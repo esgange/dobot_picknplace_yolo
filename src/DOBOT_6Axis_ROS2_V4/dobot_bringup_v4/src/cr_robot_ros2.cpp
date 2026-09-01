@@ -5,28 +5,40 @@ CRRobotRos2::CRRobotRos2() : rclcpp::Node("dobot_bringup_ros2"){};
 
 void CRRobotRos2::init()
 {
-    std::string robotIp{""};
+    std::string robotLan1Ip{""};
+    std::string robotLan2Ip{""};
     std::string robotType{""};
     double trajectoryDuration{0.0};
     std::string robotNodeName{""};
+    std::string datalogDirectory{""};
     int robotNumber = 1;
 
     // 获取参数 dobot_bringup_ros2.launch.py
-    // The launch file supplies robot_ip_address from the required project .env.
+    // The launch file supplies both interfaces from the required project .env.
     // No default is permitted: direct or misconfigured starts must fail.
-    this->declare_parameter<std::string>("robot_ip_address");
+    this->declare_parameter<std::string>("robot_lan1_ip");
+    this->declare_parameter<std::string>("robot_lan2_ip");
     this->declare_parameter("robot_type", "cr10");
     this->declare_parameter("trajectory_duration", 0.3);
     this->declare_parameter("robot_node_name", "dobot_bringup_ros2");
     this->declare_parameter("robot_number", 1);
+    this->declare_parameter<std::string>("datalog_directory");
 
-    this->get_parameter("robot_ip_address", robotIp);
+    this->get_parameter("robot_lan1_ip", robotLan1Ip);
+    this->get_parameter("robot_lan2_ip", robotLan2Ip);
     this->get_parameter("robot_type", robotType);
     this->get_parameter("trajectory_duration", trajectoryDuration);
     this->get_parameter("robot_node_name", robotNodeName);
     this->get_parameter("robot_number", robotNumber);
+    this->get_parameter("datalog_directory", datalogDirectory);
 
-    RCLCPP_INFO(this->get_logger(), "robotIp %s", robotIp.c_str());
+    event_logger_ = std::make_shared<dobot_bringup::EventLogger>("dobot_bringup_v4", datalogDirectory);
+    if (!event_logger_->record("INFO", "bringup_started", "strict two-interface configuration loaded")) {
+        throw std::runtime_error("cannot write dobot_bringup_v4 datalog");
+    }
+
+    RCLCPP_INFO(this->get_logger(), "robotLan1Ip %s", robotLan1Ip.c_str());
+    RCLCPP_INFO(this->get_logger(), "robotLan2Ip %s", robotLan2Ip.c_str());
     RCLCPP_INFO(this->get_logger(), "robotType  %s", robotType.c_str());
     RCLCPP_INFO(this->get_logger(), "trajectoryDuration %f", trajectoryDuration);
 
@@ -287,7 +299,7 @@ kServiceEnableFTSensor = this->create_service<dobot_msgs_v4::srv::EnableFTSensor
     kServiceCheckOddMovJ = this->create_service<dobot_msgs_v4::srv::CheckOddMovJ>(serviceCheckOddMovJ, std::bind(&CRRobotRos2::CheckOddMovJ, this, std::placeholders::_1, std::placeholders::_2));
     kServiceCheckOddMovC = this->create_service<dobot_msgs_v4::srv::CheckOddMovC>(serviceCheckOddMovC, std::bind(&CRRobotRos2::CheckOddMovC, this, std::placeholders::_1, std::placeholders::_2));
 
-    commander_ = std::make_shared<CRCommanderRos2>(robotIp);
+    commander_ = std::make_shared<CRCommanderRos2>(robotLan1Ip, robotLan2Ip, event_logger_);
     commander_->init();
     kPublisherInfo = this->create_publisher<std_msgs::msg::String>(topicFeedInfo, 10);
     threadPubFeedBackInfo = std::thread(&CRRobotRos2::pubFeedBackInfo, this);

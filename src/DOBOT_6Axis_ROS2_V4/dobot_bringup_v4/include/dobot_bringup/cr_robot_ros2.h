@@ -22,6 +22,7 @@
 #include <rclcpp_action/create_server.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <dobot_bringup/command.h>
+#include <dobot_bringup/event_logger.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <dobot_msgs_v4/srv/enable_robot.hpp>
 #include <dobot_msgs_v4/srv/disable_robot.hpp>
@@ -413,6 +414,7 @@ private:
     void pubFeedBackInfo();
     std::string kRobotName;
     std::shared_ptr<CRCommanderRos2> commander_;
+    std::shared_ptr<dobot_bringup::EventLogger> event_logger_;
     std::thread threadPubFeedBackInfo;
 };
 

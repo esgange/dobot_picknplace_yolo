@@ -3,6 +3,10 @@ build/
 install/
 log/
 
+# Bounded runtime datalogs (logs/README.md is tracked)
+logs/*
+!logs/README.md
+
 # Python cache and local tooling
 __pycache__/
 *.py[cod]

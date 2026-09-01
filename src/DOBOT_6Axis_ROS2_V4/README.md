@@ -33,7 +33,8 @@
 
 | Configuration | Description |
 |---------------|-------------|
-| Robot IP | 192.168.5.1 (must be in the same subnet) |
+| LAN1 primary IP | 192.168.20.204 (must be in the same subnet) |
+| LAN2 diagnostic IP | 192.168.5.1 (explicit failover) |
 | Control Port | 29999 |
 | Feedback Port | 30004 |
 
@@ -59,7 +60,7 @@ source install/setup.bash
 
 # This project loads the robot connection from the workspace root .env.
 # From the repository root, run: cp .env.example .env
-# The bringup launch hard-fails unless .env contains a valid DOBOT_ROBOT_IP.
+# The bringup launch hard-fails unless .env contains valid DOBOT_ROBOT_LAN1_IP and DOBOT_ROBOT_LAN2_IP values.
 # Use strict KEY=value syntax; no shell exports or alternate keys are accepted.
 
 # This project includes only the standard CR10 model; no model override is needed.
@@ -202,7 +203,8 @@ In addition to launch parameters, the project also supports the following enviro
 | Environment Variable | Default Source | Description |
 |---------------------|---------------|-------------|
 | `DOBOT_TYPE` | `param.json` | Robot type; this project includes only `cr10` |
-| `DOBOT_ROBOT_IP` | `.env` (required) | Robot IP address (for real robot connection) |
+| `DOBOT_ROBOT_LAN1_IP` | `.env` (required) | Primary robot interface address |
+| `DOBOT_ROBOT_LAN2_IP` | `.env` (required) | Diagnostic failover interface address |
 
 ---
 

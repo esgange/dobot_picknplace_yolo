@@ -6,8 +6,10 @@ The bringup launch is strict and requires the repository root `.env`:
 
 ```bash
 cp .env.example .env
-# Set DOBOT_ROBOT_IP=... in .env
+# Set DOBOT_ROBOT_LAN1_IP=... and DOBOT_ROBOT_LAN2_IP=... in .env
 ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
 ```
 
-Missing, malformed, unsupported, duplicate, or invalid configuration fails before the node starts. Confirm the robot, network, remote-control mode, workspace clearance, and emergency-stop readiness before launching against hardware.
+LAN1 is attempted first, followed by LAN2 when LAN1 cannot establish both Dobot TCP channels. If both fail, the outage is recorded in this package's `logs/dobot_bringup_v4/events.jsonl` and the driver retries the explicit two-address sequence. Missing, malformed, unsupported, duplicate, or invalid configuration fails before the node starts. Confirm the robot, network, remote-control mode, workspace clearance, and emergency-stop readiness before launching against hardware.
+
+The logger is package-local; use the repository-level `scripts/compile_logs.py` only when a timestamp-ordered cross-package file is needed.

@@ -36,4 +36,4 @@ source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 ```
 
-Do not flatten or move a package out of its vendor group without recording the architecture change in [`docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md`](../docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md).
+Runtime event files are isolated under `logs/<package-name>/events.jsonl`; see [`logs/README.md`](../logs/README.md). Cross-package compilation is provided by `scripts/compile_logs.py`. Do not flatten or move a package out of its vendor group without recording the architecture change in [`docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md`](../docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md).

@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <cstring>
 #include <dobot_bringup/tcp_socket.h>
+#include <dobot_bringup/event_logger.hpp>
 
 #pragma pack(push, 1)
 // 数据 按照 8 字节 以及  48 字节对齐的模式,
@@ -133,9 +134,17 @@ private:
     std::unique_ptr<std::thread> thread_;
     std::shared_ptr<TcpClient> real_time_tcp_;
     std::shared_ptr<TcpClient> dash_board_tcp_;
+    std::string lan1_ip_;
+    std::string lan2_ip_;
+    std::string active_ip_;
+    mutable std::mutex connection_mutex_;
+    std::shared_ptr<dobot_bringup::EventLogger> event_logger_;
 
 public:
-    explicit CRCommanderRos2(const std::string &ip);
+    explicit CRCommanderRos2(
+        const std::string &lan1_ip,
+        const std::string &lan2_ip,
+        const std::shared_ptr<dobot_bringup::EventLogger> &event_logger);
 
     ~CRCommanderRos2();
     void getCurrentJointStatus(double *joint);
@@ -151,6 +160,11 @@ public:
     std::shared_ptr<RealTimeData> getRealData() const;
 
 private:
+    bool tryConnect(const std::string &ip, const std::string &interface_name);
+    void disconnectActive();
+    std::shared_ptr<TcpClient> dashboardClient() const;
+    std::shared_ptr<TcpClient> realTimeClient() const;
+
     static void doTcpCmd(std::shared_ptr<TcpClient> &tcp, const char *cmd, int32_t &err_id,
                          std::vector<std::string> &result);
     static void doTcpCmd_f(std::shared_ptr<TcpClient> &tcp, const char *cmd, int32_t &err_id,std::string &mode_id,

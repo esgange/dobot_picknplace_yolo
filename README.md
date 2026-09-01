@@ -74,16 +74,25 @@ Create the project-wide runtime configuration once per checkout. The file is ign
 
 ```bash
 cp .env.example .env
-# Edit .env and set DOBOT_ROBOT_IP for the robot/network being used.
+# Edit .env and set both explicit robot interfaces for the robot/network being used.
+# LAN1 is tried first; LAN2 is the diagnostic failover.
 ```
 
-The Dobot bringup launch requires the repository `.env` automatically. It hard-fails when the file is missing, malformed, or missing a valid `DOBOT_ROBOT_IP`; there is no IP fallback:
+The Dobot bringup launch requires the repository `.env` automatically. It tries `DOBOT_ROBOT_LAN1_IP` first, then `DOBOT_ROBOT_LAN2_IP`. If both interfaces fail, the driver records one bounded outage event and continues its explicit retry loop; missing, malformed, duplicate, unsupported, or invalid configuration hard-fails before the node starts:
 
 ```bash
 ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
 ```
 
 The file uses strict `KEY=value` lines and does not require a Python dotenv package. Do not use shell exports, alternate key names, or alternate configuration paths.
+
+Runtime datalogs are isolated per package under `logs/<package-name>/events.jsonl`; the bringup launch creates the package files before starting the node. Compile the timestamped package records into a separate universal file only when needed:
+
+```bash
+python3 scripts/compile_logs.py --workspace-root . --output /tmp/picknplace-events.jsonl
+```
+
+Each package log overwrites itself before record 1,001. The compiler is a standalone script, not a ROS package; its output location is explicit.
 
 For a Gemini 335 connected over USB, the official Orbbec wrapper provides:
 

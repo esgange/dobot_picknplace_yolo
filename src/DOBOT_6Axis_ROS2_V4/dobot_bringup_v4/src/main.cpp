@@ -29,13 +29,6 @@ int main(int argc, char *argv[])
   dobot_msgs_v4::msg::ToolVectorActual tool_vector_actual_msg;
   rclcpp::Publisher<dobot_msgs_v4::msg::ToolVectorActual>::SharedPtr tool_vector_pub = robot->create_publisher<dobot_msgs_v4::msg::ToolVectorActual>("dobot_msgs_v4/msg/ToolVectorActual", 10);
 
-  std::string z = "/";
-  const char *robot_type = getenv("DOBOT_TYPE");
-  std::string a = robot_type == nullptr ? "cr10" : robot_type;
-  std::string b = "_robot/joint_controller/follow_joint_trajectory";
-  std::string ss = z + a + b;
-  (void)ss; // 预留变量
-
   double rate_value = robot->declare_parameter<double>("JointStatePublishRate", 10.0);
 
   robot->init();

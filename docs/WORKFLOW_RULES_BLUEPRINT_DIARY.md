@@ -62,8 +62,9 @@ Keep application code, launch files, calibration, and configuration separate fro
 - Never delete vendor license/notice/attribution files.
 - Never commit a vendor update without recording its upstream URL, branch, commit ID, date, reason, and validation in this diary.
 - Keep a clean separation between upstream snapshots and project patches. Prefer a new integration package; if a vendor patch is unavoidable, document the exact file and rationale.
-- Project-wide runtime settings belong only in the ignored root `.env`, created from the tracked `.env.example`; never commit machine-specific `.env` values. Configuration is absolute: use canonical keys and strict `KEY=value` syntax; do not add compatibility aliases, fallback values, or alternate configuration workflows. The Dobot bringup launch requires a non-empty, valid `DOBOT_ROBOT_IP` and must fail otherwise.
+- Project-wide runtime settings belong only in the ignored root `.env`, created from the tracked `.env.example`; never commit machine-specific `.env` values. Configuration is absolute: use canonical keys and strict `KEY=value` syntax; do not add compatibility aliases, fallback values, or alternate configuration workflows. The Dobot bringup launch requires non-empty, valid `DOBOT_ROBOT_LAN1_IP` and `DOBOT_ROBOT_LAN2_IP` values and must fail otherwise.
 - Every ROS package under `src/` must have a package-local `README.md` beside `package.xml`. Keep packages grouped under their vendor snapshot; do not flatten or relocate them without documenting the architecture change.
+- Runtime event logs are isolated by package under ignored `logs/<package>/events.jsonl`, timestamped, and bounded at 1,000 records by overwrite. Cross-package compilation is a standalone script; do not add a logger-only ROS package.
 
 ### Development workflow
 
@@ -153,8 +154,8 @@ Never use a floating “latest” version in an issue, script, or deployment not
 
 - Change: added the tracked root `.env.example` and taught `dobot_bringup_ros2.launch.py` to load the root `.env` automatically at launch.
 - Reason: keep machine-specific robot/network settings in one ignored file that travels with the offline workspace without storing them in Git.
-- Configuration contract: the launch requires the root `.env` and a valid `DOBOT_ROBOT_IP`; malformed lines, `export` syntax, unsupported keys, duplicate keys, missing values, and invalid IP addresses hard-fail. There is no shell, legacy-name, alternate-file, or `param.json` IP fallback.
-- Vendor patch: `src/DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/launch/dobot_bringup_ros2.launch.py` strictly loads the root configuration, and `src/DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/src/cr_robot_ros2.cpp` declares the robot IP without a default. No third-party dotenv dependency is required.
+- Configuration contract: the launch requires the root `.env` and valid `DOBOT_ROBOT_LAN1_IP`/`DOBOT_ROBOT_LAN2_IP` values; malformed lines, `export` syntax, unsupported keys, duplicate keys, missing values, invalid IP addresses, and duplicate interface addresses hard-fail. LAN1 is attempted before the explicitly configured LAN2 diagnostic failover; after both fail, one bounded outage event is recorded and the explicit sequence is retried.
+- Vendor patch: `src/DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/launch/dobot_bringup_ros2.launch.py` strictly loads the root configuration and initializes package logs, `src/DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/src/cr_robot_ros2.cpp` requires both interface parameters and a datalog directory, and the commander implements the explicit two-address sequence. No third-party dotenv dependency is required.
 - Validation performed: Python syntax compilation, strict `.env` parser checks, and launch-source inspection; no hardware launch was performed.
 - Follow-up: add camera and perception settings to `.env.example` only when those integrations are introduced.
 
@@ -171,6 +172,15 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Architecture: packages remain inside their official vendor snapshot directories under `src/`; no package was moved or renamed.
 - Vendor documentation patch: the new package READMEs are project-added documentation inside the vendored trees; upstream source, license, and attribution files remain unchanged.
 - Validation performed: enumerated every `package.xml` and verified each package directory contains `README.md`; no hardware launch was performed.
+
+### 2026-09-01 — Explicit LAN failover and bounded package datalogs
+
+- Change: replaced the single Dobot IP with required `DOBOT_ROBOT_LAN1_IP=192.168.20.204` and `DOBOT_ROBOT_LAN2_IP=192.168.5.1` settings. Bringup attempts LAN1 first, then the explicitly requested LAN2 diagnostic address.
+- Reason: support the robot's primary LAN and manual diagnostic LAN without hiding which interface was selected.
+- Failure behavior: if both TCP channels fail on both addresses, the driver records one `robot_connection_failed` event and retries the same explicit sequence; a recovery is recorded when either configured address succeeds.
+- Datalog architecture: package-level logging writes `logs/<package>/events.jsonl`; bringup startup creates an isolated file for every package, and each file overwrites before record 1,001. `scripts/compile_logs.py` merges timestamped package records on demand; no logger-only ROS package is used.
+- Validation performed: strict two-address config parsing, package log initialization, C++ build, and bounded logger tests; no hardware connection was attempted.
+- Follow-up: use the standalone compiler when a universal cross-package record is needed; keep source events package-local.
 
 ### Future entry template
 
