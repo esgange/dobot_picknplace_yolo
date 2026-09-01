@@ -57,11 +57,12 @@ sudo apt update && sudo apt install -y \
 colcon build
 source install/setup.bash
 
-# Configure robot connection IP (default for wired connection)
-echo "export IP_address=192.168.5.1" >> ~/.bashrc
+# This project loads the robot connection from the workspace root .env.
+# From the repository root, run: cp .env.example .env
+# The bringup launch hard-fails unless .env contains a valid DOBOT_ROBOT_IP.
+# Use strict KEY=value syntax; no shell exports or alternate keys are accepted.
 
-# This project includes only the standard CR10 model
-echo "export DOBOT_TYPE=cr10" >> ~/.bashrc
+# This project includes only the standard CR10 model; no model override is needed.
 
 # Apply configuration
 source ~/.bashrc
@@ -201,7 +202,7 @@ In addition to launch parameters, the project also supports the following enviro
 | Environment Variable | Default Source | Description |
 |---------------------|---------------|-------------|
 | `DOBOT_TYPE` | `param.json` | Robot type; this project includes only `cr10` |
-| `IP_address` | `param.json` | Robot IP address (for real robot connection) |
+| `DOBOT_ROBOT_IP` | `.env` (required) | Robot IP address (for real robot connection) |
 
 ---
 

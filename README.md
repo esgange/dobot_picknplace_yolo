@@ -66,12 +66,20 @@ source install/setup.bash
 
 ## Initial hardware checks
 
-Set the Dobot CR10 connection variables for the robot and network being used:
+Create the project-wide runtime configuration once per checkout. The file is ignored by Git, so it can contain the address of the robot connected to that machine:
 
 ```bash
-export DOBOT_TYPE=cr10
-export IP_address=192.168.5.1
+cp .env.example .env
+# Edit .env and set DOBOT_ROBOT_IP for the robot/network being used.
 ```
+
+The Dobot bringup launch requires the repository `.env` automatically. It hard-fails when the file is missing, malformed, or missing a valid `DOBOT_ROBOT_IP`; there is no IP fallback:
+
+```bash
+ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
+```
+
+The file uses strict `KEY=value` lines and does not require a Python dotenv package. Do not use shell exports, alternate key names, or alternate configuration paths.
 
 For a Gemini 335 connected over USB, the official Orbbec wrapper provides:
 

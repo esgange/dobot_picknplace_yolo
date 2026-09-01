@@ -62,6 +62,7 @@ Keep application code, launch files, calibration, and configuration separate fro
 - Never delete vendor license/notice/attribution files.
 - Never commit a vendor update without recording its upstream URL, branch, commit ID, date, reason, and validation in this diary.
 - Keep a clean separation between upstream snapshots and project patches. Prefer a new integration package; if a vendor patch is unavoidable, document the exact file and rationale.
+- Project-wide runtime settings belong only in the ignored root `.env`, created from the tracked `.env.example`; never commit machine-specific `.env` values. Configuration is absolute: use canonical keys and strict `KEY=value` syntax; do not add compatibility aliases, fallback values, or alternate configuration workflows. The Dobot bringup launch requires a non-empty, valid `DOBOT_ROBOT_IP` and must fail otherwise.
 
 ### Development workflow
 
@@ -146,6 +147,21 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Defaults changed to `DOBOT_TYPE=cr10` in bringup, RViz, Gazebo, MoveIt, and action-client entry points.
 - Validation performed: checked remaining model asset directories, package manifests, launch defaults, and documentation references; non-CR10 references left in `V4新增指令` are generic protocol documentation, not installed robot configurations.
 - Follow-up: build the CR10-only workspace on a ROS 2 Humble host before hardware operation.
+
+### 2026-09-01 — Project-wide runtime configuration
+
+- Change: added the tracked root `.env.example` and taught `dobot_bringup_ros2.launch.py` to load the root `.env` automatically at launch.
+- Reason: keep machine-specific robot/network settings in one ignored file that travels with the offline workspace without storing them in Git.
+- Configuration contract: the launch requires the root `.env` and a valid `DOBOT_ROBOT_IP`; malformed lines, `export` syntax, unsupported keys, duplicate keys, missing values, and invalid IP addresses hard-fail. There is no shell, legacy-name, alternate-file, or `param.json` IP fallback.
+- Vendor patch: `src/DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/launch/dobot_bringup_ros2.launch.py` strictly loads the root configuration, and `src/DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/src/cr_robot_ros2.cpp` declares the robot IP without a default. No third-party dotenv dependency is required.
+- Validation performed: Python syntax compilation, strict `.env` parser checks, and launch-source inspection; no hardware launch was performed.
+- Follow-up: add camera and perception settings to `.env.example` only when those integrations are introduced.
+
+### 2026-09-01 — Absolute configuration policy
+
+- Rule: all future project configuration and launch behavior is canonical and explicit. Do not add compatibility aliases, fallback values, or alternate configuration workflows.
+- Reason: prevent unexplained behavior when moving the offline workspace between machines or changing agents.
+- Enforcement: strict configuration files and launch code must hard-fail on missing, malformed, unsupported, or ambiguous values.
 
 ### Future entry template
 

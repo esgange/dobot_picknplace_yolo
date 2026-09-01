@@ -58,10 +58,12 @@ colcon build
 source install/setup.bash
 
 # 配置机械臂连接 IP（默认为有线连接 IP）
-echo "export IP_address=192.168.5.1" >> ~/.bashrc
+# 本项目会自动读取工作区根目录的 .env 文件。
+# 在仓库根目录执行：cp .env.example .env
+# 如果 .env 缺失、格式错误或没有有效的 DOBOT_ROBOT_IP，启动会直接失败。
+# 使用严格的 KEY=value 格式，不支持 shell export 或其他变量名。
 
-# 本项目仅包含标准 CR10 型号
-echo "export DOBOT_TYPE=cr10" >> ~/.bashrc
+# 本项目仅包含标准 CR10 型号，不需要型号覆盖。
 
 # 生效配置
 source ~/.bashrc
@@ -201,7 +203,7 @@ ros2 run servo_action action_move_client
 | 环境变量 | 默认值来源 | 说明 |
 |----------|-----------|------|
 | `DOBOT_TYPE` | `param.json` | 机器人型号；本项目仅包含 `cr10` |
-| `IP_address` | `param.json` | 机器人 IP 地址（用于真实机器人连接） |
+| `DOBOT_ROBOT_IP` | `.env`（必需） | 机器人 IP 地址（用于真实机器人连接） |
 
 ---
 
