@@ -63,6 +63,7 @@ Keep application code, launch files, calibration, and configuration separate fro
 - Never commit a vendor update without recording its upstream URL, branch, commit ID, date, reason, and validation in this diary.
 - Keep a clean separation between upstream snapshots and project patches. Prefer a new integration package; if a vendor patch is unavoidable, document the exact file and rationale.
 - Project-wide runtime settings belong only in the ignored root `.env`, created from the tracked `.env.example`; never commit machine-specific `.env` values. Configuration is absolute: use canonical keys and strict `KEY=value` syntax; do not add compatibility aliases, fallback values, or alternate configuration workflows. The Dobot bringup launch requires a non-empty, valid `DOBOT_ROBOT_IP` and must fail otherwise.
+- Every ROS package under `src/` must have a package-local `README.md` beside `package.xml`. Keep packages grouped under their vendor snapshot; do not flatten or relocate them without documenting the architecture change.
 
 ### Development workflow
 
@@ -162,6 +163,14 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Rule: all future project configuration and launch behavior is canonical and explicit. Do not add compatibility aliases, fallback values, or alternate configuration workflows.
 - Reason: prevent unexplained behavior when moving the offline workspace between machines or changing agents.
 - Enforcement: strict configuration files and launch code must hard-fail on missing, malformed, unsupported, or ambiguous values.
+
+### 2026-09-01 — Package organization and documentation
+
+- Change: added `src/README.md` and a package-local README beside all 13 ROS package manifests; documented the Dobot and Orbbec package groups.
+- Reason: make package ownership, entry points, and offline source layout clear when the workspace is transferred or an agent changes.
+- Architecture: packages remain inside their official vendor snapshot directories under `src/`; no package was moved or renamed.
+- Vendor documentation patch: the new package READMEs are project-added documentation inside the vendored trees; upstream source, license, and attribution files remain unchanged.
+- Validation performed: enumerated every `package.xml` and verified each package directory contains `README.md`; no hardware launch was performed.
 
 ### Future entry template
 

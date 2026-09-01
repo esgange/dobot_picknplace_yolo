@@ -17,6 +17,10 @@ src/
 
 Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-main` branch is the recommended branch for new designs and provides the `gemini_330_series.launch.py` launch file.
 
+## Package organization
+
+All 13 ROS packages are below `src/`, grouped under the official vendor snapshot they came from. Each package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
+
 ## Clone this workspace
 
 ```bash
