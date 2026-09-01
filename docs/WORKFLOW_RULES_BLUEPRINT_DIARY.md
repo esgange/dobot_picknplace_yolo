@@ -57,6 +57,7 @@ Keep application code, launch files, calibration, and configuration separate fro
 
 - The two vendor trees are regular tracked files, not submodules.
 - A normal `git clone` of this repository must contain the vendor source; no `git submodule` command should be needed.
+- Every new or changed project rule must be recorded in this diary in the same change. This diary is the durable source of truth when agents or contributors switch.
 - Never delete vendor license/notice/attribution files.
 - Never commit a vendor update without recording its upstream URL, branch, commit ID, date, reason, and validation in this diary.
 - Keep a clean separation between upstream snapshots and project patches. Prefer a new integration package; if a vendor patch is unavoidable, document the exact file and rationale.
@@ -130,6 +131,11 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Converted both checked-out trees into vendored ordinary files when the offline-PC requirement was clarified.
 - Added `AGENTS.md`, this diary, offline transfer instructions, and vendor-refresh rules.
 - Parent bootstrap commit: `ffbf0f4c20ba1d690af380a7e1652f4485737d57`.
+
+### 2026-09-01 — rule persistence
+
+- New rule: every new or changed project rule must be added to this diary in the same change.
+- Reason: keep the project contract durable across agent and contributor handoffs.
 
 ### Future entry template
 
