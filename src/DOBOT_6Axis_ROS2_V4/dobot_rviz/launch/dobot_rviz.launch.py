@@ -8,7 +8,7 @@ import os
 
 
 def generate_launch_description():
-    name = os.getenv("DOBOT_TYPE", "cr5")
+    name = os.getenv("DOBOT_TYPE", "cr10")
     urdf_tutorial_path = get_package_share_path('dobot_rviz')
     default_model_path = str(urdf_tutorial_path / f'urdf/{name}_robot.urdf')
     default_rviz_config_path = str(urdf_tutorial_path / 'rviz/urdf.rviz')

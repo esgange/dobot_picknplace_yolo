@@ -72,7 +72,7 @@ def parse_brace6(s):
 class VerifyNode(Node):
     def __init__(self):
         super().__init__('verify_dh_node')
-        name = os.getenv('DOBOT_TYPE', 'cr5')
+        name = os.getenv('DOBOT_TYPE', 'cr10')
         self.get_logger().info(f'机器人类型: {name}')
         self.group = f'{name}_group'
         self.joints = [f'joint{i+1}' for i in range(6)]

@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
 
   std::string z = "/";
   const char *robot_type = getenv("DOBOT_TYPE");
-  std::string a = robot_type == nullptr ? "cr5" : robot_type;
+  std::string a = robot_type == nullptr ? "cr10" : robot_type;
   std::string b = "_robot/joint_controller/follow_joint_trajectory";
   std::string ss = z + a + b;
   (void)ss; // 预留变量

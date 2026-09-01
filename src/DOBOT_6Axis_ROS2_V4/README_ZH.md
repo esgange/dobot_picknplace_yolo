@@ -17,6 +17,8 @@
 
 ---
 
+> **项目裁剪说明：** 此离线项目副本仅保留标准 Dobot CR10。其他机器人型号的 MoveIt 配置、描述文件和网格文件均未包含。
+
 ## 快速开始
 
 ### 环境要求
@@ -58,10 +60,8 @@ source install/setup.bash
 # 配置机械臂连接 IP（默认为有线连接 IP）
 echo "export IP_address=192.168.5.1" >> ~/.bashrc
 
-# 指定机械臂型号（根据实际型号选择）
-# 示例：CR5 型号
-echo "export DOBOT_TYPE=cr5" >> ~/.bashrc
-# 支持型号：cr3、cr5、cr7、cr10、cr12、cr16、cr20、e6（me6）、cr10af、nova2、nova5、cr30h
+# 本项目仅包含标准 CR10 型号
+echo "export DOBOT_TYPE=cr10" >> ~/.bashrc
 
 # 生效配置
 source ~/.bashrc
@@ -200,7 +200,7 @@ ros2 run servo_action action_move_client
 
 | 环境变量 | 默认值来源 | 说明 |
 |----------|-----------|------|
-| `DOBOT_TYPE` | `param.json` | 机器人型号（如 `cr5`、`cr10`、`nova2`） |
+| `DOBOT_TYPE` | `param.json` | 机器人型号；本项目仅包含 `cr10` |
 | `IP_address` | `param.json` | 机器人 IP 地址（用于真实机器人连接） |
 
 ---
@@ -216,19 +216,8 @@ DOBOT_6Axis_ROS2_V4/
 ├── dobot_demo/              # 简单运动演示脚本
 ├── dobot_msgs_v4/           # ROS2 服务与消息定义
 ├── servo_action/            # 关节轨迹动作客户端
-├── cr3_moveit/              # CR3 MoveIt 配置
-├── cr5_moveit/              # CR5 MoveIt 配置
-├── cr7_moveit/              # CR7 MoveIt 配置
 ├── cr10_moveit/             # CR10 MoveIt 配置
-├── cr10af_moveit/           # CR10AF MoveIt 配置
-├── cr12_moveit/             # CR12 MoveIt 配置
-├── cr16_moveit/             # CR16 MoveIt 配置
-├── cr20_moveit/             # CR20 MoveIt 配置
-├── cr30h_moveit/            # CR30H MoveIt 配置
-├── me6_moveit/              # E6/ME6 MoveIt 配置
-├── nova2_moveit/            # Nova2 MoveIt 配置
-├── nova5_moveit/            # Nova5 MoveIt 配置
-├── cra_description/         # 机器人 URDF/XACRO 描述与网格文件
+├── cra_description/         # CR10 URDF/XACRO 描述与网格文件
 ├── image/                   # 图片
 ├── README.md
 └── README_ZH.md
@@ -268,10 +257,7 @@ MoveIt (OMPL / CHOMP 规划器)
 
 | 系列 | 型号 |
 |------|------|
-| CR 系列 | CR3、CR5、CR7、CR10、CR12、CR16、CR20、CR30H |
-| CRAF 系列 | CR10AF |
-| E 系列 | E6 / ME6 |
-| Nova 系列 | Nova2、Nova5 |
+| CR 系列 | CR10 |
 
 ---
 

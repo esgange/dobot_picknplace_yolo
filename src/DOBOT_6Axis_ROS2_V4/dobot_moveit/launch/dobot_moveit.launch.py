@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    name = os.getenv("DOBOT_TYPE", "cr5")
+    name = os.getenv("DOBOT_TYPE", "cr10")
     package_name = f'{name}_moveit'
     urdf_name = "dobot_moveit.launch.py"
 

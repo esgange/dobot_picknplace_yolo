@@ -30,7 +30,7 @@ def load_yaml(package_name, file_path):
 
 
 def generate_launch_description():
-    name = os.getenv("DOBOT_TYPE", "cr5")
+    name = os.getenv("DOBOT_TYPE", "cr10")
     robot_name_in_model = f'{name}_robot'
     package_name = 'cra_description'
     urdf_name = f"{name}_robot.xacro"

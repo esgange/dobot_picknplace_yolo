@@ -1,18 +1,18 @@
 # Dobot Pick-and-Place YOLO
 
-ROS 2 workspace for a Dobot 6-axis robot and an Orbbec Gemini 335 depth camera. The manufacturers' ROS 2 repositories are vendored in this repository so a transferred copy contains the source needed to build without network access.
+ROS 2 workspace for a Dobot CR10 robot and an Orbbec Gemini 335 depth camera. The Dobot source is an intentionally pruned CR10-only vendor profile; the Orbbec source is vendored in full. A transferred copy therefore contains the project source without requiring network access.
 
 ## Workspace contents
 
 ```text
 src/
-├── DOBOT_6Axis_ROS2_V4/  # Dobot Robotics official ROS 2 SDK snapshot
+├── DOBOT_6Axis_ROS2_V4/  # Dobot official SDK, pruned to CR10
 └── OrbbecSDK_ROS2/       # Orbbec official ROS 2 wrapper snapshot
 ```
 
 | Component | Official repository | Snapshot |
 | --- | --- | --- |
-| Dobot 6Axis ROS 2 V4 | [Dobot-Arm/DOBOT_6Axis_ROS2_V4](https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4) | `main` at `def21d05` |
+| Dobot 6Axis ROS 2 V4 (CR10 profile) | [Dobot-Arm/DOBOT_6Axis_ROS2_V4](https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4) | `main` at `def21d05`, locally pruned |
 | Orbbec ROS 2 wrapper | [orbbec/OrbbecSDK_ROS2](https://github.com/orbbec/OrbbecSDK_ROS2) | `v2-main` at `8e7cad2b` |
 
 Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-main` branch is the recommended branch for new designs and provides the `gemini_330_series.launch.py` launch file.
@@ -24,7 +24,7 @@ git clone https://github.com/esgange/dobot_picknplace_yolo.git
 cd dobot_picknplace_yolo
 ```
 
-No submodule initialization or network access is required after cloning this repository. The source snapshots are ordinary tracked files. Preserve the upstream `LICENSE`, `NOTICE`, and README files when updating them.
+No submodule initialization or network access is required after cloning this repository. The vendored sources are ordinary tracked files. Preserve the upstream `LICENSE`, `NOTICE`, and README files when updating them. Do not reintroduce non-CR10 Dobot model configurations unless the project scope is explicitly changed and recorded in the blueprint diary.
 
 ## Updating vendored sources (online maintenance only)
 
@@ -66,10 +66,10 @@ source install/setup.bash
 
 ## Initial hardware checks
 
-Set the Dobot variables for the robot model and network being used (the values below are the upstream examples):
+Set the Dobot CR10 connection variables for the robot and network being used:
 
 ```bash
-export DOBOT_TYPE=cr5
+export DOBOT_TYPE=cr10
 export IP_address=192.168.5.1
 ```
 

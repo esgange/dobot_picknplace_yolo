@@ -17,6 +17,8 @@
 
 ---
 
+> **Project vendor profile:** This offline project copy is intentionally pruned to the standard Dobot CR10. Other robot model MoveIt packages, descriptions, and meshes are not included.
+
 ## Quick Start
 
 ### System Requirements
@@ -58,10 +60,8 @@ source install/setup.bash
 # Configure robot connection IP (default for wired connection)
 echo "export IP_address=192.168.5.1" >> ~/.bashrc
 
-# Specify robot model (choose according to actual model)
-# Example: CR5 model
-echo "export DOBOT_TYPE=cr5" >> ~/.bashrc
-# Supported models: cr3, cr5, cr7, cr10, cr12, cr16, cr20, e6 (me6), cr10af, nova2, nova5, cr30h
+# This project includes only the standard CR10 model
+echo "export DOBOT_TYPE=cr10" >> ~/.bashrc
 
 # Apply configuration
 source ~/.bashrc
@@ -200,7 +200,7 @@ In addition to launch parameters, the project also supports the following enviro
 
 | Environment Variable | Default Source | Description |
 |---------------------|---------------|-------------|
-| `DOBOT_TYPE` | `param.json` | Robot type (e.g., `cr5`, `cr10`, `nova2`) |
+| `DOBOT_TYPE` | `param.json` | Robot type; this project includes only `cr10` |
 | `IP_address` | `param.json` | Robot IP address (for real robot connection) |
 
 ---
@@ -216,19 +216,8 @@ DOBOT_6Axis_ROS2_V4/
 ├── dobot_demo/              # Simple motion demo scripts
 ├── dobot_msgs_v4/           # ROS2 service & message definitions
 ├── servo_action/            # Joint trajectory action client
-├── cr3_moveit/              # CR3 MoveIt config
-├── cr5_moveit/              # CR5 MoveIt config
-├── cr7_moveit/              # CR7 MoveIt config
 ├── cr10_moveit/             # CR10 MoveIt config
-├── cr10af_moveit/           # CR10AF MoveIt config
-├── cr12_moveit/             # CR12 MoveIt config
-├── cr16_moveit/             # CR16 MoveIt config
-├── cr20_moveit/             # CR20 MoveIt config
-├── cr30h_moveit/            # CR30H MoveIt config
-├── me6_moveit/              # E6/ME6 MoveIt config
-├── nova2_moveit/            # Nova2 MoveIt config
-├── nova5_moveit/            # Nova5 MoveIt config
-├── cra_description/         # Robot URDF/XACRO descriptions & meshes
+├── cra_description/         # CR10 URDF/XACRO description & meshes
 ├── image/                   # Images
 ├── README.md
 └── README_ZH.md
@@ -260,8 +249,8 @@ MoveIt (OMPL / CHOMP planner)
 | `main.cpp` | `dobot_bringup_v4` | TCP 30004 realtime feedback → `/joint_states_robot` |
 | `joint_state_relay.py` | `dobot_rviz` | Bridge `/joint_states_robot` → `/joint_states`; relay → `/rsp_joint_states` |
 | `action_move_server.py` | `dobot_moveit` | Receives MoveIt trajectory, sends ServoJ commands waypoint-by-waypoint |
-| `cra_description` | `cra_description` | Robot URDF/XACRO descriptions and STL meshes for all models |
-| `ompl_planning.yaml` | `{model}_moveit` | OMPL planner config (includes `AddTimeOptimalParameterization`) |
+| `cra_description` | `cra_description` | CR10 URDF/XACRO description and STL meshes |
+| `ompl_planning.yaml` | `cr10_moveit` | CR10 OMPL planner config (includes `AddTimeOptimalParameterization`) |
 
 ---
 
@@ -269,10 +258,7 @@ MoveIt (OMPL / CHOMP planner)
 
 | Series | Models |
 |--------|--------|
-| CR Series | CR3, CR5, CR7, CR10, CR12, CR16, CR20, CR30H |
-| CRAF Series | CR10AF |
-| E Series | E6 / ME6 |
-| Nova Series | Nova2, Nova5 |
+| CR Series | CR10 |
 
 ---
 

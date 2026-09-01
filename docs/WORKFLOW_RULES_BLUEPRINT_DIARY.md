@@ -6,7 +6,7 @@ This is the durable handoff document for the `dobot_picknplace_yolo` project. Re
 
 Build a ROS 2 pick-and-place system combining:
 
-- a Dobot 6-axis arm and its official ROS 2 V4 driver;
+- a Dobot CR10 arm and its official ROS 2 V4 driver;
 - an Orbbec Gemini 335 depth camera and its official ROS 2 wrapper;
 - YOLO-based object detection and a future grasp/planning pipeline.
 
@@ -14,11 +14,11 @@ The repository must be transferable to an offline PC. “Offline-ready” means 
 
 ## 2. Current source baseline
 
-The following manufacturer sources were cloned online, then converted from submodules into ordinary tracked directories on 2026-09-01:
+The following manufacturer sources were cloned online, then converted from submodules into ordinary tracked directories on 2026-09-01. The Dobot tree is a deliberate CR10-only profile derived from the upstream commit shown below; it is not an unmodified mirror.
 
-| Source | Upstream branch | Recorded commit | Local path | License file |
+| Source | Upstream branch | Upstream base commit | Local path | License file |
 | --- | --- | --- | --- | --- |
-| Dobot 6Axis ROS 2 V4 | `main` | `def21d05149576b9aed261f38e62ea236a5d8ec5` | `src/DOBOT_6Axis_ROS2_V4` | `src/DOBOT_6Axis_ROS2_V4/LICENSE` (MIT) |
+| Dobot 6Axis ROS 2 V4 (CR10-only profile) | `main` | `def21d05149576b9aed261f38e62ea236a5d8ec5` | `src/DOBOT_6Axis_ROS2_V4` | `src/DOBOT_6Axis_ROS2_V4/LICENSE` (MIT) |
 | Orbbec SDK ROS 2 wrapper | `v2-main` | `8e7cad2bfa2c4a6ac4e779be99c64e72166043af` | `src/OrbbecSDK_ROS2` | `src/OrbbecSDK_ROS2/LICENSE` (Apache 2.0) |
 
 Official URLs:
@@ -37,7 +37,7 @@ Orbbec documents Gemini 335 as part of the Gemini 330 series and recommends `v2-
 ├── docs/
 │   └── WORKFLOW_RULES_BLUEPRINT_DIARY.md
 └── src/
-    ├── DOBOT_6Axis_ROS2_V4/          # immutable-by-default vendor snapshot
+    ├── DOBOT_6Axis_ROS2_V4/          # CR10-only vendor profile
     └── OrbbecSDK_ROS2/               # immutable-by-default vendor snapshot
 ```
 
@@ -58,6 +58,7 @@ Keep application code, launch files, calibration, and configuration separate fro
 - The two vendor trees are regular tracked files, not submodules.
 - A normal `git clone` of this repository must contain the vendor source; no `git submodule` command should be needed.
 - Every new or changed project rule must be recorded in this diary in the same change. This diary is the durable source of truth when agents or contributors switch.
+- The Dobot profile is intentionally limited to CR10: retain `cr10_moveit`, the CR10 URDF/Xacro and mesh assets, and shared runtime packages; remove other model MoveIt packages, URDF/Xacro files, and mesh directories.
 - Never delete vendor license/notice/attribution files.
 - Never commit a vendor update without recording its upstream URL, branch, commit ID, date, reason, and validation in this diary.
 - Keep a clean separation between upstream snapshots and project patches. Prefer a new integration package; if a vendor patch is unavoidable, document the exact file and rationale.
@@ -113,7 +114,7 @@ Vendor refreshes happen only on an online maintenance machine:
 
 1. Clone the official upstream repository into a temporary directory at the intended branch.
 2. Record the old and new commit IDs and inspect `git diff --no-index`.
-3. Copy only the reviewed snapshot into the matching `src/` directory; do not copy its `.git` directory.
+3. Copy only the reviewed snapshot into the matching `src/` directory; do not copy its `.git` directory. For Dobot, reapply the CR10-only profile and do not reintroduce other model assets.
 4. Confirm licenses and notices are still present.
 5. Build or run the relevant non-hardware checks.
 6. Update the baseline table and add a dated diary entry before committing.
@@ -136,6 +137,15 @@ Never use a floating “latest” version in an issue, script, or deployment not
 
 - New rule: every new or changed project rule must be added to this diary in the same change.
 - Reason: keep the project contract durable across agent and contributor handoffs.
+
+### 2026-09-01 — CR10-only Dobot profile
+
+- Change: removed all non-CR10 Dobot MoveIt packages, robot URDF/Xacro files, and robot mesh directories; retained `cr10_moveit`, CR10 descriptions/assets, and shared driver/runtime packages.
+- Reason: target hardware is Dobot CR10, and the offline project should not carry unused robot configurations.
+- Upstream base commit: `def21d05149576b9aed261f38e62ea236a5d8ec5` on `Dobot-Arm/DOBOT_6Axis_ROS2_V4:main`.
+- Defaults changed to `DOBOT_TYPE=cr10` in bringup, RViz, Gazebo, MoveIt, and action-client entry points.
+- Validation performed: checked remaining model asset directories, package manifests, launch defaults, and documentation references; non-CR10 references left in `V4新增指令` are generic protocol documentation, not installed robot configurations.
+- Follow-up: build the CR10-only workspace on a ROS 2 Humble host before hardware operation.
 
 ### Future entry template
 

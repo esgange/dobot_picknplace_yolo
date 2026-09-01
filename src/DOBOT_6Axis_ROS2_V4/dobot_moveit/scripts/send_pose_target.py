@@ -40,7 +40,7 @@ def main():
 
     x, y, z = map(float, args[0:3])
     rx, ry, rz = map(float, args[3:6])
-    robot_type = os.getenv("DOBOT_TYPE", "cr5")
+    robot_type = os.getenv("DOBOT_TYPE", "cr10")
     group_name = f"{robot_type}_group"
     joint_names = [f"joint{i+1}" for i in range(6)]
 

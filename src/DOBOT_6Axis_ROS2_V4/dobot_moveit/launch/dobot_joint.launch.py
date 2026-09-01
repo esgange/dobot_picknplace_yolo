@@ -6,13 +6,13 @@ import os
 
 
 def generate_launch_description():
-    robot_type = os.getenv("DOBOT_TYPE", "cr5")
+    robot_type = os.getenv("DOBOT_TYPE", "cr10")
 
     # robot_type 参数
     robot_type_arg = DeclareLaunchArgument(
         name='robot_type',
         default_value=robot_type,
-        description='Robot type (e.g., cr5, cr10, cr12)'
+        description='Robot type (only cr10 is included in this workspace)'
     )
 
     # trajectory_execution_timeout 参数（接收父 launch 传递的参数）

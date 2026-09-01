@@ -13,7 +13,7 @@ void CRRobotRos2::init()
 
     // 获取参数 dobot_bringup_ros2.launch.py
     this->declare_parameter("robot_ip_address", "192.168.1.6");
-    this->declare_parameter("robot_type", "cr5");
+    this->declare_parameter("robot_type", "cr10");
     this->declare_parameter("trajectory_duration", 0.3);
     this->declare_parameter("robot_node_name", "dobot_bringup_ros2");
     this->declare_parameter("robot_number", 1);
