@@ -1,41 +1,56 @@
 # Dobot Pick-and-Place YOLO
 
-ROS 2 workspace for a Dobot 6-axis robot and an Orbbec Gemini 335 depth camera. This initial bootstrap keeps the manufacturers' ROS 2 repositories as Git submodules so their history, licenses, and exact revisions remain available without copying or modifying upstream source.
+ROS 2 workspace for a Dobot 6-axis robot and an Orbbec Gemini 335 depth camera. The manufacturers' ROS 2 repositories are vendored in this repository so a transferred copy contains the source needed to build without network access.
 
 ## Workspace contents
 
 ```text
 src/
-├── DOBOT_6Axis_ROS2_V4/  # Dobot Robotics official ROS 2 SDK (main)
-└── OrbbecSDK_ROS2/       # Orbbec official ROS 2 wrapper (v2-main)
+├── DOBOT_6Axis_ROS2_V4/  # Dobot Robotics official ROS 2 SDK snapshot
+└── OrbbecSDK_ROS2/       # Orbbec official ROS 2 wrapper snapshot
 ```
 
-| Component | Official repository | Tracked branch |
+| Component | Official repository | Snapshot |
 | --- | --- | --- |
-| Dobot 6Axis ROS 2 V4 | [Dobot-Arm/DOBOT_6Axis_ROS2_V4](https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4) | `main` |
-| Orbbec ROS 2 wrapper | [orbbec/OrbbecSDK_ROS2](https://github.com/orbbec/OrbbecSDK_ROS2) | `v2-main` |
+| Dobot 6Axis ROS 2 V4 | [Dobot-Arm/DOBOT_6Axis_ROS2_V4](https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4) | `main` at `def21d05` |
+| Orbbec ROS 2 wrapper | [orbbec/OrbbecSDK_ROS2](https://github.com/orbbec/OrbbecSDK_ROS2) | `v2-main` at `8e7cad2b` |
 
 Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-main` branch is the recommended branch for new designs and provides the `gemini_330_series.launch.py` launch file.
 
 ## Clone this workspace
 
 ```bash
-git clone --recurse-submodules https://github.com/esgange/dobot_picknplace_yolo.git
+git clone https://github.com/esgange/dobot_picknplace_yolo.git
 cd dobot_picknplace_yolo
 ```
 
-If the repository was cloned without submodules, initialize them with:
+No submodule initialization or network access is required after cloning this repository. The source snapshots are ordinary tracked files. Preserve the upstream `LICENSE`, `NOTICE`, and README files when updating them.
+
+## Updating vendored sources (online maintenance only)
+
+Vendor updates must be deliberate and reviewable. Use a separate temporary clone of the official repository, compare it with the current snapshot, then commit the resulting source changes together with an entry in [`docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md`](docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md). Do not add the vendor repositories back as submodules.
 
 ```bash
-git submodule update --init --recursive
+tmp_dir="$(mktemp -d)"
+git clone --branch main https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4.git "$tmp_dir/dobot"
+git clone --branch v2-main https://github.com/orbbec/OrbbecSDK_ROS2.git "$tmp_dir/orbbec"
+# Review differences before copying; keep any project-specific changes out of vendor directories.
+git diff --no-index src/DOBOT_6Axis_ROS2_V4 "$tmp_dir/dobot" || true
+git diff --no-index src/OrbbecSDK_ROS2 "$tmp_dir/orbbec" || true
 ```
 
-The superproject records the exact upstream commit for each submodule. To deliberately move to newer upstream revisions, fetch and review the change before committing the updated submodule pointers:
+Record the new upstream commit IDs in the diary whenever a snapshot is intentionally refreshed.
+
+## Offline transfer
+
+For a full Git repository transfer, create a bundle while online and copy that single file to the offline machine:
 
 ```bash
-git submodule update --remote --merge
-git diff --submodule
+git bundle create ../dobot_picknplace_yolo.bundle --all
+git clone ../dobot_picknplace_yolo.bundle dobot_picknplace_yolo
 ```
+
+The bundle includes the vendored source and project history; it does not need GitHub or submodule URLs. A source-only archive can also be made with `git archive --format=tar.gz --output=../dobot_picknplace_yolo.tar.gz HEAD`. The offline PC still needs a compatible Ubuntu/ROS 2 installation and any system dependencies (for example MoveIt and Gazebo) already available locally; `rosdep` cannot download missing packages without an offline package mirror or cache.
 
 ## Build (Ubuntu 22.04 / ROS 2 Humble)
 
