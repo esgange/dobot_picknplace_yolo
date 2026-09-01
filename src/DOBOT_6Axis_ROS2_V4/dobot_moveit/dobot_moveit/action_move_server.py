@@ -20,14 +20,13 @@ from control_msgs.action import FollowJointTrajectory
 from dobot_msgs_v4.srv import (
     EnableRobot, ServoJ, GetAngle, Stop, ClearError
 )
-import os
 
 
 class FollowJointTrajectoryServer(Node):
 
     def __init__(self):
         super().__init__('dobot_group_controller')
-        name = os.getenv("DOBOT_TYPE", "cr10")
+        name = "cr10"
 
         # 声明超时参数（默认120秒）
         self.declare_parameter('trajectory_execution_timeout', 120.0)

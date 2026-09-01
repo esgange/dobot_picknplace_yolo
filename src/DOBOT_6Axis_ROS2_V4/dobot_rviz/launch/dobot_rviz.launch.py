@@ -4,11 +4,10 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
-import os
 
 
 def generate_launch_description():
-    name = os.getenv("DOBOT_TYPE", "cr10")
+    name = "cr10"
     urdf_tutorial_path = get_package_share_path('dobot_rviz')
     default_model_path = str(urdf_tutorial_path / f'urdf/{name}_robot.urdf')
     default_rviz_config_path = str(urdf_tutorial_path / 'rviz/urdf.rviz')

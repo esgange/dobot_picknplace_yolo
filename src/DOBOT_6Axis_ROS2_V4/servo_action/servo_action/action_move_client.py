@@ -7,12 +7,11 @@ from rclpy.node   import Node
 from rclpy.action import ActionClient             
 from control_msgs.action import FollowJointTrajectory  
 import trajectory_msgs
-import os
 
 class MoveCircleActionClient(Node):
     def __init__(self, name):
         super().__init__(name)                   
-        name_env = os.getenv("DOBOT_TYPE", "cr10")
+        name_env = "cr10"
         self._action_client = ActionClient(      
             self, FollowJointTrajectory, f'/{name_env}_group_controller/follow_joint_trajectory') 
         self.joint = 0.1

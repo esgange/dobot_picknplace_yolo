@@ -62,7 +62,7 @@ Keep application code, launch files, calibration, and configuration separate fro
 - Never delete vendor license/notice/attribution files.
 - Never commit a vendor update without recording its upstream URL, branch, commit ID, date, reason, and validation in this diary.
 - Keep a clean separation between upstream snapshots and project patches. Prefer a new integration package; if a vendor patch is unavoidable, document the exact file and rationale.
-- Project-wide runtime settings belong only in the ignored root `.env`, created from the tracked `.env.example`; never commit machine-specific `.env` values. Configuration is absolute: use canonical keys and strict `KEY=value` syntax; do not add compatibility aliases, fallback values, or alternate configuration workflows. The Dobot bringup launch requires non-empty, valid `DOBOT_ROBOT_LAN1_IP` and `DOBOT_ROBOT_LAN2_IP` values and must fail otherwise.
+- Project-wide runtime settings belong only in the ignored root `.env`, created from the tracked `.env.example`; never commit machine-specific `.env` values. Configuration is absolute: use canonical keys and strict `KEY=value` syntax; do not add compatibility aliases, fallback values, package-local configuration files, or alternate configuration workflows. The Dobot bringup launch requires and validates `DOBOT_ROBOT_LAN1_IP`, `DOBOT_ROBOT_LAN2_IP`, `DOBOT_ROBOT_TYPE`, `DOBOT_ROBOT_NUMBER`, `DOBOT_TRAJECTORY_DURATION`, and `DOBOT_ROBOT_NODE_NAME`, and must fail otherwise.
 - Every ROS package under `src/` must have a package-local `README.md` beside `package.xml`. Keep packages grouped under their vendor snapshot; do not flatten or relocate them without documenting the architecture change.
 - Runtime event logs are isolated by package under ignored `logs/<package>/events.jsonl`, timestamped, and bounded at 1,000 records by overwrite. Cross-package compilation is a standalone script; do not add a logger-only ROS package.
 
@@ -146,7 +146,7 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Change: removed all non-CR10 Dobot MoveIt packages, robot URDF/Xacro files, and robot mesh directories; retained `cr10_moveit`, CR10 descriptions/assets, and shared driver/runtime packages.
 - Reason: target hardware is Dobot CR10, and the offline project should not carry unused robot configurations.
 - Upstream base commit: `def21d05149576b9aed261f38e62ea236a5d8ec5` on `Dobot-Arm/DOBOT_6Axis_ROS2_V4:main`.
-- Defaults changed to `DOBOT_TYPE=cr10` in bringup, RViz, Gazebo, MoveIt, and action-client entry points.
+- Defaults changed to the fixed `cr10` profile in bringup, RViz, Gazebo, MoveIt, and action-client entry points.
 - Validation performed: checked remaining model asset directories, package manifests, launch defaults, and documentation references; non-CR10 references left in `V4新增指令` are generic protocol documentation, not installed robot configurations.
 - Follow-up: build the CR10-only workspace on a ROS 2 Humble host before hardware operation.
 
@@ -189,6 +189,14 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Scope: this is an explicit user-approved exception to the normal “preserve upstream README files” rule. Non-README vendor protocol/reference documents and all LICENSE/NOTICE/attribution files remain intact.
 - Validation performed: scanned all remaining README files for CJK characters and stale links to removed translations; no hardware launch was performed.
 - Offline transfer validation: generated artifacts from prior build/test runs are removed before the next source archive.
+
+### 2026-09-01 — Root `.env` is the only bringup configuration
+
+- Change: removed `src/DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/config/param.json` and moved its active single-robot settings to the ignored root `.env` and tracked `.env.example`: `DOBOT_ROBOT_TYPE`, `DOBOT_ROBOT_NUMBER`, `DOBOT_TRAJECTORY_DURATION`, and `DOBOT_ROBOT_NODE_NAME`. LAN1/LAN2 addresses remain in the same file. The obsolete multi-robot `current_robot` selector and duplicate node entry were not migrated.
+- Reason: eliminate the vendor multi-robot configuration path and keep one explicit, inspectable configuration workflow for offline transfers.
+- Enforcement: bringup accepts only the six canonical keys, requires all six, validates IPv4 addresses, enforces the CR10-only/single-robot profile, validates trajectory duration and node name, and has no defaults or JSON fallback.
+- Validation performed: source reference audit, strict configuration parser checks, launch syntax compilation, and package inventory; no hardware launch was performed.
+- Offline transfer validation: the source archive contains no package-local `param.json` configuration.
 
 ### Future entry template
 

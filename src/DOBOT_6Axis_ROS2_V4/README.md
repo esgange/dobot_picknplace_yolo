@@ -60,7 +60,7 @@ source install/setup.bash
 
 # This project loads the robot connection from the workspace root .env.
 # From the repository root, run: cp .env.example .env
-# The bringup launch hard-fails unless .env contains valid DOBOT_ROBOT_LAN1_IP and DOBOT_ROBOT_LAN2_IP values.
+# The bringup launch hard-fails unless .env contains all six required Dobot values.
 # Use strict KEY=value syntax; no shell exports or alternate keys are accepted.
 
 # This project includes only the standard CR10 model; no model override is needed.
@@ -189,7 +189,7 @@ The following parameters apply to `dobot_rviz.launch.py`:
 |-----------|---------------|-------------|
 | `live_hardware` | `false` | Set to `true` to get joint states from a real robot |
 | `gui` | `false` | Enable `joint_state_publisher_gui` for manual joint control |
-| `model` | Auto | Path to robot URDF file (auto-generated based on `DOBOT_TYPE`) |
+| `model` | Auto | Path to the CR10 robot URDF file |
 
 The `dobot_moveit.launch.py` file additionally supports:
 
@@ -202,7 +202,10 @@ In addition to launch parameters, the project also supports the following enviro
 
 | Environment Variable | Default Source | Description |
 |---------------------|---------------|-------------|
-| `DOBOT_TYPE` | `param.json` | Robot type; this project includes only `cr10` |
+| `DOBOT_ROBOT_TYPE` | `.env` (required) | Robot profile; must be exactly `cr10` |
+| `DOBOT_ROBOT_NUMBER` | `.env` (required) | Number of configured robots; must be exactly `1` |
+| `DOBOT_TRAJECTORY_DURATION` | `.env` (required) | Trajectory duration in seconds |
+| `DOBOT_ROBOT_NODE_NAME` | `.env` (required) | Bringup node name |
 | `DOBOT_ROBOT_LAN1_IP` | `.env` (required) | Primary robot interface address |
 | `DOBOT_ROBOT_LAN2_IP` | `.env` (required) | Diagnostic failover interface address |
 

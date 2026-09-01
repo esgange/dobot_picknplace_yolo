@@ -13,15 +13,14 @@ void CRRobotRos2::init()
     std::string datalogDirectory{""};
     int robotNumber = 1;
 
-    // 获取参数 dobot_bringup_ros2.launch.py
-    // The launch file supplies both interfaces from the required project .env.
+    // The launch file supplies every value from the required project .env.
     // No default is permitted: direct or misconfigured starts must fail.
     this->declare_parameter<std::string>("robot_lan1_ip");
     this->declare_parameter<std::string>("robot_lan2_ip");
-    this->declare_parameter("robot_type", "cr10");
-    this->declare_parameter("trajectory_duration", 0.3);
-    this->declare_parameter("robot_node_name", "dobot_bringup_ros2");
-    this->declare_parameter("robot_number", 1);
+    this->declare_parameter<std::string>("robot_type");
+    this->declare_parameter<double>("trajectory_duration");
+    this->declare_parameter<std::string>("robot_node_name");
+    this->declare_parameter<int>("robot_number");
     this->declare_parameter<std::string>("datalog_directory");
 
     this->get_parameter("robot_lan1_ip", robotLan1Ip);

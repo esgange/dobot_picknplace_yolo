@@ -3,6 +3,7 @@ import launch_ros.actions
 from datetime import datetime, timezone
 import json
 import ipaddress
+import math
 import os
 from pathlib import Path
 import re
@@ -10,8 +11,17 @@ import xml.etree.ElementTree as ET
 
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ROS_NODE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PACKAGE_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
-_SUPPORTED_ENV_KEYS = {"DOBOT_ROBOT_LAN1_IP", "DOBOT_ROBOT_LAN2_IP"}
+_SUPPORTED_ENV_KEYS = {
+    "DOBOT_ROBOT_LAN1_IP",
+    "DOBOT_ROBOT_LAN2_IP",
+    "DOBOT_ROBOT_TYPE",
+    "DOBOT_ROBOT_NUMBER",
+    "DOBOT_TRAJECTORY_DURATION",
+    "DOBOT_ROBOT_NODE_NAME",
+}
+_REQUIRED_ENV_KEYS = frozenset(_SUPPORTED_ENV_KEYS)
 _MAX_LOG_EVENTS = 1000
 
 
@@ -79,20 +89,49 @@ def _load_project_env():
                 )
             values[key] = value
 
-    for key in sorted(_SUPPORTED_ENV_KEYS):
-        ip_address = values.get(key, "").strip()
-        if not ip_address:
-            raise RuntimeError(f"[DOBOT BRINGUP] .env must define {key}: {env_path}")
+    missing = sorted(_REQUIRED_ENV_KEYS - values.keys())
+    if missing:
+        raise RuntimeError(
+            f"[DOBOT BRINGUP] .env is missing required key(s): {', '.join(missing)}"
+        )
+
+    for key in ("DOBOT_ROBOT_LAN1_IP", "DOBOT_ROBOT_LAN2_IP"):
         try:
-            ipaddress.ip_address(ip_address)
-        except ValueError as exc:
+            ipaddress.IPv4Address(values[key])
+        except ipaddress.AddressValueError as exc:
             raise RuntimeError(
-                f"[DOBOT BRINGUP] {key} is not a valid IP address: {ip_address}"
+                f"[DOBOT BRINGUP] {key} must be a valid IPv4 address: {values[key]}"
             ) from exc
 
     if values["DOBOT_ROBOT_LAN1_IP"] == values["DOBOT_ROBOT_LAN2_IP"]:
         raise RuntimeError(
             "[DOBOT BRINGUP] DOBOT_ROBOT_LAN1_IP and DOBOT_ROBOT_LAN2_IP must be different"
+        )
+
+    if values["DOBOT_ROBOT_TYPE"] != "cr10":
+        raise RuntimeError(
+            "[DOBOT BRINGUP] DOBOT_ROBOT_TYPE must be exactly 'cr10' for this CR10-only workspace"
+        )
+
+    if values["DOBOT_ROBOT_NUMBER"] != "1":
+        raise RuntimeError(
+            "[DOBOT BRINGUP] DOBOT_ROBOT_NUMBER must be exactly '1'; multi-robot configuration is not supported"
+        )
+
+    try:
+        trajectory_duration = float(values["DOBOT_TRAJECTORY_DURATION"])
+    except ValueError as exc:
+        raise RuntimeError(
+            "[DOBOT BRINGUP] DOBOT_TRAJECTORY_DURATION must be a finite number greater than zero"
+        ) from exc
+    if not math.isfinite(trajectory_duration) or trajectory_duration <= 0.0:
+        raise RuntimeError(
+            "[DOBOT BRINGUP] DOBOT_TRAJECTORY_DURATION must be a finite number greater than zero"
+        )
+
+    if not _ROS_NODE_NAME.fullmatch(values["DOBOT_ROBOT_NODE_NAME"]):
+        raise RuntimeError(
+            "[DOBOT BRINGUP] DOBOT_ROBOT_NODE_NAME must contain only letters, digits, and underscores and must not start with a digit"
         )
 
     # The project configuration is authoritative. This intentionally replaces
@@ -171,24 +210,12 @@ def _initialize_package_logs(root):
 
 
 log_root, package_log_names = _initialize_package_logs(project_root)
-cur_config_path = Path(__file__).resolve().parent.parent / "config"
-cur_json_path = cur_config_path / "param.json"
-
-with cur_json_path.open("r", encoding="utf-8") as file:
-    json_data = json.load(file)
-
-robot_number = json_data["robot_number"]
-current_robot = json_data["current_robot"]
-node_info = json_data["node_info"]
-current_robot_info = node_info[current_robot - 1]
-
-trajectory_duration = current_robot_info["trajectory_duration"]
-robot_node_name = current_robot_info["robot_node_name"]
-
 lan1_ip = project_config["DOBOT_ROBOT_LAN1_IP"].strip()
 lan2_ip = project_config["DOBOT_ROBOT_LAN2_IP"].strip()
-# This vendored profile contains only the Dobot CR10.
-robot_type = "cr10"
+robot_type = project_config["DOBOT_ROBOT_TYPE"]
+robot_number = int(project_config["DOBOT_ROBOT_NUMBER"])
+trajectory_duration = float(project_config["DOBOT_TRAJECTORY_DURATION"])
+robot_node_name = project_config["DOBOT_ROBOT_NODE_NAME"]
 
 print(f"[DOBOT BRINGUP] LAN1 (primary): {lan1_ip}")
 print(f"[DOBOT BRINGUP] LAN2 (diagnostic failover): {lan2_ip}")

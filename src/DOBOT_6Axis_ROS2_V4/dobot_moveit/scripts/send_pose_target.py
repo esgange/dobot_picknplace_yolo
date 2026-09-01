@@ -11,7 +11,7 @@ send_pose_target.py — 控制器IK + OMPL关节空间规划
   ros2 run dobot_moveit send_pose_target.py -- x y z rx ry rz [--plan-only]
 """
 
-import math, os, sys, threading, time
+import math, sys, threading, time
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -40,7 +40,7 @@ def main():
 
     x, y, z = map(float, args[0:3])
     rx, ry, rz = map(float, args[3:6])
-    robot_type = os.getenv("DOBOT_TYPE", "cr10")
+    robot_type = "cr10"
     group_name = f"{robot_type}_group"
     joint_names = [f"joint{i+1}" for i in range(6)]
 

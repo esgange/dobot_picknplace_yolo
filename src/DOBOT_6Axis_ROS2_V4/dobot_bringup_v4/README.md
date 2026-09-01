@@ -6,7 +6,7 @@ The bringup launch is strict and requires the repository root `.env`:
 
 ```bash
 cp .env.example .env
-# Set DOBOT_ROBOT_LAN1_IP=... and DOBOT_ROBOT_LAN2_IP=... in .env
+# Set all required Dobot values in the root .env.
 ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
 ```
 

@@ -28,7 +28,7 @@ git clone https://github.com/esgange/dobot_picknplace_yolo.git
 cd dobot_picknplace_yolo
 ```
 
-No submodule initialization or network access is required after cloning this repository. The vendored sources are ordinary tracked files. Preserve the upstream `LICENSE`, `NOTICE`, and README files when updating them. Do not reintroduce non-CR10 Dobot model configurations unless the project scope is explicitly changed and recorded in the blueprint diary.
+No submodule initialization or network access is required after cloning this repository. The vendored sources are ordinary tracked files. Preserve the upstream `LICENSE`, `NOTICE`, and English README files when updating them. Do not reintroduce non-CR10 Dobot model configurations unless the project scope is explicitly changed and recorded in the blueprint diary.
 
 ## Updating vendored sources (online maintenance only)
 
@@ -74,11 +74,11 @@ Create the project-wide runtime configuration once per checkout. The file is ign
 
 ```bash
 cp .env.example .env
-# Edit .env and set both explicit robot interfaces for the robot/network being used.
+# Edit .env and set the explicit robot/network and single-CR10 bringup values.
 # LAN1 is tried first; LAN2 is the diagnostic failover.
 ```
 
-The Dobot bringup launch requires the repository `.env` automatically. It tries `DOBOT_ROBOT_LAN1_IP` first, then `DOBOT_ROBOT_LAN2_IP`. If both interfaces fail, the driver records one bounded outage event and continues its explicit retry loop; missing, malformed, duplicate, unsupported, or invalid configuration hard-fails before the node starts:
+The Dobot bringup launch requires the repository `.env` automatically. It reads all bringup settings from that file and tries `DOBOT_ROBOT_LAN1_IP` first, then `DOBOT_ROBOT_LAN2_IP`. If both interfaces fail, the driver records one bounded outage event and continues its explicit retry loop; missing, malformed, duplicate, unsupported, or invalid configuration hard-fails before the node starts:
 
 ```bash
 ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
