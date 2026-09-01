@@ -7,7 +7,7 @@
  **Dobot Robotics ROS2 Software Development Kit**  
  High-performance robot control framework based on TCP/IP protocol
 
- [English](README.md) · [简体中文](README_ZH.md)
+ [English](README.md)
 
  [![Platform](https://img.shields.io/badge/Platform-Ubuntu%2022.04-blue?style=flat-square)](https://ubuntu.com/download/server)
  [![ROS](https://img.shields.io/badge/ROS2-Humble-green?style=flat-square)](https://docs.ros.org/en/humble/)
@@ -222,8 +222,7 @@ DOBOT_6Axis_ROS2_V4/
 ├── cr10_moveit/             # CR10 MoveIt config
 ├── cra_description/         # CR10 URDF/XACRO description & meshes
 ├── image/                   # Images
-├── README.md
-└── README_ZH.md
+└── README.md
 ```
 
 ---

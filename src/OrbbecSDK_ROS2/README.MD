@@ -7,7 +7,7 @@
 
 <!-- Language: -->
   <p align="center">
-    <a href="./README.MD">English</a> | <a href="./README_CN.MD">中文</a>
+    <a href="./README.MD">English</a>
   </p>
 
 <!-- Labels: -->

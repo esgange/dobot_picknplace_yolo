@@ -182,6 +182,14 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Validation performed: strict two-address config parsing, package log initialization, C++ build, and bounded logger tests; no hardware connection was attempted.
 - Follow-up: use the standalone compiler when a universal cross-package record is needed; keep source events package-local.
 
+### 2026-09-01 — English-only README documentation
+
+- Change: removed the vendor Chinese README files `src/DOBOT_6Axis_ROS2_V4/README_ZH.md`, `src/DOBOT_6Axis_ROS2_V4/V4新增指令/README.md`, and `src/OrbbecSDK_ROS2/README_CN.MD`; retained the corresponding English README files and removed their Chinese-language selector links.
+- Reason: keep README documentation English-only for predictable offline handoff and agent/contributor use.
+- Scope: this is an explicit user-approved exception to the normal “preserve upstream README files” rule. Non-README vendor protocol/reference documents and all LICENSE/NOTICE/attribution files remain intact.
+- Validation performed: scanned all remaining README files for CJK characters and stale links to removed translations; no hardware launch was performed.
+- Offline transfer validation: generated artifacts from prior build/test runs are removed before the next source archive.
+
 ### Future entry template
 
 ```text
