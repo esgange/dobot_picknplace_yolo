@@ -1,0 +1,8 @@
+[submodule "src/DOBOT_6Axis_ROS2_V4"]
+	path = src/DOBOT_6Axis_ROS2_V4
+	url = https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4.git
+	branch = main
+[submodule "src/OrbbecSDK_ROS2"]
+	path = src/OrbbecSDK_ROS2
+	url = https://github.com/orbbec/OrbbecSDK_ROS2.git
+	branch = v2-main
