@@ -2251,6 +2251,114 @@ Never use a floating “latest” version in an issue, script, or deployment not
   correct workstation pair and imports no cv2/Torch/Ultralytics in the parent.
   No offline milestone is claimed; scoped commit and verified push follow rule 8.
 
+### 2026-09-14 — Explicit controller Home/pick with GUI/headless and TF-only debug
+
+- User confirmed controller execution scope after the scaffold summary: one
+  shared GUI/headless implementation, explicit Home/Pick controls, default safe
+  TF-only debug and explicit real mode. No automatic Home/pick, bringup/camera/
+  detector/RViz launch, placement, model inference or operator artifact rewrite.
+  Rule 51 supersedes historical non-actuating controller restrictions only;
+  Item Teach/Detect remain read-only. Full legacy-client migration and enforced
+  sole-command ownership are still pending, not claims of this stage.
+- Real startup follows Motion Debug's order but user-selected SpeedFactor 100%:
+  StopMoveJog, DisableRobot, EnableRobot/enabled confirmation, speed, Tool 0,
+  Tool 1 TCP zero, CP 100%. Only StopMoveJog/DisableRobot are best effort; other
+  failures terminate startup without retries. Motion Debug remains 50% unchanged.
+  Reject duplicate controller/canonical command-service providers and known
+  running legacy motion/gripper applications. Hardware verification is forbidden
+  in this implementation; all service/stream injection is synthetic.
+- Canonical static CR10 forward kinematics derives Cartesian Home from the six
+  taught radians, independent of RViz. Real GetPose(user=0,tool=0) and nearest
+  IK must agree with canonical model within 2 mm/0.5 degrees and joint limits;
+  no fallback or alternate model. Every Home reaches its equivalent base Z first
+  at actual XY/attitude using GetPose plus RelMovLUser, then MovLIO joint mode
+  reaches exact recorded Home joints. Relative Home Z is an explicit user
+  exception to the prior all-MovLIO request; all pick/transit/retract stays MovLIO.
+- Confirmed base-Z/Home-attitude pick equations: itemZ+standoff is Link6 pick;
+  add zheight_offset for initial/final, prepick_height for pre-pick,
+  retract_height for intermediate retract. Reject zheight_offset below either
+  pre-pick/retract and Home below any candidate clearance. Convert full tilted
+  platform XYZ to base first; transit XY at Home Z before vertical descent.
+  Checks are not collision planning/commissioning; do not repair teach settings.
+- User resolved suction deadline with final approach plus saved pick_settling
+  (example 0.2 seconds), not a new timer field. DO1 stays off; DO13 on at final
+  approach, active-high DI1 observed throughout that descent. Early DI1 interrupts
+  with Stop, including delayed move acknowledgement, and waits for accepted Stop
+  plus fresh queue-idle stationary feedback before retract. Do not continue to
+  nominal pick after sealing. No DI at completed pick waits taught settling then
+  becomes a miss. Both retract stages use at least actual stopped Z so early
+  contact cannot cause another downward move. Unexpected DI before suction,
+  stale/fault feedback, Stop/I/O/motion/retract failures or lost vacuum fail closed.
+- Final explicit finish selection is hold at final retract, suction ON (supersedes
+  the earlier free-text mention of returning Home). Explicit Home may carry the
+  held item with suction monitoring. use_grip=false never touches DO2/DO14;
+  true opens with DO2 off/DO14 on, stays open unless grip_onpick=true closes only
+  on confirmed DI1. User deferred full-open sensor checks (DI12 in canonical
+  wiring), superseding rule 14's controller full-open requirement this stage only;
+  do not diagnose damage or import old Grip/Release/purge patterns.
+- Request one ranked fresh batch from independently armed detector with exact
+  item/model/bin/camera/platform hashes. pose_candidates is maximum distinct
+  attempts, only missed suction retryable after confirmed final retract and
+  return Home; RGB/depth result age checked before every attempt and before final
+  approach after transit. Expiry
+  requires another explicit request, never automatic reacquisition or stale
+  reuse. Fresh actual joint/status/FeedInfo sole canonical publishers and an
+  advancing controller_timer are required: repeated cached packets do not count.
+  Service acceptance and Stop request alone are never completion. Cancellation
+  preserves vacuum; late accepted movement receives safety Stop containment,
+  not a movement retry. Physical emergency stop remains independent.
+- GUI loads canonical offline item/bin artifacts explicitly and preserves strict
+  schema-1 filename-only unapplied prefill in its own bounded-log directory.
+  Item Teach alone supports Home. Headless reads exactly one schema-4 item YAML,
+  verified pair .pt and portable schema-3 bin from flat root runtime_teach/;
+  reject partitions, symlinks, unknown/ambiguous inputs and overrides. Shared
+  strict readers have explicit deployment-only paths, not compatibility readers;
+  writers/teach dialogs remain offline_teach. Reuse latest bound station selector
+  in calibration/ for controller, retaining destination full tilt/height and bin
+  provenance warning. Multi-item/tray catalogs and Item Detect's pending flat
+  runtime/default activation/debug-image workflow remain separate work.
+- Debug creates no Dobot command clients and broadcasts only uniquely named
+  base-relative robot_controller_debug_* Home/all-candidate stage targets at
+  10 Hz after explicit actions. Fresh actual joints supply current debug Home,
+  not synthetic joints or GetPose. Cancel/exit/source edits stop publication;
+  timer checks file signatures, never repeatedly hashes large model weights.
+  Full hashes validated at load/action/request. Preserve artifact schemas,
+  private native workers, bounded package events and station/operator files.
+  Require exactly one canonical GUI/headless pose-service provider and verify
+  returned confidence, not only class/frame/hash/timestamps. Preflight
+  checks detector availability/provider before preliminary Pick Home travel;
+  acquire the fresh batch only after Home. Stationary confirmation
+  compares cumulative drift against its stationary anchor, not just tiny
+  per-frame differences. Validation summaries use PROFILE_VALIDATED separately
+  from execution_state; no historical NOT_ARMED label while executing.
+  Validate GUI prefill before constructing real command clients/initialization;
+  malformed state fails first. Preserve schema-4 historical controller_contract
+  as artifact validation metadata, never execution permission: real launch plus
+  explicit actions and current safety checks are the authority, not file loading.
+  Own SIGINT/SIGTERM shutdown notification without rclpy auto-context teardown;
+  headless/GUI cancel and request Stop while DDS is alive, then close executor/
+  context and restore previous handlers. GUI also closes on external ROS shutdown.
+- Real ROS-node construction regression discovered the scaffold's parameter
+  callback accidentally shadowed Node._set_parameters, preventing declaration;
+  rename to _on_parameters. Synthetic/offscreen controller tests cover startup,
+  Home/pose units, full platform conversion, early suction Stop/late acknowledgement,
+  finger rules, final retract/holding, missed retries, faults/expiry, runtime
+  copies, strict prefill, source invalidation and actual debug node construction.
+  Full regression, lint/compilation, package/root build, packaged tests and
+  git diff --check are required before the standing scoped commit/push. No new
+  offline milestone or physical commissioning is claimed.
+- Verification: 53 controller and 329 perception tests pass (382 pytest cases;
+  packaged CTest summaries include 54/330 results with both wrappers), zero
+  errors/failures/skips. Package build and final root build pass all 14 packages;
+  compilation, changed-runtime/new-test flake8 and git diff --check pass. Installed
+  launch argument inspection confirms GUI/headless and safe debug defaults;
+  read-only installed runtime catalog inspection validates this workstation's
+  water pair/latest bin_camera station, imports no cv2/Torch/Ultralytics and
+  detects zheight_offset below retract_height. Leave those operator files intact:
+  they require explicit Item Teach correction before Pick; Home clearance must
+  also satisfy every actual candidate. No real robot/camera/RViz or operator
+  weight deserialization. Scoped source commit and verified push follow rule 8.
+
 ### Future entry template
 
 ```text

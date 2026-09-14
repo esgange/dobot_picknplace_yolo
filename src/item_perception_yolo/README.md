@@ -329,14 +329,16 @@ for the controller to use for retries; it does not execute any retry itself.
 `yolo.max_detections=20` is the separate
 per-frame detection cap before geometric filtering.
 `use_grip=false` disables `grip_onpick` behavior regardless of its saved value.
-Final physical height equations, fixed attitude and I/O timing remain pending.
+Controller rule 51 now defines vertical Home-attitude height equations and
+DI1-monitored final descent; teaching remains non-actuating.
 
 Item Teach has no controller-validation button or controller client. It creates
 profiles, inspects detections and exposes read-only poses when explicitly armed;
 it never selects a controller profile or sends a controller request. Configure
-`robot_controller` separately through its explicit `item_teach_file` launch
-argument/ROS parameter. The controller validates its selected pair itself and
-remains non-actuating; see its package README for the independent pose trigger.
+`robot_controller` separately in its GUI/explicit launch parameters or headlessly
+from `runtime_teach/`. It validates its selected pair itself; default mode is
+TF-only debug and explicit real mode implements Home/pick/I/O. See its README
+for initialization and safety requirements; teaching never requests motion.
 
 Item Save/Load records the selected artifact filename in shared strict schema-6
 UI state, alongside explicit preview prefix and applied station/bin filenames.
@@ -476,7 +478,11 @@ ros2 service call /robot_controller/request_item_poses std_srvs/srv/Trigger '{}'
 
 This read-only diagnostic request uses the profile's `pose_candidates` as pose count,
 logs/returns the ranked batch and **does not move the robot**. Motion/gripper
-execution and migration of existing command clients remain pending.
+execution belongs only to explicit controller real-mode actions; migration of
+existing legacy command clients remains pending. Shared strict item/bin readers
+accept flat `runtime_teach/` only via the controller's explicit deployment path;
+GUI teaching save/load directories, detector explicit-path workflow and artifact
+schemas remain unchanged.
 
 ## Transform contract
 

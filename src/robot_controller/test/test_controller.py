@@ -39,7 +39,7 @@ def test_other_station_home_is_portable_provenance_only(pair):
     root, path, profile = pair
     result = inspect_profile(path, root=root, robot_ip="192.168.20.205",
                              publisher_node="/destination_bringup")
-    assert result["state"] == "PROFILE_VALIDATED_NOT_ARMED"
+    assert result["state"] == "PROFILE_VALIDATED"
     assert result["home"] == profile["home"]
     assert result["home_identity_policy"] == "recording_provenance_only"
     assert result["requested_pose_count"] == 3
@@ -53,15 +53,15 @@ def test_other_station_home_is_portable_provenance_only(pair):
 
 def test_atomic_parameter_validation_and_rejection():
     node = SimpleNamespace(_load=MagicMock(), events=MagicMock(), summary={"message": "valid"})
-    result = RobotController._set_parameters(node, [Parameter("item_teach_file", value="a.yaml")])
+    result = RobotController._on_parameters(node, [Parameter("item_teach_file", value="a.yaml")])
     assert result.successful
     node._load.assert_called_once_with("a.yaml")
     for parameters in ([], [Parameter("other", value="a")],
                        [Parameter("item_teach_file", value="")],
                        [Parameter("item_teach_file", value=1)]):
-        assert not RobotController._set_parameters(node, parameters).successful
+        assert not RobotController._on_parameters(node, parameters).successful
     node._load.side_effect = ValueError("bad model hash")
-    result = RobotController._set_parameters(node, [Parameter("item_teach_file", value="bad")])
+    result = RobotController._on_parameters(node, [Parameter("item_teach_file", value="bad")])
     assert not result.successful
     assert "bad model hash" in result.reason
 
@@ -103,8 +103,9 @@ def test_read_only_controller_pose_request_checks_fresh_batch(pair):
     result.candidates = [candidate]
     future = Future()
     future.set_result(result)
-    node = SimpleNamespace(pose_lock=threading.Lock(), profile_path=path, root=root,
-        events=MagicMock(), pose_client=MagicMock(), get_clock=lambda: SimpleNamespace(
+    node = SimpleNamespace(
+        pose_lock=threading.Lock(), profile_path=path, root=root, events=MagicMock(),
+        pose_client=MagicMock(), get_clock=lambda: SimpleNamespace(
             now=lambda: SimpleNamespace(nanoseconds=100_200_000_000)))
     node.pose_client.call_async.return_value = future
     response = RobotController._request_poses(node, None, SimpleNamespace())
@@ -138,5 +139,8 @@ def test_no_hardware_clients_or_model_deserialization():
             assert not client_calls
         imports = [node for node in ast.walk(tree)
                    if isinstance(node, (ast.Import, ast.ImportFrom))]
-        assert all("dobot_msgs_v4" not in ast.unparse(node) for node in imports)
+        if module is controller:
+            assert all("dobot_msgs_v4.srv" not in ast.unparse(node) for node in imports)
+        else:
+            assert all("dobot_msgs_v4" not in ast.unparse(node) for node in imports)
         assert all("torch" not in ast.unparse(node) for node in imports)

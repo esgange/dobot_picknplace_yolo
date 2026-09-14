@@ -1,98 +1,146 @@
 # robot_controller
 
-## Read-only candidate requests
+Explicit-action Home and vertical pick controller. GUI and headless share the
+same implementation. **Default launch is TF-only debug**, with no robot-command
+clients or startup initialization. No mode launches bringup, cameras, detection
+or RViz, loads model weights, automatically picks, or performs placement.
 
-The controller now has one perception client, not a Dobot command client.
-After explicitly selecting a strict schema-4 item profile, request a fresh
-batch from the independently armed GUI or headless detector:
+## Launch
 
-```bash
-ros2 service call /robot_controller/request_item_poses std_srvs/srv/Trigger '{}'
-```
-
-It sends the profile SHA-256 and `retry.pose_candidates` as the maximum pose count, checks
-the returned frame, identity, timestamps, uniqueness and ordering, and returns
-the batch as JSON while recording bounded package events. Missing service,
-deadline, invalid data and profile changes fail without retries. No returned
-pose is stored as an executable robot target. The initial validation-only
-robot-motion contract below remains: no motion, enable/disable, I/O or home
-execution, and no claim that sole-command ownership migration is complete.
-
-Initial, non-actuating controller stage for strict item-profile validation.
-It does not launch bringup, create Dobot command clients, load model weights,
-move home, pick, or actuate I/O. Detection requests are read-only. This is not yet the complete
-controller or enforcement of sole robot-command ownership. Existing motion and
-gripper clients still need migration before that claim can be made.
-
-## Build and launch
-
-From the workspace root:
+Build from root and source the canonical workspace loader:
 
 ```bash
-source /opt/ros/humble/setup.bash
 colcon build --packages-up-to robot_controller
 source scripts/source_ros_workspace.bash
 ros2 launch robot_controller robot_controller.launch.py
 ```
 
-In another sourced terminal, open the editor:
+The GUI explicitly loads Item Teach and optionally Bin Teach. Home needs only
+Item Teach; Pick also validates Bin Teach and the latest bound station calibration.
+Files come from `offline_teach/item_teach/` and `offline_teach/bin_teach/`.
+Restored filenames in `logs/robot_controller/last_session.json` (strict schema 1)
+are unapplied prefill; malformed GUI state fails before real initialization.
+Loading never moves the robot. Launch paths can be supplied
+explicitly using `item_teach_file:=... bin_teach_file:=...` in GUI mode.
+
+Headless loads one complete deployment set automatically from flat root
+`runtime_teach/`: exactly one strict schema-4 item YAML, its same-stem hash-bound
+`.pt`, and one strict schema-3 bin YAML. Extra/ambiguous artifacts, symlinks and
+partitions are rejected; no file overrides or implicit profile choice. Station
+camera/platform calibration comes from the shared latest selector in
+`calibration/`, not the portable bin's source station. Models are hashed only.
 
 ```bash
-ros2 launch item_perception_yolo item_teach.launch.py
+ros2 launch robot_controller robot_controller.launch.py headless:=true
+ros2 service call /robot_controller/go_home std_srvs/srv/Trigger '{}'
+ros2 service call /robot_controller/pick_item std_srvs/srv/Trigger '{}'
 ```
 
-Both processes require `ROS_LOCALHOST_ONLY=1` and the canonical root `.env`.
-Item Teach has no controller-validation button or controller client. Explicitly
-supply `item_teach_file:=<absolute path to the saved YAML>` when launching:
+These commands preview TFs under the default debug mode. Real mode is explicitly
+`debug:=false`, for GUI or headless. **Launching real mode disables/re-enables
+the connected robot and sets SpeedFactor 100%.** Check the physical safety area
+and independently start canonical bringup first. Headless never auto-homes/picks.
+Do not run Motion Debug or Gripper Control alongside real controller.
 
-```bash
-ros2 launch robot_controller robot_controller.launch.py item_teach_file:=/absolute/path/to/offline_teach/item_teach/profile.yaml
-```
+Schema 4 retains its historical non-executing controller_contract as validation
+metadata, not movement permission. Only explicit real launch mode plus an
+operator action authorize execution; loading a teach file never authorizes it.
 
-Alternatively start unconfigured and explicitly set its `item_teach_file`
-parameter through the controller's standard ROS parameter interface.
-There is no implicit last-profile selection or controller-unavailable bypass.
+An independently armed GUI/headless item detector must use the same item/model,
+bin and station hashes. The controller does not auto-start or arm it.
+Detect/Teach service availability and provider are checked before Pick's
+preliminary Home travel; fresh acquisition happens after Home.
+Item Detect's flat runtime catalog/default activation/debug-image workflow remains
+separate pending work; use its documented explicit paths or armed Item Teach.
 
-## Public interface
+## Startup and motion
 
-- Parameter `item_teach_file`: only a strict schema-4 YAML directly under
-  `offline_teach/item_teach/`, with its same-stem, SHA-256-verified `.pt` copy.
-  Set at launch or through the controller's standard parameter interface;
-  malformed, missing or tampered profiles are rejected without defaults or retries.
-- `/robot_controller/validate_profile` (`std_srvs/srv/Trigger`): explicitly
-  recheck the selected YAML/model pair. Failure reports `PROFILE_INVALID`.
-- `/robot_controller/status` (`std_msgs/msg/String`): JSON, reliable and
-  transient-local, published every second. States are `UNCONFIGURED`,
-  `PROFILE_VALIDATED_NOT_ARMED`, and `PROFILE_INVALID`. Execution and inference
-  are always false. A published validation summary describes the last check;
-  its periodic publication does not continuously rehash model files.
+Real startup order: StopMoveJog, DisableRobot, EnableRobot/enabled confirmation,
+SpeedFactor 100%, Tool 0, Tool 1 TCP zero, CP 100%. Only StopMoveJog and
+DisableRobot are best effort; subsequent failures terminate startup, no retries.
+Motion Debug's independent 50% startup rule is unchanged.
 
-The home record is six canonical `joint1` through `joint6` positions in radians.
-The source robot IP and feedback publisher are recording provenance, not a
-station restriction: the user explicitly permits the same home joints on their
-identical robots. Loading never commands them. Any future home move requires
-explicit controller execution and normal safety preconditions; a recorded home
-does not establish collision-free travel on a different station.
+Canonical `/joint_states`, RobotStatus and FeedInfo must be uniquely provided by
+the configured bringup node, fresh within one second. FeedInfo controller_timer
+must advance: republishing an old packet does not make the robot live. Real
+actions require enabled, fault-free feedback and user/tool 0. Static canonical
+CR10 FK derives Home from the recorded joints; GetPose(user=0,tool=0) and IK must
+agree with that model within 2 mm/0.5 degrees or movement is blocked. No guessed
+Home pose, live RViz dependence, alternate model or IK fallback.
 
-The summary records `requested_pose_count = retry.pose_candidates` and the separate
-`yolo.max_detections` cap. Candidate requests occur only on the explicit Trigger action.
-Events are UTC JSONL in `logs/robot_controller/events.jsonl`, overwriting before
-record 1,001. There is no additional configuration file or GUI state store.
+Every Home first queries current pose and uses RelMovLUser to change only base Z
+to Home Z, preserving actual XY/attitude; MovLIO joint mode then reaches the exact
+six taught Home joints. This relative-Z segment is the user-approved exception
+to MovLIO-only picking. All pick/transit/retract segments use MovLIO, with
+confirmed queue-idle, fresh stationary/target feedback, not service acceptance.
 
-`pose_candidates` limits the requested batch, not autonomous retry execution.
-The controller can use that batch for retries after motion/I/O integration;
-it does not pick or retry yet. Old `retry_limit` files are rejected here: recover
-and save them as schema 4 in Item Teach first. There is no controller-side
-compatibility reader or automatic conversion.
+Pick holds Home orientation and uses robot base Z, never the item's long-axis
+orientation as tool attitude. Convert the complete platform XYZ into base before
+adding millimetre offsets:
 
-## Remaining execution decisions
+- Link6 pick Z = item Z + standoff_height.
+- Initial/final Z = pick Z + zheight_offset.
+- Pre-pick Z = pick Z + prepick_height.
+- Intermediate retract Z = pick Z + retract_height.
 
-Inference and pose generation now belong to the shared item detector. Still
-finalize controller-side vertical attitude/height equations, home/travel/place
-safety, and the complete I/O confirmation/timeout sequence before any execution.
-The corrected map is DO1 exhaust, DO2 finger close, DO13 suction, DO14 finger
-open, DI1 suction detection and DI12 full-open confirmation. No prototype
-Grip/Release pattern or `item_pick` execution path is approved by this scaffold.
+Require zheight_offset >= prepick_height and retract_height, and Home Z at or
+above all candidate clearance heights. Transit XY at Home Z, then descend
+vertically through initial/pre-pick/final approach. Invalid settings block
+execution without editing the teach file. These checks are not collision
+planning; a taught Home cannot guarantee safe travel on another station.
 
-Hardware-free tests cover profile integrity, portable homes, parameter/service
-rejections, the 1,000-event limit, and absence of hardware/model-loading clients.
+## Suction, fingers and retries
+
+Keep exhaust DO1 off. Turn suction DO13 on at final approach, monitoring
+active-high DI1 while descending (including delayed command acknowledgement).
+On DI1, interrupt with Stop and confirm fresh stationary feedback before
+retracting from the actual stopped Z. If nominal pick completes without DI1,
+wait the saved pick_settling interval (e.g. 0.2 seconds) before declaring a miss.
+Unexpected DI1 before suction, stale feedback, failed Stop or lost suction are
+faults, not missed picks. Intermediate/final retract never moves downward from
+an early contact. Success **holds at final retract with suction on**. Explicit
+Go Home can subsequently carry the item, still monitoring suction; no auto-home.
+
+use_grip=false leaves DO2/DO14 untouched and grip_onpick has no effect. With
+use_grip=true, start with DO2 off/DO14 on (open); grip_onpick=false stays open,
+true turns DO14 off/DO2 on only after DI1. User deferred DI12 full-open checks
+and damage diagnosis in this stage; no old Grip/Release or purge pattern.
+
+The controller requests up to retry.pose_candidates distinct ranked poses.
+Only missed suction advances after confirmed final retract; return Home before
+the next candidate. Every candidate must remain within the profile's result age
+for both RGB/depth; expired batches require another explicit request, never
+cached/reacquired fallback. Hardware/I/O/stop/retract faults cancel later commands
+and fail closed. On cancellation, attempt canonical Stop and preserve vacuum,
+never disable/release a possibly held item. Late accepted motion gets another
+safety Stop, not another movement. Stop request is not a confirmed emergency
+stop; physical emergency-stop functions remain independent.
+Ctrl-C/SIGTERM notify the controller before ROS context teardown, allowing a
+Stop request while DDS is still alive; this still does not guarantee stopping.
+
+## Interfaces and verification
+
+- `/robot_controller/go_home`, `/pick_item`, `/stop` (Trigger): action acceptance
+  or cancellation; follow execution_state/execution_message on status for completion.
+- `/robot_controller/status` (String JSON): transient-local state, holding status,
+  explicit launch modes, validation summary and debug TF frame names.
+- `/robot_controller/request_item_poses`: retained explicit read-only batch request.
+- `/robot_controller/validate_profile`: retained explicit idle integrity recheck.
+- `item_teach_file`: GUI-mode explicit profile parameter; launch modes/runtime
+  catalog are immutable. Bin selection belongs to GUI/load-time configuration.
+
+Debug publishes `base_link -> robot_controller_debug_home_height/home` and
+`robot_controller_debug_pN_transit/initial/prepick/pick/retract/final` at 10 Hz.
+These are teaching targets, not actual robot/platform TF or collision validation.
+Debug Home requires fresh actual joints but issues no GetPose/motion/I/O command.
+Cancel, changed artifacts, selection changes and exit stop TF publication.
+Full hashes are verified at load/actions; the TF timer checks file signatures
+instead of repeatedly hashing large model weights.
+
+Source/model integrity, portable Home provenance, runtime catalogs, initialization,
+geometry, early Stop, finger rules, confirmed completion, expiry and fault/retry
+behavior are tested with synthetic artifacts, fake services/feedback and offscreen
+GUI only. No hardware commissioning is claimed. Sole application command
+ownership remains an architecture decision: duplicate providers and known legacy
+apps are rejected, but existing direct clients still require migration. Events
+are bounded UTC JSONL under ignored `logs/robot_controller/events.jsonl`.

@@ -9,6 +9,8 @@ install(FILES README.md DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_controller test TIMEOUT 120 ENV
+    "QT_QPA_PLATFORM=offscreen"
+    "ROS_DOMAIN_ID=231"
     "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python:${CMAKE_CURRENT_SOURCE_DIR}/../item_perception_yolo/python:${CMAKE_CURRENT_SOURCE_DIR}/../camera_calibration/python:$ENV{PYTHONPATH}")
 endif()
 ament_package()

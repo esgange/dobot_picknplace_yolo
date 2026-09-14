@@ -706,10 +706,18 @@ def write_bin_state(
     )
 
 
-def load_bin_teach(path: Path, root: Path | None = None) -> BinTeachArtifact:
+def load_bin_teach(path: Path, root: Path | None = None, *, deployment=False) -> BinTeachArtifact:
+    if Path(path).expanduser().absolute().is_symlink():
+        raise ValueError("Bin-teach artifact must be a regular file, not a symlink")
     candidate = Path(path).expanduser().resolve()
-    if candidate.parent != bin_teach_directory(root).resolve() or not candidate.is_file():
-        raise ValueError("Bin-teach artifact must be a file in root offline_teach/bin_teach/")
+    project_root = workspace_root() if root is None else Path(root).resolve()
+    directory = project_root / "runtime_teach" if deployment else bin_teach_directory(root)
+    if directory.is_symlink():
+        raise ValueError("Bin-teach directory must not be a symlink")
+    directory = directory.resolve()
+    if candidate.parent != directory or not candidate.is_file():
+        location = "runtime_teach/" if deployment else "offline_teach/bin_teach/"
+        raise ValueError(f"Bin-teach artifact must be a file in root {location}")
     try:
         content = candidate.read_bytes()
         payload = yaml.safe_load(content.decode("utf-8"))
@@ -983,7 +991,7 @@ def load_bin_teach(path: Path, root: Path | None = None) -> BinTeachArtifact:
         raise ValueError("Bin capture optical transform conflicts with its chain")
     parsed_created_at = datetime.fromisoformat(created_utc[:-1] + "+00:00")
     expected_path = bin_output_path(str(address), root=root, created_at=parsed_created_at)
-    if candidate != expected_path.resolve():
+    if candidate != directory / expected_path.name:
         raise ValueError(f"Bin-teach filename must be exactly {expected_path.name}")
     return BinTeachArtifact(
         path=candidate,

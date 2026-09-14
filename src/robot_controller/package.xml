@@ -2,7 +2,7 @@
 <package format="3">
   <name>robot_controller</name>
   <version>0.0.1</version>
-  <description>Non-actuating first-stage robot controller and strict item-profile validation.</description>
+  <description>Explicit Home and vertical pick controller with GUI/headless and TF-only debug.</description>
   <maintainer email="maintainer@example.com">maintainer</maintainer>
   <license>BSD-3-Clause</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -13,6 +13,15 @@
   <depend>rcl_interfaces</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>dobot_msgs_v4</depend>
+  <depend>cra_description</depend>
+  <depend>camera_calibration</depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-pyqt5</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <test_depend>ament_cmake_pytest</test_depend>

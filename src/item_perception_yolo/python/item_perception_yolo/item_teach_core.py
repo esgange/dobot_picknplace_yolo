@@ -288,11 +288,19 @@ def _unique_mapping(loader, node, deep=False):
 _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
 
 
-def load_item_profile(path: Path, *, root: Path | None = None):
+def load_item_profile(path: Path, *, root: Path | None = None, deployment=False):
+    original = Path(path).expanduser().absolute()
+    if original.is_symlink() or original.with_suffix(".pt").is_symlink():
+        raise ValueError("Item YAML/model must be regular local files, not symlinks")
     path = Path(path).expanduser().resolve()
-    directory = item_directory(root).resolve()
+    project_root = workspace_root() if root is None else Path(root).resolve()
+    directory = project_root / "runtime_teach" if deployment else item_directory(root)
+    if directory.is_symlink():
+        raise ValueError("Item-teach directory must not be a symlink")
+    directory = directory.resolve()
     if path.parent != directory or path.suffix != ".yaml":
-        raise ValueError("Item YAML must be directly in offline_teach/item_teach/")
+        location = "runtime_teach/" if deployment else "offline_teach/item_teach/"
+        raise ValueError(f"Item YAML must be directly in {location}")
     try:
         content = path.read_bytes()
         profile = yaml.load(content, Loader=_UniqueKeyLoader)

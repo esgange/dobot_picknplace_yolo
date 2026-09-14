@@ -11,7 +11,7 @@ src/
 ├── orbbec_camera_launcher/ # Gemini 335 configuration and bounded supervisor GUI
 ├── camera_calibration/    # manual-prefix two-mode ChArUco calibration GUI
 ├── item_perception_yolo/  # platform teaching and perception integration
-├── robot_controller/      # initial profile validator; no hardware execution
+├── robot_controller/      # explicit Home/pick GUI/headless; TF-only debug by default
 ├── item_pick/             # imported reference only; excluded by COLCON_IGNORE
 ├── DOBOT_6Axis_ROS2_V4/  # Dobot official SDK, pruned to CR10
 └── OrbbecSDK_ROS2/       # Orbbec official ROS 2 wrapper snapshot
@@ -46,17 +46,34 @@ returns item targets in `platform_reference`. The item profile will save both
 `retry.pose_candidates` (maximum ranked poses requested for controller retries)
 and a separate `yolo.max_detections` per-image detection cap. The initial
 profile editor and shared GUI/headless detector described below implement
-read-only detection requests. Physical execution remains pending. Imported
+read-only detection requests. Controller Home/pick execution is now explicit;
+default launch remains TF-only debug. Imported
 prototype runtimes have not been enabled.
 
 Item Teach has no controller-validation button or controller client. Configure
-the controller independently with an explicit `item_teach_file` launch argument
-or ROS parameter. It validates that YAML/model pair and can make an explicitly
-triggered read-only pose request; it does not initialize/move the robot, run a
-pick/home/retry sequence or actuate gripper I/O. Sole-command ownership remains
-planned, not yet enforced. See [controller README](src/robot_controller/README.md).
+the controller independently in its GUI, or headlessly from a strict flat
+`runtime_teach/` set (one item YAML/paired model plus one bin YAML). It validates
+the latest hash-bound station calibration and can preview Home/pick TFs without
+commands. Explicit `debug:=false` enables one-time robot startup initialization
+at SpeedFactor 100%, then operator-triggered Home and vertical picking. No
+automatic pick, placement or hardware launch. Legacy direct clients still need
+migration before sole-command ownership can be claimed. See
+[controller README](src/robot_controller/README.md) for motion/safety requirements.
 
-## Initial Item Teach and controller
+```bash
+ros2 launch robot_controller robot_controller.launch.py headless:=true
+```
+
+This defaults to TF-only debug. Real-mode launch disables/re-enables the connected
+robot; check physical safety and independently launch canonical bringup first.
+Home first uses GetPose/RelMovLUser to reach taught Home Z at current XY/attitude,
+then MovLIO joint mode reaches taught joints. Pick holds Home attitude/base Z,
+uses MovLIO, stops on DI1 during final descent and confirms stationary feedback
+before retract. Missed suction waits saved pick_settling and confirms final
+retract before another still-fresh candidate; other faults cancel without retry.
+Successful picks hold at final retract with suction ON; Go Home is separate.
+
+## Item Teach and controller
 
 In separate terminals after building and sourcing the workspace:
 
@@ -212,8 +229,8 @@ item/bin artifact paths, `trusted_model:=true` and `armed:=true`; its
 `platform_teach_file` argument is removed. Platform/Bin Teach retain their
 explicit calibration selection. The controller can request up to
 the taught `pose_candidates` count through its read-only `/robot_controller/request_item_poses`
-Trigger action, while remaining `PROFILE_VALIDATED_NOT_ARMED` for robot motion.
-No training, robot commands or pick/I/O execution is included. Private inference
+Trigger action. Detector/teach nodes remain read-only; explicit controller real
+mode alone implements Home/pick/I/O. No training is included. Private inference
 wheels are pinned/verified/extracted offline; exact Torch/system dependencies
 still require separate provisioning. The retired training-oriented teacher
 and separate `item_detect_yolo_debug` sources/launchers have been removed.
