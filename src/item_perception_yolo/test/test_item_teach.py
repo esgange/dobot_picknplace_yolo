@@ -2,6 +2,7 @@ import copy
 import json
 import threading
 import time
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -66,6 +67,160 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["schema_version"] == 4
     assert profile["retry"] == {"pose_candidates": 3}
     assert "retry_limit" not in path.read_text()
+
+
+def save_target(pair):
+    root, _, path, profile = pair
+    return core.item_save_target(
+        path, profile["item"]["name"], core.file_sha256(path),
+        created_at_utc=profile["created_at_utc"], root=root)
+
+
+def test_same_name_overwrites_yaml_keeps_weights_and_one_previous_version(pair):
+    root, _, path, profile = pair
+    model = path.with_suffix(".pt")
+    original_model, inode = model.read_bytes(), model.stat().st_ino
+    for confidence in (0.75, 0.85):
+        original_yaml = path.read_bytes()
+        settings = core.settings_from_profile(profile)
+        settings["yolo"]["confidence"] = confidence
+        result, profile = core.save_item_profile(
+            settings, profile["home"], model, root=root, save_target=save_target(pair))
+        assert result == path
+        assert model.stat().st_ino == inode and model.read_bytes() == original_model
+        saved, _ = core.load_item_profile(path, root=root)
+        assert saved == profile and saved["yolo"]["confidence"] == confidence
+        assert saved["created_at_utc"] == pair[3]["created_at_utc"]
+        with zipfile.ZipFile(path.with_name(f".{path.stem}.previous.zip")) as backup:
+            assert backup.read(path.name) == original_yaml
+            assert backup.read(model.name) == original_model
+    assert list(path.parent.glob("*.yaml")) == [path]
+    assert len(list(path.parent.glob(".*.previous.zip"))) == 1
+    assert not [p for p in path.parent.glob(".item_teach_*") if p.is_dir()]
+
+
+def test_changed_name_creates_new_pair_and_preserves_loaded_pair(pair):
+    root, source, path, profile = pair
+    original = path.read_bytes(), path.with_suffix(".pt").read_bytes()
+    settings = core.settings_from_profile(profile)
+    settings["item"]["name"] = "different_item"
+    result, saved = core.save_item_profile(
+        settings, profile["home"], source, root=root, save_target=save_target(pair))
+    assert result != path and result.name.startswith("item_teach_different_item_")
+    assert core.load_item_profile(result, root=root)[0] == saved
+    assert original == (path.read_bytes(), path.with_suffix(".pt").read_bytes())
+    assert not list(path.parent.glob(".*.previous.zip"))
+
+
+def test_same_name_can_replace_model_with_verified_local_copy(pair):
+    root, source, path, profile = pair
+    target = save_target(pair)
+    old_yaml, old_model = path.read_bytes(), path.with_suffix(".pt").read_bytes()
+    source.write_bytes(b"new operator-selected weights")
+    result, saved = core.save_item_profile(
+        core.settings_from_profile(profile), profile["home"], source,
+        root=root, save_target=target)
+    assert result == path and path.with_suffix(".pt").read_bytes() == source.read_bytes()
+    assert core.load_item_profile(path, root=root)[0] == saved
+    with zipfile.ZipFile(path.with_name(f".{path.stem}.previous.zip")) as backup:
+        assert backup.read(path.name) == old_yaml
+        assert backup.read(path.with_suffix(".pt").name) == old_model
+
+
+@pytest.mark.parametrize("file_suffix,remove", [
+    (".yaml", False), (".pt", False), (".yaml", True), (".pt", True)])
+def test_external_changes_block_overwrite_without_touching_files(pair, file_suffix, remove):
+    root, source, path, profile = pair
+    target = save_target(pair)
+    changed = path.with_suffix(file_suffix)
+    if remove:
+        changed.unlink()
+    else:
+        changed.write_bytes(b"external change")
+    observed = {p.name: p.read_bytes() for p in path.parent.iterdir()}
+    with pytest.raises(ValueError, match="changed externally"):
+        core.save_item_profile(core.settings_from_profile(profile), profile["home"], source,
+                               root=root, save_target=target)
+    assert observed == {p.name: p.read_bytes() for p in path.parent.iterdir()}
+
+
+@pytest.mark.parametrize("replace_model", [False, True])
+def test_update_publication_failure_preserves_old_pair_and_backup(
+        pair, monkeypatch, replace_model):
+    root, source, path, profile = pair
+    target = save_target(pair)
+    original = path.read_bytes(), path.with_suffix(".pt").read_bytes()
+    if replace_model:
+        source.write_bytes(b"selected replacement weights")
+    real_replace = core.os.replace
+
+    def fail_yaml(source_file, destination):
+        if Path(destination) == path:
+            # A concurrent strict reader must never accept mismatched YAML/weights.
+            if replace_model:
+                with pytest.raises(ValueError, match="SHA-256 mismatch"):
+                    core.load_item_profile(path, root=root)
+            raise OSError("injected YAML failure")
+        real_replace(source_file, destination)
+
+    monkeypatch.setattr(core.os, "replace", fail_yaml)
+    with pytest.raises(OSError, match="injected YAML failure"):
+        core.save_item_profile(core.settings_from_profile(profile), profile["home"], source,
+                               root=root, save_target=target)
+    assert original == (path.read_bytes(), path.with_suffix(".pt").read_bytes())
+    assert core.load_item_profile(path, root=root)[0] == profile
+    assert path.with_name(f".{path.stem}.previous.zip").is_file()
+
+
+def test_backup_failure_leaves_pair_untouched(pair, monkeypatch):
+    root, source, path, profile = pair
+    target = save_target(pair)
+    original = path.read_bytes(), path.with_suffix(".pt").read_bytes()
+    real_replace = core.os.replace
+
+    def fail_backup(source_file, destination):
+        if Path(destination).suffix == ".zip":
+            raise OSError("injected backup failure")
+        real_replace(source_file, destination)
+
+    monkeypatch.setattr(core.os, "replace", fail_backup)
+    with pytest.raises(OSError, match="backup failure"):
+        core.save_item_profile(core.settings_from_profile(profile), profile["home"], source,
+                               root=root, save_target=target)
+    assert original == (path.read_bytes(), path.with_suffix(".pt").read_bytes())
+
+
+@pytest.mark.parametrize("known_name", [False, True])
+def test_recovery_target_with_missing_weights_only_overwrites_known_item_name(pair, known_name):
+    root, source, path, profile = pair
+    path.write_bytes(b"old incomplete content")
+    path.with_suffix(".pt").unlink()
+    target = core.item_save_target(path, profile["item"]["name"] if known_name else None,
+                                   core.file_sha256(path), root=root)
+    output, saved = core.save_item_profile(
+        core.settings_from_profile(profile), profile["home"], source, root=root, save_target=target)
+    assert (output == path) == known_name
+    assert core.load_item_profile(output, root=root)[0] == saved
+    if known_name:
+        with zipfile.ZipFile(path.with_name(f".{path.stem}.previous.zip")) as backup:
+            assert backup.namelist() == [path.name]
+            assert backup.read(path.name) == b"old incomplete content"
+    else:
+        assert path.read_bytes() == b"old incomplete content"
+
+
+@pytest.mark.parametrize("file_suffix", [".yaml", ".pt"])
+def test_save_target_rejects_symlink_replacement(pair, file_suffix):
+    root, source, path, profile = pair
+    target = save_target(pair)
+    replaced = path.with_suffix(file_suffix)
+    other = path.parent / ("other" + file_suffix)
+    replaced.rename(other)
+    replaced.symlink_to(other)
+    with pytest.raises(ValueError, match="regular local"):
+        core.save_item_profile(core.settings_from_profile(profile), profile["home"], source,
+                               root=root, save_target=target)
+    assert replaced.is_symlink()
 
 
 def test_model_tamper_and_missing_pair_fail(pair):
@@ -322,12 +477,10 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
     root, _source, path, profile = pair
     app = gui.QtWidgets.QApplication.instance() or gui.QtWidgets.QApplication([])
     monkeypatch.setattr(gui, "item_directory", lambda: core.item_directory(root))
+    monkeypatch.setattr(gui, "workspace_root", lambda: root)
     monkeypatch.setattr(gui, "load_item_profile", lambda p: core.load_item_profile(p, root=root))
     from item_perception_yolo.item_teach_recovery import recover_item_fields
     monkeypatch.setattr(gui, "recover_item_fields", lambda p: recover_item_fields(p, root=root))
-    monkeypatch.setattr(gui, "save_item_profile", lambda s, h, m: core.save_item_profile(
-        s, h, m, root=root,
-    ))
     monkeypatch.setattr(gui, "ui_state_path", lambda: root / "logs/item/last_session.json")
     monkeypatch.setattr(gui, "load_package_ui_state", lambda _: SimpleNamespace(
         item_profile_filename=path.name, item_preview_camera_prefix=None,
@@ -343,8 +496,8 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
     window = gui.ItemTeachWindow(node)
     try:
         assert window.home == profile["home"]
-        assert window.saved_path is None
-        assert not window.send.isEnabled()
+        assert window.saved_path == path
+        assert window.send.isEnabled()
         node.controller_client.call_async.assert_not_called()
         window._load(path, prefill=False)
         assert window.send.isEnabled()
@@ -353,10 +506,10 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         # Removing the widget must not silently rewrite a loaded profile's input size.
         changed = copy.deepcopy(profile)
         changed["yolo"]["image_size"] = 1280
-        monkeypatch.setattr(gui, "load_item_profile", lambda _: (changed, "test-hash"))
+        path.write_text(yaml.safe_dump(changed))
         window._load(path, prefill=False)
         assert window._settings()["yolo"]["image_size"] == 1280
-        monkeypatch.setattr(gui, "load_item_profile", lambda p: core.load_item_profile(p, root=root))
+        path.write_text(yaml.safe_dump(profile))
         window._load(path, prefill=False)
         window.inputs["confidence"].setText("0.7")
         assert not window.send.isEnabled()
@@ -367,7 +520,7 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", confirmation)
         monkeypatch.setattr(gui.QtWidgets.QMessageBox, "warning", MagicMock())
         window._save()
-        assert window.saved_path != path
+        assert window.saved_path == path
         assert window.saved_path.is_file()
         assert window.home["robot_lan1_ip"] != node.robot_ip  # provenance, not a binding
         confirmation.assert_called_once()

@@ -72,13 +72,24 @@ settings are preserved; no separate Load Model click is needed. Missing, changed
 or incompatible pairs are rejected. YOLO and Armed remain OFF, and startup
 prefill still does not execute model weights.
 
+A complete validated loaded item teach, including startup restoration of the
+named profile, already counts as saved: no redundant Save is needed before
+Simulate Trigger or manual Armed. Model verification, YOLO ON and valid fresh
+station inputs are still required. Edits disarm and require Save again.
+**Save Item Teach** updates the loaded YAML/.pt pair when its item name is
+unchanged; renaming the item (or starting a new document) creates a new pair.
+Updates keep one hidden previous-version ZIP beside the pair and reject files
+changed externally since loading. Unchanged paired weights are not rewritten.
+
 Old or partially invalid item files can open in the GUI as **recovery drafts**.
 Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a new schema-4 YAML/.pt pair before arming or sending
-it to the controller. Originals remain untouched. Detector/controller loaders
+complete the form, and Save a valid schema-4 YAML/.pt pair before simulating,
+arming or sending it to the controller. The same known item name updates the
+loaded file with a previous-version backup; an unknown original name creates a
+new pair. Loading alone never rewrites files. Detector/controller loaders
 accept only complete schema-4 profiles; they never recover old files.
 
 For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can

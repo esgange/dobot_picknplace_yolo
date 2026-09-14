@@ -23,7 +23,7 @@ from tf2_ros import TransformBroadcaster
 from .item_teach_core import (
     GRIPPER_FIELDS, MODEL_TASKS, MOTION_FIELDS,
     item_directory, load_item_profile, record_home, save_item_profile,
-    settings_from_profile,
+    settings_from_profile, item_save_target, file_sha256,
     GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS,
     NEW_PROFILE_IMAGE_SIZE,
 )
@@ -242,6 +242,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node = node
         self.home = None
         self.saved_path = None
+        self.save_target = None
         self.recovered_draft = False
         self.profile_image_size = NEW_PROFILE_IMAGE_SIZE
         self.request = None
@@ -292,7 +293,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         header.addWidget(notice)
         header.addStretch(1)
         load = self.load_teach_button = QtWidgets.QPushButton("Load Item Teach…")
-        save = QtWidgets.QPushButton("Save YAML + Model Copy…")
+        save = self.save_button = QtWidgets.QPushButton("Save Item Teach…")
+        save.setToolTip("Update the loaded pair; change Item name to create a new pair.")
         load.clicked.connect(self._load_dialog)
         save.clicked.connect(self._save)
         header.addWidget(load)
@@ -826,6 +828,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.model_load_reserved = True
         self.load_model_button.setEnabled(False)
         self.load_teach_button.setEnabled(False)
+        self.save_button.setEnabled(False)
         self.yolo_toggle.setEnabled(False)
         self.armed_toggle.setEnabled(False)
         self.simulate_button.setEnabled(False)
@@ -854,6 +857,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.load_model_button.setText("Load Model / Read Classes")
         self.load_model_button.setEnabled(True)
         self.load_teach_button.setEnabled(True)
+        self.save_button.setEnabled(True)
         self.yolo_toggle.setEnabled(True)
         self.armed_toggle.setEnabled(True)
         self.simulate_button.setEnabled(not self.simulation_busy
@@ -1095,7 +1099,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 if pair is not None:
                     self._message(
                         "Recovered draft and verified paired model loaded; review fields and "
-                        "save a new profile before arming." if recovery else
+                        "save the corrected profile before arming." if recovery else
                         "Item teach and paired model loaded. Saved classes/settings "
                         "retained; YOLO Detect and Armed remain OFF.")
                     self.node.events.record("INFO", "item_pair_model_loaded",
@@ -1544,30 +1548,48 @@ class ItemTeachWindow(QtWidgets.QWidget):
         }
 
     def _save(self):
+        if self.model_load_reserved or self.closing or self.node.native.failed:
+            return
         if self.home is None:
             self._error("Missing home", "Record actual home joints before saving.")
             return
+        overwrite = (self.save_target is not None
+                     and self.name.text().strip() == self.save_target.item_name)
+        action = (f"Overwrite loaded item teach:\n{self.save_target.path.name}\n"
+                  "Its paired .pt is updated only if the selected model changed.\n"
+                  "One hidden previous-version ZIP backup will be kept."
+                  if overwrite else
+                  "Save a NEW YAML and .pt pair in offline_teach/item_teach/?\n"
+                  "The item name changed or there is no known loaded item name.")
         if QtWidgets.QMessageBox.question(
             self, "Save item teach?",
-            "Save a new YAML and .pt copy in offline_teach/item_teach/?\n"
-            "No existing file will be overwritten. No robot movement will occur.",
+            action + "\nNo robot movement will occur.",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No,
         ) != QtWidgets.QMessageBox.Yes:
             return
+        self._dirty()  # Invalidate service/frozen requests before publishing a changed pair.
         try:
-            output, _profile = save_item_profile(
+            output, profile = save_item_profile(
                 self._settings(), self.home, Path(self.model.text()),
+                root=workspace_root(), save_target=self.save_target,
             )
+            target = item_save_target(
+                output, profile["item"]["name"], file_sha256(output),
+                created_at_utc=profile["created_at_utc"], root=workspace_root())
         except (ValueError, OSError) as exc:
             self._error("Save failed", exc)
             return
         self.saved_path = output
+        self.save_target = target
+        # Retain the explicitly loaded source path and native fingerprint. Saving
+        # a new copy is not permission to switch/reload the active model.
         self.recovered_draft = False
         self.recovery_notice.clear()
         self.recovery_notice.hide()
         self.send.setEnabled(True)
         self.node.events.record(
-            "INFO", "item_pair_saved", "Saved YAML and copied model", path=str(output),
+            "INFO", "item_pair_saved", "Updated loaded pair" if overwrite else "Created pair",
+            path=str(output), overwritten=overwrite,
         )
         try:
             write_item_ui_state(ui_state_path(), output.name)
@@ -1622,6 +1644,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
             profile, _digest = load_item_profile(path)
         except (ValueError, OSError) as exc:
             return self._load_recovery(path, exc, prefill=prefill)
+        target = item_save_target(
+            path, profile["item"]["name"], _digest,
+            created_at_utc=profile["created_at_utc"], root=workspace_root())
+        if target.model_sha256 != profile["model"]["sha256"]:
+            raise ValueError("Paired model changed while loading; load it again")
         self.recovered_draft = False
         self.recovery_notice.clear()
         self.recovery_notice.hide()
@@ -1649,16 +1676,22 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self._grip_enabled(self.inputs["use_grip"].isChecked())
         self.home = copy.deepcopy(profile["home"])
         self._show_home()
-        self.saved_path = None if prefill else path
-        self.send.setEnabled(not prefill)
+        self.saved_path = target.path
+        self.save_target = target
+        self.send.setEnabled(True)
+        action = "Restored saved item teach" if prefill else "Loaded saved item teach"
         self._message(
-            f"{'Unapplied prefill' if prefill else 'Loaded'}: {path.name}. "
-            "Home is displayed only; no controller request or motion was sent."
+            f"{action}: {path.name}. "
+            "No extra Save required. Model trust/loading, YOLO and Armed stay explicit; "
+            "no controller request or motion was sent."
         )
         return profile, _digest
 
     def _load_recovery(self, path, error, *, prefill):
         draft = recover_item_fields(path)
+        self.save_target = (item_save_target(
+            path, draft.values.get("name"), draft.digest, root=workspace_root())
+            if draft.digest is not None else None)
         self.yolo_toggle.setChecked(False)
         self.node.disarm()
         self.node.model_config = self.node.model_metadata = self.node.last_view = None
@@ -1693,7 +1726,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.home_label.setText("Home unavailable — record all six actual joints again.")
         self.recovery_notice.setText(
             "RECOVERY DRAFT — review cleared fields/unknown checkboxes in Activity log. "
-            "Save a new valid YAML + model pair before arming. Original file is unchanged.")
+            "Save corrected fields before simulating/arming. Same item name updates the loaded "
+            "file with a previous-version backup; a changed/unknown original name creates a pair.")
         self.recovery_notice.show()
         self._message(f"Recovered {'prefill' if prefill else 'form'}: {path.name}. {error}")
         for issue in draft.issues:

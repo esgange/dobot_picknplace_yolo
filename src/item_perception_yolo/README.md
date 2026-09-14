@@ -264,13 +264,26 @@ publisher are provenance only: home joints are portable across the user's
 identical robots, with no station-identity rejection. Loading a home is not
 execution or a claim that the destination travel path is safe.
 
-**Save YAML + Model Copy** requires confirmation, creates a new same-stem pair
-in `offline_teach/item_teach/`, verifies the copy's SHA-256 against the unchanged
-source, then publishes the YAML without overwriting existing files. A success
-dialog names both files. The pair remains usable without the original `.pt`.
+**Save Item Teach** requires confirmation and updates the loaded same-stem pair
+in `offline_teach/item_teach/` when the item name is unchanged. Edits invalidate
+saved eligibility but retain that loaded save target. A changed item name, or
+a new document without a known original name, creates a new timestamped pair;
+later saves target that new pair. Unchanged weights remain untouched; a selected
+replacement is copied and SHA-256 verified before publication. Reject external
+YAML/model changes since loading instead of overwriting someone else's edits.
+Keep one hidden `.<stem>.previous.zip` with the previous YAML and paired weights
+(if present), replaced on the next update. The backup is for manual recovery,
+not an alternate loader. Staging/backup errors leave the original pair intact;
+if weight replacement precedes a YAML write failure, restore the original model.
+YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
+never silently load. A success dialog names both files; the original external
+model remains untouched and the pair works without it.
 **Load Item Teach** accepts only that directory. Complete schema-4 files load
-normally. Older/partially invalid files open as explicitly labelled GUI-only
-recovery drafts: keep independently valid fields, blank unclear/missing values,
+normally and immediately count as saved, including startup named-file restoration.
+No redundant Save is required before Simulate Trigger or manual Armed, but model
+trust/verification, YOLO ON and fresh station inputs remain mandatory. Loading
+does not arm, simulate or command anything. Older/partially invalid files open as
+labelled GUI-only recovery drafts: keep independently valid fields, blank unclear/missing values,
 and show unknown booleans as partial checkboxes requiring an explicit choice.
 Unreadable/ambiguous YAML clears all fields; no partial parser guesses. Clear old
 `retry_limit` counts are recovered as `pose_candidates` for editing only. Invalid
@@ -279,8 +292,10 @@ paired weights leave the model field empty; browse a trusted model explicitly.
 The warning/Activity log explains every cleared field. Missing internal
 `image_size` requires explicitly browsing a model to establish new-profile 640.
 Recovery also applies to named-file startup prefill, without executing weights.
-No recovered draft can arm or be validated in the controller until reviewed and
-saved as a new strict schema-4 pair. Original files remain untouched. Shared
+No recovered draft can simulate, arm or be validated in the controller until
+reviewed and saved as a strict schema-4 pair. Same known item name overwrites
+the loaded file with its previous-version backup; changed/unknown original name
+creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
 controller readers stay strict and never call the GUI recovery reader.
 Its single confirmation now covers replacing the form/home and trusting the

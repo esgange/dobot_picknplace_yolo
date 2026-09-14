@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import threading
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -287,7 +288,7 @@ def test_visual_first_layout_has_one_settings_column_and_persistent_actions(wind
     assert window.activity_summary.text() == "Synthetic feedback"
     window.settings_scroll.verticalScrollBar().setValue(10000)
     save = next(button for button in window.findChildren(gui.QtWidgets.QPushButton)
-                if button.text() == "Save YAML + Model Copy…")
+                if button.text() == "Save Item Teach…")
     assert not window.settings_scroll.isAncestorOf(save)
     assert save.isVisible()
     assert not window.node.yolo_enabled and window.node.service is None
@@ -737,10 +738,10 @@ def paired_teach(window, tmp_path, monkeypatch):
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
     monkeypatch.setattr(gui, "write_item_ui_state", MagicMock())
 
-    def inspect(selected, *, expected_sha256):
+    def inspect(selected, *, expected_sha256=None):
         assert selected == str(path.with_suffix(".pt"))
-        assert expected_sha256 == profile["model"]["sha256"]
-        window.node.model_config = {"path": selected, "sha256": expected_sha256,
+        assert expected_sha256 in (None, profile["model"]["sha256"])
+        window.node.model_config = {"path": selected, "sha256": metadata["sha256"],
                                     "task": metadata["task"]}
         window.node.model_metadata = metadata
         return metadata
@@ -786,13 +787,98 @@ def test_teach_prefill_never_loads_weights(window, paired_teach):
     path, _, settings, _, question = paired_teach
     window._load(path, prefill=True)
     assert window._settings() == settings
-    assert window.saved_path is None and not window.send.isEnabled()
+    assert window.saved_path == path and window.send.isEnabled()
     window.node.inspect_model.assert_not_called()
     question.assert_not_called()
     assert not window.model_load_reserved and not window.node.yolo_enabled
 
 
-def test_old_teach_recovers_prefill_and_explicit_model_then_saves_new_pair(
+@pytest.mark.parametrize("prefill", [False, True])
+def test_valid_loaded_profile_can_simulate_and_arm_without_save(window, paired_teach, prefill):
+    path, profile, _, _, _ = paired_teach
+    if prefill:
+        window._load(path, prefill=True)
+        window._load_model()  # Startup restoration never implicitly trusts/executes weights.
+    else:
+        window._load_dialog()
+    finish_model_job(window)
+    assert window.saved_path == path
+    window.yolo_toggle.setChecked(True)
+    window.node._validate_pose_profile = MagicMock(return_value=(profile, core.file_sha256(path)))
+    window._simulate_trigger()
+    assert window.pending_simulation[0] == path
+    window.node._validate_pose_profile.assert_called_once_with(path)
+    window.node.arm.assert_not_called()
+    window._resume_live()
+    window.armed_toggle.setChecked(True)
+    window.node.arm.assert_called_once_with(path)
+    assert window.armed_toggle.isChecked()
+    assert not list(path.parent.glob(".*.previous.zip"))  # No redundant write.
+
+
+def test_form_edits_preserve_loaded_save_target_and_rename_switches_target(
+        window, paired_teach, monkeypatch, tmp_path):
+    path, profile, _, _, question = paired_teach
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
+    window._load(path, prefill=True)
+    target = window.save_target
+    window.inputs["confidence"].setText("0.8")
+    assert window.saved_path is None and window.save_target == target
+    window._save()
+    assert window.saved_path == path and window.save_target.path == path
+    assert "Overwrite loaded item teach" in question.call_args.args[2]
+    updated, _ = core.load_item_profile(path, root=tmp_path)
+    assert updated["yolo"]["confidence"] == 0.8
+    window.name.setText("new_item_name")
+    window._save()
+    new_path = window.saved_path
+    assert new_path != path and window.save_target.item_name == "new_item_name"
+    assert "Save a NEW" in question.call_args.args[2]
+    assert core.load_item_profile(path, root=tmp_path)[0] == updated
+    assert Path(window.model.text()) == path.with_suffix(".pt")  # No implicit model switch.
+    window.inputs["pose_candidates"].setText("4")
+    window._save()
+    assert window.saved_path == new_path
+    assert core.load_item_profile(new_path, root=tmp_path)[0]["retry"]["pose_candidates"] == 4
+    assert not window.armed_toggle.isChecked()
+    window.node.arm.assert_not_called()
+    window.node.inspect_model.assert_not_called()
+
+
+def test_cancel_overwrite_or_loading_model_never_writes_pair(window, paired_teach):
+    path, _, _, _, question = paired_teach
+    original = path.read_bytes()
+    window._load(path, prefill=True)
+    window.inputs["confidence"].setText("0.8")
+    question.return_value = gui.QtWidgets.QMessageBox.No
+    window._save()
+    assert path.read_bytes() == original and window.saved_path is None
+    target = window.save_target
+    question.reset_mock()
+    window._reserve_model_load()
+    assert not window.save_button.isEnabled()
+    window._save()
+    question.assert_not_called()
+    assert path.read_bytes() == original and window.save_target == target
+    window._finish_model_load()
+    assert window.save_button.isEnabled()
+
+
+def test_external_change_save_failure_keeps_target_and_disarms(window, paired_teach, monkeypatch):
+    path, _, _, _, _ = paired_teach
+    window._load(path, prefill=True)
+    target = window.save_target
+    path.write_bytes(b"operator replaced the file")
+    error = MagicMock()
+    monkeypatch.setattr(window, "_error", error)
+    window._save()
+    assert window.saved_path is None and window.save_target == target
+    assert path.read_bytes() == b"operator replaced the file"
+    assert "changed externally" in str(error.call_args.args[1])
+    window.node.disarm.assert_called()
+
+
+def test_old_teach_requires_review_then_overwrites_with_backup(
         window, paired_teach, tmp_path, monkeypatch):
     path, profile, settings, _, _ = paired_teach
     profile["schema_version"] = 3
@@ -810,17 +896,18 @@ def test_old_teach_recovers_prefill_and_explicit_model_then_saves_new_pair(
     window.armed_toggle.setChecked(True)
     window.node.arm.assert_not_called()
     assert not window.armed_toggle.isChecked()
-    monkeypatch.setattr(gui, "save_item_profile", lambda s, h, m: core.save_item_profile(
-        s, h, m, root=tmp_path))
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
     window._save()
-    assert not window.recovered_draft and window.saved_path != path
+    assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
     assert saved["schema_version"] == 4 and saved["retry"] == {"pose_candidates": 3}
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings
-    assert path.read_bytes() == original and path.with_suffix(".pt").read_bytes() == model_original
+    assert path.read_bytes() != original and path.with_suffix(".pt").read_bytes() == model_original
+    with zipfile.ZipFile(path.with_name(f".{path.stem}.previous.zip")) as backup:
+        assert backup.read(path.name) == original
+        assert backup.read(path.with_suffix(".pt").name) == model_original
     assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
 
 

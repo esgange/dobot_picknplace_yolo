@@ -2116,6 +2116,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   remain untouched; no cameras, robot or RViz launched or commanded. Scoped
   commit and verified push follow rule 8; no offline milestone is claimed.
 
+### 2026-09-14 — Loaded item profiles are saved; Save updates the same named item
+
+- User requested no redundant Save after loading, and overwriting the loaded
+  item teach unless its item name changes. Strictly valid explicit loads and
+  startup named-file restoration now retain saved eligibility. Startup remains
+  weight-free; explicit trusted model loading, YOLO ON, manual Armed and all
+  production station/model/freshness checks are unchanged. No automatic trigger,
+  controller request, hardware action or teaching-image persistence.
+- Separate the loaded document's save target from its edited/saved eligibility.
+  Edits still disarm and invalidate pose eligibility, but do not lose the target.
+  Save Item Teach confirms the exact overwrite filename; same known name updates
+  its YAML/.pt, renamed/new/unknown-original-name items create a timestamped pair.
+  A successful new save becomes the next target. Keep the actively selected model
+  path/fingerprint unchanged rather than implicitly switching/reloading weights;
+  the saved YAML references its verified local copy for future loading. Saving
+  is disabled during a queued/in-progress model load.
+- Preserve created_at_utc for valid same-item updates and schema 4. Before
+  overwrite, compare observed YAML/model hashes, reject symlink targets and stage
+  verified replacement data. Keep exactly one hidden .<stem>.previous.zip per
+  updated document, containing its previous YAML and model when present. It is
+  manual recovery data, not a compatibility reader or alternate artifact path.
+  Unchanged model bytes are never replaced. Replacement weights precede atomic
+  YAML publication; a YAML write error restores the original weights. The pair
+  is not claimed to be a multi-file atomic transaction: interrupted mixed files
+  fail strict model-hash validation and the previous pair remains in the backup.
+- Supersede the earlier no-overwrite/new-pair-only restriction for explicit
+  saves, including corrected GUI recovery drafts with a known unchanged name.
+  Recovery drafts remain unarmed and cannot generate production poses until all
+  missing/unclear fields are corrected and saved as strict schema 4. A load alone
+  never mutates any file; headless/controller readers remain strict. UI schema 6,
+  other teach artifacts, model inference and pose mathematics are unchanged.
+- Verification is synthetic/offscreen only. Source changes do not rewrite this
+  workstation's operator profiles, UI state, model weights or calibration files;
+  no cameras, robot or RViz launched/commanded. No offline milestone is claimed.
+- Verification: 304 perception and 6 controller tests pass, including 151 focused
+  editor/core cases. Cover same-name and renamed saves, repeated saves with one
+  backup, unchanged model inode, replacement weights, missing-model recovery,
+  unknown original names, external changes/removals/symlinks, backup/write error
+  rollback, cancel/busy-load behavior, recovery save gates, and loaded/startup
+  profile simulation/arming without a redundant Save. Root build passes all 14
+  packages; Python compilation, changed-runtime and changed-line test flake8,
+  and git diff --check pass. Installed modules expose the save-target API and
+  import no cv2/Torch/Ultralytics in the parent. Scoped commit/push follow rule 8.
+
 ### Future entry template
 
 ```text

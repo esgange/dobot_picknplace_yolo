@@ -12,6 +12,8 @@ import os
 import re
 import shutil
 import tempfile
+import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -307,7 +309,113 @@ def load_item_profile(path: Path, *, root: Path | None = None):
     return profile, hashlib.sha256(content).hexdigest()
 
 
-def save_item_profile(settings, home, model_source: Path, *, root: Path | None = None):
+@dataclass(frozen=True)
+class ItemSaveTarget:
+    """Loaded document identity, independent of unsaved form edits."""
+
+    path: Path
+    item_name: str | None
+    yaml_sha256: str
+    model_sha256: str | None
+    created_at_utc: str | None
+
+
+def _target_path(path, root):
+    path = Path(path).expanduser().absolute()
+    if (path.is_symlink() or path.with_suffix(".pt").is_symlink()
+            or path.resolve().parent != item_directory(root).resolve()
+            or path.suffix != ".yaml"):
+        raise ValueError("Save target must be a regular local item YAML/.pt pair")
+    return path.resolve()
+
+
+def _model_digest(path):
+    return file_sha256(path) if path.exists() else None
+
+
+def item_save_target(path, item_name, yaml_sha256, *, created_at_utc=None, root=None):
+    """Remember observed files, including GUI-only recovery drafts, without writing."""
+    path = _target_path(path, root)
+    if file_sha256(path) != yaml_sha256:
+        raise ValueError("Item teach changed while loading; load it again before saving")
+    if item_name is not None and (type(item_name) is not str or re.fullmatch(
+            r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", item_name) is None):
+        raise ValueError("Loaded item name is invalid")
+    if created_at_utc is not None:
+        _timestamp(created_at_utc, "created_at_utc")
+    return ItemSaveTarget(path, item_name, yaml_sha256,
+                          _model_digest(path.with_suffix(".pt")), created_at_utc)
+
+
+def _check_save_target(target, root):
+    path = _target_path(target.path, root)
+    if (not path.is_file() or file_sha256(path) != target.yaml_sha256
+            or _model_digest(path.with_suffix(".pt")) != target.model_sha256):
+        raise ValueError("Loaded YAML/model changed externally; reload before overwriting")
+
+
+def _sync_directory(path):
+    directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _replace_item_pair(target, staged_yaml, staged_model, source_digest, root):
+    """YAML commits the pair; retain one previous-version ZIP and roll back errors."""
+    _check_save_target(target, root)
+    output, model_output = target.path, target.path.with_suffix(".pt")
+    previous = output.with_name(f".{output.stem}.previous.zip")
+    if previous.is_symlink():
+        raise ValueError("Previous-version backup must not be a symlink")
+    backup = staged_yaml.parent / "previous.zip"
+    with zipfile.ZipFile(backup, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.write(output, output.name)
+        if target.model_sha256 is not None:
+            archive.write(model_output, model_output.name)
+    with backup.open("rb") as stream:
+        os.fsync(stream.fileno())
+    # Check both the backup and live files before replacing anything.
+    with zipfile.ZipFile(backup) as archive:
+        for name, expected in ((output.name, target.yaml_sha256),
+                               (model_output.name, target.model_sha256)):
+            if expected is not None:
+                with archive.open(name) as stream:
+                    digest = hashlib.sha256()
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(block)
+                if digest.hexdigest() != expected:
+                    raise ValueError("Loaded files changed during backup; nothing was saved")
+    _check_save_target(target, root)
+    os.replace(backup, previous)
+    _sync_directory(output.parent)
+    replace_model = source_digest != target.model_sha256
+    rollback = staged_yaml.parent / "original.pt"
+    if replace_model and target.model_sha256 is not None:
+        os.link(model_output, rollback)
+    if replace_model:
+        os.replace(staged_model, model_output)
+    try:
+        os.replace(staged_yaml, output)
+    except OSError:
+        if replace_model:
+            if file_sha256(model_output) != source_digest:
+                raise ValueError(
+                    f"Concurrent model change prevented rollback; previous pair is in {previous}")
+            if target.model_sha256 is None:
+                model_output.unlink()
+            else:
+                os.replace(rollback, model_output)
+            _sync_directory(output.parent)
+        raise
+    # A settings-only save leaves the paired weights untouched. Replacing weights
+    # first is fail-closed: a reader in that short interval rejects the old hash.
+    _sync_directory(output.parent)
+
+
+def save_item_profile(settings, home, model_source: Path, *, root: Path | None = None,
+                      save_target: ItemSaveTarget | None = None):
     validate_settings(settings)
     validate_home(home)
     source = Path(model_source).expanduser().resolve()
@@ -319,6 +427,11 @@ def save_item_profile(settings, home, model_source: Path, *, root: Path | None =
     timestamp = utc_now()
     stamp = datetime.fromisoformat(timestamp[:-1] + "+00:00").strftime("%Y%m%dT%H%M%S_%fZ")
     output = directory / f"item_teach_{settings['item']['name']}_{stamp}.yaml"
+    overwrite = save_target is not None and settings['item']['name'] == save_target.item_name
+    if overwrite:
+        _check_save_target(save_target, root)
+        output = save_target.path
+        timestamp = save_target.created_at_utc or timestamp
     model_output = output.with_suffix(".pt")
     profile = {
         "schema_version": ITEM_SCHEMA_VERSION, "artifact_type": "item_teach",
@@ -349,12 +462,15 @@ def save_item_profile(settings, home, model_source: Path, *, root: Path | None =
             yaml.safe_dump(profile, stream, sort_keys=False)
             stream.flush()
             os.fsync(stream.fileno())
-        # Exclusive links avoid overwriting an existing pair; YAML is the commit marker.
-        os.link(staged_model, model_output)
-        try:
-            os.link(staged_yaml, output)
-        except BaseException:
-            if model_output.exists() and os.path.samefile(staged_model, model_output):
-                model_output.unlink()
-            raise
+        if overwrite:
+            _replace_item_pair(save_target, staged_yaml, staged_model, source_digest, root)
+        else:
+            # New names never overwrite existing pairs; YAML is the commit marker.
+            os.link(staged_model, model_output)
+            try:
+                os.link(staged_yaml, output)
+            except BaseException:
+                if model_output.exists() and os.path.samefile(staged_model, model_output):
+                    model_output.unlink()
+                raise
     return output, profile
