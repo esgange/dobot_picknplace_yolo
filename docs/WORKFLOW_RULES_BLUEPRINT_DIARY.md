@@ -1853,6 +1853,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   or camera/robot/RViz was launched or commanded. Existing artifacts/UI state
   remain unchanged. Source-only follow-up commit/push follows the user's request.
 
+### 2026-09-14 — Horizontal paired views and simplified teaching windows
+
+- User requested horizontal RGB/depth, matching overlays, removal of duplicated
+  above-video help, and the same simplification for Platform/Bin Teach. On
+  clarification the user explicitly chose to FREEZE the clicked RGB/depth pair,
+  not keep views live. Preserve exact-snapshot pose calculation and second-click
+  resume; do not substitute current depth or run another prediction for a click.
+- Item Teach now uses equal horizontal panes. The same private worker maps RGB
+  mask shading, size border, long-X/short-Y axes and exact dot into the registered
+  depth model. Sample rectangle/axis edges to retain distortion geometry; project
+  bin XY with the depth model and full platform transform. Valid color/depth
+  CameraInfo alone enables pixel overlays when no station is applied, without
+  inventing metric geometry. No depth resampling or changed candidate math.
+- Frozen depth retains all displayed item geometry while calculating only the
+  clicked pose. The cyan diameter-based circle maps into each view; accepted
+  pixels remain black/rejected red. Both views show selected dimensions/pose
+  and source age. Removed redundant above-video paragraph; current inference
+  settings are now also on-image. Existing size/class/ROI/freshness/MAD gates,
+  frame-local identity, TF publication and service separation remain strict.
+- Platform/Bin Teach share a compact scrollable setup and larger RGB area,
+  persistent Save/capture actions, concise physical guidance and expandable
+  calibration/status/output details. Blocked capture remains visible in the
+  image/waiting view and compact status. Apply/capture/load/retake/save and TF
+  behavior are unchanged; no artifacts/UI-state rewrite, vendor edits, new
+  persistence, worker replacement, camera/robot/RViz launch or motion.
+- Verification: 191 perception and 6 controller tests pass. Offscreen layout
+  tests/inspection confirm horizontal item panes, removed help paragraph,
+  large platform/bin video, expandable details and persistent gated actions.
+  Synthetic native tests check differing-distortion border colors, projected
+  centers/circles and retained non-selected outlines during a selected-pose
+  operation; GUI tests confirm neither frozen image is replaced by newer data.
+  An existing mock candidate was extended with actual production depth-count
+  fields to test the new overlay counters. Final package tests, compilation,
+  seven changed-module flake8 checks and git diff --check pass. Clean Humble-only
+  root colcon build passes all 14 packages; installed GUIs/shared layout import
+  without cv2/Torch/Ultralytics in the parent. No operator models, physical
+  cameras, robot, or RViz were launched or commanded. Artifacts/state remain
+  unchanged. Source-only commit/push follows the user's request.
+
 ### Future entry template
 
 ```text

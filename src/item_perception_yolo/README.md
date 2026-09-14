@@ -246,10 +246,25 @@ model execution and arming state are never restored or written as image files.
 
 The Item Teach window uses one scrollable settings column, ordered camera/station,
 model, live YOLO, dimensions/depth, quality limits, then saved routine fields.
-RGB and native registered-depth views take the larger area and have draggable
-splitters. Load/Save stay visible in the header; Activity log expands the bounded
+RGB and native registered-depth views are side by side in a horizontal draggable
+splitter. Both carry mask shading, green/red/gray size borders, centered axes/dots,
+and loaded bin ROI. Depth geometry is projected through its own CameraInfo;
+straight RGB edges are sampled before projection to handle differing distortion.
+Both views freeze on the exact displayed pair when clicked, and only that item
+gets a pose calculation (no second inference or newer depth). All other outlines
+stay visible on frozen depth; the sampling circle is cyan, accepted samples black,
+rejected red. Selected dimensions/pose and frame ages appear on both images.
+The redundant above-video help/settings text is removed. Missing plane calibration
+does not hide pixel-space depth overlays, but still blocks metric poses/circles/ROI.
+Load/Save stay visible in the header; Activity log expands the bounded
 read-only log. No controls or saved variables are removed, and layout does not
 enable inference, arming, motion or autosaving.
+Platform and Bin Teach share a compact single-column setup, large RGB area,
+persistent Save/capture controls and expandable calibration/status details.
+Essential physical setup guidance remains visible; full guidance/output paths
+remain in Details. Their explicit Apply, capture, load, retake and save rules
+and teaching TF behavior are unchanged. Invalid capture reasons remain visible
+on the video or waiting view and in the compact status line.
 
 The controller sends `GetItemPoses(max_candidates, profile_sha256)`. One request
 at a time is accepted; a concurrent request returns BUSY. Every request acquires

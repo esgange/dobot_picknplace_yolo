@@ -230,13 +230,15 @@ def test_measurement_protocol_rejects_bad_geometry_and_units():
             "polygon": [[0, 0], [10, 0], [10, 5]],
             "measurement": {"length_mm": 80., "width_mm": 32.}, "measurement_error": "",
             "size_valid": True, "size_reason": "Size within tolerance",
-            "sampling_circle": [[1., 2.]] * 96, "sampling_circle_error": ""}
+            "sampling_circle": [[1., 2.]] * 96, "sampling_circle_error": "",
+            "depth_sampling_circle": [[1., 2.]] * 96}
     detector.validate_preview_detections([item], 1, [7])
     for change in ({"rectangle": [[0, 0]]}, {"class_id": 0}, {"measurement": None},
                    {"measurement": {"length_mm": 10., "width_mm": 32.}},
                    {"sampling_circle": [[0, 0]]}, {"sampling_circle_error": "unexpected"},
                    {"sampling_circle": [[float("nan"), 0]] * 96},
                    {"sampling_circle": [[2_000_000_001, 0]] * 96},
+                   {"depth_sampling_circle": [[float("nan"), 0]] * 96},
                    {"polygon": [[float("nan"), 0], [1, 1], [0, 1]]}):
         with pytest.raises(RuntimeError):
             detector.validate_preview_detections([{**item, **change}], 1, [7])

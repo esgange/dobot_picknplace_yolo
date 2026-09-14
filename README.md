@@ -78,7 +78,7 @@ load takes the next worker slot, with queued/loading progress and no retry.
 YOLO and Armed remain OFF after loading. Use **Connect RGB**, then **YOLO Detect**.
 There is one detection view: no Detect All/Filtered controls or Resume Live button.
 The visual-first window keeps setup in one scrollable left column and gives
-most space to resizable RGB/depth panes. Load/Save remain visible at the top;
+most space to resizable, side-by-side RGB/depth panes. Load/Save remain visible at the top;
 the bounded activity log can be expanded at the bottom.
 Pick fields can remain blank for initial detection. The visible YOLO settings apply;
 initial confidence/IoU/cap are 0.25/0.70/100 and new-profile inference size is 640.
@@ -110,6 +110,14 @@ The cyan selection ring follows `pickdepth_radius` (circle diameter in mm),
 projected from platform Z=0 with the same geometry used for depth sampling.
 It may appear elliptical under perspective; no fixed-pixel ring is substituted
 when calibration is unavailable. Edit the diameter, then click an item again.
+Depth mirrors RGB mask shading, size borders, long-X/short-Y axes, pick dots
+and bin ROI through its own calibrated pixel model. Both views freeze together
+on a click; only the selected pose is calculated from that exact pair, while
+all item outlines remain visible. Both images show selection/pose feedback;
+accepted depth points are black and rejected points red. The redundant help
+paragraph above the views is removed. Platform/Bin Teach use the same compact
+setup/large-video presentation, with Save/capture visible and extra calibration
+details expandable; their explicit Apply and capture/save workflow is unchanged.
 RGB keeps mask shading and one mask-derived rectangle (or the native oriented
 rectangle for OBB), with centered long-X/short-Y lines and a pick-point dot.
 No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the

@@ -92,7 +92,9 @@ def test_visual_first_layout_has_one_settings_column_and_persistent_actions(wind
     assert "YOLO" in groups[2].title() and "Item size" in groups[3].title()
     assert all(a.geometry().bottom() < b.geometry().top()
                for a, b in zip(groups, groups[1:]))
-    assert window.video.height() > window.depth_video.height()
+    assert window.image_split.orientation() == gui.QtCore.Qt.Horizontal
+    assert abs(window.video.width() - window.depth_video.width()) <= 2
+    assert not window.preview_help.isVisible()
     assert not window.status.isVisible()
     window.activity_toggle.setChecked(True)
     assert window.status.isVisible()
@@ -259,7 +261,9 @@ def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, 
     view = {"rgb": bytes(640*480*3), "width": 640, "height": 480,
             "stamp_ns": 100_000_000_000, "depth_stamp_ns": 100_000_000_000,
             "sequence": 1, "preview_mode": "all", "metadata": {"detections": [item]}}
-    candidate = {"position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.]}
+    candidate = {"position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.],
+                 "filtered_camera_depth": .7, "accepted_depth_count": 100,
+                 "rejected_depth_count": 2}
     result = {"candidate": candidate if outcome in ("valid", "cancel") else None,
               "reason": "insufficient accepted depth samples/fraction",
               "depth_rgb": bytes(640*480*3), "stamp_ns": view["stamp_ns"], "epoch": 1}
@@ -599,6 +603,8 @@ def test_scaled_letterbox_click_and_frozen_measurement(window):
             "measurement": {"length_mm": 80., "width_mm": 32.}, "measurement_error": ""}
     view = {"rgb": bytes(640 * 480 * 3), "width": 640, "height": 480,
             "stamp_ns": 100_000_000_000, "sequence": 1, "preview_mode": "all",
+            "depth_rgb": bytes([20, 50, 80]) * (640 * 480),
+            "depth_stamp_ns": 100_010_000_000,
             "metadata": {"detections": [item], "inference_ms": 10.}}
     window.yolo_toggle.setChecked(True)
     window.node.last_view = view
@@ -612,9 +618,13 @@ def test_scaled_letterbox_click_and_frozen_measurement(window):
     assert window.frozen_view is view
     assert window.selected_detection is item
     assert window.inputs["height"].text() == ""  # No automatic field overwrite/tolerance guess.
-    window.node.last_view = {**view, "sequence": 2, "metadata": {"detections": []}}
+    window.node.last_view = {**view, "sequence": 2, "metadata": {"detections": []},
+                             "depth_rgb": bytes([200, 0, 0]) * (640 * 480)}
     window._refresh_video()
     assert window.displayed_view is view  # Frame-local ID cannot jump to a newer detection.
+    depth_image = window.depth_video.pixmap().toImage()
+    assert depth_image.pixelColor(depth_image.width()//2, depth_image.height()//2) == \
+        gui.QtGui.QColor(20, 50, 80)  # Frozen depth is not replaced with newer live data.
     assert "Frozen frame" in window.video_status.text()
     window.inputs["height"].setText("80")
     assert window.frozen_view is None and not window.node.yolo_enabled

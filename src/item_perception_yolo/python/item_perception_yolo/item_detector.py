@@ -80,12 +80,13 @@ def validate_preview_detections(detections, count, class_ids):
         circle, reason = item["sampling_circle"], item["sampling_circle_error"]
         if type(reason) is not str or (circle is None) != bool(reason):
             raise RuntimeError("Malformed sampling circle availability")
-        if circle is not None and (
-                type(circle) is not list or len(circle) != 96
-                or any(len(p) != 2 or any(type(v) not in (int, float)
-                       or not math.isfinite(v) or abs(v) > 2_000_000_000 for v in p)
-                       for p in circle)):
-            raise RuntimeError("Malformed sampling circle pixels")
+        for points in (circle, item["depth_sampling_circle"]):
+            if points is not None and (
+                    type(points) is not list or len(points) != 96
+                    or any(len(p) != 2 or any(type(v) not in (int, float)
+                           or not math.isfinite(v) or abs(v) > 2_000_000_000 for v in p)
+                           for p in points)):
+                raise RuntimeError("Malformed sampling circle pixels")
 
 
 def validate_candidates(result, settings):
@@ -505,6 +506,7 @@ class ItemDetectNode(Node):
         if preview is not None:
             header.update(operation="preview", geometry_source=self.preview_source,
                           measurement_context=preview["context"],
+                          depth_cameras=preview["depth_cameras"] if depth is not None else None,
                           measurement_error=preview["error"], preview_depth=depth is not None)
         payload = rgb["rgb"] + (b"" if depth is None else depth["depth"])
         result, pixels = self.native.call(header, payload, timeout)
@@ -650,7 +652,7 @@ class ItemDetectNode(Node):
                 except (ValueError, OSError, TransformException) as exc:
                     # Measurement is a separate optional display, not a pick-pose fallback.
                     error = str(exc)
-                depth, depth_error = None, ""
+                depth, depth_error, depth_cameras = None, "", None
                 with self.condition:
                     try:
                         validate_pair(rgb, self._depth, self._color_info, self._depth_info,
@@ -660,13 +662,16 @@ class ItemDetectNode(Node):
                                 raise ValueError("Color CameraInfo changed during observation")
                             measurement["depth_camera"] = copy.deepcopy(self._depth_info)
                         depth = dict(self._depth)
+                        depth_cameras = {"camera": copy.deepcopy(self._color_info),
+                                         "depth_camera": copy.deepcopy(self._depth_info)}
                     except ValueError as exc:
                         depth_error = str(exc)
                 preview = {"settings": {"yolo": copy.deepcopy(self.preview_yolo),
                                         "geometry": copy.deepcopy(self.preview_geometry),
                                         "quality": copy.deepcopy(self.preview_quality),
                                         "pickdepth_radius": self.preview_depth_diameter},
-                           "context": measurement, "error": error}
+                           "context": measurement, "error": error,
+                           "depth_cameras": depth_cameras}
                 view = self.infer(rgb, depth, preview=preview)
                 # Only this one bounded, displayed observation can be selected.
                 # Never attach a newer depth frame/TF to an older detection.
@@ -719,6 +724,7 @@ class ItemDetectNode(Node):
             header = {"operation": "selected_pose", "generation": self.arm_epoch,
                       "width": rgb["width"], "height": rgb["height"],
                       "detection": detection, "settings": settings,
+                      "display_detections": view["metadata"]["detections"],
                       "context": observation["context"]}
             result, pixels = self.native.call(header, rgb["rgb"] + depth["depth"],
                                               settings["quality"]["request_timeout_sec"])

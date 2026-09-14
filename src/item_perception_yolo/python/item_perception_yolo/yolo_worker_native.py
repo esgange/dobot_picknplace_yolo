@@ -120,7 +120,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                 depth = np.frombuffer(data[rgb_bytes:], "<u2").reshape(height, width)
                 _rgb, depth_view, candidates, rejected = selected_pose(
                     request["detection"], rgb, depth, request["context"],
-                    request["settings"], cv2, np)
+                    request["settings"], cv2, np, display_detections=request["display_detections"])
                 send_packet(output_stream, {
                     "state": "ok", "generation": request["generation"],
                     "width": width, "height": height,
@@ -211,7 +211,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
             if preview:
                 from .item_geometry import (
                     preview_detections, draw_pick_geometry, draw_bin_roi, classify_size,
-                    render_depth,
+                    render_depth, draw_depth_geometry,
                 )
                 source = request["geometry_source"]
                 if source != "none" and source not in available:
@@ -231,6 +231,9 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                 if request.get("preview_depth", False):
                     depth = np.frombuffer(data[rgb_bytes:], "<u2").reshape(height, width)
                     depth_view = render_depth(depth, request["settings"]["quality"], cv2, np)
+                    draw_depth_geometry(depth_view, detections, source,
+                                        request["depth_cameras"], request["measurement_context"],
+                                        cv2, np)
                 roi_status = draw_bin_roi(overlay, request["measurement_context"],
                                           request["measurement_error"], cv2, np)
             if context is not None:

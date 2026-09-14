@@ -32,6 +32,7 @@ from camera_calibration_gui.opencv_worker import (
     REQUIRED_ARUCO_API,
 )
 
+from .teach_ui import visual_teach_layout, update_teach_feedback, paint_teach_gate
 from .bin_teach_core import (
     PLATFORM_FRAME,
     TARGET_MAX_AGE_SEC,
@@ -1327,13 +1328,15 @@ class BinTeachWindow(QtWidgets.QWidget):
         path_row.addWidget(self.platform_path, 1)
         path_row.addWidget(self.browse_button)
         form = QtWidgets.QFormLayout()
-        form.addRow("Platform calibration", path_row)
+        form.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form.addRow(QtWidgets.QLabel("Platform calibration"))
+        form.addRow(path_row)
         form.addRow("ArUco dictionary", self.dictionary)
         form.addRow("Marker size [mm]", self.marker_size)
         controls = QtWidgets.QVBoxLayout()
         controls.addLayout(form)
         controls.addWidget(self.apply_button)
-        controls.addWidget(self.details)
         guidance = QtWidgets.QLabel(
             "Place 5x5 markers ID 0, 1, 2 and 3 at the four bin corners. "
             "Their positions and rotations may be in any order. Bin Teach selects "
@@ -1345,26 +1348,12 @@ class BinTeachWindow(QtWidgets.QWidget):
             "Absolute station height may differ. RViz previews are for teaching only."
         )
         guidance.setWordWrap(True)
-        controls.addWidget(guidance)
-        button_row = QtWidgets.QHBoxLayout()
-        button_row.addWidget(self.capture_button)
-        button_row.addWidget(self.retake_button)
-        controls.addLayout(button_row)
-        controls.addWidget(self.load_button)
-        controls.addWidget(self.save_button)
-        controls.addWidget(self.status)
-        controls.addWidget(self.output)
-        controls.addStretch(1)
-
-        video_group = QtWidgets.QGroupBox("Live Four-Marker Bin ROI")
-        video_layout = QtWidgets.QVBoxLayout(video_group)
-        video_layout.addWidget(self.video, 1)
-        root_layout = QtWidgets.QHBoxLayout(self)
-        left = QtWidgets.QWidget()
-        left.setMaximumWidth(470)
-        left.setLayout(controls)
-        root_layout.addWidget(left)
-        root_layout.addWidget(video_group, 1)
+        visual_teach_layout(self, "Bin Teach", "RGB / Yellow: teaching ROI · Green: loaded ROI",
+                            controls, guidance,
+                            [self.capture_button, self.retake_button, self.load_button],
+                            "Use 5x5 IDs 0–3, in any order. Measure marker size exactly. "
+                            "Markers must lie on the taught platform plane; preserve the "
+                            "same origin, axes and bin offset at each station.")
 
         state = self._node.load_last_session()
         if state is not None:
@@ -1646,6 +1635,7 @@ class BinTeachWindow(QtWidgets.QWidget):
         self.retake_button.setEnabled(snapshot["has_preview"])
         self.load_button.setEnabled(snapshot["configured"] and fatal_error is None)
         self.save_button.setEnabled(capture is not None and snapshot["saved_path"] is None)
+        update_teach_feedback(self)
 
         overlay = snapshot["overlay"]
         if overlay is None:
@@ -1663,6 +1653,10 @@ class BinTeachWindow(QtWidgets.QWidget):
             QtGui.QImage.Format_RGB888,
         ).copy()
         self._paint_roi_overlay(image, snapshot)
+        if template is None:
+            paint_teach_gate(image, "CAPTURED / platform XY ROI" if capture is not None else
+                             ("READY / " if snapshot["target_ready"] else "BLOCKED / ")
+                             + snapshot["gate"])
         pixmap = QtGui.QPixmap.fromImage(image)
         self.video.setPixmap(
             pixmap.scaled(

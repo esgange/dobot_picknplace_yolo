@@ -49,6 +49,7 @@ from .platform_teach_core import (
     write_platform_calibration,
     write_ui_state,
 )
+from .teach_ui import visual_teach_layout, update_teach_feedback, paint_teach_gate
 
 
 EXECUTOR_THREAD_COUNT = 2
@@ -894,8 +895,6 @@ class PlatformTeachWindow(QtWidgets.QWidget):
         controls.addWidget(QtWidgets.QLabel("Camera calibration"))
         controls.addLayout(path_row)
         controls.addWidget(self.apply_button)
-        controls.addWidget(self.details)
-        controls.addSpacing(12)
         guidance = QtWidgets.QLabel(
             "Place the ChArUco board origin at the shared bin-mount corner. "
             "Use the same board-axis directions and bin offset at every station; "
@@ -906,25 +905,10 @@ class PlatformTeachWindow(QtWidgets.QWidget):
             "base_link <- Link6 TF. RViz is a teaching preview only."
         )
         guidance.setWordWrap(True)
-        controls.addWidget(guidance)
-        button_row = QtWidgets.QHBoxLayout()
-        button_row.addWidget(self.capture_button)
-        button_row.addWidget(self.retake_button)
-        controls.addLayout(button_row)
-        controls.addWidget(self.save_button)
-        controls.addWidget(self.status)
-        controls.addWidget(self.output)
-        controls.addStretch(1)
-
-        video_group = QtWidgets.QGroupBox("Live ChArUco Platform Detection")
-        video_layout = QtWidgets.QVBoxLayout(video_group)
-        video_layout.addWidget(self.video, 1)
-        root_layout = QtWidgets.QHBoxLayout(self)
-        left = QtWidgets.QWidget()
-        left.setMaximumWidth(440)
-        left.setLayout(controls)
-        root_layout.addWidget(left)
-        root_layout.addWidget(video_group, 1)
+        visual_teach_layout(self, "Platform Teach", "RGB / ChArUco axes & platform pose",
+                            controls, guidance, [self.capture_button, self.retake_button],
+                            "Board origin = shared mount corner. Match axis directions across "
+                            "stations; keep board and robot still for capture.")
 
         state = self._node.load_last_session()
         if state is not None:
@@ -1126,9 +1110,11 @@ class PlatformTeachWindow(QtWidgets.QWidget):
         self.capture_button.setEnabled(snapshot["target_ready"] and capture is None)
         self.retake_button.setEnabled(capture is not None)
         self.save_button.setEnabled(capture is not None and snapshot["saved_path"] is None)
+        update_teach_feedback(self)
 
         overlay = self._node.latest_overlay()
         if overlay is None:
+            self.video.setText(self.status.text())
             return
         height, width, _channels = overlay.shape
         image = QtGui.QImage(
@@ -1139,6 +1125,9 @@ class PlatformTeachWindow(QtWidgets.QWidget):
             QtGui.QImage.Format_RGB888,
         ).copy()
         self._paint_video_overlay(image, snapshot)
+        if capture is None:
+            paint_teach_gate(image, ("READY / " if snapshot["target_ready"] else "BLOCKED / ")
+                             + snapshot["gate"])
         pixmap = QtGui.QPixmap.fromImage(image)
         self.video.setPixmap(
             pixmap.scaled(

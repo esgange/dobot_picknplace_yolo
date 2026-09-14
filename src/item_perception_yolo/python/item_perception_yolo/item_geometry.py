@@ -273,7 +273,8 @@ def preview_detections(result, source, names, maximum, context, reason, cv2, np,
                            "polygon": item["polygon"].tolist(),
                            "rectangle": item["rectangle"].tolist(),
                            "measurement": measurement, "measurement_error": error,
-                           "sampling_circle": circle, "sampling_circle_error": circle_error})
+                           "sampling_circle": circle, "sampling_circle_error": circle_error,
+                           "depth_sampling_circle": None})
     return detections
 
 
@@ -297,7 +298,48 @@ def render_depth(depth_mm, quality, cv2, np):
     return view
 
 
-def selected_pose(item, rgb, depth, context, settings, cv2, np):
+def draw_depth_geometry(view, detections, source, cameras, context, cv2, np):
+    """Mirror RGB geometry onto original depth pixels, never copy RGB pixel indices."""
+    color_camera, depth = cameras["camera"], cameras["depth_camera"]
+
+    def mapped(points):
+        return reproject_pixels(points, color_camera, depth, cv2, np)
+
+    def segments(points, closed):
+        points = np.asarray(points, dtype=np.float64)
+        ends = np.roll(points, -1, axis=0) if closed else points[1:]
+        starts = points if closed else points[:-1]
+        t = np.arange(32, dtype=np.float64) / 32
+        pixels = mapped(np.concatenate([a + (b-a)*t[:, None] for a, b in zip(starts, ends)]))
+        if not closed:
+            pixels = np.vstack((pixels, mapped([points[-1]])))
+        return np.rint(pixels).astype(np.int32)
+
+    if source == "mask":
+        view[:] = shade_masks(view, [mapped(item["polygon"]) for item in detections], cv2, np)
+    if context is not None:
+        draw_bin_roi(view, {**context, "camera": depth}, "", cv2, np)
+    if source == "none":
+        return
+    for item in detections:
+        if item.get("sampling_circle") is not None:
+            item["depth_sampling_circle"] = mapped(item["sampling_circle"]).tolist()
+        valid = item["size_valid"]
+        border = ((0, 255, 0) if valid is True else
+                  (255, 0, 0) if valid is False else (180, 180, 180))
+        cv2.polylines(view, [segments(item["rectangle"], True)], True, border, 2, cv2.LINE_AA)
+        x_axis, y_axis, center = rectangle_axes(item["rectangle"], np)
+        for axis, label, color in ((x_axis, "X", (255, 0, 0)), (y_axis, "Y", (0, 255, 0))):
+            line = segments(axis, False)
+            cv2.polylines(view, [line], False, color, 2, cv2.LINE_AA)
+            cv2.putText(view, label, tuple(line[-1] + [4, -4]), cv2.FONT_HERSHEY_SIMPLEX,
+                        .5, color, 1, cv2.LINE_AA)
+        pick = tuple(np.rint(mapped([center])[0]).astype(int))
+        cv2.circle(view, pick, 5, (0, 0, 0), -1, cv2.LINE_AA)
+        cv2.circle(view, pick, 3, (255, 255, 255), -1, cv2.LINE_AA)
+
+
+def selected_pose(item, rgb, depth, context, settings, cv2, np, *, display_detections=None):
     """Re-use exact displayed geometry, without prediction or moving the pick pixel."""
     rectangle = np.asarray(item["rectangle"], dtype=np.float32)
     rectangle_axes(rectangle, np)
@@ -308,10 +350,12 @@ def selected_pose(item, rgb, depth, context, settings, cv2, np):
     obj = {"index": item["source_index"], "class_id": item["class_id"],
            "class_name": item["class_name"], "confidence": item["confidence"],
            "polygon": polygon, "rectangle": rectangle, "center": rectangle.mean(axis=0)}
-    return generate_candidates([obj], rgb, depth, context, settings, cv2, np)
+    return generate_candidates([obj], rgb, depth, context, settings, cv2, np,
+                               display_detections=display_detections)
 
 
-def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np):
+def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
+                        *, display_detections=None):
     camera = context["camera"]
     depth_camera = context["depth_camera"]
     transform = np.asarray(context["platform_from_optical"], dtype=np.float64)
@@ -328,6 +372,18 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np):
     overlay = (shade_masks(rgb, [item["polygon"] for item in objects], cv2, np)
                if settings["geometry_source"] == "mask" else rgb.copy())
     depth_view = render_depth(depth_mm, quality, cv2, np)
+    depth_objects = []
+    for item in objects:
+        try:
+            length, width, _ = plane_dimensions(item["rectangle"], context, cv2, np)
+            measured = {"length_mm": length*1000, "width_mm": width*1000}
+        except ValueError:
+            measured = None
+        valid, _ = classify_size(measured, geometry)
+        depth_objects.append({**item, "size_valid": valid})
+    depth_objects = depth_objects if display_detections is None else display_detections
+    draw_depth_geometry(depth_view, depth_objects, settings["geometry_source"], context,
+                        context, cv2, np)
     center_roi = polygon_centroid(roi, np)
     draw_bin_roi(overlay, context, "", cv2, np)
     candidates, rejected = [], []
@@ -379,7 +435,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np):
             depth_view[pixels[:, 1], pixels[:, 0]] = (255, 0, 0)
             depth_view[pixels[accepted, 1], pixels[accepted, 0]] = (0, 0, 0)
             cv2.polylines(depth_view, [np.rint(circle_px).astype(np.int32)], True,
-                          (255, 255, 255), 1)
+                          (0, 255, 255), 2)
             good, total = int(accepted.sum()), len(pixels)
             label += f" depth {good}/{total}"
             if (good < quality["minimum_depth_samples"] or total == 0

@@ -303,6 +303,8 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         # Unified RGB/depth preview does not auto-generate a pose for any item.
         preview_request = {**header, "operation": "preview", "context": None,
                            "geometry_source": "mask", "measurement_context": header["context"],
+                           "depth_cameras": {key: header["context"][key]
+                                             for key in ("camera", "depth_camera")},
                            "measurement_error": "", "preview_depth": True,
                            "settings": {**header["settings"], "pickdepth_radius": 30.}}
         send_packet(child.stdin, preview_request, pixels + depth)
@@ -314,8 +316,14 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         rectangle = [[140, 110], [180, 110], [180, 130], [140, 130]]
         click = {"operation": "selected_pose", "generation": 2, "width": 320, "height": 240,
                  "context": header["context"], "settings": header["settings"],
+                 "display_detections": preview_result["detections"],
                  "detection": {"source_index": 7, "class_id": 1, "class_name": "test",
                                "confidence": .9, "rectangle": rectangle, "polygon": rectangle}}
+        other = [[240, 170], [280, 170], [280, 190], [240, 190]]
+        click["display_detections"] = [
+            {**click["detection"], "size_valid": True},
+            {"source_index": 8, "rectangle": other, "polygon": other, "size_valid": False},
+        ]
         send_packet(child.stdin, click, pixels + depth)
         selected, depth_overlay = receive_packet(child.stdout)
         assert selected["state"] == "ok", selected
@@ -325,6 +333,8 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         assert point["position"] == pytest.approx([0, 0, .1])
         assert len(depth_overlay) == len(pixels)
         assert depth_overlay[(120*320+162)*3:(120*320+162)*3+3] == bytes(3)
+        assert depth_overlay[(180*320+260)*3:(180*320+260)*3+3] == bytes([255]*3)
+        # Other displayed items remain overlaid, but only the clicked item gets a pose.
         send_packet(child.stdin, click, pixels + bytes(len(depth)))
         rejected, _pixels = receive_packet(child.stdout)
         assert rejected["state"] == "ok" and not rejected["candidates"]

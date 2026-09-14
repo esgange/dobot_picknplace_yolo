@@ -313,14 +313,14 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Click an item for RGB/depth pose + teaching TF; click image again to resume."
         )
         self.preview_help.setWordWrap(True)
-        view_layout.addWidget(self.preview_help)
+        self.preview_help.hide()  # Details are shown on the image, not a duplicate text panel.
         self.video = DetectionImage("Connect RGB to see the camera")
         self.video.clicked.connect(self._select_detection)
         self.video.setAlignment(QtCore.Qt.AlignCenter)
         self.video.setMinimumSize(400, 200)
         self.video.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Expanding)
         self.video.setStyleSheet("background: #111; color: white;")
-        images = self.image_split = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        images = self.image_split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         images.setChildrenCollapsible(False)
         images.setHandleWidth(6)
 
@@ -344,9 +344,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.depth_video.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
                                        QtWidgets.QSizePolicy.Expanding)
         image_panel("DEPTH  /  Native pixels · accepted BLACK · rejected RED", self.depth_video)
-        images.setStretchFactor(0, 3)
-        images.setStretchFactor(1, 2)
-        images.setSizes([480, 280])
+        images.setStretchFactor(0, 1)
+        images.setStretchFactor(1, 1)
+        images.setSizes([560, 560])
         view_layout.addWidget(images, 1)
         self.video_status = QtWidgets.QLabel("YOLO OFF — raw RGB")
         self.video_status.setWordWrap(True)
@@ -1008,7 +1008,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         ).copy()
         painter = QtGui.QPainter(image)
         selected = self.selected_detection
-        painter.fillRect(0, 0, image.width(), 188 if selected else 62,
+        painter.fillRect(0, 0, image.width(), 218 if selected else 88,
                          QtGui.QColor(0, 0, 0, 175))
         painter.setPen(QtGui.QColor("white"))
         painter.setFont(QtGui.QFont("Sans", 14, QtGui.QFont.Bold))
@@ -1037,6 +1037,17 @@ class ItemTeachWindow(QtWidgets.QWidget):
         frame_note = f"{'STALE ' if age > 0.5 else ''}Frame age {age:.2f}s{suffix}"
         painter.drawText(12, 25, title)
         painter.drawText(12, 51, frame_note)
+        settings_note = ""
+        if mode == "all" and not self.preview_settings_paused:
+            try:
+                current_yolo = self._yolo_settings()
+                settings_note = (f"conf {current_yolo['confidence']:g} / "
+                                 f"IoU {current_yolo['iou']:g}"
+                                 f" / cap {current_yolo['max_detections']} | "
+                                 "size: green OK, red outside, gray unchecked")
+                painter.drawText(12, 207 if selected else 78, settings_note)
+            except ValueError:
+                pass  # Invalid edits pause inference; never show guessed settings.
         self.video_status.setText(
             f"{title}\n{frame_note} | {camera_status} | {self.armed_toggle.text()}\n{roi_note}"
             + (f"\nPreview blocked: {self.preview_error}" if self.preview_error else "")
@@ -1081,10 +1092,34 @@ class ItemTeachWindow(QtWidgets.QWidget):
             depth = QtGui.QImage(depth_pixels, view["width"], view["height"], view["width"] * 3,
                                  QtGui.QImage.Format_RGB888).copy()
             painter = QtGui.QPainter(depth)
+            painter.fillRect(0, 0, depth.width(), 218 if selected else 88,
+                             QtGui.QColor(0, 0, 0, 175))
             painter.setPen(QtGui.QColor("white"))
             painter.setFont(QtGui.QFont("Sans", 14, QtGui.QFont.Bold))
             depth_age = (self.node.get_clock().now().nanoseconds - view["depth_stamp_ns"]) / 1e9
-            painter.drawText(12, 55, f"Depth age: {depth_age:.2f}s")
+            painter.drawText(12, 25, title)
+            painter.drawText(12, 51, f"Depth age: {depth_age:.2f}s | "
+                             "Accepted BLACK / Rejected RED")
+            if selected:
+                painter.drawText(12, 78, f"#{selected['source_index']} {selected['class_name']} "
+                                 f"| confidence {selected['confidence']:.2f}")
+                if selected["measurement"]:
+                    measured = selected["measurement"]
+                    painter.drawText(12, 104, f"X / height: {measured['length_mm']:.2f} mm   "
+                                     f"Y / width: {measured['width_mm']:.2f} mm")
+                if self.selected_pose_result is not None:
+                    painter.drawText(12, 130, f"platform_reference XYZ [mm]: {xyz}")
+                    painter.drawText(12, 156, f"Yaw: {yaw:+.2f}° | Teaching snapshot TF")
+                    pose = self.selected_pose_result
+                    painter.drawText(12, 182,
+                                     f"Depth {pose['filtered_camera_depth']*1000:.1f} mm | "
+                                     f"{pose['accepted_depth_count']} accepted / "
+                                     f"{pose['rejected_depth_count']} rejected")
+                else:
+                    painter.drawText(12, 130, "Pose: " + self.selected_pose_status[:80])
+                draw_sampling_circle(painter, selected.get("depth_sampling_circle"))
+            painter.setPen(QtGui.QColor("white"))
+            painter.drawText(12, 207 if selected else 78, settings_note)
             painter.end()
             self.depth_video.setPixmap(QtGui.QPixmap.fromImage(depth).scaled(
                 self.depth_video.size(), QtCore.Qt.KeepAspectRatio,

@@ -282,7 +282,7 @@ def exercise_registered_depth():
     import numpy as np
     from item_perception_yolo.item_geometry import (
         generate_candidates, depth_sampling_circle, reproject_pixels, rays,
-        on_plane, plane_dimensions,
+        on_plane, plane_dimensions, draw_depth_geometry,
     )
     from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
     cv2.setNumThreads(1)
@@ -311,6 +311,19 @@ def exercise_registered_depth():
     assert np.allclose(np.linalg.norm(recovered[:, :2] - flat_center[:2], axis=1), radius)
     assert np.allclose(reproject_pixels(depth_circle, depth_camera, color, cv2, np),
                        rgb_circle, atol=1e-6)
+    for size_valid in (True, False, None):
+        display = {**item, "size_valid": size_valid, "sampling_circle": rgb_circle.tolist()}
+        empty = np.zeros((480, 848, 3), np.uint8)
+        draw_depth_geometry(empty, [display], "mask", context, context, cv2, np)
+        mapped_center = np.rint(mapped).astype(int)
+        assert empty[mapped_center[1], mapped_center[0]].tolist() == [255, 255, 255]
+        assert empty[360, 660].tolist() != [255, 255, 255]  # Not the RGB pixel center.
+        assert np.allclose(display["depth_sampling_circle"], depth_circle, atol=1e-3)
+        color_value = ((0, 255, 0) if size_valid is True else
+                       (255, 0, 0) if size_valid is False else (180, 180, 180))
+        edge = polygon[0] + .25 * (polygon[1] - polygon[0])
+        qx, qy = np.rint(reproject_pixels([edge], color, depth_camera, cv2, np)[0]).astype(int)
+        assert np.any(np.all(empty[qy-1:qy+2, qx-1:qx+2] == color_value, axis=2))
     yy, xx = np.mgrid[:480, :848]
     native_pixels = np.column_stack((xx.ravel(), yy.ravel()))
     points = on_plane(native_pixels, depth_camera, transform, cv2, np)
