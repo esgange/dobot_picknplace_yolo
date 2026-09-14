@@ -203,6 +203,21 @@ participates in loading. Use the same physical origin/axis directions, bin size
 and bin offset at each station. Previously saved XY remains unchanged; select the
 newly re-taught bin file explicitly to replace an older ROI selection.
 
+Item Teach compares the selected platform's SHA-256 with
+`teaching_provenance.platform_calibration.sha256` in the bin file. A difference
+shows a persistent amber **Bin/platform mismatch** warning below the selectors,
+including the original and selected filenames; hover for the full hashes.
+It also records one bounded warning event per selected/restored binding, not
+per video frame. The warning clears when matching files are selected or the
+binding is cleared/invalid. It is nonmodal and does not block portable reuse,
+change ROI geometry, auto-enable YOLO/Armed, or require the original source file.
+Check the physical origin, X/Y directions, bin size and placement before reuse.
+A matching checksum confirms the same platform artifact, not physical alignment;
+different checksums do not prove the destination setup is wrong. Destination
+camera/platform validation remains strict; this notice does not relax hash errors
+or make source-station transforms a deployment binding. Artifact schemas remain
+unchanged; no existing files are rewritten.
+
 Missing/changed inputs, behind-camera or offscreen geometry have an
 explicit `Bin ROI hidden` reason. YOLO-OFF live projections older than 0.5 seconds
 are replaced by raw RGB. Completed teaching inference is a **result snapshot**:

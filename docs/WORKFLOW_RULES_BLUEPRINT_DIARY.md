@@ -2036,6 +2036,42 @@ Never use a floating “latest” version in an issue, script, or deployment not
   existing operator artifacts/configuration were not edited. Scoped source
   commit/push follows rule 8; no new offline-deployment milestone is claimed.
 
+### 2026-09-14 — Warn when Item Teach selects a different platform for a bin ROI
+
+- User requested a warning when the selected platform differs from the platform
+  recorded in a bin teach. Existing schema-3 bin YAML already saves the source
+  platform filename/SHA-256 and source transform under teaching_provenance.
+  Expose that validated hash in the loaded artifact; no schema or writer change.
+- Item Teach compares the full source/destination platform hashes after automatic
+  selected/restored station validation. Show a persistent amber, plain-text,
+  nonmodal notice directly below the file selectors with both filenames and full
+  hashes in its tooltip. Record one bounded WARNING event per mismatched binding,
+  not per frame/timer, and keep the notice separate from transient video feedback.
+  Matching selection, incomplete/invalid selection or camera unbinding clears it.
+- Preserve intentional portability: the warning does not reject a destination,
+  alter XY, use the original transform, require absent source artifacts, change
+  strict destination validation, or enable model execution/arming. Identical file
+  content at another path is not a mismatch; a changed hash with the same name
+  is. Hash identity is not physical alignment. Explicitly tell the operator to
+  check the common origin, X/Y directions, bin size and placement before reuse.
+- Scope is Item Teach feedback and the native-import-free bin reader/helper;
+  platform/bin teaching geometry, headless service behavior, schema versions,
+  operator artifacts/configuration and existing Bin Teach load confirmation stay
+  unchanged. Tests use synthetic artifacts and offscreen Qt only; no cameras,
+  robot, RViz or operator models are launched/executed. No offline milestone.
+- Verification: 263 perception and 6 controller tests pass, including same-name
+  changed hashes, same-content copies, portable geometry without source files,
+  restored selections, non-blocking ROI-only rendering, one warning per binding,
+  and clearing on matching/incomplete/invalid selections or camera unbinding.
+  Clean Humble-only root build passes all 14 packages; changed-module compilation,
+  flake8 and git diff --check pass. Installed offscreen inspection verifies the
+  amber notice and preserves the image area; long timestamped filenames wrap
+  within the sidebar, with exact text/hashes in the tooltip and bounded event.
+  Parent imports exclude cv2/Torch/Ultralytics. Read-only inspection confirmed
+  this workstation's selected bin/platform currently have matching SHA-256.
+  Existing artifacts and saved UI state were not rewritten. Source-only commit
+  and verified push follow the standing user authorization.
+
 ### Future entry template
 
 ```text

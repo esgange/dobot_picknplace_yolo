@@ -135,6 +135,12 @@ rectangle for OBB), with centered long-X/short-Y lines and a pick-point dot.
 No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the
 same image, including with YOLO OFF. Selecting both station/bin files automatically
 validates them and subscribes to their calibrated camera; there is no Apply button.
+The bin file records its teaching platform's filename, SHA-256 and transform.
+If the selected platform's SHA-256 differs, Item Teach shows an amber warning
+under the file selectors with both filenames (full hashes in its tooltip and
+Activity event). Intentional cross-station reuse stays allowed: verify the
+same physical origin, X/Y directions, bin size and placement. This checks file
+identity, not physical alignment; it never substitutes the original transform.
 Valid saved station/bin selections also reconnect this read-only preview at
 startup. The border appears when fresh RGB, CameraInfo and required TF arrive;
 this never launches cameras, executes a model or arms the pose service. The

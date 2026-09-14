@@ -370,6 +370,9 @@ def test_bin_yaml_round_trip_has_exact_four_xy_points_and_no_frames(
     assert loaded.dictionary_name == "DICT_5X5_50"
     assert loaded.marker_size_mm == 40.0
     assert loaded.source_camera_calibration_mode == mode
+    assert loaded.source_platform_calibration_filename == applied.platform.path.name
+    assert loaded.source_platform_calibration_sha256 == applied.platform.sha256
+    assert core.bin_platform_warning(loaded, applied.platform) is None
     assert loaded.points == capture.points
     with pytest.raises(ValueError, match="already exists"):
         core.write_bin_teach(path, applied, settings, capture, root=tmp_path)
@@ -457,6 +460,30 @@ def _write_template(root, mode):
     return path
 
 
+@pytest.mark.parametrize("same_filename", [True, False])
+def test_bin_platform_warning_compares_hashes_without_binding_roi(tmp_path, same_filename):
+    source = _write_template(tmp_path / "source", CAMERA_TO_HAND)
+    template = core.load_bin_teach(source, root=tmp_path / "source")
+    destination_root = tmp_path / "destination"
+    destination_root.mkdir()
+    destination = _applied(destination_root, CAMERA_ON_HAND).platform
+    if not same_filename:
+        destination = replace(destination, path=destination.path.with_name(
+            "platform_calibration_different_station.yaml"))
+    # A same-content copy is not a mismatch, regardless of path or name.
+    assert core.bin_platform_warning(template, destination) is None
+    changed = replace(destination, sha256="b" * 64,
+                      base_from_platform=_transform((.4, -.2, .9), 15.0))
+    before = core.place_bin_roi(template, changed)
+    warning = core.bin_platform_warning(template, changed)
+    assert "WARNING: Bin/platform mismatch" in warning
+    assert template.source_platform_calibration_filename in warning
+    assert changed.path.name in warning
+    assert "SHA-256 checksums differ" in warning
+    assert "Portable reuse is allowed" in warning
+    assert np.array_equal(core.place_bin_roi(template, changed), before)
+
+
 @pytest.mark.parametrize("mode", [CAMERA_TO_HAND, CAMERA_ON_HAND])
 def test_portable_bin_load_uses_no_source_files_or_station_env(tmp_path, monkeypatch, mode):
     source = _write_template(tmp_path / "source", mode)
@@ -476,6 +503,10 @@ def test_portable_bin_load_uses_no_source_files_or_station_env(tmp_path, monkeyp
     assert template.source_robot_lan1_ip == "192.168.20.204"
     assert template.sha256 == hashlib.sha256(copied.read_bytes()).hexdigest()
     assert template.reference_convention == platform_teach_core.PLATFORM_REFERENCE_CONVENTION
+    # The warning uses saved provenance only; it never opens the original platform.
+    warning = core.bin_platform_warning(template, SimpleNamespace(
+        path=Path("platform_calibration_new_station.yaml"), sha256="c" * 64))
+    assert "Portable reuse is allowed" in warning
     assert len(list(destination_bin_dir.iterdir())) == 1
     assert not (destination / "calibration").exists()
     assert not (destination / ".env").exists()

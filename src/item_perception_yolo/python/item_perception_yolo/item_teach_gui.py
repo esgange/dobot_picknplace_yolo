@@ -36,6 +36,7 @@ from .item_preview import validate_prefix
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
+from .bin_teach_core import bin_platform_warning
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -299,6 +300,17 @@ class ItemTeachWindow(QtWidgets.QWidget):
             row.addWidget(field)
             row.addWidget(choose)
             station.addRow(row)
+        self.bin_platform_warning = QtWidgets.QLabel()
+        self.bin_platform_warning.setTextFormat(QtCore.Qt.PlainText)
+        self.bin_platform_warning.setWordWrap(True)
+        self.bin_platform_warning.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.bin_platform_warning.setSizePolicy(
+            QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.bin_platform_warning.setStyleSheet(
+            "background-color: #fff3cd; color: #664d03; border: 1px solid #e0b74a; "
+            "border-radius: 4px; padding: 6px;")
+        self.bin_platform_warning.hide()
+        station.addRow(self.bin_platform_warning)
         self.station_status = QtWidgets.QLabel(
             "Bin ROI: select platform and bin teach files; preview connects automatically."
         )
@@ -576,6 +588,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             write_item_preview_state(ui_state_path(), prefix)
             self.node.connect_camera(prefix)
             if self.node.applied is None and self.platform_path.text() and self.bin_path.text():
+                self.bin_platform_warning.clear()
+                self.bin_platform_warning.setToolTip("")
+                self.bin_platform_warning.hide()
                 self.station_status.setText(
                     "Bin ROI hidden: RGB camera is not bound to the selected station. "
                     "Select matching platform/bin teach files."
@@ -880,6 +895,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node.last_view = None
         self.last_preview_sequence = None
         self._resume_live()
+        self.bin_platform_warning.clear()
+        self.bin_platform_warning.setToolTip("")
+        self.bin_platform_warning.hide()
         platform, bin_path = self.platform_path.text(), self.bin_path.text()
         if not platform or not bin_path:
             self.station_status.setText(
@@ -898,9 +916,30 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._message(message)
             self.node.events.record("INFO", "item_station_preview_auto_loaded", message,
                                     platform=platform, bin=bin_path)
+            template, selected_platform = self.node.bin_artifact, self.node.applied.platform
+            warning = bin_platform_warning(template, selected_platform)
+            if warning:
+                # Timestamped filenames otherwise clip inside the narrow setup column.
+                self.bin_platform_warning.setText(warning.replace("_", "_\u200b"))
+                self.bin_platform_warning.setToolTip(
+                    f"{warning}\n\n"
+                    f"Recorded platform SHA-256: {template.source_platform_calibration_sha256}\n"
+                    f"Selected platform SHA-256: {selected_platform.sha256}")
+                self.bin_platform_warning.show()
+                self._message(warning)
+                self.node.events.record(
+                    "WARNING", "item_bin_platform_mismatch", warning,
+                    bin_filename=template.path.name,
+                    source_platform_filename=template.source_platform_calibration_filename,
+                    source_platform_sha256=template.source_platform_calibration_sha256,
+                    selected_platform_filename=selected_platform.path.name,
+                    selected_platform_sha256=selected_platform.sha256)
         except (ValueError, OSError, RuntimeError) as exc:
             self.node.disarm()
             self.node.applied = self.node.bin_artifact = self.node.last_view = None
+            self.bin_platform_warning.clear()
+            self.bin_platform_warning.setToolTip("")
+            self.bin_platform_warning.hide()
             message = f"Bin ROI hidden: {exc}. Select valid platform/bin teach files."
             self.station_status.setText(message)
             self._message(message)

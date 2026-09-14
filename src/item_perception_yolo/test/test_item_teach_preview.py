@@ -1074,7 +1074,7 @@ def test_raw_rgb_never_claims_last_result_detection_count(window):
     assert "DETECTIONS: 23" not in window.video_status.text()
 
 
-def automatic_station_fixture(window, monkeypatch):
+def automatic_station_fixture(window, monkeypatch, source_sha="a" * 64):
     """Mock validated artifacts/subscriptions, never run camera or model processes."""
     station_write, prefix_write = MagicMock(), MagicMock()
     monkeypatch.setattr(gui, "write_item_station_state", station_write)
@@ -1082,8 +1082,11 @@ def automatic_station_fixture(window, monkeypatch):
 
     def apply(platform, bin_path):
         window.node.applied = SimpleNamespace(
+            platform=SimpleNamespace(path=Path(platform), sha256="a" * 64),
             camera=SimpleNamespace(settings=SimpleNamespace(camera_prefix="station_camera")))
-        window.node.bin_artifact = object()
+        window.node.bin_artifact = SimpleNamespace(
+            path=Path(bin_path), source_platform_calibration_sha256=source_sha,
+            source_platform_calibration_filename="platform_calibration_source.yaml")
         window.node.camera_prefix = "station_camera"
         window.node.yolo_enabled = False
     window.node.apply_station = MagicMock(side_effect=apply)
@@ -1104,6 +1107,7 @@ def test_station_files_automatically_enable_roi_when_stream_arrives(window, monk
     station_write.assert_called_once()
     prefix_write.assert_called_once()
     assert "automatically displayed" in window.station_status.text()
+    assert window.bin_platform_warning.isHidden()
     window._job = MagicMock()
     window.node.roi_once = MagicMock()
     window._refresh_video()  # Artifacts ready, camera not publishing yet.
@@ -1117,6 +1121,80 @@ def test_station_files_automatically_enable_roi_when_stream_arrives(window, monk
     window.node.apply_station.assert_called_once()  # No timer-driven reapplication/reconnect.
     assert not window.node.yolo_enabled and not window.yolo_toggle.isChecked()
     window.node.arm.assert_not_called()
+
+
+def test_platform_mismatch_warns_once_without_blocking_preview(window, monkeypatch):
+    station_write, prefix_write = automatic_station_fixture(window, monkeypatch, source_sha="b" * 64)
+    window.platform_path.setText("/selected/platform_calibration_test.yaml")
+    window.bin_path.setText("/selected/bin_teach_test.yaml")
+    assert window.node.applied is not None and window.node.bin_artifact is not None
+    assert not window.bin_platform_warning.isHidden()
+    displayed_warning = window.bin_platform_warning.text()
+    warning = displayed_warning.replace("\u200b", "")
+    assert "WARNING: Bin/platform mismatch" in warning
+    assert "platform_calibration_source.yaml" in warning
+    assert "platform_calibration_test.yaml" in warning
+    assert "Portable reuse is allowed" in warning and "X/Y directions" in warning
+    assert "a" * 64 in window.bin_platform_warning.toolTip()
+    assert "b" * 64 in window.bin_platform_warning.toolTip()
+    assert warning in window.bin_platform_warning.toolTip()
+    assert "automatically displayed" in window.station_status.text()
+    station_write.assert_called_once()
+    prefix_write.assert_called_once()
+    window._job = MagicMock()
+    window.node.roi_once = MagicMock()
+    window.node.camera_snapshot = lambda: ({
+        "rgb": bytes(640 * 480 * 3), "width": 640, "height": 480,
+        "stamp_ns": 100_000_000_000, "sequence": 1}, "RGB live")
+    for _ in range(3):
+        window._refresh_video()
+    window._job.assert_called_once_with("roi", window.node.roi_once)
+    assert window.bin_platform_warning.text() == displayed_warning  # Not transient feedback.
+    records = [call for call in window.node.events.record.call_args_list
+               if call.args[1] == "item_bin_platform_mismatch"]
+    assert len(records) == 1 and records[0].args[0] == "WARNING"
+    assert records[0].kwargs["source_platform_sha256"] == "b" * 64
+    assert records[0].kwargs["selected_platform_sha256"] == "a" * 64
+    gui.QtWidgets.QMessageBox.warning.assert_not_called()
+    assert not window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
+    window.node.arm.assert_not_called()
+
+
+@pytest.mark.parametrize("replacement", ["matching_bin", "matching_platform", "empty", "invalid"])
+def test_platform_warning_clears_on_reselection(window, monkeypatch, replacement):
+    automatic_station_fixture(window, monkeypatch, source_sha="b" * 64)
+    window.platform_path.setText("/selected/platform_calibration_test.yaml")
+    window.bin_path.setText("/selected/bin_teach_test.yaml")
+    assert not window.bin_platform_warning.isHidden()
+    if replacement.startswith("matching"):
+        automatic_station_fixture(window, monkeypatch)
+        if replacement == "matching_bin":
+            window.bin_path.setText("/selected/bin_teach_matching.yaml")
+        else:
+            window.platform_path.setText("/selected/platform_calibration_matching.yaml")
+        assert window.node.applied is not None
+    elif replacement == "empty":
+        window.bin_path.clear()
+    else:
+        window.node.apply_station.side_effect = ValueError("Camera SHA-256 mismatch")
+        window.platform_path.setText("/selected/platform_calibration_invalid.yaml")
+        assert "Bin ROI hidden" in window.station_status.text()
+        assert window.node.applied is None
+    assert window.bin_platform_warning.isHidden()
+    assert window.bin_platform_warning.text() == ""
+    assert window.bin_platform_warning.toolTip() == ""
+
+
+def test_platform_warning_clears_when_camera_disconnects_station_binding(window, monkeypatch):
+    automatic_station_fixture(window, monkeypatch, source_sha="b" * 64)
+    window.platform_path.setText("/selected/platform_calibration_test.yaml")
+    window.bin_path.setText("/selected/bin_teach_test.yaml")
+    assert not window.bin_platform_warning.isHidden()
+    window.node.connect_camera = lambda _: setattr(window.node, "applied", None)
+    window.camera_prefix.setText("other_camera")
+    window._connect_camera()
+    assert window.bin_platform_warning.isHidden() and window.bin_platform_warning.text() == ""
+    assert "not bound to the selected station" in window.station_status.text()
 
 
 def test_station_change_clears_old_overlay_and_stops_yolo(window, monkeypatch):
@@ -1156,8 +1234,9 @@ def test_invalid_station_hides_roi_without_repeated_apply_or_modal(window, monke
     window.node.arm.assert_not_called()
 
 
-def test_restored_station_files_connect_readonly_preview_without_apply(window, monkeypatch):
-    automatic_station_fixture(window, monkeypatch)
+@pytest.mark.parametrize("source_sha", ["a" * 64, "b" * 64])
+def test_restored_station_files_connect_readonly_preview_without_apply(window, monkeypatch, source_sha):
+    automatic_station_fixture(window, monkeypatch, source_sha=source_sha)
     monkeypatch.setattr(gui, "load_package_ui_state", lambda _: SimpleNamespace(
         item_platform_filename="platform_calibration_saved.yaml",
         item_bin_filename="bin_teach_saved.yaml", item_profile_filename=None,
@@ -1170,6 +1249,7 @@ def test_restored_station_files_connect_readonly_preview_without_apply(window, m
             str(gui.workspace_root() / "offline_teach/bin_teach/bin_teach_saved.yaml"))
         assert restored.camera_prefix.text() == "station_camera"
         assert restored.saved_path is None and restored.home is None
+        assert restored.bin_platform_warning.isHidden() == (source_sha == "a" * 64)
         assert not restored.yolo_toggle.isChecked() and not restored.armed_toggle.isChecked()
         window.node.arm.assert_not_called()
     finally:

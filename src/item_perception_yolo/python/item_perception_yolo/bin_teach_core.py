@@ -128,11 +128,29 @@ class BinTeachArtifact:
     created_at_utc: str
     source_robot_lan1_ip: str
     source_platform_calibration_filename: str
+    source_platform_calibration_sha256: str
     source_camera_calibration_mode: str
     reference_convention: str
     dictionary_name: str
     marker_size_mm: float
     points: tuple[BinRoiPoint, BinRoiPoint, BinRoiPoint, BinRoiPoint]
+
+
+def bin_platform_warning(
+    template: BinTeachArtifact,
+    platform: PlatformCalibrationArtifact,
+) -> str | None:
+    """Compare recorded file identity, not physical alignment or deployment eligibility."""
+    if template.source_platform_calibration_sha256 == platform.sha256:
+        return None
+    return (
+        "WARNING: Bin/platform mismatch — different platform calibration.\n"
+        f"Taught with: {template.source_platform_calibration_filename}\n"
+        f"Selected: {platform.path.name}\n"
+        "Platform SHA-256 checksums differ. Portable reuse is allowed; verify the "
+        "same physical origin, X/Y directions, bin size and placement. "
+        "The ROI uses the selected platform, not the teaching station's transform."
+    )
 
 
 def place_bin_roi(
@@ -973,6 +991,7 @@ def load_bin_teach(path: Path, root: Path | None = None) -> BinTeachArtifact:
         created_at_utc=created_utc,
         source_robot_lan1_ip=str(address),
         source_platform_calibration_filename=platform_filename,
+        source_platform_calibration_sha256=platform["sha256"],
         source_camera_calibration_mode=calibration_mode,
         reference_convention=PLATFORM_REFERENCE_CONVENTION,
         dictionary_name=settings.dictionary_name,
