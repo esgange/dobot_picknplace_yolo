@@ -17,16 +17,18 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 4 groups data by purpose. Production rejects schemas 1–3;
+Strict item schema 5 groups data by purpose. Production rejects schemas 1–4;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
 | --- | --- |
 | `item` | Item name |
 | `model` | Paired filename, SHA-256, declared task, `file_sha256_only` verification |
-| `units` | Motion distances in mm, time in seconds, home joints in radians |
+| `units` | Motion distances in mm, time in seconds, home joints in radians, speed/acceleration in % |
 | `home` | Six named joint positions, feedback timestamp, recording time, source IP/node/topic |
 | `motion` | `standoff_height`, `zheight_offset`, `prepick_height`, `retract_height` |
+| `speed` | `travel_percent`, `approach_percent`, `retract_percent` (integers 1–100; initial 100/6/6) |
+| `acceleration` | The same three phase keys (integers 1–100; initial 100/100/100) |
 | `timing` | `pick_settling` |
 | `gripper` | `use_grip`, `grip_onpick` |
 | `retry` | `pose_candidates`: maximum ranked poses requested for controller retries |
@@ -42,7 +44,16 @@ already in that profile. Existing files are not rewritten or silently normalized
 
 `retry.pose_candidates: 3` requests up to three valid poses, not three extra
 retries after an initial pick. `yolo.max_detections` remains a separate inference
-cap. The controller currently requests/logs poses only; retry execution is pending.
+cap. Explicit controller real mode executes Home/vertical picking and retries
+only missed suction after confirmed final retract; default controller mode is
+TF-only debug. Teaching never commands motion.
+
+Travel rates apply to Home, XY transit, initial positioning and descent to
+pre-pick; approach rates apply only to final descent. Both retract stages retain
+retract rates even after early suction Stop. The controller supplies vendor
+per-command `v=`/`a=` while global SpeedFactor stays 100%. These are percentages,
+not absolute velocity/acceleration. Slow rates do not relax freshness/deadlines.
+Missing/invalid rates in recovery drafts are blank, never automatically filled.
 
 GUI recovery keeps validated fields and blanks unclear/missing ones; unknown
 booleans require an explicit choice. A clear old `retry_limit` is mapped for
@@ -63,8 +74,9 @@ Save copies and verifies file integrity; it does not execute weights. Explicit
 Load Model runs the private worker, discovers actual classes/task, and checks
 the selected class IDs. Checkboxes save only selected IDs in `yolo.class_ids`.
 Declaring a task cannot convert model outputs. Armed GUI/headless detection
-requires verified mask/OBB output and current station inputs; physical picking
-remains pending. These files do not authorize robot motion.
+requires verified mask/OBB output and current station inputs. Only explicit
+controller real launch plus operator actions authorize robot execution; files
+and teach/model loading do not authorize motion or replace collision safety.
 
 Save/Load remembers the last named artifact. A complete validated loaded or
 startup-restored profile already counts as saved; no extra Save is required for

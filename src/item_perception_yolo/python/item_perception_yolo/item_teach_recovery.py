@@ -41,7 +41,7 @@ def recover_item_fields(path, *, root=None):
         return draft
     if (type(payload) is not dict or payload.get("artifact_type") != "item_teach"
             or type(payload.get("schema_version")) is not int
-            or payload["schema_version"] not in (1, 2, 3, 4)):
+            or payload["schema_version"] not in (1, 2, 3, 4, 5)):
         draft.issues.append("Unrecognized item format/schema; all fields cleared")
         return draft
 
@@ -79,6 +79,12 @@ def recover_item_fields(path, *, root=None):
     accept("geometry_source", source, type(source) is str and source in ("mask", "obb", "none"))
     for key in core.MOTION_FIELDS:
         number("motion", key, unit=("distance", "mm"))
+    for key in core.SPEED_FIELDS:
+        number("speed", key, integer=True, low=1, high=100, unit=("speed", "%"))
+        value = group("acceleration").get(key)
+        valid = (group("units").get("acceleration") == "%"
+                 and type(value) is int and 1 <= value <= 100)
+        accept(f"acceleration_{key}", value, valid, "missing/invalid acceleration percentage")
     number("timing", "pick_settling", unit=("time", "s"))
     for key in core.GRIPPER_FIELDS:
         value = group("gripper").get(key)

@@ -68,6 +68,8 @@ def inspect_profile(path, *, root, robot_ip, publisher_node, deployment=False):
         "home_identity_policy": "recording_provenance_only",
         "requested_pose_count": profile["retry"]["pose_candidates"],
         "maximum_detections": profile["yolo"]["max_detections"],
+        "speed": profile["speed"],
+        "acceleration": profile["acceleration"],
         "execution_enabled": False, "inference_enabled": False,
         "message": "Profile and copied model integrity validated; no model inference or motion.",
     }
@@ -511,7 +513,9 @@ class RobotController(Node):
         home = self.kinematics.forward(profile["home"]["positions_rad"])
         current = (self.kinematics.forward(self.current_joints()) if self.debug
                    else self.hardware.current_pose())
-        targets = home_targets(current, home, profile["home"]["positions_rad"])
+        targets = home_targets(current, home, profile["home"]["positions_rad"],
+                               speed_percent=profile["speed"]["travel_percent"],
+                               acceleration_percent=profile["acceleration"]["travel_percent"])
         if not self.debug:
             for target in targets:
                 self.hardware.move(target, require_suction=require_suction)

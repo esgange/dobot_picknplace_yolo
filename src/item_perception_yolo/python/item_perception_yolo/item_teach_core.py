@@ -22,10 +22,13 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 4
+ITEM_SCHEMA_VERSION = 5
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "zheight_offset", "prepick_height", "retract_height")
+SPEED_FIELDS = ("travel_percent", "approach_percent", "retract_percent")
+NEW_PROFILE_SPEED = {"travel_percent": 100, "approach_percent": 6, "retract_percent": 6}
+NEW_PROFILE_ACCELERATION = dict.fromkeys(SPEED_FIELDS, 100)
 GRIPPER_FIELDS = ("use_grip", "grip_onpick")
 YOLO_FIELDS = ("confidence", "iou", "image_size", "max_detections", "class_ids")
 NEW_PROFILE_IMAGE_SIZE = 640  # Not an operator field; loaded profiles retain their exact value.
@@ -91,7 +94,8 @@ def _timestamp(value, label):
 
 
 def validate_settings(settings):
-    _fields(settings, ("item", "model_task", "motion", "timing", "gripper", "retry", "yolo",
+    _fields(settings, ("item", "model_task", "motion", "speed", "acceleration", "timing",
+                       "gripper", "retry", "yolo",
                        "geometry", "geometry_source", "quality"),
             "Item settings")
     _fields(settings["item"], ("name",), "item")
@@ -103,6 +107,8 @@ def validate_settings(settings):
     _fields(settings["motion"], MOTION_FIELDS, "motion")
     for field in MOTION_FIELDS:
         _number(settings["motion"][field], field)
+    validate_speed(settings["speed"])
+    validate_acceleration(settings["acceleration"])
     _fields(settings["timing"], ("pick_settling",), "timing")
     _number(settings["timing"]["pick_settling"], "pick_settling")
     _fields(settings["gripper"], GRIPPER_FIELDS, "gripper")
@@ -123,6 +129,18 @@ def validate_settings(settings):
     validate_quality(settings["quality"])
     if settings["retry"]["pose_candidates"] > settings["yolo"]["max_detections"]:
         raise ValueError("pose_candidates cannot exceed max_detections")
+
+
+def validate_speed(speed):
+    _fields(speed, SPEED_FIELDS, "speed")
+    for field in SPEED_FIELDS:
+        _integer(speed[field], field, low=1, high=100)
+
+
+def validate_acceleration(acceleration):
+    _fields(acceleration, SPEED_FIELDS, "acceleration")
+    for field in SPEED_FIELDS:
+        _integer(acceleration[field], f"acceleration {field}", low=1, high=100)
 
 
 def validate_quality(quality):
@@ -231,21 +249,24 @@ def record_home(names, positions, sec, nanosec, *, now_ns, robot_ip, publisher):
 def settings_from_profile(profile):
     return copy.deepcopy({
         "item": profile["item"], "model_task": profile["model"]["declared_task"],
-        **{key: profile[key] for key in ("motion", "timing", "gripper", "retry", "yolo",
+        **{key: profile[key] for key in ("motion", "speed", "acceleration", "timing",
+                                         "gripper", "retry", "yolo",
                                          "geometry", "geometry_source", "quality")},
     })
 
 
 def validate_profile(profile):
-    _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
-                      "units", "home", "motion", "timing", "gripper", "retry", "yolo",
-                      "geometry", "geometry_source", "quality", "controller_contract"),
-            "Item teach artifact")
-    if (type(profile["schema_version"]) is not int
+    if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 4 (retry.pose_candidates); "
-            "schemas 1–3 are unsupported; no compatibility reader")
+            "Item teach schema_version must be exactly 5 "
+            "(explicit speed/acceleration percentages); "
+            "schemas 1–4 are unsupported; no compatibility reader")
+    _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
+                      "units", "home", "motion", "speed", "acceleration", "timing",
+                      "gripper", "retry", "yolo",
+                      "geometry", "geometry_source", "quality", "controller_contract"),
+            "Item teach artifact")
     if profile["artifact_type"] != "item_teach":
         raise ValueError("Expected item_teach artifact")
     _timestamp(profile["created_at_utc"], "created_at_utc")
@@ -258,8 +279,9 @@ def validate_profile(profile):
         raise ValueError("Model SHA-256 must be exactly 64 lowercase hexadecimal characters")
     if model["verification"] != "file_sha256_only":
         raise ValueError("Stage-one model verification must be file_sha256_only")
-    if profile["units"] != {"distance": "mm", "time": "s", "home_joints": "rad"}:
-        raise ValueError("Item units must be mm, seconds, and radians for home joints")
+    if profile["units"] != {"distance": "mm", "time": "s", "home_joints": "rad",
+                            "speed": "%", "acceleration": "%"}:
+        raise ValueError("Item units must be mm, seconds, home radians and motion percentages")
     contract = profile["controller_contract"]
     if type(contract) is not dict or contract.get("motion_enabled") is not False or contract != {
         "stage": "profile_validation_only", "motion_enabled": False,
@@ -446,10 +468,12 @@ def save_item_profile(settings, home, model_source: Path, *, root: Path | None =
         "created_at_utc": timestamp, "item": copy.deepcopy(settings["item"]),
         "model": {"filename": model_output.name, "sha256": source_digest,
                   "declared_task": settings["model_task"], "verification": "file_sha256_only"},
-        "units": {"distance": "mm", "time": "s", "home_joints": "rad"},
+        "units": {"distance": "mm", "time": "s", "home_joints": "rad",
+                  "speed": "%", "acceleration": "%"},
         "home": copy.deepcopy(home),
         **{key: copy.deepcopy(settings[key])
-           for key in ("motion", "timing", "gripper", "retry", "yolo", "geometry",
+           for key in ("motion", "speed", "acceleration", "timing", "gripper", "retry",
+                       "yolo", "geometry",
                        "geometry_source", "quality")},
         "controller_contract": {
             "stage": "profile_validation_only", "motion_enabled": False,

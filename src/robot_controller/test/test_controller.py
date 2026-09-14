@@ -23,6 +23,8 @@ def pair(tmp_path):
         "item": {"name": "test"}, "model_task": "segment",
         "geometry_source": "mask", "quality": dict(core.QUALITY_DEFAULTS),
         "motion": dict.fromkeys(core.MOTION_FIELDS, 10.0),
+        "speed": dict(core.NEW_PROFILE_SPEED),
+        "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": 1.0},
         "gripper": {"use_grip": False, "grip_onpick": True},
         "retry": {"pose_candidates": 3},

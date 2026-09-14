@@ -84,7 +84,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-4 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-5 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -110,11 +110,20 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-4 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-5 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-4 profiles; they never recover old files.
+accept only complete schema-5 profiles; they never recover old files.
+
+Item Teach also edits per-motion speed and acceleration percentages (integers
+1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
+speed 6% and intermediate/final retract speed 6%; acceleration starts at 100%
+for all three phases. Save records separate `speed` and `acceleration` groups.
+The controller passes each target's `v=`/`a=` to MovLIO (and the Home-height
+RelMovLUser exception), keeping global SpeedFactor 100%. Loaded rates are
+preserved; missing/invalid rates in old GUI recovery drafts remain blank,
+never silently defaulted. Production rejects schemas 1–4.
 
 For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
 load while the automatic bin border is updating: the confirmed

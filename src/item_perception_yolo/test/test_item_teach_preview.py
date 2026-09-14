@@ -285,7 +285,7 @@ def test_visual_first_layout_has_one_settings_column_and_persistent_actions(wind
     assert isinstance(window.settings_column, gui.QtWidgets.QVBoxLayout)
     groups = [window.settings_column.itemAt(i).widget()
               for i in range(window.settings_column.count())]
-    assert len(groups) == 9
+    assert len(groups) == 11
     assert all(isinstance(g, gui.QtWidgets.QGroupBox) for g in groups)
     assert "Camera" in groups[0].title() and "Item / model" in groups[1].title()
     assert "YOLO" in groups[2].title() and "Item size" in groups[3].title()
@@ -731,6 +731,8 @@ def paired_teach(window, tmp_path, monkeypatch):
         "item": {"name": "paired_part"}, "model_task": "segment", "geometry_source": "mask",
         "quality": dict(core.QUALITY_DEFAULTS),
         "motion": dict(zip(core.MOTION_FIELDS, [90., 50., 60., 100.])),
+        "speed": dict(core.NEW_PROFILE_SPEED),
+        "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": .5}, "gripper": {"use_grip": True, "grip_onpick": True},
         "retry": {"pose_candidates": 3},
         "geometry": {"height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 45.},
@@ -804,6 +806,43 @@ def test_teach_prefill_never_loads_weights(window, paired_teach):
     window.node.inspect_model.assert_not_called()
     question.assert_not_called()
     assert not window.model_load_reserved and not window.node.yolo_enabled
+
+
+def test_new_speed_acceleration_controls_are_explicit_and_edits_disarm(window, paired_teach):
+    assert {key: int(window.inputs[key].text()) for key in core.SPEED_FIELDS} == {
+        "travel_percent": 100, "approach_percent": 6, "retract_percent": 6}
+    assert {key: int(window.inputs[f"acceleration_{key}"].text())
+            for key in core.SPEED_FIELDS} == dict.fromkeys(core.SPEED_FIELDS, 100)
+    path, _, _, _, _ = paired_teach
+    window._load_dialog()
+    finish_model_job(window)
+    window.yolo_toggle.setChecked(True)
+    for key, value in (("approach_percent", "9"), ("acceleration_retract_percent", "55")):
+        window.saved_path = path
+        window.node.disarm.reset_mock()
+        window.inputs[key].setText(value)
+        assert window.saved_path is None
+        assert not window.armed_toggle.isChecked()
+        window.node.disarm.assert_called()
+        assert window.node.yolo_enabled  # Routine settings do not interrupt read-only inference.
+    assert window._settings()["speed"]["approach_percent"] == 9
+    assert window._settings()["acceleration"]["retract_percent"] == 55
+
+
+def test_schema_four_gui_recovery_does_not_prefill_unknown_motion_rates(window, paired_teach):
+    path, profile, _, _, _ = paired_teach
+    profile["schema_version"] = 4
+    for key in ("speed", "acceleration"):
+        del profile[key]
+        del profile["units"][key]
+    path.write_text(yaml.safe_dump(profile))
+    window._load(path, prefill=True)
+    assert window.recovered_draft and window.saved_path is None
+    assert window.home == profile["home"]
+    for key in core.SPEED_FIELDS:
+        assert window.inputs[key].text() == ""
+        assert window.inputs[f"acceleration_{key}"].text() == ""
+    window.node.inspect_model.assert_not_called()
 
 
 @pytest.mark.parametrize("prefill", [False, True])
@@ -914,7 +953,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 4 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 5 and saved["retry"] == {"pose_candidates": 3}
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings
     assert path.read_bytes() != original and path.with_suffix(".pt").read_bytes() == model_original

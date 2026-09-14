@@ -23,7 +23,7 @@ from .item_teach_core import (
     item_directory, load_item_profile, record_home, save_item_profile,
     settings_from_profile, item_save_target, file_sha256,
     GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS,
-    NEW_PROFILE_IMAGE_SIZE,
+    NEW_PROFILE_IMAGE_SIZE, SPEED_FIELDS, NEW_PROFILE_SPEED, NEW_PROFILE_ACCELERATION,
 )
 from .platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, ui_state_path, workspace_root,
@@ -506,8 +506,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         descriptions = {
             "standoff_height": "Gripper compensation at final Link6 pick position",
             "zheight_offset": "Shared first/final above-item position",
-            "prepick_height": "Intermediate approach distance (execution definition pending)",
-            "retract_height": "Intermediate retract distance (execution definition pending)",
+            "prepick_height": "Distance above Link6 pick Z before final approach",
+            "retract_height": "Intermediate upward distance above Link6 pick Z",
         }
         for key in MOTION_FIELDS:
             field = QtWidgets.QLineEdit()
@@ -516,7 +516,25 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.inputs[key] = field
             motion.addRow(key, field)
 
-        grip = group("Gripper / timing", 7)
+        speed = group("Motion speeds — %", 7)
+        speed_labels = {"travel_percent": "Travel / Home", "approach_percent": "Final approach",
+                        "retract_percent": "Intermediate / final retract"}
+        for key in SPEED_FIELDS:
+            field = QtWidgets.QLineEdit(str(NEW_PROFILE_SPEED[key]))
+            field.setPlaceholderText("Required; integer 1–100%")
+            field.setToolTip("Per-motion speed percentage; global SpeedFactor remains 100%")
+            self.inputs[key] = field
+            speed.addRow(speed_labels[key], field)
+
+        acceleration = group("Motion acceleration — %", 8)
+        for key in SPEED_FIELDS:
+            field = QtWidgets.QLineEdit(str(NEW_PROFILE_ACCELERATION[key]))
+            field.setPlaceholderText("Required; integer 1–100%")
+            field.setToolTip("Per-motion acceleration percentage (MovLIO a=)")
+            self.inputs[f"acceleration_{key}"] = field
+            acceleration.addRow(speed_labels[key], field)
+
+        grip = group("Gripper / timing", 9)
         for key in GRIPPER_FIELDS:
             field = QtWidgets.QCheckBox()
             self.inputs[key] = field
@@ -526,7 +544,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.inputs["grip_onpick"].setEnabled(False)
         self.inputs["grip_onpick"].setToolTip("No effect when use_grip is false")
         settle = QtWidgets.QLineEdit()
-        settle.setPlaceholderText("Required; seconds (execution phase pending)")
+        settle.setPlaceholderText("Required; seconds to wait at pick if DI1 has not triggered")
         self.inputs["pick_settling"] = settle
         grip.addRow("pick_settling [s]", settle)
         grip_help = QtWidgets.QLabel(
@@ -547,7 +565,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.inputs[key] = field
             label = {"confidence": "Confidence (0–1)", "iou": "Overlap IoU (0–1)"}
             yolo.addRow(label.get(key, key), field)
-        retry = group("Pose candidates", 8)
+        retry = group("Pose candidates", 10)
         limit = QtWidgets.QLineEdit()
         limit.setPlaceholderText("Required; e.g. 3 = up to three ranked poses")
         self.inputs["pose_candidates"] = limit
@@ -1544,6 +1562,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         return {
             "item": {"name": self.name.text().strip()}, "model_task": self.task.currentData(),
             "motion": {key: self._number(key) for key in MOTION_FIELDS},
+            "speed": {key: self._number(key, int) for key in SPEED_FIELDS},
+            "acceleration": {key: self._number(f"acceleration_{key}", int) for key in SPEED_FIELDS},
             "timing": {"pick_settling": self._number("pick_settling")},
             "gripper": {key: self.inputs[key].isChecked() for key in GRIPPER_FIELDS},
             "retry": {"pose_candidates": self._number("pose_candidates", int)},
@@ -1665,13 +1685,15 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                settings["yolo"]["class_ids"])
         source = settings["geometry_source"]
         self._populate_sources([source] if source != "none" else [], source)
-        for section in ("motion", "timing", "retry", "yolo", "geometry", "quality"):
+        for section in ("motion", "speed", "timing", "retry", "yolo", "geometry", "quality"):
             for key, value in settings[section].items():
                 if key in ("class_ids", "image_size"):
                     continue
                 self.inputs[key].setText(
                     ",".join(map(str, value)) if isinstance(value, list) else str(value)
                 )
+        for key, value in settings["acceleration"].items():
+            self.inputs[f"acceleration_{key}"].setText(str(value))
         for key, value in settings["gripper"].items():
             self.inputs[key].setTristate(False)
             self.inputs[key].setChecked(value)

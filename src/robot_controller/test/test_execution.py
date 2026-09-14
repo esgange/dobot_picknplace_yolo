@@ -1,6 +1,7 @@
 """Synthetic transport/streams only: never instantiate a real Dobot transport."""
 
 import json
+from dataclasses import replace
 from datetime import datetime
 import math
 from pathlib import Path
@@ -16,7 +17,7 @@ from rclpy.task import Future
 from test_controller import pair as _pair_fixture
 from robot_controller import controller, hardware, profiles, ui_state
 from robot_controller.kinematics import Cr10Kinematics, pose_matrix, pose_values
-from robot_controller.motion import PickExecutor, home_targets, pick_targets
+from robot_controller.motion import PickExecutor, Target, home_targets, pick_targets
 
 
 pair = _pair_fixture  # Reuse the strict synthetic item writer.
@@ -30,12 +31,19 @@ def model():
 def settings():
     return {"motion": {"standoff_height": 90., "zheight_offset": 120.,
                        "prepick_height": 50., "retract_height": 100.},
+            "speed": {"travel_percent": 100, "approach_percent": 6, "retract_percent": 6},
+            "acceleration": {"travel_percent": 100, "approach_percent": 100,
+                             "retract_percent": 100},
             "gripper": {"use_grip": True, "grip_onpick": True},
             "timing": {"pick_settling": .2}}
 
 
 def plan(index=1):
     return pick_targets(pose_matrix([100, 200, 800, 180, 0, 0]), [.3, .4, .1], settings(), index)
+
+
+def home_plan(current, home, joints):
+    return home_targets(current, home, joints, speed_percent=100, acceleration_percent=100)
 
 
 class FakeHardware:
@@ -54,7 +62,8 @@ class FakeHardware:
         return True if not active else next(self.acquisitions)
 
     def move(self, target, **kw):
-        self.trace.append(("move", target.name, kw, float(target.matrix[2, 3])))
+        self.trace.append(("move", target.name, kw, float(target.matrix[2, 3]),
+                           target.speed_percent, target.acceleration_percent))
         if self.failed == target.name:
             raise ValueError("Injected hardware failure")
         self.pose = target.matrix.copy()
@@ -93,7 +102,7 @@ def test_pose_units_and_canonical_fk_chain():
 
 def test_home_height_keeps_current_xy_and_orientation_then_exact_joints():
     current, home = pose_matrix([10, 20, 30, 5, 6, 7]), model().forward([.1] * 6)
-    height, final = home_targets(current, home, [.1] * 6)
+    height, final = home_plan(current, home, [.1] * 6)
     assert height.relative_z and final.joints_rad == (.1,) * 6
     assert height.matrix[2, 3] == home[2, 3]
     np.testing.assert_allclose(height.matrix[:2, 3], current[:2, 3])
@@ -113,6 +122,31 @@ def test_pick_height_equations_and_home_attitude():
         pick_targets(np.eye(4), [.3, .4, .1], cfg, 1)
     with pytest.raises(ValueError, match="Home Z"):
         pick_targets(np.eye(4), [.3, .4, .1], settings(), 1)
+
+
+def test_motion_rates_are_assigned_to_each_pick_stage_and_survive_early_retract():
+    cfg = settings()
+    cfg["speed"] = {"travel_percent": 90, "approach_percent": 7, "retract_percent": 8}
+    cfg["acceleration"] = {"travel_percent": 80, "approach_percent": 40, "retract_percent": 30}
+    targets = pick_targets(pose_matrix([100, 200, 800, 180, 0, 0]), [.3, .4, .1], cfg, 1)
+    assert [t.speed_percent for t in targets] == [90, 90, 90, 7, 8, 8]
+    assert [t.acceleration_percent for t in targets] == [80, 80, 80, 40, 30, 30]
+    fake = FakeHardware(stopped_z=.35)
+    execute(fake, cfg=cfg, plans=[targets])
+    moves = [v for v in fake.trace if v[0] == "move"]
+    assert [v[4:] for v in moves] == [(90, 80)] * 3 + [(7, 40), (8, 30), (8, 30)]
+    assert all(v[3] == .35 for v in moves[-2:])
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("speed_percent", 0), ("speed_percent", 101), ("speed_percent", 6.), ("speed_percent", True),
+    ("acceleration_percent", 0), ("acceleration_percent", 101),
+    ("acceleration_percent", 100.), ("acceleration_percent", False),
+])
+def test_target_rates_reject_invalid_values(field, bad):
+    values = {"speed_percent": 6, "acceleration_percent": 100, field: bad}
+    with pytest.raises(ValueError, match="explicit integer"):
+        Target("test", np.eye(4), **values)
 
 
 @pytest.mark.parametrize("use_grip,close", [(False, False), (False, True),
@@ -236,20 +270,56 @@ def test_initialization_order_and_only_first_two_best_effort(monkeypatch):
 
 def test_home_transport_uses_relative_z_then_joint_movlio_and_confirms_completion(monkeypatch):
     transport, _, pose, clock = synthetic_transport(monkeypatch)
-    for target in home_targets(pose, pose, [.1] * 6):
+    for target in home_plan(pose, pose, [.1] * 6):
         transport.move(target)
     relative = transport.clients["RelMovLUser"].call_async.call_args.args[0]
     assert relative.a == relative.b == relative.c == 0
     final = transport.clients["MovLIO"].call_async.call_args.args[0]
-    assert final.mode and final.mdis == [] and final.param_value == ["user=0", "tool=0"]
+    assert final.mode and final.mdis == []
+    assert relative.param_value == final.param_value == ["user=0", "tool=0", "v=100", "a=100"]
     assert final.a == pytest.approx(math.degrees(.1))
     assert clock[0] >= .6 and not transport.moving
+
+
+def test_editable_home_rates_reach_both_relative_and_movlio_services(monkeypatch):
+    transport, _, pose, _ = synthetic_transport(monkeypatch)
+    targets = home_targets(pose, pose, [.1]*6, speed_percent=42, acceleration_percent=73)
+    for target in targets:
+        transport.move(target)
+    for name in ("RelMovLUser", "MovLIO"):
+        request = transport.clients[name].call_async.call_args.args[0]
+        assert request.param_value == ["user=0", "tool=0", "v=42", "a=73"]
+
+
+def test_default_and_edited_pick_rates_reach_each_movlio_command(monkeypatch):
+    transport, _, pose, _ = synthetic_transport(monkeypatch)
+    for target in plan():
+        transport.move(replace(target, matrix=pose))
+    requests = transport.clients["MovLIO"].call_async.call_args_list
+    assert [c.args[0].param_value for c in requests] == [
+        ["user=0", "tool=0", f"v={v}", "a=100"] for v in (100, 100, 100, 6, 6, 6)]
+    transport.move(replace(plan()[3], matrix=pose, speed_percent=11, acceleration_percent=25))
+    request = transport.clients["MovLIO"].call_async.call_args.args[0]
+    assert request.param_value == ["user=0", "tool=0", "v=11", "a=25"]
+    transport.clients["SpeedFactor"].call_async.assert_not_called()
+
+
+def test_controller_home_uses_loaded_profile_motion_rates(pair):
+    _, _, profile = pair
+    profile["speed"]["travel_percent"] = 42
+    profile["acceleration"]["travel_percent"] = 73
+    fake = FakeHardware()
+    fake.pose = model().forward(profile["home"]["positions_rad"])
+    node = NS(check_cancelled=lambda: None, kinematics=model(), debug=False, hardware=fake)
+    targets = controller.RobotController._home(node, profile)
+    assert [(t.speed_percent, t.acceleration_percent) for t in targets] == [(42, 73)] * 2
+    assert [v[4:] for v in fake.trace] == [(42, 73)] * 2
 
 
 def test_di1_before_descent_stops_without_dispatching_descent(monkeypatch):
     transport, feed, pose, _ = synthetic_transport(monkeypatch)
     feed["digital_input_bits"] = 1
-    target = home_targets(pose, pose, [.1] * 6)[1]
+    target = home_plan(pose, pose, [.1] * 6)[1]
     assert transport.move(target, stop_on_suction=True)
     transport.clients["Stop"].call_async.assert_called_once()
     transport.clients["MovLIO"].call_async.assert_not_called()
@@ -264,14 +334,14 @@ def test_di1_during_descent_waits_for_stop_and_fresh_stationary_feedback(monkeyp
         feed["digital_input_bits"] = 1
         return original
     transport.clients["MovLIO"].call_async.side_effect = dispatch
-    assert transport.move(home_targets(pose, pose, [.1] * 6)[1], stop_on_suction=True)
+    assert transport.move(home_plan(pose, pose, [.1] * 6)[1], stop_on_suction=True)
     assert clock[0] >= .3 and not transport.moving
     transport.clients["Stop"].call_async.assert_called_once()
 
 
 def test_stop_rejection_and_lost_suction_block_retract(monkeypatch):
     transport, feed, pose, _ = synthetic_transport(monkeypatch)
-    target = home_targets(pose, pose, [.1] * 6)[1]
+    target = home_plan(pose, pose, [.1] * 6)[1]
     with pytest.raises(ValueError, match="Suction lost"):
         transport.move(target, require_suction=True)
     feed["digital_input_bits"] = 1
@@ -603,7 +673,7 @@ def test_unknown_duplicate_command_provider_and_legacy_clients_are_blocked():
 def test_acknowledgement_with_nonempty_queue_is_not_motion_completion(monkeypatch):
     transport, feed, pose, _ = synthetic_transport(monkeypatch)
     feed["isRunQueuedCmd"] = 1
-    target = home_targets(pose, pose, [.1]*6)[1]
+    target = home_plan(pose, pose, [.1]*6)[1]
     with pytest.raises(ValueError, match="completion timeout"):
         transport.move(target)
     assert transport.moving  # Caller must contain the ambiguous in-progress command.
@@ -615,7 +685,7 @@ def test_bad_ik_blocks_motion_before_command_dispatch(monkeypatch):
     future.set_result(NS(res=0, robot_return="0,{0,0,0,0,0,0},InverseKin();"))
     transport.clients["InverseKin"].call_async.return_value = future
     with pytest.raises(ValueError, match="InverseKin does not match"):
-        transport.move(home_targets(pose, pose, [.1]*6)[0])
+        transport.move(home_plan(pose, pose, [.1]*6)[0])
     transport.clients["RelMovLUser"].call_async.assert_not_called()
     assert not transport.moving
 
@@ -662,7 +732,7 @@ def test_stop_feedback_drift_blocks_retract_even_with_idle_flags(monkeypatch):
 
     transport.node.feedback_snapshot = snapshot
     with pytest.raises(ValueError, match="did not confirm stationary"):
-        transport.move(home_targets(pose, pose, [.1]*6)[1], stop_on_suction=True)
+        transport.move(home_plan(pose, pose, [.1]*6)[1], stop_on_suction=True)
     assert transport.moving
 
 

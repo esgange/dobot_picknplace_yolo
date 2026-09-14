@@ -2359,6 +2359,64 @@ Never use a floating “latest” version in an issue, script, or deployment not
   also satisfy every actual candidate. No real robot/camera/RViz or operator
   weight deserialization. Scoped source commit and verified push follow rule 8.
 
+### 2026-09-14 — Editable per-motion speed and acceleration in Item Teach
+
+- User extended the implemented controller routine: final approach and both
+  retract stages start at 6% speed, all remaining motion at 100%, with editable
+  acceleration initially 100% throughout. Add rule 52 superseding only the
+  earlier item schema-4/preserved-schema restriction for these new mandatory
+  motion fields; existing pick/height/freshness/Stop safety contracts remain.
+- Item Teach presents separate speed and acceleration groups in the routine
+  portion of its one-column visual-first form. Each saves explicit integer
+  travel_percent, approach_percent, retract_percent in 1–100. New form values
+  are speed 100/6/6 and acceleration 100/100/100; loaded values are preserved,
+  edits disarm/invalidate saved eligibility without interrupting read-only
+  inference, automatic saving or robot commands.
+- Item artifacts advance to strict schema 5 with speed/acceleration percent
+  units. Production readers reject schemas 1–4 with no compatibility reader,
+  aliases or inferred rates. GUI-only recovery still retains independently
+  valid known fields; missing/invalid/unknown-unit motion rates stay blank until
+  explicit correction and Save. Shared UI schema 6, filename-only controller
+  schema 1, camera schema 7 and platform/bin schema 3 remain unchanged.
+- Controller targets carry speed and acceleration through Home/pick generation
+  and early-contact retract adjustment. Travel includes both Home stages,
+  XY transit, initial positioning and descent to pre-pick. Approach is only
+  pre-pick-to-pick descent; retract includes intermediate and final retract,
+  whether successful or missed. Canonical MovLIO and the approved Home-height
+  RelMovLUser carry v=/a= in param_value; global SpeedFactor stays 100%, with no
+  new global setting calls. The vendored Dobot V4.6.5 TCP interface reference
+  defines v/a as integer 1–100 percentages; speed= would mean mm/s and is not
+  substituted. No vendor source patch or acceleration override is introduced.
+- Explicit workstation-only update, authorized by the user as an Item Teach
+  edit: preserve the water document names, model weights/hashes and all existing
+  settings, updating only schema, percent units and new rate groups in the
+  offline teach YAML and its runtime_teach copy. Retain each original YAML/.pt
+  pair in a hidden previous-version ZIP. These artifacts/weights remain outside
+  source commits. Do not fix the unrelated zheight_offset=50/retract_height=100
+  mismatch: Pick remains blocked until the operator corrects and saves heights.
+- Verify rate validation/boundaries/mandatory keys/units, strict older-schema
+  rejection, schema-5 round trips/overwrites and untouched paired weights,
+  GUI controls/prefill/recovery/disarming, per-stage v/a command dispatch,
+  editable Home rates and early Stop/retract preservation using only synthetic
+  services/streams/artifacts and offscreen GUI. Slow movement does not expand
+  motion or candidate-age deadlines; expired later batch poses still abort.
+  Package/root builds, package tests, compilation/lint and git diff --check are
+  required before the standing scoped source commit and verified push. No
+  physical robot/camera/RViz, operator weight execution or offline milestone.
+
+- Verification: all 351 perception and 65 controller tests pass (416 pytest
+  cases, 418 packaged results including CTest wrappers), zero failures/errors/
+  skips. Package-up-to-controller and clean-environment root builds pass all
+  6/14 packages. Python compilation, all changed runtime/controller-test files
+  and all changed Python lines pass flake8; 51 pre-existing unchanged-line test
+  diagnostics are excluded from the scoped lint gate, not silently repaired.
+  Installed offline/deployment readers and the runtime latest-station catalog
+  validate both updated water profiles. Original-to-updated comparison proves
+  all unrelated settings unchanged; both previous-version ZIPs and their model
+  hashes verify, and live model inodes/sizes remain unchanged. The existing
+  height mismatch still blocks Pick. git diff --check and scoped staged review
+  precede the standing source commit/push; no hardware/weights were executed.
+
 ### Future entry template
 
 ```text

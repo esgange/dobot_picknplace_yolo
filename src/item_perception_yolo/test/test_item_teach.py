@@ -23,6 +23,8 @@ def settings():
         "geometry_source": "none", "quality": dict(core.QUALITY_DEFAULTS),
         "motion": {"standoff_height": 150.0, "zheight_offset": 250.0,
                    "prepick_height": 50.0, "retract_height": 80.0},
+        "speed": dict(core.NEW_PROFILE_SPEED),
+        "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": 0.5},
         "gripper": {"use_grip": True, "grip_onpick": True},
         "retry": {"pose_candidates": 3},
@@ -64,7 +66,7 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
-    assert profile["schema_version"] == 4
+    assert profile["schema_version"] == 5
     assert profile["retry"] == {"pose_candidates": 3}
     assert "retry_limit" not in path.read_text()
 
@@ -251,9 +253,9 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    for old_version in (1, 2, 3):
+    for old_version in (1, 2, 3, 4):
         profile["schema_version"] = old_version
-        with pytest.raises(ValueError, match="exactly 4"):
+        with pytest.raises(ValueError, match="exactly 5"):
             core.validate_profile(profile)
 
 
@@ -280,7 +282,7 @@ def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair)
     assert draft.model_path == path.with_suffix(".pt")
     assert draft.model_sha256 == profile["model"]["sha256"]
     assert "retry_limit" in " ".join(draft.issues)
-    with pytest.raises(ValueError, match="exactly 4"):
+    with pytest.raises(ValueError, match="exactly 5"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -360,6 +362,10 @@ def test_recovery_never_uses_unverified_model_bytes(pair, failure):
     ("yolo", "class_ids", [0, 0]), ("yolo", "class_ids", [-1]),
     ("geometry", "height", 0), ("geometry", "width", -1),
     ("geometry", "tolerance", -1), ("geometry", "pickdepth_radius", 0),
+    ("speed", "travel_percent", 0), ("speed", "approach_percent", 101),
+    ("speed", "retract_percent", 6.0), ("speed", "approach_percent", True),
+    ("acceleration", "travel_percent", -1), ("acceleration", "approach_percent", "100"),
+    ("acceleration", "retract_percent", 101), ("acceleration", "approach_percent", False),
 ])
 def test_strict_grouped_settings(settings, section, key, value):
     settings[section][key] = value
@@ -369,6 +375,66 @@ def test_strict_grouped_settings(settings, section, key, value):
 
 def test_disabled_grip_retains_but_does_not_enable_onpick(settings):
     settings["gripper"] = {"use_grip": False, "grip_onpick": True}
+    core.validate_settings(settings)
+
+
+def test_rate_settings_round_trip_and_explicit_overwrite_preserve_other_fields(pair):
+    root, _, path, original = pair
+    settings = core.settings_from_profile(original)
+    settings["speed"] = {"travel_percent": 85, "approach_percent": 4, "retract_percent": 9}
+    settings["acceleration"] = {"travel_percent": 95, "approach_percent": 30, "retract_percent": 40}
+    model = path.with_suffix(".pt")
+    inode = model.stat().st_ino
+    target = save_target(pair)
+    _, saved = core.save_item_profile(settings, original["home"], model,
+                                      root=root, save_target=target)
+    assert core.load_item_profile(path, root=root)[0] == saved
+    assert saved["speed"] == settings["speed"]
+    assert saved["acceleration"] == settings["acceleration"]
+    assert saved["units"]["speed"] == saved["units"]["acceleration"] == "%"
+    assert model.stat().st_ino == inode
+    for group in ("motion", "home", "timing", "gripper", "retry", "yolo", "geometry", "quality"):
+        assert saved[group] == original[group]
+
+
+@pytest.mark.parametrize("group", ["speed", "acceleration"])
+@pytest.mark.parametrize("failure", ["missing", "missing_field", "extra_field", "wrong_units"])
+def test_rates_are_mandatory_without_runtime_defaults(pair, group, failure):
+    root, _, path, profile = pair
+    if failure == "missing":
+        del profile[group]
+    elif failure == "missing_field":
+        del profile[group]["approach_percent"]
+    elif failure == "extra_field":
+        profile[group]["unknown"] = 100
+    else:
+        profile["units"][group] = "mm/s" if group == "speed" else "mm/s2"
+    path.write_text(yaml.safe_dump(profile))
+    with pytest.raises(ValueError):
+        core.load_item_profile(path, root=root)
+
+
+def test_schema_four_recovery_leaves_unknown_rates_blank_and_does_not_write(pair):
+    root, _, path, profile = pair
+    profile["schema_version"] = 4
+    for key in ("speed", "acceleration"):
+        del profile[key]
+        del profile["units"][key]
+    path.write_text(yaml.safe_dump(profile))
+    original = path.read_bytes()
+    draft = recover_item_fields(path, root=root)
+    assert draft.home == profile["home"] and draft.values["pose_candidates"] == 3
+    for key in core.SPEED_FIELDS:
+        assert draft.values[key] is None
+        assert draft.values[f"acceleration_{key}"] is None
+    assert path.read_bytes() == original
+    with pytest.raises(ValueError, match="exactly 5"):
+        core.load_item_profile(path, root=root)
+
+
+@pytest.mark.parametrize("group", ["speed", "acceleration"])
+def test_valid_percentage_boundaries(settings, group):
+    settings[group] = {"travel_percent": 1, "approach_percent": 100, "retract_percent": 1}
     core.validate_settings(settings)
 
 

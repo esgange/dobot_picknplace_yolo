@@ -24,7 +24,7 @@ Loading never moves the robot. Launch paths can be supplied
 explicitly using `item_teach_file:=... bin_teach_file:=...` in GUI mode.
 
 Headless loads one complete deployment set automatically from flat root
-`runtime_teach/`: exactly one strict schema-4 item YAML, its same-stem hash-bound
+`runtime_teach/`: exactly one strict schema-5 item YAML, its same-stem hash-bound
 `.pt`, and one strict schema-3 bin YAML. Extra/ambiguous artifacts, symlinks and
 partitions are rejected; no file overrides or implicit profile choice. Station
 camera/platform calibration comes from the shared latest selector in
@@ -42,7 +42,7 @@ the connected robot and sets SpeedFactor 100%.** Check the physical safety area
 and independently start canonical bringup first. Headless never auto-homes/picks.
 Do not run Motion Debug or Gripper Control alongside real controller.
 
-Schema 4 retains its historical non-executing controller_contract as validation
+Schema 5 retains its historical non-executing controller_contract as validation
 metadata, not movement permission. Only explicit real launch mode plus an
 operator action authorize execution; loading a teach file never authorizes it.
 
@@ -73,6 +73,18 @@ to Home Z, preserving actual XY/attitude; MovLIO joint mode then reaches the exa
 six taught Home joints. This relative-Z segment is the user-approved exception
 to MovLIO-only picking. All pick/transit/retract segments use MovLIO, with
 confirmed queue-idle, fresh stationary/target feedback, not service acceptance.
+
+Item Teach saves separate `speed` and `acceleration` groups, each with explicit
+integer `travel_percent`, `approach_percent`, `retract_percent` in 1–100.
+Initial speed values are 100/6/6; initial acceleration is 100/100/100. Travel
+includes Home, XY transit, initial positioning and descent to pre-pick. Approach
+means only pre-pick to pick; retract applies to both intermediate and final
+retract, including early-contact adjusted targets and missed-pick recovery.
+Each command carries `v=<speed>` and `a=<acceleration>` in param_value, including
+Home-height RelMovLUser; no per-phase global setting changes. These are vendor
+percentages, not mm/s or mm/s². Missing values never fall back: production requires
+schema 5 and rejects schemas 1–4. Rates do not relax target-age/motion deadlines
+or collision checks; slow motion can exhaust a batch's configured freshness.
 
 Pick holds Home orientation and uses robot base Z, never the item's long-axis
 orientation as tool attitude. Convert the complete platform XYZ into base before

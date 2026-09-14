@@ -171,7 +171,8 @@ class DobotHardware:
             self.moving = False
             return True
         self.moving = True  # A timeout is ambiguous acceptance: Stop must be attempted.
-        params = ["user=0", "tool=0"]
+        params = ["user=0", "tool=0", f"v={target.speed_percent}",
+                  f"a={target.acceleration_percent}"]
         if target.relative_z:
             actual = self.current_pose()
             self.call("RelMovLUser", a=0.0, b=0.0,
@@ -216,6 +217,8 @@ class DobotHardware:
         self.moving = False
         self.node.events.record("INFO", "motion_completed", target.name,
                                 target=values, joint_target=target.joints_rad is not None,
+                                speed_percent=target.speed_percent,
+                                acceleration_percent=target.acceleration_percent,
                                 suction_stop=suction_detected)
         return suction_detected
 

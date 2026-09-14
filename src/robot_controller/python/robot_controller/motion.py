@@ -6,21 +6,32 @@ import math
 import numpy as np
 
 from camera_calibration_gui.calibration_core import rotation_angle_deg
+from item_perception_yolo.item_teach_core import validate_speed, validate_acceleration
 
 
 @dataclass(frozen=True)
 class Target:
     name: str
     matrix: np.ndarray
+    speed_percent: int
+    acceleration_percent: int
     joints_rad: tuple | None = None
     relative_z: bool = False
 
+    def __post_init__(self):
+        if type(self.speed_percent) is not int or not 1 <= self.speed_percent <= 100:
+            raise ValueError("Target speed must be an explicit integer from 1 to 100 percent")
+        if (type(self.acceleration_percent) is not int
+                or not 1 <= self.acceleration_percent <= 100):
+            raise ValueError("Target acceleration must be an explicit integer from 1 to 100 "
+                             "percent")
 
-def home_targets(current, home, joints):
+
+def home_targets(current, home, joints, *, speed_percent, acceleration_percent):
     height = current.copy()
     height[2, 3] = home[2, 3]
-    return (Target("home_height", height, relative_z=True),
-            Target("home", home.copy(), tuple(joints)))
+    return (Target("home_height", height, speed_percent, acceleration_percent, relative_z=True),
+            Target("home", home.copy(), speed_percent, acceleration_percent, tuple(joints)))
 
 
 def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
@@ -29,6 +40,8 @@ def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
 
 
 def pick_targets(home, item_in_base, settings, candidate_index):
+    validate_speed(settings["speed"])
+    validate_acceleration(settings["acceleration"])
     motion = settings["motion"]
     if motion["zheight_offset"] < max(motion["prepick_height"], motion["retract_height"]):
         raise ValueError("zheight_offset must be >= prepick_height and retract_height")
@@ -43,10 +56,18 @@ def pick_targets(home, item_in_base, settings, candidate_index):
         raise ValueError("Home Z must be at or above every pick clearance/retract height")
     names = ("transit", "initial", "prepick", "pick", "retract", "final")
     targets = []
-    for name, z in zip(names, heights):
+    speeds = settings["speed"]
+    percentages = (speeds["travel_percent"],) * 3 + (
+        speeds["approach_percent"], speeds["retract_percent"], speeds["retract_percent"])
+    accelerations = settings["acceleration"]
+    acceleration_percentages = (accelerations["travel_percent"],) * 3 + (
+        accelerations["approach_percent"], accelerations["retract_percent"],
+        accelerations["retract_percent"])
+    for name, z, percentage, acceleration in zip(names, heights, percentages,
+                                                 acceleration_percentages):
         matrix = home.copy()
         matrix[:3, 3] = [item_in_base[0], item_in_base[1], z]
-        targets.append(Target(f"p{candidate_index}_{name}", matrix))
+        targets.append(Target(f"p{candidate_index}_{name}", matrix, percentage, acceleration))
     return tuple(targets)
 
 
@@ -87,7 +108,9 @@ class PickExecutor:
             for target in plan[4:]:
                 matrix = target.matrix.copy()
                 matrix[2, 3] = max(stopped_z, matrix[2, 3])
-                self.hardware.move(Target(target.name, matrix), require_suction=acquired)
+                self.hardware.move(Target(target.name, matrix, target.speed_percent,
+                                          target.acceleration_percent),
+                                   require_suction=acquired)
                 stopped_z = matrix[2, 3]
             if acquired:
                 if self.finish_home:
