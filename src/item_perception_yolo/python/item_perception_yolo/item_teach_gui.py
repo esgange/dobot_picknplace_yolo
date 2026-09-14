@@ -35,6 +35,7 @@ from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matri
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
 from .bin_teach_core import bin_platform_warning
+from .station_calibration import latest_station_calibration
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -338,11 +339,18 @@ class ItemTeachWindow(QtWidgets.QWidget):
         camera_row.addWidget(connect_camera)
         station.addRow(camera_row)
         self.platform_path = QtWidgets.QLineEdit()
+        self.calibration_camera_path = QtWidgets.QLineEdit()
         self.bin_path = QtWidgets.QLineEdit()
-        station_fields = (
-            ("Platform teach", self.platform_path, workspace_root() / "calibration"),
-            ("Bin teach", self.bin_path, workspace_root() / "offline_teach/bin_teach"),
-        )
+        for label, field in (("Latest platform", self.platform_path),
+                             ("Camera calibration", self.calibration_camera_path)):
+            field.setReadOnly(True)
+            field.setPlaceholderText("Automatically selected from calibration/")
+            station.addRow(label, field)
+        reload_station = QtWidgets.QPushButton("Reload Latest Calibration")
+        reload_station.clicked.connect(self._update_station_preview)
+        station.addRow(reload_station)
+        station_fields = (("Bin teach", self.bin_path,
+                           workspace_root() / "offline_teach/bin_teach"),)
         for label, field, directory in station_fields:
             row = QtWidgets.QHBoxLayout()
             field.setReadOnly(True)
@@ -365,7 +373,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.bin_platform_warning.hide()
         station.addRow(self.bin_platform_warning)
         self.station_status = QtWidgets.QLabel(
-            "Bin ROI: select platform and bin teach files; preview connects automatically."
+            "Station calibration loads automatically; select a bin teach for its ROI."
         )
         self.station_status.setWordWrap(True)
         station.addRow(self.station_status)
@@ -611,8 +619,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if state is not None and state.item_preview_camera_prefix is not None:
             self.camera_prefix.setText(state.item_preview_camera_prefix)
         if state is not None and state.item_platform_filename is not None:
-            self.platform_path.setText(
-                str(workspace_root() / "calibration" / state.item_platform_filename))
             self.bin_path.setText(
                 str(workspace_root() / "offline_teach/bin_teach" / state.item_bin_filename))
         if state is not None and state.item_profile_filename is not None:
@@ -620,9 +626,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         else:
             self._message("Load model + Connect RGB, then enable YOLO Detect. "
                           "Dimensions may be blank for detection; pose checks require them.")
-        # Restore both paths before reacting. This is the read-only station-preview
+        # Restore the bin before latest-station discovery. This is the read-only station-preview
         # exception to unapplied prefill; model execution and arming stay explicit.
-        self.platform_path.textChanged.connect(self._update_station_preview)
         self.bin_path.textChanged.connect(self._update_station_preview)
         self._update_station_preview()
         self.timer = QtCore.QTimer(self)
@@ -937,7 +942,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 field.setText(path)
 
     def _update_station_preview(self, *_):
-        """Validate selected/restored artifacts once and subscribe without an Apply click."""
+        """Select latest station once, validate the bin and subscribe without Apply."""
         self.yolo_toggle.setChecked(False)
         self.node.disarm()
         self.armed_toggle.setChecked(False)
@@ -948,14 +953,27 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.bin_platform_warning.clear()
         self.bin_platform_warning.setToolTip("")
         self.bin_platform_warning.hide()
-        platform, bin_path = self.platform_path.text(), self.bin_path.text()
-        if not platform or not bin_path:
-            self.station_status.setText(
-                "Bin ROI: select platform and bin teach files; preview connects automatically."
-            )
-            return
+        platform, bin_path = "", self.bin_path.text()
+        self.platform_path.clear()
+        self.calibration_camera_path.clear()
+        self.platform_path.setToolTip("")
+        self.calibration_camera_path.setToolTip("")
         try:
-            self.node.apply_station(platform, bin_path)
+            latest = latest_station_calibration(root=workspace_root())
+            platform = str(latest.platform.path)
+            self.platform_path.setText(platform)
+            self.calibration_camera_path.setText(str(latest.camera.path))
+            self.platform_path.setToolTip(platform)
+            self.calibration_camera_path.setToolTip(str(latest.camera.path))
+            self.node.events.record(
+                "INFO", "item_latest_station_selected", "Selected newest hash-bound calibration",
+                platform=platform, platform_sha256=latest.platform.sha256,
+                camera=str(latest.camera.path), camera_sha256=latest.camera.sha256)
+            if not bin_path:
+                self.station_status.setText(
+                    "Latest platform/camera loaded. Select a bin teach to display its ROI.")
+                return
+            self.node.apply_station(platform, bin_path, expected_station=latest)
             self.camera_prefix.setText(self.node.camera_prefix)
             write_item_station_state(ui_state_path(), Path(platform).name, Path(bin_path).name)
             write_item_preview_state(ui_state_path(), self.node.camera_prefix)
@@ -990,7 +1008,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.bin_platform_warning.clear()
             self.bin_platform_warning.setToolTip("")
             self.bin_platform_warning.hide()
-            message = f"Bin ROI hidden: {exc}. Select valid platform/bin teach files."
+            message = f"Bin ROI hidden: {exc}. Check latest station calibration and bin teach."
             self.station_status.setText(message)
             self._message(message)
             self.node.events.record("WARNING", "item_station_preview_invalid", message,

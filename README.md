@@ -151,17 +151,26 @@ details expandable; their explicit Apply and capture/save workflow is unchanged.
 RGB keeps mask shading and one mask-derived rectangle (or the native oriented
 rectangle for OBB), with centered long-X/short-Y lines and a pick-point dot.
 No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the
-same image, including with YOLO OFF. Selecting both station/bin files automatically
-validates them and subscribes to their calibrated camera; there is no Apply button.
+same image, including with YOLO OFF. Item Teach automatically selects the latest
+platform for this robot and latest calibration for that platform's camera from
+root `calibration/`; filenames' UTC timestamps define newest, not modification
+times. Select only the portable bin file to validate and connect its calibrated
+camera; there is no platform picker or Apply button. Read-only paths show the
+chosen pair; **Reload Latest Calibration** reselects it, stopping YOLO/disarming
+and clearing old previews first. Calibration selection is not a live watcher.
+The newest camera must match the platform's recorded hash: after recalibrating
+that camera, re-teach the platform. Invalid/missing/ambiguous files fail visibly;
+there is no older-file fallback or mixing of calibration transforms.
 The bin file records its teaching platform's filename, SHA-256 and transform.
 If the selected platform's SHA-256 differs, Item Teach shows an amber warning
 under the file selectors with both filenames (full hashes in its tooltip and
 Activity event). Intentional cross-station reuse stays allowed: verify the
 same physical origin, X/Y directions, bin size and placement. This checks file
 identity, not physical alignment; it never substitutes the original transform.
-Valid saved station/bin selections also reconnect this read-only preview at
-startup. The border appears when fresh RGB, CameraInfo and required TF arrive;
-this never launches cameras, executes a model or arms the pose service. The
+The saved bin selection reconnects this preview using the latest station pair at
+startup, not an older platform prefill. The border appears when fresh RGB,
+CameraInfo and required TF arrive; this never launches cameras, executes a model
+or arms the pose service. The
 bin-border geometry uses the same shared platform-Z=0 construction as Bin Teach:
 saved metric XY is placed using only this station's full platform/camera chain,
 preserving tilt and height. No source-station transform, marker detection, depth
@@ -198,8 +207,10 @@ Unsaved text-box edits are not autosaved; restart prefills the selected saved
 teach YAML and camera prefix. Station/bin selections are the narrow automatic
 read-only-preview exception; item settings, model execution and arming remain unapplied.
 
-`item_detect.launch.py` runs the same detector headlessly with explicit artifact
-paths, `trusted_model:=true` and `armed:=true`. The controller can request up to
+`item_detect.launch.py` uses the same automatic station selection, with explicit
+item/bin artifact paths, `trusted_model:=true` and `armed:=true`; its
+`platform_teach_file` argument is removed. Platform/Bin Teach retain their
+explicit calibration selection. The controller can request up to
 the taught `pose_candidates` count through its read-only `/robot_controller/request_item_poses`
 Trigger action, while remaining `PROFILE_VALIDATED_NOT_ARMED` for robot motion.
 No training, robot commands or pick/I/O execution is included. Private inference

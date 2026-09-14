@@ -1198,8 +1198,14 @@ def automatic_station_fixture(window, monkeypatch, source_sha="a" * 64):
     station_write, prefix_write = MagicMock(), MagicMock()
     monkeypatch.setattr(gui, "write_item_station_state", station_write)
     monkeypatch.setattr(gui, "write_item_preview_state", prefix_write)
+    latest = SimpleNamespace(
+        platform=SimpleNamespace(path=Path("/selected/platform_calibration_test.yaml"),
+                                 sha256="a" * 64),
+        camera=SimpleNamespace(path=Path("/selected/camera_to_hand_calibration_test.yaml"),
+                               sha256="c" * 64))
+    monkeypatch.setattr(gui, "latest_station_calibration", MagicMock(return_value=latest))
 
-    def apply(platform, bin_path):
+    def apply(platform, bin_path, *, expected_station=None):
         window.node.applied = SimpleNamespace(
             platform=SimpleNamespace(path=Path(platform), sha256="a" * 64),
             camera=SimpleNamespace(settings=SimpleNamespace(camera_prefix="station_camera")))
@@ -1216,12 +1222,15 @@ def test_station_files_automatically_enable_roi_when_stream_arrives(window, monk
     station_write, prefix_write = automatic_station_fixture(window, monkeypatch)
     buttons = [button.text() for button in window.findChildren(gui.QtWidgets.QPushButton)]
     assert "Apply Station + Bin ROI" not in buttons
-    window.platform_path.setText("/selected/platform_calibration_test.yaml")
+    assert "Platform teach…" not in buttons
+    window._update_station_preview()
     window.node.apply_station.assert_not_called()
-    assert "select platform and bin teach" in window.station_status.text()
+    assert "Select a bin teach" in window.station_status.text()
+    assert window.platform_path.isReadOnly() and window.calibration_camera_path.isReadOnly()
     window.bin_path.setText("/selected/bin_teach_test.yaml")
     window.node.apply_station.assert_called_once_with(
-        "/selected/platform_calibration_test.yaml", "/selected/bin_teach_test.yaml")
+        "/selected/platform_calibration_test.yaml", "/selected/bin_teach_test.yaml",
+        expected_station=gui.latest_station_calibration.return_value)
     assert window.camera_prefix.text() == "station_camera"
     station_write.assert_called_once()
     prefix_write.assert_called_once()
@@ -1290,13 +1299,13 @@ def test_platform_warning_clears_on_reselection(window, monkeypatch, replacement
         if replacement == "matching_bin":
             window.bin_path.setText("/selected/bin_teach_matching.yaml")
         else:
-            window.platform_path.setText("/selected/platform_calibration_matching.yaml")
+            window._update_station_preview()  # Reload latest, not a manual platform chooser.
         assert window.node.applied is not None
     elif replacement == "empty":
         window.bin_path.clear()
     else:
         window.node.apply_station.side_effect = ValueError("Camera SHA-256 mismatch")
-        window.platform_path.setText("/selected/platform_calibration_invalid.yaml")
+        window._update_station_preview()
         assert "Bin ROI hidden" in window.station_status.text()
         assert window.node.applied is None
     assert window.bin_platform_warning.isHidden()
@@ -1364,8 +1373,10 @@ def test_restored_station_files_connect_readonly_preview_without_apply(window, m
     restored.timer.stop()
     try:
         window.node.apply_station.assert_called_once_with(
-            str(gui.workspace_root() / "calibration/platform_calibration_saved.yaml"),
-            str(gui.workspace_root() / "offline_teach/bin_teach/bin_teach_saved.yaml"))
+            "/selected/platform_calibration_test.yaml",
+            str(gui.workspace_root() / "offline_teach/bin_teach/bin_teach_saved.yaml"),
+            expected_station=gui.latest_station_calibration.return_value)
+        assert "saved.yaml" not in restored.platform_path.text()  # Old prefill is not authority.
         assert restored.camera_prefix.text() == "station_camera"
         assert restored.saved_path is None and restored.home is None
         assert restored.bin_platform_warning.isHidden() == (source_sha == "a" * 64)
@@ -1373,6 +1384,30 @@ def test_restored_station_files_connect_readonly_preview_without_apply(window, m
         window.node.arm.assert_not_called()
     finally:
         restored.close()
+
+
+def test_reload_latest_calibration_clears_old_preview_and_invalid_selection(window, monkeypatch):
+    automatic_station_fixture(window, monkeypatch)
+    window.bin_path.setText("/selected/bin_teach_test.yaml")
+    window.yolo_toggle.setChecked(True)
+    window.node.last_view = {"old": "snapshot"}
+    window.node.disarm.reset_mock()
+    window.node.clear_selected_pose.reset_mock()
+    gui.latest_station_calibration.side_effect = ValueError("Newest calibration is invalid")
+    reload_button = next(button for button in window.findChildren(gui.QtWidgets.QPushButton)
+                         if button.text() == "Reload Latest Calibration")
+    reload_button.click()
+    assert window.node.applied is None and window.node.last_view is None
+    assert not window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
+    window.node.disarm.assert_called()
+    window.node.clear_selected_pose.assert_called()
+    assert "Newest calibration is invalid" in window.station_status.text()
+    assert not window.platform_path.text() and not window.calibration_camera_path.text()
+    assert not window.platform_path.toolTip() and not window.calibration_camera_path.toolTip()
+    gui.QtWidgets.QMessageBox.warning.assert_not_called()
+    calls = gui.latest_station_calibration.call_count
+    window._refresh_video()
+    assert gui.latest_station_calibration.call_count == calls  # No periodic file selection.
 
 
 def test_explicit_reselection_can_revalidate_same_artifact(window, monkeypatch):

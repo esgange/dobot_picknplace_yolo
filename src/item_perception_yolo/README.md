@@ -52,18 +52,28 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Displaying all means detections under those settings, not every raw proposal.
    No platform/bin/depth, home or saved item file is required to see detections.
    OFF stops inference and shows raw RGB; it also removes the pose service.
-4. For calibrated dimensions/depth, select the destination platform
-   calibration and portable bin ROI. Once both paths are selected, the GUI
-   automatically validates them and connects the camera preview: **no Apply
-   button and no additional Connect RGB click are needed**. The camera
+4. Station calibration loads automatically from root `calibration/`: newest
+   platform for `.env`'s `DOBOT_ROBOT_LAN1_IP`, then newest camera calibration
+   matching that platform's camera prefix. Canonical filename UTC timestamps,
+   not file modification times, define newest. Read-only **Latest platform**
+   and **Camera calibration** fields show the selected files; no platform picker.
+   The camera must match the platform's recorded SHA-256/mode/settings/transform.
+   A newer calibration for that camera requires a newly taught platform. A
+   newer file for another camera is not substituted. Invalid/missing/ambiguous
+   selected files or unidentifiable catalog entries fail without an older-pair
+   fallback. For dimensions/depth, select only the portable bin ROI. The GUI
+   automatically validates the station/bin and connects the camera preview:
+   **no Apply button and no additional Connect RGB click are needed**. The camera
    calibration/prefix comes only from that platform artifact and its hash-bound
    camera file. Existing platform schema 3, camera schema 7 and bin schema 3 are
-   unchanged. Valid saved station/bin selections reconnect this read-only preview
-   on startup, a narrow exception to unapplied prefill. It never launches a camera,
+   unchanged. The saved bin selection reconnects using the latest station pair
+   on startup; an old platform prefill is not authoritative. This narrow
+   read-only-preview exception to unapplied prefill never launches a camera,
    loads model weights, enables YOLO or arms the service. Incomplete/invalid files
    leave the ROI hidden with a status reason; validation runs on selection/startup,
-   not repeatedly each timer tick. Explicitly reselect a corrected file to validate
-   it again. Changing selection disarms and clears old overlays/frozen selections.
+   not repeatedly each timer tick or during pose requests. Use **Reload Latest
+   Calibration** after teaching/correcting files, or reselect the bin, to revalidate.
+   Reloading/changing selection stops YOLO, disarms and clears old overlays/TF.
 5. **Click an item** to freeze that exact displayed RGB/depth result, highlight
    its pick dot with a cyan ring and show its measured **X / height (long side)** and
    **Y / width (short side)** in millimetres at the top-left. Mask uses its
@@ -201,8 +211,9 @@ A preview dot is not a validated 3D pick pose. Production service calculations
 continue to retain only validated candidates.
 Metric dimensions, depth sampling and pose-generation mathematics are unchanged.
 
-With both selected station/bin files validated, a green unfilled border labelled **Loaded Bin
-ROI** automatically projects the saved bin XY points at platform Z=0 into the RGB
+With the automatically selected station and selected bin validated, a green
+unfilled border labelled **Loaded Bin ROI** projects the saved bin XY points at
+platform Z=0 into the RGB
 view when its valid camera inputs arrive. No Apply click or model loading is needed.
 It works with **YOLO ON or OFF**, with no detections required. The
 YOLO-off path uses pure projection in the same isolated worker; it does not load
@@ -437,20 +448,25 @@ archive. Events remain timestamped and bounded at 1,000 package records.
 
 ### Headless detection and controller request
 
-Use absolute artifact paths on the destination machine:
+Station files are selected automatically by the same strict rule as Item Teach.
+Use absolute item/bin artifact paths on the destination machine:
 
 ```bash
 ros2 launch item_perception_yolo item_detect.launch.py \
   item_teach_file:=/path/to/workspace/offline_teach/item_teach/item_teach_NAME_TIMESTAMP.yaml \
-  platform_teach_file:=/path/to/workspace/calibration/platform_calibration_TIMESTAMP_IP.yaml \
   bin_teach_file:=/path/to/workspace/offline_teach/bin_teach/bin_teach_TIMESTAMP_IP.yaml \
   trusted_model:=true armed:=true
 ```
 
-Headless startup requires explicit paths, trust and arming, validates the same
+Headless has no `platform_teach_file` argument. Startup requires explicit
+item/bin paths, trust and arming, validates the latest station pair and same
 model/settings/sources, and waits only the taught request deadline for inputs.
 It advertises the same service and executes inference only on a request. No
 independent detector algorithm or UI-state auto-application is used.
+Restart to select newly taught calibrations; it never switches station files in
+flight. Platform/Bin Teach keep their explicit calibration-selection workflows.
+Automatic flat `runtime_teach/` loading and runtime/debug modes are not yet
+implemented by this launch command.
 
 After explicitly loading the same item profile in the separate controller:
 

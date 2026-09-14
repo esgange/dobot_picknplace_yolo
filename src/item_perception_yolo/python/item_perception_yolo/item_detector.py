@@ -31,6 +31,7 @@ from .item_teach_core import (file_sha256, load_item_profile, settings_from_prof
                               validate_detection_settings, detection_settings, validate_quality)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
 from .item_native_client import NativeClient
+from .station_calibration import latest_station_calibration
 
 
 SERVICE_NAME = "/item_detect/get_item_poses"
@@ -319,9 +320,16 @@ class ItemDetectNode(Node):
                            **config, task=metadata["task"], classes=metadata["classes"])
         return metadata
 
-    def apply_station(self, platform_path, bin_path):
+    def apply_station(self, platform_path, bin_path, *, expected_station=None):
         self.disarm()
         applied = load_bin_teach_calibration_context(Path(platform_path))
+        if expected_station is not None and (
+                applied.platform.path != expected_station.platform.path
+                or applied.platform.sha256 != expected_station.platform.sha256
+                or applied.camera.path != expected_station.camera.path
+                or applied.camera.sha256 != expected_station.camera.sha256):
+            raise ValueError(
+                "Automatically selected station calibration changed before application")
         template = load_bin_teach(Path(bin_path))
         place_bin_roi(template, applied.platform)
         self.applied, self.bin_artifact = applied, template
@@ -939,15 +947,20 @@ def main(args=None):
     thread.start()
     try:
         paths = {key: node.declare_parameter(key, "").value for key in
-                 ("item_teach_file", "platform_teach_file", "bin_teach_file")}
+                 ("item_teach_file", "bin_teach_file")}
         if not all(paths.values()):
-            raise ValueError("All three explicit teaching artifact paths are required")
+            raise ValueError("Explicit item_teach_file and bin_teach_file paths are required")
         if not node.declare_parameter("trusted_model", False).value:
             raise ValueError(
                 "Set trusted_model:=true only for a trusted .pt; weights can execute code")
+        latest = latest_station_calibration()
+        node.events.record(
+            "INFO", "item_latest_station_selected", "Selected newest hash-bound calibration",
+            platform=str(latest.platform.path), platform_sha256=latest.platform.sha256,
+            camera=str(latest.camera.path), camera_sha256=latest.camera.sha256)
         profile, _digest = load_item_profile(Path(paths["item_teach_file"]))
         node.inspect_model(Path(paths["item_teach_file"]).parent / profile["model"]["filename"])
-        node.apply_station(paths["platform_teach_file"], paths["bin_teach_file"])
+        node.apply_station(latest.platform.path, paths["bin_teach_file"], expected_station=latest)
         node.enable_yolo(detection_settings(settings_from_profile(profile)))
         if not node.declare_parameter("armed", False).value:
             raise ValueError("Headless service requires explicit armed:=true; never inferred")

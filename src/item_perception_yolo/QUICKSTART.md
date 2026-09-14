@@ -38,13 +38,18 @@ YOLO/model loading and re-arming remain explicit. Unsaved fields are not autosav
 Item overlays keep mask shading, one mask-derived rectangle (or native OBB),
 long-X/short-Y centered axes and a pick dot, with no extra axis-aligned YOLO box.
 The green bin border coexists with detections and also works with YOLO OFF.
-Selecting both platform/bin teach files automatically validates them and connects
-their camera preview; the border appears when RGB/CameraInfo/TF are available.
-There is no Apply button. Valid restored station/bin paths do the same on startup;
-YOLO/model loading and arming stay manual, and no camera process is launched.
+Station calibration is selected automatically: newest platform for the configured
+robot, then newest camera calibration for its prefix, by filename UTC timestamps.
+Their hashes/mode/settings must match; recalibrating the camera requires platform
+reteaching, not mixing transforms or falling back. Select the bin file to connect
+preview; the border appears when RGB/CameraInfo/TF are available. There is no
+platform picker or Apply button. **Reload Latest Calibration** reselects files
+and clears old overlays/disarms; no periodic watcher. The restored bin selection
+uses the latest station pair on startup. YOLO/model loading and arming stay manual,
+and no camera process is launched.
 Item Teach shares Bin Teach's saved-plane border geometry. On another station,
-select that station's own platform teach and the copied bin YAML: the unchanged
-metric XY follows its platform origin, axes, tilt and height. No markers or depth
+provide that station's own latest platform/camera files and select the copied bin
+YAML: the unchanged metric XY follows its platform origin, axes, tilt and height. No markers or depth
 are needed for the border. Keep the same physical bin size/offset/reference axes;
 loading does not detect, reposition or resize the bin.
 Slow inference results stay visible on their source RGB, explicitly labelled

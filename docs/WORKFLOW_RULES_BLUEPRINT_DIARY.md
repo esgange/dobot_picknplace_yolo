@@ -2199,6 +2199,58 @@ Never use a floating “latest” version in an issue, script, or deployment not
   passes without source/runtime fallback or hardware execution. Scoped source
   commit and verified push follow the standing authorization.
 
+### 2026-09-14 — Automatic latest station calibration for Item Teach and Detect
+
+- User requested removal of manual platform/camera selection in Item Teach and
+  Item Detect. Add shared deterministic station selection in root calibration/:
+  latest platform for canonical root .env robot LAN1 identity, derive its camera
+  prefix, then latest camera calibration for that prefix across both modes.
+  Use canonical filename UTC timestamps, not mtimes, preserving ordering after
+  copies/transfers. Other robot platforms and identifiable other-camera files
+  do not replace this station/camera. Missing/tied/noncanonical/symlinked or
+  malformed/unidentifiable candidates and invalid selected artifacts fail
+  without quietly trying an older compatible pair.
+- Preserve strict schema-3 platform/schema-7 camera hash, mode, settings and
+  mounting-chain validation. The newest same-prefix camera must be the exact
+  camera referenced by the newest platform; otherwise require platform reteach.
+  Never combine a fresh camera mount with an old measured platform transform.
+  Recheck selected paths/hashes before installing the binding; no adoption of
+  files changed between discovery and application. Keep pose math, full platform
+  tilt/height, portable bin evidence/warnings and service freshness unchanged.
+- Item Teach displays read-only latest platform/camera paths with Reload Latest
+  Calibration, retains explicit portable bin selection and auto preview binding.
+  Ignore restored platform filename as selection authority; restore bin and
+  discover station on startup. Reload/bin changes stop YOLO/disarm and clear old
+  views/teaching TF before validation. Nonmodal invalid status, no timer rescan,
+  no live station switch during requests, auto model execution or auto arming.
+- Headless Item Detect removes platform_teach_file and selects the same station
+  at startup. Existing explicit item/bin paths, trusted_model/armed flags and
+  read-only request-driven inference remain; flat runtime_teach catalog loading,
+  default deployment activation and runtime/debug image-saving modes are
+  separate pending work, not claims of this change. Platform/Bin Teach retain
+  explicit calibration selection. No schema changes/migration or artifact writes.
+- Add rule 50, superseding only Item Teach/Detect's earlier no-selection/search
+  and explicit-platform-path restrictions. Update root/package README/quickstart.
+  Verification uses real strict synthetic YAML writers/readers and offscreen
+  mocked ROS/processes only; no cameras, robot, RViz or operator weights launched.
+  Read-only workstation inspection selects bin_camera's current platform/camera
+  pair rather than its newer robot_camera calibration. Operator artifacts,
+  weights, root .env and saved UI state are not rewritten by this implementation.
+- Verification: 329 perception and 6 controller tests pass (335 total), including
+  23 new strict synthetic selector/headless cases and an offscreen reload case.
+  Cover both modes, filename ordering vs mtimes, other robot/prefix exclusion,
+  newer-camera reteach requirements, invalid newest artifacts with no fallback,
+  ambiguous timestamps, noncanonical/symlinked/unidentifiable candidates,
+  filename/content timestamps, changed selection hashes and headless launch/main.
+  GUI coverage retains restored-bin auto preview, mismatch warnings and strict
+  save/arming gates, verifies old platform prefill is ignored, reload clears old
+  geometry/TF without auto activation or periodic rescan. Root build passes all
+  14 packages; package build and packaged colcon tests also pass. Compilation,
+  changed-runtime/new-test and changed-
+  test-line flake8, and git diff --check pass. Installed inspection selects the
+  correct workstation pair and imports no cv2/Torch/Ultralytics in the parent.
+  No offline milestone is claimed; scoped commit and verified push follow rule 8.
+
 ### Future entry template
 
 ```text
