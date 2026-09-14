@@ -96,6 +96,7 @@ class ItemTeachNode(ItemDetectNode):
         self.events.record("INFO", "node_started", "Item editor started; no command clients")
 
     def clear_selected_pose(self):
+        """Clear both clicked and simulated teaching previews; never retain old batch frames."""
         with self.selection_lock:
             self.selected_pose = None
 
@@ -106,29 +107,66 @@ class ItemTeachNode(ItemDetectNode):
         transform = build_selected_pose_transform(
             self.applied.platform.base_from_platform, candidate, self.get_clock().now().to_msg())
         with self.selection_lock:
-            self.selected_pose = (epoch, transform)
+            if epoch != self.arm_epoch or not self.yolo_enabled or self.native.failed:
+                raise ValueError("Selected pose invalidated before TF publication")
+            self.selected_pose = (epoch, (transform,), None)
         self.events.record("INFO", "item_teach_pose_selected",
                            "Frozen teaching-only TF; not a robot target or service response",
                            frame=transform.child_frame_id, source_stamp_ns=stamp_ns,
                            candidate=candidate)
 
+    def show_simulated_poses(self, response, view):
+        """Install only the successful, still-fresh returned batch, not raw detections."""
+        self.clear_selected_pose()
+        self.validate_simulation_view(view)
+        epoch = view["simulation_epoch"]
+        stamp_ns = response.header.stamp.sec * 1_000_000_000 + response.header.stamp.nanosec
+        now = self.get_clock().now()
+        if (stamp_ns != view["stamp_ns"] or not 0 <= (now.nanoseconds - stamp_ns) / 1e9
+                <= self.settings["quality"]["result_max_age_sec"]):
+            raise ValueError("Simulated snapshot is stale or mismatched before TF publication")
+        transforms = build_simulated_pose_transforms(
+            self.applied.platform.base_from_platform, response, now.to_msg())
+        # Keep only identity evidence in the timer state, never another image/depth snapshot.
+        binding = {"simulation_epoch": epoch,
+                   "simulation_profile": tuple(view["simulation_profile"])}
+        with self.selection_lock:
+            if (epoch != self.arm_epoch or not self.yolo_enabled
+                    or self.native.failed or self.fatal_error):
+                raise ValueError("Simulated batch invalidated before TF publication")
+            if transforms:
+                self.selected_pose = (epoch, transforms, binding)
+        self.events.record(
+            "INFO", "item_teach_batch_tf", "Frozen simulated teaching TFs; no robot commands",
+            batch_id=response.batch_id, source_stamp_ns=stamp_ns,
+            frames=[transform.child_frame_id for transform in transforms],
+            candidate_ids=[candidate.id for candidate in response.candidates])
+
     def _broadcast_selected_pose(self):
         with self.selection_lock:
             if self.selected_pose is None:
                 return
-            epoch, transform = self.selected_pose
+            epoch, transforms, binding = self.selected_pose
             if (epoch != self.arm_epoch or not self.yolo_enabled
                     or self.native.failed or self.fatal_error):
                 self.selected_pose = None
                 return
             try:
-                self._validate_sources()
+                if binding is None:
+                    self._validate_sources()
+                else:
+                    self.validate_simulation_view(binding)
             except (ValueError, OSError) as exc:
                 self.selected_pose = None
                 self.events.record("WARNING", "item_teach_pose_cleared", str(exc))
                 return
-            transform.header.stamp = self.get_clock().now().to_msg()
-            self.selected_pose_broadcaster.sendTransform(transform)
+            if epoch != self.arm_epoch or not self.yolo_enabled or self.native.failed:
+                self.selected_pose = None
+                return
+            stamp = self.get_clock().now().to_msg()
+            for transform in transforms:
+                transform.header.stamp = stamp
+            self.selected_pose_broadcaster.sendTransform(list(transforms))
 
     def close_runtime(self):
         self.clear_selected_pose()
@@ -161,7 +199,8 @@ class ItemTeachNode(ItemDetectNode):
         return home
 
 
-def build_selected_pose_transform(base_from_platform, candidate, stamp):
+def build_selected_pose_transform(base_from_platform, candidate, stamp,
+                                  child_frame_id="item_teach_selected_item"):
     """Publish directly under base to avoid competing platform_reference authorities."""
     transform = TransformStamped()
     transform.transform.translation.x, transform.transform.translation.y, \
@@ -171,11 +210,30 @@ def build_selected_pose_transform(base_from_platform, candidate, stamp):
     matrix = np.asarray(base_from_platform) @ transform_matrix(transform)
     transform.header.frame_id = "base_link"
     transform.header.stamp = stamp
-    transform.child_frame_id = "item_teach_selected_item"
+    transform.child_frame_id = child_frame_id
     t = transform.transform.translation
     t.x, t.y, t.z = map(float, matrix[:3, 3])
     q.x, q.y, q.z, q.w = rotation_matrix_to_quaternion(matrix[:3, :3])
     return transform
+
+
+def build_simulated_pose_transforms(base_from_platform, response, stamp):
+    """P1..Pn are response priorities, composed exactly like the clicked-item preview."""
+    if not response.success or response.header.frame_id != "platform_reference":
+        raise ValueError("Simulated teaching TF requires a successful platform-relative response")
+    transforms, seen = [], set()
+    for priority, candidate in enumerate(response.candidates, 1):
+        if candidate.priority != priority or not candidate.id or candidate.id in seen:
+            raise ValueError("Simulated teaching TF requires distinct, priority-ordered candidates")
+        seen.add(candidate.id)
+        point, rotation = candidate.pose.position, candidate.pose.orientation
+        transform = build_selected_pose_transform(
+            base_from_platform,
+            {"position": [point.x, point.y, point.z],
+             "quaternion": [rotation.x, rotation.y, rotation.z, rotation.w]},
+            stamp, child_frame_id=f"item_teach_candidate_{priority}")
+        transforms.append(transform)
+    return tuple(transforms)
 
 
 class ItemTeachWindow(QtWidgets.QWidget):
@@ -997,6 +1055,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 self.preview_status = str(error)
                 self.preview_error = str(error)
                 if kind == "simulate":
+                    self.node.clear_selected_pose()
                     self._message("Simulate Trigger failed: " + str(error))
                 if kind == "pose":
                     self.node.clear_selected_pose()
@@ -1044,13 +1103,21 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                             profile=str(pair[0]), profile_sha256=pair[1])
             elif kind == "simulate" and value is not None:
                 response = value["response"]
+                self.node.clear_selected_pose()
                 if response.success:
-                    self.simulation_response = response
-                    self.frozen_view = {**value["view"], "preview_mode": "simulated"}
-                    self.preview_error = ""
-                    self.preview_status = f"SIMULATED {response.status}: {response.message}"
-                    for candidate in response.candidates:
-                        self._message(self._batch_candidate_text(candidate))
+                    try:
+                        self.node.show_simulated_poses(response, value["view"])
+                        self.simulation_response = response
+                        self.frozen_view = {**value["view"], "preview_mode": "simulated"}
+                        self.preview_error = ""
+                        self.preview_status = f"SIMULATED {response.status}: {response.message}"
+                        for candidate in response.candidates:
+                            self._message(self._batch_candidate_text(candidate))
+                    except (ValueError, OSError) as exc:
+                        self._resume_live()
+                        self.node.last_view = None
+                        self.preview_status = "Simulate Trigger preview rejected: " + str(exc)
+                        self.preview_error = str(exc)
                 else:
                     self.preview_status = "Simulate Trigger failed: " + response.message
                     self.preview_error = response.message
@@ -1206,6 +1273,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if mode == "simulated":
             batch_lines = [f"Frozen teaching batch | {batch.valid_count} valid / "
                            f"{batch.detected_count} detections | NO ROBOT COMMANDS"]
+            count = len(batch.candidates)
+            batch_lines.append(
+                "RViz TF: base_link → item_teach_candidate_1"
+                + (f"…{count}" if count > 1 else "") + " (frozen)" if count else
+                "RViz TF: no candidate frames (empty batch)")
             for candidate in batch.candidates[:3]:
                 batch_lines.append(self._batch_candidate_text(candidate))
             if len(batch.candidates) > 3:

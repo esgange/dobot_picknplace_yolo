@@ -146,12 +146,28 @@ valid objects leave no overlays behind. Null depth is excluded before MAD; it
 never contributes to the pose. Top bands report counts, source age and the first
 three poses in platform_reference (XYZ, yaw, size and depth counts); all returned
 poses have on-image priority labels and full details in the bounded Activity log.
-There is no batch-TF publication or robot actuation. SHORTAGE and NO_VALID_ITEMS
-are explicit successful outcomes; zero items freezes just the pair and bin ROI.
+Every returned pose also appears in the teaching-only RViz TF preview at 10 Hz:
+`base_link -> item_teach_candidate_1` through `item_teach_candidate_N`, matching
+P1…Pn priority order on the images (not limited to the three expanded text lines).
+The same transform composition as clicking an item preserves the selected
+platform's full rotation/translation. No extra `platform_reference` authority,
+robot-TCP compensation, live tracking, motion or service change is introduced.
+Use an already-running RViz TF display; Item Teach never launches RViz.
+
+The complete batch replaces any previous clicked-item or simulated preview.
+Validate the response frame, priorities, IDs, pose values, source/profile identity
+and snapshot age before installing all TFs atomically. While frozen, only their
+broadcast timestamps refresh; their positions/orientations do not follow newer
+images or robot TF. The timer independently checks source/profile, arming epoch,
+YOLO and native/fatal state so invalidation stops publication even if Qt is busy.
+SHORTAGE and NO_VALID_ITEMS are explicit successful outcomes; zero items freezes
+just the pair/bin ROI and publishes no candidate frames. ROS/RViz can retain old
+TF frames in their buffers until timeout/reset after publication stops.
 
 Click RGB to cancel/resume; image margins and status bands do nothing. Settings,
 station/profile/model/arming changes, YOLO OFF or failure invalidate pending and
-frozen results. A failed request never displays a previous batch as its result.
+frozen results and stop all teaching TFs. A failed request never displays or
+publishes a previous batch as its result.
 An armed real service remains independent and always obtains new observations,
 even while a simulation is frozen. No images are persisted; batch metadata is
 recorded only in the existing bounded package events.

@@ -164,7 +164,14 @@ saved profile, matching loaded model, YOLO ON and a valid station, **Simulate
 Trigger** runs the same fresh RGB/depth/TF candidate pipeline as a real pose request.
 It works with Armed OFF and never advertises a service or commands the robot.
 Both views freeze with only the returned ranked P1…Pn overlays, capped by
-`pose_candidates`, and the green bin border. Pose/depth/count feedback and ages
+`pose_candidates`, and the green bin border. Every returned pose also publishes
+a teaching-only TF at 10 Hz: `base_link -> item_teach_candidate_1` through
+`item_teach_candidate_N`, matching the image priorities. Use RViz's TF display;
+Item Teach does not launch RViz. These frozen poses preserve the platform's full
+tilt/height, replace any clicked-item/batch preview, and stop publishing on resume,
+edits/source changes, arming changes, YOLO OFF or failure/exit. Empty batches
+publish no candidate frames. TF/RViz may briefly retain old frames after stopping.
+Pose/depth/count feedback and ages
 are in the top bands; additional pose details are in Activity. A shortage or zero
 valid items is explicit. Click RGB again to resume; edits/source changes or YOLO
 OFF cancel old results. The armed service continues acquiring independent fresh

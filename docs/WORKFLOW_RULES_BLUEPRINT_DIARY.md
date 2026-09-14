@@ -2072,6 +2072,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Existing artifacts and saved UI state were not rewritten. Source-only commit
   and verified push follow the standing user authorization.
 
+### 2026-09-14 — Simulate Trigger publishes every returned pose for RViz inspection
+
+- User requested the same RViz feedback as clicking an item, for all simulated
+  pose candidates. Supersede rule 45's no-batch-TF restriction only: the shared
+  fresh-request acquisition, filters, ranking, caps and production service remain
+  unchanged. No controller request, automatic arming, RViz/hardware launch or motion.
+- Extend the existing 10 Hz teaching broadcaster to hold either the clicked
+  frame or one atomic candidate batch. Use base_link -> item_teach_candidate_1
+  through item_teach_candidate_N, matching P1..Pn and all returned poses, not the
+  first three expanded overlay details. Compose the exact platform-relative
+  response poses with the destination's full platform transform using the same
+  helper as a click. No duplicate platform_reference, flattened tilt, standoff
+  compensation, robot TCP attitude or subsequent live-TF/vision tracking.
+- Before installation, check source/profile identity, epoch, fresh matching
+  snapshot stamp, successful platform-frame response, unique candidate IDs,
+  ordered priorities, and finite normalized pose geometry. Reject the whole
+  preview, not a partial set. Store only transforms and identity evidence in
+  broadcaster state; keep the existing single frozen RGB/depth pair in the GUI.
+- Shared clearing handles clicked/batch replacement, resume, changes, YOLO OFF,
+  failed or empty batches, and exit. The timer also checks native/fatal/epoch and
+  source/profile identity independently of Qt progress; it refreshes only TF
+  broadcast timestamps while holding frozen geometry. No stale service targets.
+  TF/RViz consumers can retain stopped frames until their buffer/display timeout;
+  no invalid zero transforms or unrelated-TF clearing is used to hide them.
+- Both top bands identify candidate frame names. A bounded package event maps
+  batch ID/source timestamp/candidate IDs to frames; image annotations and
+  original observation ages remain. Item/platform/bin/camera/UI schemas, saved
+  artifacts, vendor code, camera settings and operator model files are unchanged.
+- Verification: 285 perception and 6 controller tests pass. New tests cover
+  all returned priorities including beyond the three text entries, complete
+  platform tilt/height and metre/quaternion composition, exact shared clicked
+  geometry, atomic clicked/batch replacement, smaller/empty batches, stale or
+  malformed responses, and source/profile/epoch/native invalidation without Qt
+  progress. A real ROS TF subscriber receives five then two synthetic frames
+  and confirms publication stops on clearing; add tf2_msgs as a test dependency.
+  The initial test-only domain 233 exceeded the DDS port range; corrected to
+  isolated local domain 231 and reran the full suite successfully.
+- Clean Humble-only root build passes all 14 packages; Python compilation,
+  changed-runtime/new-test flake8 and git diff --check pass. Installed offscreen
+  inspection confirms frame names in both frozen top bands and no cv2/Torch/
+  Ultralytics imports in the parent. Existing artifacts/UI state/model weights
+  remain untouched; no cameras, robot or RViz launched or commanded. Scoped
+  commit and verified push follow rule 8; no offline milestone is claimed.
+
 ### Future entry template
 
 ```text

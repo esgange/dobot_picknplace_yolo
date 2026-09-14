@@ -24,6 +24,7 @@ def window(tmp_path, monkeypatch):
     node = SimpleNamespace(
         events=MagicMock(), disarm=MagicMock(), arm=MagicMock(), close_runtime=MagicMock(),
         clear_selected_pose=MagicMock(), show_selected_pose=MagicMock(), clicked_pose=MagicMock(),
+        show_simulated_poses=MagicMock(),
         native=SimpleNamespace(failed=False), service=None, yolo_enabled=False,
         preview_source="mask", preview_mode="all", last_view=None, settings=None,
         model_config={"path": str(tmp_path / "model.pt"), "task": "segment"},
@@ -133,6 +134,8 @@ def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(windo
     window.node.simulate_trigger.assert_called_once()
     window.node.arm.assert_not_called()
     window.node.show_selected_pose.assert_not_called()
+    window.node.show_simulated_poses.assert_called_once_with(response, view)
+    assert "RViz TF: base_link → item_teach_candidate_1" in window.rgb_feedback.text()
     assert window.node.service is None and not window.armed_toggle.isChecked()
     assert window.saved_path == Path("saved.yaml")
     old_rgb, old_depth = window.video.pixmap().toImage(), window.depth_video.pixmap().toImage()
@@ -169,6 +172,7 @@ def test_simulation_inflight_result_is_discarded_on_changes(window, invalidate):
     assert window.simulation_response is None and window.frozen_view is None
     assert not window.simulation_busy and window.simulate_button.isEnabled()
     window.node.show_selected_pose.assert_not_called()
+    window.node.show_simulated_poses.assert_not_called()
 
 
 @pytest.mark.parametrize("failure", ["unsaved", "off", "fields", "profile", "busy", "no_items"])
@@ -215,6 +219,18 @@ def test_simulation_freeze_clears_if_profile_or_station_changes(window):
     window._refresh_video()
     assert window.frozen_view is None and window.simulation_response is None
     assert "Simulated batch cleared: Station source hash changed" in window.status.toPlainText()
+    window.node.clear_selected_pose.assert_called()
+
+
+def test_simulation_tf_rejection_never_keeps_old_preview(window):
+    simulation_setup(window)
+    window.node.show_simulated_poses.side_effect = ValueError("Simulated batch snapshot is stale")
+    window.simulate_button.click()
+    window._refresh_video()
+    finish_model_job(window)
+    assert window.frozen_view is None and window.simulation_response is None
+    assert "Simulate Trigger preview rejected" in window.status.toPlainText()
+    window.node.clear_selected_pose.assert_called()
 
 
 def test_cancel_queued_simulation_does_not_run_it_after_preview_completion(window):
@@ -242,6 +258,9 @@ def test_simulation_batch_feedback_does_not_expand_with_all_1000_candidates(wind
     assert "P3 part" in window.rgb_feedback.text() and "P4 part" not in window.rgb_feedback.text()
     assert "17 more poses" in window.depth_feedback.text()
     assert "P20 part" in window.status.toPlainText()
+    assert "item_teach_candidate_1…20" in window.rgb_feedback.text()
+    window.node.show_simulated_poses.assert_called_once()
+    assert len(window.node.show_simulated_poses.call_args.args[0].candidates) == 20
 
 
 def test_visual_first_layout_has_one_settings_column_and_persistent_actions(window):
@@ -537,7 +556,7 @@ def test_clicked_tf_preserves_platform_tilt_and_stops_on_invalidation():
     expected = base.copy()
     expected[:3, 3] = (base @ np.array([.01, .02, .1, 1]))[:3]
     assert np.allclose(gui.transform_matrix(message), expected)
-    node = SimpleNamespace(selection_lock=threading.RLock(), selected_pose=(1, message),
+    node = SimpleNamespace(selection_lock=threading.RLock(), selected_pose=(1, (message,), None),
                            arm_epoch=1, yolo_enabled=True, native=SimpleNamespace(failed=False),
                            fatal_error=None, _validate_sources=MagicMock(), events=MagicMock(),
                            get_clock=lambda: SimpleNamespace(
@@ -546,7 +565,7 @@ def test_clicked_tf_preserves_platform_tilt_and_stops_on_invalidation():
     gui.ItemTeachNode._broadcast_selected_pose(node)
     assert node.selected_pose_broadcaster.sendTransform.call_count == 1
     for failure in ("epoch", "off", "native", "source"):
-        node.selected_pose = (1, message)
+        node.selected_pose = (1, (message,), None)
         node.arm_epoch = 2 if failure == "epoch" else 1
         node.yolo_enabled = failure != "off"
         node.native.failed = failure == "native"
