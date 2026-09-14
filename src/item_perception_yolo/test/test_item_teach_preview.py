@@ -65,6 +65,19 @@ def test_single_view_starts_with_blank_dimensions_and_no_production_profile(wind
     assert window.node.service is None
 
 
+def test_teach_has_no_controller_validation_action_or_request_state(window):
+    import ast
+    source = Path(gui.__file__).read_text()
+    buttons = window.findChildren(gui.QtWidgets.QPushButton)
+    assert all("Controller" not in button.text() for button in buttons)
+    for name in ("send", "request", "request_started", "_send_controller", "_poll_request"):
+        assert not hasattr(window, name)
+    calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)]
+    assert not any(isinstance(node.func, ast.Attribute) and node.func.attr == "create_client"
+                   for node in calls)
+    assert "/robot_controller/" not in source
+
+
 def test_arming_from_all_view_still_requires_production_settings(window):
     window.yolo_toggle.setChecked(True)
     window.saved_path = Path("explicit_profile.yaml")
@@ -271,7 +284,7 @@ def test_visual_first_layout_has_one_settings_column_and_persistent_actions(wind
     assert preview > sidebar * 2
     assert isinstance(window.settings_column, gui.QtWidgets.QVBoxLayout)
     groups = [window.settings_column.itemAt(i).widget()
-              for i in range(window.settings_column.count() - 1)]
+              for i in range(window.settings_column.count())]
     assert len(groups) == 9
     assert all(isinstance(g, gui.QtWidgets.QGroupBox) for g in groups)
     assert "Camera" in groups[0].title() and "Item / model" in groups[1].title()
@@ -777,7 +790,7 @@ def test_explicit_teach_load_automatically_loads_exact_pair(window, paired_teach
     assert window.model.text() == str(path.with_suffix(".pt"))
     assert window._selected_classes() == [1] and window.classes.item(0).text() == "1: part"
     assert window._settings() == settings
-    assert window.saved_path == path and window.send.isEnabled()
+    assert window.saved_path == path
     assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
     assert not window.model_load_reserved and window.load_teach_button.isEnabled()
     assert "Item teach and paired model loaded" in window.status.toPlainText()
@@ -787,7 +800,7 @@ def test_teach_prefill_never_loads_weights(window, paired_teach):
     path, _, settings, _, question = paired_teach
     window._load(path, prefill=True)
     assert window._settings() == settings
-    assert window.saved_path == path and window.send.isEnabled()
+    assert window.saved_path == path
     window.node.inspect_model.assert_not_called()
     question.assert_not_called()
     assert not window.model_load_reserved and not window.node.yolo_enabled
@@ -887,12 +900,12 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     original, model_original = path.read_bytes(), path.with_suffix(".pt").read_bytes()
     window._load(path, prefill=True)
     assert window.recovered_draft and window._settings() == settings
-    assert window.saved_path is None and not window.send.isEnabled()
+    assert window.saved_path is None
     window.node.inspect_model.assert_not_called()
     window._load_dialog()
     finish_model_job(window)
     assert window.recovered_draft and window._settings() == settings
-    assert window.saved_path is None and not window.send.isEnabled()
+    assert window.saved_path is None
     window.armed_toggle.setChecked(True)
     window.node.arm.assert_not_called()
     assert not window.armed_toggle.isChecked()
@@ -968,7 +981,7 @@ def test_window_startup_recovers_named_old_or_corrupt_profile_without_execution(
     restored.timer.stop()
     try:
         assert restored.recovered_draft and restored.saved_path is None
-        assert not restored.send.isEnabled() and not restored.yolo_toggle.isChecked()
+        assert not hasattr(restored, "send") and not restored.yolo_toggle.isChecked()
         assert restored.inputs["pose_candidates"].text() == ("" if corrupt else "3")
         window.node.inspect_model.assert_not_called()
         window.node.arm.assert_not_called()
@@ -1035,7 +1048,7 @@ def test_paired_model_must_match_saved_task_classes_and_geometry(window, paired_
     window._load_dialog()
     finish_model_job(window)
     assert window.node.model_config is None
-    assert window.saved_path is None and not window.send.isEnabled()
+    assert window.saved_path is None
     assert "Model load failed" in window.status.toPlainText()
     window.node.inspect_model.assert_called_once()
     assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()

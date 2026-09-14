@@ -320,18 +320,20 @@ per-frame detection cap before geometric filtering.
 `use_grip=false` disables `grip_onpick` behavior regardless of its saved value.
 Final physical height equations, fixed attitude and I/O timing remain pending.
 
-Launch `robot_controller` separately, then explicitly Save or Load the pair
-and select **Validate Saved Profile in Controller**. Only this canonical
-controller parameter request is sent; missing controller or a five-second
-response timeout is reported without a retry or direct Dobot bypass. The
-controller remains `PROFILE_VALIDATED_NOT_ARMED`; no motion follows validation.
+Item Teach has no controller-validation button or controller client. It creates
+profiles, inspects detections and exposes read-only poses when explicitly armed;
+it never selects a controller profile or sends a controller request. Configure
+`robot_controller` separately through its explicit `item_teach_file` launch
+argument/ROS parameter. The controller validates its selected pair itself and
+remains non-actuating; see its package README for the independent pose trigger.
 
 Item Save/Load records the selected artifact filename in shared strict schema-6
 UI state, alongside explicit preview prefix and applied station/bin filenames.
-Restart reads validated fields as unapplied prefill and disables
-controller submission until explicit Load/Save. It never auto-sends a profile,
-replays joints, loads native weights, starts subscriptions, arms a service,
-restores an external model path or keeps duplicate profile settings.
+Restart reads validated fields and treats a complete valid item profile as saved
+without enabling execution. It never sends a controller profile, replays joints,
+loads native weights, arms a service, restores an external model path or keeps
+duplicate profile settings. Read-only station/RGB preview restoration follows
+the validated automatic bin-ROI workflow described above.
 Unsaved text-box edits are **not** autosaved. Only fields in the selected saved
 teach YAML return on restart. Live/frozen images, clicked measurements, stage,
 model execution and arming state are never restored or written as image files.

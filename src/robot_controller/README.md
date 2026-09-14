@@ -42,17 +42,23 @@ ros2 launch item_perception_yolo item_teach.launch.py
 ```
 
 Both processes require `ROS_LOCALHOST_ONLY=1` and the canonical root `.env`.
-Start unconfigured, then explicitly Save/Load a profile in Item Teach and press
-**Validate Saved Profile in Controller**. Alternatively, explicitly supply
-`item_teach_file:=<absolute path to the saved YAML>` when launching the controller.
+Item Teach has no controller-validation button or controller client. Explicitly
+supply `item_teach_file:=<absolute path to the saved YAML>` when launching:
+
+```bash
+ros2 launch robot_controller robot_controller.launch.py item_teach_file:=/absolute/path/to/offline_teach/item_teach/profile.yaml
+```
+
+Alternatively start unconfigured and explicitly set its `item_teach_file`
+parameter through the controller's standard ROS parameter interface.
 There is no implicit last-profile selection or controller-unavailable bypass.
 
 ## Public interface
 
 - Parameter `item_teach_file`: only a strict schema-4 YAML directly under
   `offline_teach/item_teach/`, with its same-stem, SHA-256-verified `.pt` copy.
-  The GUI uses `/robot_controller/set_parameters_atomically`; malformed,
-  missing or tampered profiles are rejected without defaults or retries.
+  Set at launch or through the controller's standard parameter interface;
+  malformed, missing or tampered profiles are rejected without defaults or retries.
 - `/robot_controller/validate_profile` (`std_srvs/srv/Trigger`): explicitly
   recheck the selected YAML/model pair. Failure reports `PROFILE_INVALID`.
 - `/robot_controller/status` (`std_msgs/msg/String`): JSON, reliable and

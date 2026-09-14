@@ -130,8 +130,7 @@ def test_no_hardware_clients_or_model_deserialization():
         client_calls = [node for node in calls if isinstance(node.func, ast.Attribute)
                         and node.func.attr == "create_client"]
         if module is item_teach_gui:
-            assert len(client_calls) == 1
-            assert client_calls[0].args[1].value == "/robot_controller/set_parameters_atomically"
+            assert not client_calls  # Teaching never configures/requests the controller.
         elif module is controller:
             assert len(client_calls) == 1
             assert client_calls[0].args[1].value == "/item_detect/get_item_poses"

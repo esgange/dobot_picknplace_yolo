@@ -491,16 +491,14 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
                            disarm=MagicMock(), close_runtime=MagicMock(), service=None,
                            clear_selected_pose=MagicMock(),
                            yolo_enabled=False, native=SimpleNamespace(failed=False),
-                           controller_client=MagicMock(),
                            camera_snapshot=lambda: (None, "No camera in fixture"))
     window = gui.ItemTeachWindow(node)
     try:
         assert window.home == profile["home"]
         assert window.saved_path == path
-        assert window.send.isEnabled()
-        node.controller_client.call_async.assert_not_called()
+        assert not hasattr(window, "send")
         window._load(path, prefill=False)
-        assert window.send.isEnabled()
+        assert window.saved_path == path
         assert window._settings() == core.settings_from_profile(profile)
         assert "image_size" not in window.inputs
         # Removing the widget must not silently rewrite a loaded profile's input size.
@@ -512,7 +510,7 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         path.write_text(yaml.safe_dump(profile))
         window._load(path, prefill=False)
         window.inputs["confidence"].setText("0.7")
-        assert not window.send.isEnabled()
+        assert window.saved_path is None
         monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", lambda *_: (
             gui.QtWidgets.QMessageBox.Yes
         ))
@@ -524,7 +522,6 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         assert window.saved_path.is_file()
         assert window.home["robot_lan1_ip"] != node.robot_ip  # provenance, not a binding
         confirmation.assert_called_once()
-        node.controller_client.call_async.assert_not_called()
         # The source chooser imposes no workspace-root restriction.
         window._populate_classes({0: "ignore", 1: "pick", 2: "ignore_too"}, [])
         assert window._selected_classes() == []
@@ -542,7 +539,7 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         ))
         window._browse_model()
         assert window.model.text() == str(external)
-        assert not window.send.isEnabled()
+        assert window.saved_path is None
     finally:
         window.timer.stop()
         window.close()

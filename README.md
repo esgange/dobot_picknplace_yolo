@@ -49,6 +49,13 @@ profile editor and shared GUI/headless detector described below implement
 read-only detection requests. Physical execution remains pending. Imported
 prototype runtimes have not been enabled.
 
+Item Teach has no controller-validation button or controller client. Configure
+the controller independently with an explicit `item_teach_file` launch argument
+or ROS parameter. It validates that YAML/model pair and can make an explicitly
+triggered read-only pose request; it does not initialize/move the robot, run a
+pick/home/retry sequence or actuate gripper I/O. Sole-command ownership remains
+planned, not yet enforced. See [controller README](src/robot_controller/README.md).
+
 ## Initial Item Teach and controller
 
 In separate terminals after building and sourcing the workspace:

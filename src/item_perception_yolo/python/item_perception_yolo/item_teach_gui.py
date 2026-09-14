@@ -1,4 +1,4 @@
-"""Non-executing item-profile editor and controller-validation client."""
+"""Read-only item-profile editor, detector and teaching pose preview."""
 
 import copy
 import math
@@ -14,8 +14,6 @@ from geometry_msgs.msg import TransformStamped
 from python_qt_binding import QtCore, QtGui, QtWidgets
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.parameter import Parameter
-from rcl_interfaces.srv import SetParametersAtomically
 from sensor_msgs.msg import JointState
 from rclpy.qos import qos_profile_sensor_data
 from tf2_ros import TransformBroadcaster
@@ -89,9 +87,6 @@ class ItemTeachNode(ItemDetectNode):
         self.create_timer(0.1, self._broadcast_selected_pose)
         self.create_subscription(
             JointState, "/joint_states", self._on_joints, qos_profile_sensor_data,
-        )
-        self.controller_client = self.create_client(
-            SetParametersAtomically, "/robot_controller/set_parameters_atomically",
         )
         self.events.record("INFO", "node_started", "Item editor started; no command clients")
 
@@ -245,8 +240,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.save_target = None
         self.recovered_draft = False
         self.profile_image_size = NEW_PROFILE_IMAGE_SIZE
-        self.request = None
-        self.request_started = None
         self.job_results = queue.Queue(maxsize=1)
         self.job_busy = False
         self.model_load_reserved = False
@@ -583,10 +576,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
         for order in sorted(sections):
             form_column.addWidget(sections[order])
-        self.send = QtWidgets.QPushButton("Validate Saved Profile in Controller")
-        self.send.setEnabled(False)
-        self.send.clicked.connect(self._send_controller)
-        form_column.addWidget(self.send)
         footer = QtWidgets.QHBoxLayout()
         self.activity_toggle = QtWidgets.QToolButton()
         self.activity_toggle.setText("Activity log")
@@ -637,7 +626,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.bin_path.textChanged.connect(self._update_station_preview)
         self._update_station_preview()
         self.timer = QtCore.QTimer(self)
-        self.timer.timeout.connect(self._poll_request)
         self.timer.timeout.connect(self._refresh_video)
         self.timer.start(100)
 
@@ -1069,7 +1057,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.node.model_config = self.node.model_metadata = None
                     if pair is not None:
                         self.saved_path = None
-                        self.send.setEnabled(False)
                     self._error("Model load failed", error)
             elif kind == "model":
                 if self.model.text() != self.model_requested_path:
@@ -1419,13 +1406,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node.disarm()
         self.armed_toggle.setChecked(False)
         self.saved_path = None
-        self.send.setEnabled(False)
 
     def _detection_settings_changed(self, *_):
         self.node.disarm()
         self.armed_toggle.setChecked(False)
         self.saved_path = None
-        self.send.setEnabled(False)
         if not self.yolo_toggle.isChecked():
             return  # Editing a form never starts YOLO automatically.
         self.preview_revision += 1
@@ -1586,7 +1571,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.recovered_draft = False
         self.recovery_notice.clear()
         self.recovery_notice.hide()
-        self.send.setEnabled(True)
         self.node.events.record(
             "INFO", "item_pair_saved", "Updated loaded pair" if overwrite else "Created pair",
             path=str(output), overwritten=overwrite,
@@ -1678,7 +1662,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self._show_home()
         self.saved_path = target.path
         self.save_target = target
-        self.send.setEnabled(True)
         action = "Restored saved item teach" if prefill else "Loaded saved item teach"
         self._message(
             f"{action}: {path.name}. "
@@ -1699,7 +1682,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.armed_toggle.setChecked(False)
         self.recovered_draft = True
         self.saved_path = None
-        self.send.setEnabled(False)
         self.profile_image_size = draft.values.get("image_size")
         self.name.setText(draft.values.get("name") or "")
         self.model.setText(str(draft.model_path) if draft.model_path is not None else "")
@@ -1736,51 +1718,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                 "GUI draft only; no valid profile or execution", path=str(path),
                                 reason=str(error), cleared_fields=draft.issues)
         return None, draft.digest
-
-    def _send_controller(self):
-        if self.saved_path is None or self.request is not None:
-            return
-        if not self.node.controller_client.service_is_ready():
-            self._error(
-                "Controller unavailable", "Launch robot_controller separately; no request sent.",
-            )
-            return
-        try:
-            load_item_profile(self.saved_path)
-        except (ValueError, OSError) as exc:
-            self._error("Saved pair invalid", exc)
-            return
-        request = SetParametersAtomically.Request()
-        request.parameters = [Parameter(
-            "item_teach_file", Parameter.Type.STRING, str(self.saved_path),
-        ).to_parameter_msg()]
-        self.request = self.node.controller_client.call_async(request)
-        self.request_started = time.monotonic()
-        self.send.setEnabled(False)
-        self._message("Requesting profile validation only. No motion.")
-
-    def _poll_request(self):
-        if self.request is None:
-            return
-        if not self.request.done() and time.monotonic() - self.request_started <= 5.0:
-            return
-        future, self.request = self.request, None
-        self.send.setEnabled(self.saved_path is not None)
-        try:
-            if not future.done():
-                future.cancel()
-                raise ValueError(
-                    "Controller response timed out; no retry. Validation outcome unknown."
-                )
-            result = future.result().result
-            outcome = 'validated' if result.successful else 'rejected'
-            message = f"Controller {outcome}: {result.reason}"
-            self._message(message)
-            self.node.events.record(
-                "INFO" if result.successful else "ERROR", "controller_reply", message,
-            )
-        except Exception as exc:
-            self._error("Controller validation failed", exc)
 
     def _error(self, title, error):
         self._message(f"{title}: {error}")

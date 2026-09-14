@@ -2160,6 +2160,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and git diff --check pass. Installed modules expose the save-target API and
   import no cv2/Torch/Ultralytics in the parent. Scoped commit/push follow rule 8.
 
+### 2026-09-14 — Remove Item Teach controller validation; review execution baseline
+
+- User requested removal of Validate Saved Profile in Controller and a current
+  controller summary before developing robot execution. Remove the button, its
+  parameter-service client, request state/polling, unused imports and package
+  dependency. Do not leave a hidden callable request path behind the removed UI.
+- Item Teach remains independent with unchanged saved/edited eligibility,
+  profile Save/Load/recovery, YOLO, local Simulate Trigger, Armed read-only pose
+  service and teaching TF. Controller configuration is explicit at its own
+  item_teach_file launch argument or standard ROS parameter interface. Retain
+  strict controller profile validation, revalidation service and pose trigger.
+- Current controller validates a schema-4 YAML and hash-bound paired weights,
+  publishes non-armed status and, on a separate trigger, requests pose_candidates
+  fresh detector poses with the profile hash. It checks response identity/frame,
+  timestamps, unique IDs, ordered priorities and finite normalized geometry,
+  then returns/logs JSON. One request at a time, bounded events, no auto-retry.
+  It has no Dobot command clients, feedback subscriptions or TF listener, and no
+  initialization/home/pick/place/gripper execution or enforced sole ownership.
+- Execution remains pending until fixed-vertical attitude/height equations,
+  home/travel/place safety, exact I/O confirmation/deadline behavior and safe
+  retry/retract transitions are decided. Do not inherit imported item_pick
+  defaults or existing gripper patterns. This change starts with the requested
+  summary rather than implementing unresolved hardware policy.
+- Verify synthetic/offscreen tests, installed package/root build, compilation,
+  changed-line lint and git diff --check. Existing station artifacts, weights,
+  root .env and saved UI state remain untouched; no physical cameras/robot/RViz
+  launched or commanded. No new offline deployment milestone.
+- Verification: 305 perception and 6 controller tests pass in a serialized
+  full-suite run. Added an offscreen/AST regression proving no controller button,
+  client, request state or polling remains; retained loaded saved eligibility,
+  recovery/model-failure gates, local simulation and Armed coverage. Root build
+  passes all 14 packages; installed modules retain the independent controller
+  pose trigger and import no native vision/ML modules in the parent. Compilation,
+  changed-runtime/changed-test-line flake8 and git diff --check pass. An initial
+  build running alongside tests replaced cv2.abi3.so during one native test's
+  import; stop overlapping install writes and rerun the complete suite, which
+  passes without source/runtime fallback or hardware execution. Scoped source
+  commit and verified push follow the standing authorization.
+
 ### Future entry template
 
 ```text
