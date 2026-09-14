@@ -108,6 +108,60 @@ def test_visual_first_layout_has_one_settings_column_and_persistent_actions(wind
     assert not window.node.yolo_enabled and window.node.service is None
 
 
+@pytest.mark.parametrize("window_size", [(1600, 1000), (1200, 800)])
+def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, window_size):
+    width, height = 1920, 1080
+    view = {"rgb": bytes([40, 110, 70]) * (width * height),
+            "depth_rgb": bytes([160, 80, 20]) * (width * height),
+            "width": width, "height": height, "stamp_ns": 99_000_000_000,
+            "depth_stamp_ns": 99_050_000_000, "sequence": 1, "preview_mode": "all",
+            "metadata": {"detections": [], "inference_ms": 555.}}
+    window.node.last_view = view
+    window.resize(*window_size)
+    window.show()
+    # Let Qt lay out wrapped status bands, then render at the resulting image size.
+    for _ in range(3):
+        window._refresh_video()
+        gui.QtWidgets.QApplication.processEvents()
+    assert "RESULT SNAPSHOT — DETECTIONS: 0" in window.rgb_feedback.text()
+    assert "STALE Frame age 1.10s | inference 555.0ms" in window.rgb_feedback.text()
+    assert "conf 0.25 / IoU 0.7 / cap 100" in window.rgb_feedback.text()
+    assert "Depth age: 1.05s" in window.depth_feedback.text()
+    for feedback, image, pixels in (
+        (window.rgb_feedback, window.video, view["rgb"]),
+        (window.depth_feedback, window.depth_video, view["depth_rgb"]),
+    ):
+        assert feedback.isVisible() and feedback.wordWrap()
+        assert feedback.textFormat() == gui.QtCore.Qt.PlainText
+        assert feedback.parent() is image.parent()
+        assert feedback.geometry().bottom() < image.geometry().top()
+        assert feedback.height() >= feedback.heightForWidth(feedback.width())
+        expected = gui.QtGui.QImage(pixels, width, height, width * 3,
+                                   gui.QtGui.QImage.Format_RGB888)
+        expected = gui.QtGui.QPixmap.fromImage(expected).scaled(
+            image.size(), gui.QtCore.Qt.KeepAspectRatio, gui.QtCore.Qt.SmoothTransformation)
+        assert image.pixmap().toImage() == expected.toImage()  # No burnt-in text/background.
+    center = gui.QtCore.QPointF(window.video.contentsRect().center())
+    mapped = gui.image_click(center, window.video, width, height)
+    assert abs(mapped.x() - width / 2) <= 4 and abs(mapped.y() - height / 2) <= 4
+    assert gui.image_click(gui.QtCore.QPointF(0, 0), window.video, width, height) is None
+    # Header clicks are not image clicks and cannot select/release a frozen target.
+    clicked = MagicMock()
+    window.video.clicked.connect(clicked)
+    event = gui.QtGui.QMouseEvent(gui.QtCore.QEvent.MouseButtonPress, gui.QtCore.QPointF(20, 10),
+                                 gui.QtCore.Qt.LeftButton, gui.QtCore.Qt.LeftButton,
+                                 gui.QtCore.Qt.NoModifier)
+    gui.QtWidgets.QApplication.sendEvent(window.rgb_feedback, event)
+    clicked.assert_not_called()
+    window.node.last_view = {**view, "depth_rgb": None, "depth_error": "Synthetic missing pair"}
+    window._refresh_video()
+    assert window.depth_feedback.isHidden() and not window.depth_feedback.text()
+    assert "Synthetic missing pair" in window.depth_video.text()
+    window.node.last_view = None
+    window._refresh_video()
+    assert window.rgb_feedback.isHidden() and not window.rgb_feedback.text()
+
+
 def test_live_yolo_edits_debounce_apply_exact_values_and_disarm(window, monkeypatch):
     clock = [10.0]
     monkeypatch.setattr(gui.time, "monotonic", lambda: clock[0])
@@ -291,6 +345,11 @@ def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, 
     if outcome == "valid":
         window.node.show_selected_pose.assert_called_once_with(candidate, view["stamp_ns"], 1)
         assert "platform_reference XYZ" in window.video_status.text()
+        for feedback in (window.rgb_feedback, window.depth_feedback):
+            assert "FROZEN SELECTION" in feedback.text()
+            assert "X / height: 80.00 mm" in feedback.text()
+            assert "platform_reference XYZ [mm]: +10.00, +20.00, +100.00" in feedback.text()
+        assert "100 accepted / 2 rejected" in window.depth_feedback.text()
         window._select_detection(center)
         assert window.selected_pose_result is None and window.frozen_view is None
         window.node.clear_selected_pose.assert_called()

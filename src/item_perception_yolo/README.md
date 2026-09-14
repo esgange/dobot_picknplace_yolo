@@ -253,7 +253,11 @@ straight RGB edges are sampled before projection to handle differing distortion.
 Both views freeze on the exact displayed pair when clicked, and only that item
 gets a pose calculation (no second inference or newer depth). All other outlines
 stay visible on frozen depth; the sampling circle is cyan, accepted samples black,
-rejected red. Selected dimensions/pose and frame ages appear on both images.
+rejected red. Result/frozen status, inference settings, dimensions/pose and source
+ages appear in a wrapping black status band at the top of each pane, below its
+heading. They no longer obscure camera pixels or scale down with the image.
+Masks, axes, bin borders and sampling circles stay on the images. Only image
+clicks select/resume, not status-band clicks; letterbox mapping remains unchanged.
 The redundant above-video help/settings text is removed. Missing plane calibration
 does not hide pixel-space depth overlays, but still blocks metric poses/circles/ROI.
 Load/Save stay visible in the header; Activity log expands the bounded

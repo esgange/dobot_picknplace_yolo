@@ -1907,6 +1907,30 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `git diff --check` plus staged-diff checks. No runtime changes, hardware
   launches, artifact rewrites or new offline-transfer milestone.
 
+### 2026-09-14 — Item Teach feedback moves into the top black pane bands
+
+- User requested moving the text overlay off the image into the available black
+  area above it. Each RGB/depth pane now has a wrapping plain-text black status
+  band immediately below its heading. Result/frozen status, live ages, inference
+  settings and selected dimensions/pose/counts retain their existing content but
+  no longer cover camera pixels or shrink with the source image. Unavailable
+  views clear their obsolete bands. This supersedes rule 43's on-image text
+  placement only; geometry overlays remain on their respective images.
+- Keep image-only click mapping, letterbox rejection, frozen paired observations,
+  cyan circles, masks/axes/borders and black/red depth samples unchanged. No
+  inference/pose math, schemas, settings persistence, source artifacts, native
+  workers or hardware behavior change. No cameras, robot, models or RViz launched.
+- Verification: 193 perception tests and 6 controller tests pass. Offscreen
+  checks at two window sizes verify top-band placement, wrapping, unchanged
+  displayed pixels, centered-image click mapping, ignored header/margin clicks,
+  selected pose/count feedback and clearing missing-view status. Inspected both
+  live-result and frozen-selection layouts with synthetic images. Compilation,
+  changed-runtime flake8 and git diff --check pass; package build and clean
+  Humble-only root build pass all 14 packages. Installed GUI matches source and
+  imports no cv2/Torch/Ultralytics in the parent. Operator artifacts/configuration
+  remain unchanged; no hardware launched. Scoped source commit/push follows
+  the standing user authorization.
+
 ### Future entry template
 
 ```text

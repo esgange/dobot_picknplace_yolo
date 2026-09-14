@@ -78,8 +78,11 @@ load takes the next worker slot, with queued/loading progress and no retry.
 YOLO and Armed remain OFF after loading. Use **Connect RGB**, then **YOLO Detect**.
 There is one detection view: no Detect All/Filtered controls or Resume Live button.
 The visual-first window keeps setup in one scrollable left column and gives
-most space to resizable, side-by-side RGB/depth panes. Load/Save remain visible at the top;
-the bounded activity log can be expanded at the bottom.
+most space to resizable, side-by-side RGB/depth panes. Result/frozen status,
+ages, inference settings and selected pose feedback occupy the top black band
+inside each pane, not the camera pixels. Text wraps at the pane width; masks,
+axes, bin borders and sampling circles stay on the images. Load/Save remain
+visible at the top; the bounded activity log can be expanded at the bottom.
 Pick fields can remain blank for initial detection. The visible YOLO settings apply;
 initial confidence/IoU/cap are 0.25/0.70/100 and new-profile inference size is 640.
 Edits to confidence, IoU, cap, class selection, dimensions, quality or geometry refresh an
@@ -113,7 +116,7 @@ when calibration is unavailable. Edit the diameter, then click an item again.
 Depth mirrors RGB mask shading, size borders, long-X/short-Y axes, pick dots
 and bin ROI through its own calibrated pixel model. Both views freeze together
 on a click; only the selected pose is calculated from that exact pair, while
-all item outlines remain visible. Both images show selection/pose feedback;
+all item outlines remain visible. Both panes show selection/pose feedback;
 accepted depth points are black and rejected points red. The redundant help
 paragraph above the views is removed. Platform/Bin Teach use the same compact
 setup/large-video presentation, with Save/capture visible and extra calibration
