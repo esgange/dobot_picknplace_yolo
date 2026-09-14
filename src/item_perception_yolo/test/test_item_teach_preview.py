@@ -78,6 +78,170 @@ def test_single_view_has_no_mode_controls_and_never_autostarts(window):
         assert not hasattr(window, name)
     assert not window.node.yolo_enabled and not window.yolo_toggle.isChecked()
     assert "pose_candidates" in window.inputs and "retry_limit" not in window.inputs
+    assert window.simulate_button.text() == "Simulate Trigger"
+    assert not window.simulate_button.isCheckable()
+    layout = window.simulate_button.parent().layout().itemAt(0).layout()
+    assert [layout.itemAt(i).widget() for i in range(3)] == [
+        window.yolo_toggle, window.simulate_button, window.armed_toggle]
+
+
+def simulation_setup(window):
+    from item_perception_interfaces.srv import GetItemPoses
+    from item_perception_interfaces.msg import ItemCandidate
+    for name, value in (("height", "80"), ("width", "32"), ("tolerance", "2")):
+        window.inputs[name].setText(value)
+    window._populate_classes({1: "part"}, [1])
+    window.yolo_toggle.setChecked(True)
+    window.saved_path = Path("saved.yaml")
+    window.node._validate_pose_profile = MagicMock(return_value=(
+        {"retry": {"pose_candidates": 3}}, "a"*64))
+    candidate = ItemCandidate(class_name="part", priority=1, length=.08, width=.032,
+                              filtered_camera_depth=.7, accepted_depth_count=100,
+                              rejected_depth_count=2)
+    candidate.pose.position.z = .1
+    candidate.pose.orientation.w = 1.
+    response = GetItemPoses.Response(success=True, status="SHORTAGE", message="Returned 1 of 3 requested",
+                                     valid_count=1, detected_count=20, candidates=[candidate])
+    view = {"width": 200, "height": 100, "rgb": bytes([80, 100, 120])*20000,
+            "depth_rgb": bytes([160, 50, 90])*20000, "stamp_ns": 100_100_000_000,
+            "depth_stamp_ns": 100_100_000_000, "sequence": 10, "preview_mode": "filtered",
+            "metadata": {"candidates": [], "count": 20, "inference_ms": 50.,
+                         "roi_overlay": {"visible": True, "reason": ""}}}
+    window.node.simulate_trigger = MagicMock(return_value={"response": response, "view": view})
+    window.node.validate_simulation_view = MagicMock()
+    window.node.clear_selected_pose.reset_mock()
+    return response, view
+
+
+def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(window):
+    response, view = simulation_setup(window)
+    window.job_busy = True  # A running all-detection preview must yield the next slot.
+    window.simulate_button.click()
+    assert window.pending_simulation and not window.simulate_button.isEnabled()
+    window.node.simulate_trigger.assert_not_called()
+    window._simulate_trigger()  # Duplicate action is ignored, not a second request.
+    window.job_results.put(("preview", None, None))
+    window._refresh_video()
+    assert window.simulation_busy
+    finish_model_job(window)
+    assert window.frozen_view["rgb"] == view["rgb"]
+    assert window.frozen_view["depth_rgb"] == view["depth_rgb"]
+    assert window.simulation_response is response
+    assert "SIMULATED SHORTAGE" in window.rgb_feedback.text()
+    assert "SIMULATED SHORTAGE" in window.depth_feedback.text()
+    assert "P1 part" in window.rgb_feedback.text() and "100 accepted / 2 rejected" in window.depth_feedback.text()
+    window.node.simulate_trigger.assert_called_once()
+    window.node.arm.assert_not_called()
+    window.node.show_selected_pose.assert_not_called()
+    assert window.node.service is None and not window.armed_toggle.isChecked()
+    assert window.saved_path == Path("saved.yaml")
+    old_rgb, old_depth = window.video.pixmap().toImage(), window.depth_video.pixmap().toImage()
+    window.node.last_view = {**view, "rgb": bytes([3, 4, 5])*20000, "depth_rgb": bytes(60000)}
+    window._refresh_video()
+    assert window.video.pixmap().toImage() == old_rgb
+    assert window.depth_video.pixmap().toImage() == old_depth
+    # Status/margins are not a resume action, but a real image click releases the batch.
+    window._select_detection(gui.QtCore.QPointF(-1, -1))
+    assert window.frozen_view is not None
+    window._select_detection(gui.QtCore.QPointF(window.video.contentsRect().center()))
+    assert window.frozen_view is None and window.simulation_response is None
+
+
+@pytest.mark.parametrize("invalidate", ["field", "off", "arming", "resume"])
+def test_simulation_inflight_result_is_discarded_on_changes(window, invalidate):
+    simulation_setup(window)
+    window.simulate_button.click()
+    window._refresh_video()
+    completed = window.job_results.get(timeout=3)
+    action = window.node.simulate_trigger.call_args.kwargs["cancelled"]
+    assert not action()
+    if invalidate == "field":
+        window.inputs["pose_candidates"].setText("4")
+    elif invalidate == "off":
+        window.yolo_toggle.setChecked(False)
+    elif invalidate == "arming":
+        window._toggle_armed(False)
+    else:
+        window._resume_live()
+    assert action()
+    window.job_results.put(completed)
+    window._refresh_video()
+    assert window.simulation_response is None and window.frozen_view is None
+    assert not window.simulation_busy and window.simulate_button.isEnabled()
+    window.node.show_selected_pose.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["unsaved", "off", "fields", "profile", "busy", "no_items"])
+def test_simulation_requirements_and_empty_or_failed_batch(window, failure):
+    response, _view = simulation_setup(window)
+    if failure == "unsaved":
+        window.saved_path = None
+    elif failure == "off":
+        window.yolo_toggle.setChecked(False)
+    elif failure == "fields":
+        window.inputs["height"].setText("")
+    elif failure == "profile":
+        window.node._validate_pose_profile.side_effect = ValueError("Saved model hash changed")
+    elif failure == "busy":
+        response.success, response.status, response.message = False, "BUSY", "One request active"
+        response.candidates = []
+        window.node.simulate_trigger.return_value["view"] = None
+    else:
+        response.status, response.message = "NO_VALID_ITEMS", "Returned 0 of 3 requested"
+        response.candidates, response.valid_count = [], 0
+    window.simulate_button.click()
+    if failure in ("busy", "no_items"):
+        window._refresh_video()
+        finish_model_job(window)
+        if failure == "no_items":
+            assert "NO_VALID_ITEMS" in window.rgb_feedback.text()
+            assert window.frozen_view is not None and not window.simulation_response.candidates
+        else:
+            assert window.frozen_view is None and "One request active" in window.status.toPlainText()
+    else:
+        assert window.pending_simulation is None
+        window.node.simulate_trigger.assert_not_called()
+    assert window.simulate_button.isEnabled()
+    window.node.arm.assert_not_called()
+
+
+def test_simulation_freeze_clears_if_profile_or_station_changes(window):
+    simulation_setup(window)
+    window.simulate_button.click()
+    window._refresh_video()
+    finish_model_job(window)
+    assert window.frozen_view is not None
+    window.node.validate_simulation_view.side_effect = ValueError("Station source hash changed")
+    window._refresh_video()
+    assert window.frozen_view is None and window.simulation_response is None
+    assert "Simulated batch cleared: Station source hash changed" in window.status.toPlainText()
+
+
+def test_cancel_queued_simulation_does_not_run_it_after_preview_completion(window):
+    simulation_setup(window)
+    window.job_busy = True
+    window.simulate_button.click()
+    window._resume_live()
+    window.job_results.put(("preview", None, None))
+    window._refresh_video()
+    window.node.simulate_trigger.assert_not_called()
+    assert window.simulation_response is None and window.simulate_button.isEnabled()
+
+
+def test_simulation_batch_feedback_does_not_expand_with_all_1000_candidates(window):
+    response, _ = simulation_setup(window)
+    from copy import deepcopy
+    response.candidates = [deepcopy(response.candidates[0]) for _ in range(20)]
+    for index, candidate in enumerate(response.candidates, 1):
+        candidate.priority = index
+    response.valid_count = 20
+    response.message, response.status = "Returned 20 of 20 requested", "OK"
+    window.simulate_button.click()
+    window._refresh_video()
+    finish_model_job(window)
+    assert "P3 part" in window.rgb_feedback.text() and "P4 part" not in window.rgb_feedback.text()
+    assert "17 more poses" in window.depth_feedback.text()
+    assert "P20 part" in window.status.toPlainText()
 
 
 def test_visual_first_layout_has_one_settings_column_and_persistent_actions(window):

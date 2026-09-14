@@ -122,6 +122,40 @@ Input checks apply when acquiring the snapshot; `result_max_age_sec` bounds its
 age at click and completion. An expired click requires resuming live; no retry.
 Only a bounded current/in-flight/selected snapshot is held in memory; no image archive.
 
+### Simulate Trigger
+
+The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
+Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
+a complete saved/loaded schema-4 profile, its verified model, matching current
+settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
+first. It neither advertises/calls the pose service nor issues robot commands.
+
+It uses the very same acquisition, inference, class/size/ROI/depth filtering,
+center-first ranking and typed response builder as a real service request.
+Acquire one new synchronized RGB/depth pair after the click, resolve RGB-time TF,
+and enforce the same input/result ages, request deadline and hash/generation
+checks. One action queues behind the current GUI job, with progress shown on the
+button; no repeated clicks or automatic retry. The deadline includes queue time.
+Production/simulated requests are mutually exclusive and report BUSY on overlap.
+
+The successful pair freezes on both views with **only returned candidates**,
+ranked P1…Pn and capped by `retry.pose_candidates`. Retain their mask shading,
+one green rectangle, X/Y axes, center dot, cyan metric sampling rings, black/red
+accepted/rejected depth pixels, and the green loaded bin ROI. Rejected or excess
+valid objects leave no overlays behind. Null depth is excluded before MAD; it
+never contributes to the pose. Top bands report counts, source age and the first
+three poses in platform_reference (XYZ, yaw, size and depth counts); all returned
+poses have on-image priority labels and full details in the bounded Activity log.
+There is no batch-TF publication or robot actuation. SHORTAGE and NO_VALID_ITEMS
+are explicit successful outcomes; zero items freezes just the pair and bin ROI.
+
+Click RGB to cancel/resume; image margins and status bands do nothing. Settings,
+station/profile/model/arming changes, YOLO OFF or failure invalidate pending and
+frozen results. A failed request never displays a previous batch as its result.
+An armed real service remains independent and always obtains new observations,
+even while a simulation is frozen. No images are persisted; batch metadata is
+recorded only in the existing bounded package events.
+
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,

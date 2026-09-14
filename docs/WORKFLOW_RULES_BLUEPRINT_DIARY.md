@@ -1979,6 +1979,63 @@ Never use a floating “latest” version in an issue, script, or deployment not
   their parent process. No cameras, RViz, robot or motion were launched. Scoped
   source-only commit/push follows the standing user authorization.
 
+### 2026-09-14 — Audit and implement the missing Simulate Trigger action
+
+- Audit confirmed the preceding source change implemented schema-4
+  retry.pose_candidates, strict production/controller counts and GUI-only
+  invalid-file recovery, but omitted the requested Simulate Trigger control.
+  It was not an install-only problem: no button or simulation handler existed.
+- Add the main row YOLO Detect, Simulate Trigger, Armed. Simulation is local,
+  one-shot and non-actuating, requires the exact saved/loaded valid profile and
+  verified model/current settings plus YOLO ON and station/bin. Armed may stay
+  OFF; no temporary service, controller request, batch TF or robot command.
+- Extract the real request implementation into a shared batch path. Both paths
+  acquire a new synchronized pair after arrival, use its timestamped TF, apply
+  identical class/size/ROI/center/depth/MAD filters and center-first ranking,
+  and build the same typed response with count limits, evidence and explicit
+  shortage/no-items/errors. Keep one request lock and one native operation lock,
+  exact worker/runtime, terminal native failure, no replacement/retry/cache.
+- Queue one GUI simulation behind existing work, with model-load priority,
+  disabled repeat trigger and progress. Include queue time in the saved request
+  deadline; bind the queued profile digest and cancel by GUI generation without
+  killing native work. Revalidate source/profile and result age at completion.
+  Settings/arming/source/model/YOLO changes discard late results; a real service
+  remains independent of the frozen teaching display and reports BUSY on overlap.
+- Audit found that production drawing annotated every valid candidate before
+  response truncation. Add explicit overlay cap to native detection: after
+  ranking, render the returned subset from the untouched RGB/depth pair. Keep
+  only that subset's masks, one green outline, axes/dots, physical cyan sampling
+  rings, black accepted and red rejected depth pixels, P1..Pn labels and bin ROI.
+  Keep the complete valid count/rejection diagnostics in the response; excluded
+  or excess items leave no overlays. Pose mathematics are unchanged.
+- Successful simulation freezes the exact annotated pair including a zero-item
+  result, with explicit status and source ages. Top black bands show up to three
+  expanded pose details to preserve image space; every returned pose is labelled
+  on-image and listed in bounded Activity. Click RGB again to resume/cancel;
+  margins/status bands do not act as image clicks. Source/profile changes clear
+  even an aged historical batch. No image archive or saved candidate cache.
+- Camera/platform/bin geometry, item schema 4, shared UI schema 6, saved operator
+  files, calibration and hardware configuration are unchanged. Robot retry
+  execution and sole-command-ownership migration remain pending.
+- Verification: 254 perception and 6 controller tests pass (colcon also counts
+  one CTest wrapper per package). Added real/simulated response equivalence,
+  fresh synthetic ROS streams/TF with Armed OFF, exact caps/priorities, BUSY,
+  queued-profile mutation/deadline, cancellation, empty/shortage, stale/source/
+  native failures and no replacement/old-result display. GUI tests verify the
+  actual three-control row, next-slot scheduling, frozen RGB/depth, image-only
+  resume, source-change clearing, and bounded top-band details. Private native
+  tests verify mask/OBB subset-only overlays on both images, unchanged ranked
+  poses and null/outlier exclusion before MAD, plus the real worker's cap
+  protocol in its same lifetime process. Existing recovery/schema/count/model,
+  selected-pose, platform/bin and controller regressions remain green.
+- Package builds and a clean Humble-only root build pass all 14 packages.
+  Python compilation, four changed-runtime-module flake8 and git diff --check
+  pass. Installed offscreen GUI inspection confirms the visible three-button
+  row and frozen paired feedback without importing cv2/Torch/Ultralytics in
+  the parent. No operator model, camera, robot or RViz was launched/commanded;
+  existing operator artifacts/configuration were not edited. Scoped source
+  commit/push follows rule 8; no new offline-deployment milestone is claimed.
+
 ### Future entry template
 
 ```text

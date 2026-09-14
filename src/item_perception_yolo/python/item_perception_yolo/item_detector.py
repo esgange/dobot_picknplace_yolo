@@ -378,15 +378,7 @@ class ItemDetectNode(Node):
 
     def arm(self, path):
         self.disarm()
-        if not self.yolo_enabled or self.native.failed or self.applied is None:
-            raise ValueError("Arming requires YOLO ON, loaded model and applied station/bin")
-        profile, digest = load_item_profile(Path(path))
-        if detection_settings(settings_from_profile(profile)) != self.settings:
-            raise ValueError("Save or load the exact currently applied item settings first")
-        if (profile["model"]["sha256"] != self.model_config["sha256"]
-                or self.settings["geometry_source"] not in
-                self.model_metadata["geometry_sources"]):
-            raise ValueError("Model/source mismatch or no verified mask/OBB output")
+        profile, digest = self._validate_pose_profile(path)
         self._validate_sources()
         own = (self.get_name(), self.get_namespace())
         nodes = self.get_node_names_and_namespaces()
@@ -402,6 +394,20 @@ class ItemDetectNode(Node):
         self.service = self.create_service(GetItemPoses, SERVICE_NAME, self._request,
                                            callback_group=ReentrantCallbackGroup())
         self.events.record("INFO", "item_armed", "Pose service advertised", profile_sha256=digest)
+
+    def _validate_pose_profile(self, path):
+        """Same strict profile/model gate for arming and local trigger simulation."""
+        if (not self.yolo_enabled or self.native.failed or self.applied is None
+                or self.model_config is None or self.model_metadata is None):
+            raise ValueError("Pose generation requires YOLO ON, loaded model and station/bin")
+        profile, digest = load_item_profile(Path(path))
+        if detection_settings(settings_from_profile(profile)) != self.settings:
+            raise ValueError("Save or load the exact currently applied item settings first")
+        if (profile["model"]["sha256"] != self.model_config["sha256"]
+                or self.settings["geometry_source"] not in
+                self.model_metadata["geometry_sources"]):
+            raise ValueError("Model/source mismatch or no verified mask/OBB output")
+        return profile, digest
 
     def _validate_sources(self):
         if self.applied is None or self.bin_artifact is None:
@@ -441,7 +447,7 @@ class ItemDetectNode(Node):
         except TransformException as exc:
             raise ValueError(f"Required TF unavailable: {exc}") from exc
 
-    def _snapshot(self, after_ns, deadline, *, wait):
+    def _snapshot(self, after_ns, deadline, *, wait, cancelled=None):
         quality = self.settings["quality"]
         if (self.applied is None
                 or self.camera_prefix != self.applied.camera.settings.camera_prefix):
@@ -449,8 +455,10 @@ class ItemDetectNode(Node):
         epoch = self.arm_epoch
         selected = None
         while True:
-            if epoch != self.arm_epoch:
+            if epoch != self.arm_epoch or (cancelled is not None and cancelled()):
                 raise ValueError("Detector settings/arming changed while acquiring observation")
+            if time.monotonic() > deadline:
+                raise ValueError("Observation request deadline exceeded")
             if selected is None:
                 with self.condition:
                     rgb, depth = self._image, self._depth
@@ -497,12 +505,15 @@ class ItemDetectNode(Node):
                        "roi": [[p.x_m, p.y_m] for p in self.bin_artifact.points]}
             return rgb, depth, context
 
-    def infer(self, rgb, depth=None, context=None, timeout=30, *, preview=None):
+    def infer(self, rgb, depth=None, context=None, timeout=30, *, preview=None,
+              candidate_limit=None):
         settings = copy.deepcopy(self.settings if preview is None else preview["settings"])
         config = {**self.model_config, "yolo": settings["yolo"]}
         header = {"operation": "detect", "generation": self.arm_epoch, "model": config,
                   "width": rgb["width"], "height": rgb["height"], "context": context,
                   "settings": settings}
+        if candidate_limit is not None:
+            header["candidate_limit"] = candidate_limit
         if preview is not None:
             header.update(operation="preview", geometry_source=self.preview_source,
                           measurement_context=preview["context"],
@@ -762,35 +773,76 @@ class ItemDetectNode(Node):
             self.operation_lock.release()
 
     def _request(self, request, response):
+        response, _view = self._pose_batch(request, response)
+        return response
+
+    def simulate_trigger(self, path, *, expected_digest, requested_at=None, cancelled=None):
+        """Local-only equivalent of a service request; never advertises or calls a service."""
+        response, view = self._pose_batch(
+            GetItemPoses.Request(), GetItemPoses.Response(), simulation_path=Path(path),
+            requested_at=requested_at, cancelled=cancelled, expected_digest=expected_digest)
+        return {"response": response, "view": view}
+
+    def _pose_batch(self, request, response, *, simulation_path=None, requested_at=None,
+                    cancelled=None, expected_digest=None):
+        """One acquisition/inference/filter/rank/response path for real and simulated triggers."""
         if not self.request_lock.acquire(blocking=False):
             response.status, response.message = "BUSY", "One request is already active"
-            return response
+            return response, None
         epoch = self.arm_epoch
         acquired = False
+        view = None
+        simulated = simulation_path is not None
+
+        def check_active():
+            if (epoch != self.arm_epoch or not self.yolo_enabled
+                    or (not simulated and self.service is None)
+                    or (cancelled is not None and cancelled())):
+                raise ValueError("Detector was disarmed or settings changed during request")
+
         try:
-            if self.service is None or not self.yolo_enabled:
+            if not simulated and (self.service is None or not self.yolo_enabled):
                 raise ValueError("Detector is not armed")
-            if request.profile_sha256 != self.profile_digest:
+            if simulated:
+                profile, profile_digest = self._validate_pose_profile(simulation_path)
+                if profile_digest != expected_digest:
+                    raise ValueError("Item profile changed while simulation was queued")
+                profile_path = simulation_path
+                count = profile["retry"]["pose_candidates"]
+                request.max_candidates, request.profile_sha256 = count, profile_digest
+            else:
+                profile_path, profile_digest = self.profile_path, self.profile_digest
+                count = self.pose_candidates
+            if request.profile_sha256 != profile_digest:
                 raise ValueError("Requested item profile SHA-256 mismatch")
-            if not 1 <= request.max_candidates <= self.pose_candidates:
+            if not 1 <= request.max_candidates <= count:
                 raise ValueError("Requested count must be from 1 through taught pose_candidates")
-            start_ns = self.get_clock().now().nanoseconds
-            deadline = time.monotonic() + self.settings["quality"]["request_timeout_sec"]
+            start_ns, started = (requested_at if requested_at is not None else
+                                 (self.get_clock().now().nanoseconds, time.monotonic()))
+            deadline = started + self.settings["quality"]["request_timeout_sec"]
+            check_active()
+            if time.monotonic() >= deadline:
+                raise ValueError("Request deadline exceeded while queued")
             acquired = self.operation_lock.acquire(timeout=max(0.001, deadline - time.monotonic()))
             if not acquired:
                 raise ValueError("Request deadline reached waiting for preview")
             self._validate_sources()
-            _profile, digest = load_item_profile(self.profile_path)
-            if digest != self.profile_digest:
+            check_active()
+            _profile, digest = load_item_profile(profile_path)
+            if digest != profile_digest:
                 self.disarm()
-                raise ValueError("Armed item profile changed")
-            rgb, depth, context = self._snapshot(start_ns, deadline, wait=True)
-            view = self.infer(rgb, depth, context, timeout=max(0.001, deadline-time.monotonic()))
+                raise ValueError("Item profile changed")
+            options = {"cancelled": cancelled} if simulated else {}
+            rgb, depth, context = self._snapshot(start_ns, deadline, wait=True, **options)
+            check_active()
+            if time.monotonic() >= deadline:
+                raise ValueError("Request deadline exceeded before inference")
+            view = self.infer(rgb, depth, context, timeout=max(0.001, deadline-time.monotonic()),
+                              candidate_limit=request.max_candidates)
             result = view["metadata"]
-            if epoch != self.arm_epoch or self.service is None or not self.yolo_enabled:
-                raise ValueError("Detector was disarmed or settings changed during request")
+            check_active()
             self._validate_sources()
-            if file_sha256(self.profile_path) != self.profile_digest:
+            if file_sha256(profile_path) != profile_digest:
                 self.disarm()
                 raise ValueError("Item profile changed during request")
             age = (self.get_clock().now().nanoseconds -
@@ -827,23 +879,29 @@ class ItemDetectNode(Node):
                 response.status = "OK"
             response.message = (f"Returned {len(response.candidates)} of "
                                 f"{request.max_candidates} requested")
-            evidence = {"profile_sha256": self.profile_digest,
+            evidence = {"profile_sha256": profile_digest,
                         "model_sha256": self.model_config["sha256"],
                         "camera_sha256": self.applied.camera.sha256,
                         "platform_sha256": self.applied.platform.sha256,
                         "bin_sha256": self.bin_artifact.sha256, "snapshot_context": context,
                         "rejected": result["rejected"], "inference_ms": result["inference_ms"]}
             response.diagnostics_json = json.dumps(evidence, allow_nan=False)
-            if self.preview_mode == "filtered":
+            if simulated:
+                view = {**view, "simulation_profile": (str(profile_path), profile_digest),
+                        "simulation_epoch": epoch}
+            if self.preview_mode == "filtered" and not simulated:
                 self.last_view = view
-            self.events.record("INFO", "item_pose_batch", response.message,
+            self.events.record("INFO", "item_simulated_batch" if simulated else "item_pose_batch",
+                               response.message,
                                batch_id=response.batch_id, status=response.status,
                                evidence=evidence,
                                candidates=result["candidates"][:request.max_candidates])
         except Exception as exc:
             response.success, response.status, response.message = False, "ERROR", str(exc)
             response.candidates = []
-            self.events.record("ERROR", "item_pose_request_failed", str(exc))
+            view = None
+            self.events.record("ERROR", "item_simulated_request_failed" if simulated
+                               else "item_pose_request_failed", str(exc))
             if self.native.failed:
                 self.disarm()
                 self.fatal_error = str(exc)
@@ -852,7 +910,17 @@ class ItemDetectNode(Node):
             if acquired:
                 self.operation_lock.release()
             self.request_lock.release()
-        return response
+        return response, view
+
+    def validate_simulation_view(self, view):
+        """A frozen display may age, but may not survive changed source/profile identity."""
+        if view["simulation_epoch"] != self.arm_epoch or not self.yolo_enabled:
+            raise ValueError("Simulated batch invalidated by changed settings/arming")
+        self._validate_sources()
+        path, digest = view["simulation_profile"]
+        if file_sha256(Path(path)) != digest:
+            self.disarm()
+            raise ValueError("Simulated item profile changed")
 
     def close_runtime(self):
         self.disarm()

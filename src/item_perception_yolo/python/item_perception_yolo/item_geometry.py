@@ -355,7 +355,10 @@ def selected_pose(item, rgb, depth, context, settings, cv2, np, *, display_detec
 
 
 def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
-                        *, display_detections=None):
+                        *, display_detections=None, candidate_limit=None):
+    if candidate_limit is not None and (type(candidate_limit) is not int
+                                        or not 1 <= candidate_limit <= 1000):
+        raise RuntimeError("Invalid candidate overlay limit")
     camera = context["camera"]
     depth_camera = context["depth_camera"]
     transform = np.asarray(context["platform_from_optical"], dtype=np.float64)
@@ -387,6 +390,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     center_roi = polygon_centroid(roi, np)
     draw_bin_roi(overlay, context, "", cv2, np)
     candidates, rejected = [], []
+    samples = {}
     for item in objects:
         center = item["center"]
         label = f"#{item['index']} {item['class_name']} {item['confidence']:.2f}"
@@ -461,6 +465,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 "accepted_depth_count": good, "rejected_depth_count": total - good,
                 "pixel": center.tolist(),
             })
+            if candidate_limit is not None:
+                samples[item["index"]] = (pixels, accepted, circle_px)
             label += f" Z={position[2] * 1000:.1f}mm"
         except ValueError as exc:
             rejected.append({"source_index": item["index"], "reason": str(exc)})
@@ -469,6 +475,36 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                                      max(22, round(float(center[1])) - 15)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     candidates.sort(key=lambda c: (c["center_distance"], -c["confidence"], c["source_index"]))
+    if candidate_limit is not None:
+        # Render from the untouched pair AFTER ranking/capping. Excluded items
+        # must leave no masks, boxes, sampling points, labels or pose axes behind.
+        chosen = candidates[:candidate_limit]
+        by_id = {item["index"]: item for item in objects}
+        chosen_objects = [by_id[c["source_index"]] for c in chosen]
+        overlay = (shade_masks(rgb, [o["polygon"] for o in chosen_objects], cv2, np)
+                   if settings["geometry_source"] == "mask" else rgb.copy())
+        depth_view = render_depth(depth_mm, quality, cv2, np)
+        draw_bin_roi(overlay, context, "", cv2, np)
+        draw_depth_geometry(depth_view, [{**o, "size_valid": True} for o in chosen_objects],
+                            settings["geometry_source"], context, context, cv2, np)
+        for rank, candidate in enumerate(chosen, 1):
+            item = by_id[candidate["source_index"]]
+            draw_pick_geometry(overlay, item["rectangle"], cv2, np, color=(0, 255, 0))
+            _, _, circle = depth_sampling_circle(
+                item["center"], geometry["pickdepth_radius"], context, cv2, np)
+            pixels, accepted, depth_circle = samples[candidate["source_index"]]
+            depth_view[pixels[:, 1], pixels[:, 0]] = (255, 0, 0)
+            depth_view[pixels[accepted, 1], pixels[accepted, 0]] = (0, 0, 0)
+            depth_center = reproject_pixels([candidate["pixel"]], camera, depth_camera, cv2, np)[0]
+            for image, boundary, center in ((overlay, circle, candidate["pixel"]),
+                                            (depth_view, depth_circle, depth_center)):
+                cv2.polylines(image, [np.rint(boundary).astype(np.int32)], True,
+                              (0, 255, 255), 2, cv2.LINE_AA)
+                cv2.putText(image, f"P{rank}", tuple(np.rint(center).astype(int) + [8, 20]),
+                            cv2.FONT_HERSHEY_SIMPLEX, .7, (0, 255, 0), 2, cv2.LINE_AA)
+        # All candidates/diagnostics still describe the uncapped valid set.
+        # The shared response builder selects the identical leading subset.
+        return overlay, depth_view, candidates, rejected
     for rank, candidate in enumerate(candidates, 1):
         cv2.putText(overlay, f"P{rank}", tuple(np.rint(candidate["pixel"]).astype(int) + [8, 20]),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)

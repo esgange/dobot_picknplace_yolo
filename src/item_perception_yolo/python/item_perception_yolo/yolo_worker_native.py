@@ -240,11 +240,16 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                 from .item_geometry import objects_from_result, generate_candidates, draw_bin_roi
                 from .item_teach_core import validate_detection_settings
                 validate_detection_settings(request["settings"], geometry_required=True)
+                limit = request.get("candidate_limit")
+                if limit is not None and (type(limit) is not int
+                                          or not 1 <= limit <= settings["max_detections"]):
+                    raise RuntimeError("Invalid requested candidate overlay count")
                 objects = objects_from_result(results[0], request["settings"]["geometry_source"],
                                               names, settings["max_detections"], cv2, np)
                 depth = np.frombuffer(data[rgb_bytes:], dtype="<u2").reshape(height, width)
                 overlay, depth_view, candidates, rejected = generate_candidates(
-                    objects, rgb, depth, context, request["settings"], cv2, np)
+                    objects, rgb, depth, context, request["settings"], cv2, np,
+                    candidate_limit=limit)
                 roi_status = draw_bin_roi(overlay, context, "", cv2, np)
             send_packet(output_stream, {
                 "state": "ok", "generation": request["generation"], "width": width,

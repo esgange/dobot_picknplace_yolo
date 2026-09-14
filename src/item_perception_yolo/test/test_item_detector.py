@@ -90,6 +90,9 @@ def service_node(monkeypatch):
     frame = {"stamp_ns": 100_200_000_000}
     node._snapshot = MagicMock(return_value=(frame, frame, {"synthetic": True}))
     node.infer = MagicMock(return_value={"metadata": result})
+    node._pose_batch = lambda *a, **kw: detector.ItemDetectNode._pose_batch(node, *a, **kw)
+    node._validate_pose_profile = MagicMock(return_value=(
+        {"retry": {"pose_candidates": 3}}, "a"*64))
     monkeypatch.setattr(detector, "load_item_profile", lambda _: ({}, "a"*64))
     monkeypatch.setattr(detector, "file_sha256", lambda _: "a"*64)
     return node, candidate
@@ -174,6 +177,117 @@ def test_native_protocol_candidate_checks(service_node):
             {"candidates": [candidate, copy.deepcopy(candidate)]}, node.settings)
 
 
+def simulate(node, **kwargs):
+    return detector.ItemDetectNode.simulate_trigger(
+        node, "profile.yaml", expected_digest="a"*64, **kwargs)
+
+
+@pytest.mark.parametrize("armed", [False, True])
+@pytest.mark.parametrize("valid_count, status", [(0, "NO_VALID_ITEMS"), (1, "SHORTAGE"), (5, "OK")])
+def test_simulation_uses_real_batch_rules_and_never_arms(service_node, armed, valid_count, status):
+    node, candidate = service_node
+    node.service = object() if armed else None
+    service = node.service
+    node.last_view = {"old": "preview must not become a request"}
+    node.infer.return_value["metadata"].update(
+        candidates=[{**candidate, "source_index": i} for i in range(valid_count)],
+        count=valid_count)
+    result = simulate(node)
+    response = result["response"]
+    assert response.success and response.status == status
+    assert len(response.candidates) == min(3, valid_count)
+    assert response.valid_count == valid_count
+    assert result["view"]["metadata"] is node.infer.return_value["metadata"]
+    assert result["view"]["simulation_profile"] == ("profile.yaml", "a"*64)
+    assert node._snapshot.call_args.args[0] == 100_200_000_000
+    assert node.infer.call_args.kwargs["candidate_limit"] == 3
+    assert node.service is service and node.last_view == {"old": "preview must not become a request"}
+    node.disarm.assert_not_called()
+    node.service = object()
+    real = call(node)
+    assert real.status == response.status
+    assert [c.pose for c in real.candidates] == [c.pose for c in response.candidates]
+    assert [c.priority for c in real.candidates] == [c.priority for c in response.candidates]
+    assert real.batch_id != response.batch_id
+    assert node.infer.call_count == 2
+
+
+@pytest.mark.parametrize("failure", ["busy", "off", "invalid_profile", "queued_hash",
+                                    "source", "hash", "cancel", "queued_timeout",
+                                    "expired", "changed", "native"])
+def test_simulation_failure_never_freezes_or_returns_old_candidates(service_node, monkeypatch, failure):
+    node, _ = service_node
+    kwargs = {}
+    if failure == "busy":
+        node.request_lock.acquire()
+    elif failure == "off":
+        node.yolo_enabled = False
+    elif failure == "invalid_profile":
+        node._validate_pose_profile.side_effect = ValueError("Invalid saved profile")
+    elif failure == "queued_hash":
+        node._validate_pose_profile.return_value = ({"retry": {"pose_candidates": 3}}, "f"*64)
+    elif failure == "source":
+        node._validate_sources.side_effect = ValueError("Station source changed")
+    elif failure == "hash":
+        monkeypatch.setattr(detector, "file_sha256", lambda _: "changed")
+    elif failure == "cancel":
+        kwargs["cancelled"] = lambda: True
+    elif failure == "queued_timeout":
+        kwargs["requested_at"] = (100_200_000_000, time.monotonic()-40)
+    elif failure == "expired":
+        node._snapshot.return_value = ({"stamp_ns": 95_000_000_000},
+                                      {"stamp_ns": 95_000_000_000}, {})
+    elif failure == "changed":
+        def changed(*args, **kwargs):
+            node.arm_epoch += 1
+            return node.infer.return_value
+        node.infer.side_effect = changed
+    elif failure == "native":
+        def failed(*args, **kwargs):
+            node.native.failed = True
+            raise RuntimeError("Synthetic native failure")
+        node.infer.side_effect = failed
+    result = simulate(node, **kwargs)
+    assert not result["response"].success and not result["response"].candidates
+    assert result["view"] is None
+    if failure in ("busy", "off", "invalid_profile", "queued_hash", "cancel", "queued_timeout"):
+        node.infer.assert_not_called()
+    if failure == "busy":
+        assert result["response"].status == "BUSY"
+        node.request_lock.release()
+    assert not node.operation_lock.locked() and not node.request_lock.locked()
+    if failure == "native":
+        assert node.fatal_error == "Synthetic native failure"
+        node.disarm.assert_called()
+
+
+def test_pose_profile_gate_is_shared_with_arm_and_strict(service_node, monkeypatch):
+    node, _ = service_node
+    node.model_metadata = {"geometry_sources": ["mask"]}
+    monkeypatch.setattr(detector, "settings_from_profile", lambda _: node.settings)
+    monkeypatch.setattr(detector, "detection_settings", lambda settings: settings)
+    profile = {"model": {"sha256": "b"*64}}
+    monkeypatch.setattr(detector, "load_item_profile", lambda _: (profile, "a"*64))
+    assert detector.ItemDetectNode._validate_pose_profile(node, "profile.yaml") == (profile, "a"*64)
+    profile["model"]["sha256"] = "changed"
+    with pytest.raises(ValueError, match="Model/source mismatch"):
+        detector.ItemDetectNode._validate_pose_profile(node, "profile.yaml")
+    node.model_config = None
+    with pytest.raises(ValueError, match="loaded model"):
+        detector.ItemDetectNode._validate_pose_profile(node, "profile.yaml")
+
+
+def test_frozen_simulation_drops_changed_sources_but_not_aged_display(service_node, monkeypatch):
+    node, _ = service_node
+    view = simulate(node)["view"]
+    node.get_clock = lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=999_000_000_000))
+    detector.ItemDetectNode.validate_simulation_view(node, view)  # Frozen, not a live pose.
+    monkeypatch.setattr(detector, "file_sha256", lambda _: "changed")
+    with pytest.raises(ValueError, match="profile changed"):
+        detector.ItemDetectNode.validate_simulation_view(node, view)
+    node.arm_epoch += 1
+    with pytest.raises(ValueError, match="invalidated"):
+        detector.ItemDetectNode.validate_simulation_view(node, view)
 def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
     from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
     rgb = {"stamp_ns": 100_000_000_000, "received_at": time.monotonic()}

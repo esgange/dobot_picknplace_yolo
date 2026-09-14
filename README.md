@@ -152,6 +152,17 @@ are projected onto platform Z=0; pick XYZ uses the exact rectangle center and
 MAD-filtered registered depth. Accepted samples are black, rejected samples red.
 Candidates are ranked nearest the bin center first. OFF removes the service.
 Teaching previews/clicked poses never become service responses.
+
+The main controls are **YOLO Detect | Simulate Trigger | Armed**. With a complete
+saved profile, matching loaded model, YOLO ON and a valid station, **Simulate
+Trigger** runs the same fresh RGB/depth/TF candidate pipeline as a real pose request.
+It works with Armed OFF and never advertises a service or commands the robot.
+Both views freeze with only the returned ranked P1…Pn overlays, capped by
+`pose_candidates`, and the green bin border. Pose/depth/count feedback and ages
+are in the top bands; additional pose details are in Activity. A shortage or zero
+valid items is explicit. Click RGB again to resume; edits/source changes or YOLO
+OFF cancel old results. The armed service continues acquiring independent fresh
+observations—it never returns this frozen teaching batch.
 Unsaved text-box edits are not autosaved; restart prefills the selected saved
 teach YAML and camera prefix. Station/bin selections are the narrow automatic
 read-only-preview exception; item settings, model execution and arming remain unapplied.

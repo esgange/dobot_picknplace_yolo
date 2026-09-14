@@ -300,6 +300,14 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         assert result["has_depth_view"] and result["geometry_sources"] == ["mask"]
         assert len(data) == len(pixels)*2
         assert isinstance(result["candidates"], list)
+        # Real private-worker protocol supports bounded service/simulation overlays
+        # without restarting the child or changing its full candidate list.
+        send_packet(child.stdin, {**header, "candidate_limit": 3}, pixels + depth)
+        batch_result, batch_pixels = receive_packet(child.stdout)
+        assert batch_result["state"] == "ok", batch_result
+        assert batch_result["has_depth_view"] and len(batch_pixels) == len(pixels)*2
+        assert batch_result["candidates"] == result["candidates"]
+        assert child.poll() is None
         # Unified RGB/depth preview does not auto-generate a pose for any item.
         preview_request = {**header, "operation": "preview", "context": None,
                            "geometry_source": "mask", "measurement_context": header["context"],

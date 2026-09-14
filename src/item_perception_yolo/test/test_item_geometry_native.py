@@ -358,7 +358,67 @@ def exercise_registered_depth():
                             settings, cv2, np)
 
 
-@pytest.mark.parametrize("exercise", ["exercise_geometry", "exercise_registered_depth"])
+def exercise_candidate_batch_overlay():
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import generate_candidates, render_depth
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+    cv2.setNumThreads(1)
+    cv2.ocl.setUseOpenCL(False)
+    camera = {"k": [1000., 0., 320., 0., 1000., 240., 0., 0., 1.], "d": [0.] * 5}
+    transform = np.diag([1., -1., -1., 1.])
+    transform[2, 3] = .8
+    context = {"camera": camera, "depth_camera": camera,
+               "platform_from_optical": transform.tolist(),
+               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
+    settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
+                "geometry": {"height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.},
+                "yolo": {"class_ids": [1], "confidence": .5}}
+    rgb = np.full((480, 640, 3), 80, np.uint8)
+    depth = np.full((480, 640), 700, np.uint16)
+    polygon = np.array([[-50, -20], [50, -20], [50, 20], [-50, 20]], np.float32)
+    objects = [{"index": index, "class_id": cls, "class_name": "part", "confidence": conf,
+                "rectangle": polygon + [x, y], "polygon": polygon + [x, y],
+                "center": np.array([x, y], np.float64)}
+               for index, x, y, cls, conf in ((0, 180, 240, 1, .99), (1, 320, 240, 1, .6),
+                                             (2, 460, 240, 1, .9), (3, 460, 350, 2, .99))]
+    depth[240, 320] = 0
+    depth[240, 321] = 990
+    for source in ("mask", "obb"):
+        config = {**settings, "geometry_source": source}
+        rgb1, depth1, valid, rejected = generate_candidates(
+            objects, rgb, depth, context, config, cv2, np, candidate_limit=1)
+        assert [c["source_index"] for c in valid] == [1, 0, 2]  # Center, then confidence tie.
+        assert rejected == [{"source_index": 3, "reason": "class not selected"}]
+        baseline_depth = render_depth(depth, config["quality"], cv2, np)
+        for x, y in ((180, 240), (460, 240), (460, 350)):
+            # No mask, outline, sample dots, label or axes left on non-returned items.
+            assert np.array_equal(rgb1[y-25:y+28, x-55:x+55], rgb[y-25:y+28, x-55:x+55])
+            assert np.array_equal(depth1[y-25:y+28, x-55:x+55],
+                                  baseline_depth[y-25:y+28, x-55:x+55])
+        assert rgb1[250, 270].tolist() == [0, 255, 0]  # Single valid-size rectangle.
+        assert rgb1[240, 320].tolist() == [255, 255, 255]
+        assert depth1[240, 320].tolist() == [255, 0, 0]  # Null never enters MAD.
+        assert depth1[240, 321].tolist() == [255, 0, 0]
+        assert depth1[240, 322].tolist() == [0, 0, 0]
+        assert rgb1[240, 70, 1] > 240 and depth1[240, 70, 1] > 240  # ROI retained on both.
+        assert np.allclose(valid[0]["position"], [0, 0, .1])
+        rgb3, depth3, all_valid, _ = generate_candidates(
+            objects, rgb, depth, context, config, cv2, np, candidate_limit=3)
+        assert valid == all_valid  # Rendering cap never changes candidate math/ranking.
+        assert not np.array_equal(rgb3[220:270, 130:230], rgb1[220:270, 130:230])
+        assert not np.array_equal(depth3[220:270, 130:230], depth1[220:270, 130:230])
+        # No items is a frozen raw pair + bin ROI, not all rejected-object overlays.
+        invalid = {**config, "yolo": {**config["yolo"], "class_ids": [9]}}
+        empty_rgb, empty_depth, empty, _ = generate_candidates(
+            objects, rgb, depth, context, invalid, cv2, np, candidate_limit=3)
+        assert empty == []
+        assert np.array_equal(empty_rgb[200:300, 260:380], rgb[200:300, 260:380])
+        assert np.array_equal(empty_depth[200:300, 260:380], baseline_depth[200:300, 260:380])
+
+
+@pytest.mark.parametrize("exercise", ["exercise_geometry", "exercise_registered_depth",
+                                     "exercise_candidate_batch_overlay"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

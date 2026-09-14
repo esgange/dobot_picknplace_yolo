@@ -53,6 +53,12 @@ checks stay strict. `image_size`
 is no longer an editable field; new profiles use 640 internally and loading
 preserves the exact saved value.
 Armed exposes the pose service only for an exact saved profile with valid inputs.
+The main row now includes **Simulate Trigger** between YOLO Detect and Armed.
+After saving a complete profile and enabling YOLO, use it to freeze a fresh
+RGB/depth pair showing only the ranked candidates a request would return, capped
+by `pose_candidates`, with the bin border. It uses production filters, works
+with Armed OFF and never commands the robot. SHORTAGE/NO_VALID_ITEMS are explicit;
+click RGB again to resume. The armed service never returns a frozen preview batch.
 See the README for headless `item_detect.launch.py`, quality limits and the
 read-only controller request. Physical pick execution remains pending.
 

@@ -197,6 +197,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.preview_update_due = None
         self.preview_settings_paused = False
         self.pending_pose = None
+        self.pending_simulation = None
+        self.simulation_busy = False
+        self.simulation_response = None
         self.selected_pose_result = None
         self.selected_pose_status = ""
         self.last_preview_sequence = None
@@ -306,6 +309,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.yolo_toggle.setCheckable(True)
         self.yolo_toggle.toggled.connect(self._toggle_yolo)
         toggle_row.addWidget(self.yolo_toggle)
+        self.simulate_button = QtWidgets.QPushButton("Simulate Trigger")
+        self.simulate_button.setToolTip(
+            "Freeze a new RGB/depth pair with only the ranked service candidates. "
+            "Requires a saved profile and YOLO ON; Armed may be OFF. No robot commands.")
+        self.simulate_button.clicked.connect(self._simulate_trigger)
+        toggle_row.addWidget(self.simulate_button)
         self.armed_toggle = QtWidgets.QPushButton("Armed: OFF")
         self.armed_toggle.setCheckable(True)
         self.armed_toggle.setToolTip(
@@ -625,8 +634,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
         )
 
     def _resume_live(self):
-        if self.frozen_view is not None or self.pending_pose is not None:
+        if (self.frozen_view is not None or self.pending_pose is not None
+                or self.pending_simulation is not None or self.simulation_busy):
             self.preview_revision += 1
+        self.pending_simulation = self.simulation_response = None
+        if not self.simulation_busy and not self.model_load_reserved:
+            self.simulate_button.setEnabled(True)
+            self.simulate_button.setText("Simulate Trigger")
         self.pending_pose = self.selected_pose_result = None
         self.selected_pose_status = ""
         self.node.clear_selected_pose()
@@ -635,13 +649,18 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _select_detection(self, point):
         view = self.displayed_view
-        if view is None or view.get("preview_mode") != "all":
+        if view is None:
             return
         pixel = image_click(point, self.video, view["width"], view["height"])
         if pixel is None:
             return
+        if self.pending_simulation is not None or self.simulation_busy:
+            self._resume_live()  # Cancel display/request eligibility, never interrupt native work.
+            return
         if self.frozen_view is not None:
             self._resume_live()
+            return
+        if view.get("preview_mode") != "all":
             return
         matches = []
         for item in view["metadata"]["detections"]:
@@ -672,6 +691,31 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                 source_index=self.selected_detection["source_index"],
                                 measurement=self.selected_detection["measurement"],
                                 reason=self.selected_detection["measurement_error"])
+
+    def _simulate_trigger(self):
+        if (self.model_load_reserved or self.pending_simulation is not None
+                or self.simulation_busy or self.closing):
+            return
+        try:
+            if self.saved_path is None:
+                raise ValueError("Save/load a complete current item profile before simulating")
+            if not self.yolo_toggle.isChecked() or self.preview_settings_paused:
+                raise ValueError("Enable YOLO with valid settings before simulating")
+            self.node.enable_yolo(self._inference_settings())
+            # Validate without temporarily arming/exposing a ROS service.
+            _profile, digest = self.node._validate_pose_profile(self.saved_path)
+            self._resume_live()
+            self.preview_revision += 1  # Discard any all-detection preview already in flight.
+            self.pending_simulation = (
+                self.saved_path, digest,
+                (self.node.get_clock().now().nanoseconds, time.monotonic()))
+            self.simulate_button.setEnabled(False)
+            self.simulate_button.setText("Trigger queued…")
+            self.preview_status = "SIMULATE TRIGGER — waiting for a new RGB/depth pair"
+            self.preview_error = ""
+            self._message(self.preview_status)
+        except (ValueError, OSError, RuntimeError) as exc:
+            self._error("Cannot simulate trigger", exc)
 
     def _job(self, kind, action):
         if self.job_busy:
@@ -711,6 +755,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.load_teach_button.setEnabled(False)
         self.yolo_toggle.setEnabled(False)
         self.armed_toggle.setEnabled(False)
+        self.simulate_button.setEnabled(False)
 
     def _queue_model_load(self, path, *, pair=None):
         """Queue exactly one confirmed model; a paired load is bound to its YAML hash."""
@@ -738,6 +783,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.load_teach_button.setEnabled(True)
         self.yolo_toggle.setEnabled(True)
         self.armed_toggle.setEnabled(True)
+        self.simulate_button.setEnabled(not self.simulation_busy
+                                        and self.pending_simulation is None)
 
     def _start_pending_model_load(self):
         if self.pending_model_path is None or self.job_busy or self.closing:
@@ -890,6 +937,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
             pass
         else:
             self.job_busy = False
+            if kind == "simulate":
+                self.simulation_busy = False
+                self.simulate_button.setEnabled(not self.model_load_reserved)
+                self.simulate_button.setText("Simulate Trigger")
             if kind != "model" and self.job_revision != self.preview_revision:
                 # Even already-completed, queued replies may belong to settings
                 # edited after inference finished. Never resurrect their overlays.
@@ -906,6 +957,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             if error is not None:
                 self.preview_status = str(error)
                 self.preview_error = str(error)
+                if kind == "simulate":
+                    self._message("Simulate Trigger failed: " + str(error))
                 if kind == "pose":
                     self.node.clear_selected_pose()
                     self.selected_pose_status = "Pose unavailable: " + str(error)
@@ -950,6 +1003,19 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.node.events.record("INFO", "item_pair_model_loaded",
                                             "Verified paired model loaded with item teach",
                                             profile=str(pair[0]), profile_sha256=pair[1])
+            elif kind == "simulate" and value is not None:
+                response = value["response"]
+                if response.success:
+                    self.simulation_response = response
+                    self.frozen_view = {**value["view"], "preview_mode": "simulated"}
+                    self.preview_error = ""
+                    self.preview_status = f"SIMULATED {response.status}: {response.message}"
+                    for candidate in response.candidates:
+                        self._message(self._batch_candidate_text(candidate))
+                else:
+                    self.preview_status = "Simulate Trigger failed: " + response.message
+                    self.preview_error = response.message
+                self._message(self.preview_status)
             elif kind == "pose" and value is not None and self.frozen_view is not None:
                 self.frozen_view = {**self.frozen_view, "depth_rgb": value["depth_rgb"]}
                 candidate = value["candidate"]
@@ -1001,12 +1067,31 @@ class ItemTeachWindow(QtWidgets.QWidget):
             view, detection, settings = self.pending_pose
             self.pending_pose = None
             self._job("pose", lambda: self.node.clicked_pose(view, detection, settings))
+        if (self.pending_simulation is not None and not self.job_busy
+                and not self.model_load_reserved):
+            path, digest, requested_at = self.pending_simulation
+            self.pending_simulation = None
+            self.simulation_busy = True
+            revision = self.preview_revision
+            self.simulate_button.setText("Simulating…")
+            self._job("simulate", lambda: self.node.simulate_trigger(
+                path, expected_digest=digest, requested_at=requested_at,
+                cancelled=lambda: self.closing or revision != self.preview_revision))
         if self.node.service is None and self.armed_toggle.isChecked():
             self.armed_toggle.setChecked(False)
+        if self.simulation_response is not None:
+            try:
+                self.node.validate_simulation_view(self.frozen_view)
+            except (ValueError, OSError) as exc:
+                self._resume_live()
+                self.node.last_view = None
+                self.preview_error = "Simulated batch cleared: " + str(exc)
+                self._message(self.preview_error)
         frame, camera_status = self.node.camera_snapshot()
         if ((self.node.yolo_enabled or self.node.applied is not None)
                 and not self.preview_settings_paused
                 and not self.model_load_reserved and not self.job_busy and frame is not None
+                and self.pending_simulation is None and not self.simulation_busy
                 and self.frozen_view is None
                 and frame["sequence"] != self.last_preview_sequence):
             self.last_preview_sequence = frame["sequence"]
@@ -1055,6 +1140,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
             title = "YOLO PREVIEW PAUSED — updating/checking settings"
         elif selected:
             title = "FROZEN SELECTION — click image to resume"
+        elif mode == "simulated":
+            batch = self.simulation_response
+            title = f"SIMULATED {batch.status} — {batch.message} | click RGB to resume"
+        elif self.pending_simulation is not None or self.simulation_busy:
+            title = "SIMULATE TRIGGER — acquiring/processing | click RGB to cancel"
         elif mode == "all":
             title = f"DETECTIONS: {len(metadata['detections'])} | click for pose"
         elif mode == "filtered":
@@ -1073,6 +1163,18 @@ class ItemTeachWindow(QtWidgets.QWidget):
         suffix = "" if timing is None else f" | inference {timing:.1f}ms"
         frame_note = f"{'STALE ' if age > 0.5 else ''}Frame age {age:.2f}s{suffix}"
         rgb_lines = [title, frame_note]
+        batch_lines = []
+        if mode == "simulated":
+            batch_lines = [f"Frozen teaching batch | {batch.valid_count} valid / "
+                           f"{batch.detected_count} detections | NO ROBOT COMMANDS"]
+            for candidate in batch.candidates[:3]:
+                batch_lines.append(self._batch_candidate_text(candidate))
+            if len(batch.candidates) > 3:
+                batch_lines.append(f"{len(batch.candidates)-3} more poses labelled on image; "
+                                   "full details in Activity log")
+            batch_lines.append("Poses in platform_reference; "
+                               "Armed service uses independent new frames.")
+            rgb_lines.extend(batch_lines)
         settings_note = ""
         if mode == "all" and not self.preview_settings_paused:
             try:
@@ -1134,6 +1236,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                  QtGui.QImage.Format_RGB888).copy()
             depth_age = (self.node.get_clock().now().nanoseconds - view["depth_stamp_ns"]) / 1e9
             depth_lines = [title, f"Depth age: {depth_age:.2f}s | Accepted BLACK / Rejected RED"]
+            depth_lines.extend(batch_lines)
             if selected:
                 depth_lines.append(item_note)
                 if selected["measurement"]:
@@ -1173,6 +1276,18 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.timer.stop()
         self.node.close_runtime()
         super().closeEvent(event)
+
+    @staticmethod
+    def _batch_candidate_text(candidate):
+        p, q = candidate.pose.position, candidate.pose.orientation
+        yaw = math.degrees(2 * math.atan2(q.z, q.w))
+        return (f"P{candidate.priority} {candidate.class_name} | "
+                f"XYZ [mm] {p.x*1000:+.1f}, {p.y*1000:+.1f}, {p.z*1000:+.1f} "
+                f"| yaw {yaw:+.1f}° | size {candidate.length*1000:.1f} × "
+                f"{candidate.width*1000:.1f} mm | depth "
+                f"{candidate.filtered_camera_depth*1000:.1f} mm | "
+                f"{candidate.accepted_depth_count} accepted / "
+                f"{candidate.rejected_depth_count} rejected")
 
     def _message(self, message):
         self.status.appendPlainText(message)

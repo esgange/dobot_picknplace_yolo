@@ -124,6 +124,16 @@ def exercise_service():
         detector.tf_buffer.lookup_transform = real_lookup
         detector.disarm()
         assert detector.service is None
+        # A local simulation stays unarmed yet uses the same fresh-observation
+        # acquisition, timestamped TF and typed response as the real service.
+        start = sensor.get_clock().now().nanoseconds
+        simulated = detector.simulate_trigger(Path("synthetic_profile.yaml"), expected_digest="a"*64)
+        assert simulated["response"].success, simulated["response"].message
+        assert simulated["response"].status == "SHORTAGE"
+        assert simulated["response"].candidates[0].pose == result.candidates[0].pose
+        assert min(observed[-1][:2]) >= start
+        assert detector.service is None
+        assert simulated["response"].batch_id != result.batch_id
         # Re-arm the same node: discovery of its retired endpoint must not self-collide.
         detector.arm(Path("synthetic_profile.yaml"))
         assert detector.service is not None
