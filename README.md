@@ -43,7 +43,7 @@ diary for the outstanding pick-profile and I/O decisions.
 The controller will request a bounded candidate batch from `item_detect`, which
 loads the model/item profile and current camera/platform/bin artifacts and
 returns item targets in `platform_reference`. The item profile will save both
-`retry_limit` (total attempts including the first, and requested pose count)
+`retry.pose_candidates` (maximum ranked poses requested for controller retries)
 and a separate `yolo.max_detections` per-image detection cap. The initial
 profile editor and shared GUI/headless detector described below implement
 read-only detection requests. Physical execution remains pending. Imported
@@ -60,7 +60,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-3 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-4 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -71,6 +71,15 @@ one combined replacement/trust confirmation. Saved class selection, geometry and
 settings are preserved; no separate Load Model click is needed. Missing, changed
 or incompatible pairs are rejected. YOLO and Armed remain OFF, and startup
 prefill still does not execute model weights.
+
+Old or partially invalid item files can open in the GUI as **recovery drafts**.
+Independently valid fields are kept; missing/ambiguous fields are blank (unknown
+checkboxes show a partial state). The old `retry_limit` count is recovered as
+`pose_candidates` only when unambiguous. Missing/bad model pairing clears the
+model field; it is never silently trusted. Review the recovery warning/log,
+complete the form, and Save a new schema-4 YAML/.pt pair before arming or sending
+it to the controller. Originals remain untouched. Detector/controller loaders
+accept only complete schema-4 profiles; they never recover old files.
 
 For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
 load while the automatic bin border is updating: the confirmed
@@ -149,7 +158,7 @@ read-only-preview exception; item settings, model execution and arming remain un
 
 `item_detect.launch.py` runs the same detector headlessly with explicit artifact
 paths, `trusted_model:=true` and `armed:=true`. The controller can request up to
-the taught retry limit through its read-only `/robot_controller/request_item_poses`
+the taught `pose_candidates` count through its read-only `/robot_controller/request_item_poses`
 Trigger action, while remaining `PROFILE_VALIDATED_NOT_ARMED` for robot motion.
 No training, robot commands or pick/I/O execution is included. Private inference
 wheels are pinned/verified/extracted offline; exact Torch/system dependencies

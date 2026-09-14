@@ -49,7 +49,7 @@ def exercise_service():
             "quality": dict(QUALITY_DEFAULTS), "yolo": {"class_ids": [1], "confidence": .6,
                 "max_detections": 20, "image_size": 640, "iou": .5}}
         profile = {**settings, "model": {"declared_task": "segment", "sha256": "b"*64},
-            "item": {}, "motion": {}, "timing": {}, "gripper": {}, "retry": {"retry_limit": 3}}
+            "item": {}, "motion": {}, "timing": {}, "gripper": {}, "retry": {"pose_candidates": 3}}
         module.load_item_profile = lambda _: (profile, "a"*64)
         module.file_sha256 = lambda _: "a"*64
         detector.model_config = {"sha256": "b"*64}

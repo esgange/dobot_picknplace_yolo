@@ -13,7 +13,8 @@ unchanged; the YAML references only the copied filename and its SHA-256, never
 the source machine's model path. No existing file is overwritten. A failed copy
 or changed source prevents YAML publication; the success dialog names both files.
 
-Strict item schema 3 groups data by purpose (schemas 1–2 are rejected, not converted):
+Strict item schema 4 groups data by purpose. Production rejects schemas 1–3;
+only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
 | --- | --- |
@@ -24,7 +25,7 @@ Strict item schema 3 groups data by purpose (schemas 1–2 are rejected, not con
 | `motion` | `standoff_height`, `zheight_offset`, `prepick_height`, `retract_height` |
 | `timing` | `pick_settling` |
 | `gripper` | `use_grip`, `grip_onpick` |
-| `retry` | `retry_limit`: total candidate attempts including the first |
+| `retry` | `pose_candidates`: maximum ranked poses requested for controller retries |
 | `yolo` | `confidence`, `iou`, `image_size`, `max_detections`, `class_ids` |
 | `geometry_source` | Explicit mask, OBB, or none for RGB-only preview |
 | `geometry` | Long-side `height`, short-side `width`, ± `tolerance`, `pickdepth_radius` (all mm; the last key means diameter, default 30 mm) |
@@ -34,6 +35,19 @@ Strict item schema 3 groups data by purpose (schemas 1–2 are rejected, not con
 `yolo.image_size` is retained as reproducible inference metadata, not an editable
 GUI field. New profiles record 640; loading preserves the exact validated value
 already in that profile. Existing files are not rewritten or silently normalized.
+
+`retry.pose_candidates: 3` requests up to three valid poses, not three extra
+retries after an initial pick. `yolo.max_detections` remains a separate inference
+cap. The controller currently requests/logs poses only; retry execution is pending.
+
+GUI recovery keeps validated fields and blanks unclear/missing ones; unknown
+booleans require an explicit choice. A clear old `retry_limit` is mapped for
+editing only. Home must validate as a whole; an unverified model is not loaded.
+Malformed/ambiguous YAML opens an empty draft. Review the warning/activity log,
+complete missing settings and Save a new pair. Recovered drafts cannot arm or
+reach the controller until strictly validated and saved. Existing files are
+never overwritten. The shared UI-state format remains schema 6 (named-file
+prefill only); no recovered values are autosaved.
 
 Source robot identity is provenance only. Identical destination robots may use
 the same recorded home joints; loading never replays them. A new home must be

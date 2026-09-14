@@ -1931,6 +1931,54 @@ Never use a floating “latest” version in an issue, script, or deployment not
   remain unchanged; no hardware launched. Scoped source commit/push follows
   the standing user authorization.
 
+### 2026-09-14 — Pose candidate count and recoverable Item Teach drafts
+
+- User renamed `retry_limit` to `pose_candidates`: the maximum ranked pose count
+  requested from the detector for the controller to use for retries. Keep the
+  existing `retry` YAML group; this field no longer claims to implement robot
+  retry execution. The detector bounds `max_candidates` against it and the
+  read-only controller requests exactly it. Keep 1–1000 and no greater than
+  `yolo.max_detections`; actual returned count may be lower or zero.
+- Advance strict production item schema to 4. GUI Save, headless detection and
+  controller use only `retry.pose_candidates`, with no production old-name alias.
+  Platform/bin schema 3, camera schema 7 and shared UI schema 6 are unchanged.
+- User initially approved one-time updated copies, then superseded that plan:
+  let old/corrupt files load for editing, leaving unclear/empty variables blank.
+  Implement a GUI-only recovery draft, not a runtime compatibility reader or
+  automatic bulk conversion. Keep individually validated known-format fields;
+  recover an unambiguous old count only in schemas 1–3. Clear invalid values,
+  conflicting pairs and values with unknown units; never retain prior form
+  values or invent defaults. Unknown flags use a partial checkbox and must be
+  resolved. An invalid home record is cleared as a whole. Malformed/duplicate
+  YAML or unknown formats produce an empty draft with reasons.
+- Verify the exact same-stem .pt SHA-256 independently before offering/queueing
+  recovered model loading, then recheck YAML/model at queue execution/completion.
+  Keep explicit trust, worker isolation and no automatic YOLO/arming. Missing
+  or tampered pairs clear the model, not silently establish a new hash. Actual
+  verified model metadata governs available task/classes/geometry for drafts.
+  Named-file startup recovery is prefill only, without model execution.
+- Recovery is visibly labelled, logs what was cleared and cannot set saved-profile
+  eligibility. Operator corrections followed by explicit Save produce a new
+  validated schema-4 YAML/.pt pair without overwriting originals; only then may
+  the operator arm or request controller validation. No source artifacts or
+  persisted UI fields are automatically rewritten. Strict shared UI-state and
+  production loaders remain unchanged in failure policy. This is the narrow
+  user-authorized exception to earlier GUI no-recovery rules, not relaxed
+  calibration/bin/platform readers or robot safety.
+- Verification: 220 perception tests and 6 controller tests pass. Coverage includes
+  exact request counts/caps, strict schema-4 round trips and production old-name
+  rejection, old/corrupt startup prefill without execution, validated-field
+  recovery, unit/conflict clearing, unknown booleans, ambiguous/malformed YAML,
+  model-hash failures and queued changes, and explicit recovered Save into a
+  new pair without altering originals. Both existing workstation item files
+  were inspected read-only: their count recovers as 3 and paired hashes verify;
+  no values or artifacts were rewritten and no operator weights were executed.
+  Package builds and clean Humble-only root colcon build pass all 14 packages;
+  compilation, five changed-module flake8 and git diff --check pass. Installed
+  GUI/recovery/controller use schema 4 and import no cv2/Torch/Ultralytics in
+  their parent process. No cameras, RViz, robot or motion were launched. Scoped
+  source-only commit/push follows the standing user authorization.
+
 ### Future entry template
 
 ```text

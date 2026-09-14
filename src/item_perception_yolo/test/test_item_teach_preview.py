@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from item_perception_yolo import item_teach_gui as gui
 from item_perception_yolo import item_teach_core as core
@@ -76,6 +77,7 @@ def test_single_view_has_no_mode_controls_and_never_autostarts(window):
     for name in ("preview_stage", "resume_live", "filtered_toggle", "detect_all_toggle"):
         assert not hasattr(window, name)
     assert not window.node.yolo_enabled and not window.yolo_toggle.isChecked()
+    assert "pose_candidates" in window.inputs and "retry_limit" not in window.inputs
 
 
 def test_visual_first_layout_has_one_settings_column_and_persistent_actions(window):
@@ -533,7 +535,7 @@ def paired_teach(window, tmp_path, monkeypatch):
         "quality": dict(core.QUALITY_DEFAULTS),
         "motion": dict(zip(core.MOTION_FIELDS, [90., 50., 60., 100.])),
         "timing": {"pick_settling": .5}, "gripper": {"use_grip": True, "grip_onpick": True},
-        "retry": {"retry_limit": 3},
+        "retry": {"pose_candidates": 3},
         "geometry": {"height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 45.},
         "yolo": {"confidence": .63, "iou": .35, "max_detections": 17,
                  "image_size": 1280, "class_ids": [1]},
@@ -545,6 +547,8 @@ def paired_teach(window, tmp_path, monkeypatch):
     path, profile = core.save_item_profile(settings, home, source, root=tmp_path)
     metadata = {**window.node.model_metadata, "sha256": profile["model"]["sha256"]}
     monkeypatch.setattr(gui, "load_item_profile", lambda p: core.load_item_profile(p, root=tmp_path))
+    from item_perception_yolo.item_teach_recovery import recover_item_fields
+    monkeypatch.setattr(gui, "recover_item_fields", lambda p: recover_item_fields(p, root=tmp_path))
     monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", lambda *_: (str(path), ""))
     question = MagicMock(return_value=gui.QtWidgets.QMessageBox.Yes)
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
@@ -603,6 +607,118 @@ def test_teach_prefill_never_loads_weights(window, paired_teach):
     window.node.inspect_model.assert_not_called()
     question.assert_not_called()
     assert not window.model_load_reserved and not window.node.yolo_enabled
+
+
+def test_old_teach_recovers_prefill_and_explicit_model_then_saves_new_pair(
+        window, paired_teach, tmp_path, monkeypatch):
+    path, profile, settings, _, _ = paired_teach
+    profile["schema_version"] = 3
+    profile["retry"] = {"retry_limit": 3}
+    path.write_text(yaml.safe_dump(profile))
+    original, model_original = path.read_bytes(), path.with_suffix(".pt").read_bytes()
+    window._load(path, prefill=True)
+    assert window.recovered_draft and window._settings() == settings
+    assert window.saved_path is None and not window.send.isEnabled()
+    window.node.inspect_model.assert_not_called()
+    window._load_dialog()
+    finish_model_job(window)
+    assert window.recovered_draft and window._settings() == settings
+    assert window.saved_path is None and not window.send.isEnabled()
+    window.armed_toggle.setChecked(True)
+    window.node.arm.assert_not_called()
+    assert not window.armed_toggle.isChecked()
+    monkeypatch.setattr(gui, "save_item_profile", lambda s, h, m: core.save_item_profile(
+        s, h, m, root=tmp_path))
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
+    window._save()
+    assert not window.recovered_draft and window.saved_path != path
+    assert window.recovery_notice.isHidden()
+    saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
+    assert saved["schema_version"] == 4 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["home"] == profile["home"]
+    assert core.settings_from_profile(saved) == settings
+    assert path.read_bytes() == original and path.with_suffix(".pt").read_bytes() == model_original
+    assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
+
+
+def test_partial_recovery_clears_previous_form_values_and_unknown_booleans(window, paired_teach):
+    path, profile, _, _, _ = paired_teach
+    window.inputs["height"].setText("999")
+    profile["geometry"]["height"] = ""
+    profile["gripper"]["grip_onpick"] = None
+    profile["gripper"]["use_grip"] = False
+    profile["home"] = None
+    profile["yolo"]["confidence"] = 40
+    profile["retry"] = {}
+    profile["model"]["sha256"] = "b" * 64
+    path.write_text(yaml.safe_dump(profile))
+    window._load_dialog()
+    assert window.recovered_draft and not window.recovery_notice.isHidden()
+    for key in ("height", "confidence", "pose_candidates"):
+        assert window.inputs[key].text() == ""
+    assert window.home is None and window.model.text() == ""
+    assert window.inputs["grip_onpick"].checkState() == gui.QtCore.Qt.PartiallyChecked
+    assert window.inputs["grip_onpick"].isEnabled()  # Can resolve unknown even with use_grip OFF.
+    assert window.inputs["width"].text() == "40.0"
+    assert not window.model_load_reserved and window.saved_path is None
+    with pytest.raises(ValueError, match="grip_onpick is unknown"):
+        window._settings()
+    window.node.inspect_model.assert_not_called()
+    window.node.arm.assert_not_called()
+
+
+def test_corrupt_profile_prefill_opens_with_no_model_or_old_values(window, paired_teach):
+    path, _, _, _, _ = paired_teach
+    path.write_text("broken: [")
+    window._load(path, prefill=True)
+    assert window.recovered_draft and window.model.text() == "" and window.home is None
+    assert window.profile_image_size is None and not window._selected_classes()
+    assert window.task.currentIndex() == window.geometry_source.currentIndex() == -1
+    for widget in window.inputs.values():
+        if isinstance(widget, gui.QtWidgets.QLineEdit):
+            assert widget.text() == ""
+    assert window.saved_path is None and not window.node.yolo_enabled
+    window.node.inspect_model.assert_not_called()
+    with pytest.raises(ValueError, match="image_size is unknown"):
+        window._yolo_settings()
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_window_startup_recovers_named_old_or_corrupt_profile_without_execution(
+        window, paired_teach, monkeypatch, corrupt):
+    path, profile, _, _, _ = paired_teach
+    profile["schema_version"] = 3
+    profile["retry"] = {"retry_limit": 3}
+    path.write_text("broken: [" if corrupt else yaml.safe_dump(profile))
+    monkeypatch.setattr(gui, "item_directory", lambda: path.parent)
+    monkeypatch.setattr(gui, "load_package_ui_state", lambda _: SimpleNamespace(
+        item_profile_filename=path.name, item_preview_camera_prefix=None,
+        item_platform_filename=None, item_bin_filename=None))
+    restored = gui.ItemTeachWindow(window.node)
+    restored.timer.stop()
+    try:
+        assert restored.recovered_draft and restored.saved_path is None
+        assert not restored.send.isEnabled() and not restored.yolo_toggle.isChecked()
+        assert restored.inputs["pose_candidates"].text() == ("" if corrupt else "3")
+        window.node.inspect_model.assert_not_called()
+        window.node.arm.assert_not_called()
+    finally:
+        restored.close()
+
+
+def test_recovery_pair_changes_while_queued_never_loads_model(window, paired_teach):
+    path, profile, _, _, _ = paired_teach
+    profile["schema_version"] = 3
+    profile["retry"] = {"retry_limit": 3}
+    path.write_text(yaml.safe_dump(profile))
+    window.job_busy = True
+    window._load_dialog()
+    path.with_suffix(".pt").write_bytes(b"changed")
+    window.job_results.put(("roi", None, None))
+    window._refresh_video()
+    finish_model_job(window)
+    assert window.saved_path is None and window.node.model_config is None
+    window.node.inspect_model.assert_not_called()
 
 
 def test_declining_pair_confirmation_preserves_form_and_does_not_load(window, paired_teach):

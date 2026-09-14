@@ -12,6 +12,7 @@ import yaml
 from item_perception_yolo import item_teach_core as core
 from item_perception_yolo import item_teach_gui as gui
 from item_perception_yolo import ui_state
+from item_perception_yolo.item_teach_recovery import recover_item_fields
 
 
 @pytest.fixture
@@ -23,7 +24,7 @@ def settings():
                    "prepick_height": 50.0, "retract_height": 80.0},
         "timing": {"pick_settling": 0.5},
         "gripper": {"use_grip": True, "grip_onpick": True},
-        "retry": {"retry_limit": 3},
+        "retry": {"pose_candidates": 3},
         "geometry": {"height": 100.0, "width": 50.0, "tolerance": 5.0,
                      "pickdepth_radius": 30.0},
         "yolo": {"confidence": 0.6, "iou": 0.5, "image_size": 640,
@@ -62,6 +63,9 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
+    assert profile["schema_version"] == 4
+    assert profile["retry"] == {"pose_candidates": 3}
+    assert "retry_limit" not in path.read_text()
 
 
 def test_model_tamper_and_missing_pair_fail(pair):
@@ -92,15 +96,110 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    profile["schema_version"] = 1
-    with pytest.raises(ValueError, match="exactly 3"):
-        core.validate_profile(profile)
+    for old_version in (1, 2, 3):
+        profile["schema_version"] = old_version
+        with pytest.raises(ValueError, match="exactly 4"):
+            core.validate_profile(profile)
+
+
+@pytest.mark.parametrize("fields", [{"retry_limit": 3},
+                                   {"pose_candidates": 3, "retry_limit": 3}, {}])
+def test_old_retry_name_is_not_an_alias(pair, fields):
+    root, _, path, profile = pair
+    profile["retry"] = fields
+    path.write_text(yaml.safe_dump(profile))
+    with pytest.raises(ValueError, match="exactly: pose_candidates"):
+        core.load_item_profile(path, root=root)
+
+
+def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair):
+    root, _, path, profile = pair
+    profile["schema_version"] = 3
+    profile["retry"] = {"retry_limit": 3}
+    path.write_text(yaml.safe_dump(profile))
+    original = path.read_bytes()
+    draft = recover_item_fields(path, root=root)
+    assert draft.values["pose_candidates"] == 3
+    assert draft.values["confidence"] == .6 and draft.values["image_size"] == 640
+    assert draft.home == profile["home"]
+    assert draft.model_path == path.with_suffix(".pt")
+    assert draft.model_sha256 == profile["model"]["sha256"]
+    assert "retry_limit" in " ".join(draft.issues)
+    with pytest.raises(ValueError, match="exactly 4"):
+        core.load_item_profile(path, root=root)
+    assert path.read_bytes() == original
+
+
+def test_recovery_clears_invalid_values_and_conflicts_without_defaults(pair):
+    root, _, path, profile = pair
+    profile["motion"]["retract_height"] = ""
+    profile["yolo"].update(confidence=40, class_ids=[0, "1"], image_size=None)
+    profile["gripper"]["use_grip"] = "false"
+    profile["geometry"].update(height=20, width=50)
+    profile["quality"].update(depth_min_mm=1000, depth_max_mm=200)
+    profile["home"]["positions_rad"][0] = float("nan")
+    profile["retry"] = {"retry_limit": 3, "pose_candidates": 5}
+    path.write_text(yaml.safe_dump(profile))
+    draft = recover_item_fields(path, root=root)
+    for key in ("retract_height", "confidence", "class_ids", "image_size", "use_grip",
+                "height", "width", "depth_min_mm", "depth_max_mm", "pose_candidates"):
+        assert draft.values[key] is None, key
+    assert draft.home is None
+    assert draft.values["standoff_height"] == 150.
+    assert draft.values["grip_onpick"] is True
+    assert draft.model_path is not None and draft.issues
+
+
+def test_recovery_unknown_units_and_missing_sections_are_not_guessed(pair):
+    root, _, path, profile = pair
+    profile["units"] = {"distance": "m", "time": "ms", "home_joints": "deg"}
+    del profile["retry"]
+    del profile["gripper"]
+    path.write_text(yaml.safe_dump(profile))
+    draft = recover_item_fields(path, root=root)
+    assert draft.home is None
+    for key in (*core.MOTION_FIELDS, *core.GEOMETRY_FIELDS, *core.GRIPPER_FIELDS,
+                "pick_settling", "pose_candidates", "input_max_age_sec", "depth_min_mm"):
+        assert draft.values[key] is None, key
+    assert draft.values["iou"] == .5 and draft.values["max_detections"] == 20
+
+
+@pytest.mark.parametrize("content", ["item: [", "schema_version: 3\nschema_version: 4",
+                                    "!!python/object/apply:os.system ['false']", "[]",
+                                    "artifact_type: bin_teach\nschema_version: 3",
+                                    "artifact_type: item_teach\nschema_version: 999"])
+def test_uninterpretable_yaml_recovers_only_an_empty_draft(pair, content):
+    root, _, path, _ = pair
+    path.write_text(content)
+    draft = recover_item_fields(path, root=root)
+    assert not draft.values and draft.home is None and draft.model_path is None
+    assert draft.issues and path.read_text() == content
+
+
+@pytest.mark.parametrize("failure", ["missing", "tampered", "wrong_name", "wrong_hash"])
+def test_recovery_never_uses_unverified_model_bytes(pair, failure):
+    root, _, path, profile = pair
+    if failure == "missing":
+        path.with_suffix(".pt").unlink()
+    elif failure == "tampered":
+        path.with_suffix(".pt").write_bytes(b"changed")
+    elif failure == "wrong_name":
+        profile["model"]["filename"] = "../external.pt"
+    else:
+        profile["model"]["sha256"] = None
+    path.write_text(yaml.safe_dump(profile))
+    draft = recover_item_fields(path, root=root)
+    assert draft.model_path is None and draft.model_sha256 is None
+    assert draft.values["name"] == "test_part"
+    assert any("Model cleared" in message for message in draft.issues)
 
 
 @pytest.mark.parametrize("section,key,value", [
     ("motion", "standoff_height", -1), ("motion", "retract_height", float("nan")),
     ("timing", "pick_settling", True), ("gripper", "use_grip", 1),
-    ("retry", "retry_limit", 0), ("retry", "retry_limit", 21),
+    ("retry", "pose_candidates", 0), ("retry", "pose_candidates", 21),
+    ("retry", "pose_candidates", True), ("retry", "pose_candidates", 3.0),
+    ("retry", "pose_candidates", "3"), ("retry", "pose_candidates", 1001),
     ("yolo", "max_detections", 1.0), ("yolo", "image_size", 641),
     ("yolo", "confidence", 1.1), ("yolo", "class_ids", []),
     ("yolo", "class_ids", [0, 0]), ("yolo", "class_ids", [-1]),
@@ -224,6 +323,8 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
     app = gui.QtWidgets.QApplication.instance() or gui.QtWidgets.QApplication([])
     monkeypatch.setattr(gui, "item_directory", lambda: core.item_directory(root))
     monkeypatch.setattr(gui, "load_item_profile", lambda p: core.load_item_profile(p, root=root))
+    from item_perception_yolo.item_teach_recovery import recover_item_fields
+    monkeypatch.setattr(gui, "recover_item_fields", lambda p: recover_item_fields(p, root=root))
     monkeypatch.setattr(gui, "save_item_profile", lambda s, h, m: core.save_item_profile(
         s, h, m, root=root,
     ))

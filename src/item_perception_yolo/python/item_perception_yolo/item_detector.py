@@ -398,7 +398,7 @@ class ItemDetectNode(Node):
                 raise ValueError("Another detector already advertises the canonical pose service")
         self._check_arm_inputs()
         self.profile_path, self.profile_digest = Path(path), digest
-        self.retry_limit = profile["retry"]["retry_limit"]
+        self.pose_candidates = profile["retry"]["pose_candidates"]
         self.service = self.create_service(GetItemPoses, SERVICE_NAME, self._request,
                                            callback_group=ReentrantCallbackGroup())
         self.events.record("INFO", "item_armed", "Pose service advertised", profile_sha256=digest)
@@ -772,8 +772,8 @@ class ItemDetectNode(Node):
                 raise ValueError("Detector is not armed")
             if request.profile_sha256 != self.profile_digest:
                 raise ValueError("Requested item profile SHA-256 mismatch")
-            if not 1 <= request.max_candidates <= self.retry_limit:
-                raise ValueError("Requested count exceeds taught total candidate-attempt limit")
+            if not 1 <= request.max_candidates <= self.pose_candidates:
+                raise ValueError("Requested count must be from 1 through taught pose_candidates")
             start_ns = self.get_clock().now().nanoseconds
             deadline = time.monotonic() + self.settings["quality"]["request_timeout_sec"]
             acquired = self.operation_lock.acquire(timeout=max(0.001, deadline - time.monotonic()))

@@ -25,7 +25,7 @@ def pair(tmp_path):
         "motion": dict.fromkeys(core.MOTION_FIELDS, 10.0),
         "timing": {"pick_settling": 1.0},
         "gripper": {"use_grip": False, "grip_onpick": True},
-        "retry": {"retry_limit": 3},
+        "retry": {"pose_candidates": 3},
         "geometry": {"height": 100.0, "width": 50.0, "tolerance": 5.0,
                      "pickdepth_radius": 30.0},
         "yolo": {"confidence": 0.5, "iou": 0.5, "image_size": 640,
@@ -112,7 +112,7 @@ def test_read_only_controller_pose_request_checks_fresh_batch(pair):
     summary = json.loads(response.message)
     assert not summary["execution_enabled"] and summary["targets"][0]["position_m"][2] == .1
     sent = node.pose_client.call_async.call_args.args[0]
-    assert sent.max_candidates == profile["retry"]["retry_limit"]
+    assert sent.max_candidates == profile["retry"]["pose_candidates"]
     assert sent.profile_sha256 == core.file_sha256(path)
     result.header.stamp.sec = 90
     assert not RobotController._request_poses(node, None, SimpleNamespace()).success

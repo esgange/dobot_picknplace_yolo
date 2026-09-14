@@ -3,14 +3,14 @@
 ## Read-only candidate requests
 
 The controller now has one perception client, not a Dobot command client.
-After explicitly selecting a strict schema-3 item profile, request a fresh
+After explicitly selecting a strict schema-4 item profile, request a fresh
 batch from the independently armed GUI or headless detector:
 
 ```bash
 ros2 service call /robot_controller/request_item_poses std_srvs/srv/Trigger '{}'
 ```
 
-It sends the profile SHA-256 and `retry_limit` as the maximum pose count, checks
+It sends the profile SHA-256 and `retry.pose_candidates` as the maximum pose count, checks
 the returned frame, identity, timestamps, uniqueness and ordering, and returns
 the batch as JSON while recording bounded package events. Missing service,
 deadline, invalid data and profile changes fail without retries. No returned
@@ -49,7 +49,7 @@ There is no implicit last-profile selection or controller-unavailable bypass.
 
 ## Public interface
 
-- Parameter `item_teach_file`: only a strict schema-3 YAML directly under
+- Parameter `item_teach_file`: only a strict schema-4 YAML directly under
   `offline_teach/item_teach/`, with its same-stem, SHA-256-verified `.pt` copy.
   The GUI uses `/robot_controller/set_parameters_atomically`; malformed,
   missing or tampered profiles are rejected without defaults or retries.
@@ -68,10 +68,16 @@ identical robots. Loading never commands them. Any future home move requires
 explicit controller execution and normal safety preconditions; a recorded home
 does not establish collision-free travel on a different station.
 
-The summary records `requested_pose_count = retry.retry_limit` and the separate
+The summary records `requested_pose_count = retry.pose_candidates` and the separate
 `yolo.max_detections` cap. Candidate requests occur only on the explicit Trigger action.
 Events are UTC JSONL in `logs/robot_controller/events.jsonl`, overwriting before
 record 1,001. There is no additional configuration file or GUI state store.
+
+`pose_candidates` limits the requested batch, not autonomous retry execution.
+The controller can use that batch for retries after motion/I/O integration;
+it does not pick or retry yet. Old `retry_limit` files are rejected here: recover
+and save them as schema 4 in Item Teach first. There is no controller-side
+compatibility reader or automatic conversion.
 
 ## Remaining execution decisions
 

@@ -125,7 +125,7 @@ Only a bounded current/in-flight/selected snapshot is held in memory; no image a
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict artifact schema 3, class filters and quality gates are unchanged.
+strict production item schema 4, class filters and quality gates remain enforced.
 
 ### Pick-oriented RGB overlays
 
@@ -203,8 +203,21 @@ execution or a claim that the destination travel path is safe.
 in `offline_teach/item_teach/`, verifies the copy's SHA-256 against the unchanged
 source, then publishes the YAML without overwriting existing files. A success
 dialog names both files. The pair remains usable without the original `.pt`.
-**Load Item Teach** accepts only that directory and strict schema 3; missing,
-tampered, mismatched or older files fail explicitly. No compatibility reader.
+**Load Item Teach** accepts only that directory. Complete schema-4 files load
+normally. Older/partially invalid files open as explicitly labelled GUI-only
+recovery drafts: keep independently valid fields, blank unclear/missing values,
+and show unknown booleans as partial checkboxes requiring an explicit choice.
+Unreadable/ambiguous YAML clears all fields; no partial parser guesses. Clear old
+`retry_limit` counts are recovered as `pose_candidates` for editing only. Invalid
+home records are cleared as a whole, never filled with zero joints. Unverified
+paired weights leave the model field empty; browse a trusted model explicitly.
+The warning/Activity log explains every cleared field. Missing internal
+`image_size` requires explicitly browsing a model to establish new-profile 640.
+Recovery also applies to named-file startup prefill, without executing weights.
+No recovered draft can arm or be validated in the controller until reviewed and
+saved as a new strict schema-4 pair. Original files remain untouched. Shared
+UI-state schema 6 remains strict; no recovered field autosave. Headless and
+controller readers stay strict and never call the GUI recovery reader.
 Its single confirmation now covers replacing the form/home and trusting the
 paired `.pt` (weights can execute code). Loading the YAML automatically queues
 that exact model and reads its classes—no second Load Model click. The existing
@@ -220,8 +233,9 @@ The YAML groups `item`, `model`, `units`, `home`, `motion`, `timing`, `gripper`,
 `retry`, `yolo`, `geometry`, `geometry_source`, `quality`, and the non-executing
 `controller_contract`. See
 [`offline_teach/item_teach/README.md`](../../offline_teach/item_teach/README.md)
-for field details. `retry.retry_limit=3` records three total attempts and a
-request for up to three poses; `yolo.max_detections=20` is the separate
+for field details. `retry.pose_candidates=3` requests up to three ranked poses
+for the controller to use for retries; it does not execute any retry itself.
+`yolo.max_detections=20` is the separate
 per-frame detection cap before geometric filtering.
 `use_grip=false` disables `grip_onpick` behavior regardless of its saved value.
 Final physical height equations, fixed attitude and I/O timing remain pending.
@@ -362,7 +376,7 @@ After explicitly loading the same item profile in the separate controller:
 ros2 service call /robot_controller/request_item_poses std_srvs/srv/Trigger '{}'
 ```
 
-This read-only diagnostic request uses the profile's retry limit as pose count,
+This read-only diagnostic request uses the profile's `pose_candidates` as pose count,
 logs/returns the ranked batch and **does not move the robot**. Motion/gripper
 execution and migration of existing command clients remain pending.
 

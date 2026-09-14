@@ -77,7 +77,7 @@ def service_node(monkeypatch):
     result = {"candidates": [candidate], "rejected": [], "count": 1, "inference_ms": 10.}
     node = SimpleNamespace(request_lock=threading.Lock(), operation_lock=threading.Lock(),
                            preview_mode="all",
-                           service=object(), arm_epoch=1, yolo_enabled=True, retry_limit=3,
+                           service=object(), arm_epoch=1, yolo_enabled=True, pose_candidates=3,
                            profile_digest="a"*64, profile_path="profile.yaml", native=SimpleNamespace(failed=False),
                            settings={"quality": dict(QUALITY_DEFAULTS), "geometry_source": "mask",
                                      "yolo": {"max_detections": 20, "class_ids": [1], "confidence": .6}},
@@ -112,6 +112,19 @@ def test_request_new_observation_shortage_identity_and_no_cache(service_node):
     again = call(node)
     assert again.batch_id != result.batch_id
     assert node.infer.call_count == 2  # no cached pose response
+
+
+def test_pose_candidates_caps_returned_batch_without_adding_a_first_attempt(service_node):
+    node, candidate = service_node
+    node.infer.return_value["metadata"]["candidates"] = [
+        {**candidate, "source_index": index} for index in range(5)]
+    node.infer.return_value["metadata"]["count"] = 5
+    result = call(node, count=3)
+    assert result.success and len(result.candidates) == 3 and result.valid_count == 5
+    assert [c.priority for c in result.candidates] == [1, 2, 3]
+    node.pose_candidates = 2
+    result = call(node, count=3)
+    assert not result.success and not result.candidates and "pose_candidates" in result.message
 
 
 def test_disarmed_busy_mismatch_count_and_no_valid_items(service_node):

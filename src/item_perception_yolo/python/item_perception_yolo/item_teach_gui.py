@@ -35,6 +35,7 @@ from .ui_state import load_package_ui_state, write_item_ui_state, write_item_pre
 from .item_preview import validate_prefix
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
+from .item_teach_recovery import recover_item_fields
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -182,6 +183,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node = node
         self.home = None
         self.saved_path = None
+        self.recovered_draft = False
         self.profile_image_size = NEW_PROFILE_IMAGE_SIZE
         self.request = None
         self.request_started = None
@@ -234,6 +236,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
         header.addWidget(load)
         header.addWidget(save)
         outer.addLayout(header)
+        self.recovery_notice = QtWidgets.QLabel()
+        self.recovery_notice.setWordWrap(True)
+        self.recovery_notice.setTextFormat(QtCore.Qt.PlainText)
+        self.recovery_notice.hide()
+        outer.addWidget(self.recovery_notice)
         scroll = self.settings_scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -432,7 +439,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             field = QtWidgets.QCheckBox()
             self.inputs[key] = field
             grip.addRow(key, field)
-        self.inputs["use_grip"].toggled.connect(self._grip_enabled)
+        self.inputs["use_grip"].stateChanged.connect(
+            lambda state: self._grip_enabled(state == QtCore.Qt.Checked))
         self.inputs["grip_onpick"].setEnabled(False)
         self.inputs["grip_onpick"].setToolTip("No effect when use_grip is false")
         settle = QtWidgets.QLineEdit()
@@ -457,14 +465,14 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.inputs[key] = field
             label = {"confidence": "Confidence (0–1)", "iou": "Overlap IoU (0–1)"}
             yolo.addRow(label.get(key, key), field)
-        retry = group("Candidate attempts", 8)
+        retry = group("Pose candidates", 8)
         limit = QtWidgets.QLineEdit()
-        limit.setPlaceholderText("Required; e.g. 3 = three total attempts")
-        self.inputs["retry_limit"] = limit
-        retry.addRow("retry_limit", limit)
+        limit.setPlaceholderText("Required; e.g. 3 = up to three ranked poses")
+        self.inputs["pose_candidates"] = limit
+        retry.addRow("pose_candidates", limit)
         explanation = QtWidgets.QLabel(
-            "Requested candidate count = total attempt limit, including the first.\n"
-            "YOLO detection cap is separate. Motion waits for controller integration."
+            "Maximum ranked poses requested for the controller to use for retries.\n"
+            "YOLO detection cap is separate. Robot retry execution is not implemented."
         )
         explanation.setWordWrap(True)
         retry.addRow(explanation)
@@ -528,7 +536,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             field.textChanged.connect(self._dirty)
         self.task.currentIndexChanged.connect(self._dirty)
         for key in GRIPPER_FIELDS:
-            self.inputs[key].toggled.connect(self._dirty)
+            self.inputs[key].stateChanged.connect(self._dirty)
         state = load_package_ui_state(ui_state_path())
         if state is not None and state.item_preview_camera_prefix is not None:
             self.camera_prefix.setText(state.item_preview_camera_prefix)
@@ -754,10 +762,21 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     @staticmethod
     def _validate_model_pair(pair, metadata=None):
-        path, expected_digest = pair
-        profile, digest = load_item_profile(path)
+        path, expected_digest = pair[:2]
+        recovery = len(pair) == 3 and pair[2] == "recovery"
+        if recovery:
+            draft = recover_item_fields(path)
+            if draft.model_path is None:
+                raise ValueError("Recovered paired model is missing or changed")
+            profile, digest = {"model": {"sha256": draft.model_sha256}}, draft.digest
+        else:
+            profile, digest = load_item_profile(path)
         if digest != expected_digest:
             raise ValueError("Item teach changed while its paired model was loading")
+        if recovery:
+            if metadata is not None and metadata["sha256"] != draft.model_sha256:
+                raise ValueError("Recovered paired model hash changed")
+            return profile  # Actual model metadata is authoritative for a recovery draft.
         if metadata is not None:
             if (metadata["sha256"] != profile["model"]["sha256"]
                     or metadata["task"] != profile["model"]["declared_task"]):
@@ -914,13 +933,20 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 if pair is None and source == "none" and len(value["geometry_sources"]) == 1:
                     source = value["geometry_sources"][0]
                 self._populate_sources(value["geometry_sources"], source)
+                recovery = pair is not None and len(pair) == 3
+                if recovery and source not in ("none", *value["geometry_sources"]):
+                    self.geometry_source.setCurrentIndex(-1)
+                    self._message("Recovered geometry output is unknown/incompatible; select it.")
                 self.preview_error = ""
                 self.preview_status = "Model loaded — enable YOLO Detect to preview"
                 self._message("Model loaded. Preview displays all model classes. "
                               "Select geometry when both mask and OBB are available.")
                 if pair is not None:
-                    self._message("Item teach and paired model loaded. Saved classes/settings "
-                                  "retained; YOLO Detect and Armed remain OFF.")
+                    self._message(
+                        "Recovered draft and verified paired model loaded; review fields and "
+                        "save a new profile before arming." if recovery else
+                        "Item teach and paired model loaded. Saved classes/settings "
+                        "retained; YOLO Detect and Armed remain OFF.")
                     self.node.events.record("INFO", "item_pair_model_loaded",
                                             "Verified paired model loaded with item teach",
                                             profile=str(pair[0]), profile_sha256=pair[1])
@@ -1203,7 +1229,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                 yolo=self._yolo_settings())
 
     def _grip_enabled(self, enabled):
-        self.inputs["grip_onpick"].setEnabled(enabled)
+        self.inputs["grip_onpick"].setEnabled(
+            enabled or self.inputs["grip_onpick"].checkState() == QtCore.Qt.PartiallyChecked)
 
     def _browse_model(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -1245,6 +1272,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self._message("Recorded home joints. No robot movement was requested.")
 
     def _yolo_settings(self):
+        if self.profile_image_size is None:
+            raise ValueError("Recovered image_size is unknown; Browse a model to start at 640 px")
         return {
             "confidence": self._number("confidence"),
             "iou": self._number("iou"),
@@ -1276,12 +1305,15 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 for key in QUALITY_DEFAULTS}
 
     def _settings(self):
+        for key in GRIPPER_FIELDS:
+            if self.inputs[key].checkState() == QtCore.Qt.PartiallyChecked:
+                raise ValueError(f"Recovered {key} is unknown; explicitly choose on or off")
         return {
             "item": {"name": self.name.text().strip()}, "model_task": self.task.currentData(),
             "motion": {key: self._number(key) for key in MOTION_FIELDS},
             "timing": {"pick_settling": self._number("pick_settling")},
             "gripper": {key: self.inputs[key].isChecked() for key in GRIPPER_FIELDS},
-            "retry": {"retry_limit": self._number("retry_limit", int)},
+            "retry": {"pose_candidates": self._number("pose_candidates", int)},
             **self._inference_settings(),
         }
 
@@ -1304,6 +1336,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._error("Save failed", exc)
             return
         self.saved_path = output
+        self.recovered_draft = False
+        self.recovery_notice.clear()
+        self.recovery_notice.hide()
         self.send.setEnabled(True)
         self.node.events.record(
             "INFO", "item_pair_saved", "Saved YAML and copied model", path=str(output),
@@ -1331,6 +1366,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self, "Load item teach and paired model?",
             "Replace the form and recorded home, then load this teach file's paired .pt?\n"
             "A .pt can execute code; continue only if you trust this pair.\n"
+            "Old/invalid files open as recovery drafts with unclear fields empty.\n"
             "YOLO Detect and Armed stay OFF. No robot movement.\n" + Path(path).name,
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No,
         ) != QtWidgets.QMessageBox.Yes:
@@ -1342,8 +1378,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
         queued = False
         try:
             _profile, digest = self._load(Path(path), prefill=False)
-            self._queue_model_load(self.model.text(), pair=(Path(path), digest))
-            queued = True
+            if self.model.text():
+                pair = ((Path(path), digest, "recovery") if self.recovered_draft
+                        else (Path(path), digest))
+                self._queue_model_load(self.model.text(), pair=pair)
+                queued = True
+            else:
+                self._finish_model_load()
             write_item_ui_state(ui_state_path(), Path(path).name)
         except (ValueError, OSError) as exc:
             if not queued:
@@ -1351,7 +1392,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._error("Load failed", exc)
 
     def _load(self, path, *, prefill):
-        profile, _digest = load_item_profile(path)
+        try:
+            profile, _digest = load_item_profile(path)
+        except (ValueError, OSError) as exc:
+            return self._load_recovery(path, exc, prefill=prefill)
+        self.recovered_draft = False
+        self.recovery_notice.clear()
+        self.recovery_notice.hide()
         self.yolo_toggle.setChecked(False)
         settings = settings_from_profile(profile)
         self.profile_image_size = settings["yolo"]["image_size"]
@@ -1371,7 +1418,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     ",".join(map(str, value)) if isinstance(value, list) else str(value)
                 )
         for key, value in settings["gripper"].items():
+            self.inputs[key].setTristate(False)
             self.inputs[key].setChecked(value)
+        self._grip_enabled(self.inputs["use_grip"].isChecked())
         self.home = copy.deepcopy(profile["home"])
         self._show_home()
         self.saved_path = None if prefill else path
@@ -1381,6 +1430,52 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Home is displayed only; no controller request or motion was sent."
         )
         return profile, _digest
+
+    def _load_recovery(self, path, error, *, prefill):
+        draft = recover_item_fields(path)
+        self.yolo_toggle.setChecked(False)
+        self.node.disarm()
+        self.node.model_config = self.node.model_metadata = self.node.last_view = None
+        self._resume_live()
+        self.armed_toggle.setChecked(False)
+        self.recovered_draft = True
+        self.saved_path = None
+        self.send.setEnabled(False)
+        self.profile_image_size = draft.values.get("image_size")
+        self.name.setText(draft.values.get("name") or "")
+        self.model.setText(str(draft.model_path) if draft.model_path is not None else "")
+        self.task.setCurrentIndex(self.task.findData(draft.values.get("model_task")))
+        ids = draft.values.get("class_ids") or []
+        self._populate_classes({key: "recovered (verify model)" for key in ids}, ids)
+        source = draft.values.get("geometry_source")
+        self._populate_sources([source] if source in ("mask", "obb") else [], source)
+        if source is None:
+            self.geometry_source.setCurrentIndex(-1)
+        for key, widget in self.inputs.items():
+            value = draft.values.get(key)
+            if isinstance(widget, QtWidgets.QLineEdit):
+                widget.setText("" if value is None else str(value))
+            elif isinstance(widget, QtWidgets.QCheckBox):
+                widget.setTristate(value is None)
+                widget.setCheckState(QtCore.Qt.PartiallyChecked if value is None else
+                                     QtCore.Qt.Checked if value else QtCore.Qt.Unchecked)
+        self._grip_enabled(self.inputs["use_grip"].checkState() == QtCore.Qt.Checked)
+        self.home = draft.home
+        if self.home is not None:
+            self._show_home()
+        else:
+            self.home_label.setText("Home unavailable — record all six actual joints again.")
+        self.recovery_notice.setText(
+            "RECOVERY DRAFT — review cleared fields/unknown checkboxes in Activity log. "
+            "Save a new valid YAML + model pair before arming. Original file is unchanged.")
+        self.recovery_notice.show()
+        self._message(f"Recovered {'prefill' if prefill else 'form'}: {path.name}. {error}")
+        for issue in draft.issues:
+            self._message(issue)
+        self.node.events.record("WARNING", "item_teach_recovered",
+                                "GUI draft only; no valid profile or execution", path=str(path),
+                                reason=str(error), cleared_fields=draft.issues)
+        return None, draft.digest
 
     def _send_controller(self):
         if self.saved_path is None or self.request is not None:

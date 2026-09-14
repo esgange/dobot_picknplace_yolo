@@ -20,7 +20,7 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 3
+ITEM_SCHEMA_VERSION = 4
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "zheight_offset", "prepick_height", "retract_height")
@@ -106,8 +106,8 @@ def validate_settings(settings):
     _fields(settings["gripper"], GRIPPER_FIELDS, "gripper")
     if any(type(settings["gripper"][key]) is not bool for key in GRIPPER_FIELDS):
         raise ValueError("Gripper flags must be booleans")
-    _fields(settings["retry"], ("retry_limit",), "retry")
-    _integer(settings["retry"]["retry_limit"], "retry_limit", high=1000)
+    _fields(settings["retry"], ("pose_candidates",), "retry")
+    _integer(settings["retry"]["pose_candidates"], "pose_candidates", high=1000)
     _fields(settings["geometry"], GEOMETRY_FIELDS, "geometry")
     for key in GEOMETRY_FIELDS:
         _number(settings["geometry"][key], key)
@@ -119,8 +119,8 @@ def validate_settings(settings):
     if settings["geometry_source"] not in ("mask", "obb", "none"):
         raise ValueError("geometry_source must be mask, obb or none (preview only)")
     validate_quality(settings["quality"])
-    if settings["retry"]["retry_limit"] > settings["yolo"]["max_detections"]:
-        raise ValueError("retry_limit cannot exceed max_detections")
+    if settings["retry"]["pose_candidates"] > settings["yolo"]["max_detections"]:
+        raise ValueError("pose_candidates cannot exceed max_detections")
 
 
 def validate_quality(quality):
@@ -241,7 +241,9 @@ def validate_profile(profile):
             "Item teach artifact")
     if (type(profile["schema_version"]) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
-        raise ValueError("Item teach schema_version must be exactly 3; no compatibility reader")
+        raise ValueError(
+            "Item teach schema_version must be exactly 4 (retry.pose_candidates); "
+            "schemas 1–3 are unsupported; no compatibility reader")
     if profile["artifact_type"] != "item_teach":
         raise ValueError("Expected item_teach artifact")
     _timestamp(profile["created_at_utc"], "created_at_utc")

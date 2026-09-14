@@ -51,7 +51,7 @@ def inspect_profile(path, *, root, robot_ip, publisher_node):
         "model_sha256": profile["model"]["sha256"], "home": home,
         "current_robot_lan1_ip": robot_ip, "current_feedback_publisher": publisher_node,
         "home_identity_policy": "recording_provenance_only",
-        "requested_pose_count": profile["retry"]["retry_limit"],
+        "requested_pose_count": profile["retry"]["pose_candidates"],
         "maximum_detections": profile["yolo"]["max_detections"],
         "execution_enabled": False, "inference_enabled": False,
         "message": "Profile and copied model integrity validated; no model inference or motion.",
@@ -143,7 +143,7 @@ class RobotController(Node):
             if not self.pose_client.service_is_ready():
                 raise ValueError(
                     "Detector service unavailable; explicitly enable Armed on detector")
-            count = profile["retry"]["retry_limit"]
+            count = profile["retry"]["pose_candidates"]
             request = GetItemPoses.Request(max_candidates=count, profile_sha256=digest)
             future = self.pose_client.call_async(request)
             done = threading.Event()
