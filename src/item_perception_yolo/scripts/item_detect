@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+from item_perception_yolo.item_detector import main
+
+if __name__ == "__main__":
+    main()

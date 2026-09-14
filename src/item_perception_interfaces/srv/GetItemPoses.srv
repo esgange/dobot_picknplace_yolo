@@ -1,0 +1,13 @@
+uint32 max_candidates
+string profile_sha256
+---
+bool success
+string status
+string message
+string batch_id
+std_msgs/Header header
+builtin_interfaces/Time depth_stamp
+uint32 detected_count
+uint32 valid_count
+item_perception_interfaces/ItemCandidate[] candidates
+string diagnostics_json

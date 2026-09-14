@@ -1,11 +1,18 @@
 # Dobot Pick-and-Place YOLO
 
-ROS 2 workspace for a Dobot CR10 robot and an Orbbec Gemini 335 depth camera. The Dobot source is an intentionally pruned CR10-only vendor profile; the Orbbec source is vendored in full. A transferred copy therefore contains the project source without requiring network access.
+ROS 2 workspace for a physical Dobot CR10 robot and an Orbbec Gemini 335 depth camera. The Dobot source is an intentionally pruned hardware-only CR10 vendor profile; the Orbbec source is vendored in full. A transferred copy therefore contains the project source without requiring network access.
 
 ## Workspace contents
 
 ```text
 src/
+├── motion_debug/          # project GUI; does not start Dobot bringup
+├── gripper_control/       # gripper/suction IO GUI; requires live bringup
+├── orbbec_camera_launcher/ # Gemini 335 configuration and bounded supervisor GUI
+├── camera_calibration/    # manual-prefix two-mode ChArUco calibration GUI
+├── item_perception_yolo/  # platform teaching and perception integration
+├── robot_controller/      # initial profile validator; no hardware execution
+├── item_pick/             # imported reference only; excluded by COLCON_IGNORE
 ├── DOBOT_6Axis_ROS2_V4/  # Dobot official SDK, pruned to CR10
 └── OrbbecSDK_ROS2/       # Orbbec official ROS 2 wrapper snapshot
 ```
@@ -19,7 +26,120 @@ Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-ma
 
 ## Package organization
 
-All 13 ROS packages are below `src/`, grouped under the official vendor snapshot they came from. Each package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
+The root build contains 14 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `robot_controller`, and `item_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
+
+## Planned robot-command ownership
+
+The full controller integration will make `robot_controller` the sole
+application allowed to issue motion, stop, robot-setting and gripper/I/O
+commands through Dobot bringup. Other applications, including the existing
+motion and gripper GUIs, will request actions through it. Bringup remains the
+hardware transport and feedback provider. This is a recorded architecture
+decision, not an implemented restriction yet: current direct clients still
+require migration. The imported `src/item_pick` package is reference code for
+that work and is not an approved ready-to-run integration. See the blueprint
+diary for the outstanding pick-profile and I/O decisions.
+
+The controller will request a bounded candidate batch from `item_detect`, which
+loads the model/item profile and current camera/platform/bin artifacts and
+returns item targets in `platform_reference`. The item profile will save both
+`retry_limit` (total attempts including the first, and requested pose count)
+and a separate `yolo.max_detections` per-image detection cap. The initial
+profile editor and shared GUI/headless detector described below implement
+read-only detection requests. Physical execution remains pending. Imported
+prototype runtimes have not been enabled.
+
+## Initial Item Teach and controller
+
+In separate terminals after building and sourcing the workspace:
+
+```bash
+ros2 launch item_perception_yolo item_teach.launch.py
+ros2 launch robot_controller robot_controller.launch.py
+```
+
+Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
+and records all six actual home joints from fresh canonical bringup feedback.
+Save creates a strict schema-3 YAML and SHA-256-bound `.pt` copy under
+`offline_teach/item_teach/`, with matching timestamped names and a confirmation
+dialog. Transfer both files together; the original model path is not needed.
+Home joints are portable between the user's identical robots: source IP/node
+are provenance, not a station restriction. Loading never replays joint positions.
+
+Select **Load Model / Read Classes** and confirm the model is trusted. You can
+load while the automatic bin border is updating: the confirmed
+load takes the next worker slot, with queued/loading progress and no retry.
+YOLO and Armed remain OFF after loading. Use **Connect RGB**, then **YOLO Detect**.
+There is one detection view: no Detect All/Filtered controls or Resume Live button.
+The visual-first window keeps setup in one scrollable left column and gives
+most space to resizable RGB/depth panes. Load/Save remain visible at the top;
+the bounded activity log can be expanded at the bottom.
+Pick fields can remain blank for initial detection. The visible YOLO settings apply;
+initial confidence/IoU/cap are 0.25/0.70/100 and new-profile inference size is 640.
+Edits to confidence, IoU, cap, class selection, dimensions, quality or geometry refresh an
+enabled preview after a 300 ms typing pause, without toggling YOLO. Invalid
+values pause inference with a reason; correcting them resumes it. Old-setting
+results are discarded, and edits disarm without automatically saving or re-arming.
+The view retains all model classes and size failures. Item borders are green
+within the taught size tolerance, red outside it, and gray if dimensions or
+plane measurement are unavailable. Green means size-valid, not a validated pose.
+Select the station platform/bin and mask/OBB to measure long-X/height and
+short-Y/width on platform Z=0. Registered depth is displayed alongside RGB;
+missing/mismatched depth leaves RGB detections visible but blocks pose calculation.
+Registered depth and RGB must share their optical frame, dimensions and K.
+Their lens-distortion coefficients may differ: the worker uses both CameraInfo
+models to map the physical sampling circle and RGB mask onto native depth pixels.
+Depth is not resized or interpolated; the original RGB pick center is unchanged.
+Click an item to freeze the exact RGB/depth observation and calculate only its pose.
+Class, size, ROI, freshness and MAD depth checks must pass. No newer image/depth
+or TF is substituted, and an expired snapshot is rejected. The top-left shows
+platform-relative XYZ/yaw and dimensions. A valid click publishes teaching-only
+`base_link -> item_teach_selected_item` at 10 Hz, composed with the platform's
+full tilt/height. This frozen TF is not a live tracked item or a robot command;
+it remains until resuming, changing settings/sources/arming, YOLO OFF, failure or exit.
+Click the image again to resume. Item Teach never launches RViz; use its TF
+display to inspect that frame. It does not publish another `platform_reference`
+authority. Rejected clicks show a reason and publish no selected pose.
+The cyan selection ring follows `pickdepth_radius` (circle diameter in mm),
+projected from platform Z=0 with the same geometry used for depth sampling.
+It may appear elliptical under perspective; no fixed-pixel ring is substituted
+when calibration is unavailable. Edit the diameter, then click an item again.
+RGB keeps mask shading and one mask-derived rectangle (or the native oriented
+rectangle for OBB), with centered long-X/short-Y lines and a pick-point dot.
+No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the
+same image, including with YOLO OFF. Selecting both station/bin files automatically
+validates them and subscribes to their calibrated camera; there is no Apply button.
+Valid saved station/bin selections also reconnect this read-only preview at
+startup. The border appears when fresh RGB, CameraInfo and required TF arrive;
+this never launches cameras, executes a model or arms the pose service. The
+bin-border geometry uses the same shared platform-Z=0 construction as Bin Teach:
+saved metric XY is placed using only this station's full platform/camera chain,
+preserving tilt and height. No source-station transform, marker detection, depth
+or resizing is used for the loaded edge. Completed
+inference images remain visible as age-labelled result snapshots until replaced;
+slow CPU inference does not discard their annotations. Pose-service freshness
+checks are unchanged. The editable `image_size` control is removed:
+new profiles use 640 internally; loaded profiles preserve their recorded value.
+Explicit **Armed ON** always validates the production profile and advertises the item-pose service
+only for a saved/loaded matching profile with valid fresh inputs. Length/width
+are projected onto platform Z=0; pick XYZ uses the exact rectangle center and
+MAD-filtered registered depth. Accepted samples are black, rejected samples red.
+Candidates are ranked nearest the bin center first. OFF removes the service.
+Teaching previews/clicked poses never become service responses.
+Unsaved text-box edits are not autosaved; restart prefills the selected saved
+teach YAML and camera prefix. Station/bin selections are the narrow automatic
+read-only-preview exception; item settings, model execution and arming remain unapplied.
+
+`item_detect.launch.py` runs the same detector headlessly with explicit artifact
+paths, `trusted_model:=true` and `armed:=true`. The controller can request up to
+the taught retry limit through its read-only `/robot_controller/request_item_poses`
+Trigger action, while remaining `PROFILE_VALIDATED_NOT_ARMED` for robot motion.
+No training, robot commands or pick/I/O execution is included. Private inference
+wheels are pinned/verified/extracted offline; exact Torch/system dependencies
+still require separate provisioning. The retired training-oriented teacher
+and separate `item_detect_yolo_debug` sources/launchers have been removed.
+See [Item Teach](src/item_perception_yolo/README.md) and
+[robot_controller](src/robot_controller/README.md) for details.
 
 ## Clone this workspace
 
@@ -54,7 +174,7 @@ git bundle create ../dobot_picknplace_yolo.bundle --all
 git clone ../dobot_picknplace_yolo.bundle dobot_picknplace_yolo
 ```
 
-The bundle includes the vendored source and project history; it does not need GitHub or submodule URLs. A source-only archive can also be made with `git archive --format=tar.gz --output=../dobot_picknplace_yolo.tar.gz HEAD`. The offline PC still needs a compatible Ubuntu/ROS 2 installation and any system dependencies (for example MoveIt and Gazebo) already available locally; `rosdep` cannot download missing packages without an offline package mirror or cache.
+The bundle includes the vendored source and project history; it does not need GitHub or submodule URLs. A source-only archive can also be made with `git archive --format=tar.gz --output=../dobot_picknplace_yolo.tar.gz HEAD`. The offline PC still needs a compatible Ubuntu/ROS 2 installation and retained system dependencies already available locally; `rosdep` cannot download missing packages without an offline package mirror or cache. Gazebo and MoveIt are not dependencies of this project profile.
 
 ## Build (Ubuntu 22.04 / ROS 2 Humble)
 
@@ -64,9 +184,19 @@ The Dobot SDK documents Ubuntu 22.04 with ROS 2 Humble. After sourcing ROS 2, in
 source /opt/ros/humble/setup.bash
 rosdep update
 rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
-source install/setup.bash
+colcon build
+source scripts/source_ros_workspace.bash
 ```
+
+This hardware-only profile builds without Gazebo, MoveIt, or servo control. The
+removed simulation packages/assets, `servo_action`, `ServoJ`/`ServoP`
+interfaces, and MoveIt motion stack must not be restored unless the project
+scope and blueprint diary are explicitly changed together.
+
+`scripts/source_ros_workspace.bash` is the canonical post-build environment
+loader. It requires the root `.env`, clears inherited ROS workspace paths,
+sources exactly ROS 2 Humble and this workspace, and exports the required
+`ROS_LOCALHOST_ONLY` value. Source it in every terminal used for ROS commands.
 
 ## Initial hardware checks
 
@@ -78,13 +208,55 @@ cp .env.example .env
 # LAN1 is tried first; LAN2 is the diagnostic failover.
 ```
 
-The Dobot bringup launch requires the repository `.env` automatically. It reads all bringup settings from that file and tries `DOBOT_ROBOT_LAN1_IP` first, then `DOBOT_ROBOT_LAN2_IP`. If both interfaces fail, the driver records one bounded outage event and continues its explicit retry loop; missing, malformed, duplicate, unsupported, or invalid configuration hard-fails before the node starts:
+`ROS_LOCALHOST_ONLY=1` is mandatory. It restricts ROS 2 discovery and DDS
+communication to the local computer. It does not block the Dobot driver's
+explicit TCP connection to the configured robot LAN addresses.
+
+The Dobot bringup launch requires the repository `.env` automatically. It reads all bringup settings from that file and tries `DOBOT_ROBOT_LAN1_IP` first, then `DOBOT_ROBOT_LAN2_IP`. Each TCP channel uses the required `DOBOT_CONNECTION_TIMEOUT_MS`; the project value is `3000`, so an unreachable LAN1 cannot block LAN2 behind the operating system's long default TCP timeout. Every attempt is printed immediately and logged. Each successful connection records a `robot_connection_result` containing the selected interface/IP. If both interfaces fail, one result is recorded for the continuous outage with both attempted addresses and the driver continues its explicit retry loop; missing, malformed, duplicate, unsupported, or invalid configuration hard-fails before the node starts:
 
 ```bash
 ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
 ```
 
-The file uses strict `KEY=value` lines and does not require a Python dotenv package. Do not use shell exports, alternate key names, or alternate configuration paths.
+Read the bounded package log after bringup has completed an attempt:
+
+```bash
+grep '"event":"robot_connection_result"' logs/dobot_bringup_v4/events.jsonl | tail
+```
+
+Follow connection attempts and results live with:
+
+```bash
+tail -f logs/dobot_bringup_v4/events.jsonl
+```
+
+Launch the read-only actual-robot and TF viewer in a second sourced terminal
+after bringup is connected and publishing:
+
+```bash
+ros2 launch dobot_rviz dobot_rviz.launch.py
+```
+
+The fixed CR10 `robot_state_publisher` consumes canonical `/joint_states`
+directly and RViz displays the resulting robot model plus every TF available on
+the local ROS graph. The viewer has no launch arguments, manual joint sliders,
+relay topic, zero-position generator, or non-hardware mode. It requires the
+configured Dobot bringup node to be the only `/joint_states` publisher; missing,
+malformed, ambiguous, or stale feedback terminates the viewer and is recorded
+under `logs/dobot_rviz/events.jsonl`.
+
+`motion_debug` is launched separately and does not start bringup. If bringup is
+not running, the GUI prompts the operator to start the Dobot bringup command and
+waits for its services. When a safe startup controller mode is available, it performs
+one exact initialization cycle before enabling its controls:
+`StopMoveJog` (best effort), `DisableRobot` (best effort), `EnableRobot`, mode
+confirmation, SpeedFactor `50%`, Tool `0`, Tool `1` TCP zero, and CP `100%`.
+Only the first two preconditioning calls may continue after a logged warning;
+Enable and all setting steps stop on failure. See
+[`src/motion_debug/README.md`](src/motion_debug/README.md) for the full timeout
+and logging contract.
+
+The file uses strict `KEY=value` lines and does not require a Python dotenv package. Do not use shell exports, alternate key names, or alternate configuration paths. Every Dobot and Orbbec key shown in `.env.example` is required. Active Orbbec serial numbers may remain empty only while opening the camera GUI for first-time configuration; camera startup remains disabled until the configured set is complete.
 
 Runtime datalogs are isolated per package under `logs/<package-name>/events.jsonl`; the bringup launch creates the package files before starting the node. Compile the timestamped package records into a separate universal file only when needed:
 
@@ -94,11 +266,189 @@ python3 scripts/compile_logs.py --workspace-root . --output /tmp/picknplace-even
 
 Each package log overwrites itself before record 1,001. The compiler is a standalone script, not a ROS package; its output location is explicit.
 
-For a Gemini 335 connected over USB, the official Orbbec wrapper provides:
+The `gripper_control` GUI requires the separately launched bringup to already be
+connected. It uses only the default Dobot V4 DO service and feedback topics; if
+those interfaces are not live within five seconds, it writes a failure to its
+package log and exits. Its fixed output map is DO1 suction exhaust, DO2
+gripper close, DO13 finger close, and DO14 gripper open; DI1 and DI2 are
+monitored as generic digital inputs with semantic names intentionally deferred.
+
+**Wiring correction / migration pending:** the user-confirmed physical map is
+DO1 exhaust, DO2 finger close, DO13 suction, DO14 finger open, DI1 suction
+detection, and DI12 finger fully open. The preceding paragraph describes the
+still-unmigrated GUI, not the new wiring contract. Do not use its old automatic
+Grip/Release patterns with the corrected wiring. The new controller's explicit
+I/O sequence and open-confirmation timing must be finalized before use.
+
+Configure and launch the Gemini 335 camera set through the project GUI:
 
 ```bash
-ros2 launch orbbec_camera gemini_330_series.launch.py
+ros2 launch orbbec_camera_launcher camera_launcher.launch.py
 ```
+
+The GUI is the only camera configuration editor and saves canonical `ORBBEC_*`
+values to root `.env`. The camera set is fixed at exactly two slots; camera
+count is not an `.env` value or GUI control. Each camera-row button launches
+only that saved camera
+through the vendor driver in a separate visible terminal for diagnostics; it
+has no watchdog and is stopped with Ctrl-C in that terminal. The lower action
+launches the complete configured set headlessly under the mandatory watchdog,
+starting Camera 1 and requiring both streams before Camera 2 is started with its
+own five-second deadline. Camera 1 remains supervised throughout Camera 2
+startup. Any camera failure stops both, then the full ordered sequence is
+retried; there are three total full-set attempts separated by fixed
+three-second rests after shutdown completes.
+Launch modes are mutually exclusive. Every supervised serial and both
+color/depth streams are required; supervised partial startup and unlimited
+restart are forbidden. The package forces USB-only Orbbec enumeration while
+all ROS 2 communication remains local.
+See [`src/orbbec_camera_launcher/README.md`](src/orbbec_camera_launcher/README.md).
+
+Calibrate one camera at a time with the local-only ChArUco GUI:
+
+```bash
+ros2 launch camera_calibration camera_calibration.launch.py
+```
+
+The standalone GUI follows the pinned
+[MoveIt ROS 2 calibration pipeline](https://github.com/moveit/moveit_calibration/tree/3f9d48ebe843caf1de060bfafe78160585c7c26f)
+without adding MoveIt dependencies or robot motion. Calibration uses only RGB
+ChArUco and color CameraInfo: there is no depth subscription, synchronization,
+plane fitting, fusion, or depth panel. Camera-launcher configuration is unchanged.
+
+Enter the camera prefix, mode, dictionary and measured board geometry manually;
+names are never inferred from root `.env`. Camera-to-hand references
+`base_link`; camera-on-hand references `Link6`. Apply Settings saves validated
+form fields as strict schema-4 `logs/camera_calibration/last_session.json`.
+Startup restores unapplied prefill only, not samples or a solution.
+
+The modern detector uses grayscale, color intrinsics/distortion, legacy board
+layout, no marker-corner refinement, two adjacent markers, no marker recovery,
+and iterative board PnP with at least four non-collinear ChArUco corners.
+There is no editable corner minimum, stability wait or pose averaging.
+Capture requires a board pose at most 0.5 seconds old plus robot TF and exact
+six-joint feedback at most 1 second old. Both robot and camera-relative board
+orientations must differ by at least 5 degrees from every earlier sample;
+translation alone never qualifies. Hold stationary for capture and collect
+rotations around multiple axes.
+
+The fifth accepted sample and every later capture/removal automatically
+recompute using fixed Tsai hand-eye solving. Robot TF reception remains on an
+independent executor thread. The single RGB view overlays the calculated
+camera XYZ/RPY and **FIT RMS**, and broadcasts only
+`base_link -> <prefix>_link` or `Link6 -> <prefix>_link`, never a board TF.
+Diagnostics include fit maxima/IDs, previous-solution changes, pose coverage,
+leave-one-out from six samples, and separately labelled adjacent-pair
+**AX=XB RMS** in mm/degrees. These are consistency metrics, not accuracy grades.
+Below five samples the solution is cleared and TF broadcasting stops.
+A failed leave-one-out omission preserves the full preview but disables saving.
+
+Save YAML confirms the exact new timestamped path under `calibration/`.
+Strict schema 7 stores pinned pipeline provenance, settings, diagnostics,
+stable C# IDs, one RGB board pose, robot transform and six joint positions per
+sample. Load Calibration explicitly replaces confirmed samples, validates the
+five-sample/angular rules, and recomputes using live internal camera TF.
+Existing schema 1–6 files are preserved but rejected without conversion.
+Joint positions are recorded only; this package never replays robot motion.
+RGB frames and overlays are transient memory only, never an accumulating archive.
+
+The build verifies and extracts the existing exact vendored
+`opencv-python 4.10.0.84` wheel offline into the package-private prefix.
+One lifetime spawned worker owns all OpenCV 4.10.0 detection/drawing/pose/solve
+operations with one thread and OpenCL disabled; the ROS/Qt parent never imports
+`cv2`. Runtime/protocol drift, native exit or timeout remains terminal with no
+worker restart, fallback runtime, detector or solver.
+See [package documentation](src/camera_calibration/README.md) and
+[upstream attribution](src/camera_calibration/NOTICE.md).
+
+Teach the platform origin after producing a valid camera calibration:
+
+```bash
+ros2 launch item_perception_yolo platform_teach.launch.py
+```
+
+`platform_teach` explicitly loads one schema-7 camera-to-hand or camera-on-hand
+YAML directly from root `calibration/`, inherits its camera prefix and ChArUco
+geometry, and shows the same RGB marker/corner/board-axis feedback. A fixed
+camera uses its calibrated `base_link <- camera_link` directly. An on-hand
+camera additionally requires a live `base_link <- Link6` TF no older than one
+second and composes it with calibrated `Link6 <- camera_link`. Place the board
+origin at the bin-mount corner chosen as the pick-area origin, keep the robot
+and board stationary, capture once, inspect the calculated
+`base_link <- platform_reference` XYZ/RPY and RViz TF preview, then confirm
+Save YAML. It performs no robot motion and does not subscribe to joint states.
+
+The strict schema-3 result is saved beside the camera artifacts as
+`calibration/platform_calibration_<UTC_TIMESTAMP>_<DOBOT_ROBOT_LAN1_IP>.yaml`.
+It records the selected camera calibration and SHA-256, inherited ChArUco
+settings, and exact transform chain, but no RGB frame or overlay. See
+[`src/item_perception_yolo/README.md`](src/item_perception_yolo/README.md).
+
+After saving a platform calibration, teach a bin ROI with four 5x5 ArUco
+markers (IDs 0–3):
+
+```bash
+ros2 launch item_perception_yolo bin_teach.launch.py
+```
+
+Select the platform calibration, choose the exact 5x5 dictionary, enter the
+measured common marker size, and apply. The node uses the same camera mode as
+the selected platform artifact: fixed-camera mode uses its static calibrated
+mount, while on-hand mode requires fresh `base_link <- Link6` TF. All four IDs
+must be visible; their ID order does not define bin-corner order. The private
+worker undistorts all detected image corners using color CameraInfo. Bin Teach
+intersects their rays with the existing platform Z=0 plane, without flattening
+the platform relative to the robot base or using marker PnP depths for ROI XY.
+The GUI selects each plane corner farthest from the four-marker centroid, draws the
+resulting polygon, and saves four clockwise metric XY points in
+`platform_reference` as strict schema 3:
+
+```text
+offline_teach/bin_teach/bin_teach_<UTC_TIMESTAMP>_<DOBOT_ROBOT_LAN1_IP>.yaml
+```
+
+The node is RGB-only and launches no camera, robot, RViz, or motion process.
+After a successful capture, it dynamically publishes the complete RViz preview
+`base_link -> platform_reference -> bin_corner_1..4` at 10 Hz. The corner frames
+use the exact saved clockwise P1–P4 XY coordinates, Z=0, and platform-aligned
+orientation. Retake, re-Apply, terminal failure, or node exit stops publication.
+Run `dobot_rviz` separately to inspect the frames.
+Platform and bin outputs now use strict schema 3. The platform file records the
+shared ChArUco-origin/axis convention; the bin file separates portable XY
+geometry from its original station's teaching evidence. Each station must
+reproduce the same origin, axes, bin size and bin offset. Platform and corner
+markers are approximately coplanar within a station; absolute station height
+may differ.
+
+Teaching's yellow border and loading's green border project the same platform
+XY/Z=0 geometry, with 32 lens-distorted samples per edge. A tilted platform is
+preserved. Parallel, behind-camera or invalid ray intersections block capture.
+The planar projection assumes the physical corners lie on the taught plane;
+an incorrect platform/camera calibration can still distort metric dimensions.
+Existing files are unchanged: capture and save a new bin file to replace geometry
+previously taught by dropping marker-PnP Z. There is no automatic repair/migration.
+
+Bin ROI files are teaching data and are saved/loaded only in
+`offline_teach/bin_teach/`. Camera and platform calibrations stay in
+`calibration/`. To inspect a copied bin template at another station, put it in
+that station's `offline_teach/bin_teach/`, Apply that station's own
+platform calibration in Bin Teach, then select **Load Bin ROI** and confirm the
+physical reference arrangement. RViz previews the unchanged XY points using the
+destination platform transform. Live RGB shows a green border labelled
+`Loaded Bin Teach | <filename>`, projected using the current station's camera
+calibration and color intrinsics/distortion, with no marker detection required.
+An on-hand camera also requires fresh robot TF for the RGB projection. Missing
+or stale projection inputs hide the border with an explanation. The original
+station's robot configuration and
+calibration files are not required to load the template. Loaded templates are
+preview-only; Retake clears them before a fresh capture, and Save YAML writes
+only fresh captures. Older platform/bin schemas 1–2 are preserved but rejected;
+re-teach them to produce schema 3. Camera calibration remains schema 7.
+
+Teaching previews do not define the future item detector's behavior. Item
+detection and picking are outside this change, and will consume the files
+independently of these teaching nodes and their RViz previews.
+See [`src/item_perception_yolo/README.md`](src/item_perception_yolo/README.md).
 
 For first-time USB setup, install the udev rules supplied by Orbbec:
 

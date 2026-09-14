@@ -136,6 +136,7 @@ private:
     std::shared_ptr<TcpClient> dash_board_tcp_;
     std::string lan1_ip_;
     std::string lan2_ip_;
+    uint32_t connection_timeout_ms_;
     std::string active_ip_;
     mutable std::mutex connection_mutex_;
     std::shared_ptr<dobot_bringup::EventLogger> event_logger_;
@@ -144,6 +145,7 @@ public:
     explicit CRCommanderRos2(
         const std::string &lan1_ip,
         const std::string &lan2_ip,
+        uint32_t connection_timeout_ms,
         const std::shared_ptr<dobot_bringup::EventLogger> &event_logger);
 
     ~CRCommanderRos2();

@@ -2,22 +2,39 @@
 
 Every ROS 2 package in this workspace lives below `src/` and has a package-local `README.md` beside its `package.xml`. The vendor boundaries are intentional: they keep the official Dobot and Orbbec snapshots identifiable and make offline refreshes reviewable.
 
+## Project packages
+
+| Package | Role |
+| --- | --- |
+| [`motion_debug`](motion_debug/) | CR10 motion/status GUI; uses Dobot bringup services but never starts bringup |
+| [`gripper_control`](gripper_control/) | Dobot DO1, DO2, DO13, and DO14 gripper/suction IO diagnostic GUI; requires live bringup |
+| [`orbbec_camera_launcher`](orbbec_camera_launcher/) | Gemini 335 configuration GUI and strict three-attempt complete-set supervisor |
+| [`camera_calibration`](camera_calibration/) | Manual-prefix ChArUco camera-to-hand (`base_link`) and camera-on-hand (`Link6`) calibration |
+| [`item_perception_yolo`](item_perception_yolo/) | Fixed/on-hand ChArUco `platform_teach`, mode-matched four-marker `bin_teach`, and staged perception integration |
+| [`robot_controller`](robot_controller/) | Initial non-actuating item-profile validator; full command ownership/execution remains pending |
+| [`item_perception_interfaces`](item_perception_interfaces/) | Ranked candidate message and read-only GetItemPoses service |
+
+`item_perception_yolo` also installs the `item_teach` GUI and shared headless
+`item_detect` runtime, with class checkboxes, RGB/depth preview and explicitly
+armed calibrated pose requests. The controller can request/log a candidate
+batch without robot execution.
+Imported `item_pick` is retained as reference source with `COLCON_IGNORE`;
+its unaligned execution path is not part of the root build or installed runtime.
+
 ## Dobot CR10 packages
 
 All packages in `DOBOT_6Axis_ROS2_V4/` come from the vendored Dobot ROS 2 V4 snapshot. The project profile retains only the standard CR10 robot assets.
 
 | Package | Role |
 | --- | --- |
-| [`cr10_moveit`](DOBOT_6Axis_ROS2_V4/cr10_moveit/) | CR10 MoveIt planning and controller configuration |
 | [`cra_description`](DOBOT_6Axis_ROS2_V4/cra_description/) | CR10 URDF/Xacro description and meshes |
 | [`dobot_bringup_v4`](DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/) | Dobot TCP/IP ROS 2 driver and services |
-| [`dobot_demo`](DOBOT_6Axis_ROS2_V4/dobot_demo/) | Python demonstration nodes |
-| [`dobot_gazebo`](DOBOT_6Axis_ROS2_V4/dobot_gazebo/) | Gazebo simulation launchers and world |
-| [`dobot_kinematics_plugin`](DOBOT_6Axis_ROS2_V4/dobot_kinematics_plugin/) | MoveIt kinematics plugin |
-| [`dobot_moveit`](DOBOT_6Axis_ROS2_V4/dobot_moveit/) | MoveIt launchers and motion action helpers |
 | [`dobot_msgs_v4`](DOBOT_6Axis_ROS2_V4/dobot_msgs_v4/) | Dobot messages and service definitions |
 | [`dobot_rviz`](DOBOT_6Axis_ROS2_V4/dobot_rviz/) | CR10 RViz visualization |
-| [`servo_action`](DOBOT_6Axis_ROS2_V4/servo_action/) | Joint trajectory action client |
+
+Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`,
+and the Dobot `ServoJ`/`ServoP` interfaces are intentionally absent from the
+hardware-only CR10 profile.
 
 ## Orbbec packages
 
@@ -33,7 +50,8 @@ Build from the workspace root so `colcon` discovers all package manifests:
 
 ```bash
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+colcon build
+source scripts/source_ros_workspace.bash
 ```
 
 Runtime event files are isolated under `logs/<package-name>/events.jsonl`; see [`logs/README.md`](../logs/README.md). Cross-package compilation is provided by `scripts/compile_logs.py`. Do not flatten or move a package out of its vendor group without recording the architecture change in [`docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md`](../docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md).

@@ -21,6 +21,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <poll.h>
+#include <fcntl.h>
 #include <sys/select.h>
 
 /**
@@ -64,7 +66,7 @@ public:
     /**
      * connect
      */
-    void connect();
+    void connect(uint32_t timeout_ms);
 
     /**
      * disConnect

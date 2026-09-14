@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "private_packages": {
+    "ultralytics": "8.4.150",
+    "numpy": "1.26.4",
+    "opencv-python": "4.10.0.84",
+    "cloudpickle": "3.1.1",
+    "polars": "1.35.2",
+    "polars-runtime-32": "1.35.2",
+    "ultralytics-thop": "2.1.6",
+    "nvidia-ml-py": "12.560.30"
+  },
+  "system_packages": {
+    "torch": "2.13.0",
+    "torchvision": "0.28.0",
+    "pillow": "12.3.0",
+    "matplotlib": "3.5.1",
+    "pyyaml": "6.0.3",
+    "requests": "2.34.2",
+    "psutil": "5.9.0",
+    "filelock": "3.29.4"
+  },
+  "wheels": {
+    "ultralytics-8.4.150-py3-none-any.whl": "1af11709f0e525e72d8b1b71916c0081de3e63c49ab9ffdbffa995ae6a8c69de",
+    "numpy-1.26.4-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": "ffa75af20b44f8dba823498024771d5ac50620e6915abac414251bd971b4529f",
+    "opencv_python-4.10.0.84-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": "9ace140fc6d647fbe1c692bcb2abce768973491222c067c131d80957c595b71f",
+    "cloudpickle-3.1.1-py3-none-any.whl": "c8c5a44295039331ee9dad40ba100a9c7297b6f988e50e87ccdf3765a668350e",
+    "polars-1.35.2-py3-none-any.whl": "5e8057c8289ac148c793478323b726faea933d9776bd6b8a554b0ab7c03db87e",
+    "polars_runtime_32-1.35.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl": "85dda0994b5dff7f456bb2f4bbd22be9a9e5c5e28670e23fedb13601ec99a46d",
+    "ultralytics_thop-2.1.6-py3-none-any.whl": "23f7b8ad124fa3432c1a7de9279102c4fdda699216032a7dff49f87ec3d1a3af",
+    "nvidia_ml_py-12.560.30-py3-none-any.whl": "fea371c94d63e38a611c17bbb85fe400e9c8ddb9e8684a9cd0e47786a4bc3c73"
+  }
+}

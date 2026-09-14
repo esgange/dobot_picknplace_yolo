@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>item_perception_yolo</name>
+  <version>0.0.1</version>
+  <description>Strict platform/bin teaching and non-actuating item-profile editor.</description>
+  <maintainer email="maintainer@example.com">maintainer</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>camera_calibration</depend>
+  <depend>geometry_msgs</depend>
+  <depend>item_perception_interfaces</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python_qt_binding</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

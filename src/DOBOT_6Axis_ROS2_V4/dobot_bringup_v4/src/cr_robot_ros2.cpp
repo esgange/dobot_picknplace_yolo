@@ -7,6 +7,7 @@ void CRRobotRos2::init()
 {
     std::string robotLan1Ip{""};
     std::string robotLan2Ip{""};
+    int connectionTimeoutMs{0};
     std::string robotType{""};
     double trajectoryDuration{0.0};
     std::string robotNodeName{""};
@@ -17,6 +18,7 @@ void CRRobotRos2::init()
     // No default is permitted: direct or misconfigured starts must fail.
     this->declare_parameter<std::string>("robot_lan1_ip");
     this->declare_parameter<std::string>("robot_lan2_ip");
+    this->declare_parameter<int>("connection_timeout_ms");
     this->declare_parameter<std::string>("robot_type");
     this->declare_parameter<double>("trajectory_duration");
     this->declare_parameter<std::string>("robot_node_name");
@@ -25,6 +27,7 @@ void CRRobotRos2::init()
 
     this->get_parameter("robot_lan1_ip", robotLan1Ip);
     this->get_parameter("robot_lan2_ip", robotLan2Ip);
+    this->get_parameter("connection_timeout_ms", connectionTimeoutMs);
     this->get_parameter("robot_type", robotType);
     this->get_parameter("trajectory_duration", trajectoryDuration);
     this->get_parameter("robot_node_name", robotNodeName);
@@ -32,12 +35,19 @@ void CRRobotRos2::init()
     this->get_parameter("datalog_directory", datalogDirectory);
 
     event_logger_ = std::make_shared<dobot_bringup::EventLogger>("dobot_bringup_v4", datalogDirectory);
-    if (!event_logger_->record("INFO", "bringup_started", "strict two-interface configuration loaded")) {
+    if (connectionTimeoutMs < 100 || connectionTimeoutMs > 60000) {
+        throw std::runtime_error("connection_timeout_ms must be from 100 through 60000");
+    }
+    if (!event_logger_->record(
+            "INFO", "bringup_started",
+            "strict two-interface configuration loaded connection_timeout_ms=" +
+                std::to_string(connectionTimeoutMs))) {
         throw std::runtime_error("cannot write dobot_bringup_v4 datalog");
     }
 
     RCLCPP_INFO(this->get_logger(), "robotLan1Ip %s", robotLan1Ip.c_str());
     RCLCPP_INFO(this->get_logger(), "robotLan2Ip %s", robotLan2Ip.c_str());
+    RCLCPP_INFO(this->get_logger(), "connectionTimeoutMs %d", connectionTimeoutMs);
     RCLCPP_INFO(this->get_logger(), "robotType  %s", robotType.c_str());
     RCLCPP_INFO(this->get_logger(), "trajectoryDuration %f", trajectoryDuration);
 
@@ -139,9 +149,6 @@ void CRRobotRos2::init()
     std::string serviceRelMovLUser = kRobotName + "/dobot_bringup_ros2/srv/RelMovLUser";
     std::string serviceRelJointMovJ = kRobotName + "/dobot_bringup_ros2/srv/RelJointMovJ";
     std::string serviceGetCurrentCommandId = kRobotName + "/dobot_bringup_ros2/srv/GetCurrentCommandId";
-    std::string serviceServoJ = kRobotName + "/dobot_bringup_ros2/srv/ServoJ";
-    std::string serviceServoP = kRobotName + "/dobot_bringup_ros2/srv/ServoP";
-
     std::string serviceEnableFTSensor = kRobotName + "/dobot_bringup_ros2/srv/EnableFTSensor";
     std::string serviceSixForceHome = kRobotName + "/dobot_bringup_ros2/srv/SixForceHome";
     std::string serviceGetForce = kRobotName + "/dobot_bringup_ros2/srv/GetForce";
@@ -265,8 +272,6 @@ void CRRobotRos2::init()
     kServiceRelMovLUser = this->create_service<dobot_msgs_v4::srv::RelMovLUser>(serviceRelMovLUser, std::bind(&CRRobotRos2::RelMovLUser, this, std::placeholders::_1, std::placeholders::_2));
     kServiceRelJointMovJ = this->create_service<dobot_msgs_v4::srv::RelJointMovJ>(serviceRelJointMovJ, std::bind(&CRRobotRos2::RelJointMovJ, this, std::placeholders::_1, std::placeholders::_2));
     kServiceGetCurrentCommandId = this->create_service<dobot_msgs_v4::srv::GetCurrentCommandId>(serviceGetCurrentCommandId, std::bind(&CRRobotRos2::GetCurrentCommandId, this, std::placeholders::_1, std::placeholders::_2));
-    kServiceServoJ = this->create_service<dobot_msgs_v4::srv::ServoJ>(serviceServoJ, std::bind(&CRRobotRos2::ServoJ, this, std::placeholders::_1, std::placeholders::_2));
-    kServiceServoP = this->create_service<dobot_msgs_v4::srv::ServoP>(serviceServoP, std::bind(&CRRobotRos2::ServoP, this, std::placeholders::_1, std::placeholders::_2));
 kServiceEnableFTSensor = this->create_service<dobot_msgs_v4::srv::EnableFTSensor>(serviceEnableFTSensor, std::bind(&CRRobotRos2::EnableFTSensor, this, std::placeholders::_1, std::placeholders::_2));
     kServiceSixForceHome = this->create_service<dobot_msgs_v4::srv::SixForceHome>(serviceSixForceHome, std::bind(&CRRobotRos2::SixForceHome, this, std::placeholders::_1, std::placeholders::_2));
     kServiceGetForce = this->create_service<dobot_msgs_v4::srv::GetForce>(serviceGetForce, std::bind(&CRRobotRos2::GetForce, this, std::placeholders::_1, std::placeholders::_2));
@@ -298,7 +303,8 @@ kServiceEnableFTSensor = this->create_service<dobot_msgs_v4::srv::EnableFTSensor
     kServiceCheckOddMovJ = this->create_service<dobot_msgs_v4::srv::CheckOddMovJ>(serviceCheckOddMovJ, std::bind(&CRRobotRos2::CheckOddMovJ, this, std::placeholders::_1, std::placeholders::_2));
     kServiceCheckOddMovC = this->create_service<dobot_msgs_v4::srv::CheckOddMovC>(serviceCheckOddMovC, std::bind(&CRRobotRos2::CheckOddMovC, this, std::placeholders::_1, std::placeholders::_2));
 
-    commander_ = std::make_shared<CRCommanderRos2>(robotLan1Ip, robotLan2Ip, event_logger_);
+    commander_ = std::make_shared<CRCommanderRos2>(
+        robotLan1Ip, robotLan2Ip, static_cast<uint32_t>(connectionTimeoutMs), event_logger_);
     commander_->init();
     kPublisherInfo = this->create_publisher<std_msgs::msg::String>(topicFeedInfo, 10);
     threadPubFeedBackInfo = std::thread(&CRRobotRos2::pubFeedBackInfo, this);
@@ -1258,15 +1264,5 @@ bool CRRobotRos2::GetCurrentCommandId(const std::shared_ptr<dobot_msgs_v4::srv::
                                       const std::shared_ptr<dobot_msgs_v4::srv::GetCurrentCommandId::Response> response)
 {
     return commander_->callRosService_f(parseTool::parserGetCurrentCommandIdRequest2String(request), response->res,response->robot_return);
-}
-
-bool CRRobotRos2::ServoJ(const std::shared_ptr<dobot_msgs_v4::srv::ServoJ::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::ServoJ::Response> response)
-{
-    return commander_->callRosService(parseTool::parserServoJRequest2String(request), response->res);
-}
-
-bool CRRobotRos2::ServoP(const std::shared_ptr<dobot_msgs_v4::srv::ServoP::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::ServoP::Response> response)
-{
-    return commander_->callRosService(parseTool::parserServoPRequest2String(request), response->res);
 }
 

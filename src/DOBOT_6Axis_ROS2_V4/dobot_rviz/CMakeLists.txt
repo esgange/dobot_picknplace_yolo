@@ -5,13 +5,10 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files
@@ -21,14 +18,17 @@ if(BUILD_TESTING)
   # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+  ament_add_pytest_test(actual_joint_state_monitor_test
+    test/test_actual_joint_state_monitor.py)
 endif()
+
 install(
   DIRECTORY launch urdf rviz meshes
-  DESTINATION share/${PROJECT_NAME}  
+  DESTINATION share/${PROJECT_NAME}
 )
 
 install(PROGRAMS
-  dobot_rviz/joint_state_relay.py
+  dobot_rviz/actual_joint_state_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

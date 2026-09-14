@@ -114,8 +114,6 @@
 #include <dobot_msgs_v4/srv/mov_l.hpp>
 #include <dobot_msgs_v4/srv/rel_joint_mov_j.hpp>
 #include <dobot_msgs_v4/srv/get_current_command_id.hpp>
-#include <dobot_msgs_v4/srv/servo_j.hpp>
-#include <dobot_msgs_v4/srv/servo_p.hpp>
 #include <dobot_msgs_v4/srv/enable_ft_sensor.hpp>
 #include <dobot_msgs_v4/srv/six_force_home.hpp>
 #include <dobot_msgs_v4/srv/get_force.hpp>
@@ -251,8 +249,6 @@ protected:
     bool RelMovLUser(const std::shared_ptr<dobot_msgs_v4::srv::RelMovLUser::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::RelMovLUser::Response> response);
     bool RelJointMovJ(const std::shared_ptr<dobot_msgs_v4::srv::RelJointMovJ::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::RelJointMovJ::Response> response);
     bool GetCurrentCommandId(const std::shared_ptr<dobot_msgs_v4::srv::GetCurrentCommandId::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::GetCurrentCommandId::Response> response);
-    bool ServoJ(const std::shared_ptr<dobot_msgs_v4::srv::ServoJ::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::ServoJ::Response> response);
-    bool ServoP(const std::shared_ptr<dobot_msgs_v4::srv::ServoP::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::ServoP::Response> response);
     bool EnableFTSensor(const std::shared_ptr<dobot_msgs_v4::srv::EnableFTSensor::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::EnableFTSensor::Response> response);
     bool SixForceHome(const std::shared_ptr<dobot_msgs_v4::srv::SixForceHome::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::SixForceHome::Response> response);
     bool GetForce(const std::shared_ptr<dobot_msgs_v4::srv::GetForce::Request> request, const std::shared_ptr<dobot_msgs_v4::srv::GetForce::Response> response);
@@ -377,8 +373,6 @@ private:
     std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::RelMovLUser>> kServiceRelMovLUser;
     std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::RelJointMovJ>> kServiceRelJointMovJ;
     std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::GetCurrentCommandId>> kServiceGetCurrentCommandId;
-    std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::ServoJ>> kServiceServoJ;
-    std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::ServoP>> kServiceServoP;
     std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::EnableFTSensor>> kServiceEnableFTSensor;
     std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::SixForceHome>> kServiceSixForceHome;
     std::shared_ptr<rclcpp::Service<dobot_msgs_v4::srv::GetForce>> kServiceGetForce;

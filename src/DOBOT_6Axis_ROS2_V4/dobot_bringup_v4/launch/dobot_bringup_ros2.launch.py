@@ -12,14 +12,45 @@ import xml.etree.ElementTree as ET
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ROS_NODE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ORBBEC_CAMERA_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_ORBBEC_SERIAL = re.compile(r"^[A-Za-z0-9_.:-]+$")
 _PACKAGE_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SUPPORTED_ENV_KEYS = {
+    "ROS_LOCALHOST_ONLY",
     "DOBOT_ROBOT_LAN1_IP",
     "DOBOT_ROBOT_LAN2_IP",
+    "DOBOT_CONNECTION_TIMEOUT_MS",
     "DOBOT_ROBOT_TYPE",
     "DOBOT_ROBOT_NUMBER",
     "DOBOT_TRAJECTORY_DURATION",
     "DOBOT_ROBOT_NODE_NAME",
+    "ORBBEC_CAMERA_1_NAME",
+    "ORBBEC_CAMERA_1_SERIAL",
+    "ORBBEC_CAMERA_2_NAME",
+    "ORBBEC_CAMERA_2_SERIAL",
+    "ORBBEC_DEVICE_PRESET",
+    "ORBBEC_ENABLE_COLOR",
+    "ORBBEC_ENABLE_DEPTH",
+    "ORBBEC_DEPTH_REGISTRATION",
+    "ORBBEC_ALIGN_TARGET_STREAM",
+    "ORBBEC_ALIGN_MODE",
+    "ORBBEC_ENABLE_FRAME_SYNC",
+    "ORBBEC_ENABLE_TEMPORAL_FILTER",
+    "ORBBEC_COLOR_WIDTH",
+    "ORBBEC_COLOR_HEIGHT",
+    "ORBBEC_COLOR_FPS",
+    "ORBBEC_DEPTH_WIDTH",
+    "ORBBEC_DEPTH_HEIGHT",
+    "ORBBEC_DEPTH_FPS",
+    "ORBBEC_ENABLE_POINT_CLOUD",
+    "ORBBEC_ENUMERATE_NET_DEVICE",
+    "ORBBEC_SCAN_TIMEOUT_SEC",
+    "ORBBEC_STARTUP_TIMEOUT_SEC",
+    "ORBBEC_HEALTH_TIMEOUT_SEC",
+    "ORBBEC_CHECK_PERIOD_SEC",
+    "ORBBEC_MAX_ATTEMPTS",
+    "ORBBEC_RETRY_DELAY_SEC",
+    "ORBBEC_SHUTDOWN_TIMEOUT_SEC",
 }
 _REQUIRED_ENV_KEYS = frozenset(_SUPPORTED_ENV_KEYS)
 _MAX_LOG_EVENTS = 1000
@@ -108,6 +139,25 @@ def _load_project_env():
             "[DOBOT BRINGUP] DOBOT_ROBOT_LAN1_IP and DOBOT_ROBOT_LAN2_IP must be different"
         )
 
+    try:
+        connection_timeout_ms = int(values["DOBOT_CONNECTION_TIMEOUT_MS"])
+    except ValueError as exc:
+        raise RuntimeError(
+            "[DOBOT BRINGUP] DOBOT_CONNECTION_TIMEOUT_MS must be an integer from 100 through 60000"
+        ) from exc
+    if (
+        str(connection_timeout_ms) != values["DOBOT_CONNECTION_TIMEOUT_MS"]
+        or not 100 <= connection_timeout_ms <= 60000
+    ):
+        raise RuntimeError(
+            "[DOBOT BRINGUP] DOBOT_CONNECTION_TIMEOUT_MS must be an integer from 100 through 60000"
+        )
+
+    if values["ROS_LOCALHOST_ONLY"] != "1":
+        raise RuntimeError(
+            "[DOBOT BRINGUP] ROS_LOCALHOST_ONLY must be exactly '1'"
+        )
+
     if values["DOBOT_ROBOT_TYPE"] != "cr10":
         raise RuntimeError(
             "[DOBOT BRINGUP] DOBOT_ROBOT_TYPE must be exactly 'cr10' for this CR10-only workspace"
@@ -133,6 +183,78 @@ def _load_project_env():
         raise RuntimeError(
             "[DOBOT BRINGUP] DOBOT_ROBOT_NODE_NAME must contain only letters, digits, and underscores and must not start with a digit"
         )
+
+    camera_names = []
+    camera_serials = []
+    for slot in (1, 2):
+        name_key = f"ORBBEC_CAMERA_{slot}_NAME"
+        serial_key = f"ORBBEC_CAMERA_{slot}_SERIAL"
+        name = values[name_key]
+        serial = values[serial_key]
+        if name and not _ORBBEC_CAMERA_NAME.fullmatch(name):
+            raise RuntimeError(f"[DOBOT BRINGUP] {name_key} must be empty or a valid ROS camera name")
+        if serial and not _ORBBEC_SERIAL.fullmatch(serial):
+            raise RuntimeError(f"[DOBOT BRINGUP] {serial_key} contains invalid characters")
+        if name:
+            camera_names.append(name)
+        if serial:
+            camera_serials.append(serial)
+    if len(camera_names) != len(set(camera_names)):
+        raise RuntimeError("[DOBOT BRINGUP] configured Orbbec camera names must be unique")
+    if len(camera_serials) != len(set(camera_serials)):
+        raise RuntimeError("[DOBOT BRINGUP] configured Orbbec serial numbers must be unique")
+
+    if values["ORBBEC_DEVICE_PRESET"] != "High Accuracy":
+        raise RuntimeError("[DOBOT BRINGUP] ORBBEC_DEVICE_PRESET must be exactly High Accuracy")
+    for key in (
+        "ORBBEC_ENABLE_COLOR",
+        "ORBBEC_ENABLE_DEPTH",
+        "ORBBEC_DEPTH_REGISTRATION",
+        "ORBBEC_ENABLE_FRAME_SYNC",
+        "ORBBEC_ENABLE_TEMPORAL_FILTER",
+        "ORBBEC_ENABLE_POINT_CLOUD",
+        "ORBBEC_ENUMERATE_NET_DEVICE",
+    ):
+        if values[key] not in {"true", "false"}:
+            raise RuntimeError(f"[DOBOT BRINGUP] {key} must be exactly true or false")
+    if values["ORBBEC_ENABLE_COLOR"] != "true" or values["ORBBEC_ENABLE_DEPTH"] != "true":
+        raise RuntimeError("[DOBOT BRINGUP] Orbbec color and depth streams must both be enabled")
+    if values["ORBBEC_ENUMERATE_NET_DEVICE"] != "false":
+        raise RuntimeError("[DOBOT BRINGUP] ORBBEC_ENUMERATE_NET_DEVICE must be exactly false")
+    if values["ORBBEC_ALIGN_TARGET_STREAM"] != "COLOR" or values["ORBBEC_ALIGN_MODE"] != "SW":
+        raise RuntimeError("[DOBOT BRINGUP] Orbbec alignment must be exactly target COLOR and mode SW")
+
+    for key in (
+        "ORBBEC_COLOR_WIDTH",
+        "ORBBEC_COLOR_HEIGHT",
+        "ORBBEC_COLOR_FPS",
+        "ORBBEC_DEPTH_WIDTH",
+        "ORBBEC_DEPTH_HEIGHT",
+        "ORBBEC_DEPTH_FPS",
+    ):
+        try:
+            value = int(values[key])
+        except ValueError as exc:
+            raise RuntimeError(f"[DOBOT BRINGUP] {key} must be a canonical positive integer") from exc
+        if value <= 0 or str(value) != values[key]:
+            raise RuntimeError(f"[DOBOT BRINGUP] {key} must be a canonical positive integer")
+    for key in (
+        "ORBBEC_SCAN_TIMEOUT_SEC",
+        "ORBBEC_STARTUP_TIMEOUT_SEC",
+        "ORBBEC_HEALTH_TIMEOUT_SEC",
+        "ORBBEC_CHECK_PERIOD_SEC",
+        "ORBBEC_SHUTDOWN_TIMEOUT_SEC",
+    ):
+        try:
+            value = float(values[key])
+        except ValueError as exc:
+            raise RuntimeError(f"[DOBOT BRINGUP] {key} must be a finite number greater than zero") from exc
+        if not math.isfinite(value) or value <= 0.0:
+            raise RuntimeError(f"[DOBOT BRINGUP] {key} must be a finite number greater than zero")
+    if values["ORBBEC_MAX_ATTEMPTS"] != "3":
+        raise RuntimeError("[DOBOT BRINGUP] ORBBEC_MAX_ATTEMPTS must be exactly 3")
+    if values["ORBBEC_RETRY_DELAY_SEC"] != "3":
+        raise RuntimeError("[DOBOT BRINGUP] ORBBEC_RETRY_DELAY_SEC must be exactly 3")
 
     # The project configuration is authoritative. This intentionally replaces
     # inherited values so a shell variable cannot silently select another robot.
@@ -212,6 +334,7 @@ def _initialize_package_logs(root):
 log_root, package_log_names = _initialize_package_logs(project_root)
 lan1_ip = project_config["DOBOT_ROBOT_LAN1_IP"].strip()
 lan2_ip = project_config["DOBOT_ROBOT_LAN2_IP"].strip()
+connection_timeout_ms = int(project_config["DOBOT_CONNECTION_TIMEOUT_MS"])
 robot_type = project_config["DOBOT_ROBOT_TYPE"]
 robot_number = int(project_config["DOBOT_ROBOT_NUMBER"])
 trajectory_duration = float(project_config["DOBOT_TRAJECTORY_DURATION"])
@@ -219,6 +342,7 @@ robot_node_name = project_config["DOBOT_ROBOT_NODE_NAME"]
 
 print(f"[DOBOT BRINGUP] LAN1 (primary): {lan1_ip}")
 print(f"[DOBOT BRINGUP] LAN2 (diagnostic failover): {lan2_ip}")
+print(f"[DOBOT BRINGUP] TCP connection timeout per channel: {connection_timeout_ms} ms")
 print(f"[DOBOT BRINGUP] Using Robot Type: {robot_type}")
 print(f"[DOBOT BRINGUP] Loaded project config: {env_path}")
 print(f"[DOBOT BRINGUP] Package datalogs: {log_root} ({len(package_log_names)} packages)")
@@ -227,6 +351,7 @@ print(f"[DOBOT BRINGUP] Package datalogs: {log_root} ({len(package_log_names)} p
 dobot_ros2_params = [
     {"robot_lan1_ip": lan1_ip},
     {"robot_lan2_ip": lan2_ip},
+    {"connection_timeout_ms": connection_timeout_ms},
     {"robot_type": robot_type},
     {"trajectory_duration": trajectory_duration},
     {"robot_node_name": robot_node_name},

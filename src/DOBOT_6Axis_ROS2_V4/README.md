@@ -1,318 +1,94 @@
-<div align="center">
+# DOBOT 6Axis ROS 2 V4 — project profile
 
- <img src="image/dobot_moveit.jpg" alt="DOBOT 6Axis ROS2 V4" style="max-width: 600px; margin-bottom: 20px;" />
+Vendored Dobot ROS 2 V4 source for this project's standard CR10 robot. It is
+derived from the official Dobot source snapshot recorded in the repository
+blueprint diary and remains subject to the upstream [MIT License](LICENSE).
 
- <h1>DOBOT 6Axis ROS2 V4</h1>
+This hardware-only profile is deliberately limited to the CR10 description,
+robot bringup, retained protocol interfaces, and actual-feedback visualization.
+Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`,
+and the streaming `ServoJ`/`ServoP` interfaces are excluded.
 
- **Dobot Robotics ROS2 Software Development Kit**  
- High-performance robot control framework based on TCP/IP protocol
+## Fixed platform and robot profile
 
- [English](README.md)
+| Requirement | Value |
+| --- | --- |
+| Operating system | Ubuntu 22.04 LTS |
+| ROS distribution | ROS 2 Humble |
+| Robot | Dobot CR10 |
+| LAN1 controller IP | `192.168.20.204` |
+| LAN2 diagnostic IP | `192.168.200.1` |
+| Dashboard port | `29999` |
+| Feedback port | `30004` |
 
- [![Platform](https://img.shields.io/badge/Platform-Ubuntu%2022.04-blue?style=flat-square)](https://ubuntu.com/download/server)
- [![ROS](https://img.shields.io/badge/ROS2-Humble-green?style=flat-square)](https://docs.ros.org/en/humble/)
- [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
+## Build
 
-</div>
-
----
-
-> **Project vendor profile:** This offline project copy is intentionally pruned to the standard Dobot CR10. Other robot model MoveIt packages, descriptions, and meshes are not included.
-
-## Quick Start
-
-### System Requirements
-
-| Requirement | Version |
-|-------------|---------|
-| OS | Ubuntu 22.04 LTS |
-| ROS Version | ROS2 Humble |
-| Python | 3.8+ |
-
-### Network Configuration
-
-| Configuration | Description |
-|---------------|-------------|
-| LAN1 primary IP | 192.168.20.204 (must be in the same subnet) |
-| LAN2 diagnostic IP | 192.168.5.1 (explicit failover) |
-| Control Port | 29999 |
-| Feedback Port | 30004 |
-
-### Installation
+Build this package group only as part of the repository workspace:
 
 ```bash
-# Create workspace
-mkdir -p ~/dobot_ws/src
-cd ~/dobot_ws/src
-git clone -b feature/v4-optimization https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4.git
-cd ~/dobot_ws
-
-# Install dependencies
-sudo apt update && sudo apt install -y \
-  ros-humble-moveit \
-  ros-humble-gazebo-* \
-  ros-humble-joint-state-publisher \
-  ros-humble-robot-state-publisher
-
-# Build
+cd ~/PicknPlace
+source /opt/ros/humble/setup.bash
 colcon build
-source install/setup.bash
-
-# This project loads the robot connection from the workspace root .env.
-# From the repository root, run: cp .env.example .env
-# The bringup launch hard-fails unless .env contains all six required Dobot values.
-# Use strict KEY=value syntax; no shell exports or alternate keys are accepted.
-
-# This project includes only the standard CR10 model; no model override is needed.
-
-# Apply configuration
-source ~/.bashrc
+source scripts/source_ros_workspace.bash
 ```
 
----
+The canonical root `.env` is required at runtime. It contains exactly these
+project settings:
 
-## Usage
+- `ROS_LOCALHOST_ONLY`
+- `DOBOT_ROBOT_LAN1_IP`
+- `DOBOT_ROBOT_LAN2_IP`
+- `DOBOT_CONNECTION_TIMEOUT_MS`
+- `DOBOT_ROBOT_TYPE`
+- `DOBOT_ROBOT_NUMBER`
+- `DOBOT_TRAJECTORY_DURATION`
+- `DOBOT_ROBOT_NODE_NAME`
 
-### 1. RViz Visualization (Standalone)
+There is no package-local configuration or compatibility path.
 
-Visualize the robot model without a physical robot:
+## Retained packages
+
+| Package | Role |
+| --- | --- |
+| `cra_description` | CR10 URDF/Xacro and visual/collision meshes |
+| `dobot_bringup_v4` | Controller TCP/IP driver, feedback, and ROS services |
+| `dobot_msgs_v4` | Dobot ROS messages and services |
+| `dobot_rviz` | Read-only actual-feedback CR10 and ROS TF viewer |
+
+## Safe entry points
+
+Start controller bringup only after completing the real-robot safety and network
+checks documented in the repository root README:
+
+```bash
+ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
+```
+
+After bringup is connected and publishing actual joint feedback, visualize the
+robot without commanding it:
 
 ```bash
 ros2 launch dobot_rviz dobot_rviz.launch.py
 ```
 
-### 2. RViz with Real Robot
+The current feedback path is:
 
-Stream live joint states from the physical robot into RViz:
-
-```bash
-# Terminal 1: Connect to robot
-ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
-
-# Terminal 2: RViz with live hardware mode
-ros2 launch dobot_rviz dobot_rviz.launch.py live_hardware:=true
+```text
+Dobot controller TCP feedback
+  → dobot_bringup_v4
+  → /joint_states
+  → robot_state_publisher and RViz
 ```
 
-### 3. MoveIt Virtual Demo
+## Safety
 
-Test motion planning in RViz with a virtual controller (no robot required):
+The retained bringup services are capable of robot motion. Do not run a motion
+executable or call a motion service unless the user explicitly requests it and
+the robot/network/safety preconditions are checked.
 
-```bash
-ros2 launch dobot_moveit moveit_demo.launch.py
-```
+## Upstream attribution
 
-### 4. MoveIt with Real Robot
+Original project: [Dobot-Arm/DOBOT_6Axis_ROS2_V4](https://github.com/Dobot-Arm/DOBOT_6Axis_ROS2_V4)
 
-Full motion planning and execution on the physical robot:
-
-```bash
-# Terminal 1: Connect to robot
-ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
-
-# Terminal 2: MoveIt control interface
-ros2 launch dobot_moveit dobot_moveit.launch.py
-```
-
-**Precision Control (publisher-calibrated DH accuracy)**
-
-For point-to-point motions with calibrated-DH accuracy, use `send_pose_target.py`:
-
-```bash
-# Terminal 1: Connect to robot
-ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
-
-# Terminal 2: MoveIt
-ros2 launch dobot_moveit dobot_moveit.launch.py
-
-# Terminal 3: Precision control
-ros2 run dobot_moveit send_pose_target.py -- x y z rx ry rz [--plan-only]
-```
-
-**How it works:** Controller InverseKin computes joint targets → OMPL plans a
-collision-free path → `action_move_server` executes via ServoJ.
-
-| Step | IK source | Purpose |
-|------|-----------|---------|
-| Target IK | Controller InverseKin (calibrated DH) | TCP accuracy < 0.05 mm |
-| Path planning | OMPL + joint-space constraints | Collision avoidance |
-| Execution | `action_move_server` + ServoJ | Point-by-point to controller |
-
-> `--plan-only` displays the path in RViz first; press Enter to execute.
-> Use `verify_dh.py` to validate controller IK accuracy before motion.
-
-### 5. Gazebo + MoveIt Co-Simulation
-
-Physics simulation with motion planning:
-
-```bash
-# Terminal 1: Launch Gazebo with MoveIt controllers
-ros2 launch dobot_gazebo gazebo_moveit.launch.py
-
-# Terminal 2: Launch MoveIt control interface
-ros2 launch dobot_moveit moveit_gazebo.launch.py
-```
-
-### 6. Motion Demo Scripts
-
-Run pre-built motion demos for quick testing:
-
-```bash
-# Terminal 1: Connect to robot first
-ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
-
-# Terminal 2: Run basic motion demo (MovJ/MovL/DO control)
-ros2 run dobot_demo demo
-```
-
-### 7. Servo Action Client
-
-Test joint trajectory control via action client (sends single-point trajectory goals periodically):
-
-```bash
-# Terminal 1: Connect to robot
-ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
-
-# Terminal 2: Start MoveIt action server
-ros2 launch dobot_moveit dobot_moveit.launch.py
-
-# Terminal 3: Run action client (sends single-point goals every second)
-ros2 run servo_action action_move_client
-```
-
----
-
-## Launch Parameters
-
-The following parameters apply to `dobot_rviz.launch.py`:
-
-| Parameter | Default Value | Description |
-|-----------|---------------|-------------|
-| `live_hardware` | `false` | Set to `true` to get joint states from a real robot |
-| `gui` | `false` | Enable `joint_state_publisher_gui` for manual joint control |
-| `model` | Auto | Path to the CR10 robot URDF file |
-
-The `dobot_moveit.launch.py` file additionally supports:
-
-| Parameter | Default Value | Description |
-|-----------|---------------|-------------|
-
-### Environment Variables
-
-In addition to launch parameters, the project also supports the following environment variables:
-
-| Environment Variable | Default Source | Description |
-|---------------------|---------------|-------------|
-| `DOBOT_ROBOT_TYPE` | `.env` (required) | Robot profile; must be exactly `cr10` |
-| `DOBOT_ROBOT_NUMBER` | `.env` (required) | Number of configured robots; must be exactly `1` |
-| `DOBOT_TRAJECTORY_DURATION` | `.env` (required) | Trajectory duration in seconds |
-| `DOBOT_ROBOT_NODE_NAME` | `.env` (required) | Bringup node name |
-| `DOBOT_ROBOT_LAN1_IP` | `.env` (required) | Primary robot interface address |
-| `DOBOT_ROBOT_LAN2_IP` | `.env` (required) | Diagnostic failover interface address |
-
----
-
-## Project Structure
-
-```
-DOBOT_6Axis_ROS2_V4/
-├── dobot_bringup_v4/        # Robot driver (TCP/IP communication)
-├── dobot_moveit/            # MoveIt action server & utilities
-├── dobot_rviz/              # RViz visualization launcher
-├── dobot_gazebo/            # Gazebo simulation
-├── dobot_demo/              # Simple motion demo scripts
-├── dobot_msgs_v4/           # ROS2 service & message definitions
-├── servo_action/            # Joint trajectory action client
-├── cr10_moveit/             # CR10 MoveIt config
-├── cra_description/         # CR10 URDF/XACRO description & meshes
-├── image/                   # Images
-└── README.md
-```
-
----
-
-## Architecture & Data Flow
-
-### MoveIt + Real Robot
-
-```
-dobot_bringup_v4 (main.cpp)
-  └→ /joint_states_robot  (10Hz, radians, from port 30004 feedback)
-       └→ joint_state_relay (--robot mode)
-            ├→ /joint_states           → MoveIt current_state_monitor (planning start state)
-            └→ /rsp_joint_states       → robot_state_publisher  → TF  → RViz
-
-MoveIt (OMPL / CHOMP planner)
-  └→ FollowJointTrajectory Action
-       └→ action_move_server (dobot_moveit package)
-            └→ ServoJ service (per waypoint)  → dobot_bringup_v4  → TCP  → robot
-```
-
-### Key Components
-
-| Component | Package | Role |
-|-----------|---------|------|
-| `main.cpp` | `dobot_bringup_v4` | TCP 30004 realtime feedback → `/joint_states_robot` |
-| `joint_state_relay.py` | `dobot_rviz` | Bridge `/joint_states_robot` → `/joint_states`; relay → `/rsp_joint_states` |
-| `action_move_server.py` | `dobot_moveit` | Receives MoveIt trajectory, sends ServoJ commands waypoint-by-waypoint |
-| `cra_description` | `cra_description` | CR10 URDF/XACRO description and STL meshes |
-| `ompl_planning.yaml` | `cr10_moveit` | CR10 OMPL planner config (includes `AddTimeOptimalParameterization`) |
-
----
-
-## Supported Models
-
-| Series | Models |
-|--------|--------|
-| CR Series | CR10 |
-
----
-
-## Launch Files Reference
-
-| Launch File | Description |
-|-------------|-------------|
-| `dobot_rviz.launch.py` | RViz visualization (standalone or with `live_hardware:=true`) |
-| `dobot_bringup_ros2.launch.py` | Robot driver — TCP/IP connection to physical robot |
-| `moveit_demo.launch.py` | MoveIt motion planning demo (virtual) |
-| `dobot_moveit.launch.py` | MoveIt control interface (real robot) |
-| `dobot_gazebo.launch.py` | Gazebo physics simulation (without controllers) |
-| `gazebo_moveit.launch.py` | Gazebo + MoveIt co-simulation (with controllers) |
-| `dobot_joint.launch.py` | MoveIt action server (real robot) |
-
-## Demo & Utilities Reference
-
-| Package | Executable | Description |
-|---------|------------|-------------|
-| `dobot_demo` | `demo` | Basic motion demo (MovJ/MovL/DO control) |
-| `servo_action` | `action_move_client` | Joint trajectory action client (single-point goals every 1s) |
-| `servo_action` | `Joint_Position` | Fake joint state publisher for simulation testing |
-
----
-
-## Notes
-
-> ⚠️ **Safety First**: Ensure the robot is in a safe position before operation
-
-1. Ensure computer IP is in the same subnet as robot (192.168.X.X)
-2. Ensure ports 29999 and 30004 are not occupied
-3. Robot must be in remote TCP/IP control mode
-
----
-
-## Version Information
-
-| Information | Content |
-|-------------|---------|
-| Current Version | V4.6.5 |
-| ROS Version | ROS2 Humble |
-| Protocol Version | Dobot TCP/IP V4.6.5 |
-
----
-
-## License
-
-[MIT License](LICENSE)
-
-<div align="center">
-Built by Dobot-Arm
-</div>
+The exact upstream commit, local pruning decisions, and verification record are
+maintained in `docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md` at the repository root.

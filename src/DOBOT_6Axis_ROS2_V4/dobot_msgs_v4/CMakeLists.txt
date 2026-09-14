@@ -120,8 +120,6 @@ set(srv_files
        "srv/RelMovJUser.srv"
        "srv/RelMovLUser.srv"
        "srv/GetCurrentCommandId.srv"
-       "srv/ServoJ.srv"
-       "srv/ServoP.srv"
        "srv/TcpDashboard.srv"
        "srv/EnableFTSensor.srv"
        "srv/SixForceHome.srv"

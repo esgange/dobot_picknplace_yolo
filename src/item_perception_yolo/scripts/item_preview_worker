@@ -1,0 +1,28 @@
+#!/usr/bin/python3
+"""Private worker bootstrap: no ROS/Qt/model imports before runtime selection."""
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+runtime = Path(sys.argv[1]).resolve(strict=True)
+manifest = json.loads((runtime / "runtime-lock.json").read_text())
+sys.path.insert(0, str(runtime))
+protocol_output = sys.stdout.buffer
+sys.stdout = sys.stderr
+
+
+def block_network(event, _args):
+    if event in {"socket.connect", "socket.connect_ex", "socket.getaddrinfo",
+                 "socket.gethostbyname", "socket.sendto"}:
+        raise RuntimeError("Network access is forbidden in the item preview worker")
+
+
+sys.addaudithook(block_network)
+with tempfile.TemporaryDirectory(prefix="picknplace-yolo-session-") as scratch:
+    os.environ.update({"YOLO_CONFIG_DIR": scratch, "YOLO_OFFLINE": "true",
+                       "YOLO_AUTOINSTALL": "false", "YOLO_VERBOSE": "false",
+                       "MPLCONFIGDIR": scratch, "MPLBACKEND": "Agg"})
+    from item_perception_yolo.yolo_worker_native import serve
+    serve(sys.stdin.buffer, protocol_output, runtime, manifest, Path(scratch))

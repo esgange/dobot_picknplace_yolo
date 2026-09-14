@@ -6,12 +6,17 @@
 CRCommanderRos2::CRCommanderRos2(
     const std::string &lan1_ip,
     const std::string &lan2_ip,
+    uint32_t connection_timeout_ms,
     const std::shared_ptr<dobot_bringup::EventLogger> &event_logger)
     : current_joint_{}, tool_vector_{}, is_running_(false),
-      lan1_ip_(lan1_ip), lan2_ip_(lan2_ip), event_logger_(event_logger)
+      lan1_ip_(lan1_ip), lan2_ip_(lan2_ip), connection_timeout_ms_(connection_timeout_ms),
+      event_logger_(event_logger)
 {
     if (!event_logger_) {
         throw std::invalid_argument("Dobot commander requires a datalog logger");
+    }
+    if (connection_timeout_ms_ < 100 || connection_timeout_ms_ > 60000) {
+        throw std::invalid_argument("Dobot connection timeout must be from 100 through 60000 ms");
     }
     real_time_data_ = std::make_shared<RealTimeData>();
 }
@@ -28,13 +33,19 @@ CRCommanderRos2::~CRCommanderRos2()
 bool CRCommanderRos2::tryConnect(const std::string &ip, const std::string &interface_name)
 {
     disconnectActive();
-    event_logger_->record("INFO", "robot_connection_attempt", interface_name + " ip=" + ip);
+    const std::string attempt_message = interface_name + " ip=" + ip +
+        " timeout_ms=" + std::to_string(connection_timeout_ms_);
+    event_logger_->record("INFO", "robot_connection_attempt", attempt_message);
+    RCLCPP_INFO(
+        rclcpp::get_logger("CRCommanderRos2"),
+        "Attempting Dobot connection via %s (%s), timeout %u ms per TCP channel",
+        interface_name.c_str(), ip.c_str(), connection_timeout_ms_);
 
     auto realtime = std::make_shared<TcpClient>(ip, 30004);
     auto dashboard = std::make_shared<TcpClient>(ip, 29999);
     try {
-        realtime->connect();
-        dashboard->connect();
+        realtime->connect(connection_timeout_ms_);
+        dashboard->connect(connection_timeout_ms_);
     } catch (const TcpClientException &err) {
         realtime->close();
         dashboard->close();
@@ -50,7 +61,9 @@ bool CRCommanderRos2::tryConnect(const std::string &ip, const std::string &inter
         dash_board_tcp_ = dashboard;
         active_ip_ = ip;
     }
-    event_logger_->record("INFO", "robot_connection_succeeded", interface_name + " ip=" + ip);
+    event_logger_->record(
+        "INFO", "robot_connection_result",
+        "status=connected interface=" + interface_name + " ip=" + ip);
     RCLCPP_INFO(rclcpp::get_logger("CRCommanderRos2"),
         "Connected to Dobot via %s (%s)", interface_name.c_str(), ip.c_str());
     return true;
@@ -113,8 +126,9 @@ void CRCommanderRos2::recvTask()
             if (!connected) {
                 if (!outage_logged) {
                     const std::string message =
-                        "LAN1 ip=" + lan1_ip_ + "; LAN2 ip=" + lan2_ip_;
-                    event_logger_->record("ERROR", "robot_connection_failed", message);
+                        "status=failed LAN1_ip=" + lan1_ip_ + " LAN2_ip=" + lan2_ip_ +
+                        " timeout_ms=" + std::to_string(connection_timeout_ms_);
+                    event_logger_->record("ERROR", "robot_connection_result", message);
                     RCLCPP_ERROR(rclcpp::get_logger("CRCommanderRos2"),
                         "Dobot connection failed on both configured interfaces: %s",
                         message.c_str());
