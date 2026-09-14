@@ -76,7 +76,7 @@ Keep application code, launch files, calibration, and configuration separate fro
 4. Make the smallest scoped change. Keep generated output in ignored `build/`, `install/`, and `log/` directories.
 5. Run relevant tests or launch-file checks that do not move hardware. Run `git diff --check`.
 6. Update this diary for a new package, architectural decision, vendor change, offline constraint, or failed validation.
-7. Commit with a descriptive message. Review the diff and never force-push shared history.
+7. After each completed change passes relevant tests/checks, review `git status` and the staged diff, then commit with a descriptive message and push to the current branch's configured remote. The user authorized this standing workflow on 2026-09-14; no repeated confirmation is needed. Stage only the task's source, tests and documentation, not unrelated user edits, local configuration/logs/build output, station calibration/teaching artifacts or operator model weights. Verify the push and report the commit ID. If validation or pushing is blocked, preserve the work and report the blocker, not a successful completion. Never force-push or rewrite shared history.
 
 ### Hardware safety
 
@@ -1891,6 +1891,21 @@ Never use a floating “latest” version in an issue, script, or deployment not
   without cv2/Torch/Ultralytics in the parent. No operator models, physical
   cameras, robot, or RViz were launched or commanded. Artifacts/state remain
   unchanged. Source-only commit/push follows the user's request.
+
+### 2026-09-14 — Standing tested-change commit and push workflow
+
+- User explicitly confirmed committing and pushing after each completed, tested
+  change from now on. Record the authorization in rule 8 and the development
+  workflow so it survives contributor/agent handoffs; no repeated prompt or
+  automatic Git hook is needed. This supersedes the earlier checkpoint's lack
+  of a standing Git policy, not its source-only artifact exclusions.
+- Check relevant tests, status, whitespace and the staged diff before committing
+  scoped source/tests/docs, then push normally and verify the remote commit.
+  Never bundle unrelated edits or local station/model artifacts, force-push,
+  rewrite shared history, or claim a blocked validation/push succeeded.
+- Documentation-only change: review the three-document diff and run
+  `git diff --check` plus staged-diff checks. No runtime changes, hardware
+  launches, artifact rewrites or new offline-transfer milestone.
 
 ### Future entry template
 

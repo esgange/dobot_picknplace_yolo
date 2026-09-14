@@ -164,6 +164,18 @@ cd dobot_picknplace_yolo
 
 No submodule initialization or network access is required after cloning this repository. The vendored sources are ordinary tracked files. Preserve the upstream `LICENSE`, `NOTICE`, and English README files when updating them. Do not reintroduce non-CR10 Dobot model configurations unless the project scope is explicitly changed and recorded in the blueprint diary.
 
+## Development checkpoints
+
+After each completed, tested change, commit and push the scoped source, tests
+and documentation to the current branch's configured remote. This is the
+user-authorized standing workflow; another confirmation is not required.
+Review status and the staged diff, run `git diff --check`, and record workflow
+or architecture changes in the blueprint diary. Keep unrelated user edits,
+local configuration, generated output, station teaching/calibration artifacts
+and operator model weights out of these source commits. Report the commit and
+verified push, or explain any validation/push blocker. Never force-push or
+rewrite shared history.
+
 ## Updating vendored sources (online maintenance only)
 
 Vendor updates must be deliberate and reviewable. Use a separate temporary clone of the official repository, compare it with the current snapshot, then commit the resulting source changes together with an entry in [`docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md`](docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md). Do not add the vendor repositories back as submodules.
