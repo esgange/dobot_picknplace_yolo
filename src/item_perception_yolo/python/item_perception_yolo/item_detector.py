@@ -300,13 +300,15 @@ class ItemDetectNode(Node):
         with self._feedback_lock:
             return self._image, self.camera_status
 
-    def inspect_model(self, path):
+    def inspect_model(self, path, *, expected_sha256=None):
         self.disarm()
         self.yolo_enabled = False
         path = Path(path).expanduser().resolve(strict=True)
         if path.suffix != ".pt" or path.stat().st_size == 0:
             raise ValueError("Select a non-empty .pt model")
         config = {"path": str(path), "sha256": file_sha256(path)}
+        if expected_sha256 is not None and config["sha256"] != expected_sha256:
+            raise ValueError("Paired model SHA-256 changed before loading")
         metadata, payload = self.native.call({"operation": "inspect", "model": config})
         if payload or not metadata.get("classes") or metadata["sha256"] != config["sha256"]:
             raise RuntimeError("Invalid model metadata")

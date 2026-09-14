@@ -1822,6 +1822,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   publication. No shared-history rewrite, force push or automatic Git policy
   installation. No complete offline-deployment milestone is claimed.
 
+### 2026-09-14 — Explicit Item Teach load also loads its paired model
+
+- User requested automatic loading of the paired .pt when explicitly loading
+  an item teach file. Combine the existing replacement and model-trust questions
+  into one confirmation, then queue the exact SHA-256-bound same-stem model in
+  the existing lifetime worker. No second Load Model click. The direct standalone
+  model workflow retains its separate trust confirmation.
+- Reuse reserved next-slot scheduling to avoid bin-preview starvation; disable
+  overlapping model/profile loads. Preserve saved settings, home, class checks,
+  geometry and inference size. YOLO and Armed stay OFF; no movement, camera
+  launch, native-worker restart, fallback model or automatic retry.
+- Validate the pair before queueing, recheck its YAML/model hash before native
+  load and at completion, and pass the expected model hash into inspection.
+  Require saved task, class IDs and geometry support to match actual metadata.
+  Missing/changed/incompatible pairs fail visibly and cannot enable poses.
+  Ordinary form edits still invalidate saved-profile eligibility.
+- Startup restoration continues as unapplied prefill only and never executes
+  the .pt. Artifact/UI schemas and paths are unchanged; operator files are not
+  rewritten. This supersedes only the extra manual-model-load step after an
+  explicit profile Load, not the startup/model-execution safety contract.
+- Verification: 189 perception and 6 controller tests pass, including combined
+  confirmation/automatic paired loading, preserved profile values/classes,
+  queued/busy/duplicate-load handling, cancellation, missing/tampered pairs,
+  expected-hash preflight and metadata incompatibility. Startup prefill remains
+  weight-free. Python compilation, changed-runtime flake8 and git diff --check
+  pass; clean Humble-only root colcon build passes all 14 packages. Installed
+  modules match source and parent imports exclude cv2/Torch/Ultralytics.
+  Tests use synthetic files/models and mocked feedback only; no operator model
+  or camera/robot/RViz was launched or commanded. Existing artifacts/UI state
+  remain unchanged. Source-only follow-up commit/push follows the user's request.
+
 ### Future entry template
 
 ```text

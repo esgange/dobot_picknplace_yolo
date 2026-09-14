@@ -189,6 +189,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.job_busy = False
         self.model_load_reserved = False
         self.pending_model_path = None
+        self.model_requested_pair = None
         self.closing = False
         self.preview_revision = self.job_revision = 0
         self.preview_update_due = None
@@ -226,7 +227,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         )
         header.addWidget(notice)
         header.addStretch(1)
-        load = QtWidgets.QPushButton("Load Item Teach…")
+        load = self.load_teach_button = QtWidgets.QPushButton("Load Item Teach…")
         save = QtWidgets.QPushButton("Save YAML + Model Copy…")
         load.clicked.connect(self._load_dialog)
         save.clicked.connect(self._save)
@@ -670,10 +671,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             return
         # Reserve before the modal question: Qt timers also run inside its event
         # loop and must not keep taking the worker for automatic ROI previews.
-        self.model_load_reserved = True
-        self.load_model_button.setEnabled(False)
-        self.yolo_toggle.setEnabled(False)
-        self.armed_toggle.setEnabled(False)
+        self._reserve_model_load()
         path = self.model.text()
         if QtWidgets.QMessageBox.question(self, "Load trusted model?",
                                           "A .pt can execute code. Load only a model you trust.\n"
@@ -685,11 +683,24 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if self.closing or self.node.native.failed:
             self._finish_model_load()
             return
+        self._queue_model_load(path)
+
+    def _reserve_model_load(self):
+        self.model_load_reserved = True
+        self.load_model_button.setEnabled(False)
+        self.load_teach_button.setEnabled(False)
+        self.yolo_toggle.setEnabled(False)
+        self.armed_toggle.setEnabled(False)
+
+    def _queue_model_load(self, path, *, pair=None):
+        """Queue exactly one confirmed model; a paired load is bound to its YAML hash."""
         self.yolo_toggle.setChecked(False)
         self.node.disarm()
         self.armed_toggle.setChecked(False)
         self.node.model_config = None
+        self.node.model_metadata = None
         self.model_requested_path = path
+        self.model_requested_pair = pair
         self.pending_model_path = path
         self.load_model_button.setText("Model queued — waiting for current preview…")
         self.preview_status = "Model load queued; automatic previews paused"
@@ -700,9 +711,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _finish_model_load(self):
         self.pending_model_path = None
+        self.model_requested_pair = None
         self.model_load_reserved = False
         self.load_model_button.setText("Load Model / Read Classes")
         self.load_model_button.setEnabled(True)
+        self.load_teach_button.setEnabled(True)
         self.yolo_toggle.setEnabled(True)
         self.armed_toggle.setEnabled(True)
 
@@ -718,7 +731,31 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.pending_model_path = None
         self.load_model_button.setText("Loading model / reading classes…")
         self.preview_status = "Loading model; automatic previews paused"
-        self._job("model", lambda: self.node.inspect_model(path))
+        pair = self.model_requested_pair
+
+        def inspect():
+            if pair is None:
+                return self.node.inspect_model(path)
+            profile = self._validate_model_pair(pair)
+            return self.node.inspect_model(path, expected_sha256=profile["model"]["sha256"])
+        self._job("model", inspect)
+
+    @staticmethod
+    def _validate_model_pair(pair, metadata=None):
+        path, expected_digest = pair
+        profile, digest = load_item_profile(path)
+        if digest != expected_digest:
+            raise ValueError("Item teach changed while its paired model was loading")
+        if metadata is not None:
+            if (metadata["sha256"] != profile["model"]["sha256"]
+                    or metadata["task"] != profile["model"]["declared_task"]):
+                raise ValueError("Paired model hash/task does not match the item teach")
+            if set(profile["yolo"]["class_ids"]) - {int(k) for k in metadata["classes"]}:
+                raise ValueError("Paired model is missing saved item class IDs")
+            source = profile["geometry_source"]
+            if source != "none" and source not in metadata["geometry_sources"]:
+                raise ValueError("Paired model does not provide the saved geometry output")
+        return profile
 
     def _populate_classes(self, names, selected):
         self.classes.blockSignals(True)
@@ -827,6 +864,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 # edited after inference finished. Never resurrect their overlays.
                 value = error = None
                 self.node.last_view = None
+            pair = self.model_requested_pair if kind == "model" else None
+            if kind == "model" and error is None and pair is not None:
+                try:
+                    self._validate_model_pair(pair, value)
+                except (ValueError, OSError) as exc:
+                    error = exc
             if kind == "model":
                 self._finish_model_load()
             if error is not None:
@@ -837,6 +880,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.selected_pose_status = "Pose unavailable: " + str(error)
                     self._message(self.selected_pose_status)
                 if kind == "model":
+                    self.node.model_config = self.node.model_metadata = None
+                    if pair is not None:
+                        self.saved_path = None
+                        self.send.setEnabled(False)
                     self._error("Model load failed", error)
             elif kind == "model":
                 if self.model.text() != self.model_requested_path:
@@ -852,13 +899,19 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 self.task.setCurrentIndex(self.task.findData(value["task"]))
                 self._populate_classes(value["classes"], selected)
                 source = self.geometry_source.currentData()
-                if source == "none" and len(value["geometry_sources"]) == 1:
+                if pair is None and source == "none" and len(value["geometry_sources"]) == 1:
                     source = value["geometry_sources"][0]
                 self._populate_sources(value["geometry_sources"], source)
                 self.preview_error = ""
                 self.preview_status = "Model loaded — enable YOLO Detect to preview"
                 self._message("Model loaded. Preview displays all model classes. "
                               "Select geometry when both mask and OBB are available.")
+                if pair is not None:
+                    self._message("Item teach and paired model loaded. Saved classes/settings "
+                                  "retained; YOLO Detect and Armed remain OFF.")
+                    self.node.events.record("INFO", "item_pair_model_loaded",
+                                            "Verified paired model loaded with item teach",
+                                            profile=str(pair[0]), profile_sha256=pair[1])
             elif kind == "pose" and value is not None and self.frozen_view is not None:
                 self.frozen_view = {**self.frozen_view, "depth_rgb": value["depth_rgb"]}
                 candidate = value["candidate"]
@@ -1221,20 +1274,35 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self._message(f"Saved: {output.name}. Saving does not start inference or motion.")
 
     def _load_dialog(self):
+        if self.model_load_reserved or self.closing or self.node.native.failed:
+            return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Load item teach", str(item_directory()), "Item teach (*.yaml)",
         )
         if not path:
             return
+        self._reserve_model_load()
         if QtWidgets.QMessageBox.question(
-            self, "Replace form?", "Replace the form and recorded home with this saved profile?",
+            self, "Load item teach and paired model?",
+            "Replace the form and recorded home, then load this teach file's paired .pt?\n"
+            "A .pt can execute code; continue only if you trust this pair.\n"
+            "YOLO Detect and Armed stay OFF. No robot movement.\n" + Path(path).name,
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No,
         ) != QtWidgets.QMessageBox.Yes:
+            self._finish_model_load()
             return
+        if self.closing or self.node.native.failed:
+            self._finish_model_load()
+            return
+        queued = False
         try:
-            self._load(Path(path), prefill=False)
+            _profile, digest = self._load(Path(path), prefill=False)
+            self._queue_model_load(self.model.text(), pair=(Path(path), digest))
+            queued = True
             write_item_ui_state(ui_state_path(), Path(path).name)
         except (ValueError, OSError) as exc:
+            if not queued:
+                self._finish_model_load()
             self._error("Load failed", exc)
 
     def _load(self, path, *, prefill):
@@ -1267,6 +1335,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             f"{'Unapplied prefill' if prefill else 'Loaded'}: {path.name}. "
             "Home is displayed only; no controller request or motion was sent."
         )
+        return profile, _digest
 
     def _send_controller(self):
         if self.saved_path is None or self.request is not None:

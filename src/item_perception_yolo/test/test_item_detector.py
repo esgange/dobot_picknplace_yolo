@@ -30,6 +30,27 @@ def test_pair_freshness_sync_registration():
                                QUALITY_DEFAULTS)
 
 
+@pytest.mark.parametrize("matching", [True, False])
+def test_paired_digest_is_checked_before_native_model_load(tmp_path, matching):
+    path = tmp_path / "paired.pt"
+    path.write_bytes(b"synthetic model bytes; not executable")
+    digest = detector.file_sha256(path)
+    metadata = {"task": "segment", "classes": {"1": "part"}, "sha256": digest}
+    node = SimpleNamespace(disarm=MagicMock(), yolo_enabled=True,
+                           native=SimpleNamespace(call=MagicMock(return_value=(metadata, b""))),
+                           events=MagicMock())
+    if matching:
+        actual = detector.ItemDetectNode.inspect_model(node, str(path), expected_sha256=digest)
+        assert actual == metadata and node.model_config["sha256"] == digest
+        assert node.native.call.call_args.args[0]["model"]["sha256"] == digest
+    else:
+        with pytest.raises(ValueError, match="SHA-256 changed"):
+            detector.ItemDetectNode.inspect_model(node, str(path), expected_sha256="0"*64)
+        node.native.call.assert_not_called()
+    assert not node.yolo_enabled
+    node.disarm.assert_called_once()
+
+
 def test_station_source_changes_disarm(monkeypatch):
     node = SimpleNamespace(applied=object(),
         bin_artifact=SimpleNamespace(path="bin", sha256="old"), disarm=MagicMock(),

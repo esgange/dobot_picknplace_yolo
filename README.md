@@ -66,7 +66,13 @@ dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
 are provenance, not a station restriction. Loading never replays joint positions.
 
-Select **Load Model / Read Classes** and confirm the model is trusted. You can
+**Load Item Teach** also loads its paired `.pt` and reads the model classes after
+one combined replacement/trust confirmation. Saved class selection, geometry and
+settings are preserved; no separate Load Model click is needed. Missing, changed
+or incompatible pairs are rejected. YOLO and Armed remain OFF, and startup
+prefill still does not execute model weights.
+
+For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
 load while the automatic bin border is updating: the confirmed
 load takes the next worker slot, with queued/loading progress and no retry.
 YOLO and Armed remain OFF after loading. Use **Connect RGB**, then **YOLO Detect**.

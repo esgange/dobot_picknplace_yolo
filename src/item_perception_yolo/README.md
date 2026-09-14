@@ -205,6 +205,16 @@ source, then publishes the YAML without overwriting existing files. A success
 dialog names both files. The pair remains usable without the original `.pt`.
 **Load Item Teach** accepts only that directory and strict schema 3; missing,
 tampered, mismatched or older files fail explicitly. No compatibility reader.
+Its single confirmation now covers replacing the form/home and trusting the
+paired `.pt` (weights can execute code). Loading the YAML automatically queues
+that exact model and reads its classes—no second Load Model click. The existing
+worker finishes its current preview and gives the load the next slot. Overlapping
+loads are disabled. The pair's hash is checked before queuing/loading and after
+inspection, along with saved task, class IDs and geometry support. Keep the saved
+selection and fields; do not substitute classes, a task or another output.
+Failures are visible and never retried. YOLO Detect and Armed stay OFF.
+Startup form prefill remains weight-free; manually browsing a standalone model
+still requires the separate explicit Load Model/trust action.
 
 The YAML groups `item`, `model`, `units`, `home`, `motion`, `timing`, `gripper`,
 `retry`, `yolo`, `geometry`, `geometry_source`, `quality`, and the non-executing

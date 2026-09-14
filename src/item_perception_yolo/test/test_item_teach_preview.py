@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from item_perception_yolo import item_teach_gui as gui
+from item_perception_yolo import item_teach_core as core
 from item_perception_yolo.item_detector import ItemDetectNode
 
 
@@ -354,11 +355,13 @@ def test_model_load_takes_next_slot_from_continuous_preview(window, monkeypatch,
     release = threading.Event()
     entered = threading.Event()
     path = window.model.text()
+    metadata = node.model_metadata
 
     def inspect(selected):
         entered.set()
         assert release.wait(3), "Test did not release the synthetic model operation"
         node.model_config = {"path": selected, "task": "segment"}
+        node.model_metadata = metadata
         return node.model_metadata
 
     node.inspect_model = MagicMock(side_effect=inspect)
@@ -458,6 +461,135 @@ def test_failed_model_load_unlocks_controls_without_retry(window, monkeypatch):
     assert "Select a non-empty .pt model" in window.status.toPlainText()
     window._refresh_video()
     window.node.inspect_model.assert_called_once()
+
+
+@pytest.fixture
+def paired_teach(window, tmp_path, monkeypatch):
+    settings = {
+        "item": {"name": "paired_part"}, "model_task": "segment", "geometry_source": "mask",
+        "quality": dict(core.QUALITY_DEFAULTS),
+        "motion": dict(zip(core.MOTION_FIELDS, [90., 50., 60., 100.])),
+        "timing": {"pick_settling": .5}, "gripper": {"use_grip": True, "grip_onpick": True},
+        "retry": {"retry_limit": 3},
+        "geometry": {"height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 45.},
+        "yolo": {"confidence": .63, "iou": .35, "max_detections": 17,
+                 "image_size": 1280, "class_ids": [1]},
+    }
+    home = core.record_home(core.JOINT_NAMES, [.1]*6, 100, 0, now_ns=100_100_000_000,
+                            robot_ip="192.168.20.204", publisher="/dobot_bringup_ros2")
+    source = tmp_path / "trusted-test.pt"
+    source.write_bytes(b"Synthetic pair; never deserialize these bytes")
+    path, profile = core.save_item_profile(settings, home, source, root=tmp_path)
+    metadata = {**window.node.model_metadata, "sha256": profile["model"]["sha256"]}
+    monkeypatch.setattr(gui, "load_item_profile", lambda p: core.load_item_profile(p, root=tmp_path))
+    monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", lambda *_: (str(path), ""))
+    question = MagicMock(return_value=gui.QtWidgets.QMessageBox.Yes)
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
+    monkeypatch.setattr(gui, "write_item_ui_state", MagicMock())
+
+    def inspect(selected, *, expected_sha256):
+        assert selected == str(path.with_suffix(".pt"))
+        assert expected_sha256 == profile["model"]["sha256"]
+        window.node.model_config = {"path": selected, "sha256": expected_sha256,
+                                    "task": metadata["task"]}
+        window.node.model_metadata = metadata
+        return metadata
+    window.node.inspect_model = MagicMock(side_effect=inspect)
+    return path, profile, settings, metadata, question
+
+
+def finish_model_job(window):
+    result = window.job_results.get(timeout=3)
+    window.job_results.put(result)
+    window._refresh_video()
+
+
+@pytest.mark.parametrize("busy_preview", [False, True])
+def test_explicit_teach_load_automatically_loads_exact_pair(window, paired_teach, busy_preview):
+    path, profile, settings, _, question = paired_teach
+    window.job_busy = busy_preview
+    window._load_dialog()
+    assert window.model_load_reserved
+    assert not window.load_teach_button.isEnabled()
+    assert not window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
+    window._load_dialog()
+    window._load_model()  # Neither entry point can enqueue a duplicate load.
+    question.assert_called_once()  # Combined replacement/trust dialog, no second Load Model click.
+    assert "execute code" in question.call_args.args[2]
+    if busy_preview:
+        window.node.inspect_model.assert_not_called()
+        window.job_results.put(("roi", None, None))
+        window._refresh_video()
+    finish_model_job(window)
+    window.node.inspect_model.assert_called_once_with(
+        str(path.with_suffix(".pt")), expected_sha256=profile["model"]["sha256"])
+    assert window.model.text() == str(path.with_suffix(".pt"))
+    assert window._selected_classes() == [1] and window.classes.item(0).text() == "1: part"
+    assert window._settings() == settings
+    assert window.saved_path == path and window.send.isEnabled()
+    assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
+    assert not window.model_load_reserved and window.load_teach_button.isEnabled()
+    assert "Item teach and paired model loaded" in window.status.toPlainText()
+
+
+def test_teach_prefill_never_loads_weights(window, paired_teach):
+    path, _, settings, _, question = paired_teach
+    window._load(path, prefill=True)
+    assert window._settings() == settings
+    assert window.saved_path is None and not window.send.isEnabled()
+    window.node.inspect_model.assert_not_called()
+    question.assert_not_called()
+    assert not window.model_load_reserved and not window.node.yolo_enabled
+
+
+def test_declining_pair_confirmation_preserves_form_and_does_not_load(window, paired_teach):
+    _, _, _, _, question = paired_teach
+    before = window.model.text(), window.name.text(), window.home
+    question.return_value = gui.QtWidgets.QMessageBox.No
+    window._load_dialog()
+    assert (window.model.text(), window.name.text(), window.home) == before
+    window.node.inspect_model.assert_not_called()
+    assert not window.model_load_reserved and window.load_teach_button.isEnabled()
+
+
+@pytest.mark.parametrize("stage", ["before", "queued", "completion"])
+def test_changed_or_missing_pair_blocks_model_load_without_retry(window, paired_teach, stage):
+    path, _, _, _, _ = paired_teach
+    if stage == "before":
+        path.with_suffix(".pt").unlink()
+    window.job_busy = stage != "completion"
+    window._load_dialog()
+    if stage == "queued":
+        path.with_suffix(".pt").write_bytes(b"changed model")
+        window.job_results.put(("roi", None, None))
+        window._refresh_video()
+    if stage == "completion":
+        result = window.job_results.get(timeout=3)
+        path.write_text(path.read_text() + "\n# changed after model inspection\n")
+        window.job_results.put(result)
+        window._refresh_video()
+    elif stage == "queued":
+        finish_model_job(window)
+    if stage != "completion":
+        window.node.inspect_model.assert_not_called()
+    else:
+        assert window.node.model_config is None and window.saved_path is None
+    assert not window.model_load_reserved and window.load_teach_button.isEnabled()
+    assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
+
+
+@pytest.mark.parametrize("mismatch", ["task", "classes", "geometry_sources"])
+def test_paired_model_must_match_saved_task_classes_and_geometry(window, paired_teach, mismatch):
+    _, _, _, metadata, _ = paired_teach
+    metadata[mismatch] = {"task": "obb", "classes": {"4": "other"},
+                          "geometry_sources": ["obb"]}[mismatch]
+    window._load_dialog()
+    finish_model_job(window)
+    assert window.node.model_config is None
+    assert window.saved_path is None and not window.send.isEnabled()
+    assert "Model load failed" in window.status.toPlainText()
+    window.node.inspect_model.assert_called_once()
+    assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
 
 
 def test_scaled_letterbox_click_and_frozen_measurement(window):
