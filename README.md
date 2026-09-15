@@ -103,7 +103,7 @@ when Live recovery failed, but refuse motion and show the exact blocker plus an
 emergency-stop check prompt. Hardware calls remain response-serialized and
 unanswered calls never automatically advance.
 Home compares current Link6 Z with taught Home Z. Below Home Z, it first uses
-GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovLIO joint
+GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovL joint
 mode reaches taught joints. At or above Home Z it skips the relative clearance
 move and sends only the direct joint-mode Home target. Debug uses the same branch
 and therefore omits `robot_controller_debug_home_height` when it is unnecessary.
@@ -115,13 +115,12 @@ once when the profile loads, for Home Z/fixed-attitude planning only. Home
 completion requires each fresh actual joint within one degree of the taught
 value; Cartesian endpoints use 5 mm/one-degree tolerance. Both also require
 fresh enabled, stationary and queue-idle feedback. It does not call InverseKin:
-taught Home joints use MovLIO joint input, and item waypoints use MovLIO
-Cartesian input directly. Both are linear moves.
-No-I/O waypoints retain `MovLIO` with empty `mdis` at the operator's request;
-the manual's minimum-one-DO-event condition still needs supervised physical
-validation, without adding a fake tool command.
+taught Home joints use MovL joint input. Item waypoints without timed output
+events use MovL Cartesian input; only waypoints with real motion-timed DO events
+use MovLIO. All remain linear moves, and MovLIO is never sent with an empty
+`mdis` array or a fake tool command.
 Pick holds Home attitude/base Z,
-uses MovLIO, stops on DI1 during final descent and confirms stationary feedback
+uses MovL/MovLIO, stops on DI1 during final descent and confirms stationary feedback
 before retract. Forward and return waypoints are response-serialized queues,
 not host-side waits at every waypoint. MovLIO opens enabled fingers at 50% of
 the above-item clearance move and starts suction at final-descent start.
@@ -184,8 +183,8 @@ Item Teach also edits per-motion speed and acceleration percentages (integers
 speed 6% and pick-to-prepick retract speed 6%; remaining clearance/Home moves
 use travel speed. Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
-The controller passes each target's `v=`/`a=` to MovLIO (and the Home-height
-RelMovLUser exception), independently of the controller's global SpeedFactor
+The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
+RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
 never silently defaulted. Production rejects schemas 1–5.

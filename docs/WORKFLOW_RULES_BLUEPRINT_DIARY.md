@@ -2842,6 +2842,44 @@ Never use a floating “latest” version in an issue, script, or deployment not
   successfully, with all 14 packages built, and `git diff --check` is clean. No
   physical robot, camera, RViz or operator model was launched or commanded.
 
+### 2026-09-15 — Protocol-correct MovL versus MovLIO dispatch
+
+- A supervised Home attempt reached the real controller after the cached-Home
+  correction and sent
+  `MovLIO(joint={-33.489,10.555,-133.958,33.543,90.058,11.305},user=0,tool=0,v=100,a=100,cp=0)`.
+  The robot rejected it with `-20000` before motion, then `robot_controller`
+  issued Stop. The official local Dobot TCP/IP V4.6.5 reference defines
+  `-20000` as parameter-count error and MovLIO pages 88–89 require at least one
+  `{Mode,Distance,Index,Status}` group. The unchanged vendor parser correctly
+  omits the absent `mdis=[]`, proving the previously selected empty-I/O MovLIO
+  request is not accepted by this firmware.
+- Rule 63 supersedes the empty-I/O MovLIO decision. Add the canonical vendor
+  MovL ROS client to `robot_controller`. Targets with no motion-timed output now
+  dispatch as MovL with their unchanged joint/pose mode, coordinates and
+  user/tool/v/a/cp values. Targets containing genuine saved I/O events remain
+  MovLIO and pass those tuples unchanged. Home therefore uses joint-mode MovL;
+  ordinary Cartesian transit/retract uses pose-mode MovL; finger/suction event
+  waypoints remain MovLIO. No fake DO tuple, host-timed replacement event or
+  vendor bringup modification is permitted.
+- MovL joins MovLIO and RelMovLUser in late-ack Stop containment, cancellation,
+  response serialization, command ownership and failure reporting. Existing
+  planning geometry, queued order, target/rate checks, endpoint confirmation,
+  output feedback, suction/Stop recovery and artifact schemas remain unchanged.
+  Synthetic queue transport now asserts that every MovLIO request has a
+  non-empty I/O tuple and every MovL request has no `mdis` field, preventing the
+  firmware-incompatible request from passing mocked tests again.
+- Verification requires the controller package test wrapper, compilation/lint,
+  package/root builds, source-only staged review and `git diff --check`. No
+  physical robot, camera, RViz or operator model may be launched or commanded.
+- Verification completed: all 234 controller synthetic/offscreen pytest cases
+  pass through the package CTest wrapper with zero errors/failures/skips.
+  Coverage includes the exact mixed forward/return service order, joint-mode
+  Home through MovL, non-empty event-bearing MovLIO, both services' rates/modes,
+  response sequencing and late-ack Stop containment. Controller Python compiles
+  and all package Python/tests pass ament_flake8. The package build and root
+  build succeed, with all 14 packages built, and `git diff --check` is clean.
+  No physical robot, camera, RViz or operator model was launched or commanded.
+
 ### Future entry template
 
 ```text

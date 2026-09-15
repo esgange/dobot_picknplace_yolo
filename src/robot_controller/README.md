@@ -150,8 +150,8 @@ is loaded. That cached transform supplies Home Z and fixed pick attitude as
 planning geometry only. A validated GetPose(user=0,tool=0) response is the live
 Cartesian pose; it is not rejected for disagreeing with live current-joint FK.
 Exact taught Home joints remain model-limit/FK checked before dispatch.
-Cartesian targets no longer call InverseKin for preflight: MovLIO receives the
-validated rigid pose directly, but no independent Cartesian reachability/joint
+Cartesian targets no longer call InverseKin for preflight: MovL or MovLIO
+receives the validated rigid pose directly, but no independent Cartesian reachability/joint
 branch is known before vendor acceptance. No guessed Home pose, live RViz
 dependence, alternate model or IK fallback.
 In the vendored bringup bridge, the raw TCP error ID is the ROS service `res`;
@@ -160,20 +160,20 @@ prefix or command echo. A nonzero `res` or malformed result blocks motion.
 
 Every Home first determines current Link6 Z. If current Z is below taught Home Z,
 RelMovLUser changes only base Z to Home Z while preserving actual XY/attitude;
-MovLIO joint mode then reaches the exact six taught Home joints. If current Z is
+MovL joint mode then reaches the exact six taught Home joints. If current Z is
 equal to or above Home Z, the controller skips RelMovLUser and issues only the
 direct joint-mode Home target, per the user's confirmed safe-above-Home rule.
 The six taught Home joints are stored in radians and sent as degrees through
-MovLIO joint mode. Pick/transit/retract targets use mm/degrees in MovLIO
-Cartesian pose mode; both modes request linear paths, not a joint-space path.
-The conditional relative-Z segment is the user-approved exception to MovLIO-only
-picking. All pick/transit/retract segments use MovLIO. Before queueing, validate
+MovL joint mode. Pick/transit/retract targets use mm/degrees in MovL or MovLIO
+Cartesian pose mode; both services request linear paths, not a joint-space path.
+Use MovLIO only when a target contains at least one real timed DO event; use
+MovL for every target without one. Before queueing, validate
 finite rigid targets, fresh stationary feedback, exact taught joints/FK and
 relative upward Home geometry while idle; Cartesian reachability is not checked
 with IK. The vendor response and actual completion are still strictly required.
-No-I/O segments deliberately retain empty `mdis` without a fake DO event or
-MovL substitution. The V4.6.5 manual calls for at least one DO tuple, so this
-selected behavior is pending supervised firmware validation.
+The V4.6.5 manual requires at least one DO tuple in MovLIO. Never send empty
+`mdis`, invent a fake/no-op output, or modify vendor bringup to bypass that
+protocol requirement.
 Wait for each service response before submitting the next waypoint, but do not
 wait for arrival between waypoints. Completion requires fresh whole-queue idle,
 stationary feedback and endpoint evidence, not service acceptance. A joint-form
@@ -182,9 +182,8 @@ one degree of the taught joints. A Cartesian endpoint completes within 5 mm
 translation and one degree rotation using FeedInfo `tool_vector_actual`; Home
 does not additionally require a Cartesian FK/GetPose match. Per-command
 cp=0 preserves vertical corners/speed boundaries; startup CP remains 100%.
-The vendor MovLIO interface returns only res, not queue IDs: completion uses
-the sole owned queue's idle feedback plus its terminal pose/joints, never a
-guessed queue ID or a motion-acknowledgement shortcut.
+Completion uses the sole owned queue's idle feedback plus its terminal
+pose/joints, never a guessed queue ID or a motion-acknowledgement shortcut.
 
 Item Teach saves separate `speed` and `acceleration` groups, each with explicit
 integer `travel_percent`, `approach_percent`, `retract_percent` in 1–100.

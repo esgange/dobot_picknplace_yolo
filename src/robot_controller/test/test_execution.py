@@ -282,7 +282,7 @@ def synthetic_transport(monkeypatch):
     transport.suction_stop, transport.suction_interrupted = None, False
     names = ("Stop", "StopMoveJog", "DisableRobot", "EnableRobot", "ClearError",
              "SpeedFactor", "Tool", "SetTool", "CP", "DO", "GetPose",
-             "MovLIO", "RelMovLUser")
+             "MovL", "MovLIO", "RelMovLUser")
     transport.types = {name: NS(Request=lambda **fields: NS(**fields)) for name in names}
     transport.clients = {name: MagicMock() for name in names}
     for name, client in transport.clients.items():
@@ -293,12 +293,13 @@ def synthetic_transport(monkeypatch):
     return transport, feed, pose, clock
 
 
-def test_live_transport_creates_no_inversekin_client():
+def test_live_transport_creates_required_motion_clients_without_inversekin():
     node = NS(create_client=MagicMock(return_value=MagicMock()))
     transport = hardware.DobotHardware(node)
-    assert len(transport.clients) == 13
+    assert len(transport.clients) == 14
+    assert {"MovL", "MovLIO", "RelMovLUser"} <= set(transport.clients)
     assert "InverseKin" not in transport.clients
-    assert node.create_client.call_count == 13
+    assert node.create_client.call_count == 14
 
 
 def test_initialization_order_and_only_first_two_best_effort(monkeypatch):
@@ -689,7 +690,7 @@ def test_failed_enable_worker_is_cancelled_and_does_not_restart_startup():
     node.hardware.enable_robot.assert_called_once()
 
 
-def test_home_transport_uses_relative_z_then_joint_movlio_and_confirms_completion(monkeypatch):
+def test_home_transport_uses_relative_z_then_joint_movl_and_confirms_completion(monkeypatch):
     transport, _, pose, clock = synthetic_transport(monkeypatch)
     current = pose.copy()
     current[2, 3] -= .1
@@ -698,14 +699,15 @@ def test_home_transport_uses_relative_z_then_joint_movlio_and_confirms_completio
         transport.move(target)
     relative = transport.clients["RelMovLUser"].call_async.call_args.args[0]
     assert relative.a == relative.b == 0 and relative.c == pytest.approx(100)
-    final = transport.clients["MovLIO"].call_async.call_args.args[0]
-    assert final.mode and final.mdis == []
+    final = transport.clients["MovL"].call_async.call_args.args[0]
+    assert final.mode and not hasattr(final, "mdis")
     assert relative.param_value == final.param_value == ["user=0", "tool=0", "v=100", "a=100"]
     assert final.a == pytest.approx(math.degrees(.1))
+    transport.clients["MovLIO"].call_async.assert_not_called()
     assert clock[0] >= .6 and not transport.moving
 
 
-def test_editable_home_rates_reach_both_relative_and_movlio_services(monkeypatch):
+def test_editable_home_rates_reach_both_relative_and_movl_services(monkeypatch):
     transport, _, pose, _ = synthetic_transport(monkeypatch)
     current = pose.copy()
     current[2, 3] -= .1
@@ -713,29 +715,35 @@ def test_editable_home_rates_reach_both_relative_and_movlio_services(monkeypatch
     targets = home_targets(current, pose, [.1]*6, speed_percent=42, acceleration_percent=73)
     for target in targets:
         transport.move(target)
-    for name in ("RelMovLUser", "MovLIO"):
+    for name in ("RelMovLUser", "MovL"):
         request = transport.clients[name].call_async.call_args.args[0]
         assert request.param_value == ["user=0", "tool=0", "v=42", "a=73"]
 
 
-def test_direct_home_dispatches_only_joint_movlio(monkeypatch):
+def test_direct_home_dispatches_only_joint_movl(monkeypatch):
     transport, _, pose, _ = synthetic_transport(monkeypatch)
     current = pose.copy()
     current[2, 3] += .1
     for target in home_plan(current, pose, [.1] * 6):
         transport.move(target)
     transport.clients["RelMovLUser"].call_async.assert_not_called()
-    transport.clients["MovLIO"].call_async.assert_called_once()
+    transport.clients["MovL"].call_async.assert_called_once()
+    transport.clients["MovLIO"].call_async.assert_not_called()
 
 
-def test_default_and_edited_pick_rates_reach_each_movlio_command(monkeypatch):
+def test_motion_service_selection_and_pick_rates_follow_actual_io_events(monkeypatch):
     transport, _, pose, _ = synthetic_transport(monkeypatch)
     for target in plan():
         transport.move(replace(target, matrix=pose))
-    requests = transport.clients["MovLIO"].call_async.call_args_list
-    assert all(not call.args[0].mode for call in requests)
-    assert [c.args[0].param_value for c in requests] == [
-        ["user=0", "tool=0", f"v={v}", "a=100"] for v in (100, 100, 100, 6, 6, 100)]
+    plain = transport.clients["MovL"].call_async.call_args_list
+    with_io = transport.clients["MovLIO"].call_async.call_args_list
+    assert all(not call.args[0].mode for call in (*plain, *with_io))
+    assert [c.args[0].param_value for c in plain] == [
+        ["user=0", "tool=0", f"v={v}", "a=100"] for v in (100, 100, 6, 100)]
+    assert [c.args[0].param_value for c in with_io] == [
+        ["user=0", "tool=0", f"v={v}", "a=100"] for v in (100, 6)]
+    assert [c.args[0].mdis for c in with_io] == [
+        ["{0,50,2,0}", "{0,50,14,1}"], ["{1,0,13,1}"]]
     transport.move(replace(plan()[3], matrix=pose, speed_percent=11, acceleration_percent=25))
     request = transport.clients["MovLIO"].call_async.call_args.args[0]
     assert request.param_value == ["user=0", "tool=0", "v=11", "a=25"]
@@ -764,18 +772,19 @@ def test_di1_before_descent_stops_without_dispatching_descent(monkeypatch):
     target = home_plan(pose, pose, [.1] * 6)[-1]
     assert transport.move(target, stop_on_suction=True)
     transport.clients["Stop"].call_async.assert_called_once()
+    transport.clients["MovL"].call_async.assert_not_called()
     transport.clients["MovLIO"].call_async.assert_not_called()
     assert not transport.moving
 
 
 def test_di1_during_descent_waits_for_stop_and_fresh_stationary_feedback(monkeypatch):
     transport, feed, pose, clock = synthetic_transport(monkeypatch)
-    original = transport.clients["MovLIO"].call_async.return_value
+    original = transport.clients["MovL"].call_async.return_value
 
     def dispatch(_):
         feed["digital_input_bits"] = 1
         return original
-    transport.clients["MovLIO"].call_async.side_effect = dispatch
+    transport.clients["MovL"].call_async.side_effect = dispatch
     assert transport.move(home_plan(pose, pose, [.1] * 6)[-1], stop_on_suction=True)
     assert clock[0] >= .3 and not transport.moving
     transport.clients["Stop"].call_async.assert_called_once()
@@ -833,6 +842,7 @@ def test_getpose_nonzero_res_blocks_even_with_valid_payload(monkeypatch):
     transport.clients["GetPose"].call_async.return_value = future
     with pytest.raises(ValueError, match="GetPose failed: 1"):
         transport.current_pose()
+    transport.clients["MovL"].call_async.assert_not_called()
     transport.clients["MovLIO"].call_async.assert_not_called()
 
 
@@ -1127,12 +1137,13 @@ def test_readiness_error_lists_all_blockers_instead_of_generic_fault():
         "toolCoordinate=2"))
 
 
-def test_service_timeout_late_motion_ack_receives_safety_stop(monkeypatch):
+@pytest.mark.parametrize("service", hardware.MOTION_SERVICES)
+def test_service_timeout_late_motion_ack_receives_safety_stop(service, monkeypatch):
     transport, _, _, _ = synthetic_transport(monkeypatch)
     pending = Future()
-    transport.clients["MovLIO"].call_async.return_value = pending
+    transport.clients[service].call_async.return_value = pending
     with pytest.raises(ValueError, match="timeout"):
-        transport.call("MovLIO")
+        transport.call(service)
     transport.node.cancel.set()
     pending.set_result(NS(res=0))
     transport.clients["Stop"].call_async.assert_called_once()
@@ -1481,6 +1492,7 @@ def test_invalid_cartesian_transform_and_joint_fk_mismatch_block_before_motion(m
     mismatched_home = replace(home_plan(pose, pose, [.1]*6)[-1], joints_rad=(0.,)*6)
     with pytest.raises(ValueError, match="Taught joint/FK mismatch"):
         transport.move(mismatched_home)
+    transport.clients["MovL"].call_async.assert_not_called()
     transport.clients["MovLIO"].call_async.assert_not_called()
     assert not transport.moving
 

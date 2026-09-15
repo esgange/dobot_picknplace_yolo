@@ -36,6 +36,10 @@ def queue_transport(monkeypatch, count, *, acquisition=False, unanswered=None, r
 
     def send(request, name):
         assert all(future.done() for future, _, _ in state.pending), "Responses overlapped"
+        if name == "MovLIO":
+            assert request.mdis, "Firmware rejects MovLIO without a timed I/O tuple"
+        elif name == "MovL":
+            assert not hasattr(request, "mdis")
         state.sent.append((name, request, clock[0]))
         index = len(state.sent)
         future = Future()
@@ -44,7 +48,7 @@ def queue_transport(monkeypatch, count, *, acquisition=False, unanswered=None, r
         feed.update(isRunQueuedCmd=1, RunningStatus=1, robot_mode=7)
         return future
 
-    for name in ("MovLIO", "RelMovLUser"):
+    for name in ("MovL", "MovLIO", "RelMovLUser"):
         transport.clients[name].call_async.side_effect = lambda request, n=name: send(request, n)
 
     def stop(_):
@@ -75,14 +79,15 @@ def queue_transport(monkeypatch, count, *, acquisition=False, unanswered=None, r
             goal = [getattr(request, key) for key in "abcdef"]
             if request.mode:
                 goal = list(goal)  # Fake analytic FK maps joint degrees to pose values.
-            for raw in request.mdis:
+            events = request.mdis if name == "MovLIO" else ()
+            for raw in events:
                 mode, distance, channel, active = map(int, raw.strip("{}").split(","))
                 if not ignore_events:
                     mask = 1 << (channel-1)
                     feed["digital_outputs"] = ((feed["digital_outputs"] | mask) if active
                                                else (feed["digital_outputs"] & ~mask))
                 state.applied.append((state.executed, mode, distance, channel, active))
-            if acquisition and request.mdis == ["{1,0,13,1}"]:
+            if acquisition and events == ["{1,0,13,1}"]:
                 feed["digital_input_bits"] = 1
                 # Seal before nominal pick: keep a higher actual stopped Z.
                 goal[2] += 25
@@ -103,9 +108,12 @@ def test_forward_queue_ack_order_without_waypoint_arrival_waits(monkeypatch):
     assert state.sent[-1][2] < .3  # Arrival/stationarity waits occur only after submission.
     assert clock[0] >= .3
     np.testing.assert_allclose(feed["tool_vector_actual"][:3], [300, 400, 190])
+    assert [name for name, _, _ in state.sent] == ["MovL", "MovLIO", "MovL", "MovLIO"]
     requests = [request for _, request, _ in state.sent]
-    assert [request.mdis for request in requests] == [
-        [], ["{0,50,2,0}", "{0,50,14,1}"], [], ["{1,0,13,1}"]]
+    assert [request.mdis for name, request, _ in state.sent if name == "MovLIO"] == [
+        ["{0,50,2,0}", "{0,50,14,1}"], ["{1,0,13,1}"]]
+    assert all(not hasattr(request, "mdis") for name, request, _ in state.sent
+               if name == "MovL")
     assert [request.param_value for request in requests] == [
         ["user=0", "tool=0", f"v={v}", "a=100", "cp=0"] for v in (100, 100, 100, 6)]
     assert checks.call_count > 4
@@ -116,7 +124,7 @@ def test_forward_queue_ack_order_without_waypoint_arrival_waits(monkeypatch):
 def test_failed_queue_ack_never_submits_next_waypoint(failed, kind, monkeypatch):
     options = {"unanswered" if kind == "timeout" else "rejected": failed}
     transport, _, _, _, state = queue_transport(monkeypatch, 4, **options)
-    with pytest.raises(ValueError, match="MovLIO.*(timeout|failed)"):
+    with pytest.raises(ValueError, match="MovL.*(timeout|failed)"):
         transport.move_batch(plan()[:4], stop_on_suction=True)
     assert len(state.sent) == failed
     assert transport.moving  # Owning action must Stop the ambiguous/remaining queue.
@@ -169,7 +177,7 @@ def test_return_is_one_queue_including_conditional_home_rise_and_joint_home(monk
     node._loaded_home_reference = controller.RobotController._loaded_home_reference.__get__(node)
     targets = controller.RobotController.home(node, cfg, preceding=upward, require_suction=True)
     assert [name for name, _, _ in state.sent] == [
-        "MovLIO", "MovLIO", "RelMovLUser", "MovLIO"]
+        "MovLIO", "MovL", "RelMovLUser", "MovL"]
     assert [request.param_value[2] for _, request, _ in state.sent] == [
         "v=6", "v=100", "v=100", "v=100"]
     assert state.sent[0][1].mdis == ["{0,100,14,0}", "{0,100,2,1}"]

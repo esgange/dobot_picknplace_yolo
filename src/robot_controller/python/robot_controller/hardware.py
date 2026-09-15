@@ -17,6 +17,7 @@ STATIONARY_SEC = 0.3
 CARTESIAN_POSITION_TOLERANCE_M = 0.005
 CARTESIAN_ORIENTATION_TOLERANCE_DEG = 1.0
 HOME_JOINT_TOLERANCE_RAD = math.radians(1.0)
+MOTION_SERVICES = ("MovL", "MovLIO", "RelMovLUser")
 
 
 class ResponsePending(ValueError):
@@ -42,10 +43,10 @@ class DobotHardware:
     def __init__(self, node):
         # Debug construction never imports these types or creates command clients.
         from dobot_msgs_v4.srv import (CP, ClearError, DO, DisableRobot, EnableRobot,
-                                       GetPose, MovLIO, RelMovLUser, SetTool, SpeedFactor,
+                                       GetPose, MovL, MovLIO, RelMovLUser, SetTool, SpeedFactor,
                                        Stop, StopMoveJog, Tool)
         self.node = node
-        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetPose, MovLIO,
+        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetPose, MovL, MovLIO,
                  RelMovLUser, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
         self.types = {kind.__name__: kind for kind in kinds}
         self.clients = {name: node.create_client(kind, f"/dobot_bringup_ros2/srv/{name}")
@@ -82,7 +83,7 @@ class DobotHardware:
         self.node.events.record("INFO", "robot_service_sent", name, fields=fields)
         future = client.call_async(request)
         self.pending_response = name, future
-        if name in ("MovLIO", "RelMovLUser"):
+        if name in MOTION_SERVICES:
             # A late accepted command after cancellation must receive another safety Stop.
             # This is containment, not a retry of motion or a claim of confirmed stopping.
             future.add_done_callback(self._late_motion_ack)
@@ -106,7 +107,7 @@ class DobotHardware:
         if result is None or result.res != 0:
             raise ValueError(f"{name} failed: {None if result is None else result.res}")
         self.node.events.record("INFO", "robot_service", name, fields=fields)
-        if name in ("MovLIO", "RelMovLUser") and self.suction_interrupted:
+        if name in MOTION_SERVICES and self.suction_interrupted:
             # Stop might have been processed BEFORE this motion was accepted.
             # Contain late acceptance synchronously after the awaited response,
             # not via a callback that could run after stationary confirmation.
@@ -437,10 +438,13 @@ class DobotHardware:
             else:
                 command_values = (values if target.joints_rad is None
                                   else list(np.rad2deg(target.joints_rad)))
-                self.call("MovLIO", mode=target.joints_rad is not None,
-                          **dict(zip("abcdef", map(float, command_values))),
-                          mdis=[event.vendor_value() for event in target.motion_io],
-                          param_value=params, progress=monitor)
+                events = [event.vendor_value() for event in target.motion_io]
+                service = "MovLIO" if events else "MovL"
+                fields = dict(zip("abcdef", map(float, command_values)))
+                if events:
+                    fields["mdis"] = events
+                self.call(service, mode=target.joints_rad is not None,
+                          **fields, param_value=params, progress=monitor)
             self.node.events.record("INFO", "motion_queued", target.name,
                                     motion_io=[event.vendor_value() for event in target.motion_io],
                                     speed_percent=target.speed_percent,
@@ -519,9 +523,12 @@ class DobotHardware:
         else:
             command_values = values if target.joints_rad is None else list(
                 np.rad2deg(target.joints_rad))
-            self.call("MovLIO", mode=target.joints_rad is not None,
-                      **dict(zip("abcdef", map(float, command_values))),
-                      mdis=[event.vendor_value() for event in target.motion_io],
+            events = [event.vendor_value() for event in target.motion_io]
+            service = "MovLIO" if events else "MovL"
+            fields = dict(zip("abcdef", map(float, command_values)))
+            if events:
+                fields["mdis"] = events
+            self.call(service, mode=target.joints_rad is not None, **fields,
                       param_value=params,
                       monitor_suction=stop_on_suction, require_clear=require_clear)
         stable_since = None
