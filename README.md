@@ -106,10 +106,14 @@ GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovLIO joint
 mode reaches taught joints. At or above Home Z it skips the relative clearance
 move and sends only the direct joint-mode Home target. Debug uses the same branch
 and therefore omits `robot_controller_debug_home_height` when it is unnecessary.
-The Dobot ROS bridge returns GetPose/InverseKin's six values alone in
-`robot_return` (for example `{x,y,z,rx,ry,rz}`); its separate `res` field carries
-the TCP error ID. The controller validates both before motion. Taught Home
-joints use MovLIO joint input; item waypoints use MovLIO Cartesian input.
+The Dobot ROS bridge returns GetPose's six values alone in `robot_return`
+(for example `{x,y,z,rx,ry,rz}`); its separate `res` field carries the TCP
+error ID. The controller validates that pose against fresh joint FK before
+motion. It does not call InverseKin: taught Home joints use MovLIO joint input,
+and item waypoints use MovLIO Cartesian input directly. Both are linear moves.
+No-I/O waypoints retain `MovLIO` with empty `mdis` at the operator's request;
+the manual's minimum-one-DO-event condition still needs supervised physical
+validation, without adding a fake tool command.
 Pick holds Home attitude/base Z,
 uses MovLIO, stops on DI1 during final descent and confirms stationary feedback
 before retract. Forward and return waypoints are response-serialized queues,

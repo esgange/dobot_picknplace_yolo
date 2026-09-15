@@ -2771,6 +2771,42 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and remote push are recorded by the final handoff, not treated as proof of
   physical commissioning.
 
+### 2026-09-15 — Direct MovLIO joint/pose inputs without controller InverseKin
+
+- The operator pointed out that vendor MovLIO itself accepts either joint or
+  Cartesian pose input and directed removal of the redundant controller
+  InverseKin prerequisite. The pinned wrapper's `mode` switch emits `joint=`
+  when true and `pose=` when false; the vendored Dobot V4.6.5 manual (MovLIO,
+  p. 88) also names both target forms. No InverseKin response is needed to
+  construct either MovLIO request, and joint-form MovLIO remains a linear move.
+- Rule 61 supersedes the historical IK/FK waypoint preflight requirements.
+  Remove the InverseKin client and both batch/single-target calls. Preserve
+  GetPose versus fresh current-joint FK, model-limit/FK checks for exact taught
+  Home joints, finite rigid target geometry, upward relative-Home constraints,
+  user/tool-0 binding, response ordering, actual queued arrival and output
+  feedback. Cartesian reachability/joint branch is now not known before the
+  motion service; a rejected/ambiguous/uncompleted move faults and stops later
+  commands, not an ordinary suction retry. No vendor patch or alternate IK.
+- The manual also says MovLIO takes at least one parallel DO tuple, but the
+  wrapper drops `mdis=[]`. After being offered plain MovL for no-event segments,
+  the operator explicitly chose to retain empty-I/O MovLIO for Home and other
+  no-event waypoints. Do not invent a no-op output event or silently switch
+  motion service. That selected no-event request must be tested with physical
+  firmware under supervised commissioning; synthetic success cannot establish
+  firmware acceptance.
+- Verification: controller synthetic/offscreen tests, compilation/lint,
+  package/root builds, source-only staged review and standing commit/push;
+  no real robot, camera, RViz or operator model launch or command.
+- Verification completed: 230 synthetic/offscreen controller tests pass both
+  directly and through package CTest with zero errors/failures/skips. Tests
+  prove the Live transport creates exactly 13 Dobot clients with no InverseKin,
+  Home remains joint-mode MovLIO with empty `mdis`, Cartesian waypoints remain
+  pose-mode MovLIO, and invalid rigid targets/taught-joint FK mismatches block
+  before movement. Changed Python compiles and passes flake8; the clean root
+  build finishes all 14 packages and git diff checks are clean. No physical
+  robot/camera/RViz/model was launched or commanded; empty-`mdis` firmware
+  acceptance remains the explicit supervised commissioning follow-up.
+
 ### Future entry template
 
 ```text

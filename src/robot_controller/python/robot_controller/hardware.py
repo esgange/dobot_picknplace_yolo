@@ -20,18 +20,18 @@ class ResponsePending(ValueError):
     """An unanswered command forbids dispatching a later normal command."""
 
 
-def robot_values(raw, command):
+def robot_values(raw):
     # The vendored bridge reports the TCP error ID in res and copies only the
     # brace-delimited values into robot_return; the command echo is not present.
     match = re.fullmatch(r"\{([^{}]+)\}", raw) if isinstance(raw, str) else None
     if match is None:
-        raise ValueError(f"Malformed canonical {command} reply")
+        raise ValueError("Malformed canonical GetPose reply")
     try:
         values = [float(v) for v in match.group(1).split(",")]
     except ValueError as exc:
-        raise ValueError(f"Malformed canonical {command} values") from exc
+        raise ValueError("Malformed canonical GetPose values") from exc
     if len(values) != 6 or not all(math.isfinite(v) for v in values):
-        raise ValueError(f"{command} must return six finite values")
+        raise ValueError("GetPose must return six finite values")
     return values
 
 
@@ -39,11 +39,11 @@ class DobotHardware:
     def __init__(self, node):
         # Debug construction never imports these types or creates command clients.
         from dobot_msgs_v4.srv import (CP, ClearError, DO, DisableRobot, EnableRobot,
-                                       GetPose, InverseKin, MovLIO, RelMovLUser, SetTool,
-                                       SpeedFactor, Stop, StopMoveJog, Tool)
+                                       GetPose, MovLIO, RelMovLUser, SetTool, SpeedFactor,
+                                       Stop, StopMoveJog, Tool)
         self.node = node
-        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetPose, InverseKin,
-                 MovLIO, RelMovLUser, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
+        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetPose, MovLIO,
+                 RelMovLUser, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
         self.types = {kind.__name__: kind for kind in kinds}
         self.clients = {name: node.create_client(kind, f"/dobot_bringup_ros2/srv/{name}")
                         for name, kind in self.types.items()}
@@ -318,17 +318,37 @@ class DobotHardware:
                 or snapshot["feed"]["robot_mode"] != 5):
             raise ValueError("Current-pose acquisition requires stationary enabled robot")
         result = self.call("GetPose", user=0, tool=0)
-        matrix = pose_matrix(robot_values(result.robot_return, "GetPose"))
+        matrix = pose_matrix(robot_values(result.robot_return))
         modeled = self.node.kinematics.forward(self.node.current_joints())
         if not pose_reached(modeled, matrix, translation_m=0.002, rotation_deg=0.5):
             raise ValueError("CR10 FK does not match GetPose(user=0,tool=0); motion blocked")
         return matrix
 
+    def _target_values(self, target):
+        """Validate target data and exact taught joints without a vendor IK call."""
+        matrix = target.matrix
+        if (not isinstance(matrix, np.ndarray) or matrix.shape != (4, 4)
+                or not np.issubdtype(matrix.dtype, np.number) or np.iscomplexobj(matrix)
+                or not np.all(np.isfinite(matrix))
+                or not np.allclose(matrix[3], [0, 0, 0, 1], atol=1e-9, rtol=0)
+                or not np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3),
+                                   atol=1e-6, rtol=0)
+                or not math.isclose(float(np.linalg.det(matrix[:3, :3])), 1.,
+                                    abs_tol=1e-6)):
+            raise ValueError(f"Invalid rigid target transform for {target.name}; no motion sent")
+        values = pose_values(matrix)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError(f"Nonfinite target coordinates for {target.name}; no motion sent")
+        if target.joints_rad is not None:
+            modeled = self.node.kinematics.forward(target.joints_rad)
+            if not pose_reached(modeled, matrix, translation_m=0.002, rotation_deg=0.5):
+                raise ValueError(f"Taught joint/FK mismatch for {target.name}; no motion sent")
+        return values
+
     def _prepare_batch(self, targets, start, *, before_suction):
-        """Validate every endpoint/IK while idle, before creating any motion queue."""
+        """Validate every target while idle, before creating any motion queue."""
         prepared = []
         origin = start
-        near = tuple(self.node.current_joints())
         for target in targets:
             if before_suction is not None:
                 before_suction()
@@ -337,20 +357,7 @@ class DobotHardware:
             if (snapshot["feed"]["isRunQueuedCmd"] or snapshot["feed"]["RunningStatus"]
                     or snapshot["feed"]["robot_mode"] != 5):
                 raise ValueError("Queue preflight requires stationary enabled robot")
-            values = pose_values(target.matrix)
-            if target.joints_rad is None:
-                result = self.call(
-                    "InverseKin", x=values[0], y=values[1], z=values[2],
-                    rx=values[3], ry=values[4], rz=values[5], use_joint_near="1",
-                    joint_near="{" + ",".join(map(str, np.rad2deg(near))) + "}",
-                    user="0", tool="0")
-                near = tuple(math.radians(v) for v in robot_values(
-                    result.robot_return, "InverseKin"))
-            else:
-                near = target.joints_rad
-            modeled = self.node.kinematics.forward(near)
-            if not pose_reached(modeled, target.matrix, translation_m=0.002, rotation_deg=0.5):
-                raise ValueError(f"Queue InverseKin/FK mismatch for {target.name}; no motion sent")
+            values = self._target_values(target)
             if target.relative_z:
                 if (not np.allclose(origin[:2, 3], target.matrix[:2, 3], atol=1e-12, rtol=0)
                         or not np.allclose(origin[:3, :3], target.matrix[:3, :3],
@@ -482,21 +489,11 @@ class DobotHardware:
             self._confirm_suction_stop()
             self.moving = False
             return True  # Vacuum may seal while its output acknowledgement arrives.
-        values = pose_values(target.matrix)
+        values = self._target_values(target)
         require_clear = (not require_suction and not stop_on_suction and
                          snapshot["feed"]["tool_vector_actual"][2] > values[2] + 0.1)
         if require_clear and snapshot["feed"]["digital_input_bits"] & 1:
             raise ValueError("Unexpected DI1 before suction descent")
-        if target.joints_rad is None:
-            # Strict nearest-joint IK and model-limit check; no optional IK bypass.
-            joint_near = "{" + ",".join(map(str, np.rad2deg(self.node.current_joints()))) + "}"
-            result = self.call("InverseKin", x=values[0], y=values[1], z=values[2],
-                               rx=values[3], ry=values[4], rz=values[5], use_joint_near="1",
-                               joint_near=joint_near, user="0", tool="0")
-            joints = tuple(math.radians(v) for v in robot_values(result.robot_return, "InverseKin"))
-            modeled = self.node.kinematics.forward(joints)
-            if not pose_reached(modeled, target.matrix, translation_m=0.002, rotation_deg=0.5):
-                raise ValueError("InverseKin does not match the target in canonical CR10 geometry")
         before = self.node.feedback_snapshot(enabled=True)["sequence"]
         if stop_on_suction and self.node.feedback_snapshot(enabled=True)["feed"][
                 "digital_input_bits"] & 1:

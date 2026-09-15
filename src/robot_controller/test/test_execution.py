@@ -281,18 +281,24 @@ def synthetic_transport(monkeypatch):
     transport.pending_response = None
     transport.suction_stop, transport.suction_interrupted = None, False
     names = ("Stop", "StopMoveJog", "DisableRobot", "EnableRobot", "ClearError",
-             "SpeedFactor", "Tool", "SetTool", "CP", "DO", "GetPose", "InverseKin",
+             "SpeedFactor", "Tool", "SetTool", "CP", "DO", "GetPose",
              "MovLIO", "RelMovLUser")
     transport.types = {name: NS(Request=lambda **fields: NS(**fields)) for name in names}
     transport.clients = {name: MagicMock() for name in names}
     for name, client in transport.clients.items():
         future = Future()
         raw = "{" + ",".join(map(str, pose_values(pose))) + "}"
-        if name == "InverseKin":
-            raw = "{" + ",".join(map(str, np.rad2deg([.1]*6))) + "}"
         future.set_result(NS(res=0, robot_return=raw))
         client.call_async.return_value = future
     return transport, feed, pose, clock
+
+
+def test_live_transport_creates_no_inversekin_client():
+    node = NS(create_client=MagicMock(return_value=MagicMock()))
+    transport = hardware.DobotHardware(node)
+    assert len(transport.clients) == 13
+    assert "InverseKin" not in transport.clients
+    assert node.create_client.call_count == 13
 
 
 def test_initialization_order_and_only_first_two_best_effort(monkeypatch):
@@ -801,23 +807,18 @@ def test_operator_stop_confirmation_ignores_action_cancel_but_requires_stationar
         transport.confirm_stop(rejected)
 
 
-@pytest.mark.parametrize("command,raw,values", [
-    ("GetPose", "{400.125,-348.75,457.5,-175.25,9.5,-111.125}",
-     [400.125, -348.75, 457.5, -175.25, 9.5, -111.125]),
-    ("InverseKin", "{1,2,3,4,5,6}", [1, 2, 3, 4, 5, 6]),
-])
-def test_brace_only_robot_return_is_accepted(command, raw, values):
-    assert hardware.robot_values(raw, command) == values
+def test_brace_only_getpose_return_is_accepted():
+    raw = "{400.125,-348.75,457.5,-175.25,9.5,-111.125}"
+    assert hardware.robot_values(raw) == [400.125, -348.75, 457.5, -175.25, 9.5, -111.125]
 
 
 @pytest.mark.parametrize("raw", [None, "", "{1,2}", "{nan,2,3,4,5,6}",
                                  "{inf,2,3,4,5,6}", "{{1,2,3,4,5,6}}",
                                  "{1,2,3,4,5,6},GetPose();",
                                  "0,{1,2,3,4,5,6},GetPose(user=0,tool=0);"])
-@pytest.mark.parametrize("command", ["GetPose", "InverseKin"])
-def test_malformed_robot_return_is_not_accepted(command, raw):
+def test_malformed_getpose_return_is_not_accepted(raw):
     with pytest.raises(ValueError):
-        hardware.robot_values(raw, command)
+        hardware.robot_values(raw)
 
 
 def test_getpose_nonzero_res_blocks_even_with_valid_payload(monkeypatch):
@@ -1422,16 +1423,19 @@ def test_acknowledgement_with_nonempty_queue_is_not_motion_completion(monkeypatc
     assert transport.moving  # Caller must contain the ambiguous in-progress command.
 
 
-def test_bad_ik_blocks_motion_before_command_dispatch(monkeypatch):
+def test_invalid_cartesian_transform_and_joint_fk_mismatch_block_before_motion(monkeypatch):
     transport, _, pose, _ = synthetic_transport(monkeypatch)
-    future = Future()
-    future.set_result(NS(res=0, robot_return="{0,0,0,0,0,0}"))
-    transport.clients["InverseKin"].call_async.return_value = future
-    current = pose.copy()
-    current[2, 3] -= .1
-    with pytest.raises(ValueError, match="InverseKin does not match"):
-        transport.move(home_plan(current, pose, [.1]*6)[0])
-    transport.clients["RelMovLUser"].call_async.assert_not_called()
+    assert "InverseKin" not in transport.clients
+    invalid_matrices = [np.full((4, 4), np.nan), np.eye(4), np.eye(4)]
+    invalid_matrices[1][3, 3] = 2
+    invalid_matrices[2][0, 0] = 2
+    for matrix in invalid_matrices:
+        with pytest.raises(ValueError, match="Invalid rigid target transform"):
+            transport.move(replace(plan()[0], matrix=matrix))
+    mismatched_home = replace(home_plan(pose, pose, [.1]*6)[-1], joints_rad=(0.,)*6)
+    with pytest.raises(ValueError, match="Taught joint/FK mismatch"):
+        transport.move(mismatched_home)
+    transport.clients["MovLIO"].call_async.assert_not_called()
     assert not transport.moving
 
 

@@ -144,13 +144,16 @@ actions require enabled, fault-free feedback and user/tool 0. FeedInfo must
 include EnableStatus=1. Vendor RobotStatus.is_enable means idle mode 5, so its
 False value during moving modes 7/8 is not itself disabled feedback; the explicit
 EnableStatus remains mandatory. Idle readiness still requires RobotStatus enabled.
-Static canonical
-CR10 FK derives Home from the recorded joints; GetPose(user=0,tool=0) and IK must
-agree with that model within 2 mm/0.5 degrees or movement is blocked. No guessed
-Home pose, live RViz dependence, alternate model or IK fallback.
+Static canonical CR10 FK derives Home from the recorded joints;
+GetPose(user=0,tool=0) must agree with current-joint FK within 2 mm/0.5 degrees
+or movement is blocked. Exact taught Home joints remain model-limit/FK checked.
+Cartesian targets no longer call InverseKin for preflight: MovLIO receives the
+validated rigid pose directly, but no independent Cartesian reachability/joint
+branch is known before vendor acceptance. No guessed Home pose, live RViz
+dependence, alternate model or IK fallback.
 In the vendored bringup bridge, the raw TCP error ID is the ROS service `res`;
-GetPose and InverseKin `robot_return` contain only `{six,finite,values}`, without
-the TCP prefix or command echo. A nonzero `res` or malformed result blocks motion.
+GetPose `robot_return` contains only `{six,finite,values}`, without the TCP
+prefix or command echo. A nonzero `res` or malformed result blocks motion.
 
 Every Home first determines current Link6 Z. If current Z is below taught Home Z,
 RelMovLUser changes only base Z to Home Z while preserving actual XY/attitude;
@@ -159,10 +162,15 @@ equal to or above Home Z, the controller skips RelMovLUser and issues only the
 direct joint-mode Home target, per the user's confirmed safe-above-Home rule.
 The six taught Home joints are stored in radians and sent as degrees through
 MovLIO joint mode. Pick/transit/retract targets use mm/degrees in MovLIO
-Cartesian pose mode; neither mode guesses a TCP or alternate kinematic target.
+Cartesian pose mode; both modes request linear paths, not a joint-space path.
 The conditional relative-Z segment is the user-approved exception to MovLIO-only
 picking. All pick/transit/retract segments use MovLIO. Before queueing, validate
-all endpoints with nearest-previous-solution IK and canonical FK while idle.
+finite rigid targets, fresh stationary feedback, exact taught joints/FK and
+relative upward Home geometry while idle; Cartesian reachability is not checked
+with IK. The vendor response and actual completion are still strictly required.
+No-I/O segments deliberately retain empty `mdis` without a fake DO event or
+MovL substitution. The V4.6.5 manual calls for at least one DO tuple, so this
+selected behavior is pending supervised firmware validation.
 Wait for each service response before submitting the next waypoint, but do not
 wait for arrival between waypoints. Completion requires fresh whole-queue idle,
 stationary tail pose and exact Home joints, not service acceptance. Per-command
