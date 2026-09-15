@@ -2501,6 +2501,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   feedback/images and offscreen Qt; no robot/camera/RViz/model was launched or
   commanded and no operator artifact was changed.
 
+### 2026-09-15 — Ordered response-aware startup and precise readiness failures
+
+- Investigated the operator's latest controller failure before changing code.
+  Both latest Live initializations logged successful StopMoveJog, DisableRobot,
+  EnableRobot, SpeedFactor, Tool, SetTool and CP responses, followed by READY
+  and the generic feedback-watchdog failure. No startup service failure was
+  recorded. A passive five-second subscription found connected/enabled mode 5,
+  zero error/collision flags and user/tool 0, but isPauseCmdFlag=1. This current
+  paused-queue flag matches the blocked-readiness condition; historical logs
+  did not record the individual flag values at the original failure instant.
+- Add rule 55 after the user's explicit instruction to wait for every response.
+  Preserve Motion Debug's startup ordering and the controller's 100% SpeedFactor.
+  Boundedly wait for all strict service discovery before preconditioning.
+  Missing/rejected StopMoveJog and DisableRobot remain warnings, as does missing
+  Disabled confirmation. Serialize normal calls and retain unresolved futures:
+  an unanswered response timeout stops startup without a later command, even
+  for an otherwise optional step. Late responses never auto-advance/retry;
+  independent safety Stop can still interrupt ambiguous motion acceptance.
+  Motion Debug's separate best-effort timeout contract is not changed.
+- Startup progress names the current service; failed calls log their exact name.
+  After the final settings response, check full readiness before advertising
+  READY. Failed feedback says startup calls completed and lists every exact
+  enabled/mode/error/collision/pause/user/tool blocker with its value. Preserve
+  all safety guards: no automatic Continue, pause bypass, alarm clearing or
+  new robot settings. The vendored Dobot V4.6.5 manual describes Continue as
+  resuming a paused motion queue/program, not a harmless readiness check.
+- Verification: 101 controller tests pass directly, including delayed sequential
+  responses, unanswered optional calls/no late advancement, missing/rejected
+  optional steps, strict named failures/no later settings, bounded strict-service
+  discovery, no false READY on paused feedback and exact/multiple blocker errors.
+  All 101 cases also pass the packaged CTest wrapper. Compilation/scoped lint,
+  git diff checks, six-package dependency build and clean-environment all-14-
+  package root build pass before the standing source commit/push. Verification uses synthetic
+  transport/feedback/offscreen Qt only; the investigation used passive feedback
+  subscriptions. No robot/camera/RViz was launched, no hardware command was sent,
+  no operator weights were executed and no station artifact was changed.
+
 ### Future entry template
 
 ```text

@@ -77,6 +77,18 @@ Live initialization order: StopMoveJog, DisableRobot, EnableRobot/enabled confir
 SpeedFactor 100%, Tool 0, Tool 1 TCP zero, CP 100%. Only StopMoveJog and
 DisableRobot are best effort; subsequent failures terminate startup, no retries.
 Motion Debug's independent 50% startup rule is unchanged.
+Wait up to five seconds for all strict startup services before preconditioning.
+Every normal call is response-serialized. Missing/rejected best-effort services
+or missing Disabled confirmation warn and continue, but an unanswered response
+timeout stops startup without dispatching later calls—even for StopMoveJog or
+DisableRobot. A late response never automatically advances the sequence. Safety
+Stop remains independent so it can interrupt a pending motion acknowledgement.
+The status names each active startup call and failed calls are logged with their
+service name. After all settings respond, validate enabled/fault/pause/user/tool
+feedback before claiming READY. Failure then says `Startup calls completed;`
+followed by exact blockers, not a guessed failed service. For example,
+`isPauseCmdFlag=1` means queue-paused feedback; the controller never silently
+ignores it or sends Continue to resume an unknown paused queue.
 
 Canonical `/joint_states`, RobotStatus and FeedInfo must be uniquely provided by
 the configured bringup node, fresh within one second. FeedInfo controller_timer

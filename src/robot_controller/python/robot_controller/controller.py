@@ -490,10 +490,20 @@ class RobotController(Node):
                 or progress is None or now-progress > 1):
             raise ValueError("Canonical robot connection/feedback is unavailable or stale")
         feed = feedback[0]
-        if (enabled and (not status[1] or feed["robot_mode"] not in (5, 7, 8)
-                         or feed["ErrorStatus"] or feed["CollisionStates"] or feed["isPauseCmdFlag"]
-                         or feed["userCoordinate"] != 0 or feed["toolCoordinate"] != 0)):
-            raise ValueError("Robot fault/pause/disabled or nonzero user/tool; commands blocked")
+        if enabled:
+            blockers = []
+            if not status[1]:
+                blockers.append("RobotStatus.is_enable=False")
+            if feed["robot_mode"] not in (5, 7, 8):
+                blockers.append(f"robot_mode={feed['robot_mode']} (expected 5/7/8)")
+            for key in ("ErrorStatus", "CollisionStates", "isPauseCmdFlag"):
+                if feed[key]:
+                    blockers.append(f"{key}={feed[key]}")
+            for key in ("userCoordinate", "toolCoordinate"):
+                if feed[key] != 0:
+                    blockers.append(f"nonzero user/tool: {key}={feed[key]} (required 0)")
+            if blockers:
+                raise ValueError("Robot readiness blocked: " + "; ".join(blockers))
         return {"feed": feed, "enabled": status[1], "sequence": sequence}
 
     def _initialize(self):

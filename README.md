@@ -75,6 +75,12 @@ GUI buttons and headless clients share `/robot_controller/set_live`, `/go_home`,
 acceptance and completion is reported on `/robot_controller/status`. Optional
 debug-image capture saves the exact requested annotated RGB/depth pair under
 ignored `debug/pick_img/` without changing candidates or motion.
+Controller startup follows Motion Debug's ordered preconditioning/enable/settings
+cycle, with SpeedFactor 100%. Only StopMoveJog and DisableRobot are best-effort.
+Normal calls wait for each response before another is sent; an unanswered
+response timeout stops the sequence, including for a best-effort call. Startup
+and watchdog errors name the exact call or feedback blocker. A paused queue is
+not automatically resumed, and READY requires the final feedback checks to pass.
 Home compares current Link6 Z with taught Home Z. Below Home Z, it first uses
 GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovLIO joint
 mode reaches taught joints. At or above Home Z it skips the relative clearance

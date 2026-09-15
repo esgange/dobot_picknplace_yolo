@@ -259,6 +259,8 @@ def synthetic_transport(monkeypatch):
               events=MagicMock(), set_execution_state=MagicMock())
     transport = object.__new__(hardware.DobotHardware)
     transport.node, transport.moving = node, False
+    transport.response_lock = threading.Lock()
+    transport.pending_response = None
     transport.suction_stop, transport.suction_interrupted = None, False
     names = ("Stop", "StopMoveJog", "DisableRobot", "EnableRobot", "SpeedFactor", "Tool",
              "SetTool", "CP", "DO", "GetPose", "InverseKin", "MovLIO", "RelMovLUser")
@@ -298,6 +300,111 @@ def test_initialization_order_and_only_first_two_best_effort(monkeypatch):
     with pytest.raises(ValueError, match="strict failed"):
         transport.initialize()
     assert calls == ["StopMoveJog", "DisableRobot", "EnableRobot"]
+
+
+def test_startup_waits_for_every_delayed_response_before_dispatching_next(monkeypatch):
+    transport, feed, _, clock = synthetic_transport(monkeypatch)
+    sent, pending = [], []
+
+    def send(name):
+        assert not pending or pending[-1][0].done(), "Startup commands overlapped"
+        future = Future()
+        pending.append((future, clock[0] + .06, name))
+        sent.append(name)
+        return future
+
+    def sleep(dt):
+        clock[0] += dt
+        if pending:
+            future, ready_at, name = pending[-1]
+            if not future.done() and clock[0] >= ready_at:
+                if name == "DisableRobot":
+                    feed["robot_mode"] = 4
+                elif name == "EnableRobot":
+                    feed["robot_mode"] = 5
+                future.set_result(NS(res=0))
+
+    monkeypatch.setattr(hardware.time, "sleep", sleep)
+    for name, client in transport.clients.items():
+        client.call_async.side_effect = lambda _, n=name: send(n)
+    transport.initialize()
+    assert sent == ["StopMoveJog", "DisableRobot", "EnableRobot", "SpeedFactor", "Tool",
+                    "SetTool", "CP"]
+    assert clock[0] >= .42
+    assert transport.node.set_execution_state.call_args.args[0] == "READY"
+
+
+@pytest.mark.parametrize("name", ["StopMoveJog", "DisableRobot"])
+def test_unanswered_optional_startup_call_never_advances_or_overlaps(name, monkeypatch):
+    transport, _, _, _ = synthetic_transport(monkeypatch)
+    pending = Future()
+    transport.clients[name].call_async.return_value = pending
+    with pytest.raises(hardware.ResponsePending, match=f"Startup {name}.*response timeout"):
+        transport.initialize()
+    transport.clients["EnableRobot"].call_async.assert_not_called()
+    if name == "StopMoveJog":
+        transport.clients["DisableRobot"].call_async.assert_not_called()
+    with pytest.raises(hardware.ResponsePending, match=f"still awaiting {name}"):
+        transport.call("SpeedFactor", ratio=100)
+    transport.clients["SpeedFactor"].call_async.assert_not_called()
+    pending.set_result(NS(res=0))
+    transport.clients["EnableRobot"].call_async.assert_not_called()  # No late auto-advance.
+
+
+@pytest.mark.parametrize("failure", ["missing", "rejected"])
+def test_optional_startup_failures_continue_only_when_no_response_is_pending(failure, monkeypatch):
+    transport, _, _, _ = synthetic_transport(monkeypatch)
+    for name in ("StopMoveJog", "DisableRobot"):
+        if failure == "missing":
+            transport.clients[name].service_is_ready.return_value = False
+        else:
+            reply = Future()
+            reply.set_result(NS(res=-1))
+            transport.clients[name].call_async.return_value = reply
+    transport.initialize()
+    transport.clients["EnableRobot"].call_async.assert_called_once()
+    transport.clients["CP"].call_async.assert_called_once()
+    warnings = [c for c in transport.node.events.record.call_args_list
+                if c.args[:2] == ("WARNING", "startup_best_effort")]
+    assert [c.kwargs["service"] for c in warnings] == ["StopMoveJog", "DisableRobot"]
+
+
+@pytest.mark.parametrize("name", ["EnableRobot", "SpeedFactor", "Tool", "SetTool", "CP"])
+def test_strict_startup_failure_identifies_call_and_sends_no_later_setting(name, monkeypatch):
+    transport, _, _, _ = synthetic_transport(monkeypatch)
+    reply = Future()
+    reply.set_result(NS(res=-2))
+    transport.clients[name].call_async.return_value = reply
+    order = ["StopMoveJog", "DisableRobot", "EnableRobot", "SpeedFactor", "Tool", "SetTool", "CP"]
+    with pytest.raises(ValueError, match=f"Startup {name}: {name} failed: -2"):
+        transport.initialize()
+    for later in order[order.index(name) + 1:]:
+        transport.clients[later].call_async.assert_not_called()
+
+
+def test_missing_strict_startup_service_is_bounded_and_named_before_preconditioning(monkeypatch):
+    transport, _, _, clock = synthetic_transport(monkeypatch)
+    transport.clients["Tool"].service_is_ready.return_value = False
+    with pytest.raises(ValueError, match="Startup required services unavailable: Tool"):
+        transport.initialize()
+    assert clock[0] >= hardware.SERVICE_TIMEOUT_SEC
+    assert all(client.call_async.call_count == 0 for client in transport.clients.values())
+
+
+def test_startup_calls_complete_but_paused_feedback_does_not_claim_ready(monkeypatch):
+    transport, _, _, _ = synthetic_transport(monkeypatch)
+    original = transport.node.feedback_snapshot
+
+    def snapshot(*, enabled):
+        if enabled:
+            raise ValueError("Robot readiness blocked: isPauseCmdFlag=1")
+        return original(enabled=enabled)
+
+    transport.node.feedback_snapshot = snapshot
+    transport.initialize()
+    transport.clients["CP"].call_async.assert_called_once()
+    assert transport.node.set_execution_state.call_args.args == (
+        "FAILED", "Startup calls completed; Robot readiness blocked: isPauseCmdFlag=1")
 
 
 def test_home_transport_uses_relative_z_then_joint_movlio_and_confirms_completion(monkeypatch):
@@ -602,6 +709,37 @@ def test_feedback_fault_and_nonzero_tool_block_execution():
               feed_feedback=(feed, now), feed_sequence=3)
     with pytest.raises(ValueError, match="nonzero user/tool"):
         controller.RobotController.feedback_snapshot(node, enabled=True)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("robot_mode", 4), ("ErrorStatus", 1), ("CollisionStates", 1), ("isPauseCmdFlag", 1),
+    ("userCoordinate", 2), ("toolCoordinate", 1),
+])
+def test_readiness_error_names_exact_feedback_blocker(field, value):
+    now = hardware.time.monotonic()
+    feed = {"robot_mode": 5, "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
+            "userCoordinate": 0, "toolCoordinate": 0}
+    feed[field] = value
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+              robot_feedback=(True, True, now), controller_progress_at=now,
+              feed_feedback=(feed, now), feed_sequence=3)
+    with pytest.raises(ValueError, match=f"{field}={value}"):
+        controller.RobotController.feedback_snapshot(node, enabled=True)
+    assert controller.RobotController.feedback_snapshot(node, enabled=False)["feed"] == feed
+
+
+def test_readiness_error_lists_all_blockers_instead_of_generic_fault():
+    now = hardware.time.monotonic()
+    feed = {"robot_mode": 4, "ErrorStatus": 1, "CollisionStates": 0, "isPauseCmdFlag": 1,
+            "userCoordinate": 0, "toolCoordinate": 2}
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+              robot_feedback=(True, False, now), controller_progress_at=now,
+              feed_feedback=(feed, now), feed_sequence=3)
+    with pytest.raises(ValueError) as failure:
+        controller.RobotController.feedback_snapshot(node, enabled=True)
+    assert all(reason in str(failure.value) for reason in (
+        "RobotStatus.is_enable=False", "robot_mode=4", "ErrorStatus=1", "isPauseCmdFlag=1",
+        "toolCoordinate=2"))
 
 
 def test_service_timeout_late_motion_ack_receives_safety_stop(monkeypatch):

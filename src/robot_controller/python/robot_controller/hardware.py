@@ -2,6 +2,7 @@
 
 import math
 import re
+import threading
 import time
 
 import numpy as np
@@ -13,6 +14,10 @@ from .motion import pose_reached
 SERVICE_TIMEOUT_SEC = 5.0
 MOTION_TIMEOUT_SEC = 30.0
 STATIONARY_SEC = 0.3
+
+
+class ResponsePending(ValueError):
+    """An unanswered command forbids dispatching a later normal command."""
 
 
 def robot_values(raw, command):
@@ -43,8 +48,25 @@ class DobotHardware:
         self.moving = False
         self.suction_stop = None
         self.suction_interrupted = False
+        self.response_lock = threading.Lock()
+        self.pending_response = None
 
     def call(self, name, *, monitor_suction=False, require_clear=False, **fields):
+        with self.response_lock:
+            try:
+                if self.pending_response is not None:
+                    previous, future = self.pending_response
+                    if not future.done():
+                        raise ResponsePending(
+                            f"{name} not sent: still awaiting {previous} response")
+                    self.pending_response = None
+                return self._call(name, monitor_suction=monitor_suction,
+                                  require_clear=require_clear, **fields)
+            except Exception as exc:
+                self.node.events.record("ERROR", "robot_service_failed", str(exc), service=name)
+                raise
+
+    def _call(self, name, *, monitor_suction=False, require_clear=False, **fields):
         self.node.check_cancelled()
         self.node.check_command_owner(name)
         self.node.feedback_snapshot(enabled=False)
@@ -52,7 +74,9 @@ class DobotHardware:
         if not client.service_is_ready():
             raise ValueError(f"Required canonical {name} service unavailable")
         request = self.types[name].Request(**fields)
+        self.node.events.record("INFO", "robot_service_sent", name, fields=fields)
         future = client.call_async(request)
+        self.pending_response = name, future
         if name in ("MovLIO", "RelMovLUser"):
             # A late accepted command after cancellation must receive another safety Stop.
             # This is containment, not a retry of motion or a claim of confirmed stopping.
@@ -66,9 +90,10 @@ class DobotHardware:
             if monitor_suction and snapshot["feed"]["digital_input_bits"] & 1:
                 self._interrupt_suction()
             if time.monotonic() >= deadline:
-                raise ValueError(f"{name} response timeout; no retry")
+                raise ResponsePending(f"{name} response timeout; no later commands sent; no retry")
             time.sleep(0.02)
         result = future.result()
+        self.pending_response = None
         self.node.check_cancelled()
         self.node.feedback_snapshot(enabled=False)
         if result is None or result.res != 0:
@@ -107,23 +132,54 @@ class DobotHardware:
                     raise
                 self.node.check_cancelled()
                 time.sleep(0.02)
+        required = ("EnableRobot", "SpeedFactor", "Tool", "SetTool", "CP")
+        self.node.set_execution_state("INITIALIZING", "Waiting for required startup services")
+        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
+        while True:
+            missing = [name for name in required if not self.clients[name].service_is_ready()]
+            if not missing:
+                break
+            self.node.check_cancelled()
+            self.node.feedback_snapshot(enabled=False)
+            if time.monotonic() >= deadline:
+                raise ValueError("Startup required services unavailable: " + ", ".join(missing))
+            time.sleep(0.02)
         for name in ("StopMoveJog", "DisableRobot"):
             try:
-                self.call(name)
+                self._startup_call(name)
                 if name == "DisableRobot" and not self.wait(
                         lambda s: s["feed"]["robot_mode"] == 4, SERVICE_TIMEOUT_SEC):
                     raise ValueError("DisableRobot did not confirm Disabled mode")
+            except ResponsePending:
+                raise  # No response is not a returned failure: never overlap the next call.
             except ValueError as exc:
                 self.node.events.record("WARNING", "startup_best_effort", str(exc), service=name)
-        self.call("EnableRobot")
+        self._startup_call("EnableRobot")
+        self.node.set_execution_state("INITIALIZING", "Startup EnableRobot: confirming Enabled")
         if not self.wait(lambda s: s["feed"]["robot_mode"] == 5 and s["enabled"],
                          SERVICE_TIMEOUT_SEC):
             raise ValueError("EnableRobot did not confirm Enabled mode")
-        self.call("SpeedFactor", ratio=100)
-        self.call("Tool", index=0)
-        self.call("SetTool", index=1, value="{0,0,0,0,0,0}")
-        self.call("CP", r=100)
+        self._startup_call("SpeedFactor", ratio=100)
+        self._startup_call("Tool", index=0)
+        self._startup_call("SetTool", index=1, value="{0,0,0,0,0,0}")
+        self._startup_call("CP", r=100)
+        try:
+            self.node.feedback_snapshot(enabled=True)
+        except ValueError as exc:
+            message = f"Startup calls completed; {exc}"
+            self.node.events.record("ERROR", "startup_readiness_blocked", message)
+            self.node.set_execution_state("FAILED", message)
+            return
         self.node.set_execution_state("READY", "Initialized at SpeedFactor 100%, Tool 0, CP 100%")
+
+    def _startup_call(self, name, **fields):
+        self.node.set_execution_state("INITIALIZING", f"Startup {name}: waiting for response")
+        try:
+            return self.call(name, **fields)
+        except ResponsePending as exc:
+            raise ResponsePending(f"Startup {name}: {exc}") from exc
+        except ValueError as exc:
+            raise ValueError(f"Startup {name}: {exc}") from exc
 
     def current_pose(self):
         snapshot = self.node.feedback_snapshot(enabled=True)
