@@ -767,7 +767,7 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         with pytest.raises(RuntimeError, match="Live is OFF"):
             node.check_command_owner("EnableRobot")
         assert set(window.service_clients) == {
-            "home", "pick", "stop", "live", "debug_images", "enable"}
+            "home", "pick", "stop", "live", "debug_images", "enable", "global_speed"}
         assert not window.enable.isEnabled()  # Live OFF can never enable hardware.
         invoke = MagicMock()
         window._call_service = invoke
@@ -983,6 +983,7 @@ def test_headless_node_loads_runtime_profile_and_starts_permanently_live(pair, m
                 "/robot_controller/stop", "/robot_controller/set_live",
                 "/robot_controller/set_debug_images",
                 "/robot_controller/enable_robot"} <= service_names
+        assert "/robot_controller/set_global_speed" in service_names
         response = controller.RobotController._set_live_service(
             node, controller.SetBool.Request(data=False), NS())
         assert not response.success and node.live

@@ -77,6 +77,12 @@ debug-image capture saves the exact requested annotated RGB/depth pair under
 ignored `debug/pick_img/` without changing candidates or motion.
 Controller startup follows Motion Debug's ordered preconditioning/enable/settings
 cycle, with SpeedFactor 100%. Only StopMoveJog and DisableRobot are best-effort.
+The **Global speed** slider (1–100%) changes SpeedFactor while Live is ON and
+the controller is idle, separately from taught per-command speed/acceleration.
+It waits for the robot response and displays the confirmed factor. Each Live
+initialization resets it to 100%; this transient command is not saved in teach files.
+Headless clients use `/robot_controller/set_global_speed` with
+`dobot_msgs_v4/srv/SpeedFactor` and an integer `ratio`.
 Normal calls wait for each response before another is sent; an unanswered
 response timeout stops the sequence, including for a best-effort call. Startup
 and watchdog errors name the exact call or feedback blocker. A paused queue is
@@ -157,7 +163,8 @@ speed 6% and pick-to-prepick retract speed 6%; remaining clearance/Home moves
 use travel speed. Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovLIO (and the Home-height
-RelMovLUser exception), keeping global SpeedFactor 100%. Loaded rates are
+RelMovLUser exception), independently of the controller's global SpeedFactor
+(100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
 never silently defaulted. Production rejects schemas 1–5.
 Motion saves only standoff_height, prepick_height and retract_height:

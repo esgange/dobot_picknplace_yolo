@@ -6,6 +6,7 @@ from PyQt5 import QtCore, QtWidgets
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from std_srvs.srv import SetBool, Trigger
+from dobot_msgs_v4.srv import SpeedFactor
 
 from .ui_state import save_state
 
@@ -19,6 +20,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "pick": node.create_client(Trigger, "/robot_controller/pick_item"),
             "stop": node.create_client(Trigger, "/robot_controller/stop"),
             "enable": node.create_client(Trigger, "/robot_controller/enable_robot"),
+            "global_speed": node.create_client(SpeedFactor, "/robot_controller/set_global_speed"),
             "live": node.create_client(SetBool, "/robot_controller/set_live"),
             "debug_images": node.create_client(
                 SetBool, "/robot_controller/set_debug_images"),
@@ -94,6 +96,30 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.stop.clicked.connect(self.stop_action)
         row.addWidget(self.stop)
         layout.addLayout(row)
+        speed_row = QtWidgets.QHBoxLayout()
+        self.global_speed_label = QtWidgets.QLabel("Global speed: Live OFF")
+        self.global_speed_label.setMinimumWidth(245)
+        speed_row.addWidget(self.global_speed_label)
+        speed_row.addWidget(QtWidgets.QLabel("1%"))
+        self.global_speed = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.global_speed.setRange(1, 100)
+        self.global_speed.setValue(100)
+        self.global_speed.setTracking(False)
+        self.global_speed.setSingleStep(1)
+        self.global_speed.setPageStep(10)
+        self.global_speed.setToolTip(
+            "Live/idle only. Sets robot SpeedFactor after release; taught v/a stay unchanged. "
+            "Every Live initialization resets global speed to 100%.")
+        speed_row.addWidget(self.global_speed, 1)
+        speed_row.addWidget(QtWidgets.QLabel("100%"))
+        layout.addLayout(speed_row)
+        self.speed_timer = QtCore.QTimer(self)
+        self.speed_timer.setSingleShot(True)
+        self.speed_timer.setInterval(300)
+        self.speed_timer.timeout.connect(self.set_global_speed)
+        self.global_speed.valueChanged.connect(self.global_speed_edited)
+        self.global_speed.sliderReleased.connect(
+            lambda: self.global_speed_edited(self.global_speed.sliderPosition()))
         self.status = QtWidgets.QLabel()
         self.status.setWordWrap(True)
         self.status.setStyleSheet("background:#202a35;color:white;padding:14px;font-size:16px")
@@ -153,6 +179,18 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._set_debug_images_visual(enabled)
         self._call_service("debug_images", SetBool.Request(data=enabled))
 
+    def global_speed_edited(self, value):
+        self.global_speed_label.setText(f"Global speed: {value}% · pending")
+        if self.global_speed.isEnabled():
+            self.speed_timer.start()
+
+    def set_global_speed(self):
+        if not self.global_speed.isEnabled():
+            return
+        value = self.global_speed.value()
+        if value != self.node.global_speed_percent:
+            self._call_service("global_speed", SpeedFactor.Request(ratio=value))
+
     def _set_live_visual(self, enabled):
         self.live.setText("Live: ON" if enabled else "Live: OFF")
         self.live.setStyleSheet(
@@ -190,6 +228,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
             del self.pending_calls[name]
             try:
                 result = future.result()
+                if name == "global_speed":
+                    if result is None or result.res != 0:
+                        self.node.execution_message = (
+                            "Global speed: no service response" if result is None else
+                            self.node.global_speed_message)
+                    continue
                 if result is None or not result.success:
                     message = "No response" if result is None else result.message
                     self.node.execution_message = f"{name} rejected: {message}"
@@ -200,10 +244,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         node = self.node
         self._collect_service_results()
         busy = ((node.action_thread is not None and node.action_thread.is_alive())
-                or (node.stop_thread is not None and node.stop_thread.is_alive()))
+                or (node.stop_thread is not None and node.stop_thread.is_alive())
+                or node.action_lock.locked())
         ready = node.execution_state in ("DEBUG", "READY", "HOLDING", "NO_PICK") and not busy
-        actions_pending = any(name in self.pending_calls for name in
-                              ("home", "pick", "live", "enable"))
+        service_pending = any(name in self.pending_calls for name in
+                              ("home", "pick", "live", "enable", "global_speed"))
+        actions_pending = service_pending or self.speed_timer.isActive()
         self.apply.setEnabled(not busy)
         self.item_path.setReadOnly(busy)
         self.bin_path.setReadOnly(busy)
@@ -219,8 +265,27 @@ class ControllerWindow(QtWidgets.QMainWindow):
             and node.fatal_error is None and node.hardware is not None
             and not node.hardware.moving)
         self.live.setEnabled(
-            not busy and not node.holding_item and "live" not in self.pending_calls)
+            not busy and not node.holding_item and not actions_pending)
         self.debug_images.setEnabled("debug_images" not in self.pending_calls)
+        self.global_speed.setEnabled(
+            node.live and ready and not service_pending
+            and getattr(node, "startup_settings_applied", False)
+            and node.fatal_error is None and node.hardware is not None
+            and not node.hardware.moving and not node.cancel.is_set())
+        factor = node.global_speed_percent
+        self.global_speed_label.setToolTip(node.global_speed_message)
+        if not self.global_speed.isEnabled():
+            self.speed_timer.stop()
+        editing_speed = self.global_speed.isSliderDown() or self.speed_timer.isActive()
+        if not editing_speed and "global_speed" not in self.pending_calls:
+            with QtCore.QSignalBlocker(self.global_speed):
+                self.global_speed.setValue(100 if factor is None else factor)
+            self.global_speed_label.setText(
+                "Global speed: Live OFF" if not node.live else
+                "Global speed: unknown" if factor is None else f"Global speed: {factor}%")
+        elif "global_speed" in self.pending_calls:
+            self.global_speed_label.setText(
+                f"Global speed: {self.global_speed.value()}% · awaiting response")
         with QtCore.QSignalBlocker(self.live):
             self.live.setChecked(node.live)
         self._set_live_visual(node.live)
@@ -228,7 +293,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.debug_images.setChecked(node.debug_images)
         self._set_debug_images_visual(node.debug_images)
         if node.live:
-            self.mode.setText("LIVE ROBOT · Actual commands enabled · SpeedFactor 100%")
+            speed = "unknown" if factor is None else f"{factor}%"
+            self.mode.setText(f"LIVE ROBOT · Actual commands enabled · SpeedFactor {speed}")
             self.mode.setStyleSheet(
                 "font-size:20px;font-weight:600;padding:12px;color:#b51f24")
             self.home.setText("Go Home")

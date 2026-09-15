@@ -349,8 +349,10 @@ edits disarm and invalidate saved eligibility without interrupting read-only
 inference or automatically saving/commanding hardware. Save writes schema 6 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
-global SpeedFactor stays 100%. Production rejects schemas 1–5; old GUI recovery
-drafts leave missing/invalid rates blank until the operator explicitly fills and
+global SpeedFactor starts at 100% and the controller can adjust it explicitly
+while Live/idle, without rewriting these taught per-command rates. Production
+rejects schemas 1–5; old GUI recovery drafts leave missing/invalid rates blank
+until the operator explicitly fills and
 saves them. Shared schema-6 named-file UI state is unchanged.
 
 Item Teach has no controller-validation button or controller client. It creates

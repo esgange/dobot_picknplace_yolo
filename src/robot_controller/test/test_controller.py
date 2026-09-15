@@ -177,6 +177,7 @@ def test_status_topic_separates_live_from_debug_image_capture():
         summary={"state": "PROFILE_VALIDATED"}, execution_state="READY",
         execution_message="Ready", live=True, headless=True, debug_images=True,
         startup_settings_applied=True,
+        global_speed_percent=37, global_speed_message="Global SpeedFactor set to 37%",
         debug_capture_status="SAVED: rgb.png | depth.png", holding_item=False,
         profile_path=Path("item.yaml"), preview_targets=(), publisher=publisher,
     )
@@ -184,6 +185,8 @@ def test_status_topic_separates_live_from_debug_image_capture():
     status = json.loads(publisher.publish.call_args.args[0].data)
     assert status["live"] and status["headless"] and status["debug_images"]
     assert status["startup_settings_applied"]
+    assert status["global_speed_percent"] == 37
+    assert status["global_speed_message"] == "Global SpeedFactor set to 37%"
     assert status["debug_capture_status"] == "SAVED: rgb.png | depth.png"
     assert "debug" not in status  # TF-only/Live is not confused with image capture.
 
@@ -206,7 +209,11 @@ def test_no_hardware_clients_or_model_deserialization():
         imports = [node for node in ast.walk(tree)
                    if isinstance(node, (ast.Import, ast.ImportFrom))]
         if module is controller:
-            assert all("dobot_msgs_v4.srv" not in ast.unparse(node) for node in imports)
+            # Public service metadata is safe in TF-only mode; command clients
+            # still exist only in the separately Live-gated hardware transport.
+            assert all(node.module != "dobot_msgs_v4.srv"
+                       or [alias.name for alias in node.names] == ["SpeedFactor"]
+                       for node in imports if isinstance(node, ast.ImportFrom))
         else:
             assert all("dobot_msgs_v4" not in ast.unparse(node) for node in imports)
         assert all("torch" not in ast.unparse(node) for node in imports)

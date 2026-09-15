@@ -2654,6 +2654,52 @@ Never use a floating “latest” version in an issue, script, or deployment not
   commit/verified push. No real robot/camera/RViz launch, operator weight
   execution, vendor patch, or new offline milestone.
 
+### 2026-09-15 — Explicit controller global-speed slider and headless setting
+
+- User requested a controller-level 1–100 speed slider, separate from the item
+  profile's individually assigned MovLIO/RelMovLUser speed/acceleration. Add
+  superseding rule 58: every Live initialization still explicitly sets global
+  SpeedFactor 100%, then an operator may adjust it while Live/idle. No change
+  to per-phase v/a, taught offsets, queue/I/O/pick behavior or artifact schemas.
+- GUI mouse changes apply after release; keyboard changes debounce 300 ms.
+  The GUI calls shared `/robot_controller/set_global_speed` using the existing
+  dobot_msgs_v4 SpeedFactor type, not vendor bringup directly. Public service
+  type metadata is safe in TF-only mode; real command clients remain exclusively
+  in the Live-gated transport. Headless exposes the same bounded setting
+  response: res=0 only after a successful robot response; otherwise -1 with
+  precise reason in bounded events/status, never asynchronous acceptance.
+- Disable/reject changes during Live OFF, incomplete/fatal startup, active
+  action/recovery or pending commands. Acquire action ownership atomically;
+  preserve response serialization, sole canonical provider, fresh enabled,
+  fault-free/unpaused/user/tool-0 idle feedback and no unknown queued motion.
+  Idle HOLDING permits speed changes only while DI1 remains ON. Safety Stop
+  remains independent; cancellation/failure never resumes or retries commands.
+  Report SPEED_SETTING while waiting; success restores the previous idle state.
+  Accepted setting failure fails closed. Unknown/late acceptance never silently
+  restores READY or the previous confirmed percentage.
+- Status includes global_speed_percent and global_speed_message. The percentage
+  denotes an acknowledged command, not measured motion speed; null means unknown
+  or Live OFF. This slider is a transient robot-command target, not operator
+  setup or Item Teach content: no persisted speed, startup auto-application,
+  new .env key, configuration workflow or schema migration. Root/controller
+  documentation explains reset/idle/service behavior. Do not extend existing
+  five-second command/30-second motion/result-age limits for slow global speed.
+- Verify slider range/debounce/service routing and Live/busy/pending gates;
+  actual delayed/rejected/unanswered responses and unknown/late containment;
+  enabled-idle/ownership/suction/cancellation checks; unchanged taught v/a and
+  100% reinitialization. Run synthetic/offscreen controller regressions,
+  compilation/lint, packaged tests, dependency/root builds and git diff checks
+  before the standing scoped commit/verified push. No robot/camera/RViz/model
+  is launched or commanded; operator artifacts/weights remain untouched.
+- Verification completed: 208 synthetic/offscreen controller tests pass directly
+  and in the package CTest wrapper (zero errors/failures/skips). These include
+  isolated ROS wire-service invocation, Live/busy/ownership/freshness/DI1 gates,
+  1/100 boundary values, delayed/rejected/unanswered Stop/cancel behavior,
+  no late-ack READY restoration, preserved per-target v/a and 100% startup reset.
+  Changed Python compiles and passes flake8; git diff --check, six-package
+  dependency build and clean-environment 14-package root build pass. No real
+  hardware/weights/station artifact was exercised or modified.
+
 ### Future entry template
 
 ```text

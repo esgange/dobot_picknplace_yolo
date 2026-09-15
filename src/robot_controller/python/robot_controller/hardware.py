@@ -134,6 +134,7 @@ class DobotHardware:
 
     def initialize(self):
         self.node.startup_settings_applied = False
+        self.node.global_speed_percent = None
         self.node.set_execution_state("INITIALIZING", "Checking canonical robot feedback")
         deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
         while True:
@@ -176,6 +177,8 @@ class DobotHardware:
                          SERVICE_TIMEOUT_SEC):
             raise ValueError("EnableRobot did not confirm Enabled mode")
         self._startup_call("SpeedFactor", ratio=100)
+        self.node.global_speed_percent = 100
+        self.node.global_speed_message = "Startup SpeedFactor 100% response confirmed"
         self._startup_call("Tool", index=0)
         self._startup_call("SetTool", index=1, value="{0,0,0,0,0,0}")
         self._startup_call("CP", r=100)
@@ -214,6 +217,28 @@ class DobotHardware:
         self.node.set_execution_state("ENABLING", "EnableRobot: confirming enabled readiness")
         self.confirm_ready()
         self.node.set_execution_state("READY", "EnableRobot confirmed; no Home or Pick sent")
+
+    def set_global_speed(self, ratio):
+        if type(ratio) is not int or not 1 <= ratio <= 100:
+            raise ValueError("Global speed must be an integer from 1 through 100")
+
+        def idle(snapshot):
+            feed = snapshot["feed"]
+            if (feed["robot_mode"] != 5 or feed["isRunQueuedCmd"] or feed["RunningStatus"]
+                    or self.moving):
+                raise ValueError("SpeedFactor requires fresh enabled idle feedback")
+            if (self.node.holding_item and not feed["digital_input_bits"] & 1):
+                raise ValueError("Suction lost while setting global speed")
+
+        idle(self.node.feedback_snapshot(enabled=True))
+        # A timeout/cancellation may still be followed by late acceptance. Do not
+        # report the old factor as confirmed after dispatch becomes ambiguous.
+        self.node.global_speed_percent = None
+        self.node._publish()
+        self.call("SpeedFactor", ratio=ratio, progress=idle)
+        self.node.global_speed_percent = ratio
+        self.node.events.record("INFO", "global_speed_changed", "SpeedFactor response confirmed",
+                                ratio=ratio)
 
     def _startup_call(self, name, **fields):
         self.node.set_execution_state("INITIALIZING", f"Startup {name}: waiting for response")

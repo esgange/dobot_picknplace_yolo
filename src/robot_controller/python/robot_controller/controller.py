@@ -21,6 +21,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
+from dobot_msgs_v4.srv import SpeedFactor
 from item_perception_interfaces.srv import GetItemPoses
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import JointState
@@ -102,6 +103,8 @@ class RobotController(Node):
         self.execution_message = "TF-only; no hardware commands" if self.debug else "Starting"
         self.holding_item = False
         self.startup_settings_applied = False
+        self.global_speed_percent = None  # Unknown until a successful SpeedFactor response.
+        self.global_speed_message = "Live OFF; no global speed command"
         self.fatal_error = None
         self.cancel = threading.Event()
         self.shutdown_requested = threading.Event()
@@ -161,6 +164,9 @@ class RobotController(Node):
         self.create_service(Trigger, "/robot_controller/stop", self._stop_service,
                             callback_group=ReentrantCallbackGroup())
         self.create_service(Trigger, "/robot_controller/enable_robot", self._enable_robot_service,
+                            callback_group=ReentrantCallbackGroup())
+        self.create_service(SpeedFactor, "/robot_controller/set_global_speed",
+                            self._set_global_speed_service,
                             callback_group=ReentrantCallbackGroup())
         self.create_service(SetBool, "/robot_controller/set_live", self._set_live_service,
                             callback_group=ReentrantCallbackGroup())
@@ -249,6 +255,8 @@ class RobotController(Node):
         if hasattr(self, "execution_state"):
             value.update(live=self.live, headless=self.headless,
                          startup_settings_applied=getattr(self, "startup_settings_applied", False),
+                         global_speed_percent=getattr(self, "global_speed_percent", None),
+                         global_speed_message=getattr(self, "global_speed_message", ""),
                          debug_images=self.debug_images,
                          debug_capture_status=self.debug_capture_status,
                          execution_state=self.execution_state,
@@ -557,6 +565,8 @@ class RobotController(Node):
                 from .hardware import DobotHardware
                 self.live, self.debug = True, False
                 self.startup_settings_applied = False
+                self.global_speed_percent = None
+                self.global_speed_message = "Initializing SpeedFactor 100%"
                 self.execution_state = "INITIALIZING"
                 self.execution_message = "Live requested; initializing robot"
                 self.hardware = DobotHardware(self)
@@ -571,6 +581,8 @@ class RobotController(Node):
                 self.hardware.close()
             self.hardware = None
             self.startup_settings_applied = False
+            self.global_speed_percent = None
+            self.global_speed_message = "Live OFF; no global speed command"
             self.live, self.debug = False, True
             self.execution_state = "DEBUG"
             self.execution_message = "Live OFF; TF-only previews"
@@ -591,6 +603,57 @@ class RobotController(Node):
                 self.action_lock.release()
             elif requested and not response.success and self.action_lock.locked():
                 self.action_lock.release()
+        return response
+
+    def _set_global_speed_service(self, request, response):
+        """A bounded setting response, never an automatically resumed motion action."""
+        acquired = False
+        accepted = False
+        try:
+            with self.state_lock:
+                if type(request.ratio) is not int or not 1 <= request.ratio <= 100:
+                    raise ValueError("Global speed must be an integer from 1 through 100")
+                if not self.live or self.debug or self.hardware is None:
+                    raise ValueError("Global speed requires Live ON")
+                if (not self.startup_settings_applied or self.fatal_error is not None
+                        or self.shutdown_requested.is_set()):
+                    raise ValueError("Global speed requires completed, non-fatal startup")
+                if (self.execution_state not in ("READY", "HOLDING", "NO_PICK")
+                        or self.hardware.moving or self.cancel.is_set()
+                        or (self.action_thread is not None and self.action_thread.is_alive())
+                        or (self.stop_thread is not None and self.stop_thread.is_alive())):
+                    raise ValueError("Global speed requires an idle controller; no active recovery")
+                if self.stop_future is not None and not self.stop_future.done():
+                    raise ValueError("Stop response pending; global speed not sent")
+                acquired = self.action_lock.acquire(blocking=False)
+                if not acquired:
+                    raise ValueError("Controller action busy; global speed not sent")
+                self.check_command_owner("SpeedFactor")
+                previous = self.execution_state
+                accepted = True
+                self.global_speed_message = f"SpeedFactor {request.ratio}%: waiting for response"
+                self.set_execution_state(
+                    "SPEED_SETTING", self.global_speed_message)
+            self.hardware.set_global_speed(request.ratio)
+            with self.state_lock:
+                self.check_cancelled()
+                self.global_speed_message = f"Global SpeedFactor set to {request.ratio}%"
+                self.set_execution_state(previous, self.global_speed_message)
+            response.res = 0  # Actual successful robot response, not asynchronous acceptance.
+        except Exception as exc:
+            response.res = -1
+            self.global_speed_message = (
+                f"Global speed request failed: {exc}" if accepted else
+                f"Global speed rejected: {exc}")
+            if accepted:
+                self.cancel.set()
+                self.set_execution_state("FAILED", f"SpeedFactor: {exc}")
+            self.events.record("ERROR" if accepted else "WARNING", "global_speed_rejected",
+                               str(exc), ratio=request.ratio)
+        finally:
+            if acquired:
+                self.action_lock.release()
+            self._publish()
         return response
 
     def _enable_robot_service(self, _request, response):

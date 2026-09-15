@@ -49,6 +49,7 @@ ros2 service call /robot_controller/go_home std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/pick_item std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/stop std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/set_debug_images std_srvs/srv/SetBool '{data: true}'
+ros2 service call /robot_controller/set_global_speed dobot_msgs_v4/srv/SpeedFactor '{ratio: 50}'
 ```
 
 In the GUI, Home/Pick while Live is OFF preview TFs. Setting Live ON performs the one-time
@@ -59,6 +60,26 @@ it removes the controller's command clients but does not send DisableRobot.
 Every later GUI Live ON runs initialization again. Headless automatically starts
 Live, rejects Live OFF and never automatically homes or picks. Do not run Motion
 Debug or Gripper Control while Live is ON.
+
+The **Global speed** slider sets SpeedFactor from 1–100%, independently of the
+item profile's per-command `v=` and `a=` values. Mouse changes apply after release;
+keyboard changes apply after a 300 ms pause. Each request waits for the actual
+robot response before another setting/action can proceed. No motion is issued
+by the slider, and taught speeds/acceleration are not rewritten.
+It is available only with Live ON, completed startup and an idle READY/HOLDING/
+NO_PICK controller. Startup, motion, Stop recovery, pending responses, stale/
+faulted/paused feedback or nonzero user/tool reject changes. A held item must
+retain DI1 while the setting response is awaited. Normal command serialization
+and independent safety Stop remain intact.
+The shared headless service above returns `res: 0` only after success; `res: -1`
+means rejection/failure, with the precise reason on status/events. A failed or
+ambiguous accepted setting blocks further actions without an automatic retry.
+Status reports `global_speed_percent` and `global_speed_message`; the factor is
+null while unknown or Live OFF, not a guessed readback. It is the acknowledged
+command factor, not measured motion speed. The slider is a transient robot
+command, not reusable setup: it is not saved to Item Teach, `.env` or UI prefill,
+and every Live initialization explicitly resets SpeedFactor to 100%.
+Reduced global speed does not extend motion deadlines or candidate freshness.
 
 Schema 6 retains its historical non-executing controller_contract as validation
 metadata, not movement permission. Only explicit Live ON plus an action service
@@ -226,6 +247,8 @@ result-age and request-deadline checks, so saving cannot make expired targets va
   action acceptance or cancellation; follow status for asynchronous completion.
 - `/robot_controller/enable_robot` (Trigger): explicit Live-only enable/readiness
   confirmation after settings completed, with no motion or startup replay.
+- `/robot_controller/set_global_speed` (dobot_msgs_v4/SpeedFactor): Live/idle-only
+  integer ratio 1–100; res=0 after successful robot response, otherwise -1.
 - `/robot_controller/set_live` (SetBool): shared GUI/headless actuation gate. True
   begins GUI initialization; false returns GUI to TF-only mode only while
   idle/not holding. Headless starts true and rejects false.
@@ -233,6 +256,7 @@ result-age and request-deadline checks, so saving cannot make expired targets va
   RGB/depth pair per requested candidate batch, independently of Live.
 - `/robot_controller/status` (String JSON): transient-local state, holding status,
   explicit Live/headless mode, `startup_settings_applied`, `debug_images`,
+  `global_speed_percent`, `global_speed_message`,
   `debug_capture_status`, validation
   summary and debug TF frame names.
 - `/robot_controller/request_item_poses`: retained explicit read-only batch request.
