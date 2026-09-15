@@ -2807,6 +2807,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   robot/camera/RViz/model was launched or commanded; empty-`mdis` firmware
   acceptance remains the explicit supervised commissioning follow-up.
 
+### 2026-09-15 — Cached Home reference and measured endpoint tolerances
+
+- A real Home request was blocked before motion because the controller compared
+  canonical CR10 FK from the live joint stream with GetPose(user=0,tool=0), and
+  those Cartesian representations did not agree within the former 2 mm/0.5
+  degree gate. The operator clarified that taught Home joints are authoritative
+  for the final Home target while GetPose is authoritative for the current
+  Cartesian pose used to select the conditional vertical-clearance branch.
+- Rule 62 supersedes the live GetPose/current-joint-FK agreement requirements in
+  rules 59–61. On a successful Item Teach load, calculate and cache canonical FK
+  from the six taught Home joints. Use that cached transform only as Home/pick
+  planning geometry; do not recalculate it during actions or compare it with
+  GetPose. Keep the exact cached joint tuple beside it so a changed profile is
+  rejected until explicitly reloaded.
+- A joint-mode MovLIO Home is complete only after fresh sole-publisher
+  `/joint_states` puts every joint within plus/minus one degree of the taught
+  value and fresh enabled/fault-free/queue-idle/stationary feedback remains
+  coherent. Its Cartesian FeedInfo/GetPose position is not an additional Home
+  arrival gate. Cartesian MovLIO/RelMovLUser terminal targets instead use 5 mm
+  translation and one degree rotation against actual FeedInfo
+  `tool_vector_actual`, plus the same feedback gates. Successful service
+  acknowledgement alone never means arrival.
+- Exact taught-joint model/FK validation, target rigidity, relative upward-only
+  Home geometry, response serialization, timeouts, suction/Stop handling,
+  user/tool zero, debug TF-only operation, and empty-I/O MovLIO remain unchanged.
+  Verification is synthetic/offscreen only; no physical robot, camera, RViz or
+  operator model may be launched or commanded for this change.
+- Verification completed: all 232 controller synthetic/offscreen pytest cases
+  pass through the package CTest wrapper (zero errors/failures/skips), including
+  mismatched live GetPose/FK acceptance, cached profile Home, and both sides of
+  the joint/Cartesian tolerance boundaries. Controller Python compiles and all
+  package Python/tests pass ament_flake8. The package build and root build finish
+  successfully, with all 14 packages built, and `git diff --check` is clean. No
+  physical robot, camera, RViz or operator model was launched or commanded.
+
 ### Future entry template
 
 ```text

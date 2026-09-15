@@ -164,7 +164,9 @@ def test_return_is_one_queue_including_conditional_home_rise_and_joint_home(monk
     upward = list(plan()[4:])
     upward[0] = replace(upward[0], motion_io=(MotionIO(100, 14, False), MotionIO(100, 2, True)))
     node = NS(check_cancelled=MagicMock(), kinematics=transport.node.kinematics,
-              debug=False, hardware=transport)
+              debug=False, hardware=transport, home_reference=home,
+              home_reference_joints=tuple(cfg["home"]["positions_rad"]))
+    node._loaded_home_reference = controller.RobotController._loaded_home_reference.__get__(node)
     targets = controller.RobotController.home(node, cfg, preceding=upward, require_suction=True)
     assert [name for name, _, _ in state.sent] == [
         "MovLIO", "MovLIO", "RelMovLUser", "MovLIO"]
@@ -266,7 +268,8 @@ def test_moving_vendor_status_is_not_idle_but_requires_explicit_enable_flag(mode
     feed = {"robot_mode": mode, "EnableStatus": enabled, "ErrorStatus": 0,
             "CollisionStates": 0, "isPauseCmdFlag": 0, "userCoordinate": 0,
             "toolCoordinate": 0}
-    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(),
+              current_joints=MagicMock(),
               robot_feedback=(True, False, now), controller_progress_at=now,
               feed_feedback=(feed, now), feed_sequence=3)
     if not enabled:
@@ -280,7 +283,8 @@ def test_idle_vendor_disabled_status_still_blocks_even_with_enable_flag():
     now = hardware.time.monotonic()
     feed = {"robot_mode": 5, "EnableStatus": 1, "ErrorStatus": 0, "CollisionStates": 0,
             "isPauseCmdFlag": 0, "userCoordinate": 0, "toolCoordinate": 0}
-    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(),
+              current_joints=MagicMock(),
               robot_feedback=(True, False, now), controller_progress_at=now,
               feed_feedback=(feed, now), feed_sequence=3)
     with pytest.raises(ValueError, match="RobotStatus.is_enable=False"):

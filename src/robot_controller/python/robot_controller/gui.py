@@ -144,6 +144,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.node.clear_preview()
         self.node.selection = None
         self.node.profile_path = None
+        self.node.home_reference = None
+        self.node.home_reference_joints = None
 
     def browse(self, edit, directory):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(

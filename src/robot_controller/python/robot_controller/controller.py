@@ -127,13 +127,16 @@ class RobotController(Node):
         self.tf_broadcaster = TransformBroadcaster(self)
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
         from dobot_msgs_v4.msg import RobotStatus
-        self.create_subscription(RobotStatus, "/dobot_msgs_v4/msg/RobotStatus", self._on_status, 10)
+        self.create_subscription(
+            RobotStatus, "/dobot_msgs_v4/msg/RobotStatus", self._on_status, 10)
         self.create_subscription(String, "/dobot_bringup_ros2/msg/FeedInfo", self._on_feed, 10)
         self.summary = {
             "state": "UNCONFIGURED", "execution_enabled": False,
             "inference_enabled": False, "message": "Select an item profile explicitly.",
         }
         self.profile_path = None
+        self.home_reference = None
+        self.home_reference_joints = None
         self.pose_lock = threading.Lock()
         self.pose_client = self.create_client(GetItemPoses, "/item_detect/get_item_poses")
         self.publisher = self.create_publisher(
@@ -146,7 +149,8 @@ class RobotController(Node):
         bin_path = self.declare_parameter("bin_teach_file", "").value
         if self.headless:
             if selected or bin_path:
-                raise ValueError("Headless loads runtime_teach/; explicit file overrides forbidden")
+                raise ValueError(
+                    "Headless loads runtime_teach/; explicit file overrides forbidden")
             self.selection = runtime_selection(self.root)
             self._load(self.selection.item_path)
         elif selected:
@@ -191,8 +195,12 @@ class RobotController(Node):
             Path(path), root=self.root, robot_ip=self.robot_ip, publisher_node=self.publisher_node,
             deployment=self.headless,
         )
+        home_joints = tuple(summary["home"]["positions_rad"])
+        home_reference = self.kinematics.forward(home_joints)
         self.summary = summary
         self.profile_path = Path(path).resolve()
+        self.home_reference = home_reference
+        self.home_reference_joints = home_joints
         self.events.record("INFO", "profile_validated", summary["message"],
                            profile_sha256=summary["profile_sha256"], path=str(self.profile_path))
         self._publish()
@@ -241,6 +249,8 @@ class RobotController(Node):
                 self.clear_preview()
                 self.selection = None
                 self.profile_path = None
+                self.home_reference = None
+                self.home_reference_joints = None
             self._publish()
             response.success, response.message = False, str(exc)
         else:
@@ -366,8 +376,10 @@ class RobotController(Node):
                 ids.add(candidate.id)
                 previous_distance = candidate.center_distance
                 targets.append({"id": candidate.id, "priority": candidate.priority,
-                                "position_m": [p.x, p.y, p.z], "quaternion": [q.x, q.y, q.z, q.w],
-                                "class_id": candidate.class_id, "confidence": candidate.confidence})
+                                "position_m": [p.x, p.y, p.z],
+                                "quaternion": [q.x, q.y, q.z, q.w],
+                                "class_id": candidate.class_id,
+                                "confidence": candidate.confidence})
             summary = {"batch_id": result.batch_id, "status": result.status,
                        "frame": "platform_reference", "targets": targets,
                        "execution_enabled": False, "profile_sha256": digest,
@@ -555,7 +567,8 @@ class RobotController(Node):
             response.success, response.message = False, "Controller operation active"
             return response
         if self.holding_item:
-            response.success, response.message = False, "Cannot turn Live OFF while holding an item"
+            response.success, response.message = (
+                False, "Cannot turn Live OFF while holding an item")
             return response
         if not self.action_lock.acquire(blocking=False):
             response.success, response.message = False, "Controller action busy"
@@ -625,7 +638,8 @@ class RobotController(Node):
                         or self.hardware.moving or self.cancel.is_set()
                         or (self.action_thread is not None and self.action_thread.is_alive())
                         or (self.stop_thread is not None and self.stop_thread.is_alive())):
-                    raise ValueError("Global speed requires an idle controller; no active recovery")
+                    raise ValueError(
+                        "Global speed requires an idle controller; no active recovery")
                 if self.stop_future is not None and not self.stop_future.done():
                     raise ValueError("Stop response pending; global speed not sent")
                 acquired = self.action_lock.acquire(blocking=False)
@@ -797,9 +811,15 @@ class RobotController(Node):
             self.action_lock.release()
             raise
 
+    def _loaded_home_reference(self, profile):
+        home_joints = tuple(profile["home"]["positions_rad"])
+        if (self.home_reference is None or self.home_reference_joints != home_joints):
+            raise ValueError("Loaded Home FK reference is unavailable or does not match profile")
+        return self.home_reference.copy()
+
     def home(self, profile, *, require_suction=False, forbid_suction=False, preceding=()):
         self.check_cancelled()
-        home = self.kinematics.forward(profile["home"]["positions_rad"])
+        home = self._loaded_home_reference(profile)
         current = (preceding[-1].matrix if preceding else
                    self.kinematics.forward(self.current_joints()) if self.debug else
                    self.hardware.current_pose())
@@ -848,7 +868,7 @@ class RobotController(Node):
                 raise ValueError(f"Candidate {index} expired; explicitly request another pick")
 
         check(1)
-        home = self.kinematics.forward(profile["home"]["positions_rad"])
+        home = self._loaded_home_reference(profile)
         plans = []
         for index, candidate in enumerate(batch["targets"], 1):
             xyz = self.selection.station.platform.base_from_platform @ np.array(

@@ -14,6 +14,9 @@ from .motion import pose_reached
 SERVICE_TIMEOUT_SEC = 5.0
 MOTION_TIMEOUT_SEC = 30.0
 STATIONARY_SEC = 0.3
+CARTESIAN_POSITION_TOLERANCE_M = 0.005
+CARTESIAN_ORIENTATION_TOLERANCE_DEG = 1.0
+HOME_JOINT_TOLERANCE_RAD = math.radians(1.0)
 
 
 class ResponsePending(ValueError):
@@ -318,11 +321,17 @@ class DobotHardware:
                 or snapshot["feed"]["robot_mode"] != 5):
             raise ValueError("Current-pose acquisition requires stationary enabled robot")
         result = self.call("GetPose", user=0, tool=0)
-        matrix = pose_matrix(robot_values(result.robot_return))
-        modeled = self.node.kinematics.forward(self.node.current_joints())
-        if not pose_reached(modeled, matrix, translation_m=0.002, rotation_deg=0.5):
-            raise ValueError("CR10 FK does not match GetPose(user=0,tool=0); motion blocked")
-        return matrix
+        return pose_matrix(robot_values(result.robot_return))
+
+    def _target_reached(self, target, actual_pose):
+        if target.joints_rad is not None:
+            return max(abs(actual-target_value) for actual, target_value in zip(
+                self.node.current_joints(), target.joints_rad)) <= HOME_JOINT_TOLERANCE_RAD
+        return pose_reached(
+            actual_pose, target.matrix,
+            translation_m=CARTESIAN_POSITION_TOLERANCE_M,
+            rotation_deg=CARTESIAN_ORIENTATION_TOLERANCE_DEG,
+        )
 
     def _target_values(self, target):
         """Validate target data and exact taught joints without a vendor IK call."""
@@ -376,7 +385,7 @@ class DobotHardware:
             raise ValueError("Motion batch cannot be empty")
         if sum((require_suction, forbid_suction, stop_on_suction)) > 1:
             raise ValueError("Motion batch suction policies are mutually exclusive")
-        start = self.current_pose()  # Includes current GetPose versus canonical FK validation.
+        start = self.current_pose()  # Canonical GetPose is the actual Cartesian queue origin.
         self.suction_stop, self.suction_interrupted = None, False
         suction_started = False
         expected_outputs = {}
@@ -445,10 +454,7 @@ class DobotHardware:
             if self.suction_interrupted:
                 return True
             feed = snapshot["feed"]
-            reached = pose_reached(pose_matrix(feed["tool_vector_actual"]), tail.matrix)
-            if tail.joints_rad is not None:
-                reached = reached and max(abs(a-b) for a, b in zip(
-                    self.node.current_joints(), tail.joints_rad)) <= 0.005
+            reached = self._target_reached(tail, pose_matrix(feed["tool_vector_actual"]))
             if (snapshot["sequence"] <= before or not reached or feed["isRunQueuedCmd"]
                     or feed["RunningStatus"] or feed["robot_mode"] != 5):
                 stable_since = None
@@ -515,7 +521,8 @@ class DobotHardware:
                 np.rad2deg(target.joints_rad))
             self.call("MovLIO", mode=target.joints_rad is not None,
                       **dict(zip("abcdef", map(float, command_values))),
-                      mdis=[event.vendor_value() for event in target.motion_io], param_value=params,
+                      mdis=[event.vendor_value() for event in target.motion_io],
+                      param_value=params,
                       monitor_suction=stop_on_suction, require_clear=require_clear)
         stable_since = None
         suction_detected = False
@@ -530,10 +537,8 @@ class DobotHardware:
                 return True
             if require_suction and not s["feed"]["digital_input_bits"] & 1:
                 raise ValueError("Suction lost during retract/Home")
-            reached = pose_reached(pose_matrix(s["feed"]["tool_vector_actual"]), target.matrix)
-            if target.joints_rad is not None:
-                pairs = zip(self.node.current_joints(), target.joints_rad)
-                reached = reached and max(abs(a-b) for a, b in pairs) <= 0.005
+            reached = self._target_reached(
+                target, pose_matrix(s["feed"]["tool_vector_actual"]))
             if (s["sequence"] <= before or not reached or s["feed"]["isRunQueuedCmd"]
                     or s["feed"]["RunningStatus"] or s["feed"]["robot_mode"] != 5):
                 stable_since = None

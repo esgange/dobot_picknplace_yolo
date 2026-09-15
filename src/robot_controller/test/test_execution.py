@@ -548,7 +548,8 @@ def test_live_startup_di1_on_does_not_send_initialization_calls(monkeypatch):
     assert all(client.call_async.call_count == 0 for client in transport.clients.values())
 
 
-def test_final_readiness_waits_for_transient_disabled_feedback_without_another_command(monkeypatch):
+def test_final_readiness_waits_for_transient_disabled_feedback_without_another_command(
+        monkeypatch):
     transport, _, _, clock = synthetic_transport(monkeypatch)
     original = transport.node.feedback_snapshot
     first_read = []
@@ -747,7 +748,11 @@ def test_controller_home_uses_loaded_profile_motion_rates(pair):
     profile["acceleration"]["travel_percent"] = 73
     fake = FakeHardware()
     fake.pose = model().forward(profile["home"]["positions_rad"])
-    node = NS(check_cancelled=lambda: None, kinematics=model(), debug=False, hardware=fake)
+    node = NS(check_cancelled=lambda: None, kinematics=model(), debug=False, hardware=fake,
+              home_reference=fake.pose.copy(),
+              home_reference_joints=tuple(profile["home"]["positions_rad"]))
+    node._loaded_home_reference = MethodType(
+        controller.RobotController._loaded_home_reference, node)
     targets = controller.RobotController.home(node, profile)
     assert [(t.speed_percent, t.acceleration_percent) for t in targets] == [(42, 73)]
     assert [v[4:] for v in fake.trace if v[0] == "move"] == [(42, 73)]
@@ -831,6 +836,36 @@ def test_getpose_nonzero_res_blocks_even_with_valid_payload(monkeypatch):
     transport.clients["MovLIO"].call_async.assert_not_called()
 
 
+def test_getpose_is_actual_pose_without_live_joint_fk_equality_gate(monkeypatch):
+    transport, _, _, _ = synthetic_transport(monkeypatch)
+    raw = "{426.8984,-584.7478,515.9540,177.0174,19.8563,-149.2425}"
+    future = Future()
+    future.set_result(NS(res=0, robot_return=raw))
+    transport.clients["GetPose"].call_async.return_value = future
+    transport.node.kinematics.forward = MagicMock(
+        side_effect=AssertionError("current_pose must not recalculate live FK"))
+    np.testing.assert_allclose(pose_values(transport.current_pose()),
+                               [426.8984, -584.7478, 515.9540,
+                                177.0174, 19.8563, -149.2425])
+
+
+def test_completion_tolerances_distinguish_cartesian_and_joint_targets(monkeypatch):
+    transport, _, pose, _ = synthetic_transport(monkeypatch)
+    cartesian = replace(plan()[0], matrix=pose_matrix([0, 0, 0, 0, 0, 0]))
+    assert transport._target_reached(cartesian, pose_matrix([4.9, 0, 0, 0, 0, .9]))
+    assert not transport._target_reached(cartesian, pose_matrix([5.1, 0, 0, 0, 0, 0]))
+    assert not transport._target_reached(cartesian, pose_matrix([0, 0, 0, 0, 0, 1.1]))
+
+    taught = (.1,) * 6
+    joint_target = home_plan(pose, pose, taught)[-1]
+    transport.node.current_joints = lambda: tuple(
+        value + math.radians(.99) for value in taught)
+    assert transport._target_reached(joint_target, pose_matrix([999, 999, 999, 90, 0, 0]))
+    transport.node.current_joints = lambda: tuple(
+        value + math.radians(1.01) for value in taught)
+    assert not transport._target_reached(joint_target, pose)
+
+
 def test_ui_prefill_is_strict_unapplied_and_atomic(tmp_path):
     path = tmp_path / "last_session.json"
     assert ui_state.load_state(path) is None
@@ -900,7 +935,7 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
     import rclpy
     from PyQt5 import QtWidgets
     from robot_controller.gui import ControllerWindow
-    root, path, _ = pair
+    root, path, profile = pair
     monkeypatch.setattr(controller, "workspace_root", lambda: root)
     monkeypatch.setattr(controller, "load_robot_lan1_ip", lambda _: "192.168.20.204")
     monkeypatch.setattr(controller, "_parse_env_file", lambda _: {
@@ -919,6 +954,9 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         window.load_selected()
         assert window.home.isEnabled() and not window.pick.isEnabled()
         assert node.profile_path == path and node.action_thread is None
+        assert node.home_reference_joints == tuple(profile["home"]["positions_rad"])
+        np.testing.assert_allclose(
+            node.home_reference, node.kinematics.forward(profile["home"]["positions_rad"]))
         with pytest.raises(RuntimeError, match="Live is OFF"):
             node.check_command_owner("EnableRobot")
         assert set(window.service_clients) == {
@@ -996,12 +1034,16 @@ def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidate
               summary={"profile_sha256": digest}, selection=selected, action_lock=threading.Lock(),
               pose_client=MagicMock(), check_detector_owner=MagicMock(),
               kinematics=NS(forward=lambda _: home), current_joints=lambda: [.1]*6,
+              home_reference=home, home_reference_joints=tuple(
+                  profile["home"]["positions_rad"]),
               check_cancelled=MagicMock(), clear_preview=MagicMock(), install_preview=MagicMock(),
               set_execution_state=MagicMock(), events=MagicMock(),
               get_clock=lambda: NS(now=lambda: NS(nanoseconds=100_100_000_000)),
               _request_poses=lambda *_: NS(success=True, message=json.dumps(batch)))
     node.home = MethodType(controller.RobotController.home, node)
     node.pick = MethodType(controller.RobotController.pick, node)
+    node._loaded_home_reference = MethodType(
+        controller.RobotController._loaded_home_reference, node)
     node.action_lock.acquire()
     controller.RobotController._run_action(node, "pick")
     assert not node.action_lock.locked()
@@ -1027,7 +1069,8 @@ def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidate
 
 
 def test_feedback_staleness_includes_controller_timer_not_only_republished_feed():
-    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(),
+              current_joints=MagicMock(),
               robot_feedback=(True, True, hardware.time.monotonic()), feed_sequence=4,
               controller_progress_at=hardware.time.monotonic()-2,
               feed_feedback=({}, hardware.time.monotonic()))
@@ -1040,7 +1083,8 @@ def test_feedback_fault_and_nonzero_tool_block_execution():
     feed = {"robot_mode": 5, "EnableStatus": 1,
             "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
             "userCoordinate": 0, "toolCoordinate": 1}
-    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(),
+              current_joints=MagicMock(),
               robot_feedback=(True, True, now), controller_progress_at=now,
               feed_feedback=(feed, now), feed_sequence=3)
     with pytest.raises(ValueError, match="nonzero user/tool"):
@@ -1058,7 +1102,8 @@ def test_readiness_error_names_exact_feedback_blocker(field, value):
             "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
             "userCoordinate": 0, "toolCoordinate": 0}
     feed[field] = value
-    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(),
+              current_joints=MagicMock(),
               robot_feedback=(True, True, now), controller_progress_at=now,
               feed_feedback=(feed, now), feed_sequence=3)
     with pytest.raises(ValueError, match=f"{field}={value}"):
@@ -1071,7 +1116,8 @@ def test_readiness_error_lists_all_blockers_instead_of_generic_fault():
     feed = {"robot_mode": 4, "EnableStatus": 0,
             "ErrorStatus": 1, "CollisionStates": 0, "isPauseCmdFlag": 1,
             "userCoordinate": 0, "toolCoordinate": 2}
-    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
+    node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(),
+              current_joints=MagicMock(),
               robot_feedback=(True, False, now), controller_progress_at=now,
               feed_feedback=(feed, now), feed_sequence=3)
     with pytest.raises(ValueError) as failure:

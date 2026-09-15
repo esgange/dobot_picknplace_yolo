@@ -90,8 +90,9 @@ never resumed, and READY requires fresh idle/fault-free feedback. Live ON enable
 the robot during its ordered startup; a persistent readiness blocker triggers
 one guarded Stop, conditional ClearError and EnableRobot recovery. Stop / Clear
 also confirms a stationary, empty queue and re-enables when safe. With DI1 OFF
-and an unchanged loaded Home profile, it then uses fresh actual GetPose/FK to
-go Home; it never resumes a discarded queue or trusts an old EE target. A DI1-
+and an unchanged loaded Home profile, it then uses fresh actual GetPose and the
+profile-load-time cached Home FK reference to go Home; it never resumes a
+discarded queue or trusts an old EE target. A DI1-
 active/possibly held item instead follows the established last-prepick return
 policy, with no blind idle reset. If startup settings or global SpeedFactor are
 unknown, an explicit Stop / Clear re-runs the ordered initialization before
@@ -108,9 +109,14 @@ move and sends only the direct joint-mode Home target. Debug uses the same branc
 and therefore omits `robot_controller_debug_home_height` when it is unnecessary.
 The Dobot ROS bridge returns GetPose's six values alone in `robot_return`
 (for example `{x,y,z,rx,ry,rz}`); its separate `res` field carries the TCP
-error ID. The controller validates that pose against fresh joint FK before
-motion. It does not call InverseKin: taught Home joints use MovLIO joint input,
-and item waypoints use MovLIO Cartesian input directly. Both are linear moves.
+error ID. The controller treats that validated response as the actual Cartesian
+pose and does not compare it with current-joint FK. It caches taught-joint FK
+once when the profile loads, for Home Z/fixed-attitude planning only. Home
+completion requires each fresh actual joint within one degree of the taught
+value; Cartesian endpoints use 5 mm/one-degree tolerance. Both also require
+fresh enabled, stationary and queue-idle feedback. It does not call InverseKin:
+taught Home joints use MovLIO joint input, and item waypoints use MovLIO
+Cartesian input directly. Both are linear moves.
 No-I/O waypoints retain `MovLIO` with empty `mdis` at the operator's request;
 the manual's minimum-one-DO-event condition still needs supervised physical
 validation, without adding a fake tool command.

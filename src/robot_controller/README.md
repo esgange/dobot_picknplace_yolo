@@ -37,8 +37,9 @@ Live ON automatically executes the ordered startup EnableRobot. A persistent
 post-startup readiness blocker triggers one guarded Stop, conditional ClearError
 and EnableRobot attempt. Stop/Clear confirms the Stop reply, fresh stationary/
 empty queue feedback, conditionally clears a remaining alarm, re-enables, then
-uses the shared Home function from fresh actual GetPose/FK when DI1 is OFF and
-an unchanged Home profile is loaded. With no profile it re-enables without motion
+uses the shared Home function from fresh actual GetPose and the cached Home FK
+reference when DI1 is OFF and an unchanged Home profile is loaded. With no
+profile it re-enables without motion
 and asks the operator to load a Home; DI1 ON preserves the last-prepick return/
 release policy instead. If global SpeedFactor is unknown after a failed/ambiguous
 setting response, explicit Stop/Clear re-runs the complete ordered initialization
@@ -144,9 +145,11 @@ actions require enabled, fault-free feedback and user/tool 0. FeedInfo must
 include EnableStatus=1. Vendor RobotStatus.is_enable means idle mode 5, so its
 False value during moving modes 7/8 is not itself disabled feedback; the explicit
 EnableStatus remains mandatory. Idle readiness still requires RobotStatus enabled.
-Static canonical CR10 FK derives Home from the recorded joints;
-GetPose(user=0,tool=0) must agree with current-joint FK within 2 mm/0.5 degrees
-or movement is blocked. Exact taught Home joints remain model-limit/FK checked.
+Static canonical CR10 FK derives and caches Home once when the Item Teach profile
+is loaded. That cached transform supplies Home Z and fixed pick attitude as
+planning geometry only. A validated GetPose(user=0,tool=0) response is the live
+Cartesian pose; it is not rejected for disagreeing with live current-joint FK.
+Exact taught Home joints remain model-limit/FK checked before dispatch.
 Cartesian targets no longer call InverseKin for preflight: MovLIO receives the
 validated rigid pose directly, but no independent Cartesian reachability/joint
 branch is known before vendor acceptance. No guessed Home pose, live RViz
@@ -173,7 +176,11 @@ MovL substitution. The V4.6.5 manual calls for at least one DO tuple, so this
 selected behavior is pending supervised firmware validation.
 Wait for each service response before submitting the next waypoint, but do not
 wait for arrival between waypoints. Completion requires fresh whole-queue idle,
-stationary tail pose and exact Home joints, not service acceptance. Per-command
+stationary feedback and endpoint evidence, not service acceptance. A joint-form
+Home completes when all six fresh canonical actual joints are within plus/minus
+one degree of the taught joints. A Cartesian endpoint completes within 5 mm
+translation and one degree rotation using FeedInfo `tool_vector_actual`; Home
+does not additionally require a Cartesian FK/GetPose match. Per-command
 cp=0 preserves vertical corners/speed boundaries; startup CP remains 100%.
 The vendor MovLIO interface returns only res, not queue IDs: completion uses
 the sole owned queue's idle feedback plus its terminal pose/joints, never a
@@ -260,7 +267,8 @@ while Live is ON, sends canonical Stop. Recovery starts only after Stop acceptan
 fresh stationary/empty queue feedback and termination of the interrupted action.
 DI1 OFF conditionally clears remaining alarm feedback, re-enables and, when a
 validated loaded Home exists, plans the shared conditional-vertical Home from
-fresh actual GetPose/FK. Unexpected DI1 blocks that transit. Without a Home
+fresh actual GetPose and the cached profile-load-time Home FK reference.
+Unexpected DI1 blocks that transit. Without a Home
 profile, Stop/Clear re-enables only and reports the missing Home. DI1 ON requires
 the remembered last pre-pick target: keep suction active, return there, then set DO13 OFF and
 DO1 exhaust ON; with use_grip=true also set DO2 OFF and DO14 ON. A missing target,
