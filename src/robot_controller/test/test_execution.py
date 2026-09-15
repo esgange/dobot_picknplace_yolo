@@ -264,14 +264,15 @@ def synthetic_transport(monkeypatch):
     robot = model()
     pose = robot.forward([.1] * 6)
     feed = {"digital_input_bits": 0, "digital_outputs": 0, "EnableStatus": 1, "isRunQueuedCmd": 0,
-            "RunningStatus": 0, "robot_mode": 5, "tool_vector_actual": pose_values(pose)}
+            "RunningStatus": 0, "robot_mode": 5, "tool_vector_actual": pose_values(pose),
+            "isPauseCmdFlag": 0, "ErrorStatus": 0, "CollisionStates": 0}
     sequence = [0]
 
     def snapshot(**_):
         sequence[0] += 1
         return {"feed": feed, "enabled": feed["robot_mode"] == 5, "sequence": sequence[0]}
     node = NS(check_cancelled=MagicMock(), check_command_owner=MagicMock(),
-              cancel=threading.Event(),
+              cancel=threading.Event(), holding_item=False,
               feedback_snapshot=snapshot, current_joints=lambda: [.1] * 6, kinematics=robot,
               events=MagicMock(), set_execution_state=MagicMock())
     transport = object.__new__(hardware.DobotHardware)
@@ -279,8 +280,9 @@ def synthetic_transport(monkeypatch):
     transport.response_lock = threading.Lock()
     transport.pending_response = None
     transport.suction_stop, transport.suction_interrupted = None, False
-    names = ("Stop", "StopMoveJog", "DisableRobot", "EnableRobot", "SpeedFactor", "Tool",
-             "SetTool", "CP", "DO", "GetPose", "InverseKin", "MovLIO", "RelMovLUser")
+    names = ("Stop", "StopMoveJog", "DisableRobot", "EnableRobot", "ClearError",
+             "SpeedFactor", "Tool", "SetTool", "CP", "DO", "GetPose", "InverseKin",
+             "MovLIO", "RelMovLUser")
     transport.types = {name: NS(Request=lambda **fields: NS(**fields)) for name in names}
     transport.clients = {name: MagicMock() for name in names}
     for name, client in transport.clients.items():
@@ -420,9 +422,124 @@ def test_startup_calls_complete_but_paused_feedback_does_not_claim_ready(monkeyp
     transport.node.feedback_snapshot = snapshot
     transport.initialize()
     transport.clients["CP"].call_async.assert_called_once()
-    assert transport.node.set_execution_state.call_args.args == (
-        "FAILED", "Startup calls completed; Robot readiness blocked: isPauseCmdFlag=1")
+    assert transport.node.set_execution_state.call_args.args[0] == "FAILED"
+    assert "isPauseCmdFlag=1" in transport.node.set_execution_state.call_args.args[1]
+    transport.clients["Stop"].call_async.assert_called_once()
+    assert transport.clients["EnableRobot"].call_async.call_count == 2
     assert transport.node.startup_settings_applied
+
+
+def test_paused_live_recovery_cancels_queue_then_enables_without_continue(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["isPauseCmdFlag"] = 1
+    original = transport.node.feedback_snapshot
+
+    def snapshot(*, enabled):
+        if enabled and feed["isPauseCmdFlag"]:
+            raise ValueError("Robot readiness blocked: isPauseCmdFlag=1")
+        return original(enabled=enabled)
+
+    def stop(_request):
+        feed["isPauseCmdFlag"] = 0
+        return transport.clients["Stop"].default_future
+
+    future = Future()
+    future.set_result(NS(res=0))
+    transport.clients["Stop"].default_future = future
+    transport.clients["Stop"].call_async.side_effect = stop
+    transport.node.feedback_snapshot = snapshot
+    transport.recover_idle(stop_already_confirmed=False)
+    transport.clients["Stop"].call_async.assert_called_once()
+    transport.clients["EnableRobot"].call_async.assert_called_once()
+    transport.clients["ClearError"].call_async.assert_not_called()
+    assert "Continue" not in transport.clients
+
+
+def test_error_recovery_clears_then_enables_only_after_fresh_fault_clear(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["robot_mode"], feed["ErrorStatus"] = 9, 1
+    sent = []
+
+    def send(name):
+        sent.append(name)
+        if name == "ClearError":
+            feed["robot_mode"], feed["ErrorStatus"] = 4, 0
+        elif name == "EnableRobot":
+            feed["robot_mode"] = 5
+        future = Future()
+        future.set_result(NS(res=0))
+        return future
+
+    for name in ("Stop", "ClearError", "EnableRobot"):
+        transport.clients[name].call_async.side_effect = lambda _, n=name: send(n)
+    transport.recover_idle(stop_already_confirmed=False)
+    assert sent == ["Stop", "ClearError", "EnableRobot"]
+
+
+def test_persistent_error_after_clear_prompts_and_never_enables(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["robot_mode"], feed["ErrorStatus"] = 9, 1
+    with pytest.raises(ValueError, match="emergency stop is pressed"):
+        transport.recover_idle(stop_already_confirmed=False)
+    transport.clients["Stop"].call_async.assert_called_once()
+    transport.clients["ClearError"].call_async.assert_called_once()
+    transport.clients["EnableRobot"].call_async.assert_not_called()
+
+
+def test_unanswered_clear_error_never_dispatches_enable_or_auto_advances(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["robot_mode"], feed["ErrorStatus"] = 9, 1
+    pending = Future()
+    transport.clients["ClearError"].call_async.return_value = pending
+    with pytest.raises(hardware.ResponsePending, match="ClearError response timeout"):
+        transport.recover_idle(stop_already_confirmed=False)
+    transport.clients["EnableRobot"].call_async.assert_not_called()
+    pending.set_result(NS(res=0))
+    transport.clients["EnableRobot"].call_async.assert_not_called()
+
+
+def test_stop_ack_without_empty_stationary_queue_never_clears_or_enables(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["isRunQueuedCmd"] = 1
+    with pytest.raises(ValueError, match="Stop did not confirm stationary robot"):
+        transport.recover_idle(stop_already_confirmed=False)
+    transport.clients["ClearError"].call_async.assert_not_called()
+    transport.clients["EnableRobot"].call_async.assert_not_called()
+
+
+def test_idle_recovery_never_clears_alarm_or_enables_with_di1(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["digital_input_bits"] = 1
+    with pytest.raises(ValueError, match="DI1/held item"):
+        transport.recover_idle(stop_already_confirmed=True)
+    transport.clients["ClearError"].call_async.assert_not_called()
+    transport.clients["EnableRobot"].call_async.assert_not_called()
+
+
+def test_late_di1_after_clear_error_response_blocks_enable(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["robot_mode"], feed["ErrorStatus"] = 9, 1
+
+    def clear(_request):
+        feed["robot_mode"], feed["ErrorStatus"] = 4, 0
+        feed["digital_input_bits"] = 1
+        future = Future()
+        future.set_result(NS(res=0))
+        return future
+
+    transport.clients["ClearError"].call_async.side_effect = clear
+    with pytest.raises(ValueError, match="DI1/held item"):
+        transport.recover_idle(stop_already_confirmed=False)
+    transport.clients["ClearError"].call_async.assert_called_once()
+    transport.clients["EnableRobot"].call_async.assert_not_called()
+
+
+def test_live_startup_di1_on_does_not_send_initialization_calls(monkeypatch):
+    transport, feed, _, _ = synthetic_transport(monkeypatch)
+    feed["digital_input_bits"] = 1
+    with pytest.raises(ValueError, match="DI1/held item active at Live startup"):
+        transport.initialize()
+    assert all(client.call_async.call_count == 0 for client in transport.clients.values())
 
 
 def test_final_readiness_waits_for_transient_disabled_feedback_without_another_command(monkeypatch):
@@ -479,8 +596,10 @@ def test_explicit_enable_never_bypasses_blocked_feedback_or_retries(blocker, mon
 
 def enable_service_node():
     feed = {"robot_mode": 4, "ErrorStatus": 0, "CollisionStates": 0,
-            "isRunQueuedCmd": 0, "RunningStatus": 0, "digital_input_bits": 0}
-    node = NS(live=True, debug=False, startup_settings_applied=True, holding_item=False,
+            "isRunQueuedCmd": 0, "RunningStatus": 0, "digital_input_bits": 0,
+            "isPauseCmdFlag": 0, "userCoordinate": 0, "toolCoordinate": 0}
+    node = NS(live=True, debug=False, startup_settings_applied=True,
+              global_speed_percent=100, holding_item=False,
               fatal_error=None, shutdown_requested=threading.Event(),
               state_lock=threading.RLock(), action_lock=threading.Lock(),
               action_thread=None, stop_thread=None, stop_future=None, cancel=threading.Event(),
@@ -504,9 +623,18 @@ def test_enable_service_can_recover_disabled_after_completed_startup_without_tea
     assert not node.cancel.is_set()
 
 
+def test_enable_only_service_cannot_bypass_unknown_global_speed():
+    node, _ = enable_service_node()
+    node.global_speed_percent = None
+    response = controller.RobotController._enable_robot_service(node, None, NS())
+    assert not response.success and "SpeedFactor is unknown" in response.message
+    node.hardware.enable_robot.assert_not_called()
+
+
 @pytest.mark.parametrize("blocker", [
     "live_off", "startup", "holding", "moving", "action", "recovery", "fault", "collision",
-    "queued", "running", "suction", "mode", "stale", "owner", "stop_pending", "shutdown",
+    "queued", "running", "paused", "user", "tool", "suction", "mode", "stale",
+    "owner", "stop_pending", "shutdown",
 ])
 def test_enable_service_rejects_unsafe_or_incomplete_states_before_dispatch(blocker):
     node, feed = enable_service_node()
@@ -521,9 +649,12 @@ def test_enable_service_rejects_unsafe_or_incomplete_states_before_dispatch(bloc
     elif blocker in ("action", "recovery"):
         setattr(node, "action_thread" if blocker == "action" else "stop_thread",
                 NS(is_alive=lambda: True))
-    elif blocker in ("fault", "collision", "queued", "running", "suction", "mode"):
+    elif blocker in ("fault", "collision", "queued", "running", "paused",
+                     "user", "tool", "suction", "mode"):
         fields = {"fault": "ErrorStatus", "collision": "CollisionStates",
                   "queued": "isRunQueuedCmd", "running": "RunningStatus",
+                  "paused": "isPauseCmdFlag", "user": "userCoordinate",
+                  "tool": "toolCoordinate",
                   "suction": "digital_input_bits", "mode": "robot_mode"}
         key = fields[blocker]
         feed[key] = 7 if blocker == "mode" else 1
@@ -767,8 +898,8 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         with pytest.raises(RuntimeError, match="Live is OFF"):
             node.check_command_owner("EnableRobot")
         assert set(window.service_clients) == {
-            "home", "pick", "stop", "live", "debug_images", "enable", "global_speed"}
-        assert not window.enable.isEnabled()  # Live OFF can never enable hardware.
+            "home", "pick", "stop", "live", "debug_images", "global_speed"}
+        assert not hasattr(window, "enable")  # Enable is part of Live/Stop, not a button.
         invoke = MagicMock()
         window._call_service = invoke
         window.home.click()
@@ -786,9 +917,24 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         node.startup_settings_applied = True
         node.execution_state = "FAILED"
         window.refresh()
-        assert window.enable.isEnabled()
-        window.enable.click()
-        assert invoke.call_args.args[0] == "enable"
+        assert window.home.isEnabled() and not hasattr(window, "enable")
+        window.home.click()
+        assert invoke.call_args.args[0] == "home"
+        assert window.stop.text() == "Stop / Clear"
+        popup = MagicMock()
+        monkeypatch.setattr(QtWidgets.QMessageBox, "warning", popup)
+        failure = Future()
+        failure.set_result(controller.Trigger.Response(
+            success=False, message="Robot readiness blocked: isPauseCmdFlag=1"))
+        window.pending_calls["home"] = failure
+        window._collect_service_results()
+        assert "isPauseCmdFlag=1" in popup.call_args.args[2]
+        node.execution_message = ("Stop/recovery failed: Error remains after ClearError; "
+                                  "check emergency stop")
+        window.refresh()
+        assert popup.call_count == 2
+        window.refresh()
+        assert popup.call_count == 2  # Only one prompt per failed recovery state.
         node.hardware = None
         node.live, node.debug = False, True
     finally:
@@ -797,6 +943,16 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         node.close_runtime()
         node.destroy_node()
         rclpy.shutdown()
+
+
+def test_home_and_pick_report_recovery_blocker_without_motion():
+    node = NS(profile_path=Path("item.yaml"), execution_state="FAILED",
+              execution_message="Stop recovery failed", live=True, hardware=NS(),
+              feedback_snapshot=MagicMock(side_effect=ValueError(
+                  "Robot readiness blocked: isPauseCmdFlag=1")))
+    for action in ("home", "pick"):
+        with pytest.raises(ValueError, match="isPauseCmdFlag=1.*emergency stop"):
+            controller.RobotController.start_action(node, action)
 
 
 def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidates(pair):
@@ -1062,10 +1218,13 @@ def test_live_service_constructs_initializes_and_removes_transport(pair, monkeyp
 def test_operator_stop_confirms_stationary_and_conditionally_returns_item(suction, monkeypatch):
     monkeypatch.setattr(controller.rclpy, "ok", lambda: True)
     target = plan()[2]
-    transport = NS(confirm_stop=MagicMock(), move=MagicMock(), output=MagicMock())
+    transport = NS(confirm_stop=MagicMock(), recover_idle=MagicMock(),
+                   move=MagicMock(), output=MagicMock())
     node = NS(hardware=transport, action_lock=threading.Lock(), cancel=threading.Event(),
               stop_future=object(), last_prepick=target, last_gripper=settings()["gripper"],
-              holding_item=False, state_lock=threading.RLock(), events=MagicMock(),
+              holding_item=False, startup_settings_applied=True, global_speed_percent=100,
+              profile_path=None,
+              state_lock=threading.RLock(), events=MagicMock(),
               stop_recovery_abort=threading.Event(), shutdown_requested=threading.Event(),
               feedback_snapshot=MagicMock(return_value={
                   "feed": {"digital_input_bits": int(suction)}}),
@@ -1084,9 +1243,64 @@ def test_operator_stop_confirms_stationary_and_conditionally_returns_item(suctio
     else:
         transport.move.assert_not_called()
         transport.output.assert_not_called()
+        transport.recover_idle.assert_called_once_with(stop_already_confirmed=True)
         assert node.set_execution_state.call_args.args == (
-            "READY", "Stopped; DI1 is OFF, no return motion")
+            "READY", "Stop/Clear confirmed; robot re-enabled. "
+            "Load Item Teach for Home recovery")
     assert not node.cancel.is_set() and not node.action_lock.locked()
+
+
+def test_stop_clear_home_uses_loaded_profile_after_reenable_without_resume(monkeypatch):
+    monkeypatch.setattr(controller.rclpy, "ok", lambda: True)
+    profile = {"home": {"positions_rad": [.1] * 6}}
+    monkeypatch.setattr(controller, "load_item_profile", lambda *_args, **_kw: (profile, "sha"))
+    transport = NS(confirm_stop=MagicMock(), recover_idle=MagicMock(),
+                   move=MagicMock(), output=MagicMock())
+    stop_future = object()
+    node = NS(hardware=transport, action_lock=threading.Lock(), cancel=threading.Event(),
+              stop_future=stop_future, last_prepick=None, last_gripper=None, holding_item=False,
+              startup_settings_applied=True, global_speed_percent=100,
+              profile_path=Path("item.yaml"), root=Path("."),
+              headless=False, summary={"profile_sha256": "sha"}, home=MagicMock(),
+              state_lock=threading.RLock(), events=MagicMock(),
+              stop_recovery_abort=threading.Event(), shutdown_requested=threading.Event(),
+              feedback_snapshot=MagicMock(return_value={"feed": {"digital_input_bits": 0}}),
+              set_execution_state=MagicMock())
+    node.cancel.set()
+    controller.RobotController._complete_operator_stop(node, stop_future, None)
+    transport.confirm_stop.assert_called_once_with(stop_future, allow_not_ready=True)
+    transport.recover_idle.assert_called_once_with(stop_already_confirmed=True)
+    node.home.assert_called_once_with(profile, forbid_suction=True)
+    transport.move.assert_not_called()  # No last-prepick return path is used.
+    transport.output.assert_not_called()
+    assert node.set_execution_state.call_args.args == (
+        "READY", "Stop/Clear confirmed; Home completed")
+
+
+def test_stop_clear_reinitializes_unknown_speed_only_as_explicit_action(monkeypatch):
+    monkeypatch.setattr(controller.rclpy, "ok", lambda: True)
+    transport = NS(confirm_stop=MagicMock(), recover_idle=MagicMock(),
+                   initialize=MagicMock(), moving=False)
+    stop_future = object()
+    node = NS(hardware=transport, action_lock=threading.Lock(), cancel=threading.Event(),
+              stop_future=stop_future, last_prepick=None, last_gripper=None,
+              holding_item=False, startup_settings_applied=True, global_speed_percent=None,
+              profile_path=None, state_lock=threading.RLock(), events=MagicMock(),
+              stop_recovery_abort=threading.Event(), shutdown_requested=threading.Event(),
+              feedback_snapshot=MagicMock(return_value={"feed": {"digital_input_bits": 0}}),
+              execution_state="FAILED", execution_message="Unknown SpeedFactor")
+
+    def state(name, message):
+        node.execution_state, node.execution_message = name, message
+
+    node.set_execution_state = state
+    transport.initialize.side_effect = lambda: (
+        setattr(node, "global_speed_percent", 100), state("READY", "Initialized"))
+    node.cancel.set()
+    controller.RobotController._complete_operator_stop(node, stop_future, None)
+    transport.initialize.assert_called_once()
+    transport.recover_idle.assert_not_called()
+    assert node.global_speed_percent == 100 and node.execution_state == "READY"
 
 
 def test_operator_stop_recovery_fault_never_releases_item(monkeypatch):

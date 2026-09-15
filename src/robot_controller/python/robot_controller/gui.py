@@ -19,13 +19,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "home": node.create_client(Trigger, "/robot_controller/go_home"),
             "pick": node.create_client(Trigger, "/robot_controller/pick_item"),
             "stop": node.create_client(Trigger, "/robot_controller/stop"),
-            "enable": node.create_client(Trigger, "/robot_controller/enable_robot"),
             "global_speed": node.create_client(SpeedFactor, "/robot_controller/set_global_speed"),
             "live": node.create_client(SetBool, "/robot_controller/set_live"),
             "debug_images": node.create_client(
                 SetBool, "/robot_controller/set_debug_images"),
         }
         self.pending_calls = {}
+        self.last_recovery_prompt = None
         self.state_path = node.root / "logs/robot_controller/last_session.json"
         restored = node.ui_prefill  # Validated before real startup; never auto-applied.
         self.setWindowTitle("Robot Controller")
@@ -78,12 +78,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "Save the exact annotated RGB/depth pair for each requested pick batch.")
         self.debug_images.toggled.connect(self.set_debug_images)
         row.addWidget(self.debug_images)
-        self.enable = QtWidgets.QPushButton("Enable Robot")
-        self.enable.setMinimumHeight(60)
-        self.enable.setToolTip(
-            "Live only: explicitly enable and confirm readiness after startup; no motion.")
-        self.enable.clicked.connect(lambda _: self._call_service("enable", Trigger.Request()))
-        row.addWidget(self.enable)
         self.home = QtWidgets.QPushButton("Preview Home TF")
         self.pick = QtWidgets.QPushButton("Preview Pick TF")
         self.stop = QtWidgets.QPushButton("Clear / Cancel")
@@ -127,8 +121,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.details = QtWidgets.QLabel(
             "Pick always starts at Home. Success returns Home with suction ON; "
             "an exhausted batch returns Home and reports failure.\n"
-            "STOP cancels motion; when DI1 is ON it returns to the last pre-pick "
-            "pose before releasing.\n"
+            "Stop / Clear cancels the queue, confirms stationary feedback and "
+            "re-enables. With DI1 OFF and a loaded Home it returns Home from "
+            "fresh actual pose; DI1 ON uses the last pre-pick return/release.\n"
             "Live canonical feedback is required, including for debug Home.\n"
             "Debug Images saves one requested annotated pair in debug/pick_img; "
             "it does not change poses or motion.\n"
@@ -237,8 +232,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 if result is None or not result.success:
                     message = "No response" if result is None else result.message
                     self.node.execution_message = f"{name} rejected: {message}"
+                    if name in ("home", "pick"):
+                        QtWidgets.QMessageBox.warning(self, "Robot not ready", message)
             except Exception as exc:
                 self.node.execution_message = f"{name} service failed: {exc}"
+                if name in ("home", "pick"):
+                    QtWidgets.QMessageBox.warning(self, "Robot action failed", str(exc))
 
     def refresh(self):
         node = self.node
@@ -247,23 +246,22 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 or (node.stop_thread is not None and node.stop_thread.is_alive())
                 or node.action_lock.locked())
         ready = node.execution_state in ("DEBUG", "READY", "HOLDING", "NO_PICK") and not busy
+        action_clickable = (not busy and node.fatal_error is None
+                            and (node.live or node.execution_state == "DEBUG"))
         service_pending = any(name in self.pending_calls for name in
-                              ("home", "pick", "live", "enable", "global_speed"))
+                              ("home", "pick", "live", "global_speed"))
         actions_pending = service_pending or self.speed_timer.isActive()
         self.apply.setEnabled(not busy)
         self.item_path.setReadOnly(busy)
         self.bin_path.setReadOnly(busy)
         for button in self.browse_buttons:
             button.setEnabled(not busy)
-        self.home.setEnabled(ready and not actions_pending and node.profile_path is not None)
-        self.pick.setEnabled(ready and not actions_pending and node.selection is not None
+        self.home.setEnabled(action_clickable and not actions_pending
+                             and node.profile_path is not None)
+        self.pick.setEnabled(action_clickable and not actions_pending
+                             and node.selection is not None
                              and not node.holding_item)
         self.stop.setEnabled("stop" not in self.pending_calls)
-        self.enable.setEnabled(
-            node.live and getattr(node, "startup_settings_applied", False)
-            and not busy and not actions_pending and not node.holding_item
-            and node.fatal_error is None and node.hardware is not None
-            and not node.hardware.moving)
         self.live.setEnabled(
             not busy and not node.holding_item and not actions_pending)
         self.debug_images.setEnabled("debug_images" not in self.pending_calls)
@@ -299,7 +297,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 "font-size:20px;font-weight:600;padding:12px;color:#b51f24")
             self.home.setText("Go Home")
             self.pick.setText("Pick Item")
-            self.stop.setText("STOP")
+            self.stop.setText("Stop / Clear")
         else:
             self.mode.setText("TF-ONLY · Live OFF · No hardware commands")
             self.mode.setStyleSheet(
@@ -310,6 +308,16 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.status.setText(
             f"{node.execution_state} · {node.execution_message}\n"
             f"Debug images: {node.debug_capture_status}")
+        if node.execution_state != "FAILED":
+            self.last_recovery_prompt = None
+        elif (node.live and "recovery failed" in node.execution_message.lower()
+              and node.execution_message != self.last_recovery_prompt):
+            self.last_recovery_prompt = node.execution_message
+            QtWidgets.QMessageBox.warning(
+                self, "Robot recovery did not complete",
+                node.execution_message + "\n\nCheck whether the emergency stop is pressed. "
+                "If safe, use Stop / Clear and wait for READY before Home or Pick. "
+                "The controller will not resume a paused queue or send motion while blocked.")
         if node.selection is not None:
             selected = node.selection
             warning = selected.warning() or "Destination station and portable bin validated."

@@ -36,12 +36,12 @@ def robot_values(raw, command):
 class DobotHardware:
     def __init__(self, node):
         # Debug construction never imports these types or creates command clients.
-        from dobot_msgs_v4.srv import (CP, DO, DisableRobot, EnableRobot, GetPose, InverseKin,
-                                       MovLIO, RelMovLUser, SetTool, SpeedFactor, Stop, StopMoveJog,
-                                       Tool)
+        from dobot_msgs_v4.srv import (CP, ClearError, DO, DisableRobot, EnableRobot,
+                                       GetPose, InverseKin, MovLIO, RelMovLUser, SetTool,
+                                       SpeedFactor, Stop, StopMoveJog, Tool)
         self.node = node
-        kinds = (CP, DO, DisableRobot, EnableRobot, GetPose, InverseKin, MovLIO, RelMovLUser,
-                 SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
+        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetPose, InverseKin,
+                 MovLIO, RelMovLUser, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
         self.types = {kind.__name__: kind for kind in kinds}
         self.clients = {name: node.create_client(kind, f"/dobot_bringup_ros2/srv/{name}")
                         for name, kind in self.types.items()}
@@ -140,8 +140,9 @@ class DobotHardware:
         while True:
             try:
                 snapshot = self.node.feedback_snapshot(enabled=False)
-                if snapshot["feed"]["robot_mode"] not in (4, 5, 11):
-                    raise ValueError("Initialization requires robot mode Disabled/Enabled/Jogging")
+                if snapshot["feed"]["robot_mode"] not in (4, 5, 9, 10, 11):
+                    raise ValueError(
+                        "Initialization requires Disabled/Enabled/Error/Paused/Jogging mode")
                 break
             except ValueError:
                 if time.monotonic() >= deadline:
@@ -160,6 +161,21 @@ class DobotHardware:
             if time.monotonic() >= deadline:
                 raise ValueError("Startup required services unavailable: " + ", ".join(missing))
             time.sleep(0.02)
+        snapshot = self.node.feedback_snapshot(enabled=False)
+        feed = snapshot["feed"]
+        if feed["digital_input_bits"] & 1 or self.node.holding_item:
+            raise ValueError("DI1/held item active at Live startup; no robot enable sent")
+        if (feed["robot_mode"] in (9, 10) or feed["isPauseCmdFlag"]
+                or feed["ErrorStatus"] or feed["CollisionStates"]):
+            self.node.set_execution_state(
+                "INITIALIZING", "Cancelling paused/error queue before robot enable")
+            self.recover_idle(stop_already_confirmed=False, enable=False)
+            if not self.wait(lambda s: s["feed"]["robot_mode"] in (4, 5, 11)
+                             and not s["feed"]["ErrorStatus"]
+                             and not s["feed"]["CollisionStates"]
+                             and not s["feed"]["isPauseCmdFlag"], SERVICE_TIMEOUT_SEC):
+                raise ValueError("Startup recovery did not clear error/pause; "
+                                 "check emergency stop or paused command state")
         for name in ("StopMoveJog", "DisableRobot"):
             try:
                 self._startup_call(name)
@@ -186,10 +202,14 @@ class DobotHardware:
         try:
             self.confirm_ready()
         except ValueError as exc:
-            message = f"Startup calls completed; {exc}"
-            self.node.events.record("ERROR", "startup_readiness_blocked", message)
-            self.node.set_execution_state("FAILED", message)
-            return
+            self.node.events.record("WARNING", "startup_readiness_recovery", str(exc))
+            try:
+                self.recover_idle(stop_already_confirmed=False)
+            except ValueError as recovery_exc:
+                message = f"Startup calls completed; recovery failed: {recovery_exc}"
+                self.node.events.record("ERROR", "startup_readiness_blocked", message)
+                self.node.set_execution_state("FAILED", message)
+                return
         self.node.set_execution_state("READY", "Initialized at SpeedFactor 100%, Tool 0, CP 100%")
 
     def confirm_ready(self):
@@ -218,6 +238,43 @@ class DobotHardware:
         self.confirm_ready()
         self.node.set_execution_state("READY", "EnableRobot confirmed; no Home or Pick sent")
 
+    def recover_idle(self, *, stop_already_confirmed, enable=True):
+        """Cancel the queue, conditionally clear alarms, and re-enable; never resume it."""
+        if not stop_already_confirmed:
+            future = self.stop()
+            if future is None:
+                raise ValueError("Recovery Stop service unavailable")
+            self.confirm_stop(future, allow_not_ready=True)
+
+        def idle():
+            feed = self.node.feedback_snapshot(enabled=False)["feed"]
+            if feed["digital_input_bits"] & 1 or self.node.holding_item:
+                raise ValueError("DI1/held item present; automatic enable/clear is forbidden")
+            if feed["isRunQueuedCmd"] or feed["RunningStatus"]:
+                raise ValueError("Queue still active after Stop; no alarm clear or enable sent")
+            return feed
+
+        feed = idle()
+        if feed["ErrorStatus"] or feed["CollisionStates"] or feed["robot_mode"] == 9:
+            self.node.set_execution_state("RECOVERING", "ClearError: awaiting response")
+            self.call("ClearError", require_clear=True)
+            idle()
+            if not self.wait(lambda s: s["feed"]["robot_mode"] != 9
+                             and not s["feed"]["ErrorStatus"]
+                             and not s["feed"]["CollisionStates"], SERVICE_TIMEOUT_SEC):
+                raise ValueError("Error remains after ClearError; check whether the "
+                                 "emergency stop is pressed")
+        if not enable:
+            return
+        idle()
+        self.node.set_execution_state("RECOVERING", "EnableRobot: awaiting response")
+        self.call("EnableRobot", require_clear=True)
+        idle()
+        self.node.set_execution_state("RECOVERING", "Confirming enabled/idle feedback")
+        self.confirm_ready()
+        idle()
+        self.node.events.record("INFO", "robot_recovered", "Stop/Clear/Enable confirmed")
+
     def set_global_speed(self, ratio):
         if type(ratio) is not int or not 1 <= ratio <= 100:
             raise ValueError("Global speed must be an integer from 1 through 100")
@@ -241,6 +298,10 @@ class DobotHardware:
                                 ratio=ratio)
 
     def _startup_call(self, name, **fields):
+        snapshot = self.node.feedback_snapshot(enabled=False)
+        if snapshot["feed"]["digital_input_bits"] & 1 or self.node.holding_item:
+            raise RuntimeError(f"Startup {name}: DI1/held item became active; "
+                               "no further initialization commands sent")
         self.node.set_execution_state("INITIALIZING", f"Startup {name}: waiting for response")
         try:
             return self.call(name, **fields)
@@ -535,7 +596,7 @@ class DobotHardware:
         if not self.wait(stopped, SERVICE_TIMEOUT_SEC, enabled=True):
             raise ValueError("DI1 descent Stop did not confirm stationary robot")
 
-    def confirm_stop(self, future):
+    def confirm_stop(self, future, *, allow_not_ready=False):
         """Confirm an operator Stop without allowing cancellation to hide its result."""
         deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
         while not future.done():
@@ -554,7 +615,8 @@ class DobotHardware:
             feed = snapshot["feed"]
             actual = pose_matrix(feed["tool_vector_actual"])
             stationary = (snapshot["sequence"] > before and not feed["isRunQueuedCmd"]
-                          and not feed["RunningStatus"] and feed["robot_mode"] == 5
+                          and not feed["RunningStatus"]
+                          and feed["robot_mode"] in ((4, 5, 9, 10) if allow_not_ready else (5,))
                           and anchor is not None and pose_reached(anchor, actual))
             if not stationary:
                 stable_since = None

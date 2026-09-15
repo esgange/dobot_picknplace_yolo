@@ -31,20 +31,28 @@ Headless loads one complete deployment set automatically from flat root
 partitions are rejected; no file overrides or implicit profile choice. Station
 camera/platform calibration comes from the shared latest selector in
 `calibration/`, not the portable bin's source station. Models are hashed only.
-The GUI's Home, Pick, Stop, red-on-active Live and Debug Images controls call the
-same ROS services listed below; there is no private GUI execution path.
-**Enable Robot** is a separate explicit button using the same headless service.
-It is available with Live ON after startup settings have completed, including
-when final readiness was blocked; it does not require an Item Teach profile.
-It sends only EnableRobot and confirms fresh enabled, idle, fault-free feedback.
-It never repeats DisableRobot/settings, resumes a paused queue, Homes or picks.
-Active operations, held items, DI1 ON, queued/running motion, error/collision
-flags, incomplete startup, stale feedback, pending Stop and competing command
-owners reject the action. The reply acknowledges acceptance; follow status.
+The GUI's Home, Pick, Stop/Clear, red-on-active Live and Debug Images controls
+call the same ROS services listed below; there is no private GUI execution path.
+Live ON automatically executes the ordered startup EnableRobot. A persistent
+post-startup readiness blocker triggers one guarded Stop, conditional ClearError
+and EnableRobot attempt. Stop/Clear confirms the Stop reply, fresh stationary/
+empty queue feedback, conditionally clears a remaining alarm, re-enables, then
+uses the shared Home function from fresh actual GetPose/FK when DI1 is OFF and
+an unchanged Home profile is loaded. With no profile it re-enables without motion
+and asks the operator to load a Home; DI1 ON preserves the last-prepick return/
+release policy instead. If global SpeedFactor is unknown after a failed/ambiguous
+setting response, explicit Stop/Clear re-runs the complete ordered initialization
+to restore a confirmed 100% factor before Home; the enable-only service cannot
+bypass that unknown state. No discarded waypoint queue is resumed with Continue.
+The separate GUI Enable Robot button is removed. The optional headless
+`/robot_controller/enable_robot` service remains enable-only after completed
+settings; Stop/Clear is the shared recovery route. Blocked Home/Pick GUI buttons
+remain clickable only to report the exact safety refusal and prompt; no motion
+is sent until READY. A failed recovery also prompts once in the GUI with an
+emergency-stop check, without assuming the stop is actually pressed.
 
 ```bash
 ros2 launch robot_controller robot_controller.launch.py headless:=true
-ros2 service call /robot_controller/enable_robot std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/go_home std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/pick_item std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/stop std_srvs/srv/Trigger '{}'
@@ -105,7 +113,12 @@ an otherwise valid candidate batch.
 
 Live initialization order: StopMoveJog, DisableRobot, EnableRobot/enabled confirmation,
 SpeedFactor 100%, Tool 0, Tool 1 TCP zero, CP 100%. Only StopMoveJog and
-DisableRobot are best effort; subsequent failures terminate startup, no retries.
+DisableRobot are best effort; strict startup failures leave a FAILED controller
+without pretending it is READY. Live performs at most one post-settings Stop/
+ClearError/EnableRobot recovery for a persistent readiness blocker; explicit
+Stop/Clear may re-run incomplete initialization as a new operator action.
+The same applies to an unknown global SpeedFactor after a failed setting; an
+unanswered earlier normal response still blocks every subsequent command.
 Motion Debug's independent 50% startup rule is unchanged.
 Wait up to five seconds for all strict startup services before preconditioning.
 Every normal call is response-serialized. Missing/rejected best-effort services
@@ -117,9 +130,10 @@ The status names each active startup call and failed calls are logged with their
 service name. After all settings respond, validate enabled/fault/pause/user/tool
 feedback before claiming READY. Await final coherent idle/enabled feedback for
 at most five seconds without reissuing commands, so a transient asynchronous
-RobotStatus update does not immediately fail startup. Failure then says
-`Startup calls completed;`
-followed by exact blockers, not a guessed failed service. For example,
+RobotStatus update does not immediately fail startup. Persistent failure then
+attempts one Stop/conditional ClearError/EnableRobot recovery. If that attempt
+fails, status says `Startup calls completed; recovery failed:` followed by the
+exact blocker, not a guessed failed startup service. For example,
 `isPauseCmdFlag=1` means queue-paused feedback; the controller never silently
 ignores it or sends Continue to resume an unknown paused queue.
 
@@ -229,9 +243,12 @@ Stop request while DDS is still alive; this still does not guarantee stopping.
 
 The Stop service immediately cancels the active routine, clears previews and,
 while Live is ON, sends canonical Stop. Recovery starts only after Stop acceptance,
-fresh stationary feedback and termination of the interrupted action. DI1 OFF
-leaves the robot stopped with no return motion. DI1 ON requires the remembered
-last pre-pick target: keep suction active, return there, then set DO13 OFF and
+fresh stationary/empty queue feedback and termination of the interrupted action.
+DI1 OFF conditionally clears remaining alarm feedback, re-enables and, when a
+validated loaded Home exists, plans the shared conditional-vertical Home from
+fresh actual GetPose/FK. Unexpected DI1 blocks that transit. Without a Home
+profile, Stop/Clear re-enables only and reports the missing Home. DI1 ON requires
+the remembered last pre-pick target: keep suction active, return there, then set DO13 OFF and
 DO1 exhaust ON; with use_grip=true also set DO2 OFF and DO14 ON. A missing target,
 lost suction, motion/I/O/freshness/Stop failure never releases the item. Stop is
 not an emergency stop, and this explicitly requested return path is not collision
@@ -245,8 +262,8 @@ result-age and request-deadline checks, so saving cannot make expired targets va
 
 - `/robot_controller/go_home`, `/pick_item`, `/stop` (Trigger): shared GUI/headless
   action acceptance or cancellation; follow status for asynchronous completion.
-- `/robot_controller/enable_robot` (Trigger): explicit Live-only enable/readiness
-  confirmation after settings completed, with no motion or startup replay.
+- `/robot_controller/enable_robot` (Trigger): optional headless explicit enable-only
+  request after settings; Stop/Clear is the shared recovery path.
 - `/robot_controller/set_global_speed` (dobot_msgs_v4/SpeedFactor): Live/idle-only
   integer ratio 1–100; res=0 after successful robot response, otherwise -1.
 - `/robot_controller/set_live` (SetBool): shared GUI/headless actuation gate. True

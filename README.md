@@ -86,13 +86,21 @@ Headless clients use `/robot_controller/set_global_speed` with
 Normal calls wait for each response before another is sent; an unanswered
 response timeout stops the sequence, including for a best-effort call. Startup
 and watchdog errors name the exact call or feedback blocker. A paused queue is
-not automatically resumed, and READY requires the final feedback checks to pass.
-The controller also has an explicit **Enable Robot** button and headless
-`/robot_controller/enable_robot` Trigger service. With Live ON and startup
-settings complete, it enables and confirms fresh idle readiness without
-repeating DisableRobot or sending Home/Pick. Final feedback confirmation waits
-boundedly for asynchronous status updates; it never retries commands or ignores
-persistent disabled, fault or pause flags.
+never resumed, and READY requires fresh idle/fault-free feedback. Live ON enables
+the robot during its ordered startup; a persistent readiness blocker triggers
+one guarded Stop, conditional ClearError and EnableRobot recovery. Stop / Clear
+also confirms a stationary, empty queue and re-enables when safe. With DI1 OFF
+and an unchanged loaded Home profile, it then uses fresh actual GetPose/FK to
+go Home; it never resumes a discarded queue or trusts an old EE target. A DI1-
+active/possibly held item instead follows the established last-prepick return
+policy, with no blind idle reset. If startup settings or global SpeedFactor are
+unknown, an explicit Stop / Clear re-runs the ordered initialization before
+Home rather than assuming a robot setting. The separate GUI Enable Robot button
+is removed; the optional headless
+`/robot_controller/enable_robot` Trigger service remains. Home/Pick stay clickable
+when Live recovery failed, but refuse motion and show the exact blocker plus an
+emergency-stop check prompt. Hardware calls remain response-serialized and
+unanswered calls never automatically advance.
 Home compares current Link6 Z with taught Home Z. Below Home Z, it first uses
 GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovLIO joint
 mode reaches taught joints. At or above Home Z it skips the relative clearance

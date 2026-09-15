@@ -2700,6 +2700,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   dependency build and clean-environment 14-package root build pass. No real
   hardware/weights/station artifact was exercised or modified.
 
+### 2026-09-15 — Live enable and Stop/Clear Home recovery
+
+- User corrected the controller interaction: Live ON, not a separate GUI button,
+  must enable the robot. Stop/Clear must cancel an owned queue, confirm fresh
+  stationary/empty-queue feedback, conditionally ClearError, re-enable, and with
+  DI1 OFF use the existing Home function from a new GetPose/FK-checked actual
+  Link6 pose. A discarded queue is never resumed with Continue and a cached EE
+  target is not a recovery origin. The previously confirmed DI1 ON last-prepick
+  return/release rule remains; without a loaded Home, idle re-enable alone is
+  reported. This is superseding rule 59 in AGENTS.md.
+- Motion Debug's controller-mode-10 manual recovery sends Stop before EnableRobot;
+  its ClearError pathway checks for a still-active error and prompts that the
+  emergency stop may be pressed. The controller adapts that sequence with strict
+  response serialization, five-second acknowledgements/readiness, sole canonical
+  command ownership, fresh advancing feedback, a stationary/queue-empty Stop
+  check and no silent motion on failure. Live uses at most one post-settings
+  recovery for persistent readiness failure. Explicit Stop/Clear may repeat an
+  incomplete startup only as a new operator request, never after an ambiguous
+  unanswered command. A failed/ambiguous global SpeedFactor setting makes its
+  factor unknown; Stop/Clear then re-runs full initialization to re-establish a
+  confirmed 100% factor before Home, while enable-only cannot bypass it; that
+  optional service also rejects fresh pause/user/tool offset feedback.
+  Ordinary failure stays visible in GUI/headless FAILED;
+  unexpected fatal runtime failures still terminate.
+- The GUI Enable Robot button/client is removed; the existing optional headless
+  enable-only service remains. In Live FAILED, Home/Pick buttons remain clickable
+  with loaded files to produce an exact safety refusal/prompt, not actual motion.
+  The GUI prompts once per failed recovery to check the emergency stop without
+  diagnosing it from a generic fault. No camera, robot, RViz or model is launched
+  or commanded for verification. Synthetic pause/error/held-item, Stop/Home and
+  offscreen GUI regressions plus scoped build/lint/commit checks are required.
+- Operator follow-up: actual Stop, ClearError, EnableRobot and Home behavior must
+  be verified under physical safety supervision before production reliance;
+  software stationary feedback is not collision planning or a physical E-stop.
+- Verification: 223 synthetic/offscreen controller tests pass directly and in
+  package CTest (zero failures/errors/skips). The changed Python compiles and
+  passes flake8; a clean-environment root `colcon build` finishes all 14 ROS
+  packages, and `git diff --check` is clean. No physical robot, camera, RViz or
+  operator model is launched or commanded in verification.
+
 ### Future entry template
 
 ```text

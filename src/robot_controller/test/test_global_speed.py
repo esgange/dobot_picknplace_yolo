@@ -258,7 +258,7 @@ def test_global_slider_range_debounce_gating_and_confirmed_value(pair, monkeypat
         assert node.global_speed_percent == 18
         window.refresh()
         assert window.global_speed.value() == 18 and "18%" in window.mode.text()
-        assert len(list(node.clients)) == 8  # Pose + GUI clients; no vendor command clients.
+        assert len(list(node.clients)) == 7  # Pose + GUI clients; no vendor command clients.
     finally:
         if executor is not None:
             executor.shutdown(timeout_sec=2)

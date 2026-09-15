@@ -526,6 +526,9 @@ class RobotController(Node):
     def _initialize(self):
         try:
             self.hardware.initialize()
+        except (ValueError, RuntimeError) as exc:
+            self.set_execution_state("FAILED", f"Startup recovery failed: {exc}")
+            self.events.record("ERROR", "initialization_failed", str(exc))
         except Exception as exc:
             self.set_execution_state("FAILED", str(exc))
             self.fatal_error = f"Controller initialization failed: {exc}"
@@ -670,6 +673,9 @@ class RobotController(Node):
             if not self.startup_settings_applied:
                 raise ValueError(
                     "Startup settings are incomplete; Enable Robot cannot bypass startup")
+            if self.global_speed_percent is None:
+                raise ValueError("Global SpeedFactor is unknown; use Stop / Clear to "
+                                 "reinitialize before enabling actions")
             if self.holding_item or self.hardware.moving:
                 raise ValueError("Enable Robot requires idle controller with no held item")
             if ((self.action_thread is not None and self.action_thread.is_alive())
@@ -683,7 +689,8 @@ class RobotController(Node):
             feed = snapshot["feed"]
             if (feed["robot_mode"] not in (4, 5) or feed["isRunQueuedCmd"]
                     or feed["RunningStatus"] or feed["ErrorStatus"] or feed["CollisionStates"]
-                    or feed["digital_input_bits"] & 1):
+                    or feed["isPauseCmdFlag"] or feed["digital_input_bits"] & 1
+                    or feed["userCoordinate"] or feed["toolCoordinate"]):
                 raise ValueError("Enable Robot requires fault-free idle feedback and DI1 OFF")
             if self.stop_future is not None and not self.stop_future.done():
                 raise ValueError("Stop response pending; Enable Robot not sent")
@@ -753,12 +760,23 @@ class RobotController(Node):
             response.message = "Action accepted; watch /robot_controller/status"
         except Exception as exc:
             response.success, response.message = False, str(exc)
+            self.events.record("WARNING", "controller_action_rejected", str(exc), action=action)
         return response
 
     def start_action(self, action):
-        if (self.profile_path is None or action not in ("home", "pick")
-                or self.execution_state not in ("DEBUG", "READY", "HOLDING", "NO_PICK")):
-            raise ValueError("Load valid teach files and complete initialization before an action")
+        if self.profile_path is None or action not in ("home", "pick"):
+            raise ValueError("Load valid Item Teach before Home or Pick")
+        permitted = ("READY", "HOLDING", "NO_PICK") if self.live else ("DEBUG",)
+        if self.execution_state not in permitted:
+            detail = self.execution_message
+            if self.live and self.hardware is not None:
+                try:
+                    self.feedback_snapshot(enabled=True)
+                except ValueError as exc:
+                    detail = str(exc)
+            hint = (" Check whether the emergency stop is pressed; use Stop / Clear "
+                    "and wait for READY. No robot motion was sent.") if self.live else ""
+            raise ValueError(f"Robot not READY ({self.execution_state}): {detail}.{hint}")
         if self.action_thread is not None and self.action_thread.is_alive():
             raise ValueError("One controller action is already active")
         if self.stop_thread is not None and self.stop_thread.is_alive():
@@ -997,7 +1015,7 @@ class RobotController(Node):
                 raise ValueError("Stop recovery cancelled; no further return motion or release")
 
         try:
-            self.hardware.confirm_stop(future)
+            self.hardware.confirm_stop(future, allow_not_ready=True)
             check_recovery_allowed()
             if active_action is not None:
                 active_action.join(timeout=5)
@@ -1006,7 +1024,7 @@ class RobotController(Node):
             acquired = self.action_lock.acquire(timeout=5)
             if not acquired:
                 raise ValueError("Controller action did not release after Stop")
-            snapshot = self.feedback_snapshot(enabled=True)
+            snapshot = self.feedback_snapshot(enabled=False)
             check_recovery_allowed()
             suction = bool(snapshot["feed"]["digital_input_bits"] & 1)
             if not suction:
@@ -1017,8 +1035,36 @@ class RobotController(Node):
                     check_recovery_allowed()
                     self.cancel.clear()
                     self.stop_future = None
-                self.set_execution_state("READY", "Stopped; DI1 is OFF, no return motion")
+                    self.last_prepick = None
+                    self.last_gripper = None
+                self.set_execution_state("RECOVERING", "Stop/Clear: recovering idle robot")
+                check_recovery_allowed()
+                if self.startup_settings_applied and self.global_speed_percent is not None:
+                    self.hardware.recover_idle(stop_already_confirmed=True)
+                else:
+                    # Explicit Stop/Clear restores incomplete or ambiguous startup
+                    # settings; unanswered normal responses still forbid overlap.
+                    self.hardware.initialize()
+                    if self.execution_state != "READY":
+                        raise ValueError(self.execution_message)
+                check_recovery_allowed()
+                if self.profile_path is not None:
+                    profile, digest = load_item_profile(
+                        self.profile_path, root=self.root, deployment=self.headless)
+                    if digest != self.summary["profile_sha256"]:
+                        raise ValueError("Item Teach changed; reload before Stop/Clear Home")
+                    self.set_execution_state(
+                        "RECOVERING", "Stop/Clear: Home from fresh actual Link6 pose")
+                    check_recovery_allowed()
+                    self.home(profile, forbid_suction=True)
+                    check_recovery_allowed()
+                    self.set_execution_state("READY", "Stop/Clear confirmed; Home completed")
+                else:
+                    self.set_execution_state(
+                        "READY", "Stop/Clear confirmed; robot re-enabled. "
+                        "Load Item Teach for Home recovery")
                 return
+            self.feedback_snapshot(enabled=True)
             with self.state_lock:
                 target, gripper = self.last_prepick, self.last_gripper
             if target is None or gripper is None:
