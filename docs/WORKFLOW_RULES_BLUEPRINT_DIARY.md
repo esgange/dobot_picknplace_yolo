@@ -2417,6 +2417,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   height mismatch still blocks Pick. git diff --check and scoped staged review
   precede the standing source commit/push; no hardware/weights were executed.
 
+### 2026-09-15 — Conditional preliminary Home-height move
+
+- User confirmed that a current Link6 pose already equal to or above taught
+  Home Z may move directly to the exact taught Home joints. Add rule 53,
+  superseding only rule 51's unconditional preliminary Home-Z segment.
+- Home planning uses the validated current base_link-relative Link6 Z and
+  canonical FK-derived Home Z. Strictly below Home keeps the existing vertical
+  RelMovLUser rise at current XY/attitude, then joint-mode MovLIO Home. Equal or
+  above produces only the joint-mode MovLIO Home target; it never first descends
+  to the Home plane. The comparison has no hidden tolerance or alternate path.
+- Debug and real actions share the exact branch. TF-only preview publishes
+  robot_controller_debug_home_height only below Home Z; the direct branch shows
+  only robot_controller_debug_home. Existing profile rates, FK/GetPose checks,
+  fresh feedback, held-item suction monitoring, cancellation, Stop/fault logic,
+  explicit actions and no inferred collision planning remain unchanged.
+- Verify pure target construction below/equal/above Home, direct MovLIO-only
+  dispatch, retained below-Home RelMovLUser then MovLIO order/rates, controller
+  Home and debug candidate-frame counts with synthetic services/feedback only.
+  Run controller and affected full regressions, compilation/scoped lint, package
+  and root builds, git diff checks, staged review and standing source commit/push.
+  No robot, camera, model, RViz or operator artifact is launched or modified.
+- Verification: all 69 controller tests pass directly and through the packaged
+  CTest wrapper, zero failures/errors/skips. New regressions cover strict-below,
+  exact-equality and above-Home branching; direct MovLIO-only dispatch; retained
+  below-Home RelMovLUser then MovLIO rates/order; controller Home and complete
+  debug-pick frame indexing. Python compilation, focused flake8 and git diff
+  checks pass. Package-up-to build completes six dependencies/packages and a
+  clean-environment root build completes all 14 packages. Only synthetic
+  transport/feedback and offscreen/debug data were used; no hardware/RViz/model
+  or local operator artifact was launched, commanded or changed.
+
 ### Future entry template
 
 ```text

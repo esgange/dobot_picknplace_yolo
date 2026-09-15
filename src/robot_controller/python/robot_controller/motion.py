@@ -28,10 +28,13 @@ class Target:
 
 
 def home_targets(current, home, joints, *, speed_percent, acceleration_percent):
+    final = Target("home", home.copy(), speed_percent, acceleration_percent, tuple(joints))
+    if current[2, 3] >= home[2, 3]:
+        return (final,)
     height = current.copy()
     height[2, 3] = home[2, 3]
     return (Target("home_height", height, speed_percent, acceleration_percent, relative_z=True),
-            Target("home", home.copy(), speed_percent, acceleration_percent, tuple(joints)))
+            final)
 
 
 def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):

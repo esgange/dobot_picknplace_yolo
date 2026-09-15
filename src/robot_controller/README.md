@@ -68,10 +68,13 @@ CR10 FK derives Home from the recorded joints; GetPose(user=0,tool=0) and IK mus
 agree with that model within 2 mm/0.5 degrees or movement is blocked. No guessed
 Home pose, live RViz dependence, alternate model or IK fallback.
 
-Every Home first queries current pose and uses RelMovLUser to change only base Z
-to Home Z, preserving actual XY/attitude; MovLIO joint mode then reaches the exact
-six taught Home joints. This relative-Z segment is the user-approved exception
-to MovLIO-only picking. All pick/transit/retract segments use MovLIO, with
+Every Home first determines current Link6 Z. If current Z is below taught Home Z,
+RelMovLUser changes only base Z to Home Z while preserving actual XY/attitude;
+MovLIO joint mode then reaches the exact six taught Home joints. If current Z is
+equal to or above Home Z, the controller skips RelMovLUser and issues only the
+direct joint-mode Home target, per the user's confirmed safe-above-Home rule.
+The conditional relative-Z segment is the user-approved exception to MovLIO-only
+picking. All pick/transit/retract segments use MovLIO, with
 confirmed queue-idle, fresh stationary/target feedback, not service acceptance.
 
 Item Teach saves separate `speed` and `acceleration` groups, each with explicit
@@ -141,7 +144,9 @@ Stop request while DDS is still alive; this still does not guarantee stopping.
 - `item_teach_file`: GUI-mode explicit profile parameter; launch modes/runtime
   catalog are immutable. Bin selection belongs to GUI/load-time configuration.
 
-Debug publishes `base_link -> robot_controller_debug_home_height/home` and
+Debug always publishes `base_link -> robot_controller_debug_home`; only while
+below Home Z does it also publish `robot_controller_debug_home_height`. Pick
+previews publish
 `robot_controller_debug_pN_transit/initial/prepick/pick/retract/final` at 10 Hz.
 These are teaching targets, not actual robot/platform TF or collision validation.
 Debug Home requires fresh actual joints but issues no GetPose/motion/I/O command.

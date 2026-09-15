@@ -66,8 +66,12 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 
 This defaults to TF-only debug. Real-mode launch disables/re-enables the connected
 robot; check physical safety and independently launch canonical bringup first.
-Home first uses GetPose/RelMovLUser to reach taught Home Z at current XY/attitude,
-then MovLIO joint mode reaches taught joints. Pick holds Home attitude/base Z,
+Home compares current Link6 Z with taught Home Z. Below Home Z, it first uses
+GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovLIO joint
+mode reaches taught joints. At or above Home Z it skips the relative clearance
+move and sends only the direct joint-mode Home target. Debug uses the same branch
+and therefore omits `robot_controller_debug_home_height` when it is unnecessary.
+Pick holds Home attitude/base Z,
 uses MovLIO, stops on DI1 during final descent and confirms stationary feedback
 before retract. Missed suction waits saved pick_settling and confirms final
 retract before another still-fresh candidate; other faults cancel without retry.

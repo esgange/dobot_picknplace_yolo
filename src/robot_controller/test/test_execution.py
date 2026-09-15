@@ -110,6 +110,17 @@ def test_home_height_keeps_current_xy_and_orientation_then_exact_joints():
     np.testing.assert_allclose(final.matrix, home)
 
 
+@pytest.mark.parametrize("offset", [0., .001, .5])
+def test_at_or_above_home_height_goes_directly_to_home(offset):
+    home = model().forward([.1] * 6)
+    current = home.copy()
+    current[2, 3] += offset
+    targets = home_plan(current, home, [.1] * 6)
+    assert len(targets) == 1
+    assert targets[0].name == "home" and not targets[0].relative_z
+    assert targets[0].joints_rad == (.1,) * 6
+
+
 def test_pick_height_equations_and_home_attitude():
     targets = plan()
     np.testing.assert_allclose([t.matrix[2, 3] for t in targets], [.8, .31, .24, .19, .29, .31])
@@ -270,10 +281,13 @@ def test_initialization_order_and_only_first_two_best_effort(monkeypatch):
 
 def test_home_transport_uses_relative_z_then_joint_movlio_and_confirms_completion(monkeypatch):
     transport, _, pose, clock = synthetic_transport(monkeypatch)
-    for target in home_plan(pose, pose, [.1] * 6):
+    current = pose.copy()
+    current[2, 3] -= .1
+    transport.current_pose = lambda: current
+    for target in home_plan(current, pose, [.1] * 6):
         transport.move(target)
     relative = transport.clients["RelMovLUser"].call_async.call_args.args[0]
-    assert relative.a == relative.b == relative.c == 0
+    assert relative.a == relative.b == 0 and relative.c == pytest.approx(100)
     final = transport.clients["MovLIO"].call_async.call_args.args[0]
     assert final.mode and final.mdis == []
     assert relative.param_value == final.param_value == ["user=0", "tool=0", "v=100", "a=100"]
@@ -283,12 +297,25 @@ def test_home_transport_uses_relative_z_then_joint_movlio_and_confirms_completio
 
 def test_editable_home_rates_reach_both_relative_and_movlio_services(monkeypatch):
     transport, _, pose, _ = synthetic_transport(monkeypatch)
-    targets = home_targets(pose, pose, [.1]*6, speed_percent=42, acceleration_percent=73)
+    current = pose.copy()
+    current[2, 3] -= .1
+    transport.current_pose = lambda: current
+    targets = home_targets(current, pose, [.1]*6, speed_percent=42, acceleration_percent=73)
     for target in targets:
         transport.move(target)
     for name in ("RelMovLUser", "MovLIO"):
         request = transport.clients[name].call_async.call_args.args[0]
         assert request.param_value == ["user=0", "tool=0", "v=42", "a=73"]
+
+
+def test_direct_home_dispatches_only_joint_movlio(monkeypatch):
+    transport, _, pose, _ = synthetic_transport(monkeypatch)
+    current = pose.copy()
+    current[2, 3] += .1
+    for target in home_plan(current, pose, [.1] * 6):
+        transport.move(target)
+    transport.clients["RelMovLUser"].call_async.assert_not_called()
+    transport.clients["MovLIO"].call_async.assert_called_once()
 
 
 def test_default_and_edited_pick_rates_reach_each_movlio_command(monkeypatch):
@@ -312,14 +339,14 @@ def test_controller_home_uses_loaded_profile_motion_rates(pair):
     fake.pose = model().forward(profile["home"]["positions_rad"])
     node = NS(check_cancelled=lambda: None, kinematics=model(), debug=False, hardware=fake)
     targets = controller.RobotController._home(node, profile)
-    assert [(t.speed_percent, t.acceleration_percent) for t in targets] == [(42, 73)] * 2
-    assert [v[4:] for v in fake.trace] == [(42, 73)] * 2
+    assert [(t.speed_percent, t.acceleration_percent) for t in targets] == [(42, 73)]
+    assert [v[4:] for v in fake.trace] == [(42, 73)]
 
 
 def test_di1_before_descent_stops_without_dispatching_descent(monkeypatch):
     transport, feed, pose, _ = synthetic_transport(monkeypatch)
     feed["digital_input_bits"] = 1
-    target = home_plan(pose, pose, [.1] * 6)[1]
+    target = home_plan(pose, pose, [.1] * 6)[-1]
     assert transport.move(target, stop_on_suction=True)
     transport.clients["Stop"].call_async.assert_called_once()
     transport.clients["MovLIO"].call_async.assert_not_called()
@@ -334,14 +361,14 @@ def test_di1_during_descent_waits_for_stop_and_fresh_stationary_feedback(monkeyp
         feed["digital_input_bits"] = 1
         return original
     transport.clients["MovLIO"].call_async.side_effect = dispatch
-    assert transport.move(home_plan(pose, pose, [.1] * 6)[1], stop_on_suction=True)
+    assert transport.move(home_plan(pose, pose, [.1] * 6)[-1], stop_on_suction=True)
     assert clock[0] >= .3 and not transport.moving
     transport.clients["Stop"].call_async.assert_called_once()
 
 
 def test_stop_rejection_and_lost_suction_block_retract(monkeypatch):
     transport, feed, pose, _ = synthetic_transport(monkeypatch)
-    target = home_plan(pose, pose, [.1] * 6)[1]
+    target = home_plan(pose, pose, [.1] * 6)[-1]
     with pytest.raises(ValueError, match="Suction lost"):
         transport.move(target, require_suction=True)
     feed["digital_input_bits"] = 1
@@ -485,9 +512,9 @@ def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidate
     controller.RobotController._run_action(node, "pick")
     assert not node.action_lock.locked()
     targets = node.install_preview.call_args.args[0]
-    assert len(targets) == 14
+    assert len(targets) == 13
     expected = platform @ [.1, .2, .05, 1.]
-    np.testing.assert_allclose(targets[5].matrix[:3, 3],
+    np.testing.assert_allclose(targets[4].matrix[:3, 3],
                                [*expected[:2], expected[2] + .01])
     assert node.set_execution_state.call_args.args[0] == "DEBUG"
     # Hash disagreement must clear rather than install executable/preview targets.
@@ -673,7 +700,7 @@ def test_unknown_duplicate_command_provider_and_legacy_clients_are_blocked():
 def test_acknowledgement_with_nonempty_queue_is_not_motion_completion(monkeypatch):
     transport, feed, pose, _ = synthetic_transport(monkeypatch)
     feed["isRunQueuedCmd"] = 1
-    target = home_plan(pose, pose, [.1]*6)[1]
+    target = home_plan(pose, pose, [.1]*6)[-1]
     with pytest.raises(ValueError, match="completion timeout"):
         transport.move(target)
     assert transport.moving  # Caller must contain the ambiguous in-progress command.
@@ -684,8 +711,10 @@ def test_bad_ik_blocks_motion_before_command_dispatch(monkeypatch):
     future = Future()
     future.set_result(NS(res=0, robot_return="0,{0,0,0,0,0,0},InverseKin();"))
     transport.clients["InverseKin"].call_async.return_value = future
+    current = pose.copy()
+    current[2, 3] -= .1
     with pytest.raises(ValueError, match="InverseKin does not match"):
-        transport.move(home_plan(pose, pose, [.1]*6)[0])
+        transport.move(home_plan(current, pose, [.1]*6)[0])
     transport.clients["RelMovLUser"].call_async.assert_not_called()
     assert not transport.moving
 
@@ -732,7 +761,7 @@ def test_stop_feedback_drift_blocks_retract_even_with_idle_flags(monkeypatch):
 
     transport.node.feedback_snapshot = snapshot
     with pytest.raises(ValueError, match="did not confirm stationary"):
-        transport.move(home_plan(pose, pose, [.1]*6)[1], stop_on_suction=True)
+        transport.move(home_plan(pose, pose, [.1]*6)[-1], stop_on_suction=True)
     assert transport.moving
 
 
