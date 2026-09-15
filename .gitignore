@@ -3,6 +3,9 @@ build/
 install/
 log/
 
+# Operator-requested troubleshooting snapshots
+debug/pick_img/
+
 # Bounded runtime datalogs (logs/README.md is tracked)
 logs/*
 !logs/README.md

@@ -18,15 +18,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("bin_teach_file", default_value="", description="Portable bin YAML"),
         DeclareLaunchArgument("headless", default_value="false",
-                              description="Load the flat runtime_teach/ deployment set"),
-        DeclareLaunchArgument("debug", default_value="true",
-                              description="TF-only; false enables hardware initialization"),
+                              description="Load runtime_teach/ and initialize permanently Live"),
         Node(package="robot_controller", executable="robot_controller", name="robot_controller",
              parameters=[{"item_teach_file": ParameterValue(
                  LaunchConfiguration("item_teach_file"), value_type=str,
              ), "bin_teach_file": ParameterValue(LaunchConfiguration("bin_teach_file"),
                                                  value_type=str),
-                 "headless": ParameterValue(LaunchConfiguration("headless"), value_type=bool),
-                 "debug": ParameterValue(LaunchConfiguration("debug"), value_type=bool)}],
+                 "headless": ParameterValue(LaunchConfiguration("headless"), value_type=bool)}],
              output="screen", on_exit=Shutdown(reason="Robot controller stopped")),
     ])

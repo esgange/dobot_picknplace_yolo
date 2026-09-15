@@ -1,4 +1,4 @@
-"""Shared explicit-action controller with immutable real/TF-only launch mode."""
+"""Shared service-driven controller with explicit TF-only/Live selection."""
 
 import json
 import math
@@ -19,7 +19,7 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
-from std_srvs.srv import Trigger
+from std_srvs.srv import SetBool, Trigger
 from item_perception_interfaces.srv import GetItemPoses
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import JointState
@@ -83,10 +83,13 @@ class RobotController(Node):
         self.publisher_node = "/" + _parse_env_file(self.root / ".env")["DOBOT_ROBOT_NODE_NAME"]
         self.events = PackageEventLogger(self.root)
         self.state_lock = threading.RLock()
-        self.debug = self.declare_parameter("debug", True).value
         self.headless = self.declare_parameter("headless", False).value
-        if type(self.debug) is not bool or type(self.headless) is not bool:
-            raise ValueError("debug/headless must be explicit Boolean mode flags")
+        if type(self.headless) is not bool:
+            raise ValueError("headless must be an explicit Boolean mode flag")
+        self.live = False
+        self.debug = True
+        self.debug_images = False
+        self.debug_capture_status = "OFF"
         try:
             self.ui_prefill = (None if self.headless else load_state(
                 self.root / "logs/robot_controller/last_session.json"))
@@ -102,7 +105,11 @@ class RobotController(Node):
         self.shutdown_requested = threading.Event()
         self.action_lock = threading.Lock()
         self.action_thread = None
+        self.stop_thread = None
         self.stop_future = None
+        self.stop_recovery_abort = threading.Event()
+        self.last_prepick = None
+        self.last_gripper = None
         self.joint_feedback = self.feed_feedback = self.robot_feedback = None
         self.feed_sequence = 0
         self.controller_timer = None
@@ -151,17 +158,21 @@ class RobotController(Node):
                                 callback_group=ReentrantCallbackGroup())
         self.create_service(Trigger, "/robot_controller/stop", self._stop_service,
                             callback_group=ReentrantCallbackGroup())
+        self.create_service(SetBool, "/robot_controller/set_live", self._set_live_service,
+                            callback_group=ReentrantCallbackGroup())
+        self.create_service(SetBool, "/robot_controller/set_debug_images",
+                            self._set_debug_images_service,
+                            callback_group=ReentrantCallbackGroup())
         self.create_timer(1.0, self._publish)
         self.create_timer(0.1, self._supervise, callback_group=ReentrantCallbackGroup())
         self.hardware = None
-        if not self.debug:
-            from .hardware import DobotHardware
-            self.hardware = DobotHardware(self)
-            self.action_thread = threading.Thread(target=self._initialize, daemon=True)
-            self.action_thread.start()
+        if self.headless:
+            startup = self._set_live_service(SetBool.Request(data=True), SimpleNamespace())
+            if not startup.success:
+                raise RuntimeError(f"Headless Live startup rejected: {startup.message}")
         self._publish()
         self.events.record("INFO", "node_started", "Explicit actions; no automatic home/pick",
-                           headless=self.headless, debug=self.debug,
+                           headless=self.headless, live=self.live,
                            cr10_model_sha256=self.kinematics.sha256)
 
     def _load(self, path):
@@ -232,11 +243,13 @@ class RobotController(Node):
     def _publish(self):
         value = dict(self.summary)
         if hasattr(self, "execution_state"):
-            value.update(debug=self.debug, headless=self.headless,
+            value.update(live=self.live, headless=self.headless,
+                         debug_images=self.debug_images,
+                         debug_capture_status=self.debug_capture_status,
                          execution_state=self.execution_state,
                          execution_message=self.execution_message,
                          holding_item=self.holding_item,
-                         execution_enabled=(not self.debug and self.profile_path is not None
+                         execution_enabled=(self.live and self.profile_path is not None
                                             and self.execution_state in
                                             ("READY", "BUSY", "HOLDING", "NO_PICK")),
                          tf_frames=[f"robot_controller_debug_{t.name}"
@@ -259,7 +272,12 @@ class RobotController(Node):
             if hasattr(self, "check_detector_owner"):
                 self.check_detector_owner()
             count = profile["retry"]["pose_candidates"]
-            request = GetItemPoses.Request(max_candidates=count, profile_sha256=digest)
+            with self.state_lock:
+                save_debug_images = self.debug_images
+                if save_debug_images:
+                    self.debug_capture_status = "REQUESTED; waiting for annotated image pair"
+            request = GetItemPoses.Request(max_candidates=count, profile_sha256=digest,
+                                           save_debug_images=save_debug_images)
             future = self.pose_client.call_async(request)
             done = threading.Event()
             future.add_done_callback(lambda _: done.set())
@@ -281,6 +299,31 @@ class RobotController(Node):
             if (result.header.frame_id != "platform_reference"
                     or evidence["profile_sha256"] != digest):
                 raise ValueError("Detector frame/profile mismatch")
+            capture = evidence.get("debug_capture")
+            if (type(capture) is not dict
+                    or set(capture) != {"requested", "rgb_path", "depth_path", "error"}
+                    or type(capture["requested"]) is not bool
+                    or any(type(capture[key]) is not str
+                           for key in ("rgb_path", "depth_path", "error"))
+                    or capture["requested"] is not save_debug_images):
+                raise ValueError("Detector debug-capture diagnostics are malformed")
+            paths = (capture["rgb_path"], capture["depth_path"])
+            if save_debug_images:
+                if bool(capture["error"]) == bool(all(paths)):
+                    raise ValueError("Detector debug-capture result is inconsistent")
+                if all(paths):
+                    directory = (Path(self.root) / "debug/pick_img").resolve()
+                    resolved = tuple(Path(path).resolve() for path in paths)
+                    if any(path.parent != directory or path.suffix != ".png"
+                           for path in resolved):
+                        raise ValueError("Detector debug image path escaped debug/pick_img")
+                    self.debug_capture_status = "SAVED: " + " | ".join(map(str, resolved))
+                else:
+                    self.debug_capture_status = "SAVE WARNING: " + capture["error"]
+            elif any(paths) or capture["error"]:
+                raise ValueError("Detector saved unrequested debug images")
+            else:
+                self.debug_capture_status = "OFF"
             now_ns = self.get_clock().now().nanoseconds
             stamps = [s.sec * 1_000_000_000 + s.nanosec for s in
                       (result.header.stamp, result.depth_stamp)]
@@ -320,6 +363,8 @@ class RobotController(Node):
             self.events.record("INFO", "item_candidates_received", result.message, **summary)
             response.success, response.message = True, json.dumps(summary, allow_nan=False)
         except Exception as exc:
+            if getattr(self, "debug_images", False):
+                self.debug_capture_status = f"REQUEST FAILED: {exc}"
             self.events.record("ERROR", "candidate_request_failed", str(exc))
             response.success, response.message = False, str(exc)
         finally:
@@ -335,7 +380,7 @@ class RobotController(Node):
         self._publish()
 
     def check_cancelled(self):
-        if self.cancel.is_set() or not rclpy.ok():
+        if self.cancel.is_set() or self.shutdown_requested.is_set() or not rclpy.ok():
             raise RuntimeError("Controller action cancelled; no further motion/I/O")
 
     def _sole_publisher(self, topic):
@@ -345,8 +390,8 @@ class RobotController(Node):
             raise ValueError(f"{topic} requires sole canonical publisher {self.publisher_node}")
 
     def check_command_owner(self, service):
-        if self.debug:
-            raise RuntimeError("Hardware command forbidden in TF-only debug mode")
+        if not self.live or self.debug:
+            raise RuntimeError("Hardware command forbidden while Live is OFF")
         nodes = self.get_node_names_and_namespaces()
         if nodes.count((self.get_name(), self.get_namespace())) != 1:
             raise ValueError("Duplicate controller identity; command authority ambiguous")
@@ -458,6 +503,88 @@ class RobotController(Node):
             self.set_execution_state("FAILED", str(exc))
             self.fatal_error = f"Controller initialization failed: {exc}"
             self.events.record("FATAL", "initialization_failed", self.fatal_error)
+        finally:
+            if self.action_lock.locked():
+                self.action_lock.release()
+
+    def _set_live_service(self, request, response):
+        requested = bool(request.data)
+        if self.headless and not requested:
+            response.success = False
+            response.message = "Headless controller is permanently Live; stop the node to disarm"
+            return response
+        if requested == self.live:
+            response.success = True
+            response.message = f"Live already {'ON' if self.live else 'OFF'}"
+            return response
+        if self.fatal_error is not None:
+            response.success, response.message = False, self.fatal_error
+            return response
+        if ((self.action_thread is not None and self.action_thread.is_alive())
+                or (self.stop_thread is not None and self.stop_thread.is_alive())):
+            response.success, response.message = False, "Controller operation active"
+            return response
+        if self.holding_item:
+            response.success, response.message = False, "Cannot turn Live OFF while holding an item"
+            return response
+        if not self.action_lock.acquire(blocking=False):
+            response.success, response.message = False, "Controller action busy"
+            return response
+        try:
+            self.clear_preview()
+            self.cancel.clear()
+            self.stop_future = None
+            if requested:
+                from .hardware import DobotHardware
+                self.live, self.debug = True, False
+                self.execution_state = "INITIALIZING"
+                self.execution_message = "Live requested; initializing robot"
+                self.hardware = DobotHardware(self)
+                self.action_thread = threading.Thread(target=self._initialize, daemon=True)
+                self.action_thread.start()
+                self.events.record("WARNING", "live_enabled", "Live ON; initialization started")
+                response.success = True
+                response.message = "Live ON requested; wait for READY"
+                self._publish()
+                return response
+            if self.hardware is not None:
+                self.hardware.close()
+            self.hardware = None
+            self.live, self.debug = False, True
+            self.execution_state = "DEBUG"
+            self.execution_message = "Live OFF; TF-only previews"
+            self.events.record("INFO", "live_disabled", self.execution_message)
+            response.success, response.message = True, self.execution_message
+            self._publish()
+        except Exception as exc:
+            if requested:
+                self.hardware = None
+                self.live, self.debug = False, True
+                self.execution_state = "DEBUG"
+                self.execution_message = f"Live enable rejected: {exc}"
+            response.success, response.message = False, str(exc)
+            self.events.record("ERROR", "live_change_failed", str(exc), requested=requested)
+            self._publish()
+        finally:
+            if not requested and self.action_lock.locked():
+                self.action_lock.release()
+            elif requested and not response.success and self.action_lock.locked():
+                self.action_lock.release()
+        return response
+
+    def _set_debug_images_service(self, request, response):
+        requested = bool(request.data)
+        with self.state_lock:
+            self.debug_images = requested
+            self.debug_capture_status = (
+                "ON; next pose request saves one annotated RGB/depth pair"
+                if requested else "OFF")
+        response.success = True
+        response.message = self.debug_capture_status
+        self.events.record(
+            "INFO", "debug_images_changed", response.message, enabled=requested)
+        self._publish()
+        return response
 
     def apply_teach(self, item, bin_path):
         if self.headless or (self.action_thread is not None and self.action_thread.is_alive()):
@@ -492,6 +619,8 @@ class RobotController(Node):
             raise ValueError("Load valid teach files and complete initialization before an action")
         if self.action_thread is not None and self.action_thread.is_alive():
             raise ValueError("One controller action is already active")
+        if self.stop_thread is not None and self.stop_thread.is_alive():
+            raise ValueError("Stop/recovery is active")
         if action == "pick" and (self.selection is None or self.holding_item):
             raise ValueError("Pick requires station/bin binding and no item already held")
         if not self.action_lock.acquire(blocking=False):
@@ -508,7 +637,7 @@ class RobotController(Node):
             self.action_lock.release()
             raise
 
-    def _home(self, profile, *, require_suction=False):
+    def home(self, profile, *, require_suction=False):
         self.check_cancelled()
         home = self.kinematics.forward(profile["home"]["positions_rad"])
         current = (self.kinematics.forward(self.current_joints()) if self.debug
@@ -521,73 +650,91 @@ class RobotController(Node):
                 self.hardware.move(target, require_suction=require_suction)
         return targets
 
+    def _remember_prepick(self, target, gripper):
+        with self.state_lock:
+            self.last_prepick = target
+            self.last_gripper = dict(gripper)
+
+    def pick(self, profile, digest):
+        with self.state_lock:
+            self.last_prepick = None
+            self.last_gripper = None
+        self.selection.validate(self.root)
+        motion = profile["motion"]
+        clearance = max(motion["prepick_height"], motion["retract_height"])
+        if motion["zheight_offset"] < clearance:
+            raise ValueError("zheight_offset must be >= prepick_height and retract_height")
+        if not self.pose_client.service_is_ready():
+            raise ValueError("Detector must be independently armed before Pick/Home travel")
+        self.check_detector_owner()
+        if not self.debug and self.hardware.sensor(True, 0, settling_sec=0):
+            raise ValueError("DI1 is already active; do not drop/repick a possibly held item")
+        home_plan = self.home(profile)
+        response = self._request_poses(None, SimpleNamespace())
+        if not response.success:
+            raise ValueError(response.message)
+        batch = json.loads(response.message)
+        evidence = batch["evidence"]
+        for key, expected in (("camera_sha256", self.selection.station.camera.sha256),
+                              ("platform_sha256", self.selection.station.platform.sha256),
+                              ("bin_sha256", self.selection.bin.sha256),
+                              ("model_sha256", profile["model"]["sha256"])):
+            if evidence.get(key) != expected:
+                raise ValueError(f"Detector/controller {key} mismatch; no pick")
+        stamp = min(batch["observation_stamp_ns"], batch["depth_stamp_ns"])
+
+        def check(index):
+            self.check_cancelled()
+            self.selection.validate(self.root)
+            if (not 0 <= (self.get_clock().now().nanoseconds-stamp)/1e9 <=
+                    profile["quality"]["result_max_age_sec"]):
+                raise ValueError(f"Candidate {index} expired; explicitly request another pick")
+
+        check(1)
+        home = self.kinematics.forward(profile["home"]["positions_rad"])
+        plans = []
+        for index, candidate in enumerate(batch["targets"], 1):
+            xyz = self.selection.station.platform.base_from_platform @ np.array(
+                [*candidate["position_m"], 1.0])
+            plans.append(pick_targets(home, xyz[:3], profile, index))
+        if self.debug:
+            self.install_preview((*home_plan, *(t for plan in plans for t in plan)), digest)
+            self.set_execution_state("DEBUG", f"TF-only pick targets: {len(plans)} candidates")
+            return
+        outcome = PickExecutor(self.hardware, finish_home=True).run(
+            plans, profile, check=check,
+            return_home=lambda **kw: self.home(profile, **kw),
+            remember_prepick=self._remember_prepick)
+        self.holding_item = outcome["holding_item"]
+        if not outcome["picked"]:
+            with self.state_lock:
+                self.last_prepick = None
+                self.last_gripper = None
+        self.set_execution_state("HOLDING" if outcome["picked"] else "NO_PICK",
+                                 "Pick complete; item held with suction at Home" if
+                                 outcome["picked"] else
+                                 "No item picked; batch exhausted and Home completed")
+
     def _run_action(self, action):
         try:
             profile, digest = load_item_profile(
                 self.profile_path, root=self.root, deployment=self.headless)
             if digest != self.summary["profile_sha256"]:
                 raise ValueError("Loaded Item Teach changed; explicitly reload before action")
-            home = self.kinematics.forward(profile["home"]["positions_rad"])
             if action == "home":
                 if (not self.debug and not self.holding_item and
                         self.hardware.sensor(True, 0, settling_sec=0)):
                     raise ValueError("Unexpected DI1; held-item state unknown, Home blocked")
-                targets = self._home(profile, require_suction=self.holding_item)
+                targets = self.home(profile, require_suction=self.holding_item)
                 self.install_preview(targets, digest)
                 self.set_execution_state("DEBUG" if self.debug else
                                          ("HOLDING" if self.holding_item else "READY"),
                                          "Home previewed" if self.debug else "Home completed")
                 return
-            self.selection.validate(self.root)
-            motion = profile["motion"]
-            if motion["zheight_offset"] < max(motion["prepick_height"], motion["retract_height"]):
-                raise ValueError("zheight_offset must be >= prepick_height and retract_height")
-            if not self.pose_client.service_is_ready():
-                raise ValueError("Detector must be independently armed before Pick/Home travel")
-            self.check_detector_owner()
-            if not self.debug and self.hardware.sensor(True, 0, settling_sec=0):
-                raise ValueError("DI1 is already active; do not drop/repick a possibly held item")
-            home_plan = self._home(profile)
-            response = self._request_poses(None, SimpleNamespace())
-            if not response.success:
-                raise ValueError(response.message)
-            batch = json.loads(response.message)
-            evidence = batch["evidence"]
-            for key, expected in (("camera_sha256", self.selection.station.camera.sha256),
-                                  ("platform_sha256", self.selection.station.platform.sha256),
-                                  ("bin_sha256", self.selection.bin.sha256),
-                                  ("model_sha256", profile["model"]["sha256"])):
-                if evidence.get(key) != expected:
-                    raise ValueError(f"Detector/controller {key} mismatch; no pick")
-            stamp = min(batch["observation_stamp_ns"], batch["depth_stamp_ns"])
-
-            def check(index):
-                self.check_cancelled()
-                self.selection.validate(self.root)
-                if (not 0 <= (self.get_clock().now().nanoseconds-stamp)/1e9 <=
-                        profile["quality"]["result_max_age_sec"]):
-                    raise ValueError(f"Candidate {index} expired; explicitly request another pick")
-
-            check(1)
-            plans = []
-            for index, candidate in enumerate(batch["targets"], 1):
-                xyz = self.selection.station.platform.base_from_platform @ np.array(
-                    [*candidate["position_m"], 1.0])
-                plans.append(pick_targets(home, xyz[:3], profile, index))
-            if self.debug:
-                self.install_preview((*home_plan, *(t for plan in plans for t in plan)), digest)
-                self.set_execution_state("DEBUG", f"TF-only pick targets: {len(plans)} candidates")
-            else:
-                outcome = PickExecutor(self.hardware, finish_home=False).run(
-                    plans, profile, check=check,
-                    return_home=lambda **kw: self._home(profile, **kw))
-                self.holding_item = outcome["holding_item"]
-                self.set_execution_state("HOLDING" if outcome["picked"] else "NO_PICK",
-                                         "Pick complete; suction stays on at final retract" if
-                                         outcome["picked"] else "No item picked; batch exhausted")
+            self.pick(profile, digest)
         except Exception as exc:
             self.clear_preview()
-            if self.hardware is not None and self.hardware.moving:
+            if self.hardware is not None and getattr(self.hardware, "moving", False):
                 self.request_stop()
             self.set_execution_state("DEBUG" if self.debug else "FAILED", str(exc))
             self.events.record("ERROR", "action_failed", str(exc), action=action)
@@ -656,16 +803,113 @@ class RobotController(Node):
             self.stop_future = self.hardware.stop()
         return self.stop_future
 
+    def stop(self):
+        return self.request_stop()
+
     def _stop_service(self, _request, response):
-        future = self.request_stop()
-        self.set_execution_state("DEBUG" if self.debug else "FAILED",
-                                 "Debug TF cleared" if self.debug else
-                                 "Stop requested; hardware confirmation is not assumed")
-        response.success = self.debug or future is not None
-        response.message = self.execution_message
+        with self.state_lock:
+            return RobotController._handle_stop_service(self, response)
+
+    def _handle_stop_service(self, response):
+        if not self.live:
+            self.cancel.set()
+            self.clear_preview()
+            self.set_execution_state("DEBUG", "TF preview cleared; Live is OFF")
+            response.success, response.message = True, self.execution_message
+            return response
+        if self.stop_thread is not None and self.stop_thread.is_alive():
+            with self.state_lock:
+                self.stop_recovery_abort.set()
+                self.cancel.set()
+            future = self.hardware.stop()
+            self.stop_future = future
+            self.set_execution_state("FAILED", "Stop requested again; return recovery cancelled")
+            response.success = future is not None
+            response.message = self.execution_message
+            return response
+        self.stop_recovery_abort.clear()
+        active = (self.action_thread if self.action_thread is not None
+                  and self.action_thread.is_alive() else None)
+        future = self.stop()
+        if future is None:
+            response.success, response.message = False, "Stop service unavailable"
+            return response
+        self.set_execution_state("STOPPING", "Stop sent; confirming stationary feedback")
+        self.stop_thread = threading.Thread(
+            target=self._complete_operator_stop, args=(future, active), daemon=True)
+        self.stop_thread.start()
+        response.success = True
+        response.message = "Stop accepted; watch /robot_controller/status"
         return response
 
+    def _complete_operator_stop(self, future, active_action):
+        acquired = False
+
+        def check_recovery_allowed():
+            if (self.stop_recovery_abort.is_set() or self.shutdown_requested.is_set()
+                    or not rclpy.ok()):
+                raise ValueError("Stop recovery cancelled; no further return motion or release")
+
+        try:
+            self.hardware.confirm_stop(future)
+            check_recovery_allowed()
+            if active_action is not None:
+                active_action.join(timeout=5)
+                if active_action.is_alive():
+                    raise ValueError("Interrupted action did not terminate after Stop")
+            acquired = self.action_lock.acquire(timeout=5)
+            if not acquired:
+                raise ValueError("Controller action did not release after Stop")
+            snapshot = self.feedback_snapshot(enabled=True)
+            check_recovery_allowed()
+            suction = bool(snapshot["feed"]["digital_input_bits"] & 1)
+            if not suction:
+                if self.holding_item:
+                    raise ValueError(
+                        "DI1 cleared after Stop; previously held item state is unknown")
+                with self.state_lock:
+                    check_recovery_allowed()
+                    self.cancel.clear()
+                    self.stop_future = None
+                self.set_execution_state("READY", "Stopped; DI1 is OFF, no return motion")
+                return
+            with self.state_lock:
+                target, gripper = self.last_prepick, self.last_gripper
+            if target is None or gripper is None:
+                raise ValueError("DI1 is ON but no validated last pre-pick target exists")
+            self.holding_item = True
+            with self.state_lock:
+                check_recovery_allowed()
+                self.cancel.clear()
+                self.stop_future = None
+            self.set_execution_state("RECOVERING", "Returning held item to last pre-pick pose")
+            check_recovery_allowed()
+            self.hardware.move(target, require_suction=True)
+            check_recovery_allowed()
+            self.hardware.output(13, False)
+            self.hardware.output(1, True)
+            if gripper["use_grip"]:
+                self.hardware.output(2, False)
+                self.hardware.output(14, True)
+            self.holding_item = False
+            with self.state_lock:
+                self.last_prepick = None
+                self.last_gripper = None
+            self.set_execution_state("READY", "Stopped; item returned and released at pre-pick")
+        except Exception as exc:
+            self.cancel.set()
+            if self.hardware is not None and getattr(self.hardware, "moving", False):
+                self.request_stop()
+            self.set_execution_state("FAILED", f"Stop/recovery failed: {exc}")
+            self.events.record("ERROR", "stop_recovery_failed", str(exc))
+        finally:
+            if acquired:
+                self.action_lock.release()
+
     def close_runtime(self):
+        with self.state_lock:
+            self.stop_recovery_abort.set()
+            self.cancel.set()
         if self.hardware is not None and self.hardware.moving:
             self.request_stop()
         else:
@@ -673,6 +917,10 @@ class RobotController(Node):
             self.clear_preview()
         if self.action_thread is not None:
             self.action_thread.join(timeout=5)
+        if self.stop_thread is not None:
+            self.stop_thread.join(timeout=5)
+        if self.hardware is not None:
+            self.hardware.close()
 
 
 def file_profile_digest(path, root, *, deployment=False):
@@ -725,7 +973,7 @@ def main(args=None):
     finally:
         if node is not None:
             node.events.record("INFO", "node_stopped", "Controller stopped; no automatic release",
-                               debug=node.debug)
+                               live=node.live)
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

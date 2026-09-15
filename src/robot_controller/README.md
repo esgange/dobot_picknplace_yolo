@@ -1,9 +1,11 @@
 # robot_controller
 
-Explicit-action Home and vertical pick controller. GUI and headless share the
-same implementation. **Default launch is TF-only debug**, with no robot-command
-clients or startup initialization. No mode launches bringup, cameras, detection
-or RViz, loads model weights, automatically picks, or performs placement.
+Service-driven Home, vertical pick and Stop controller. GUI and headless expose
+the same action interfaces. The GUI starts with **Live OFF**: TF previews only,
+with no robot-command clients or startup initialization. Headless starts
+permanently **Live ON** and performs robot initialization before READY. No mode launches bringup,
+cameras, detection or RViz, loads model weights, automatically picks, or performs
+placement.
 
 ## Launch
 
@@ -29,33 +31,49 @@ Headless loads one complete deployment set automatically from flat root
 partitions are rejected; no file overrides or implicit profile choice. Station
 camera/platform calibration comes from the shared latest selector in
 `calibration/`, not the portable bin's source station. Models are hashed only.
+The GUI's Home, Pick, Stop, red-on-active Live and Debug Images controls call the
+same ROS services listed below; there is no private GUI execution path.
 
 ```bash
 ros2 launch robot_controller robot_controller.launch.py headless:=true
 ros2 service call /robot_controller/go_home std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/pick_item std_srvs/srv/Trigger '{}'
+ros2 service call /robot_controller/stop std_srvs/srv/Trigger '{}'
+ros2 service call /robot_controller/set_debug_images std_srvs/srv/SetBool '{data: true}'
 ```
 
-These commands preview TFs under the default debug mode. Real mode is explicitly
-`debug:=false`, for GUI or headless. **Launching real mode disables/re-enables
-the connected robot and sets SpeedFactor 100%.** Check the physical safety area
-and independently start canonical bringup first. Headless never auto-homes/picks.
-Do not run Motion Debug or Gripper Control alongside real controller.
+In the GUI, Home/Pick while Live is OFF preview TFs. Setting Live ON performs the one-time
+disable/re-enable initialization and sets SpeedFactor 100%; it does not itself
+Home or pick. Check the physical safety area and independently start canonical
+bringup first. Live OFF is accepted only while idle and not carrying an item;
+it removes the controller's command clients but does not send DisableRobot.
+Every later GUI Live ON runs initialization again. Headless automatically starts
+Live, rejects Live OFF and never automatically homes or picks. Do not run Motion
+Debug or Gripper Control while Live is ON.
 
 Schema 5 retains its historical non-executing controller_contract as validation
-metadata, not movement permission. Only explicit real launch mode plus an
-operator action authorize execution; loading a teach file never authorizes it.
+metadata, not movement permission. Only explicit Live ON plus an action service
+call authorize execution; loading a teach file never authorizes it.
 
 An independently armed GUI/headless item detector must use the same item/model,
 bin and station hashes. The controller does not auto-start or arm it.
 Detect/Teach service availability and provider are checked before Pick's
 preliminary Home travel; fresh acquisition happens after Home.
-Item Detect's flat runtime catalog/default activation/debug-image workflow remains
-separate pending work; use its documented explicit paths or armed Item Teach.
+Item Detect supplies the requested annotated image pair when Debug Images is ON;
+it remains independently launched and armed.
+
+Debug Images is separate from the motion gate and defaults OFF in both modes.
+The setting is sampled once for each candidate request. When ON, the detector
+saves the exact rendered RGB and registered-depth result panes for that request
+as a same-batch PNG pair under ignored `debug/pick_img/`. It does not subscribe
+to another camera stream, continuously archive frames, change filtering/ranking,
+or change the motion sequence. Absolute saved paths, or a warning if persistence
+fails, appear in `/robot_controller/status`; persistence failure does not invalidate
+an otherwise valid candidate batch.
 
 ## Startup and motion
 
-Real startup order: StopMoveJog, DisableRobot, EnableRobot/enabled confirmation,
+Live initialization order: StopMoveJog, DisableRobot, EnableRobot/enabled confirmation,
 SpeedFactor 100%, Tool 0, Tool 1 TCP zero, CP 100%. Only StopMoveJog and
 DisableRobot are best effort; subsequent failures terminate startup, no retries.
 Motion Debug's independent 50% startup rule is unchanged.
@@ -104,7 +122,7 @@ vertically through initial/pre-pick/final approach. Invalid settings block
 execution without editing the teach file. These checks are not collision
 planning; a taught Home cannot guarantee safe travel on another station.
 
-## Suction, fingers and retries
+## Suction, fingers, retries and Stop recovery
 
 Keep exhaust DO1 off. Turn suction DO13 on at final approach, monitoring
 active-high DI1 while descending (including delayed command acknowledgement).
@@ -113,8 +131,10 @@ retracting from the actual stopped Z. If nominal pick completes without DI1,
 wait the saved pick_settling interval (e.g. 0.2 seconds) before declaring a miss.
 Unexpected DI1 before suction, stale feedback, failed Stop or lost suction are
 faults, not missed picks. Intermediate/final retract never moves downward from
-an early contact. Success **holds at final retract with suction on**. Explicit
-Go Home can subsequently carry the item, still monitoring suction; no auto-home.
+an early contact. Every Pick first completes Home, then requests one fresh ranked
+batch. A success completes retract and returns Home with suction on. A missed
+candidate completes retract and returns Home before the next candidate. Exhausting
+the batch returns Home and reports failure. No new batch is acquired automatically.
 
 use_grip=false leaves DO2/DO14 untouched and grip_onpick has no effect. With
 use_grip=true, start with DO2 off/DO14 on (open); grip_onpick=false stays open,
@@ -122,8 +142,8 @@ true turns DO14 off/DO2 on only after DI1. User deferred DI12 full-open checks
 and damage diagnosis in this stage; no old Grip/Release or purge pattern.
 
 The controller requests up to retry.pose_candidates distinct ranked poses.
-Only missed suction advances after confirmed final retract; return Home before
-the next candidate. Every candidate must remain within the profile's result age
+Only missed suction advances after confirmed final retract and Home. Every
+candidate must remain within the profile's result age
 for both RGB/depth; expired batches require another explicit request, never
 cached/reacquired fallback. Hardware/I/O/stop/retract faults cancel later commands
 and fail closed. On cancellation, attempt canonical Stop and preserve vacuum,
@@ -133,12 +153,32 @@ stop; physical emergency-stop functions remain independent.
 Ctrl-C/SIGTERM notify the controller before ROS context teardown, allowing a
 Stop request while DDS is still alive; this still does not guarantee stopping.
 
+The Stop service immediately cancels the active routine, clears previews and,
+while Live is ON, sends canonical Stop. Recovery starts only after Stop acceptance,
+fresh stationary feedback and termination of the interrupted action. DI1 OFF
+leaves the robot stopped with no return motion. DI1 ON requires the remembered
+last pre-pick target: keep suction active, return there, then set DO13 OFF and
+DO1 exhaust ON; with use_grip=true also set DO2 OFF and DO14 ON. A missing target,
+lost suction, motion/I/O/freshness/Stop failure never releases the item. Stop is
+not an emergency stop, and this explicitly requested return path is not collision
+planning.
+Another Stop during confirmation/return cancels recovery and sends Stop again;
+shutdown also forbids resuming recovery or releasing. No second return routine is
+started. Debug-image persistence remains subject to the original source-generation,
+result-age and request-deadline checks, so saving cannot make expired targets valid.
+
 ## Interfaces and verification
 
-- `/robot_controller/go_home`, `/pick_item`, `/stop` (Trigger): action acceptance
-  or cancellation; follow execution_state/execution_message on status for completion.
+- `/robot_controller/go_home`, `/pick_item`, `/stop` (Trigger): shared GUI/headless
+  action acceptance or cancellation; follow status for asynchronous completion.
+- `/robot_controller/set_live` (SetBool): shared GUI/headless actuation gate. True
+  begins GUI initialization; false returns GUI to TF-only mode only while
+  idle/not holding. Headless starts true and rejects false.
+- `/robot_controller/set_debug_images` (SetBool): enable/disable one annotated
+  RGB/depth pair per requested candidate batch, independently of Live.
 - `/robot_controller/status` (String JSON): transient-local state, holding status,
-  explicit launch modes, validation summary and debug TF frame names.
+  explicit Live/headless mode, `debug_images`, `debug_capture_status`, validation
+  summary and debug TF frame names.
 - `/robot_controller/request_item_poses`: retained explicit read-only batch request.
 - `/robot_controller/validate_profile`: retained explicit idle integrity recheck.
 - `item_teach_file`: GUI-mode explicit profile parameter; launch modes/runtime

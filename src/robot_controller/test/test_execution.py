@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import threading
 from types import MethodType, SimpleNamespace as NS
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import numpy as np
 import pytest
@@ -78,10 +78,12 @@ class FakeHardware:
         return self.pose.copy()
 
 
-def execute(fake, cfg=None, plans=None, check=None):
-    return PickExecutor(fake, finish_home=False).run(
+def execute(fake, cfg=None, plans=None, check=None, *, finish_home=False,
+            remember_prepick=None):
+    return PickExecutor(fake, finish_home=finish_home).run(
         plans or [plan()], cfg or settings(), check=check or (lambda _: None),
-        return_home=lambda **kw: fake.trace.append(("home", kw)))
+        return_home=lambda **kw: fake.trace.append(("home", kw)),
+        remember_prepick=remember_prepick)
 
 
 def test_pose_units_and_canonical_fk_chain():
@@ -194,6 +196,25 @@ def test_missed_suction_settles_and_final_completion_precedes_next_candidate():
     home = next(i for i, v in enumerate(fake.trace) if v[0] == "home")
     second = next(i for i, v in enumerate(fake.trace) if v[0:2] == ("move", "p2_transit"))
     assert final < home < second
+
+
+def test_live_pick_returns_home_on_success_and_after_exhausting_all_candidates():
+    success = FakeHardware()
+    outcome = execute(success, finish_home=True)
+    assert outcome["picked"] and success.trace[-1] == ("home", {"require_suction": True})
+    missed = FakeHardware((False, False, False, False))
+    outcome = execute(missed, plans=[plan(), plan(2)], finish_home=True)
+    homes = [entry for entry in missed.trace if entry[0] == "home"]
+    assert not outcome["picked"] and homes == [
+        ("home", {"require_suction": False}), ("home", {"require_suction": False})]
+
+
+def test_pick_records_each_candidate_last_prepick_for_stop_recovery():
+    remembered = []
+    execute(FakeHardware((False, False, True)), plans=[plan(), plan(2)],
+            remember_prepick=lambda target, grip: remembered.append((target, dict(grip))))
+    assert [entry[0].name for entry in remembered] == ["p1_prepick", "p2_prepick"]
+    assert remembered[-1][1] == settings()["gripper"]
 
 
 @pytest.mark.parametrize("failed", ["p1_transit", "p1_pick", "p1_retract", "p1_final"])
@@ -338,7 +359,7 @@ def test_controller_home_uses_loaded_profile_motion_rates(pair):
     fake = FakeHardware()
     fake.pose = model().forward(profile["home"]["positions_rad"])
     node = NS(check_cancelled=lambda: None, kinematics=model(), debug=False, hardware=fake)
-    targets = controller.RobotController._home(node, profile)
+    targets = controller.RobotController.home(node, profile)
     assert [(t.speed_percent, t.acceleration_percent) for t in targets] == [(42, 73)]
     assert [v[4:] for v in fake.trace] == [(42, 73)]
 
@@ -378,6 +399,23 @@ def test_stop_rejection_and_lost_suction_block_retract(monkeypatch):
     with pytest.raises(ValueError, match="Stop rejected"):
         transport.move(target, stop_on_suction=True)
     assert transport.moving
+
+
+def test_operator_stop_confirmation_ignores_action_cancel_but_requires_stationary(monkeypatch):
+    transport, _, _, clock = synthetic_transport(monkeypatch)
+    transport.node.cancel.set()
+    transport.node.check_cancelled.side_effect = RuntimeError("action cancelled")
+    future = Future()
+    future.set_result(NS(res=0))
+    transport.moving = True
+    transport.confirm_stop(future)
+    assert clock[0] >= hardware.STATIONARY_SEC and not transport.moving
+    assert transport.node.check_cancelled.call_count == 0
+
+    rejected = Future()
+    rejected.set_result(NS(res=1))
+    with pytest.raises(ValueError, match="Stop rejected"):
+        transport.confirm_stop(rejected)
 
 
 @pytest.mark.parametrize("raw", ["", "0,{1,2},GetPose();", "0,{nan,2,3,4,5,6},GetPose();",
@@ -463,6 +501,7 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         "DOBOT_ROBOT_NODE_NAME": "dobot_bringup_ros2"})
     ui_state.save_state(root / "logs/robot_controller/last_session.json", path, None)
     application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    assert application is not None
     rclpy.init(args=[])
     node = controller.RobotController()
     window = None
@@ -474,11 +513,22 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         window.load_selected()
         assert window.home.isEnabled() and not window.pick.isEnabled()
         assert node.profile_path == path and node.action_thread is None
-        with pytest.raises(RuntimeError, match="TF-only"):
+        with pytest.raises(RuntimeError, match="Live is OFF"):
             node.check_command_owner("EnableRobot")
-        window.stop_action()
-        assert node.cancel.is_set() and not node.preview_targets
-        application.processEvents()
+        assert set(window.service_clients) == {
+            "home", "pick", "stop", "live", "debug_images"}
+        invoke = MagicMock()
+        window._call_service = invoke
+        window.home.click()
+        assert invoke.call_args.args[0] == "home"
+        window.stop.click()
+        assert invoke.call_args.args[0] == "stop"
+        window.live.click()
+        assert invoke.call_args.args[0] == "live"
+        assert "#b51f24" in window.live.styleSheet()
+        window.debug_images.click()
+        assert invoke.call_args.args[0] == "debug_images"
+        assert "#d77b00" in window.debug_images.styleSheet()
     finally:
         if window is not None:
             window.close()
@@ -500,6 +550,7 @@ def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidate
              "observation_stamp_ns": 100_000_000_000, "depth_stamp_ns": 100_000_000_000,
              "targets": [{"position_m": [.1, .2, .05]}, {"position_m": [.2, .1, .05]}]}
     node = NS(profile_path=path, root=root, headless=False, debug=True, hardware=None,
+              state_lock=threading.RLock(), last_prepick=None, last_gripper=None,
               summary={"profile_sha256": digest}, selection=selected, action_lock=threading.Lock(),
               pose_client=MagicMock(), check_detector_owner=MagicMock(),
               kinematics=NS(forward=lambda _: home), current_joints=lambda: [.1]*6,
@@ -507,7 +558,8 @@ def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidate
               set_execution_state=MagicMock(), events=MagicMock(),
               get_clock=lambda: NS(now=lambda: NS(nanoseconds=100_100_000_000)),
               _request_poses=lambda *_: NS(success=True, message=json.dumps(batch)))
-    node._home = MethodType(controller.RobotController._home, node)
+    node.home = MethodType(controller.RobotController.home, node)
+    node.pick = MethodType(controller.RobotController.pick, node)
     node.action_lock.acquire()
     controller.RobotController._run_action(node, "pick")
     assert not node.action_lock.locked()
@@ -524,11 +576,11 @@ def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidate
     controller.RobotController._run_action(node, "pick")
     node.install_preview.assert_not_called()
     assert "mismatch" in node.set_execution_state.call_args.args[1]
-    node._home = MagicMock()
+    node.home = MagicMock()
     node.pose_client.service_is_ready.return_value = False
     node.action_lock.acquire()
     controller.RobotController._run_action(node, "pick")
-    node._home.assert_not_called()
+    node.home.assert_not_called()
     assert "independently armed" in node.set_execution_state.call_args.args[1]
 
 
@@ -591,7 +643,7 @@ def test_real_supervisor_fault_requests_stop_and_never_claims_completion():
     node.set_execution_state.assert_called_once_with("FAILED", "stale")
 
 
-def test_headless_debug_node_loads_runtime_profile_without_commands(pair, monkeypatch):
+def test_headless_node_loads_runtime_profile_and_starts_permanently_live(pair, monkeypatch):
     import rclpy
     root, path, _ = pair
     directory = root / "runtime_teach"
@@ -604,11 +656,37 @@ def test_headless_debug_node_loads_runtime_profile_without_commands(pair, monkey
     monkeypatch.setattr(controller, "_parse_env_file", lambda _: {
         "DOBOT_ROBOT_NODE_NAME": "dobot_bringup_ros2"})
     monkeypatch.setattr(controller, "runtime_selection", lambda _: selected)
+    initialized = threading.Event()
+
+    class FakeStartup:
+        moving = False
+
+        def __init__(self, node):
+            self.node = node
+
+        def initialize(self):
+            self.node.set_execution_state("READY", "Synthetic initialization complete")
+            initialized.set()
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(hardware, "DobotHardware", FakeStartup)
     rclpy.init(args=["--ros-args", "-p", "headless:=true"])
     node = controller.RobotController()
     try:
-        assert node.headless and node.debug and node.hardware is None
-        assert node.profile_path.parent == directory and node.action_thread is None
+        assert initialized.wait(1)
+        node.action_thread.join(timeout=1)
+        assert node.headless and node.live and not node.debug
+        assert isinstance(node.hardware, FakeStartup)
+        assert node.profile_path.parent == directory
+        service_names = {service.srv_name for service in node.services}
+        assert {"/robot_controller/go_home", "/robot_controller/pick_item",
+                "/robot_controller/stop", "/robot_controller/set_live",
+                "/robot_controller/set_debug_images"} <= service_names
+        response = controller.RobotController._set_live_service(
+            node, controller.SetBool.Request(data=False), NS())
+        assert not response.success and node.live
         from rclpy.parameter import Parameter
         result = node.set_parameters([Parameter("item_teach_file", value=str(path))])[0]
         assert not result.successful
@@ -618,7 +696,7 @@ def test_headless_debug_node_loads_runtime_profile_without_commands(pair, monkey
         rclpy.shutdown()
 
 
-def test_real_launch_constructs_transport_and_initializes_but_never_picks(pair, monkeypatch):
+def test_live_service_constructs_initializes_and_removes_transport(pair, monkeypatch):
     import rclpy
     root, _, _ = pair
     initialized = threading.Event()
@@ -635,17 +713,35 @@ def test_real_launch_constructs_transport_and_initializes_but_never_picks(pair, 
             self.node.set_execution_state("READY", "Synthetic initialization complete")
             initialized.set()
 
+        def close(self):
+            self.closed = True
+
     monkeypatch.setattr(hardware, "DobotHardware", FakeStartup)
     monkeypatch.setattr(controller, "workspace_root", lambda: root)
     monkeypatch.setattr(controller, "load_robot_lan1_ip", lambda _: "192.168.20.204")
     monkeypatch.setattr(controller, "_parse_env_file", lambda _: {
         "DOBOT_ROBOT_NODE_NAME": "dobot_bringup_ros2"})
-    rclpy.init(args=["--ros-args", "-p", "debug:=false"])
+    rclpy.init(args=[])
     node = controller.RobotController()
     try:
-        assert initialized.wait(1) and not node.debug and isinstance(node.hardware, FakeStartup)
+        assert node.debug and not node.live and node.hardware is None
+        response = controller.RobotController._set_live_service(
+            node, controller.SetBool.Request(data=True), NS())
+        assert response.success and initialized.wait(1)
+        node.action_thread.join(timeout=1)
+        started = node.hardware
+        assert node.live and not node.debug and isinstance(started, FakeStartup)
         assert node.execution_state == "READY" and node.profile_path is None
         assert not node.preview_targets and not node.holding_item
+        node.holding_item = True
+        response = controller.RobotController._set_live_service(
+            node, controller.SetBool.Request(data=False), NS())
+        assert not response.success and node.live
+        node.holding_item = False
+        response = controller.RobotController._set_live_service(
+            node, controller.SetBool.Request(data=False), NS())
+        assert response.success and not node.live and node.debug and node.hardware is None
+        assert started.closed
     finally:
         node.close_runtime()
         node.destroy_node()
@@ -653,13 +749,96 @@ def test_real_launch_constructs_transport_and_initializes_but_never_picks(pair, 
     state = root / "logs/robot_controller/last_session.json"
     state.write_text('{"schema_version":0}')
     constructed.clear()
-    rclpy.init(args=["--ros-args", "-p", "debug:=false"])
+    rclpy.init(args=[])
     try:
         with pytest.raises(ValueError, match="exact schema 1"):
             controller.RobotController()
         assert not constructed
     finally:
         rclpy.shutdown()
+
+
+@pytest.mark.parametrize("suction", [False, True])
+def test_operator_stop_confirms_stationary_and_conditionally_returns_item(suction, monkeypatch):
+    monkeypatch.setattr(controller.rclpy, "ok", lambda: True)
+    target = plan()[2]
+    transport = NS(confirm_stop=MagicMock(), move=MagicMock(), output=MagicMock())
+    node = NS(hardware=transport, action_lock=threading.Lock(), cancel=threading.Event(),
+              stop_future=object(), last_prepick=target, last_gripper=settings()["gripper"],
+              holding_item=False, state_lock=threading.RLock(), events=MagicMock(),
+              stop_recovery_abort=threading.Event(), shutdown_requested=threading.Event(),
+              feedback_snapshot=MagicMock(return_value={
+                  "feed": {"digital_input_bits": int(suction)}}),
+              set_execution_state=MagicMock())
+    node.cancel.set()
+    controller.RobotController._complete_operator_stop(node, object(), None)
+    transport.confirm_stop.assert_called_once()
+    if suction:
+        transport.move.assert_called_once_with(target, require_suction=True)
+        assert transport.output.call_args_list == [
+            call(13, False), call(1, True), call(2, False), call(14, True),
+        ]
+        assert node.last_prepick is None and not node.holding_item
+        assert node.set_execution_state.call_args.args == (
+            "READY", "Stopped; item returned and released at pre-pick")
+    else:
+        transport.move.assert_not_called()
+        transport.output.assert_not_called()
+        assert node.set_execution_state.call_args.args == (
+            "READY", "Stopped; DI1 is OFF, no return motion")
+    assert not node.cancel.is_set() and not node.action_lock.locked()
+
+
+def test_operator_stop_recovery_fault_never_releases_item(monkeypatch):
+    monkeypatch.setattr(controller.rclpy, "ok", lambda: True)
+    transport = NS(confirm_stop=MagicMock(), move=MagicMock(side_effect=ValueError("blocked")),
+                   output=MagicMock())
+    node = NS(hardware=transport, action_lock=threading.Lock(), cancel=threading.Event(),
+              stop_future=object(), last_prepick=plan()[2],
+              last_gripper=settings()["gripper"], holding_item=False,
+              state_lock=threading.RLock(), events=MagicMock(),
+              stop_recovery_abort=threading.Event(), shutdown_requested=threading.Event(),
+              feedback_snapshot=MagicMock(return_value={"feed": {"digital_input_bits": 1}}),
+              set_execution_state=MagicMock())
+    controller.RobotController._complete_operator_stop(node, object(), None)
+    assert node.holding_item and node.cancel.is_set()
+    transport.output.assert_not_called()
+    assert node.set_execution_state.call_args.args[0] == "FAILED"
+
+
+@pytest.mark.parametrize("reason", ["second_stop", "shutdown"])
+@pytest.mark.parametrize("when", ["before", "after_motion"])
+def test_stop_recovery_never_resumes_after_another_stop_or_shutdown(reason, when, monkeypatch):
+    monkeypatch.setattr(controller.rclpy, "ok", lambda: True)
+    transport = NS(confirm_stop=MagicMock(), move=MagicMock(), output=MagicMock())
+    node = NS(hardware=transport, action_lock=threading.Lock(), cancel=threading.Event(),
+              stop_future=object(), last_prepick=plan()[2], last_gripper=settings()["gripper"],
+              holding_item=True, state_lock=threading.RLock(), events=MagicMock(),
+              stop_recovery_abort=threading.Event(), shutdown_requested=threading.Event(),
+              feedback_snapshot=MagicMock(return_value={"feed": {"digital_input_bits": 1}}),
+              set_execution_state=MagicMock())
+    node.cancel.set()
+    flag = node.stop_recovery_abort if reason == "second_stop" else node.shutdown_requested
+    if when == "before":
+        flag.set()
+    else:
+        transport.move.side_effect = lambda *_args, **_kwargs: flag.set()
+    controller.RobotController._complete_operator_stop(node, object(), None)
+    assert transport.move.call_count == int(when == "after_motion")
+    transport.output.assert_not_called()
+    assert node.cancel.is_set() and node.holding_item
+    assert node.set_execution_state.call_args.args[0] == "FAILED"
+
+
+def test_second_stop_sends_stop_and_aborts_recovery_without_starting_another():
+    transport = NS(stop=MagicMock(return_value=object()))
+    node = NS(live=True, hardware=transport, stop_thread=NS(is_alive=lambda: True),
+              stop_recovery_abort=threading.Event(), cancel=threading.Event(),
+              state_lock=threading.RLock(), execution_message="Stopped",
+              set_execution_state=MagicMock())
+    response = controller.RobotController._stop_service(node, None, NS())
+    assert response.success and node.cancel.is_set() and node.stop_recovery_abort.is_set()
+    transport.stop.assert_called_once()
 
 
 @pytest.mark.parametrize("kind", ["partition", "unknown", "malformed", "symlink"])
@@ -683,7 +862,7 @@ def test_runtime_catalog_rejects_bad_entries_without_fallback(tmp_path, kind):
 def test_unknown_duplicate_command_provider_and_legacy_clients_are_blocked():
     nodes = [("robot_controller", "/"), ("dobot_bringup_ros2", "/")]
     services = {("dobot_bringup_ros2", "/"): [("/dobot_bringup_ros2/srv/MovLIO", [])]}
-    node = NS(debug=False, publisher_node="/dobot_bringup_ros2",
+    node = NS(debug=False, live=True, publisher_node="/dobot_bringup_ros2",
               get_name=lambda: "robot_controller", get_namespace=lambda: "/",
               get_node_names_and_namespaces=lambda: nodes,
               get_service_names_and_types_by_node=lambda name, ns: services.get((name, ns), []))
@@ -793,7 +972,7 @@ def test_signal_shutdown_keeps_ros_alive_until_stop_and_restores_handlers(monkey
         assert alive[0]
         order.append("stop-before-context-shutdown")
 
-    node = NS(headless=True, fatal_error=None, debug=False, close_runtime=close,
+    node = NS(headless=True, fatal_error=None, debug=True, live=False, close_runtime=close,
               events=MagicMock(), destroy_node=MagicMock())
     executor = MagicMock()
     executor.spin_once.side_effect = lambda **_: handlers[controller.signal.SIGINT](2, None)

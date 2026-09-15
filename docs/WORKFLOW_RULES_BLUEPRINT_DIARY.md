@@ -2448,6 +2448,59 @@ Never use a floating “latest” version in an issue, script, or deployment not
   transport/feedback and offscreen/debug data were used; no hardware/RViz/model
   or local operator artifact was launched, commanded or changed.
 
+### 2026-09-15 — Service-driven controller Live gate, Home-return pick and Stop recovery
+
+- User replaced launch-time debug/real selection with a runtime actuation gate,
+  then explicitly made headless the production-live mode. Add rule 54: the GUI
+  starts Live OFF with TF-only actions and no Dobot command clients. Its Home,
+  Pick, Stop and red Live controls call the same public ROS services exposed
+  headlessly. `/robot_controller/set_live` ON constructs the command transport
+  and completes one-time initialization before READY; GUI OFF is idle/not-holding
+  only, removes command clients without disabling the robot, and a later ON
+  initializes again. Headless loads the deployment set, automatically starts
+  permanently Live, initializes, and rejects Live OFF, but never invokes Home or
+  Pick itself. Remove the `debug` launch argument.
+- Refactor execution into reusable `home()`, `pick()` and `stop()` functions.
+  Pick validates detector/station/profile before motion, completes Home, requests
+  one fresh ranked batch and attempts only those candidates. A miss completes
+  retract and Home before the next candidate. Success completes retract and Home
+  while monitoring/holding suction; exhaustion returns Home and reports failure.
+  Preserve rule 53's conditional preliminary Home height, item rates, fixed
+  vertical geometry, finger rules, freshness, FK/IK and sole-provider checks.
+- Stop cancels the interrupted routine and sends canonical Stop. Only after Stop
+  acknowledgement, fresh stationary feedback and action termination may recovery
+  run. DI1 OFF performs no return motion. DI1 ON requires the remembered most
+  recent pre-pick target, returns there with suction continuously required, then
+  disables suction, enables exhaust and opens enabled fingers. Missing recovery
+  context or any suction/motion/I/O/feedback fault retains the item and fails
+  closed; physical emergency stop remains independent. Item Teach Armed ON is
+  also red as a visual service-state warning without changing arming validation.
+  A second explicit Stop during confirmation/return sends Stop again and cancels
+  recovery without another return routine; shutdown also prevents recovery from
+  clearing cancellation and resuming motion/release. Serialize Stop acceptance.
+- Add a separate troubleshooting-image gate in both modes, unrelated to Live.
+  `/robot_controller/set_debug_images` defaults OFF and its Boolean is sampled
+  once per candidate request; `/robot_controller/status` publishes that state and
+  the latest save outcome. Extend GetItemPoses with `save_debug_images`. When true,
+  Item Detect atomically saves exactly that request's already-rendered RGB and
+  registered-depth overlay pair as PNG under ignored root `debug/pick_img/` and
+  returns absolute paths. Never subscribe to another camera stream or continuously
+  archive frames. Persistence failure is reported in diagnostics/status but does
+  not alter candidates, ranking or robot motion.
+  Revalidate generation/source hashes, result age and request deadline after image
+  persistence; optional saving never permits a stale/disarmed response.
+- Verification: all 355 perception and 82 controller tests pass directly and
+  through their packaged CTest wrappers. Regressions cover service names and GUI
+  service clients, red Live/Armed styling, GUI OFF/no-transport startup, headless
+  automatic Live initialization/permanent gate, GUI ON/OFF/re-enable gating,
+  independent debug-image service/status, exact same-batch PNG pair persistence,
+  non-blocking persistence errors, Home-return success/miss/exhaustion, remembered
+  pre-pick and Stop confirmation/DI/no-release branches. The changed runtime and
+  controller tests compile and pass focused flake8; `git diff --check`, package-up-to
+  and all-14-package root builds pass. All validation used synthetic ROS services,
+  feedback/images and offscreen Qt; no robot/camera/RViz/model was launched or
+  commanded and no operator artifact was changed.
+
 ### Future entry template
 
 ```text

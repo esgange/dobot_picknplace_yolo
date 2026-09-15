@@ -1,5 +1,6 @@
 uint32 max_candidates
 string profile_sha256
+bool save_debug_images
 ---
 bool success
 string status

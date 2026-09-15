@@ -393,6 +393,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.armed_toggle.setToolTip(
             "Requires saved profile, loaded model, YOLO ON and applied station with fresh inputs."
         )
+        self.armed_toggle.toggled.connect(self._style_armed)
         self.armed_toggle.toggled.connect(self._toggle_armed)
         toggle_row.addWidget(self.armed_toggle)
         view_layout.addLayout(toggle_row)
@@ -1031,6 +1032,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._message(message)
             self.node.events.record("WARNING", "item_station_preview_invalid", message,
                                     platform=platform, bin=bin_path)
+
+    def _style_armed(self, enabled):
+        self.armed_toggle.setStyleSheet(
+            "background:#b51f24;color:white;font-weight:700;border:2px solid #7c1115;"
+            if enabled else "")
 
     def _toggle_armed(self, enabled):
         self._resume_live()

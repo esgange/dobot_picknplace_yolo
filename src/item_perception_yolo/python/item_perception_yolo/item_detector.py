@@ -1,13 +1,16 @@
 """Shared GUI/headless read-only detector. No robot command clients or cv2 imports."""
 
 import copy
+from datetime import datetime, timezone
 import json
 import math
 import os
 from pathlib import Path
+import struct
 import threading
 import time
 import uuid
+import zlib
 
 import numpy as np
 import rclpy
@@ -26,7 +29,9 @@ from .bin_teach_core import (
     load_bin_teach, load_bin_teach_calibration_context,
     validate_applied_sources, compose_platform_from_optical, place_bin_roi,
 )
-from .platform_teach_core import PackageEventLogger, resolve_base_from_camera_link
+from .platform_teach_core import (
+    PackageEventLogger, resolve_base_from_camera_link, workspace_root,
+)
 from .item_teach_core import (file_sha256, load_item_profile, settings_from_profile,
                               validate_detection_settings, detection_settings, validate_quality)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
@@ -39,6 +44,55 @@ SERVICE_NAME = "/item_detect/get_item_poses"
 INITIAL_PREVIEW_YOLO = {"confidence": 0.25, "iou": 0.7, "image_size": 640,
                         "max_detections": 100}
 PREVIEW_MAX_AGE_SEC = 0.5
+
+
+def _png_chunk(kind, payload):
+    return (struct.pack(">I", len(payload)) + kind + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+
+
+def encode_rgb_png(pixels, width, height):
+    """Encode one packed RGB8 frame without importing image/native libraries."""
+    if (type(pixels) is not bytes or type(width) is not int or type(height) is not int
+            or not 0 < width <= 4096 or not 0 < height <= 4096
+            or len(pixels) != width * height * 3):
+        raise ValueError("Debug image must be a packed RGB8 frame")
+    stride = width * 3
+    scanlines = b"".join(
+        b"\x00" + pixels[offset:offset + stride]
+        for offset in range(0, len(pixels), stride)
+    )
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", header)
+            + _png_chunk(b"IDAT", zlib.compress(scanlines)) + _png_chunk(b"IEND", b""))
+
+
+def save_pick_debug_pair(root, batch_id, view):
+    """Atomically persist the exact annotated result pair for one explicit request."""
+    if (type(batch_id) is not str or len(batch_id) != 32
+            or any(character not in "0123456789abcdef" for character in batch_id)):
+        raise ValueError("Debug image batch ID is invalid")
+    width, height = view["width"], view["height"]
+    images = {"rgb": view["rgb"], "depth": view["depth_rgb"]}
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    directory = Path(root) / "debug/pick_img"
+    directory.mkdir(parents=True, exist_ok=True)
+    finals = {kind: directory / f"pick_{stamp}_{batch_id}_{kind}.png" for kind in images}
+    temporary = {}
+    try:
+        for kind, pixels in images.items():
+            path = directory / f".{finals[kind].name}.{uuid.uuid4().hex}.tmp"
+            temporary[kind] = path
+            path.write_bytes(encode_rgb_png(pixels, width, height))
+        for kind in images:
+            os.replace(temporary[kind], finals[kind])
+        return {f"{kind}_path": str(finals[kind].resolve()) for kind in images}
+    except Exception:
+        for path in temporary.values():
+            path.unlink(missing_ok=True)
+        for path in finals.values():
+            path.unlink(missing_ok=True)
+        raise
 
 
 def validate_roi_status(status):
@@ -191,6 +245,7 @@ def validate_pair(rgb, depth, color_info, depth_info, now_ns, quality):
 class ItemDetectNode(Node):
     def __init__(self, name="item_detect"):
         super().__init__(name)
+        self.root = workspace_root()
         self.events = PackageEventLogger(node_name=name)
         self.native = NativeClient(self.events)
         self._feedback_lock = threading.Lock()
@@ -887,12 +942,38 @@ class ItemDetectNode(Node):
                 response.status = "OK"
             response.message = (f"Returned {len(response.candidates)} of "
                                 f"{request.max_candidates} requested")
+            debug_capture = {"requested": bool(request.save_debug_images),
+                             "rgb_path": "", "depth_path": "", "error": ""}
+            if debug_capture["requested"]:
+                try:
+                    debug_capture.update(save_pick_debug_pair(self.root, response.batch_id, view))
+                    self.events.record(
+                        "INFO", "pick_debug_images_saved",
+                        "Saved annotated RGB/depth pair for requested candidate batch",
+                        batch_id=response.batch_id, **debug_capture)
+                except Exception as exc:
+                    debug_capture["error"] = str(exc)
+                    self.events.record(
+                        "WARNING", "pick_debug_images_failed",
+                        "Candidate batch remains valid; troubleshooting images were not saved",
+                        batch_id=response.batch_id, error=str(exc))
+                check_active()
+                self._validate_sources()
+                if file_sha256(profile_path) != profile_digest:
+                    self.disarm()
+                    raise ValueError("Item profile changed while saving debug images")
+                age = (self.get_clock().now().nanoseconds -
+                       min(rgb["stamp_ns"], depth["stamp_ns"])) / 1e9
+                if (not 0 <= age <= self.settings["quality"]["result_max_age_sec"]
+                        or time.monotonic() > deadline):
+                    raise ValueError("Observation/request expired while saving debug images")
             evidence = {"profile_sha256": profile_digest,
                         "model_sha256": self.model_config["sha256"],
                         "camera_sha256": self.applied.camera.sha256,
                         "platform_sha256": self.applied.platform.sha256,
                         "bin_sha256": self.bin_artifact.sha256, "snapshot_context": context,
-                        "rejected": result["rejected"], "inference_ms": result["inference_ms"]}
+                        "rejected": result["rejected"], "inference_ms": result["inference_ms"],
+                        "debug_capture": debug_capture}
             response.diagnostics_json = json.dumps(evidence, allow_nan=False)
             if simulated:
                 view = {**view, "simulation_profile": (str(profile_path), profile_digest),

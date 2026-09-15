@@ -97,7 +97,10 @@ def test_read_only_controller_pose_request_checks_fresh_batch(pair):
     result.header.frame_id = "platform_reference"
     result.header.stamp.sec = result.depth_stamp.sec = 100
     result.batch_id = "fixture"
-    result.diagnostics_json = json.dumps({"profile_sha256": core.file_sha256(path)})
+    result.diagnostics_json = json.dumps({
+        "profile_sha256": core.file_sha256(path),
+        "debug_capture": {"requested": False, "rgb_path": "", "depth_path": "", "error": ""},
+    })
     candidate = ItemCandidate(id="fixture:1", priority=1, class_id=0, confidence=.9,
                               center_distance=.01)
     candidate.pose.orientation.w = 1.
@@ -107,6 +110,7 @@ def test_read_only_controller_pose_request_checks_fresh_batch(pair):
     future.set_result(result)
     node = SimpleNamespace(
         pose_lock=threading.Lock(), profile_path=path, root=root, events=MagicMock(),
+        state_lock=threading.RLock(), debug_images=False, debug_capture_status="OFF",
         pose_client=MagicMock(), get_clock=lambda: SimpleNamespace(
             now=lambda: SimpleNamespace(nanoseconds=100_200_000_000)))
     node.pose_client.call_async.return_value = future
@@ -117,11 +121,69 @@ def test_read_only_controller_pose_request_checks_fresh_batch(pair):
     sent = node.pose_client.call_async.call_args.args[0]
     assert sent.max_candidates == profile["retry"]["pose_candidates"]
     assert sent.profile_sha256 == core.file_sha256(path)
+    assert not sent.save_debug_images
     result.header.stamp.sec = 90
     assert not RobotController._request_poses(node, None, SimpleNamespace()).success
     result.header.stamp.sec = 100
     result.header.frame_id = "base_link"
     assert not RobotController._request_poses(node, None, SimpleNamespace()).success
+
+
+def test_debug_image_service_and_request_flag_are_reported(pair):
+    import threading
+    from rclpy.task import Future
+    from item_perception_interfaces.srv import GetItemPoses
+    root, path, _ = pair
+    directory = root / "debug/pick_img"
+    directory.mkdir(parents=True)
+    rgb, depth = directory / "rgb.png", directory / "depth.png"
+    rgb.write_bytes(b"png")
+    depth.write_bytes(b"png")
+    result = GetItemPoses.Response(success=True, status="NO_VALID_ITEMS", message="None")
+    result.header.frame_id = "platform_reference"
+    result.header.stamp.sec = result.depth_stamp.sec = 100
+    result.batch_id = "fixture"
+    result.diagnostics_json = json.dumps({
+        "profile_sha256": core.file_sha256(path),
+        "debug_capture": {"requested": True, "rgb_path": str(rgb),
+                          "depth_path": str(depth), "error": ""},
+    })
+    future = Future()
+    future.set_result(result)
+    node = SimpleNamespace(
+        pose_lock=threading.Lock(), profile_path=path, root=root, events=MagicMock(),
+        state_lock=threading.RLock(), debug_images=True, debug_capture_status="OFF",
+        pose_client=MagicMock(), get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(nanoseconds=100_200_000_000)))
+    node.pose_client.call_async.return_value = future
+    response = RobotController._request_poses(node, None, SimpleNamespace())
+    assert response.success
+    assert node.pose_client.call_async.call_args.args[0].save_debug_images
+    assert node.debug_capture_status == f"SAVED: {rgb} | {depth}"
+
+    state = SimpleNamespace(state_lock=threading.RLock(), debug_images=False,
+                            debug_capture_status="OFF", events=MagicMock(),
+                            _publish=MagicMock())
+    response = RobotController._set_debug_images_service(
+        state, SimpleNamespace(data=True), SimpleNamespace())
+    assert response.success and state.debug_images
+    assert "next pose request" in state.debug_capture_status
+    state._publish.assert_called_once()
+
+
+def test_status_topic_separates_live_from_debug_image_capture():
+    publisher = MagicMock()
+    node = SimpleNamespace(
+        summary={"state": "PROFILE_VALIDATED"}, execution_state="READY",
+        execution_message="Ready", live=True, headless=True, debug_images=True,
+        debug_capture_status="SAVED: rgb.png | depth.png", holding_item=False,
+        profile_path=Path("item.yaml"), preview_targets=(), publisher=publisher,
+    )
+    RobotController._publish(node)
+    status = json.loads(publisher.publish.call_args.args[0].data)
+    assert status["live"] and status["headless"] and status["debug_images"]
+    assert status["debug_capture_status"] == "SAVED: rgb.png | depth.png"
+    assert "debug" not in status  # TF-only/Live is not confused with image capture.
 
 
 def test_no_hardware_clients_or_model_deserialization():

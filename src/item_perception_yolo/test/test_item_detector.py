@@ -1,7 +1,10 @@
 import copy
 import json
+from pathlib import Path
+import struct
 import threading
 import time
+import zlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -68,7 +71,7 @@ def test_station_source_changes_disarm(monkeypatch):
 
 
 @pytest.fixture
-def service_node(monkeypatch):
+def service_node(monkeypatch, tmp_path):
     candidate = {"source_index": 4, "class_id": 1, "class_name": "part", "confidence": .8,
                  "position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.],
                  "length": .1, "width": .05, "center_distance": .01,
@@ -76,6 +79,7 @@ def service_node(monkeypatch):
                  "accepted_depth_count": 100, "rejected_depth_count": 10, "pixel": [100., 100.]}
     result = {"candidates": [candidate], "rejected": [], "count": 1, "inference_ms": 10.}
     node = SimpleNamespace(request_lock=threading.Lock(), operation_lock=threading.Lock(),
+                           root=tmp_path,
                            preview_mode="all",
                            service=object(), arm_epoch=1, yolo_enabled=True, pose_candidates=3,
                            profile_digest="a"*64, profile_path="profile.yaml", native=SimpleNamespace(failed=False),
@@ -110,11 +114,77 @@ def test_request_new_observation_shortage_identity_and_no_cache(service_node):
     assert len(result.candidates) == 1 and result.header.frame_id == "platform_reference"
     assert result.candidates[0].priority == 1
     assert result.candidates[0].id.startswith(result.batch_id + ":")
-    assert json.loads(result.diagnostics_json)["profile_sha256"] == "a"*64
+    evidence = json.loads(result.diagnostics_json)
+    assert evidence["profile_sha256"] == "a"*64
+    assert evidence["debug_capture"] == {
+        "requested": False, "rgb_path": "", "depth_path": "", "error": ""}
     assert node._snapshot.call_args.args[0] == 100_200_000_000
     again = call(node)
     assert again.batch_id != result.batch_id
     assert node.infer.call_count == 2  # no cached pose response
+
+
+def test_requested_debug_pair_is_exact_annotated_result_and_bounded_to_debug_dir(service_node):
+    node, _ = service_node
+    rgb = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+    depth = bytes([0, 0, 0, 255, 0, 0, 0, 0, 0, 255, 0, 0])
+    node.infer.return_value.update(width=2, height=2, rgb=rgb, depth_rgb=depth)
+    request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+                                   save_debug_images=True)
+    result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
+    assert result.success
+    capture = json.loads(result.diagnostics_json)["debug_capture"]
+    assert capture["requested"] and not capture["error"]
+    paths = [Path(capture["rgb_path"]), Path(capture["depth_path"])]
+    assert all(path.parent == node.root / "debug/pick_img" for path in paths)
+    assert all(path.is_file() and path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+               for path in paths)
+    for path, expected in zip(paths, (rgb, depth)):
+        encoded, offset, compressed = path.read_bytes(), 8, b""
+        while offset < len(encoded):
+            length = struct.unpack(">I", encoded[offset:offset + 4])[0]
+            kind = encoded[offset + 4:offset + 8]
+            payload = encoded[offset + 8:offset + 8 + length]
+            if kind == b"IDAT":
+                compressed += payload
+            offset += 12 + length
+        raw = zlib.decompress(compressed)
+        assert raw == b"\x00" + expected[:6] + b"\x00" + expected[6:]
+    assert len(list((node.root / "debug/pick_img").glob("*.png"))) == 2
+
+
+def test_debug_image_failure_is_diagnostic_only(service_node, monkeypatch):
+    node, _ = service_node
+    node.infer.return_value.update(width=2, height=2, rgb=bytes(12), depth_rgb=bytes(12))
+    monkeypatch.setattr(detector, "save_pick_debug_pair",
+                        MagicMock(side_effect=OSError("synthetic disk failure")))
+    request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+                                   save_debug_images=True)
+    result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
+    capture = json.loads(result.diagnostics_json)["debug_capture"]
+    assert result.success and len(result.candidates) == 1
+    assert capture["requested"] and "synthetic disk failure" in capture["error"]
+    assert not capture["rgb_path"] and not capture["depth_path"]
+
+
+@pytest.mark.parametrize("failure", ["disarm", "expired"])
+def test_debug_saving_cannot_return_invalidated_or_expired_candidates(
+        service_node, monkeypatch, failure):
+    node, _ = service_node
+
+    def saved(*_):
+        if failure == "disarm":
+            node.arm_epoch += 1
+        else:
+            node.get_clock = lambda: SimpleNamespace(
+                now=lambda: SimpleNamespace(nanoseconds=105_200_000_000))
+        return {"rgb_path": "rgb.png", "depth_path": "depth.png"}
+
+    monkeypatch.setattr(detector, "save_pick_debug_pair", saved)
+    request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+                                   save_debug_images=True)
+    result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
+    assert not result.success and not result.candidates
 
 
 def test_pose_candidates_caps_returned_batch_without_adding_a_first_attempt(service_node):

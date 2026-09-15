@@ -83,11 +83,13 @@ class PickExecutor:
         self.hardware = hardware
         self.finish_home = finish_home
 
-    def run(self, plans, settings, *, check, return_home):
+    def run(self, plans, settings, *, check, return_home, remember_prepick=None):
         grip = settings["gripper"]["use_grip"]
         close = grip and settings["gripper"]["grip_onpick"]
         for index, plan in enumerate(plans, 1):
             check(index)
+            if remember_prepick is not None:
+                remember_prepick(plan[2], settings["gripper"])
             self.hardware.output(1, False)  # Exhaust stays off; no imported release/purge pattern.
             self.hardware.output(13, False)
             if grip:
@@ -123,4 +125,6 @@ class PickExecutor:
             self.hardware.output(13, False)
             if index < len(plans):
                 return_home(require_suction=False)
+        if plans and self.finish_home:
+            return_home(require_suction=False)
         return {"picked": False, "candidate": None, "holding_item": False}

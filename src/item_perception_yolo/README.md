@@ -130,11 +130,15 @@ Click calculation reuses the exact displayed geometry and synchronized raw
 RGB/depth/TF snapshot, without re-running YOLO or substituting newer sensor data.
 Input checks apply when acquiring the snapshot; `result_max_age_sec` bounds its
 age at click and completion. An expired click requires resuming live; no retry.
-Only a bounded current/in-flight/selected snapshot is held in memory; no image archive.
+Only a bounded current/in-flight/selected snapshot is held in memory. The sole
+persistence exception is an explicitly requested controller troubleshooting pair
+described below; there is no continuous image archive.
 
 ### Simulate Trigger
 
 The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
+Armed ON is highlighted red so advertised production pose-service state cannot
+be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
 a complete saved/loaded schema-5 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
@@ -391,7 +395,8 @@ remain in Details. Their explicit Apply, capture, load, retake and save rules
 and teaching TF behavior are unchanged. Invalid capture reasons remain visible
 on the video or waiting view and in the compact status line.
 
-The controller sends `GetItemPoses(max_candidates, profile_sha256)`. One request
+The controller sends
+`GetItemPoses(max_candidates, profile_sha256, save_debug_images)`. One request
 at a time is accepted; a concurrent request returns BUSY. Every request acquires
 a new RGB/depth pair after its arrival, not a cached prior result. Source frames
 must be tightly packed `rgb8` and registered little-endian `16UC1` millimetres,
@@ -406,7 +411,12 @@ points and the circle are drawn in native depth coordinates. Median accepted
 depth still back-projects the unchanged RGB center through the RGB model.
 Missing metadata, different K/frame/dimensions and stale/unsynchronized data
 still block poses. No resizing, depth interpolation, silent registration,
-unit guessing, replacement distortion or old-frame substitution.
+unit guessing, replacement distortion or old-frame substitution. When the
+explicit debug flag is true, the detector atomically saves this request's exact
+already-rendered RGB and registered-depth result pair as PNG under root
+`debug/pick_img/` and returns the absolute paths in diagnostics. It never creates
+a second camera subscription or continuous archive. A persistence error is a
+reported warning and does not change an otherwise valid candidate response.
 An on-hand camera additionally uses live `base_link <- Link6` at the RGB
 timestamp. Once a valid pair is selected, keep that pair while waiting for its
 TF; never chase newer camera frames. The pair must remain within the taught

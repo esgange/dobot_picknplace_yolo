@@ -865,6 +865,9 @@ def test_valid_loaded_profile_can_simulate_and_arm_without_save(window, paired_t
     window.armed_toggle.setChecked(True)
     window.node.arm.assert_called_once_with(path)
     assert window.armed_toggle.isChecked()
+    assert "#b51f24" in window.armed_toggle.styleSheet()
+    window.armed_toggle.setChecked(False)
+    assert window.armed_toggle.styleSheet() == ""
     assert not list(path.parent.glob(".*.previous.zip"))  # No redundant write.
 
 

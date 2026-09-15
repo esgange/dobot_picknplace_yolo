@@ -11,7 +11,7 @@ src/
 ├── orbbec_camera_launcher/ # Gemini 335 configuration and bounded supervisor GUI
 ├── camera_calibration/    # manual-prefix two-mode ChArUco calibration GUI
 ├── item_perception_yolo/  # platform teaching and perception integration
-├── robot_controller/      # explicit Home/pick GUI/headless; TF-only debug by default
+├── robot_controller/      # service-driven Home/pick/Stop; GUI gate, headless Live
 ├── item_pick/             # imported reference only; excluded by COLCON_IGNORE
 ├── DOBOT_6Axis_ROS2_V4/  # Dobot official SDK, pruned to CR10
 └── OrbbecSDK_ROS2/       # Orbbec official ROS 2 wrapper snapshot
@@ -47,16 +47,19 @@ returns item targets in `platform_reference`. The item profile will save both
 and a separate `yolo.max_detections` per-image detection cap. The initial
 profile editor and shared GUI/headless detector described below implement
 read-only detection requests. Controller Home/pick execution is now explicit;
-default launch remains TF-only debug. Imported
+the GUI starts Live OFF with TF-only previews, while headless initializes
+permanently Live before it accepts explicit actions. Imported
 prototype runtimes have not been enabled.
 
 Item Teach has no controller-validation button or controller client. Configure
 the controller independently in its GUI, or headlessly from a strict flat
 `runtime_teach/` set (one item YAML/paired model plus one bin YAML). It validates
 the latest hash-bound station calibration and can preview Home/pick TFs without
-commands. Explicit `debug:=false` enables one-time robot startup initialization
-at SpeedFactor 100%, then operator-triggered Home and vertical picking. No
-automatic pick, placement or hardware launch. Legacy direct clients still need
+commands. The red **Live** GUI control enables one-time robot startup
+initialization at SpeedFactor 100%, then service-triggered Home and vertical
+picking. Headless starts permanently Live but never initiates Home or Pick
+itself. No automatic pick, placement or
+hardware launch. Legacy direct clients still need
 migration before sole-command ownership can be claimed. See
 [controller README](src/robot_controller/README.md) for motion/safety requirements.
 
@@ -64,8 +67,14 @@ migration before sole-command ownership can be claimed. See
 ros2 launch robot_controller robot_controller.launch.py headless:=true
 ```
 
-This defaults to TF-only debug. Real-mode launch disables/re-enables the connected
-robot; check physical safety and independently launch canonical bringup first.
+This headless command starts Live and disables/re-enables the connected robot;
+check physical safety and independently launch canonical bringup first. The GUI
+starts Live OFF.
+GUI buttons and headless clients share `/robot_controller/set_live`, `/go_home`,
+`/pick_item`, `/stop`, and `/set_debug_images`; action replies acknowledge
+acceptance and completion is reported on `/robot_controller/status`. Optional
+debug-image capture saves the exact requested annotated RGB/depth pair under
+ignored `debug/pick_img/` without changing candidates or motion.
 Home compares current Link6 Z with taught Home Z. Below Home Z, it first uses
 GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovLIO joint
 mode reaches taught joints. At or above Home Z it skips the relative clearance
@@ -74,8 +83,9 @@ and therefore omits `robot_controller_debug_home_height` when it is unnecessary.
 Pick holds Home attitude/base Z,
 uses MovLIO, stops on DI1 during final descent and confirms stationary feedback
 before retract. Missed suction waits saved pick_settling and confirms final
-retract before another still-fresh candidate; other faults cancel without retry.
-Successful picks hold at final retract with suction ON; Go Home is separate.
+retract and Home before another still-fresh candidate; other faults cancel
+without retry. Every Pick starts at Home. Successful picks return Home holding
+suction; an exhausted batch also returns Home and reports failure.
 
 ## Item Teach and controller
 
@@ -98,7 +108,9 @@ are provenance, not a station restriction. Loading never replays joint positions
 one combined replacement/trust confirmation. Saved class selection, geometry and
 settings are preserved; no separate Load Model click is needed. Missing, changed
 or incompatible pairs are rejected. YOLO and Armed remain OFF, and startup
-prefill still does not execute model weights.
+prefill still does not execute model weights. Armed ON is highlighted red so
+the advertised production pose-service state is conspicuous; validation and
+fresh-input rules remain unchanged.
 
 A complete validated loaded item teach, including startup restoration of the
 named profile, already counts as saved: no redundant Save is needed before

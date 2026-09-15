@@ -1,4 +1,4 @@
-"""Canonical Dobot service transport; instantiated only in explicit real mode."""
+"""Canonical Dobot service transport; instantiated only while Live is ON."""
 
 import math
 import re
@@ -261,6 +261,43 @@ class DobotHardware:
         if not self.wait(stopped, SERVICE_TIMEOUT_SEC, enabled=True):
             raise ValueError("DI1 descent Stop did not confirm stationary robot")
 
+    def confirm_stop(self, future):
+        """Confirm an operator Stop without allowing cancellation to hide its result."""
+        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
+        while not future.done():
+            self.node.feedback_snapshot(enabled=False)
+            if time.monotonic() >= deadline:
+                raise ValueError("Stop acknowledgement timeout")
+            time.sleep(0.02)
+        result = future.result()
+        if result is None or result.res != 0:
+            raise ValueError("Stop rejected")
+        before = self.node.feedback_snapshot(enabled=False)["sequence"]
+        stable_since, anchor = None, None
+
+        def stopped(snapshot):
+            nonlocal stable_since, anchor
+            feed = snapshot["feed"]
+            actual = pose_matrix(feed["tool_vector_actual"])
+            stationary = (snapshot["sequence"] > before and not feed["isRunQueuedCmd"]
+                          and not feed["RunningStatus"] and feed["robot_mode"] == 5
+                          and anchor is not None and pose_reached(anchor, actual))
+            if not stationary:
+                stable_since = None
+                anchor = actual
+                return False
+            stable_since = time.monotonic() if stable_since is None else stable_since
+            return time.monotonic() - stable_since >= STATIONARY_SEC
+
+        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
+        while time.monotonic() < deadline:
+            if stopped(self.node.feedback_snapshot(enabled=False)):
+                self.moving = False
+                self.node.events.record("INFO", "stop_confirmed", "Robot stationary after Stop")
+                return
+            time.sleep(0.02)
+        raise ValueError("Stop did not confirm stationary robot")
+
     def output(self, channel, active):
         self.node.feedback_snapshot(enabled=True)
         before = self.node.feedback_snapshot(enabled=True)["sequence"]
@@ -299,3 +336,8 @@ class DobotHardware:
             return future
         self.node.events.record("ERROR", "stop_unavailable", "Cannot confirm robot stopped")
         return None
+
+    def close(self):
+        for client in self.clients.values():
+            self.node.destroy_client(client)
+        self.clients.clear()
