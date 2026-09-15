@@ -2573,6 +2573,87 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Investigation used passive subscriptions only; no robot/camera/RViz launch,
   hardware command, operator model execution or station-artifact mutation.
 
+### 2026-09-15 — Queued vertical pick, additive clearance and motion-timed gripper I/O
+
+- User approved the final alignment and confirmed that end-of-prepick-retract
+  finger closing happens only on DI1-confirmed success. Add superseding rule 57.
+  Remove zheight_offset from the form/artifact/controller; production item
+  schema becomes 6, with only standoff_height, prepick_height and retract_height.
+  P=item base-Z+standoff; pre=P+prepick; clearance=pre+retract. Home attitude/base
+  Z and Home Z>=clearance remain required. Do not reinterpret the user's pre-pick
+  waypoint as item Z+prepick below the compensated pick point.
+- Pick completes the exact shared Home function before acquiring one fresh
+  ranked batch. Queue item XY at Home Z, clearance, pre-pick at travel rates,
+  then P at approach rates. On return, queue pre-pick at retract rates,
+  clearance and shared conditional Home at travel rates. Initial speeds remain
+  travel/approach/retract 100/6/6, acceleration 100/100/100; remaining clearance
+  and Home return now use travel rates. Debug previews include conditional
+  per-candidate Home targets, not actuator clients or executed motion.
+- Preflight every endpoint with canonical FK/nearest previous IK while idle.
+  Dispatch motion calls one at a time, awaiting every response without waiting
+  at intermediate arrivals. Confirm full owned-queue idle and fresh stationary
+  terminal pose/exact Home joints before settling/completion/candidate advance.
+  The vendor MovLIO response exposes only res, not ResultID; never guess IDs or
+  treat acknowledgements as arrival. Per-command cp=0 prevents blending past
+  vertical corners or speed/event boundaries; startup/global CP remains 100%.
+  Home's conditional relative-Z exception uses its validated preceding endpoint
+  as the queued delta origin, preserving XY/attitude and avoiding GetPose while
+  moving. Existing 5-second service/30-second motion bounds are not expanded;
+  the motion bound applies to a whole batch.
+- Canonical local Dobot V4.6.5 TCP/IP manual (vendored PDF, MovLIO pp. 88–89)
+  defines parallel output tuples, percent 50/100 and distance-mode zero as
+  motion-start. Existing parseTool.cpp passes mdis through unchanged; no vendor
+  patch. With use_grip, clearance carries DO2 OFF/DO14 ON at 50%; final descent
+  carries `{1,0,13,1}` for suction at start, keeping exhaust OFF. Fresh output
+  feedback must confirm motion events before batch success. DI1 after actual
+  suction start interrupts the forward queue, requires Stop acknowledgement
+  and fresh stationary feedback, and prevents further descent submission.
+  A motion acknowledgement arriving after acquisition Stop gets a new safety
+  Stop; confirm that latest Stop before retract, never retry the movement.
+  grip_onpick=true closes after confirmed acquisition/Stop before retract;
+  false places DO14 OFF/DO2 ON 100% events on retract-to-prepick ONLY on success.
+  Misses never close fingers. Disabled finger control never writes DO2/DO14.
+- Return geometry starts from actual stopped XY/attitude with upward-clamped Z;
+  contact above nominal pre-pick also updates remembered Stop-recovery height.
+  Success returns Home holding; misses finish retract/Home before vacuum OFF
+  and the next still-fresh received candidate. DI1 during a classified missed
+  return is a fault requiring Stop, not another candidate or release. Apply
+  the same DI1-clear guard before initial/missed vacuum OFF and its response/
+  output confirmation, including a late pickup immediately after Home.
+  Preserve second-Stop/shutdown cancellation, independent safety Stop, ownership,
+  source/candidate expiry, no automatic batch reacquisition and physical-estop
+  independence. Collision/path safety still requires hardware commissioning.
+- Inspection found a related existing guard defect: vendor command.cpp
+  isEnable() returns robot_mode==5 and is false during modes 7/8, despite enabled
+  motion. No vendor patch: require canonical FeedInfo EnableStatus exactly 1
+  during enabled actions. False RobotStatus while mode 7/8 and EnableStatus=1
+  means not idle, not disabled. Idle readiness still requires RobotStatus
+  enabled; pause/error/collision/user/tool/freshness checks remain unchanged.
+- Production rejects schemas 1–5 without conversion. GUI-only recovery omits
+  zheight_offset and blanks old retract_height because its reference changed;
+  require explicit correction/Save, retaining independent valid settings. Shared
+  UI schema 6 and camera/platform/bin schemas/geometry stay unchanged.
+- Authorized workstation-only edit updates the current water offline/runtime
+  YAMLs to schema 6 and removes zheight_offset, preserving all other values,
+  filenames and paired weight hashes/inodes. Each original YAML/.pt pair has a
+  separate hidden before_schema6 ZIP, retaining previous backups too. Operator
+  artifacts/weights/backups are excluded from source commits. Loading alone
+  never converts profiles or executes weights/robot commands.
+- Verification: 356 perception and 165 controller tests pass (521 cases), with
+  synthetic queued/delayed/failed/unanswered responses, no intermediate arrival
+  waits, endpoint IK/FK preflight, phase rates/I/O, DI1 early/late/failed Stop,
+  late acknowledgement containment, actual-stop geometry, conditional shared
+  Home, success-only finger closing and GUI/schema/recovery regressions. Package
+  tests have zero errors/failures/skips. Compilation, runtime/controller-test
+  flake8 and changed perception-test lines pass; 14 pre-existing unchanged test
+  diagnostics are excluded, not silently repaired. The six-package dependency
+  build and clean-environment all-14-package root build pass. Installed schema-6
+  readers verify both updated profiles and the complete runtime/station set;
+  backup comparison proves only schema/removal changed and weight hashes/inodes
+  are untouched. git diff checks and staged review precede the standing scoped
+  commit/verified push. No real robot/camera/RViz launch, operator weight
+  execution, vendor patch, or new offline milestone.
+
 ### Future entry template
 
 ```text

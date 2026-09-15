@@ -29,7 +29,7 @@ def model():
 
 
 def settings():
-    return {"motion": {"standoff_height": 90., "zheight_offset": 120.,
+    return {"motion": {"standoff_height": 90.,
                        "prepick_height": 50., "retract_height": 100.},
             "speed": {"travel_percent": 100, "approach_percent": 6, "retract_percent": 6},
             "acceleration": {"travel_percent": 100, "approach_percent": 100,
@@ -38,8 +38,9 @@ def settings():
             "timing": {"pick_settling": .2}}
 
 
-def plan(index=1):
-    return pick_targets(pose_matrix([100, 200, 800, 180, 0, 0]), [.3, .4, .1], settings(), index)
+def plan(index=1, cfg=None):
+    return pick_targets(pose_matrix([100, 200, 800, 180, 0, 0]), [.3, .4, .1],
+                        cfg or settings(), index)
 
 
 def home_plan(current, home, joints):
@@ -54,7 +55,7 @@ class FakeHardware:
         self.pose = np.eye(4)
         self.stopped_z = stopped_z
 
-    def output(self, channel, active):
+    def output(self, channel, active, **_):
         self.trace.append(("DO", channel, active))
 
     def sensor(self, active, timeout, *, settling_sec):
@@ -77,12 +78,32 @@ class FakeHardware:
     def current_pose(self):
         return self.pose.copy()
 
+    def move_batch(self, targets, **kw):
+        acquired = False
+        for target in targets:
+            if target.name.endswith("_pick") and kw.get("before_suction"):
+                kw["before_suction"]()
+            for event in target.motion_io:
+                if event.percent < 100:
+                    self.output(event.channel, event.active)
+            acquired = self.move(target, require_suction=kw.get("require_suction", False),
+                                 stop_on_suction=bool(kw.get("stop_on_suction") and
+                                                      target.name.endswith("_pick")))
+            for event in target.motion_io:
+                if event.percent == 100:
+                    self.output(event.channel, event.active)
+        return acquired
+
 
 def execute(fake, cfg=None, plans=None, check=None, *, finish_home=False,
             remember_prepick=None):
+    def return_home(preceding=(), require_suction=False, forbid_suction=False):
+        fake.move_batch(preceding, require_suction=require_suction, forbid_suction=forbid_suction)
+        fake.trace.append(("home", {"require_suction": require_suction}))
+
     return PickExecutor(fake, finish_home=finish_home).run(
-        plans or [plan()], cfg or settings(), check=check or (lambda _: None),
-        return_home=lambda **kw: fake.trace.append(("home", kw)),
+        plans or [plan(cfg=cfg)], cfg or settings(), check=check or (lambda _: None),
+        return_home=return_home,
         remember_prepick=remember_prepick)
 
 
@@ -125,14 +146,10 @@ def test_at_or_above_home_height_goes_directly_to_home(offset):
 
 def test_pick_height_equations_and_home_attitude():
     targets = plan()
-    np.testing.assert_allclose([t.matrix[2, 3] for t in targets], [.8, .31, .24, .19, .29, .31])
+    np.testing.assert_allclose([t.matrix[2, 3] for t in targets], [.8, .34, .24, .19, .24, .34])
     for target in targets:
         np.testing.assert_allclose(target.matrix[:3, :3], targets[0].matrix[:3, :3])
         np.testing.assert_allclose(target.matrix[:2, 3], [.3, .4])
-    cfg = settings()
-    cfg["motion"]["zheight_offset"] = 99
-    with pytest.raises(ValueError, match="zheight_offset"):
-        pick_targets(np.eye(4), [.3, .4, .1], cfg, 1)
     with pytest.raises(ValueError, match="Home Z"):
         pick_targets(np.eye(4), [.3, .4, .1], settings(), 1)
 
@@ -142,12 +159,12 @@ def test_motion_rates_are_assigned_to_each_pick_stage_and_survive_early_retract(
     cfg["speed"] = {"travel_percent": 90, "approach_percent": 7, "retract_percent": 8}
     cfg["acceleration"] = {"travel_percent": 80, "approach_percent": 40, "retract_percent": 30}
     targets = pick_targets(pose_matrix([100, 200, 800, 180, 0, 0]), [.3, .4, .1], cfg, 1)
-    assert [t.speed_percent for t in targets] == [90, 90, 90, 7, 8, 8]
-    assert [t.acceleration_percent for t in targets] == [80, 80, 80, 40, 30, 30]
+    assert [t.speed_percent for t in targets] == [90, 90, 90, 7, 8, 90]
+    assert [t.acceleration_percent for t in targets] == [80, 80, 80, 40, 30, 80]
     fake = FakeHardware(stopped_z=.35)
     execute(fake, cfg=cfg, plans=[targets])
     moves = [v for v in fake.trace if v[0] == "move"]
-    assert [v[4:] for v in moves] == [(90, 80)] * 3 + [(7, 40), (8, 30), (8, 30)]
+    assert [v[4:] for v in moves] == [(90, 80)] * 3 + [(7, 40), (8, 30), (90, 80)]
     assert all(v[3] == .35 for v in moves[-2:])
 
 
@@ -171,7 +188,7 @@ def test_finger_rules_and_success_holds_final_retract(use_grip, close):
     assert outcome["picked"] and outcome["holding_item"]
     finger = [v for v in fake.trace if v[0] == "DO" and v[1] in (2, 14)]
     expected = [("DO", 2, False), ("DO", 14, True)] if use_grip else []
-    if use_grip and close:
+    if use_grip:
         expected += [("DO", 14, False), ("DO", 2, True)]
     assert finger == expected
     assert fake.trace[-1][1] == "p1_final" and fake.trace[-1][2]["require_suction"]
@@ -246,7 +263,7 @@ def synthetic_transport(monkeypatch):
     monkeypatch.setattr(hardware.time, "sleep", lambda dt: clock.__setitem__(0, clock[0]+dt))
     robot = model()
     pose = robot.forward([.1] * 6)
-    feed = {"digital_input_bits": 0, "digital_outputs": 0, "isRunQueuedCmd": 0,
+    feed = {"digital_input_bits": 0, "digital_outputs": 0, "EnableStatus": 1, "isRunQueuedCmd": 0,
             "RunningStatus": 0, "robot_mode": 5, "tool_vector_actual": pose_values(pose)}
     sequence = [0]
 
@@ -579,7 +596,7 @@ def test_default_and_edited_pick_rates_reach_each_movlio_command(monkeypatch):
         transport.move(replace(target, matrix=pose))
     requests = transport.clients["MovLIO"].call_async.call_args_list
     assert [c.args[0].param_value for c in requests] == [
-        ["user=0", "tool=0", f"v={v}", "a=100"] for v in (100, 100, 100, 6, 6, 6)]
+        ["user=0", "tool=0", f"v={v}", "a=100"] for v in (100, 100, 100, 6, 6, 100)]
     transport.move(replace(plan()[3], matrix=pose, speed_percent=11, acceleration_percent=25))
     request = transport.clients["MovLIO"].call_async.call_args.args[0]
     assert request.param_value == ["user=0", "tool=0", "v=11", "a=25"]
@@ -595,7 +612,7 @@ def test_controller_home_uses_loaded_profile_motion_rates(pair):
     node = NS(check_cancelled=lambda: None, kinematics=model(), debug=False, hardware=fake)
     targets = controller.RobotController.home(node, profile)
     assert [(t.speed_percent, t.acceleration_percent) for t in targets] == [(42, 73)]
-    assert [v[4:] for v in fake.trace] == [(42, 73)]
+    assert [v[4:] for v in fake.trace if v[0] == "move"] == [(42, 73)]
 
 
 def test_di1_before_descent_stops_without_dispatching_descent(monkeypatch):
@@ -809,7 +826,7 @@ def test_debug_pick_converts_full_platform_transform_and_publishes_all_candidate
     controller.RobotController._run_action(node, "pick")
     assert not node.action_lock.locked()
     targets = node.install_preview.call_args.args[0]
-    assert len(targets) == 13
+    assert len(targets) == 17
     expected = platform @ [.1, .2, .05, 1.]
     np.testing.assert_allclose(targets[4].matrix[:3, 3],
                                [*expected[:2], expected[2] + .01])
@@ -840,7 +857,8 @@ def test_feedback_staleness_includes_controller_timer_not_only_republished_feed(
 
 def test_feedback_fault_and_nonzero_tool_block_execution():
     now = hardware.time.monotonic()
-    feed = {"robot_mode": 5, "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
+    feed = {"robot_mode": 5, "EnableStatus": 1,
+            "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
             "userCoordinate": 0, "toolCoordinate": 1}
     node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
               robot_feedback=(True, True, now), controller_progress_at=now,
@@ -850,12 +868,14 @@ def test_feedback_fault_and_nonzero_tool_block_execution():
 
 
 @pytest.mark.parametrize("field,value", [
-    ("robot_mode", 4), ("ErrorStatus", 1), ("CollisionStates", 1), ("isPauseCmdFlag", 1),
+    ("robot_mode", 4), ("EnableStatus", 0), ("ErrorStatus", 1),
+    ("CollisionStates", 1), ("isPauseCmdFlag", 1),
     ("userCoordinate", 2), ("toolCoordinate", 1),
 ])
 def test_readiness_error_names_exact_feedback_blocker(field, value):
     now = hardware.time.monotonic()
-    feed = {"robot_mode": 5, "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
+    feed = {"robot_mode": 5, "EnableStatus": 1,
+            "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
             "userCoordinate": 0, "toolCoordinate": 0}
     feed[field] = value
     node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
@@ -868,7 +888,8 @@ def test_readiness_error_names_exact_feedback_blocker(field, value):
 
 def test_readiness_error_lists_all_blockers_instead_of_generic_fault():
     now = hardware.time.monotonic()
-    feed = {"robot_mode": 4, "ErrorStatus": 1, "CollisionStates": 0, "isPauseCmdFlag": 1,
+    feed = {"robot_mode": 4, "EnableStatus": 0,
+            "ErrorStatus": 1, "CollisionStates": 0, "isPauseCmdFlag": 1,
             "userCoordinate": 0, "toolCoordinate": 2}
     node = NS(state_lock=threading.RLock(), _sole_publisher=MagicMock(), current_joints=MagicMock(),
               robot_feedback=(True, False, now), controller_progress_at=now,
@@ -905,7 +926,8 @@ def test_suction_monitor_interrupts_before_slow_motion_ack(monkeypatch):
     transport.node.feedback_snapshot = snapshot
     assert transport.call("MovLIO", monitor_suction=True).res == 0
     assert transport.suction_interrupted
-    transport.clients["Stop"].call_async.assert_called_once()
+    # Contain a motion acknowledged after the first acquisition Stop.
+    assert transport.clients["Stop"].call_async.call_count == 2
 
 
 def test_real_supervisor_fault_requests_stop_and_never_claims_completion():

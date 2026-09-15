@@ -94,7 +94,12 @@ move and sends only the direct joint-mode Home target. Debug uses the same branc
 and therefore omits `robot_controller_debug_home_height` when it is unnecessary.
 Pick holds Home attitude/base Z,
 uses MovLIO, stops on DI1 during final descent and confirms stationary feedback
-before retract. Missed suction waits saved pick_settling and confirms final
+before retract. Forward and return waypoints are response-serialized queues,
+not host-side waits at every waypoint. MovLIO opens enabled fingers at 50% of
+the above-item clearance move and starts suction at final-descent start.
+Finger closing requires DI1-confirmed success: before retract when grip_onpick
+is true, otherwise at the end of slow retract-to-prepick. Missed suction waits
+saved pick_settling and confirms final
 retract and Home before another still-fresh candidate; other faults cancel
 without retry. Every Pick starts at Home. Successful picks return Home holding
 suction; an exhausted batch also returns Home and reports failure.
@@ -110,7 +115,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-5 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-6 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -138,20 +143,29 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-5 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-6 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-5 profiles; they never recover old files.
+accept only complete schema-6 profiles; they never recover old files.
+The removed zheight_offset is not recovered. Old retract_height is blank in GUI
+drafts because it now means extra clearance above pre-pick, not above pick.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
-speed 6% and intermediate/final retract speed 6%; acceleration starts at 100%
+speed 6% and pick-to-prepick retract speed 6%; remaining clearance/Home moves
+use travel speed. Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovLIO (and the Home-height
 RelMovLUser exception), keeping global SpeedFactor 100%. Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
-never silently defaulted. Production rejects schemas 1–4.
+never silently defaulted. Production rejects schemas 1–5.
+Motion saves only standoff_height, prepick_height and retract_height:
+pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
+clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.
+Queued commands use cp=0 to preserve these corners and rate boundaries;
+startup/global CP remains 100%. See the controller README for feedback/Stop
+confirmation and deployment safety requirements.
 
 For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
 load while the automatic bin border is updating: the confirmed

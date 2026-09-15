@@ -140,7 +140,7 @@ The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
 Armed ON is highlighted red so advertised production pose-service state cannot
 be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
-a complete saved/loaded schema-5 profile, its verified model, matching current
+a complete saved/loaded schema-6 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
 first. It neither advertises/calls the pose service nor issues robot commands.
 
@@ -189,7 +189,7 @@ recorded only in the existing bounded package events.
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict production item schema 5, class filters and quality gates remain enforced.
+strict production item schema 6, class filters and quality gates remain enforced.
 
 ### Pick-oriented RGB overlays
 
@@ -293,7 +293,7 @@ if weight replacement precedes a YAML write failure, restore the original model.
 YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
 never silently load. A success dialog names both files; the original external
 model remains untouched and the pair works without it.
-**Load Item Teach** accepts only that directory. Complete schema-5 files load
+**Load Item Teach** accepts only that directory. Complete schema-6 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
 trust/verification, YOLO ON and fresh station inputs remain mandatory. Loading
@@ -308,7 +308,7 @@ The warning/Activity log explains every cleared field. Missing internal
 `image_size` requires explicitly browsing a model to establish new-profile 640.
 Recovery also applies to named-file startup prefill, without executing weights.
 No recovered draft can simulate, arm or be validated in the controller until
-reviewed and saved as a strict schema-5 pair. Same known item name overwrites
+reviewed and saved as a strict schema-6 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
@@ -333,18 +333,23 @@ for the controller to use for retries; it does not execute any retry itself.
 `yolo.max_detections=20` is the separate
 per-frame detection cap before geometric filtering.
 `use_grip=false` disables `grip_onpick` behavior regardless of its saved value.
-Controller rule 51 now defines vertical Home-attitude height equations and
+Controller rule 57 now defines vertical Home-attitude height equations and
 DI1-monitored final descent; teaching remains non-actuating.
+The motion form has only standoff_height, prepick_height and retract_height.
+Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
+in robot base Z. zheight_offset is removed. GUI-only old-file recovery leaves
+old retract_height blank because its reference changed; correction/Save is
+required. Existing calibration/bin/shared UI schemas are unchanged.
 
 The scrollable routine settings include three editable speed and acceleration
-percentages: travel/Home, final approach, intermediate/final retract. All must be
+percentages: travel/Home, final approach, pick-to-prepick retract. All must be
 integers 1–100. New-profile speed is explicitly 100/6/6 and acceleration
 100/100/100; loaded profiles retain their exact values. Speed and acceleration
 edits disarm and invalidate saved eligibility without interrupting read-only
-inference or automatically saving/commanding hardware. Save writes schema 5 with
+inference or automatically saving/commanding hardware. Save writes schema 6 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
-global SpeedFactor stays 100%. Production rejects schemas 1–4; old GUI recovery
+global SpeedFactor stays 100%. Production rejects schemas 1–5; old GUI recovery
 drafts leave missing/invalid rates blank until the operator explicitly fills and
 saves them. Shared schema-6 named-file UI state is unchanged.
 

@@ -17,7 +17,7 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 5 groups data by purpose. Production rejects schemas 1–4;
+Strict item schema 6 groups data by purpose. Production rejects schemas 1–5;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
@@ -26,7 +26,7 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 | `model` | Paired filename, SHA-256, declared task, `file_sha256_only` verification |
 | `units` | Motion distances in mm, time in seconds, home joints in radians, speed/acceleration in % |
 | `home` | Six named joint positions, feedback timestamp, recording time, source IP/node/topic |
-| `motion` | `standoff_height`, `zheight_offset`, `prepick_height`, `retract_height` |
+| `motion` | `standoff_height`, `prepick_height`, `retract_height` |
 | `speed` | `travel_percent`, `approach_percent`, `retract_percent` (integers 1–100; initial 100/6/6) |
 | `acceleration` | The same three phase keys (integers 1–100; initial 100/100/100) |
 | `timing` | `pick_settling` |
@@ -49,11 +49,16 @@ only missed suction after confirmed final retract; default controller mode is
 TF-only debug. Teaching never commands motion.
 
 Travel rates apply to Home, XY transit, initial positioning and descent to
-pre-pick; approach rates apply only to final descent. Both retract stages retain
-retract rates even after early suction Stop. The controller supplies vendor
+pre-pick; approach rates apply only to final descent. Slow retract applies to
+pick-to-prepick; the remaining clearance and Home return use travel rates.
+Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick, clearance Z=pre-pick Z+retract,
+in robot base Z with Home attitude. zheight_offset is removed, not an alias.
+The controller supplies vendor
 per-command `v=`/`a=` while global SpeedFactor stays 100%. These are percentages,
 not absolute velocity/acceleration. Slow rates do not relax freshness/deadlines.
 Missing/invalid rates in recovery drafts are blank, never automatically filled.
+Old retract_height is also blank in GUI recovery: its meaning changed from an
+offset above pick to extra clearance above pre-pick. Review and fill it explicitly.
 
 GUI recovery keeps validated fields and blanks unclear/missing ones; unknown
 booleans require an explicit choice. A clear old `retry_limit` is mapped for

@@ -26,7 +26,7 @@ Loading never moves the robot. Launch paths can be supplied
 explicitly using `item_teach_file:=... bin_teach_file:=...` in GUI mode.
 
 Headless loads one complete deployment set automatically from flat root
-`runtime_teach/`: exactly one strict schema-5 item YAML, its same-stem hash-bound
+`runtime_teach/`: exactly one strict schema-6 item YAML, its same-stem hash-bound
 `.pt`, and one strict schema-3 bin YAML. Extra/ambiguous artifacts, symlinks and
 partitions are rejected; no file overrides or implicit profile choice. Station
 camera/platform calibration comes from the shared latest selector in
@@ -60,7 +60,7 @@ Every later GUI Live ON runs initialization again. Headless automatically starts
 Live, rejects Live OFF and never automatically homes or picks. Do not run Motion
 Debug or Gripper Control while Live is ON.
 
-Schema 5 retains its historical non-executing controller_contract as validation
+Schema 6 retains its historical non-executing controller_contract as validation
 metadata, not movement permission. Only explicit Live ON plus an action service
 call authorize execution; loading a teach file never authorizes it.
 
@@ -105,7 +105,11 @@ ignores it or sends Continue to resume an unknown paused queue.
 Canonical `/joint_states`, RobotStatus and FeedInfo must be uniquely provided by
 the configured bringup node, fresh within one second. FeedInfo controller_timer
 must advance: republishing an old packet does not make the robot live. Real
-actions require enabled, fault-free feedback and user/tool 0. Static canonical
+actions require enabled, fault-free feedback and user/tool 0. FeedInfo must
+include EnableStatus=1. Vendor RobotStatus.is_enable means idle mode 5, so its
+False value during moving modes 7/8 is not itself disabled feedback; the explicit
+EnableStatus remains mandatory. Idle readiness still requires RobotStatus enabled.
+Static canonical
 CR10 FK derives Home from the recorded joints; GetPose(user=0,tool=0) and IK must
 agree with that model within 2 mm/0.5 degrees or movement is blocked. No guessed
 Home pose, live RViz dependence, alternate model or IK fallback.
@@ -116,19 +120,27 @@ MovLIO joint mode then reaches the exact six taught Home joints. If current Z is
 equal to or above Home Z, the controller skips RelMovLUser and issues only the
 direct joint-mode Home target, per the user's confirmed safe-above-Home rule.
 The conditional relative-Z segment is the user-approved exception to MovLIO-only
-picking. All pick/transit/retract segments use MovLIO, with
-confirmed queue-idle, fresh stationary/target feedback, not service acceptance.
+picking. All pick/transit/retract segments use MovLIO. Before queueing, validate
+all endpoints with nearest-previous-solution IK and canonical FK while idle.
+Wait for each service response before submitting the next waypoint, but do not
+wait for arrival between waypoints. Completion requires fresh whole-queue idle,
+stationary tail pose and exact Home joints, not service acceptance. Per-command
+cp=0 preserves vertical corners/speed boundaries; startup CP remains 100%.
+The vendor MovLIO interface returns only res, not queue IDs: completion uses
+the sole owned queue's idle feedback plus its terminal pose/joints, never a
+guessed queue ID or a motion-acknowledgement shortcut.
 
 Item Teach saves separate `speed` and `acceleration` groups, each with explicit
 integer `travel_percent`, `approach_percent`, `retract_percent` in 1–100.
 Initial speed values are 100/6/6; initial acceleration is 100/100/100. Travel
 includes Home, XY transit, initial positioning and descent to pre-pick. Approach
-means only pre-pick to pick; retract applies to both intermediate and final
-retract, including early-contact adjusted targets and missed-pick recovery.
+means only pre-pick to pick; retract applies only to pick-to-prepick upward
+movement, including early-contact adjustment and missed-pick recovery. The
+remaining clearance and Home movements use travel rates.
 Each command carries `v=<speed>` and `a=<acceleration>` in param_value, including
 Home-height RelMovLUser; no per-phase global setting changes. These are vendor
 percentages, not mm/s or mm/s². Missing values never fall back: production requires
-schema 5 and rejects schemas 1–4. Rates do not relax target-age/motion deadlines
+schema 6 and rejects schemas 1–5. Rates do not relax target-age/motion deadlines
 or collision checks; slow motion can exhaust a batch's configured freshness.
 
 Pick holds Home orientation and uses robot base Z, never the item's long-axis
@@ -136,19 +148,23 @@ orientation as tool attitude. Convert the complete platform XYZ into base before
 adding millimetre offsets:
 
 - Link6 pick Z = item Z + standoff_height.
-- Initial/final Z = pick Z + zheight_offset.
 - Pre-pick Z = pick Z + prepick_height.
-- Intermediate retract Z = pick Z + retract_height.
+- Above-item clearance Z = pre-pick Z + retract_height.
 
-Require zheight_offset >= prepick_height and retract_height, and Home Z at or
-above all candidate clearance heights. Transit XY at Home Z, then descend
-vertically through initial/pre-pick/final approach. Invalid settings block
+zheight_offset is removed. Require Home Z at or above every candidate clearance.
+Complete the shared Home function before acquiring one fresh pose batch.
+The forward queue transits item XY at Home Z, then descends vertically through
+clearance/pre-pick at travel rates and final approach at approach rates. The
+return queue rises to pre-pick at retract rates, then clearance at travel rates,
+and appends the shared Home function (conditional relative rise plus exact joint
+Home). Invalid settings block
 execution without editing the teach file. These checks are not collision
 planning; a taught Home cannot guarantee safe travel on another station.
 
 ## Suction, fingers, retries and Stop recovery
 
-Keep exhaust DO1 off. Turn suction DO13 on at final approach, monitoring
+Keep exhaust DO1 off. MovLIO carries a start-distance event `{1,0,13,1}` to turn
+suction DO13 on at the start of final approach, monitoring
 active-high DI1 while descending (including delayed command acknowledgement).
 On DI1, interrupt with Stop and confirm fresh stationary feedback before
 retracting from the actual stopped Z. If nominal pick completes without DI1,
@@ -157,12 +173,25 @@ Unexpected DI1 before suction, stale feedback, failed Stop or lost suction are
 faults, not missed picks. Intermediate/final retract never moves downward from
 an early contact. Every Pick first completes Home, then requests one fresh ranked
 batch. A success completes retract and returns Home with suction on. A missed
-candidate completes retract and returns Home before the next candidate. Exhausting
+candidate completes retract and returns Home before vacuum OFF and the next
+candidate. DI1 arriving during an already-classified missed return is a fault:
+Stop without releasing or retrying a possibly held item. Exhausting
 the batch returns Home and reports failure. No new batch is acquired automatically.
+Initial and missed-pick vacuum OFF also require DI1 clear before dispatch,
+during the response wait and output confirmation; a late DI1 blocks retries.
 
 use_grip=false leaves DO2/DO14 untouched and grip_onpick has no effect. With
-use_grip=true, start with DO2 off/DO14 on (open); grip_onpick=false stays open,
-true turns DO14 off/DO2 on only after DI1. User deferred DI12 full-open checks
+use_grip=true, MovLIO opens DO2 OFF/DO14 ON at 50% of the clearance move.
+grip_onpick=true turns DO14 OFF/DO2 ON after confirmed DI1 acquisition/Stop and
+before retract. grip_onpick=false uses 100% motion events on retract-to-prepick
+to close, ONLY if DI1 confirmed pickup; a missed suction pick never closes.
+Motion I/O must be confirmed by fresh output feedback before batch success.
+Early suction clears the remaining forward queue; no further descent is submitted.
+A motion acknowledgement arriving after acquisition Stop receives a new safety
+Stop, whose acknowledgement/stationary feedback is confirmed before retract.
+Return targets preserve actual stopped XY/attitude and clamp Z upward; a contact
+above nominal pre-pick also updates the remembered Stop-recovery height.
+User deferred DI12 full-open checks
 and damage diagnosis in this stage; no old Grip/Release or purge pattern.
 
 The controller requests up to retry.pose_candidates distinct ranked poses.
@@ -215,6 +244,8 @@ Debug always publishes `base_link -> robot_controller_debug_home`; only while
 below Home Z does it also publish `robot_controller_debug_home_height`. Pick
 previews publish
 `robot_controller_debug_pN_transit/initial/prepick/pick/retract/final` at 10 Hz.
+Per-candidate `robot_controller_debug_pN_home_height` (only below Home Z) and
+`robot_controller_debug_pN_home` show the shared return tail too.
 These are teaching targets, not actual robot/platform TF or collision validation.
 Debug Home requires fresh actual joints but issues no GetPose/motion/I/O command.
 Cancel, changed artifacts, selection changes and exit stop TF publication.

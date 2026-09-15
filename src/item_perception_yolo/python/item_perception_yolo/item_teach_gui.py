@@ -506,9 +506,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         motion = group("Vertical motion — mm", 6)
         descriptions = {
             "standoff_height": "Gripper compensation at final Link6 pick position",
-            "zheight_offset": "Shared first/final above-item position",
             "prepick_height": "Distance above Link6 pick Z before final approach",
-            "retract_height": "Intermediate upward distance above Link6 pick Z",
+            "retract_height": "Extra clearance above pre-pick Z (pick + pre-pick + retract)",
         }
         for key in MOTION_FIELDS:
             field = QtWidgets.QLineEdit()
@@ -519,7 +518,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
         speed = group("Motion speeds — %", 7)
         speed_labels = {"travel_percent": "Travel / Home", "approach_percent": "Final approach",
-                        "retract_percent": "Intermediate / final retract"}
+                        "retract_percent": "Pick to pre-pick retract"}
         for key in SPEED_FIELDS:
             field = QtWidgets.QLineEdit(str(NEW_PROFILE_SPEED[key]))
             field.setPlaceholderText("Required; integer 1–100%")

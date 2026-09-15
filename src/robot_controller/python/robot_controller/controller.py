@@ -1,5 +1,6 @@
 """Shared service-driven controller with explicit TF-only/Live selection."""
 
+from dataclasses import replace
 import json
 import math
 import os
@@ -449,7 +450,7 @@ class RobotController(Node):
             feed = json.loads(message.data)
             for key in ("robot_mode", "digital_input_bits", "digital_outputs", "controller_timer",
                         "isRunQueuedCmd", "RunningStatus", "ErrorStatus", "CollisionStates",
-                        "isPauseCmdFlag", "userCoordinate", "toolCoordinate"):
+                        "isPauseCmdFlag", "userCoordinate", "toolCoordinate", "EnableStatus"):
                 if type(feed[key]) is not int or feed[key] < 0:
                     raise ValueError(f"Canonical FeedInfo {key} must be a nonnegative integer")
             for key in ("tool_vector_actual", "q_actual"):
@@ -496,8 +497,12 @@ class RobotController(Node):
         feed = feedback[0]
         if enabled:
             blockers = []
-            if not status[1]:
+            # Vendor isEnable() means robot_mode==5, NOT enabled while moving.
+            # Never infer power from mode alone: motion still requires EnableStatus==1.
+            if not status[1] and feed["robot_mode"] not in (7, 8):
                 blockers.append("RobotStatus.is_enable=False")
+            if feed["EnableStatus"] != 1:
+                blockers.append(f"EnableStatus={feed['EnableStatus']} (required 1)")
             if feed["robot_mode"] not in (5, 7, 8):
                 blockers.append(f"robot_mode={feed['robot_mode']} (expected 5/7/8)")
             for key in ("ErrorStatus", "CollisionStates", "isPauseCmdFlag"):
@@ -711,18 +716,19 @@ class RobotController(Node):
             self.action_lock.release()
             raise
 
-    def home(self, profile, *, require_suction=False):
+    def home(self, profile, *, require_suction=False, forbid_suction=False, preceding=()):
         self.check_cancelled()
         home = self.kinematics.forward(profile["home"]["positions_rad"])
-        current = (self.kinematics.forward(self.current_joints()) if self.debug
-                   else self.hardware.current_pose())
+        current = (preceding[-1].matrix if preceding else
+                   self.kinematics.forward(self.current_joints()) if self.debug else
+                   self.hardware.current_pose())
         targets = home_targets(current, home, profile["home"]["positions_rad"],
                                speed_percent=profile["speed"]["travel_percent"],
                                acceleration_percent=profile["acceleration"]["travel_percent"])
         if not self.debug:
-            for target in targets:
-                self.hardware.move(target, require_suction=require_suction)
-        return targets
+            self.hardware.move_batch((*preceding, *targets), require_suction=require_suction,
+                                     forbid_suction=forbid_suction)
+        return (*preceding, *targets)
 
     def _remember_prepick(self, target, gripper):
         with self.state_lock:
@@ -734,10 +740,6 @@ class RobotController(Node):
             self.last_prepick = None
             self.last_gripper = None
         self.selection.validate(self.root)
-        motion = profile["motion"]
-        clearance = max(motion["prepick_height"], motion["retract_height"])
-        if motion["zheight_offset"] < clearance:
-            raise ValueError("zheight_offset must be >= prepick_height and retract_height")
         if not self.pose_client.service_is_ready():
             raise ValueError("Detector must be independently armed before Pick/Home travel")
         self.check_detector_owner()
@@ -772,7 +774,14 @@ class RobotController(Node):
                 [*candidate["position_m"], 1.0])
             plans.append(pick_targets(home, xyz[:3], profile, index))
         if self.debug:
-            self.install_preview((*home_plan, *(t for plan in plans for t in plan)), digest)
+            preview = list(home_plan)
+            for index, plan in enumerate(plans, 1):
+                preview.extend(plan[:4])
+                returned = self.home(profile, preceding=plan[4:])
+                preview.extend(replace(target, name=f"p{index}_{target.name}")
+                               if target.name.startswith("home") else target
+                               for target in returned)
+            self.install_preview(preview, digest)
             self.set_execution_state("DEBUG", f"TF-only pick targets: {len(plans)} candidates")
             return
         outcome = PickExecutor(self.hardware, finish_home=True).run(

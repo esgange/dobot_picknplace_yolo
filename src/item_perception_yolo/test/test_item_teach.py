@@ -21,7 +21,7 @@ def settings():
     return {
         "item": {"name": "test_part"}, "model_task": "detect",
         "geometry_source": "none", "quality": dict(core.QUALITY_DEFAULTS),
-        "motion": {"standoff_height": 150.0, "zheight_offset": 250.0,
+        "motion": {"standoff_height": 150.0,
                    "prepick_height": 50.0, "retract_height": 80.0},
         "speed": dict(core.NEW_PROFILE_SPEED),
         "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
@@ -66,7 +66,7 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
-    assert profile["schema_version"] == 5
+    assert profile["schema_version"] == 6
     assert profile["retry"] == {"pose_candidates": 3}
     assert "retry_limit" not in path.read_text()
 
@@ -253,9 +253,9 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    for old_version in (1, 2, 3, 4):
+    for old_version in (1, 2, 3, 4, 5):
         profile["schema_version"] = old_version
-        with pytest.raises(ValueError, match="exactly 5"):
+        with pytest.raises(ValueError, match="exactly 6"):
             core.validate_profile(profile)
 
 
@@ -267,6 +267,24 @@ def test_old_retry_name_is_not_an_alias(pair, fields):
     path.write_text(yaml.safe_dump(profile))
     with pytest.raises(ValueError, match="exactly: pose_candidates"):
         core.load_item_profile(path, root=root)
+
+
+def test_schema_six_forbids_removed_height_and_older_height_requires_gui_review(pair):
+    root, _, path, profile = pair
+    assert "zheight_offset" not in profile["motion"]
+    profile["motion"]["zheight_offset"] = 50.
+    with pytest.raises(ValueError, match="motion must contain exactly"):
+        core.validate_profile(profile)
+    profile["schema_version"] = 5
+    path.write_text(yaml.safe_dump(profile))
+    original = path.read_bytes()
+    draft = recover_item_fields(path, root=root)
+    assert "zheight_offset" not in draft.values
+    assert draft.values["retract_height"] is None
+    assert draft.values["prepick_height"] == profile["motion"]["prepick_height"]
+    assert draft.values["standoff_height"] == profile["motion"]["standoff_height"]
+    assert any("extra above pre-pick" in issue for issue in draft.issues)
+    assert path.read_bytes() == original
 
 
 def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair):
@@ -282,7 +300,7 @@ def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair)
     assert draft.model_path == path.with_suffix(".pt")
     assert draft.model_sha256 == profile["model"]["sha256"]
     assert "retry_limit" in " ".join(draft.issues)
-    with pytest.raises(ValueError, match="exactly 5"):
+    with pytest.raises(ValueError, match="exactly 6"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -428,7 +446,7 @@ def test_schema_four_recovery_leaves_unknown_rates_blank_and_does_not_write(pair
         assert draft.values[key] is None
         assert draft.values[f"acceleration_{key}"] is None
     assert path.read_bytes() == original
-    with pytest.raises(ValueError, match="exactly 5"):
+    with pytest.raises(ValueError, match="exactly 6"):
         core.load_item_profile(path, root=root)
 
 

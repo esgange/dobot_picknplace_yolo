@@ -51,7 +51,7 @@ class DobotHardware:
         self.response_lock = threading.Lock()
         self.pending_response = None
 
-    def call(self, name, *, monitor_suction=False, require_clear=False, **fields):
+    def call(self, name, *, monitor_suction=False, require_clear=False, progress=None, **fields):
         with self.response_lock:
             try:
                 if self.pending_response is not None:
@@ -61,12 +61,12 @@ class DobotHardware:
                             f"{name} not sent: still awaiting {previous} response")
                     self.pending_response = None
                 return self._call(name, monitor_suction=monitor_suction,
-                                  require_clear=require_clear, **fields)
+                                  require_clear=require_clear, progress=progress, **fields)
             except Exception as exc:
                 self.node.events.record("ERROR", "robot_service_failed", str(exc), service=name)
                 raise
 
-    def _call(self, name, *, monitor_suction=False, require_clear=False, **fields):
+    def _call(self, name, *, monitor_suction=False, require_clear=False, progress=None, **fields):
         self.node.check_cancelled()
         self.node.check_command_owner(name)
         self.node.feedback_snapshot(enabled=False)
@@ -84,7 +84,9 @@ class DobotHardware:
         deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
         while not future.done():
             self.node.check_cancelled()
-            snapshot = self.node.feedback_snapshot(enabled=False)
+            snapshot = self.node.feedback_snapshot(enabled=progress is not None)
+            if progress is not None:
+                progress(snapshot)
             if require_clear and snapshot["feed"]["digital_input_bits"] & 1:
                 raise ValueError("Unexpected DI1 during descent before suction; Stop required")
             if monitor_suction and snapshot["feed"]["digital_input_bits"] & 1:
@@ -99,6 +101,18 @@ class DobotHardware:
         if result is None or result.res != 0:
             raise ValueError(f"{name} failed: {None if result is None else result.res}")
         self.node.events.record("INFO", "robot_service", name, fields=fields)
+        if name in ("MovLIO", "RelMovLUser") and self.suction_interrupted:
+            # Stop might have been processed BEFORE this motion was accepted.
+            # Contain late acceptance synchronously after the awaited response,
+            # not via a callback that could run after stationary confirmation.
+            self.suction_stop = self.stop()
+            if self.suction_stop is None:
+                raise ValueError("Late motion acknowledgement after DI1 Stop; "
+                                 "new Stop unavailable, retract blocked")
+            self.node.events.record("WARNING", "late_suction_ack_stop",
+                                    "Motion acknowledged after DI1 Stop; Stop sent again")
+        if progress is not None:
+            progress(self.node.feedback_snapshot(enabled=True))
         return result
 
     def _late_motion_ack(self, _future):
@@ -157,7 +171,8 @@ class DobotHardware:
                 self.node.events.record("WARNING", "startup_best_effort", str(exc), service=name)
         self._startup_call("EnableRobot")
         self.node.set_execution_state("INITIALIZING", "Startup EnableRobot: confirming Enabled")
-        if not self.wait(lambda s: s["feed"]["robot_mode"] == 5 and s["enabled"],
+        if not self.wait(lambda s: s["feed"]["robot_mode"] == 5 and s["enabled"]
+                         and s["feed"]["EnableStatus"] == 1,
                          SERVICE_TIMEOUT_SEC):
             raise ValueError("EnableRobot did not confirm Enabled mode")
         self._startup_call("SpeedFactor", ratio=100)
@@ -211,7 +226,8 @@ class DobotHardware:
 
     def current_pose(self):
         snapshot = self.node.feedback_snapshot(enabled=True)
-        if snapshot["feed"]["isRunQueuedCmd"] or snapshot["feed"]["robot_mode"] != 5:
+        if (snapshot["feed"]["isRunQueuedCmd"] or snapshot["feed"]["RunningStatus"]
+                or snapshot["feed"]["robot_mode"] != 5):
             raise ValueError("Current-pose acquisition requires stationary enabled robot")
         result = self.call("GetPose", user=0, tool=0)
         matrix = pose_matrix(robot_values(result.robot_return, "GetPose"))
@@ -219,6 +235,153 @@ class DobotHardware:
         if not pose_reached(modeled, matrix, translation_m=0.002, rotation_deg=0.5):
             raise ValueError("CR10 FK does not match GetPose(user=0,tool=0); motion blocked")
         return matrix
+
+    def _prepare_batch(self, targets, start, *, before_suction):
+        """Validate every endpoint/IK while idle, before creating any motion queue."""
+        prepared = []
+        origin = start
+        near = tuple(self.node.current_joints())
+        for target in targets:
+            if before_suction is not None:
+                before_suction()
+            self.node.check_cancelled()
+            snapshot = self.node.feedback_snapshot(enabled=True)
+            if (snapshot["feed"]["isRunQueuedCmd"] or snapshot["feed"]["RunningStatus"]
+                    or snapshot["feed"]["robot_mode"] != 5):
+                raise ValueError("Queue preflight requires stationary enabled robot")
+            values = pose_values(target.matrix)
+            if target.joints_rad is None:
+                result = self.call(
+                    "InverseKin", x=values[0], y=values[1], z=values[2],
+                    rx=values[3], ry=values[4], rz=values[5], use_joint_near="1",
+                    joint_near="{" + ",".join(map(str, np.rad2deg(near))) + "}",
+                    user="0", tool="0")
+                near = tuple(math.radians(v) for v in robot_values(
+                    result.robot_return, "InverseKin"))
+            else:
+                near = target.joints_rad
+            modeled = self.node.kinematics.forward(near)
+            if not pose_reached(modeled, target.matrix, translation_m=0.002, rotation_deg=0.5):
+                raise ValueError(f"Queue InverseKin/FK mismatch for {target.name}; no motion sent")
+            if target.relative_z:
+                if (not np.allclose(origin[:2, 3], target.matrix[:2, 3], atol=1e-12, rtol=0)
+                        or not np.allclose(origin[:3, :3], target.matrix[:3, :3],
+                                           atol=1e-12, rtol=0)
+                        or target.matrix[2, 3] < origin[2, 3]):
+                    raise ValueError("Queued relative Home-height move must rise only at same XY")
+            prepared.append((target, values, origin.copy()))
+            origin = target.matrix
+        return prepared
+
+    def move_batch(self, targets, *, require_suction=False, forbid_suction=False,
+                   stop_on_suction=False, before_suction=None):
+        """Queue response-serialized waypoints, then confirm the whole owned queue."""
+        targets = tuple(targets)
+        if not targets:
+            raise ValueError("Motion batch cannot be empty")
+        if sum((require_suction, forbid_suction, stop_on_suction)) > 1:
+            raise ValueError("Motion batch suction policies are mutually exclusive")
+        start = self.current_pose()  # Includes current GetPose versus canonical FK validation.
+        self.suction_stop, self.suction_interrupted = None, False
+        suction_started = False
+        expected_outputs = {}
+        for target in targets:
+            for event in target.motion_io:
+                expected_outputs[event.channel] = event.active
+
+        def monitor(snapshot):
+            nonlocal suction_started
+            self.node.check_cancelled()
+            feed = snapshot["feed"]
+            detected = bool(feed["digital_input_bits"] & 1)
+            if require_suction and not detected:
+                raise ValueError("Suction lost during queued retract/Home")
+            if forbid_suction and detected:
+                raise ValueError("Late DI1 after missed pickup; Stop required, no candidate retry")
+            if stop_on_suction:
+                vacuum = bool(feed["digital_outputs"] & (1 << 12))
+                if not suction_started and not vacuum and before_suction is not None:
+                    before_suction()  # Expiry during queued transit stops the pending descent.
+                suction_started = suction_started or vacuum
+                if detected:
+                    if not vacuum:
+                        raise ValueError("Unexpected DI1 before queued suction start; "
+                                         "Stop required")
+                    self._interrupt_suction()
+                elif suction_started and not vacuum:
+                    raise ValueError("Suction output lost during queued approach")
+
+        monitor(self.node.feedback_snapshot(enabled=True))
+        prepared = self._prepare_batch(targets, start, before_suction=before_suction)
+        before = self.node.feedback_snapshot(enabled=True)["sequence"]
+        deadline = time.monotonic() + MOTION_TIMEOUT_SEC
+        self.node.events.record("INFO", "motion_batch_started", "Queueing owned waypoints",
+                                targets=[target.name for target in targets])
+        for target, values, origin in prepared:
+            monitor(self.node.feedback_snapshot(enabled=True))
+            if self.suction_interrupted:
+                break  # Stop discarded the forward queue; never submit the rest of descent.
+            if time.monotonic() >= deadline:
+                raise ValueError("Motion batch deadline expired; no later waypoint sent")
+            params = ["user=0", "tool=0", f"v={target.speed_percent}",
+                      f"a={target.acceleration_percent}", "cp=0"]
+            self.moving = True  # An unanswered acknowledgement is ambiguous motion acceptance.
+            if target.relative_z:
+                self.call("RelMovLUser", a=0., b=0.,
+                          c=(target.matrix[2, 3] - origin[2, 3])*1000,
+                          d=0., e=0., f=0., param_value=params, progress=monitor)
+            else:
+                command_values = (values if target.joints_rad is None
+                                  else list(np.rad2deg(target.joints_rad)))
+                self.call("MovLIO", mode=target.joints_rad is not None,
+                          **dict(zip("abcdef", map(float, command_values))),
+                          mdis=[event.vendor_value() for event in target.motion_io],
+                          param_value=params, progress=monitor)
+            self.node.events.record("INFO", "motion_queued", target.name,
+                                    motion_io=[event.vendor_value() for event in target.motion_io],
+                                    speed_percent=target.speed_percent,
+                                    acceleration_percent=target.acceleration_percent)
+        stable_since = None
+        tail = targets[-1]
+
+        def complete(snapshot):
+            nonlocal stable_since
+            monitor(snapshot)
+            if self.suction_interrupted:
+                return True
+            feed = snapshot["feed"]
+            reached = pose_reached(pose_matrix(feed["tool_vector_actual"]), tail.matrix)
+            if tail.joints_rad is not None:
+                reached = reached and max(abs(a-b) for a, b in zip(
+                    self.node.current_joints(), tail.joints_rad)) <= 0.005
+            if (snapshot["sequence"] <= before or not reached or feed["isRunQueuedCmd"]
+                    or feed["RunningStatus"] or feed["robot_mode"] != 5):
+                stable_since = None
+                return False
+            stable_since = time.monotonic() if stable_since is None else stable_since
+            return time.monotonic() - stable_since >= STATIONARY_SEC
+
+        if not self.wait(complete, max(0., deadline-time.monotonic()), enabled=True):
+            raise ValueError("Motion batch completion timeout; acceptance is not arrival")
+        if self.suction_interrupted:
+            self._confirm_suction_stop()
+            feed = self.node.feedback_snapshot(enabled=True)["feed"]
+            if not feed["digital_input_bits"] & 1 or not feed["digital_outputs"] & (1 << 12):
+                raise ValueError("Suction lost after queued descent Stop; retract blocked")
+        # Hardware events must actually be reflected by fresh output feedback.
+
+        def outputs_confirmed(snapshot):
+            monitor(snapshot)
+            return snapshot["sequence"] > before and all(
+                bool(snapshot["feed"]["digital_outputs"] & (1 << (channel-1))) == active
+                for channel, active in expected_outputs.items())
+        if not self.wait(outputs_confirmed, SERVICE_TIMEOUT_SEC, enabled=True):
+            raise ValueError("MovLIO motion I/O feedback confirmation timeout; no retry")
+        self.moving = False
+        self.node.events.record("INFO", "motion_batch_completed", tail.name,
+                                targets=[target.name for target in targets],
+                                suction_stop=self.suction_interrupted)
+        return self.suction_interrupted
 
     def move(self, target, *, require_suction=False, stop_on_suction=False):
         snapshot = self.node.feedback_snapshot(enabled=True)
@@ -267,7 +430,7 @@ class DobotHardware:
                 np.rad2deg(target.joints_rad))
             self.call("MovLIO", mode=target.joints_rad is not None,
                       **dict(zip("abcdef", map(float, command_values))),
-                      mdis=[], param_value=params,
+                      mdis=[event.vendor_value() for event in target.motion_io], param_value=params,
                       monitor_suction=stop_on_suction, require_clear=require_clear)
         stable_since = None
         suction_detected = False
@@ -315,6 +478,8 @@ class DobotHardware:
         self.suction_interrupted = True
 
     def _confirm_suction_stop(self):
+        if self.suction_stop is None:
+            raise ValueError("DI1 Stop unavailable after motion acknowledgement; retract blocked")
         deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
         while not self.suction_stop.done():
             self.node.check_cancelled()
@@ -382,14 +547,23 @@ class DobotHardware:
             time.sleep(0.02)
         raise ValueError("Stop did not confirm stationary robot")
 
-    def output(self, channel, active):
-        self.node.feedback_snapshot(enabled=True)
+    def output(self, channel, active, *, require_clear=False):
+        def clear(snapshot):
+            if require_clear and snapshot["feed"]["digital_input_bits"] & 1:
+                raise ValueError("Unexpected/late DI1 before vacuum OFF; no candidate retry")
+
+        clear(self.node.feedback_snapshot(enabled=True))
         before = self.node.feedback_snapshot(enabled=True)["sequence"]
-        self.call("DO", index=channel, status=int(active), time=0)
+        self.call("DO", index=channel, status=int(active), time=0,
+                  progress=clear if require_clear else None)
         mask = 1 << (channel - 1)
-        if not self.wait(lambda s: s["sequence"] > before and
-                         bool(s["feed"]["digital_outputs"] & mask) == active,
-                         SERVICE_TIMEOUT_SEC, enabled=True):
+
+        def confirmed(snapshot):
+            clear(snapshot)
+            return (snapshot["sequence"] > before and
+                    bool(snapshot["feed"]["digital_outputs"] & mask) == active)
+
+        if not self.wait(confirmed, SERVICE_TIMEOUT_SEC, enabled=True):
             raise ValueError(f"DO{channel} feedback confirmation timeout")
 
     def sensor(self, active, timeout, *, settling_sec):
