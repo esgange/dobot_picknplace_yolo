@@ -21,7 +21,9 @@ class ResponsePending(ValueError):
 
 
 def robot_values(raw, command):
-    match = re.fullmatch(r"0,\{([^{}]+)\}," + re.escape(command) + r"\([^;]*\);?\s*", raw)
+    # The vendored bridge reports the TCP error ID in res and copies only the
+    # brace-delimited values into robot_return; the command echo is not present.
+    match = re.fullmatch(r"\{([^{}]+)\}", raw) if isinstance(raw, str) else None
     if match is None:
         raise ValueError(f"Malformed canonical {command} reply")
     try:

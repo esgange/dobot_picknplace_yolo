@@ -2740,6 +2740,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   packages, and `git diff --check` is clean. No physical robot, camera, RViz or
   operator model is launched or commanded in verification.
 
+### 2026-09-15 — Dobot ROS pose/IK result payload alignment
+
+- A real Home attempt received GetPose with `res=0`, then failed at the
+  controller's "Malformed canonical GetPose reply" check before any motion
+  command. The vendored bridge's TCP parser copies only the substring from
+  `{` through `}` into ROS `robot_return`, while the raw TCP error prefix is
+  delivered separately as `res`. The previous controller parser and synthetic
+  fixtures incorrectly expected the complete TCP reply and command echo.
+- Rule 60 supersedes that parser assumption for both GetPose and InverseKin:
+  check successful `res` first, accept exactly a brace-delimited six-finite-value
+  ROS payload, and keep malformed or full raw TCP strings blocked. Preserve the
+  GetPose/FK and IK/FK comparisons and all response ordering/safety gates.
+  No vendor patch, fallback parser, motion-service substitution or hardware
+  command is part of this correction.
+- The operator reconfirmed MovLIO joint mode for the six taught Home joints
+  (radians in the artifact, converted to degrees on the service request) and
+  MovLIO Cartesian pose mode for item waypoints. Conditional Home-Z clearance
+  remains RelMovLUser. Synthetic fixtures now reflect the ROS field rather
+  than raw TCP transport, and malformed field tests cover both services.
+- Verification: synthetic/offscreen controller tests, compilation/lint,
+  package/root builds and scoped git review/commit/push are required. Physical
+  robot validation is still pending; no launch or command to hardware is
+  authorized for software verification.
+- Verification completed: 238 synthetic/offscreen controller tests pass both
+  directly and via the package CTest wrapper (zero errors/failures/skips).
+  Changed Python compiles and passes flake8; the clean-environment root build
+  finishes all 14 packages, and git diff --check is clean. No physical robot,
+  camera, RViz or operator model was launched or commanded. The source commit
+  and remote push are recorded by the final handoff, not treated as proof of
+  physical commissioning.
+
 ### Future entry template
 
 ```text

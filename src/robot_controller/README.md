@@ -148,12 +148,18 @@ Static canonical
 CR10 FK derives Home from the recorded joints; GetPose(user=0,tool=0) and IK must
 agree with that model within 2 mm/0.5 degrees or movement is blocked. No guessed
 Home pose, live RViz dependence, alternate model or IK fallback.
+In the vendored bringup bridge, the raw TCP error ID is the ROS service `res`;
+GetPose and InverseKin `robot_return` contain only `{six,finite,values}`, without
+the TCP prefix or command echo. A nonzero `res` or malformed result blocks motion.
 
 Every Home first determines current Link6 Z. If current Z is below taught Home Z,
 RelMovLUser changes only base Z to Home Z while preserving actual XY/attitude;
 MovLIO joint mode then reaches the exact six taught Home joints. If current Z is
 equal to or above Home Z, the controller skips RelMovLUser and issues only the
 direct joint-mode Home target, per the user's confirmed safe-above-Home rule.
+The six taught Home joints are stored in radians and sent as degrees through
+MovLIO joint mode. Pick/transit/retract targets use mm/degrees in MovLIO
+Cartesian pose mode; neither mode guesses a TCP or alternate kinematic target.
 The conditional relative-Z segment is the user-approved exception to MovLIO-only
 picking. All pick/transit/retract segments use MovLIO. Before queueing, validate
 all endpoints with nearest-previous-solution IK and canonical FK while idle.

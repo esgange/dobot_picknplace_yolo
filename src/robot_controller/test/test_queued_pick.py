@@ -26,16 +26,15 @@ def queue_transport(monkeypatch, count, *, acquisition=False, unanswered=None, r
     transport.node.current_joints = lambda: tuple(np.deg2rad(feed["tool_vector_actual"]))
     state = NS(sent=[], pending=[], remaining=[], applied=[], stopped=False, executed=0)
 
-    def reply(name, values):
+    def reply(values):
         future = Future()
-        future.set_result(NS(res=0, robot_return="0,{" + ",".join(map(str, values)) +
-                             "}," + name + "();"))
+        future.set_result(NS(res=0, robot_return="{" + ",".join(map(str, values)) + "}"))
         return future
 
     transport.clients["GetPose"].call_async.side_effect = lambda _: reply(
-        "GetPose", feed["tool_vector_actual"])
+        feed["tool_vector_actual"])
     transport.clients["InverseKin"].call_async.side_effect = lambda request: reply(
-        "InverseKin", [getattr(request, key) for key in ("x", "y", "z", "rx", "ry", "rz")])
+        [getattr(request, key) for key in ("x", "y", "z", "rx", "ry", "rz")])
 
     def send(request, name):
         assert all(future.done() for future, _, _ in state.pending), "Responses overlapped"
@@ -129,7 +128,7 @@ def test_all_ik_checked_before_any_motion_batch_is_submitted(monkeypatch):
     transport, _, _, _, state = queue_transport(monkeypatch, 4)
     transport.clients["InverseKin"].call_async.side_effect = None
     future = Future()
-    future.set_result(NS(res=0, robot_return="0,{0,0,0,0,0,0},InverseKin();"))
+    future.set_result(NS(res=0, robot_return="{0,0,0,0,0,0}"))
     transport.clients["InverseKin"].call_async.return_value = future
     with pytest.raises(ValueError, match="Queue InverseKin/FK mismatch"):
         transport.move_batch(plan()[:4], stop_on_suction=True)

@@ -287,9 +287,9 @@ def synthetic_transport(monkeypatch):
     transport.clients = {name: MagicMock() for name in names}
     for name, client in transport.clients.items():
         future = Future()
-        raw = "0,{" + ",".join(map(str, pose_values(pose))) + "},GetPose(user=0,tool=0);"
+        raw = "{" + ",".join(map(str, pose_values(pose))) + "}"
         if name == "InverseKin":
-            raw = "0,{" + ",".join(map(str, np.rad2deg([.1]*6))) + "},InverseKin();"
+            raw = "{" + ",".join(map(str, np.rad2deg([.1]*6))) + "}"
         future.set_result(NS(res=0, robot_return=raw))
         client.call_async.return_value = future
     return transport, feed, pose, clock
@@ -726,6 +726,7 @@ def test_default_and_edited_pick_rates_reach_each_movlio_command(monkeypatch):
     for target in plan():
         transport.move(replace(target, matrix=pose))
     requests = transport.clients["MovLIO"].call_async.call_args_list
+    assert all(not call.args[0].mode for call in requests)
     assert [c.args[0].param_value for c in requests] == [
         ["user=0", "tool=0", f"v={v}", "a=100"] for v in (100, 100, 100, 6, 6, 100)]
     transport.move(replace(plan()[3], matrix=pose, speed_percent=11, acceleration_percent=25))
@@ -800,11 +801,33 @@ def test_operator_stop_confirmation_ignores_action_cancel_but_requires_stationar
         transport.confirm_stop(rejected)
 
 
-@pytest.mark.parametrize("raw", ["", "0,{1,2},GetPose();", "0,{nan,2,3,4,5,6},GetPose();",
-                                 "1,{1,2,3,4,5,6},GetPose();"])
-def test_malformed_getpose_is_not_accepted(raw):
+@pytest.mark.parametrize("command,raw,values", [
+    ("GetPose", "{400.125,-348.75,457.5,-175.25,9.5,-111.125}",
+     [400.125, -348.75, 457.5, -175.25, 9.5, -111.125]),
+    ("InverseKin", "{1,2,3,4,5,6}", [1, 2, 3, 4, 5, 6]),
+])
+def test_brace_only_robot_return_is_accepted(command, raw, values):
+    assert hardware.robot_values(raw, command) == values
+
+
+@pytest.mark.parametrize("raw", [None, "", "{1,2}", "{nan,2,3,4,5,6}",
+                                 "{inf,2,3,4,5,6}", "{{1,2,3,4,5,6}}",
+                                 "{1,2,3,4,5,6},GetPose();",
+                                 "0,{1,2,3,4,5,6},GetPose(user=0,tool=0);"])
+@pytest.mark.parametrize("command", ["GetPose", "InverseKin"])
+def test_malformed_robot_return_is_not_accepted(command, raw):
     with pytest.raises(ValueError):
-        hardware.robot_values(raw, "GetPose")
+        hardware.robot_values(raw, command)
+
+
+def test_getpose_nonzero_res_blocks_even_with_valid_payload(monkeypatch):
+    transport, _, _, _ = synthetic_transport(monkeypatch)
+    future = Future()
+    future.set_result(NS(res=1, robot_return="{1,2,3,4,5,6}"))
+    transport.clients["GetPose"].call_async.return_value = future
+    with pytest.raises(ValueError, match="GetPose failed: 1"):
+        transport.current_pose()
+    transport.clients["MovLIO"].call_async.assert_not_called()
 
 
 def test_ui_prefill_is_strict_unapplied_and_atomic(tmp_path):
@@ -1402,7 +1425,7 @@ def test_acknowledgement_with_nonempty_queue_is_not_motion_completion(monkeypatc
 def test_bad_ik_blocks_motion_before_command_dispatch(monkeypatch):
     transport, _, pose, _ = synthetic_transport(monkeypatch)
     future = Future()
-    future.set_result(NS(res=0, robot_return="0,{0,0,0,0,0,0},InverseKin();"))
+    future.set_result(NS(res=0, robot_return="{0,0,0,0,0,0}"))
     transport.clients["InverseKin"].call_async.return_value = future
     current = pose.copy()
     current[2, 3] -= .1
