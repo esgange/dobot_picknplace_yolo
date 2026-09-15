@@ -18,6 +18,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "home": node.create_client(Trigger, "/robot_controller/go_home"),
             "pick": node.create_client(Trigger, "/robot_controller/pick_item"),
             "stop": node.create_client(Trigger, "/robot_controller/stop"),
+            "enable": node.create_client(Trigger, "/robot_controller/enable_robot"),
             "live": node.create_client(SetBool, "/robot_controller/set_live"),
             "debug_images": node.create_client(
                 SetBool, "/robot_controller/set_debug_images"),
@@ -75,6 +76,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "Save the exact annotated RGB/depth pair for each requested pick batch.")
         self.debug_images.toggled.connect(self.set_debug_images)
         row.addWidget(self.debug_images)
+        self.enable = QtWidgets.QPushButton("Enable Robot")
+        self.enable.setMinimumHeight(60)
+        self.enable.setToolTip(
+            "Live only: explicitly enable and confirm readiness after startup; no motion.")
+        self.enable.clicked.connect(lambda _: self._call_service("enable", Trigger.Request()))
+        row.addWidget(self.enable)
         self.home = QtWidgets.QPushButton("Preview Home TF")
         self.pick = QtWidgets.QPushButton("Preview Pick TF")
         self.stop = QtWidgets.QPushButton("Clear / Cancel")
@@ -171,7 +178,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 (self._set_live_visual if name == "live"
                  else self._set_debug_images_visual)(enabled)
             QtWidgets.QMessageBox.warning(self, "Service unavailable",
-                                          f"/robot_controller/{name} is unavailable")
+                                          f"{client.srv_name} is unavailable")
             return
         self.pending_calls[name] = client.call_async(request)
         self.refresh()
@@ -195,7 +202,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         busy = ((node.action_thread is not None and node.action_thread.is_alive())
                 or (node.stop_thread is not None and node.stop_thread.is_alive()))
         ready = node.execution_state in ("DEBUG", "READY", "HOLDING", "NO_PICK") and not busy
-        actions_pending = any(name in self.pending_calls for name in ("home", "pick", "live"))
+        actions_pending = any(name in self.pending_calls for name in
+                              ("home", "pick", "live", "enable"))
         self.apply.setEnabled(not busy)
         self.item_path.setReadOnly(busy)
         self.bin_path.setReadOnly(busy)
@@ -205,6 +213,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.pick.setEnabled(ready and not actions_pending and node.selection is not None
                              and not node.holding_item)
         self.stop.setEnabled("stop" not in self.pending_calls)
+        self.enable.setEnabled(
+            node.live and getattr(node, "startup_settings_applied", False)
+            and not busy and not actions_pending and not node.holding_item
+            and node.fatal_error is None and node.hardware is not None
+            and not node.hardware.moving)
         self.live.setEnabled(
             not busy and not node.holding_item and "live" not in self.pending_calls)
         self.debug_images.setEnabled("debug_images" not in self.pending_calls)

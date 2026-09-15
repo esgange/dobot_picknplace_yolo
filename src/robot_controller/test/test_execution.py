@@ -405,6 +405,133 @@ def test_startup_calls_complete_but_paused_feedback_does_not_claim_ready(monkeyp
     transport.clients["CP"].call_async.assert_called_once()
     assert transport.node.set_execution_state.call_args.args == (
         "FAILED", "Startup calls completed; Robot readiness blocked: isPauseCmdFlag=1")
+    assert transport.node.startup_settings_applied
+
+
+def test_final_readiness_waits_for_transient_disabled_feedback_without_another_command(monkeypatch):
+    transport, _, _, clock = synthetic_transport(monkeypatch)
+    original = transport.node.feedback_snapshot
+    first_read = []
+
+    def snapshot(*, enabled):
+        if enabled:
+            if not first_read:
+                first_read.append(clock[0])
+            if clock[0] - first_read[0] < .12:
+                raise ValueError("Robot readiness blocked: RobotStatus.is_enable=False")
+        return original(enabled=enabled)
+
+    transport.node.feedback_snapshot = snapshot
+    transport.initialize()
+    assert transport.node.set_execution_state.call_args.args[0] == "READY"
+    transport.clients["EnableRobot"].call_async.assert_called_once()
+    assert clock[0] - first_read[0] >= .12
+
+
+def test_explicit_enable_sends_only_enable_and_confirms_readiness(monkeypatch):
+    transport, _, _, _ = synthetic_transport(monkeypatch)
+    transport.enable_robot()
+    assert transport.clients["EnableRobot"].call_async.call_count == 1
+    assert all(client.call_async.call_count == 0 for name, client in transport.clients.items()
+               if name != "EnableRobot")
+    assert transport.node.set_execution_state.call_args.args == (
+        "READY", "EnableRobot confirmed; no Home or Pick sent")
+
+
+@pytest.mark.parametrize("blocker", ["disabled", "paused", "running"])
+def test_explicit_enable_never_bypasses_blocked_feedback_or_retries(blocker, monkeypatch):
+    transport, feed, _, clock = synthetic_transport(monkeypatch)
+    original = transport.node.feedback_snapshot
+
+    def snapshot(*, enabled):
+        if enabled:
+            if blocker != "running":
+                reason = ("RobotStatus.is_enable=False" if blocker == "disabled"
+                          else "isPauseCmdFlag=1")
+                raise ValueError(f"Robot readiness blocked: {reason}")
+            feed["RunningStatus"] = 1
+        return original(enabled=enabled)
+
+    transport.node.feedback_snapshot = snapshot
+    with pytest.raises(ValueError, match="Robot readiness blocked"):
+        transport.enable_robot()
+    assert clock[0] >= hardware.SERVICE_TIMEOUT_SEC
+    transport.clients["EnableRobot"].call_async.assert_called_once()
+    assert transport.node.set_execution_state.call_args.args[0] != "READY"
+
+
+def enable_service_node():
+    feed = {"robot_mode": 4, "ErrorStatus": 0, "CollisionStates": 0,
+            "isRunQueuedCmd": 0, "RunningStatus": 0, "digital_input_bits": 0}
+    node = NS(live=True, debug=False, startup_settings_applied=True, holding_item=False,
+              fatal_error=None, shutdown_requested=threading.Event(),
+              state_lock=threading.RLock(), action_lock=threading.Lock(),
+              action_thread=None, stop_thread=None, stop_future=None, cancel=threading.Event(),
+              hardware=NS(moving=False, enable_robot=MagicMock()),
+              check_command_owner=MagicMock(),
+              feedback_snapshot=MagicMock(return_value={"feed": feed}),
+              clear_preview=MagicMock(), set_execution_state=MagicMock(), events=MagicMock())
+    node._run_enable_robot = MethodType(controller.RobotController._run_enable_robot, node)
+    return node, feed
+
+
+def test_enable_service_can_recover_disabled_after_completed_startup_without_teach_or_auto_pick():
+    node, _ = enable_service_node()
+    node.cancel.set()
+    response = controller.RobotController._enable_robot_service(node, None, NS())
+    assert response.success
+    node.action_thread.join(timeout=1)
+    assert not node.action_thread.is_alive() and not node.action_lock.locked()
+    node.hardware.enable_robot.assert_called_once()
+    node.check_command_owner.assert_called_once_with("EnableRobot")
+    assert not node.cancel.is_set()
+
+
+@pytest.mark.parametrize("blocker", [
+    "live_off", "startup", "holding", "moving", "action", "recovery", "fault", "collision",
+    "queued", "running", "suction", "mode", "stale", "owner", "stop_pending", "shutdown",
+])
+def test_enable_service_rejects_unsafe_or_incomplete_states_before_dispatch(blocker):
+    node, feed = enable_service_node()
+    if blocker == "live_off":
+        node.live, node.debug = False, True
+    elif blocker == "startup":
+        node.startup_settings_applied = False
+    elif blocker == "holding":
+        node.holding_item = True
+    elif blocker == "moving":
+        node.hardware.moving = True
+    elif blocker in ("action", "recovery"):
+        setattr(node, "action_thread" if blocker == "action" else "stop_thread",
+                NS(is_alive=lambda: True))
+    elif blocker in ("fault", "collision", "queued", "running", "suction", "mode"):
+        fields = {"fault": "ErrorStatus", "collision": "CollisionStates",
+                  "queued": "isRunQueuedCmd", "running": "RunningStatus",
+                  "suction": "digital_input_bits", "mode": "robot_mode"}
+        key = fields[blocker]
+        feed[key] = 7 if blocker == "mode" else 1
+    elif blocker == "stale":
+        node.feedback_snapshot.side_effect = ValueError("stale feedback")
+    elif blocker == "owner":
+        node.check_command_owner.side_effect = ValueError("competing owner")
+    elif blocker == "stop_pending":
+        node.stop_future = Future()
+    elif blocker == "shutdown":
+        node.shutdown_requested.set()
+    response = controller.RobotController._enable_robot_service(node, None, NS())
+    assert not response.success and not node.action_lock.locked()
+    node.hardware.enable_robot.assert_not_called()
+
+
+def test_failed_enable_worker_is_cancelled_and_does_not_restart_startup():
+    node, _ = enable_service_node()
+    node.hardware.enable_robot.side_effect = ValueError("EnableRobot rejected")
+    node.action_lock.acquire()
+    controller.RobotController._run_enable_robot(node)
+    assert node.cancel.is_set() and not node.action_lock.locked()
+    assert node.set_execution_state.call_args.args == (
+        "FAILED", "EnableRobot: EnableRobot rejected")
+    node.hardware.enable_robot.assert_called_once()
 
 
 def test_home_transport_uses_relative_z_then_joint_movlio_and_confirms_completion(monkeypatch):
@@ -623,7 +750,8 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         with pytest.raises(RuntimeError, match="Live is OFF"):
             node.check_command_owner("EnableRobot")
         assert set(window.service_clients) == {
-            "home", "pick", "stop", "live", "debug_images"}
+            "home", "pick", "stop", "live", "debug_images", "enable"}
+        assert not window.enable.isEnabled()  # Live OFF can never enable hardware.
         invoke = MagicMock()
         window._call_service = invoke
         window.home.click()
@@ -636,6 +764,16 @@ def test_debug_gui_is_unapplied_and_has_no_hardware_transport(pair, monkeypatch)
         window.debug_images.click()
         assert invoke.call_args.args[0] == "debug_images"
         assert "#d77b00" in window.debug_images.styleSheet()
+        node.live, node.debug = True, False
+        node.hardware = NS(moving=False)
+        node.startup_settings_applied = True
+        node.execution_state = "FAILED"
+        window.refresh()
+        assert window.enable.isEnabled()
+        window.enable.click()
+        assert invoke.call_args.args[0] == "enable"
+        node.hardware = None
+        node.live, node.debug = False, True
     finally:
         if window is not None:
             window.close()
@@ -821,7 +959,8 @@ def test_headless_node_loads_runtime_profile_and_starts_permanently_live(pair, m
         service_names = {service.srv_name for service in node.services}
         assert {"/robot_controller/go_home", "/robot_controller/pick_item",
                 "/robot_controller/stop", "/robot_controller/set_live",
-                "/robot_controller/set_debug_images"} <= service_names
+                "/robot_controller/set_debug_images",
+                "/robot_controller/enable_robot"} <= service_names
         response = controller.RobotController._set_live_service(
             node, controller.SetBool.Request(data=False), NS())
         assert not response.success and node.live

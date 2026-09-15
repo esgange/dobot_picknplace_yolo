@@ -2538,6 +2538,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   subscriptions. No robot/camera/RViz was launched, no hardware command was sent,
   no operator weights were executed and no station artifact was changed.
 
+### 2026-09-15 — Explicit Enable Robot and coherent final startup feedback
+
+- User requested Enable Robot in the controller after the final startup check
+  reported RobotStatus.is_enable=False. The latest log already records a
+  successful EnableRobot response and enabled confirmation before settings.
+  A passive current-feedback check reports both RobotStatus enabled and mode 5/
+  EnableStatus 1, but isPauseCmdFlag remains 1. The original disabled snapshot
+  may be transient asynchronous feedback; the source publishes RobotStatus
+  separately and derives is_enable from mode 5. No vendor patch is required.
+- Add rule 56: GUI Enable Robot calls `/robot_controller/enable_robot` Trigger,
+  also available headlessly. With Live ON and all startup settings complete,
+  an explicit action sends only EnableRobot once, awaits its response and fresh
+  coherent idle/enabled/fault/pause/user/tool feedback. No teach file is needed.
+  Replies acknowledge acceptance; ENABLING, READY or exact FAILED details are
+  published on status, including startup_settings_applied. No automatic Home,
+  Pick, DisableRobot replay, setting changes or Continue is added.
+- Reject incomplete/fatal startup, active actions/Stop recovery, held items,
+  ambiguous motion, DI1 ON, queued/running/fault/collision feedback, stale inputs,
+  pending Stop and competing command owners. Serialize acceptance with Stop;
+  preserve command-response ordering, cancellation and independent safety Stop.
+  Explicit enable failure cancels and reports failure, never retries or releases.
+- Final startup readiness now waits boundedly up to five seconds for coherent
+  asynchronous feedback after all settings responses instead of failing one
+  transient disabled snapshot. No command is resent; persistent disabled/pause/
+  fault/coordinate or stale-feedback failure remains blocked and precisely named.
+- Verification: 124 synthetic/offscreen controller tests cover the new service/
+  button and Live-OFF gating, enable-only dispatch, delayed final status recovery,
+  persistent disabled/paused/running blocks, unsafe-state rejection, incomplete
+  startup and worker failure/cancellation. All 124 cases pass directly and via
+  the packaged CTest wrapper, zero errors/failures/skips. Compilation/scoped lint,
+  six-package dependency and clean-environment all-14-package root builds and
+  git diff checks pass before scoped commit/push.
+  Investigation used passive subscriptions only; no robot/camera/RViz launch,
+  hardware command, operator model execution or station-artifact mutation.
+
 ### Future entry template
 
 ```text

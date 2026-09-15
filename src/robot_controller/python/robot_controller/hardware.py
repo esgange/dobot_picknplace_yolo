@@ -119,6 +119,7 @@ class DobotHardware:
         return False
 
     def initialize(self):
+        self.node.startup_settings_applied = False
         self.node.set_execution_state("INITIALIZING", "Checking canonical robot feedback")
         deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
         while True:
@@ -163,14 +164,41 @@ class DobotHardware:
         self._startup_call("Tool", index=0)
         self._startup_call("SetTool", index=1, value="{0,0,0,0,0,0}")
         self._startup_call("CP", r=100)
+        self.node.startup_settings_applied = True
         try:
-            self.node.feedback_snapshot(enabled=True)
+            self.confirm_ready()
         except ValueError as exc:
             message = f"Startup calls completed; {exc}"
             self.node.events.record("ERROR", "startup_readiness_blocked", message)
             self.node.set_execution_state("FAILED", message)
             return
         self.node.set_execution_state("READY", "Initialized at SpeedFactor 100%, Tool 0, CP 100%")
+
+    def confirm_ready(self):
+        """Boundedly await coherent feedback, without reissuing any command."""
+        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
+        while True:
+            self.node.check_cancelled()
+            try:
+                snapshot = self.node.feedback_snapshot(enabled=True)
+                feed = snapshot["feed"]
+                if feed["robot_mode"] != 5 or feed["isRunQueuedCmd"] or feed["RunningStatus"]:
+                    raise ValueError(
+                        f"Robot readiness blocked: robot_mode={feed['robot_mode']}, "
+                        f"isRunQueuedCmd={feed['isRunQueuedCmd']}, "
+                        f"RunningStatus={feed['RunningStatus']} (required idle Enabled mode 5)")
+                return snapshot
+            except ValueError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
+
+    def enable_robot(self):
+        self.node.set_execution_state("ENABLING", "EnableRobot: waiting for response")
+        self.call("EnableRobot")
+        self.node.set_execution_state("ENABLING", "EnableRobot: confirming enabled readiness")
+        self.confirm_ready()
+        self.node.set_execution_state("READY", "EnableRobot confirmed; no Home or Pick sent")
 
     def _startup_call(self, name, **fields):
         self.node.set_execution_state("INITIALIZING", f"Startup {name}: waiting for response")

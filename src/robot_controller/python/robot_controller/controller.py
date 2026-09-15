@@ -100,6 +100,7 @@ class RobotController(Node):
         self.execution_state = "DEBUG" if self.debug else "INITIALIZING"
         self.execution_message = "TF-only; no hardware commands" if self.debug else "Starting"
         self.holding_item = False
+        self.startup_settings_applied = False
         self.fatal_error = None
         self.cancel = threading.Event()
         self.shutdown_requested = threading.Event()
@@ -157,6 +158,8 @@ class RobotController(Node):
                                 lambda req, res, a=action: self._start_service(a, res),
                                 callback_group=ReentrantCallbackGroup())
         self.create_service(Trigger, "/robot_controller/stop", self._stop_service,
+                            callback_group=ReentrantCallbackGroup())
+        self.create_service(Trigger, "/robot_controller/enable_robot", self._enable_robot_service,
                             callback_group=ReentrantCallbackGroup())
         self.create_service(SetBool, "/robot_controller/set_live", self._set_live_service,
                             callback_group=ReentrantCallbackGroup())
@@ -244,6 +247,7 @@ class RobotController(Node):
         value = dict(self.summary)
         if hasattr(self, "execution_state"):
             value.update(live=self.live, headless=self.headless,
+                         startup_settings_applied=getattr(self, "startup_settings_applied", False),
                          debug_images=self.debug_images,
                          debug_capture_status=self.debug_capture_status,
                          execution_state=self.execution_state,
@@ -547,6 +551,7 @@ class RobotController(Node):
             if requested:
                 from .hardware import DobotHardware
                 self.live, self.debug = True, False
+                self.startup_settings_applied = False
                 self.execution_state = "INITIALIZING"
                 self.execution_message = "Live requested; initializing robot"
                 self.hardware = DobotHardware(self)
@@ -560,6 +565,7 @@ class RobotController(Node):
             if self.hardware is not None:
                 self.hardware.close()
             self.hardware = None
+            self.startup_settings_applied = False
             self.live, self.debug = False, True
             self.execution_state = "DEBUG"
             self.execution_message = "Live OFF; TF-only previews"
@@ -581,6 +587,64 @@ class RobotController(Node):
             elif requested and not response.success and self.action_lock.locked():
                 self.action_lock.release()
         return response
+
+    def _enable_robot_service(self, _request, response):
+        with self.state_lock:
+            return RobotController._handle_enable_robot_service(self, response)
+
+    def _handle_enable_robot_service(self, response):
+        acquired = False
+        try:
+            if not self.live or self.debug or self.hardware is None:
+                raise ValueError("Turn Live ON and complete startup before Enable Robot")
+            if self.fatal_error is not None or self.shutdown_requested.is_set():
+                raise ValueError("Controller is terminating; Enable Robot is forbidden")
+            if not self.startup_settings_applied:
+                raise ValueError(
+                    "Startup settings are incomplete; Enable Robot cannot bypass startup")
+            if self.holding_item or self.hardware.moving:
+                raise ValueError("Enable Robot requires idle controller with no held item")
+            if ((self.action_thread is not None and self.action_thread.is_alive())
+                    or (self.stop_thread is not None and self.stop_thread.is_alive())):
+                raise ValueError("Controller operation active; Enable Robot not sent")
+            acquired = self.action_lock.acquire(blocking=False)
+            if not acquired:
+                raise ValueError("Controller action busy; Enable Robot not sent")
+            self.check_command_owner("EnableRobot")
+            snapshot = self.feedback_snapshot(enabled=False)
+            feed = snapshot["feed"]
+            if (feed["robot_mode"] not in (4, 5) or feed["isRunQueuedCmd"]
+                    or feed["RunningStatus"] or feed["ErrorStatus"] or feed["CollisionStates"]
+                    or feed["digital_input_bits"] & 1):
+                raise ValueError("Enable Robot requires fault-free idle feedback and DI1 OFF")
+            if self.stop_future is not None and not self.stop_future.done():
+                raise ValueError("Stop response pending; Enable Robot not sent")
+            self.clear_preview()
+            self.cancel.clear()
+            self.stop_future = None
+            self.set_execution_state("ENABLING", "Explicit Enable Robot accepted")
+            self.action_thread = threading.Thread(target=self._run_enable_robot, daemon=True)
+            self.action_thread.start()
+            acquired = False  # The worker owns release after dispatch/confirmation.
+            response.success = True
+            response.message = "Enable Robot accepted; watch /robot_controller/status"
+        except Exception as exc:
+            response.success, response.message = False, str(exc)
+            self.events.record("WARNING", "enable_robot_rejected", str(exc))
+        finally:
+            if acquired:
+                self.action_lock.release()
+        return response
+
+    def _run_enable_robot(self):
+        try:
+            self.hardware.enable_robot()
+        except Exception as exc:
+            self.cancel.set()
+            self.set_execution_state("FAILED", f"EnableRobot: {exc}")
+            self.events.record("ERROR", "enable_robot_failed", str(exc))
+        finally:
+            self.action_lock.release()
 
     def _set_debug_images_service(self, request, response):
         requested = bool(request.data)

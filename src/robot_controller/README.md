@@ -33,9 +33,18 @@ camera/platform calibration comes from the shared latest selector in
 `calibration/`, not the portable bin's source station. Models are hashed only.
 The GUI's Home, Pick, Stop, red-on-active Live and Debug Images controls call the
 same ROS services listed below; there is no private GUI execution path.
+**Enable Robot** is a separate explicit button using the same headless service.
+It is available with Live ON after startup settings have completed, including
+when final readiness was blocked; it does not require an Item Teach profile.
+It sends only EnableRobot and confirms fresh enabled, idle, fault-free feedback.
+It never repeats DisableRobot/settings, resumes a paused queue, Homes or picks.
+Active operations, held items, DI1 ON, queued/running motion, error/collision
+flags, incomplete startup, stale feedback, pending Stop and competing command
+owners reject the action. The reply acknowledges acceptance; follow status.
 
 ```bash
 ros2 launch robot_controller robot_controller.launch.py headless:=true
+ros2 service call /robot_controller/enable_robot std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/go_home std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/pick_item std_srvs/srv/Trigger '{}'
 ros2 service call /robot_controller/stop std_srvs/srv/Trigger '{}'
@@ -85,7 +94,10 @@ DisableRobot. A late response never automatically advances the sequence. Safety
 Stop remains independent so it can interrupt a pending motion acknowledgement.
 The status names each active startup call and failed calls are logged with their
 service name. After all settings respond, validate enabled/fault/pause/user/tool
-feedback before claiming READY. Failure then says `Startup calls completed;`
+feedback before claiming READY. Await final coherent idle/enabled feedback for
+at most five seconds without reissuing commands, so a transient asynchronous
+RobotStatus update does not immediately fail startup. Failure then says
+`Startup calls completed;`
 followed by exact blockers, not a guessed failed service. For example,
 `isPauseCmdFlag=1` means queue-paused feedback; the controller never silently
 ignores it or sends Continue to resume an unknown paused queue.
@@ -183,13 +195,16 @@ result-age and request-deadline checks, so saving cannot make expired targets va
 
 - `/robot_controller/go_home`, `/pick_item`, `/stop` (Trigger): shared GUI/headless
   action acceptance or cancellation; follow status for asynchronous completion.
+- `/robot_controller/enable_robot` (Trigger): explicit Live-only enable/readiness
+  confirmation after settings completed, with no motion or startup replay.
 - `/robot_controller/set_live` (SetBool): shared GUI/headless actuation gate. True
   begins GUI initialization; false returns GUI to TF-only mode only while
   idle/not holding. Headless starts true and rejects false.
 - `/robot_controller/set_debug_images` (SetBool): enable/disable one annotated
   RGB/depth pair per requested candidate batch, independently of Live.
 - `/robot_controller/status` (String JSON): transient-local state, holding status,
-  explicit Live/headless mode, `debug_images`, `debug_capture_status`, validation
+  explicit Live/headless mode, `startup_settings_applied`, `debug_images`,
+  `debug_capture_status`, validation
   summary and debug TF frame names.
 - `/robot_controller/request_item_poses`: retained explicit read-only batch request.
 - `/robot_controller/validate_profile`: retained explicit idle integrity recheck.

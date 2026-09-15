@@ -176,12 +176,14 @@ def test_status_topic_separates_live_from_debug_image_capture():
     node = SimpleNamespace(
         summary={"state": "PROFILE_VALIDATED"}, execution_state="READY",
         execution_message="Ready", live=True, headless=True, debug_images=True,
+        startup_settings_applied=True,
         debug_capture_status="SAVED: rgb.png | depth.png", holding_item=False,
         profile_path=Path("item.yaml"), preview_targets=(), publisher=publisher,
     )
     RobotController._publish(node)
     status = json.loads(publisher.publish.call_args.args[0].data)
     assert status["live"] and status["headless"] and status["debug_images"]
+    assert status["startup_settings_applied"]
     assert status["debug_capture_status"] == "SAVED: rgb.png | depth.png"
     assert "debug" not in status  # TF-only/Live is not confused with image capture.
 
