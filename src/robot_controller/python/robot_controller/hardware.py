@@ -333,8 +333,7 @@ class DobotTransport:
         return (feed["robot_mode"] == 5 and feed["EnableStatus"] == 1
                 and not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
                 and not feed["ErrorStatus"] and not feed["CollisionStates"]
-                and not feed["isPauseCmdFlag"] and feed["userCoordinate"] == 0
-                and feed["toolCoordinate"] == 0)
+                and feed["userCoordinate"] == 0 and feed["toolCoordinate"] == 0)
 
     def _wait_enabled(self):
         self._phase("MODE_CONFIRM", "Confirming Enabled mode", "EnableRobot")
@@ -344,33 +343,6 @@ class DobotTransport:
                 and sample.feed["EnableStatus"] == 1 and sample.robot_enabled),
             CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
             cancel=self.node.cancel_requested, description="Enabled mode")
-
-    def _correct_persistent_pause_once(self):
-        self._wait_enabled()
-        try:
-            sample = self.monitor.wait_samples(
-                self._held_predicate(
-                    lambda state: bool(state.feed["isPauseCmdFlag"])),
-                CONSISTENT_FLAG_SAMPLES, 0.25, cancel=self.node.cancel_requested,
-                description="persistent pause samples")
-        except FeedbackFailure:
-            sample = None
-        if sample is None:
-            return False
-        self.node.events.record(
-            "WARNING", "startup_pause_correction",
-            "Three consecutive pause samples; applying one Stop -> Enable correction")
-        self._phase("PAUSE_CORRECTION", "Discarding persistent paused queue", "Stop")
-        future = self.request_stop("persistent pause after EnableRobot")
-        self.confirm_stop(future)
-        self._call_startup("EnableRobot")
-        self._wait_enabled()
-        self.monitor.wait_samples(
-            self._held_predicate(
-                lambda state: not state.feed["isPauseCmdFlag"]),
-            CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
-            cancel=self.node.cancel_requested, description="cleared pause flag after correction")
-        return True
 
     def _check_held_context(self, known_holding, expected_outputs):
         snapshot = self.monitor.snapshot(require_enabled=False)
@@ -482,11 +454,9 @@ class DobotTransport:
             cancel=self.node.cancel_requested, description="Disabled mode")
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
-        pause_corrected = self._correct_persistent_pause_once()
+        self._wait_enabled()
         self._apply_settings(100)
         self._reset_outputs_if_unheld()
-        if not pause_corrected:
-            self._correct_persistent_pause_once()
         self._confirm_ready()
 
     def recover(self, speed_percent):
@@ -500,11 +470,9 @@ class DobotTransport:
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
-        pause_corrected = self._correct_persistent_pause_once()
+        self._wait_enabled()
         self._apply_settings(speed_percent if speed_percent is not None else 100)
         self._reset_outputs_if_unheld()
-        if not pause_corrected:
-            self._correct_persistent_pause_once()
         self._confirm_ready()
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 

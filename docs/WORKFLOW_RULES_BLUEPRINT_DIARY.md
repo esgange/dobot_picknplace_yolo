@@ -3007,6 +3007,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   enough to stop its Qt timer before destroying the ROS context, preventing the
   prior shutdown-only invalid-context traceback.
 
+### 2026-09-16 — Enable pause latch is not a READY gate
+
+- A controller/vendor-log correlation identified the transition precisely. The
+  earlier executable confirmed Stop only after 300 ms with
+  `isPauseCmdFlag=0`; it then sent `EnableRobot()` with no intervening command,
+  after which READY observed `isPauseCmdFlag=1`. The same Stop→Enable pattern
+  occurred twice. Thus EnableRobot, not Stop or Pause, asserted the observed bit.
+- With the operator's explicit authorization, a live no-motion check first
+  confirmed enabled mode 5, `isRunQueuedCmd=0`, `RunningStatus=0`, zero
+  error/collision, DI/output bits zero and `isPauseCmdFlag=1`. One raw
+  `Continue()` returned `res=-1`, left the bit at one and produced no motion.
+  This proves the idle latch is not a resumable paused queue.
+- Rule 66 supersedes all global uses of the bit. Startup/Recover no longer run
+  the ineffective Stop→Enable pause-correction sequence. READY, command
+  admission, motion feedback and idle supervision ignore the latch while still
+  requiring fresh connected/enabled mode 5, EnableStatus 1, RobotStatus enabled,
+  empty/not-running queue, no fault/collision, user/tool zero and stationary
+  coherence. Mode 10 remains blocked outside explicit PAUSED state.
+- Explicit Pause/Continue semantics remain contextual and strict. Only a
+  successful controller-owned Pause with retained generation/state may enter
+  PAUSED; that transaction still confirms the asserted bit, and Continue still
+  requires its own successful response and cleared-bit samples. A latch without
+  controller context never enables Continue or changes the GUI lifecycle.
+- Verification passes all 66 focused controller tests directly and through the
+  package CTest wrapper; controller plus generated-interface results report 67
+  tests with zero errors/failures/skips. Python compilation and ament_flake8
+  pass, the package build succeeds, and the complete workspace builds all 15
+  packages. An isolated-domain offscreen launch exposed the expected lifecycle
+  services in `UNCONFIGURED` and all three processes stopped cleanly. No movement
+  target was sent during the live audit or implementation verification.
+
 ### Future entry template
 
 ```text

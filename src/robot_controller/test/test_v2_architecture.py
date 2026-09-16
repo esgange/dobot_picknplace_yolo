@@ -82,6 +82,16 @@ def test_pause_continue_are_controller_services_and_stop_remains_direct():
     assert 'self.stop_after_pause = True' in gui
 
 
+def test_idle_pause_latch_is_not_a_startup_or_ready_gate():
+    hardware = (PACKAGE / "python/robot_controller/hardware.py").read_text()
+    feedback = (PACKAGE / "python/robot_controller/feedback.py").read_text()
+    assert "_correct_persistent_pause_once" not in hardware
+    idle = hardware.split("def _idle", 1)[1].split("def _wait_enabled", 1)[0]
+    assert "isPauseCmdFlag" not in idle
+    blockers = feedback.split("def enabled_blockers", 1)[1]
+    assert 'blockers.append(f"isPauseCmdFlag=' not in blockers
+
+
 def test_headless_configuration_does_not_call_startup():
     controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
     headless_block = controller.split("if self.headless:", 1)[1].split(

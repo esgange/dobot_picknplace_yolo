@@ -148,6 +148,29 @@ def test_stop_after_pause_is_direct_and_enters_recovery():
     assert finish_stop("PAUSED", di1=True)[0].state == "HELD_UNKNOWN"
 
 
+def test_idle_supervision_ignores_enable_pause_latch():
+    sample = SimpleNamespace(robot_enabled=True, feed={
+        "robot_mode": 5, "EnableStatus": 1, "isRunQueuedCmd": 0,
+        "RunningStatus": 0, "ErrorStatus": 0, "CollisionStates": 0,
+        "isPauseCmdFlag": 1, "userCoordinate": 0, "toolCoordinate": 0,
+        "digital_input_bits": 0, "digital_outputs": 0,
+    })
+    stops = []
+    node = SimpleNamespace(
+        startup_complete=True,
+        machine=SimpleNamespace(state="READY", message="Ready"),
+        operation_lock=threading.Lock(),
+        monitor=SimpleNamespace(
+            snapshot=lambda **_kwargs: sample,
+            consistent_flags=lambda _count: (1, 0, 0)),
+        holding_item=False, expected_outputs={},
+        _stop_unexpected_idle_motion=lambda reason="": stops.append(reason),
+        _transition=lambda *_args: None, publish_status=lambda: None,
+    )
+    RobotController._supervise(node)
+    assert stops == []
+
+
 class Button:
     def __init__(self):
         self.text = ""

@@ -236,8 +236,6 @@ def enabled_blockers(feed, status_enabled, *, allow_paused=False):
     for key in ("ErrorStatus", "CollisionStates"):
         if feed[key]:
             blockers.append(f"{key}={feed[key]}")
-    if feed["isPauseCmdFlag"] and not allow_paused:
-        blockers.append(f"isPauseCmdFlag={feed['isPauseCmdFlag']}")
     for key in ("userCoordinate", "toolCoordinate"):
         if feed[key] != 0:
             blockers.append(f"nonzero user/tool: {key}={feed[key]} (required 0)")

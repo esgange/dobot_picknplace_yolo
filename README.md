@@ -53,8 +53,7 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 
 Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
-100, unheld output reset, one bounded persistent-pause correction checked both
-after Enable and before READY, and coherent READY confirmation. Recover performs the
+100, unheld output reset, and coherent READY confirmation. Recover performs the
 same guarded recovery without moving Home. Pause preserves the current queue and
 active Home/Pick generation; Continue resumes only that confirmed paused state.
 Direct Stop and native cancellation preserve all gripper outputs, discard queued
@@ -63,6 +62,12 @@ never automatically Homes, releases, or resumes. Trusted held-item DI/output
 feedback is checked throughout recovery and Stop confirmation. If idle
 supervision sees an unexpected running/nonempty queue, it pre-empts that motion
 with the independent Stop path before requiring recovery.
+
+The Dobot `isPauseCmdFlag` bit is not a general readiness gate. Hardware evidence
+shows that `EnableRobot()` may latch it to one while mode 5 is enabled and the
+queue is empty/not running; `Continue()` is rejected in that condition. The
+controller recognizes resumable Pause only from its own confirmed Pause request
+and retained operation context.
 
 Home uses fresh GetPose only to decide whether an upward current-XY rise is
 needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,

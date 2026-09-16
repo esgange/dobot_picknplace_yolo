@@ -110,9 +110,8 @@ Startup validates sole canonical services and publishers, then performs:
    does not invalidate a confirmed Stop);
 3. cold DI1 check (active DI1 preserves I/O and enters `HELD_UNKNOWN`);
 4. Disable and conditional ClearError;
-5. Enable, with at most one Stop→Enable correction after three persistent pause
-   samples. Pause is checked immediately after Enable and once more before READY
-   only if that correction has not already been used;
+5. Enable and confirm fresh enabled mode. A latched `isPauseCmdFlag` does not
+   block READY when mode 5 is enabled and the queue is empty/not running;
 6. SpeedFactor 100, User 0, Tool 0, Tool 1 TCP zero, and CP 100;
 7. DO1/DO2/DO13/DO14 reset only when no item is held;
 8. 200 ms of coherent `READY` feedback.
@@ -142,6 +141,11 @@ and three fresh cleared-pause samples before restoring the suspended state.
 Feedback, held suction, and expected outputs remain supervised. An ambiguous
 Pause/Continue is contained by direct Stop. Intentional pause duration is not
 charged to sensor, no-progress, arrival, or hard-motion deadlines.
+
+`isPauseCmdFlag` is contextual telemetry rather than a global command gate.
+Live evidence showed `EnableRobot()` latching it to one with an idle empty queue,
+and a raw `Continue()` returned `-1`. Only a controller-issued, acknowledged
+Pause with retained operation context enters `PAUSED`; an idle latch never does.
 
 The GUI presents these services as two dynamic controls. `START` calls Startup
 from `INACTIVE` and becomes `CONTINUE` in `PAUSED`. The amber `PAUSE` control

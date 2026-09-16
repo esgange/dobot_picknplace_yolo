@@ -944,15 +944,15 @@ class RobotController(Node):
             snapshot = self.monitor.snapshot(require_enabled=False)
             feed = snapshot.feed
             blockers = enabled_blockers(feed, snapshot.robot_enabled)
-            transient = {"ErrorStatus", "CollisionStates", "isPauseCmdFlag"}
+            transient = {"ErrorStatus", "CollisionStates"}
             blockers = [item for item in blockers
                         if not any(item.startswith(key + "=") for key in transient)]
             flags = self.monitor.consistent_flags(3)
             if flags is not None:
-                pause, error, collision = flags
-                if pause or error or collision:
+                _pause, error, collision = flags
+                if error or collision:
                     blockers.append(
-                        f"persistent flags pause={pause}, error={error}, collision={collision}")
+                        f"persistent flags error={error}, collision={collision}")
             if blockers:
                 raise FeedbackFailure("; ".join(blockers))
             if feed["isRunQueuedCmd"] or feed["RunningStatus"]:

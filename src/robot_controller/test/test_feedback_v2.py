@@ -45,13 +45,21 @@ def test_valid_feedback_snapshot_and_enabled_blockers():
     assert "EnableStatus=0" in enabled_blockers(feed(EnableStatus=0), False)[1]
 
 
-def test_pause_is_not_ready_but_is_valid_for_confirmed_pause_monitoring():
+def test_pause_flag_is_not_a_general_readiness_blocker():
+    idle_latch = feed(isPauseCmdFlag=1)
+    assert enabled_blockers(idle_latch, True) == []
+    monitor = primed_monitor()
+    monitor.update_feed(idle_latch)
+    assert monitor.snapshot(require_enabled=True).feed["isPauseCmdFlag"] == 1
+
+
+def test_mode_10_is_accepted_only_for_explicit_pause_monitoring():
     paused = feed(robot_mode=10, isPauseCmdFlag=1)
-    assert "isPauseCmdFlag=1" in enabled_blockers(paused, True)
+    assert "robot_mode=10" in enabled_blockers(paused, True)[0]
     assert enabled_blockers(paused, True, allow_paused=True) == []
     monitor = primed_monitor()
     monitor.update_feed(paused)
-    with pytest.raises(FeedbackFailure, match="isPauseCmdFlag=1"):
+    with pytest.raises(FeedbackFailure, match="robot_mode=10"):
         monitor.snapshot(require_enabled=True)
     assert monitor.snapshot(require_enabled=True, allow_paused=True).feed[
         "isPauseCmdFlag"] == 1
