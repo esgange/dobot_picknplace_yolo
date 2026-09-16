@@ -91,15 +91,12 @@ class RobotControllerPreview(rclpy.node.Node):
             if request.operation == request.PICK:
                 batch = self.client.request(
                     config, save_debug_images=False, cancel=self.cancel.is_set)
-                reference_rotation = config.home_matrix[:3, :3]
                 for index, candidate in enumerate(batch.candidates, 1):
                     item_pose = candidate_pose_in_base(
                         config.selection.station.platform.base_from_platform,
                         candidate.position_m, candidate.quaternion)
                     plan = pick_targets(
-                        config.home_matrix, item_pose, config.profile, index,
-                        reference_rotation=reference_rotation)
-                    reference_rotation = plan[0].matrix[:3, :3]
+                        config.home_matrix, item_pose, config.profile, index)
                     targets.extend(plan)
                     if index == len(batch.candidates):
                         targets.append(Target(

@@ -241,8 +241,9 @@ composes that heading through the destination platform transform, projects the
 short axis perpendicular to the exact taught Home tool Z, then considers the
 taught unsigned 0–90° `pick_rotation` on either side of that line. Since a
 rectangle has no directed end, both modulo-180° directions are equivalent.
-Candidate 1 chooses the legal attitude with the least CW/CCW travel from Home;
-each later retry chooses from the preceding candidate attitude. All candidate
+Every candidate independently chooses the legal attitude with the least CW/CCW
+travel from taught Home. All candidate poses are therefore ready before execution
+and their rotations never accumulate across retries. Every candidate's
 transit/descent/retract targets share its selected attitude; exact
 joint Home restores the taught orientation. Platform tilt is not copied into
 TCP roll/pitch, and all waypoint heights remain referenced to base Z.
@@ -289,7 +290,7 @@ next candidate. All command, feedback, state, cancellation, and result events
 are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.
 Each candidate plan also records its source quaternion, transformed short axis,
 commanded green axis, configured offset, selected CW/CCW side, rotation from the
-current path reference, and target RPY.
+taught Home reference, and target RPY.
 
 Joint Home completion uses ±1° independently on every joint. Cartesian target
 completion uses 5 mm Euclidean translation and 1° orientation. Both require 300

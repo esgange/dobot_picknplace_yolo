@@ -888,19 +888,14 @@ class RobotController(Node):
                 goal.succeed()
                 return result
             plans = []
-            reference_rotation = config.home_matrix[:3, :3]
             for index, candidate in enumerate(batch.candidates, 1):
                 item_pose = candidate_pose_in_base(
                     config.selection.station.platform.base_from_platform,
                     candidate.position_m, candidate.quaternion)
                 _rotation, delta_deg, offset_direction = pick_attitude(
-                    config.home_matrix, item_pose, config.profile["pick_rotation"],
-                    reference_rotation)
-                plan = pick_targets(
-                    config.home_matrix, item_pose, config.profile, index,
-                    reference_rotation=reference_rotation)
+                    config.home_matrix, item_pose, config.profile["pick_rotation"])
+                plan = pick_targets(config.home_matrix, item_pose, config.profile, index)
                 plans.append(plan)
-                reference_rotation = plan[0].matrix[:3, :3]
                 self.events.record(
                     "INFO", "pick_orientation_planned",
                     "Applied the nearest legal offset from the item short-axis line",
@@ -910,7 +905,7 @@ class RobotController(Node):
                     target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
                     configured_pick_rotation_deg=config.profile["pick_rotation"],
                     selected_offset_direction=offset_direction,
-                    rotation_from_reference_deg=delta_deg,
+                    rotation_from_home_deg=delta_deg,
                     target_rpy_deg=pose_values(plan[0].matrix)[3:])
 
             def check(index):

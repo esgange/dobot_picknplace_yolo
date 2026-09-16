@@ -104,17 +104,8 @@ def _spin_about_axis(vector, axis, angle):
             + axis * float(np.dot(axis, vector)) * (1.0 - math.cos(angle)))
 
 
-def _rotation_matrix(value, label):
-    rotation = np.asarray(value, dtype=float)
-    if (rotation.shape != (3, 3) or not np.all(np.isfinite(rotation))
-            or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6, rtol=0)
-            or not math.isclose(float(np.linalg.det(rotation)), 1., abs_tol=1e-6)):
-        raise ValueError(f"{label} must be a finite rotation matrix")
-    return rotation
-
-
-def pick_attitude(home, item_in_base, pick_rotation_deg=0.0, reference_rotation=None):
-    """Choose the nearest legal ±offset attitude about the unchanged taught tool Z."""
+def pick_attitude(home, item_in_base, pick_rotation_deg=0.0):
+    """Choose each candidate's nearest legal ±offset attitude from taught Home."""
     home = _rigid_matrix(home, "Home")
     item = _rigid_matrix(item_in_base, "Base-relative candidate pose")
     if (type(pick_rotation_deg) not in (int, float)
@@ -123,17 +114,13 @@ def pick_attitude(home, item_in_base, pick_rotation_deg=0.0, reference_rotation=
         raise ValueError("pick_rotation must be a finite number from 0 to 90 degrees")
     home_rotation = home[:3, :3]
     tool_z = home_rotation[:, 2]
-    reference = (home_rotation if reference_rotation is None
-                 else _rotation_matrix(reference_rotation, "Reference attitude"))
-    if not np.allclose(reference[:, 2], tool_z, atol=1e-6, rtol=0):
-        raise ValueError("Reference attitude must preserve the taught Home tool Z axis")
     item_short = item[:3, 1]
     projected = item_short - tool_z * float(np.dot(item_short, tool_z))
     norm = float(np.linalg.norm(projected))
     if norm <= 1e-6:
         raise ValueError("Item short axis cannot be projected perpendicular to tool Z")
     projected /= norm
-    reference_green = reference[:, 1]
+    reference_green = home_rotation[:, 1]
     offset = math.radians(pick_rotation_deg)
     choices = (("none", projected),) if offset == 0.0 else (
         ("ccw", _spin_about_axis(projected, tool_z, offset)),
@@ -158,12 +145,12 @@ def pick_attitude(home, item_in_base, pick_rotation_deg=0.0, reference_rotation=
     return rotation, travel_deg, direction
 
 
-def pick_targets(home, item_in_base, settings, candidate_index, *, reference_rotation=None):
+def pick_targets(home, item_in_base, settings, candidate_index):
     validate_speed(settings["speed"])
     validate_acceleration(settings["acceleration"])
     item_in_base = _rigid_matrix(item_in_base, "Base-relative candidate pose")
     rotation, _travel_deg, _direction = pick_attitude(
-        home, item_in_base, settings["pick_rotation"], reference_rotation)
+        home, item_in_base, settings["pick_rotation"])
     position = item_in_base[:3, 3]
     motion = settings["motion"]
     pick_z = float(position[2]) + motion["standoff_height"] / 1000

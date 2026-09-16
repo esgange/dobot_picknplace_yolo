@@ -55,7 +55,8 @@ pick-to-prepick; the remaining clearance and Home return use travel rates.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick, clearance Z=pre-pick Z+retract,
 in robot base Z. The candidate attitude preserves taught tool Z and applies the
 nearest legal clockwise/counter-clockwise `pick_rotation` offset from the item
-short-axis line. zheight_offset is removed, not an alias.
+short-axis line relative to taught Home. Every candidate is solved independently;
+retry orientations do not accumulate. zheight_offset is removed, not an alias.
 The controller supplies vendor
 per-command `v=`/`a=` while global SpeedFactor stays 100%. These are percentages,
 not absolute velocity/acceleration. Slow rates do not relax acquisition

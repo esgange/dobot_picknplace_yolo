@@ -339,7 +339,8 @@ DI1-monitored final descent; teaching remains non-actuating.
 The motion form has only standoff_height, prepick_height and retract_height.
 `pick_rotation` is a separate required 0–90° value. It is an unsigned offset
 from the detected short-axis line; Robot Controller chooses the lower-travel
-clockwise/counter-clockwise equivalent for the current path.
+clockwise/counter-clockwise equivalent from taught Home independently for every
+candidate.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
 in robot base Z. zheight_offset is removed. GUI-only old-file recovery leaves
 old retract_height blank because its reference changed; correction/Save is

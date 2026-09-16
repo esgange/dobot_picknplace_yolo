@@ -251,7 +251,7 @@ def test_second_candidate_success_returns_home_only_after_acquisition():
     assert returned[0]["require_suction"] is True
 
 
-def test_pick_rotation_selects_nearest_offset_and_retry_reference():
+def test_every_pick_rotation_selects_nearest_offset_from_home_independently():
     home = matrix(1.0)
     first = item_pose(yaw_deg=80.0)
     rotation, travel, direction = pick_attitude(home, first, 20.0)
@@ -260,11 +260,10 @@ def test_pick_rotation_selects_nearest_offset_and_retry_reference():
     assert np.allclose(rotation[:, 1], item_pose(yaw_deg=60.0)[:3, 1])
 
     second = item_pose(yaw_deg=100.0)
-    next_rotation, next_travel, next_direction = pick_attitude(
-        home, second, 20.0, rotation)
-    assert next_direction == "cw"
-    assert next_travel == pytest.approx(20.0)
-    assert np.allclose(next_rotation[:, 1], item_pose(yaw_deg=80.0)[:3, 1])
+    next_rotation, next_travel, next_direction = pick_attitude(home, second, 20.0)
+    assert next_direction == "ccw"
+    assert next_travel == pytest.approx(-60.0)
+    assert np.allclose(next_rotation[:, 1], item_pose(yaw_deg=-60.0)[:3, 1])
 
 
 @pytest.mark.parametrize("value", [-0.1, 90.1, float("nan"), "10"])

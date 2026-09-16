@@ -107,8 +107,8 @@ and timed gripper behavior, and returns Home after success or final exhaustion.
 Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
 uses the detected item short-axis line plus the taught unsigned `pick_rotation`;
 the planner evaluates both clockwise and counter-clockwise offsets and both
-modulo-180° line directions. Candidate 1 minimizes rotation from Home and each
-retry minimizes from the preceding candidate attitude. Platform tilt never
+modulo-180° line directions. Every candidate independently minimizes rotation
+from Home, so retry rotations never accumulate. Platform tilt never
 becomes TCP tilt and waypoint heights remain in base Z. Only missed suction
 advances to another candidate. No-I/O
 moves use MovL, real timed-output moves use non-empty MovLIO, and the conditional

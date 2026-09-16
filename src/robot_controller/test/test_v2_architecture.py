@@ -119,9 +119,9 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
     assert "plan = pick_targets(" in controller
     assert "plan = pick_targets(" in preview
     assert "item[:3, 1]" in motion
-    assert "reference_rotation=reference_rotation" in controller
-    assert "reference_rotation=reference_rotation" in preview
+    assert "reference_rotation" not in controller + preview + motion
     assert "selected_offset_direction" in controller
+    assert "rotation_from_home_deg" in controller
 
 
 def test_pick_uses_named_forward_and_return_queue_batches():

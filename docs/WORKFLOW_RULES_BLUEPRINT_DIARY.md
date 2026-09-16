@@ -3475,6 +3475,30 @@ Never use a floating “latest” version in an issue, script, or deployment not
   clearance-only routing, second-candidate success and final exact-Home return.
   No detector request or robot command was issued.
 
+### 2026-09-16 — Calculate every candidate orientation independently from Home
+
+- Operator correction: direct motion between missed candidates must not make
+  their angular plans cumulative. Rule 79 supersedes rule 78's previous-candidate
+  reference. Before any attempt, hardware Pick and TF Preview calculate every
+  candidate's absolute attitude independently from the exact taught Home
+  orientation, evaluating both signed `pick_rotation` offsets and every
+  modulo-180 line equivalent.
+- A failed non-final candidate still retracts only to its final clearance and
+  proceeds directly to the next item. The robot may physically rotate from one
+  candidate attitude to the next during that travel, but the next target itself
+  is the precomputed minimum-turn solution from Home; no prior target angle is
+  added to it. Logs now name the signed `rotation_from_home_deg` explicitly.
+- Schema 8, Item Teach UI, pose batches, direct retry queues, success/final Home,
+  tool-Z preservation, I/O, CP, response ordering, Stop/cancellation and feedback
+  rules are unchanged. Verification remains source/synthetic only; do not request
+  detector poses or issue robot commands.
+- Verification completed with all 118 direct Robot Controller tests and all 119
+  package-reported results passing with zero failures, errors or skips. Python
+  compilation and focused ament_flake8 checks passed, the controller package and
+  complete 15-package workspace built successfully, and architecture tests reject
+  any previous-candidate orientation reference in controller, preview or planner.
+  No detector request or robot command was issued.
+
 ### Future entry template
 
 ```text
