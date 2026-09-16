@@ -212,7 +212,8 @@ Pick is permitted only from `READY` with DI1 clear:
 
 1. run the same Home function;
 2. request one fresh profile/model/camera/platform/bin-hash-matched batch from
-   `/item_detect/get_item_poses`;
+   `/item_detect/get_item_poses`, advertised by exactly one root node: headless
+   `/item_detect` or explicitly Armed `/item_teach`;
 3. transform platform-relative targets into base coordinates;
 4. attempt up to Item Teach `pose_candidates` in detector rank order;
 5. after every miss, retract and return Home before advancing;

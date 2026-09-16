@@ -16,7 +16,8 @@ from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternio
 from item_perception_yolo.platform_teach_core import workspace_root
 from robot_controller_interfaces.srv import Preview
 
-from .candidates import CandidateClient
+from .candidates import (
+    CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
 from .configuration import load_configuration
 from .controller import PackageEventLogger
 from .kinematics import Cr10Kinematics
@@ -52,10 +53,10 @@ class RobotControllerPreview(rclpy.node.Node):
         providers = []
         for name, namespace in self.get_node_names_and_namespaces():
             names = self.get_service_names_and_types_by_node(name, namespace)
-            if "/item_detect/get_item_poses" in (service for service, _types in names):
+            if CANDIDATE_SERVICE in (service for service, _types in names):
                 providers.append((name, namespace))
-        if len(providers) != 1 or providers[0] not in {
-                ("item_detect", "/"), ("item_teach", "/")}:
+        if (len(providers) != 1
+                or providers[0] not in CANONICAL_CANDIDATE_PROVIDERS):
             raise ValueError(
                 "Preview requires exactly one canonical item_detect/item_teach pose service")
 

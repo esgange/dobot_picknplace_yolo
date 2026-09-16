@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 import threading
 
+import pytest
 from PyQt5 import QtWidgets
 from rclpy.action import GoalResponse
 
 from robot_controller.controller import RobotController
+from robot_controller.errors import FeedbackFailure
 from robot_controller.gui import ControllerWindow, GuiNode
 from robot_controller.state_machine import ControllerStateMachine
 
@@ -12,6 +14,27 @@ from robot_controller.state_machine import ControllerStateMachine
 class Config:
     configuration_id = "active"
     selection = object()
+
+
+@pytest.mark.parametrize("provider", [
+    ("item_detect", "/"),
+    ("item_teach", "/"),
+])
+def test_pick_accepts_one_canonical_headless_or_armed_teach_pose_provider(provider):
+    node = SimpleNamespace(_service_providers=lambda _service: [provider])
+    RobotController.check_detector_owner(node)
+
+
+@pytest.mark.parametrize("providers", [
+    [],
+    [("unexpected_detector", "/")],
+    [("item_teach", "/station")],
+    [("item_detect", "/"), ("item_teach", "/")],
+])
+def test_pick_rejects_missing_unknown_namespaced_or_duplicate_pose_providers(providers):
+    node = SimpleNamespace(_service_providers=lambda _service: providers)
+    with pytest.raises(FeedbackFailure, match="exactly one canonical root provider"):
+        RobotController.check_detector_owner(node)
 
 
 def reservation(state, *, startup=True, holding=False, selection=True):

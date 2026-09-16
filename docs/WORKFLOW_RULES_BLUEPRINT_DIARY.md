@@ -3173,6 +3173,36 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the controller package and complete 15-package workspace build successfully,
   and `git diff --check` is clean. No hardware was launched or commanded.
 
+### 2026-09-16 — Accept the armed Item Teach candidate-service authority
+
+- A live Pick reached DETECT after correctly skipping an already-complete Home,
+  but the controller rejected the sole `/item_detect/get_item_poses` server
+  because the advertising node was `/item_teach`. It then issued and confirmed
+  the required safety Stop; no pick waypoint was dispatched. The ROS graph
+  showed exactly one provider, and Item Teach was explicitly Armed. Simulate
+  Trigger had independently succeeded because it uses the same internal fresh
+  batch implementation without calling through the controller client.
+- This exposed an internal ownership inconsistency: Item Teach intentionally
+  advertises the canonical production service while Armed, and TF Preview
+  already accepted the sole root `/item_teach` or `/item_detect` provider, but
+  hardware Pick accepted only `/item_detect`.
+- Rule 71 centralizes the service name and allowed node identities. Both hardware
+  Pick and TF Preview now accept exactly one root provider named `item_teach` or
+  `item_detect`; missing, namespaced, unknown, or simultaneous GUI/headless
+  providers remain rejected. Profile/model/station/bin hashes, fresh request
+  capture, response validation and all robot safety gates are unchanged.
+- Verification is source/synthetic only: cover both allowed identities and every
+  rejected ownership shape, run controller tests, compilation/lint, package and
+  root builds, staged review, and `git diff --check`. Do not send a detector
+  request or robot command during verification.
+- Verification completed with all 83 focused controller tests passing directly
+  and through the package CTest wrapper (84 reported tests, zero errors,
+  failures or skips). The tests accept each sole canonical provider and reject
+  missing, unknown, non-root and simultaneous providers. Python compilation and
+  all 20 controller/test files pass ament_flake8; the controller package and all
+  15 workspace packages build successfully. Live graph inspection was read-only,
+  and no candidate request or robot command was issued during verification.
+
 ### Future entry template
 
 ```text

@@ -12,6 +12,13 @@ from item_perception_interfaces.srv import GetItemPoses
 from .errors import FeedbackFailure, OperationCanceled
 
 
+CANDIDATE_SERVICE = "/item_detect/get_item_poses"
+CANONICAL_CANDIDATE_PROVIDERS = frozenset({
+    ("item_detect", "/"),
+    ("item_teach", "/"),
+})
+
+
 @dataclass(frozen=True)
 class Candidate:
     identifier: str
@@ -33,7 +40,7 @@ class CandidateBatch:
 
 
 class CandidateClient:
-    def __init__(self, node, root, *, service="/item_detect/get_item_poses"):
+    def __init__(self, node, root, *, service=CANDIDATE_SERVICE):
         self.node = node
         self.root = Path(root).resolve()
         self.client = node.create_client(GetItemPoses, service)

@@ -28,7 +28,8 @@ from robot_controller_interfaces.action import GoHome, PickItem
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, SetGlobalSpeed
 
-from .candidates import CandidateClient
+from .candidates import (
+    CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
 from .configuration import load_configuration, load_runtime_configuration
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldUnknown, OperationCanceled, StopUnconfirmed)
@@ -244,10 +245,12 @@ class RobotController(Node):
             self.check_command_owner(service)
 
     def check_detector_owner(self):
-        providers = self._service_providers("/item_detect/get_item_poses")
-        if providers != [("item_detect", "/")]:
+        providers = self._service_providers(CANDIDATE_SERVICE)
+        if (len(providers) != 1
+                or providers[0] not in CANONICAL_CANDIDATE_PROVIDERS):
             raise FeedbackFailure(
-                "Pose service requires the sole canonical /item_detect node provider")
+                "Pose service requires exactly one canonical root provider "
+                f"(/item_detect or /item_teach); got {providers}")
 
     # ---------- state/status ----------
 

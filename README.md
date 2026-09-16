@@ -40,11 +40,14 @@ an explicit typed `/robot_controller/startup` call.
 
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
-Pick requests one fresh hash-matched batch from `item_detect`; candidate count
-always comes from Item Teach `pose_candidates`. Typed Startup, Recover, Pause,
-Continue, direct Stop, Configure and global-speed services support those actions,
-while reliable transient-local typed status reports the state and operation phase. The old
-Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image endpoints are removed.
+Pick requests one fresh hash-matched batch from the sole canonical provider:
+headless `item_detect`, or explicitly Armed `item_teach` during attended use.
+They share `/item_detect/get_item_poses`; running both providers is rejected.
+Candidate count always comes from Item Teach `pose_candidates`. Typed Startup,
+Recover, Pause, Continue, direct Stop, Configure and global-speed services support
+those actions, while reliable transient-local typed status reports the state and
+operation phase. The old Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image
+endpoints are removed.
 
 ```bash
 ros2 launch robot_controller robot_controller.launch.py
