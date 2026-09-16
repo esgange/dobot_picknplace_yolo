@@ -1,1193 +1,863 @@
-"""Shared service-driven controller with explicit TF-only/Live selection."""
+"""Robot Controller v2: explicit Startup, deterministic Home/Pick, native cancellation."""
 
-from dataclasses import replace
+import fcntl
 import json
-import math
 import os
-import signal
 from pathlib import Path
+import signal
 import threading
-import time
-from types import SimpleNamespace
 
 import numpy as np
 
 import rclpy
-from rclpy.node import Node
+from ament_index_python.packages import get_package_share_directory
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
-from rcl_interfaces.msg import SetParametersResult
+from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
-from std_msgs.msg import String
-from std_srvs.srv import SetBool, Trigger
-from dobot_msgs_v4.srv import SpeedFactor
-from item_perception_interfaces.srv import GetItemPoses
-from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import JointState
-from tf2_ros import TransformBroadcaster
-from ament_index_python.packages import get_package_share_directory
-from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternion
+from std_msgs.msg import String
 
-from item_perception_yolo.item_teach_core import load_item_profile, utc_now
+from dobot_msgs_v4.msg import RobotStatus
+from item_perception_yolo.item_teach_core import utc_now
 from item_perception_yolo.platform_teach_core import (
-    _parse_env_file, load_robot_lan1_ip, workspace_root,
-)
+    _parse_env_file, load_robot_lan1_ip, workspace_root)
+from robot_controller_interfaces.action import GoHome, PickItem
+from robot_controller_interfaces.msg import ControllerStatus
+from robot_controller_interfaces.srv import Command, Configure, SetGlobalSpeed
+
+from .candidates import CandidateClient
+from .configuration import load_configuration, load_runtime_configuration
+from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
+                     HeldUnknown, OperationCanceled, StopUnconfirmed)
+from .feedback import FeedbackMonitor, enabled_blockers
+from .hardware import DobotTransport
 from .kinematics import Cr10Kinematics
-from .motion import home_targets, pick_targets, PickExecutor
-from .profiles import load_selection, runtime_selection
-from .ui_state import load_state
+from .motion import PickExecutor, home_targets, pick_targets
+from .state_machine import ControllerStateMachine
 
 
 class PackageEventLogger:
-    def __init__(self, root):
+    """Package-owned bounded JSONL event recorder."""
+
+    def __init__(self, root, node_name="robot_controller"):
         self.path = Path(root) / "logs/robot_controller/events.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
+        self.node_name = node_name
 
     def record(self, level, event, message, **fields):
-        payload = {"timestamp_utc": utc_now(), "package": "robot_controller",
-                   "node": "robot_controller", "level": level, "event": event,
-                   "message": message, **fields}
+        payload = {
+            "timestamp_utc": utc_now(), "package": "robot_controller",
+            "node": self.node_name, "level": level, "event": event,
+            "message": message, **fields,
+        }
         with self.lock:
-            count = 0
-            if self.path.exists():
-                with self.path.open(encoding="utf-8") as stream:
-                    count = sum(bool(line.strip()) for line in stream)
-            with self.path.open("w" if count >= 1000 else "a", encoding="utf-8") as stream:
-                stream.write(json.dumps(payload, sort_keys=True) + "\n")
-
-
-def inspect_profile(path, *, root, robot_ip, publisher_node, deployment=False):
-    path = Path(path).expanduser()
-    profile, digest = load_item_profile(path, root=root, deployment=deployment)
-    home = profile["home"]
-    return {
-        "state": "PROFILE_VALIDATED", "item_teach_file": str(Path(path).resolve()),
-        "profile_sha256": digest, "item_name": profile["item"]["name"],
-        "model_sha256": profile["model"]["sha256"], "home": home,
-        "current_robot_lan1_ip": robot_ip, "current_feedback_publisher": publisher_node,
-        "home_identity_policy": "recording_provenance_only",
-        "requested_pose_count": profile["retry"]["pose_candidates"],
-        "maximum_detections": profile["yolo"]["max_detections"],
-        "speed": profile["speed"],
-        "acceleration": profile["acceleration"],
-        "execution_enabled": False, "inference_enabled": False,
-        "message": "Profile and copied model integrity validated; no model inference or motion.",
-    }
+            with self.path.open("a+", encoding="utf-8") as stream:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+                stream.seek(0)
+                count = sum(bool(line.strip()) for line in stream)
+                if count >= 1000:
+                    stream.seek(0)
+                    stream.truncate()
+                else:
+                    stream.seek(0, os.SEEK_END)
+                stream.write(json.dumps(payload, sort_keys=True, allow_nan=False) + "\n")
+                stream.flush()
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 class RobotController(Node):
+    """The sole application-level Dobot command authority."""
+
     def __init__(self):
         super().__init__("robot_controller")
         self.root = workspace_root()
         self.robot_ip = load_robot_lan1_ip(self.root)
-        self.publisher_node = "/" + _parse_env_file(self.root / ".env")["DOBOT_ROBOT_NODE_NAME"]
-        self.events = PackageEventLogger(self.root)
-        self.state_lock = threading.RLock()
+        env = _parse_env_file(self.root / ".env")
+        self.bringup_node = "/" + env["DOBOT_ROBOT_NODE_NAME"]
         self.headless = self.declare_parameter("headless", False).value
         if type(self.headless) is not bool:
-            raise ValueError("headless must be an explicit Boolean mode flag")
-        self.live = False
-        self.debug = True
-        self.debug_images = False
-        self.debug_capture_status = "OFF"
-        try:
-            self.ui_prefill = (None if self.headless else load_state(
-                self.root / "logs/robot_controller/last_session.json"))
-        except ValueError as exc:
-            self.events.record("FATAL", "invalid_ui_prefill", str(exc))
-            raise  # Validate before even constructing a real command transport.
-        self.selection = None
-        self.execution_state = "DEBUG" if self.debug else "INITIALIZING"
-        self.execution_message = "TF-only; no hardware commands" if self.debug else "Starting"
-        self.holding_item = False
-        self.startup_settings_applied = False
-        self.global_speed_percent = None  # Unknown until a successful SpeedFactor response.
-        self.global_speed_message = "Live OFF; no global speed command"
-        self.fatal_error = None
-        self.cancel = threading.Event()
-        self.shutdown_requested = threading.Event()
-        self.action_lock = threading.Lock()
-        self.action_thread = None
-        self.stop_thread = None
-        self.stop_future = None
-        self.stop_recovery_abort = threading.Event()
-        self.last_prepick = None
-        self.last_gripper = None
-        self.joint_feedback = self.feed_feedback = self.robot_feedback = None
-        self.feed_sequence = 0
-        self.controller_timer = None
-        self.controller_progress_at = None
-        self.preview_targets = ()
-        self.preview_digest = None
-        self.preview_sources = ()
+            raise ValueError("headless must be an explicit Boolean")
+
+        self.events = PackageEventLogger(self.root)
         model_path = Path(get_package_share_directory("cra_description")) / "urdf/cr10_robot.xacro"
         self.kinematics = Cr10Kinematics(model_path)
-        self.tf_broadcaster = TransformBroadcaster(self)
+        self.machine = ControllerStateMachine()
+        self.configuration = None
+        self.startup_complete = False
+        self.global_speed_percent = None
+        self.holding_item = False
+        self.expected_outputs = {}
+
+        self.operation_lock = threading.Lock()
+        self.control_group = ReentrantCallbackGroup()
+        self.cancel_event = threading.Event()
+        self.shutdown_event = threading.Event()
+        self.active_goal = None
+        self.active_action = ""
+        self.phase = ""
+        self.waypoint = ""
+        self.candidate_index = 0
+        self.candidate_total = 0
+
+        self.stop_guard = threading.RLock()
+        self.stop_confirmation_guard = threading.Lock()
+        self.stop_future = None
+        self.stop_confirmed = False
+        self.stop_error = None
+        self.state_before_stop = None
+        self.late_stop_thread = None
+        self.supervision_stop_thread = None
+
+        self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
-        from dobot_msgs_v4.msg import RobotStatus
         self.create_subscription(
             RobotStatus, "/dobot_msgs_v4/msg/RobotStatus", self._on_status, 10)
-        self.create_subscription(String, "/dobot_bringup_ros2/msg/FeedInfo", self._on_feed, 10)
-        self.summary = {
-            "state": "UNCONFIGURED", "execution_enabled": False,
-            "inference_enabled": False, "message": "Select an item profile explicitly.",
-        }
-        self.profile_path = None
-        self.home_reference = None
-        self.home_reference_joints = None
-        self.pose_lock = threading.Lock()
-        self.pose_client = self.create_client(GetItemPoses, "/item_detect/get_item_poses")
-        self.publisher = self.create_publisher(
-            String, "/robot_controller/status", QoSProfile(
-                depth=1, reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            ),
-        )
-        selected = self.declare_parameter("item_teach_file", "").value
-        bin_path = self.declare_parameter("bin_teach_file", "").value
+        self.create_subscription(
+            String, "/dobot_bringup_ros2/msg/FeedInfo", self._on_feed, 10)
+        self.hardware = DobotTransport(self, self.monitor)
+        self.candidates = CandidateClient(self, self.root)
+
+        status_qos = QoSProfile(
+            depth=1, reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.status_publisher = self.create_publisher(
+            ControllerStatus, "/robot_controller/status", status_qos)
+        self.startup_service = self.create_service(
+            Command, "/robot_controller/startup", self._startup,
+            callback_group=self.control_group)
+        self.recover_service = self.create_service(
+            Command, "/robot_controller/recover", self._recover,
+            callback_group=self.control_group)
+        self.stop_service = self.create_service(
+            Command, "/robot_controller/stop", self._stop,
+            callback_group=self.control_group)
+        self.configure_service = self.create_service(
+            Configure, "/robot_controller/configure", self._configure,
+            callback_group=self.control_group)
+        self.speed_service = self.create_service(
+            SetGlobalSpeed, "/robot_controller/set_global_speed", self._set_global_speed,
+            callback_group=self.control_group)
+        self.home_server = ActionServer(
+            self, GoHome, "/robot_controller/go_home",
+            execute_callback=self._execute_home_action,
+            goal_callback=self._home_goal, cancel_callback=self._cancel_goal,
+            callback_group=self.control_group)
+        self.pick_server = ActionServer(
+            self, PickItem, "/robot_controller/pick_item",
+            execute_callback=self._execute_pick_action,
+            goal_callback=self._pick_goal, cancel_callback=self._cancel_goal,
+            callback_group=self.control_group)
+
         if self.headless:
-            if selected or bin_path:
-                raise ValueError(
-                    "Headless loads runtime_teach/; explicit file overrides forbidden")
-            self.selection = runtime_selection(self.root)
-            self._load(self.selection.item_path)
-        elif selected:
-            self._load(selected)
-            if bin_path:
-                self.selection = load_selection(selected, bin_path, self.root)
-        self.add_on_set_parameters_callback(self._on_parameters)
-        self.create_service(Trigger, "/robot_controller/validate_profile", self._validate)
-        self.create_service(Trigger, "/robot_controller/request_item_poses", self._request_poses,
-                            callback_group=ReentrantCallbackGroup())
-        for name, action in (("go_home", "home"), ("pick_item", "pick")):
-            self.create_service(Trigger, f"/robot_controller/{name}",
-                                lambda req, res, a=action: self._start_service(a, res),
-                                callback_group=ReentrantCallbackGroup())
-        self.create_service(Trigger, "/robot_controller/stop", self._stop_service,
-                            callback_group=ReentrantCallbackGroup())
-        self.create_service(Trigger, "/robot_controller/enable_robot", self._enable_robot_service,
-                            callback_group=ReentrantCallbackGroup())
-        self.create_service(SpeedFactor, "/robot_controller/set_global_speed",
-                            self._set_global_speed_service,
-                            callback_group=ReentrantCallbackGroup())
-        self.create_service(SetBool, "/robot_controller/set_live", self._set_live_service,
-                            callback_group=ReentrantCallbackGroup())
-        self.create_service(SetBool, "/robot_controller/set_debug_images",
-                            self._set_debug_images_service,
-                            callback_group=ReentrantCallbackGroup())
-        self.create_timer(1.0, self._publish)
-        self.create_timer(0.1, self._supervise, callback_group=ReentrantCallbackGroup())
-        self.hardware = None
-        if self.headless:
-            startup = self._set_live_service(SetBool.Request(data=True), SimpleNamespace())
-            if not startup.success:
-                raise RuntimeError(f"Headless Live startup rejected: {startup.message}")
-        self._publish()
-        self.events.record("INFO", "node_started", "Explicit actions; no automatic home/pick",
-                           headless=self.headless, live=self.live,
-                           cr10_model_sha256=self.kinematics.sha256)
+            self.configuration = load_runtime_configuration(self.root, self.kinematics)
+            self._transition("INACTIVE", "Runtime teach loaded; explicit Startup required")
+            self._log_configuration("runtime_configuration_loaded")
+        self.create_timer(0.2, self.publish_status)
+        self.create_timer(0.1, self._supervise, callback_group=self.control_group)
+        self.publish_status()
+        self.events.record(
+            "INFO", "node_started",
+            "Controller available; launch performed no enable or motion command",
+            headless=self.headless, state=self.machine.state,
+            cr10_model_sha256=self.kinematics.sha256)
 
-    def _load(self, path):
-        path = Path(path).expanduser()
-        summary = inspect_profile(
-            Path(path), root=self.root, robot_ip=self.robot_ip, publisher_node=self.publisher_node,
-            deployment=self.headless,
-        )
-        home_joints = tuple(summary["home"]["positions_rad"])
-        home_reference = self.kinematics.forward(home_joints)
-        self.summary = summary
-        self.profile_path = Path(path).resolve()
-        self.home_reference = home_reference
-        self.home_reference_joints = home_joints
-        self.events.record("INFO", "profile_validated", summary["message"],
-                           profile_sha256=summary["profile_sha256"], path=str(self.profile_path))
-        self._publish()
+    # ---------- feedback and ownership ----------
 
-    def _on_parameters(self, parameters):
-        if getattr(self, "headless", False):
-            return SetParametersResult(successful=False, reason="Runtime catalog is immutable")
-        if (hasattr(self, "action_thread") and self.action_thread is not None
-                and self.action_thread.is_alive()):
-            return SetParametersResult(successful=False, reason="Controller operation active")
-        if (len(parameters) != 1 or parameters[0].name != "item_teach_file"
-                or type(parameters[0].value) is not str or not parameters[0].value):
-            return SetParametersResult(
-                successful=False, reason="Set exactly one non-empty item_teach_file string",
-            )
-        guard = getattr(self, "action_lock", None)
-        if guard is not None and not guard.acquire(blocking=False):
-            return SetParametersResult(successful=False, reason="Controller action active")
+    def _on_joints(self, message):
         try:
-            if hasattr(self, "clear_preview"):
-                self.clear_preview()
-                self.selection = None
-            self._load(parameters[0].value)
-        except (ValueError, OSError) as exc:
-            self.events.record("ERROR", "profile_rejected", str(exc))
-            return SetParametersResult(successful=False, reason=str(exc))
-        finally:
-            if guard is not None:
-                guard.release()
-        return SetParametersResult(successful=True, reason=self.summary["message"])
+            self.monitor.update_joints(message)
+        except FeedbackFailure as exc:
+            self.events.record("WARNING", "invalid_joint_feedback", str(exc))
 
-    def _validate(self, _request, response):
-        guard = getattr(self, "action_lock", None)
-        if guard is not None and not guard.acquire(blocking=False):
-            response.success, response.message = False, "Controller action active"
-            return response
+    def _on_status(self, message):
+        self.monitor.update_status(message)
+
+    def _on_feed(self, message):
         try:
-            if self.profile_path is None:
-                raise ValueError("No item profile selected")
-            self._load(self.profile_path)
-        except (ValueError, OSError) as exc:
-            self.summary = {"state": "PROFILE_INVALID", "execution_enabled": False,
-                            "inference_enabled": False, "message": str(exc)}
-            self.events.record("ERROR", "validation_failed", str(exc))
-            if hasattr(self, "clear_preview"):
-                self.clear_preview()
-                self.selection = None
-                self.profile_path = None
-                self.home_reference = None
-                self.home_reference_joints = None
-            self._publish()
-            response.success, response.message = False, str(exc)
-        else:
-            response.success, response.message = True, json.dumps(self.summary, sort_keys=True)
-        finally:
-            if guard is not None:
-                guard.release()
-        return response
-
-    def _publish(self):
-        value = dict(self.summary)
-        if hasattr(self, "execution_state"):
-            value.update(live=self.live, headless=self.headless,
-                         startup_settings_applied=getattr(self, "startup_settings_applied", False),
-                         global_speed_percent=getattr(self, "global_speed_percent", None),
-                         global_speed_message=getattr(self, "global_speed_message", ""),
-                         debug_images=self.debug_images,
-                         debug_capture_status=self.debug_capture_status,
-                         execution_state=self.execution_state,
-                         execution_message=self.execution_message,
-                         holding_item=self.holding_item,
-                         execution_enabled=(self.live and self.profile_path is not None
-                                            and self.execution_state in
-                                            ("READY", "BUSY", "HOLDING", "NO_PICK")),
-                         tf_frames=[f"robot_controller_debug_{t.name}"
-                                    for t in self.preview_targets])
-        self.publisher.publish(String(data=json.dumps(value, sort_keys=True)))
-
-    def _request_poses(self, _request, response):
-        if not self.pose_lock.acquire(blocking=False):
-            response.success, response.message = False, "A candidate request is already active"
-            return response
-        try:
-            if self.profile_path is None:
-                raise ValueError("Select an item profile first")
-            path = self.profile_path
-            deployment = path.parent == Path(self.root) / "runtime_teach"
-            profile, digest = load_item_profile(path, root=self.root, deployment=deployment)
-            if not self.pose_client.service_is_ready():
-                raise ValueError(
-                    "Detector service unavailable; explicitly enable Armed on detector")
-            if hasattr(self, "check_detector_owner"):
-                self.check_detector_owner()
-            count = profile["retry"]["pose_candidates"]
-            with self.state_lock:
-                save_debug_images = self.debug_images
-                if save_debug_images:
-                    self.debug_capture_status = "REQUESTED; waiting for annotated image pair"
-            request = GetItemPoses.Request(max_candidates=count, profile_sha256=digest,
-                                           save_debug_images=save_debug_images)
-            future = self.pose_client.call_async(request)
-            done = threading.Event()
-            future.add_done_callback(lambda _: done.set())
-            deadline = time.monotonic() + profile["quality"]["request_timeout_sec"] + 1
-            while not done.wait(0.05):
-                if getattr(self, "cancel", threading.Event()).is_set():
-                    future.cancel()
-                    raise ValueError("Detector request cancelled")
-                if time.monotonic() >= deadline:
-                    future.cancel()
-                    raise ValueError("Detector response timeout; no automatic retry")
-            result = future.result()
-            if self.profile_path != path or file_profile_digest(
-                    path, self.root, deployment=deployment) != digest:
-                raise ValueError("Controller profile changed during detection")
-            if not result.success:
-                raise ValueError(f"Detector {result.status}: {result.message}")
-            evidence = json.loads(result.diagnostics_json)
-            if (result.header.frame_id != "platform_reference"
-                    or evidence["profile_sha256"] != digest):
-                raise ValueError("Detector frame/profile mismatch")
-            capture = evidence.get("debug_capture")
-            if (type(capture) is not dict
-                    or set(capture) != {"requested", "rgb_path", "depth_path", "error"}
-                    or type(capture["requested"]) is not bool
-                    or any(type(capture[key]) is not str
-                           for key in ("rgb_path", "depth_path", "error"))
-                    or capture["requested"] is not save_debug_images):
-                raise ValueError("Detector debug-capture diagnostics are malformed")
-            paths = (capture["rgb_path"], capture["depth_path"])
-            if save_debug_images:
-                if bool(capture["error"]) == bool(all(paths)):
-                    raise ValueError("Detector debug-capture result is inconsistent")
-                if all(paths):
-                    directory = (Path(self.root) / "debug/pick_img").resolve()
-                    resolved = tuple(Path(path).resolve() for path in paths)
-                    if any(path.parent != directory or path.suffix != ".png"
-                           for path in resolved):
-                        raise ValueError("Detector debug image path escaped debug/pick_img")
-                    self.debug_capture_status = "SAVED: " + " | ".join(map(str, resolved))
-                else:
-                    self.debug_capture_status = "SAVE WARNING: " + capture["error"]
-            elif any(paths) or capture["error"]:
-                raise ValueError("Detector saved unrequested debug images")
-            else:
-                self.debug_capture_status = "OFF"
-            now_ns = self.get_clock().now().nanoseconds
-            stamps = [s.sec * 1_000_000_000 + s.nanosec for s in
-                      (result.header.stamp, result.depth_stamp)]
-            if any(s <= 0 or not 0 <= (now_ns-s)/1e9 <= profile["quality"]["result_max_age_sec"]
-                   for s in stamps):
-                raise ValueError("Returned observation is stale or future-dated")
-            if abs(stamps[0]-stamps[1])/1e9 > profile["quality"]["sync_tolerance_sec"]:
-                raise ValueError("Detector RGB/depth timestamps are not synchronized")
-            if len(result.candidates) > count:
-                raise ValueError("Detector exceeded requested candidate count")
-            ids = set()
-            targets = []
-            previous_distance = -1
-            for i, candidate in enumerate(result.candidates):
-                p, q = candidate.pose.position, candidate.pose.orientation
-                numbers = (p.x, p.y, p.z, q.x, q.y, q.z, q.w,
-                           candidate.confidence, candidate.center_distance)
-                if (candidate.id in ids or candidate.priority != i+1
-                        or not candidate.id or not profile["yolo"]["confidence"] <=
-                        candidate.confidence <= 1
-                        or candidate.center_distance < 0
-                        or candidate.class_id not in profile["yolo"]["class_ids"]
-                        or not all(math.isfinite(v) for v in numbers)
-                        or abs(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w - 1) > 1e-5
-                        or candidate.center_distance < previous_distance):
-                    raise ValueError("Malformed/duplicate/unordered detector candidate")
-                ids.add(candidate.id)
-                previous_distance = candidate.center_distance
-                targets.append({"id": candidate.id, "priority": candidate.priority,
-                                "position_m": [p.x, p.y, p.z],
-                                "quaternion": [q.x, q.y, q.z, q.w],
-                                "class_id": candidate.class_id,
-                                "confidence": candidate.confidence})
-            summary = {"batch_id": result.batch_id, "status": result.status,
-                       "frame": "platform_reference", "targets": targets,
-                       "execution_enabled": False, "profile_sha256": digest,
-                       "observation_stamp_ns": stamps[0], "depth_stamp_ns": stamps[1],
-                       "evidence": evidence}
-            self.events.record("INFO", "item_candidates_received", result.message, **summary)
-            response.success, response.message = True, json.dumps(summary, allow_nan=False)
-        except Exception as exc:
-            if getattr(self, "debug_images", False):
-                self.debug_capture_status = f"REQUEST FAILED: {exc}"
-            self.events.record("ERROR", "candidate_request_failed", str(exc))
-            response.success, response.message = False, str(exc)
-        finally:
-            self.pose_lock.release()
-        return response
-
-    def set_execution_state(self, state, message):
-        with self.state_lock:
-            if self.cancel.is_set() and state in ("READY", "HOLDING", "NO_PICK", "DEBUG"):
-                state, message = ("DEBUG" if self.debug else "FAILED"), "Action cancelled"
-            self.execution_state, self.execution_message = state, message
-        self.events.record("INFO", "controller_state", message, state=state)
-        self._publish()
-
-    def check_cancelled(self):
-        if self.cancel.is_set() or self.shutdown_requested.is_set() or not rclpy.ok():
-            raise RuntimeError("Controller action cancelled; no further motion/I/O")
+            self.monitor.update_feed(message.data)
+        except FeedbackFailure as exc:
+            self.events.record("WARNING", "invalid_feed_feedback", str(exc))
 
     def _sole_publisher(self, topic):
         endpoints = self.get_publishers_info_by_topic(topic)
         if (len(endpoints) != 1 or endpoints[0].node_namespace != "/"
-                or "/" + endpoints[0].node_name != self.publisher_node):
-            raise ValueError(f"{topic} requires sole canonical publisher {self.publisher_node}")
+                or "/" + endpoints[0].node_name != self.bringup_node):
+            raise CommandRejected(
+                f"{topic} requires sole canonical publisher {self.bringup_node}")
+
+    def check_feedback_owners(self):
+        for topic in ("/joint_states", "/dobot_msgs_v4/msg/RobotStatus",
+                      "/dobot_bringup_ros2/msg/FeedInfo"):
+            self._sole_publisher(topic)
+
+    def _service_providers(self, absolute_name):
+        providers = []
+        for node_name, namespace in self.get_node_names_and_namespaces():
+            try:
+                names = self.get_service_names_and_types_by_node(node_name, namespace)
+            except RuntimeError:
+                continue
+            if absolute_name in (name for name, _types in names):
+                providers.append((node_name, namespace))
+        return providers
 
     def check_command_owner(self, service):
-        if not self.live or self.debug:
-            raise RuntimeError("Hardware command forbidden while Live is OFF")
         nodes = self.get_node_names_and_namespaces()
         if nodes.count((self.get_name(), self.get_namespace())) != 1:
-            raise ValueError("Duplicate controller identity; command authority ambiguous")
-        if any(name in ("motion_debug_gui", "gripper_control_gui") for name, _ in nodes):
-            raise ValueError("Competing legacy motion/gripper application must be stopped")
-        owned = self.get_service_names_and_types_by_node(self.publisher_node[1:], "/")
-        if f"/dobot_bringup_ros2/srv/{service}" not in [name for name, _ in owned]:
-            raise ValueError("Command service is not provided by canonical Dobot bringup")
-        for name, namespace in set(nodes):
-            if (name, namespace) == (self.publisher_node[1:], "/"):
-                continue
-            services = self.get_service_names_and_types_by_node(name, namespace)
-            if f"/dobot_bringup_ros2/srv/{service}" in [n for n, _ in services]:
-                raise ValueError("Duplicate command-service provider; command authority ambiguous")
+            raise CommandRejected("Duplicate robot_controller identity")
+        forbidden = {"motion_debug_gui", "gripper_control_gui", "motion_debug",
+                     "gripper_control"}
+        running = sorted(name for name, _namespace in nodes if name in forbidden)
+        if running:
+            raise CommandRejected(
+                "Competing maintenance application must be stopped: " + ", ".join(running))
+        absolute = f"/dobot_bringup_ros2/srv/{service}"
+        expected = (self.bringup_node[1:], "/")
+        providers = self._service_providers(absolute)
+        if providers != [expected]:
+            raise CommandRejected(
+                f"{absolute} requires sole canonical provider {expected}; got {providers}")
+
+    def check_all_command_owners(self, services):
+        for service in dict.fromkeys(services):
+            self.check_command_owner(service)
 
     def check_detector_owner(self):
-        providers = []
-        for name, namespace in self.get_node_names_and_namespaces():
-            services = self.get_service_names_and_types_by_node(name, namespace)
-            if "/item_detect/get_item_poses" in [service for service, _ in services]:
-                providers.append((name, namespace))
-        allowed = (("item_detect", "/"), ("item_teach", "/"))
-        if len(providers) != 1 or providers[0] not in allowed:
-            raise ValueError("Pose service requires exactly one canonical Detect/Teach provider")
+        providers = self._service_providers("/item_detect/get_item_poses")
+        if providers != [("item_detect", "/")]:
+            raise FeedbackFailure(
+                "Pose service requires the sole canonical /item_detect node provider")
 
-    def _on_joints(self, message):
-        try:
-            names, positions = message.name, message.position
-            if len(names) != 6 or set(names) != {f"joint{i}" for i in range(1, 7)}:
-                raise ValueError("Actual joints must be exactly joint1 through joint6")
-            if len(positions) != 6 or not all(math.isfinite(v) for v in positions):
-                raise ValueError("Actual joints require six finite radians")
-            values = tuple(float(positions[names.index(f"joint{i}")]) for i in range(1, 7))
-            stamp = message.header.stamp.sec*1_000_000_000 + message.header.stamp.nanosec
-            if stamp <= 0 or not 0 <= message.header.stamp.nanosec < 1_000_000_000:
-                raise ValueError("Actual joints require a nonzero source timestamp")
-            with self.state_lock:
-                self.joint_feedback = values, stamp, time.monotonic()
-        except ValueError as exc:
-            with self.state_lock:
-                self.joint_feedback = None
-            self.events.record("WARNING", "invalid_joint_feedback", str(exc))
+    # ---------- state/status ----------
 
-    def _on_status(self, message):
-        with self.state_lock:
-            self.robot_feedback = (bool(message.is_connected), bool(message.is_enable),
-                                   time.monotonic())
-
-    def _on_feed(self, message):
-        try:
-            feed = json.loads(message.data)
-            for key in ("robot_mode", "digital_input_bits", "digital_outputs", "controller_timer",
-                        "isRunQueuedCmd", "RunningStatus", "ErrorStatus", "CollisionStates",
-                        "isPauseCmdFlag", "userCoordinate", "toolCoordinate", "EnableStatus"):
-                if type(feed[key]) is not int or feed[key] < 0:
-                    raise ValueError(f"Canonical FeedInfo {key} must be a nonnegative integer")
-            for key in ("tool_vector_actual", "q_actual"):
-                values = feed[key]
-                finite = all(type(v) in (int, float) and math.isfinite(v) for v in values)
-                if len(values) != 6 or not finite:
-                    raise ValueError(f"Canonical FeedInfo {key} must have six finite values")
-            now = time.monotonic()
-            with self.state_lock:
-                if self.controller_timer != feed["controller_timer"]:
-                    self.controller_timer = feed["controller_timer"]
-                    self.controller_progress_at = now
-                self.feed_sequence += 1
-                self.feed_feedback = feed, now
-        except (ValueError, KeyError, TypeError, OverflowError) as exc:
-            with self.state_lock:
-                self.feed_feedback = None
-            self.events.record("WARNING", "invalid_robot_feedback", str(exc))
-
-    def current_joints(self):
-        self._sole_publisher("/joint_states")
-        with self.state_lock:
-            feedback = self.joint_feedback
-        if feedback is None:
-            raise ValueError("No valid canonical actual joint feedback")
-        values, stamp, received = feedback
-        if (not 0 <= (self.get_clock().now().nanoseconds-stamp)/1e9 <= 1
-                or time.monotonic()-received > 1):
-            raise ValueError("Actual joint feedback is stale/future-dated")
-        return values
-
-    def feedback_snapshot(self, *, enabled):
-        self._sole_publisher("/dobot_msgs_v4/msg/RobotStatus")
-        self._sole_publisher("/dobot_bringup_ros2/msg/FeedInfo")
-        self.current_joints()
-        with self.state_lock:
-            status, feedback = self.robot_feedback, self.feed_feedback
-            progress, sequence = self.controller_progress_at, self.feed_sequence
-        now = time.monotonic()
-        if (status is None or feedback is None or not status[0]
-                or now-status[2] > 1 or now-feedback[1] > 1
-                or progress is None or now-progress > 1):
-            raise ValueError("Canonical robot connection/feedback is unavailable or stale")
-        feed = feedback[0]
-        if enabled:
-            blockers = []
-            # Vendor isEnable() means robot_mode==5, NOT enabled while moving.
-            # Never infer power from mode alone: motion still requires EnableStatus==1.
-            if not status[1] and feed["robot_mode"] not in (7, 8):
-                blockers.append("RobotStatus.is_enable=False")
-            if feed["EnableStatus"] != 1:
-                blockers.append(f"EnableStatus={feed['EnableStatus']} (required 1)")
-            if feed["robot_mode"] not in (5, 7, 8):
-                blockers.append(f"robot_mode={feed['robot_mode']} (expected 5/7/8)")
-            for key in ("ErrorStatus", "CollisionStates", "isPauseCmdFlag"):
-                if feed[key]:
-                    blockers.append(f"{key}={feed[key]}")
-            for key in ("userCoordinate", "toolCoordinate"):
-                if feed[key] != 0:
-                    blockers.append(f"nonzero user/tool: {key}={feed[key]} (required 0)")
-            if blockers:
-                raise ValueError("Robot readiness blocked: " + "; ".join(blockers))
-        return {"feed": feed, "enabled": status[1], "sequence": sequence}
-
-    def _initialize(self):
-        try:
-            self.hardware.initialize()
-        except (ValueError, RuntimeError) as exc:
-            self.set_execution_state("FAILED", f"Startup recovery failed: {exc}")
-            self.events.record("ERROR", "initialization_failed", str(exc))
-        except Exception as exc:
-            self.set_execution_state("FAILED", str(exc))
-            self.fatal_error = f"Controller initialization failed: {exc}"
-            self.events.record("FATAL", "initialization_failed", self.fatal_error)
-        finally:
-            if self.action_lock.locked():
-                self.action_lock.release()
-
-    def _set_live_service(self, request, response):
-        requested = bool(request.data)
-        if self.headless and not requested:
-            response.success = False
-            response.message = "Headless controller is permanently Live; stop the node to disarm"
-            return response
-        if requested == self.live:
-            response.success = True
-            response.message = f"Live already {'ON' if self.live else 'OFF'}"
-            return response
-        if self.fatal_error is not None:
-            response.success, response.message = False, self.fatal_error
-            return response
-        if ((self.action_thread is not None and self.action_thread.is_alive())
-                or (self.stop_thread is not None and self.stop_thread.is_alive())):
-            response.success, response.message = False, "Controller operation active"
-            return response
-        if self.holding_item:
-            response.success, response.message = (
-                False, "Cannot turn Live OFF while holding an item")
-            return response
-        if not self.action_lock.acquire(blocking=False):
-            response.success, response.message = False, "Controller action busy"
-            return response
-        try:
-            self.clear_preview()
-            self.cancel.clear()
-            self.stop_future = None
-            if requested:
-                from .hardware import DobotHardware
-                self.live, self.debug = True, False
-                self.startup_settings_applied = False
-                self.global_speed_percent = None
-                self.global_speed_message = "Initializing SpeedFactor 100%"
-                self.execution_state = "INITIALIZING"
-                self.execution_message = "Live requested; initializing robot"
-                self.hardware = DobotHardware(self)
-                self.action_thread = threading.Thread(target=self._initialize, daemon=True)
-                self.action_thread.start()
-                self.events.record("WARNING", "live_enabled", "Live ON; initialization started")
-                response.success = True
-                response.message = "Live ON requested; wait for READY"
-                self._publish()
-                return response
-            if self.hardware is not None:
-                self.hardware.close()
-            self.hardware = None
-            self.startup_settings_applied = False
-            self.global_speed_percent = None
-            self.global_speed_message = "Live OFF; no global speed command"
-            self.live, self.debug = False, True
-            self.execution_state = "DEBUG"
-            self.execution_message = "Live OFF; TF-only previews"
-            self.events.record("INFO", "live_disabled", self.execution_message)
-            response.success, response.message = True, self.execution_message
-            self._publish()
-        except Exception as exc:
-            if requested:
-                self.hardware = None
-                self.live, self.debug = False, True
-                self.execution_state = "DEBUG"
-                self.execution_message = f"Live enable rejected: {exc}"
-            response.success, response.message = False, str(exc)
-            self.events.record("ERROR", "live_change_failed", str(exc), requested=requested)
-            self._publish()
-        finally:
-            if not requested and self.action_lock.locked():
-                self.action_lock.release()
-            elif requested and not response.success and self.action_lock.locked():
-                self.action_lock.release()
-        return response
-
-    def _set_global_speed_service(self, request, response):
-        """A bounded setting response, never an automatically resumed motion action."""
-        acquired = False
-        accepted = False
-        try:
-            with self.state_lock:
-                if type(request.ratio) is not int or not 1 <= request.ratio <= 100:
-                    raise ValueError("Global speed must be an integer from 1 through 100")
-                if not self.live or self.debug or self.hardware is None:
-                    raise ValueError("Global speed requires Live ON")
-                if (not self.startup_settings_applied or self.fatal_error is not None
-                        or self.shutdown_requested.is_set()):
-                    raise ValueError("Global speed requires completed, non-fatal startup")
-                if (self.execution_state not in ("READY", "HOLDING", "NO_PICK")
-                        or self.hardware.moving or self.cancel.is_set()
-                        or (self.action_thread is not None and self.action_thread.is_alive())
-                        or (self.stop_thread is not None and self.stop_thread.is_alive())):
-                    raise ValueError(
-                        "Global speed requires an idle controller; no active recovery")
-                if self.stop_future is not None and not self.stop_future.done():
-                    raise ValueError("Stop response pending; global speed not sent")
-                acquired = self.action_lock.acquire(blocking=False)
-                if not acquired:
-                    raise ValueError("Controller action busy; global speed not sent")
-                self.check_command_owner("SpeedFactor")
-                previous = self.execution_state
-                accepted = True
-                self.global_speed_message = f"SpeedFactor {request.ratio}%: waiting for response"
-                self.set_execution_state(
-                    "SPEED_SETTING", self.global_speed_message)
-            self.hardware.set_global_speed(request.ratio)
-            with self.state_lock:
-                self.check_cancelled()
-                self.global_speed_message = f"Global SpeedFactor set to {request.ratio}%"
-                self.set_execution_state(previous, self.global_speed_message)
-            response.res = 0  # Actual successful robot response, not asynchronous acceptance.
-        except Exception as exc:
-            response.res = -1
-            self.global_speed_message = (
-                f"Global speed request failed: {exc}" if accepted else
-                f"Global speed rejected: {exc}")
-            if accepted:
-                self.cancel.set()
-                self.set_execution_state("FAILED", f"SpeedFactor: {exc}")
-            self.events.record("ERROR" if accepted else "WARNING", "global_speed_rejected",
-                               str(exc), ratio=request.ratio)
-        finally:
-            if acquired:
-                self.action_lock.release()
-            self._publish()
-        return response
-
-    def _enable_robot_service(self, _request, response):
-        with self.state_lock:
-            return RobotController._handle_enable_robot_service(self, response)
-
-    def _handle_enable_robot_service(self, response):
-        acquired = False
-        try:
-            if not self.live or self.debug or self.hardware is None:
-                raise ValueError("Turn Live ON and complete startup before Enable Robot")
-            if self.fatal_error is not None or self.shutdown_requested.is_set():
-                raise ValueError("Controller is terminating; Enable Robot is forbidden")
-            if not self.startup_settings_applied:
-                raise ValueError(
-                    "Startup settings are incomplete; Enable Robot cannot bypass startup")
-            if self.global_speed_percent is None:
-                raise ValueError("Global SpeedFactor is unknown; use Stop / Clear to "
-                                 "reinitialize before enabling actions")
-            if self.holding_item or self.hardware.moving:
-                raise ValueError("Enable Robot requires idle controller with no held item")
-            if ((self.action_thread is not None and self.action_thread.is_alive())
-                    or (self.stop_thread is not None and self.stop_thread.is_alive())):
-                raise ValueError("Controller operation active; Enable Robot not sent")
-            acquired = self.action_lock.acquire(blocking=False)
-            if not acquired:
-                raise ValueError("Controller action busy; Enable Robot not sent")
-            self.check_command_owner("EnableRobot")
-            snapshot = self.feedback_snapshot(enabled=False)
-            feed = snapshot["feed"]
-            if (feed["robot_mode"] not in (4, 5) or feed["isRunQueuedCmd"]
-                    or feed["RunningStatus"] or feed["ErrorStatus"] or feed["CollisionStates"]
-                    or feed["isPauseCmdFlag"] or feed["digital_input_bits"] & 1
-                    or feed["userCoordinate"] or feed["toolCoordinate"]):
-                raise ValueError("Enable Robot requires fault-free idle feedback and DI1 OFF")
-            if self.stop_future is not None and not self.stop_future.done():
-                raise ValueError("Stop response pending; Enable Robot not sent")
-            self.clear_preview()
-            self.cancel.clear()
-            self.stop_future = None
-            self.set_execution_state("ENABLING", "Explicit Enable Robot accepted")
-            self.action_thread = threading.Thread(target=self._run_enable_robot, daemon=True)
-            self.action_thread.start()
-            acquired = False  # The worker owns release after dispatch/confirmation.
-            response.success = True
-            response.message = "Enable Robot accepted; watch /robot_controller/status"
-        except Exception as exc:
-            response.success, response.message = False, str(exc)
-            self.events.record("WARNING", "enable_robot_rejected", str(exc))
-        finally:
-            if acquired:
-                self.action_lock.release()
-        return response
-
-    def _run_enable_robot(self):
-        try:
-            self.hardware.enable_robot()
-        except Exception as exc:
-            self.cancel.set()
-            self.set_execution_state("FAILED", f"EnableRobot: {exc}")
-            self.events.record("ERROR", "enable_robot_failed", str(exc))
-        finally:
-            self.action_lock.release()
-
-    def _set_debug_images_service(self, request, response):
-        requested = bool(request.data)
-        with self.state_lock:
-            self.debug_images = requested
-            self.debug_capture_status = (
-                "ON; next pose request saves one annotated RGB/depth pair"
-                if requested else "OFF")
-        response.success = True
-        response.message = self.debug_capture_status
+    def _transition(self, state, message):
+        before = self.machine.state
+        snapshot = (self.machine.update(message) if before == state
+                    else self.machine.transition(state, message))
         self.events.record(
-            "INFO", "debug_images_changed", response.message, enabled=requested)
-        self._publish()
-        return response
+            "INFO", "state_transition", message, previous=before, state=snapshot.state,
+            configuration_id=(self.configuration.configuration_id
+                              if self.configuration else ""))
+        self.publish_status()
 
-    def apply_teach(self, item, bin_path):
-        if self.headless or (self.action_thread is not None and self.action_thread.is_alive()):
-            raise ValueError("Cannot change teach selection in headless/active controller")
-        if not self.action_lock.acquire(blocking=False):
-            raise ValueError("Cannot change teach selection during an action")
-        try:
-            self.clear_preview()
-            self.selection = None
-            self._load(item)
-            if bin_path:
-                self.selection = load_selection(item, bin_path, self.root)
-                warning = self.selection.warning()
-                if warning:
-                    self.events.record("WARNING", "bin_platform_mismatch", warning)
-            return self.summary
-        finally:
-            self.action_lock.release()
+    def operation_progress(self, phase, message, *, waypoint="", candidate_index=None,
+                           candidate_total=None):
+        self.phase, self.waypoint = phase, waypoint
+        if candidate_index is not None:
+            self.candidate_index = candidate_index
+        if candidate_total is not None:
+            self.candidate_total = candidate_total
+        self.machine.update(message)
+        self.events.record(
+            "INFO", "operation_phase", message, operation=self.active_action,
+            phase=phase, waypoint=waypoint, candidate_index=self.candidate_index,
+            candidate_total=self.candidate_total)
+        goal = self.active_goal
+        if goal is not None:
+            feedback = GoHome.Feedback() if self.active_action == "home" else PickItem.Feedback()
+            if self.active_action == "pick":
+                feedback.candidate_index = self.candidate_index
+                feedback.candidate_total = self.candidate_total
+            feedback.phase, feedback.waypoint, feedback.message = phase, waypoint, message
+            goal.publish_feedback(feedback)
+        self.publish_status()
 
-    def _start_service(self, action, response):
+    def publish_status(self):
+        if not hasattr(self, "status_publisher"):
+            return
+        status = ControllerStatus()
+        status.header.stamp = self.get_clock().now().to_msg()
+        status.header.frame_id = "base_link"
+        status.state, status.message = self.machine.state, self.machine.message
+        status.configuration_id = (
+            self.configuration.configuration_id if self.configuration else "")
+        status.configured = self.configuration is not None
+        status.holding_item = self.holding_item
+        status.operation_active = self.operation_lock.locked()
+        status.operation, status.phase, status.waypoint = (
+            self.active_action, self.phase, self.waypoint)
+        status.candidate_index, status.candidate_total = (
+            self.candidate_index, self.candidate_total)
+        status.global_speed_percent = (
+            self.global_speed_percent if self.global_speed_percent is not None else -1)
+        status.startup_complete = self.startup_complete
         try:
-            self.start_action(action)
-            response.success = True
-            response.message = "Action accepted; watch /robot_controller/status"
-        except Exception as exc:
-            response.success, response.message = False, str(exc)
-            self.events.record("WARNING", "controller_action_rejected", str(exc), action=action)
-        return response
+            self.monitor.snapshot(require_enabled=False)
+            status.feedback_fresh = True
+        except FeedbackFailure:
+            status.feedback_fresh = False
+        self.status_publisher.publish(status)
 
-    def start_action(self, action):
-        if self.profile_path is None or action not in ("home", "pick"):
-            raise ValueError("Load valid Item Teach before Home or Pick")
-        permitted = ("READY", "HOLDING", "NO_PICK") if self.live else ("DEBUG",)
-        if self.execution_state not in permitted:
-            detail = self.execution_message
-            if self.live and self.hardware is not None:
-                try:
-                    self.feedback_snapshot(enabled=True)
-                except ValueError as exc:
-                    detail = str(exc)
-            hint = (" Check whether the emergency stop is pressed; use Stop / Clear "
-                    "and wait for READY. No robot motion was sent.") if self.live else ""
-            raise ValueError(f"Robot not READY ({self.execution_state}): {detail}.{hint}")
-        if self.action_thread is not None and self.action_thread.is_alive():
-            raise ValueError("One controller action is already active")
-        if self.stop_thread is not None and self.stop_thread.is_alive():
-            raise ValueError("Stop/recovery is active")
-        if action == "pick" and (self.selection is None or self.holding_item):
-            raise ValueError("Pick requires station/bin binding and no item already held")
-        if not self.action_lock.acquire(blocking=False):
-            raise ValueError("Controller action busy")
-        try:
-            self.clear_preview()
-            self.cancel.clear()
+    def _begin_operation(self, name):
+        if not self.operation_lock.acquire(blocking=False):
+            raise CommandRejected("Another controller operation is active")
+        self.cancel_event.clear()
+        with self.stop_guard:
             self.stop_future = None
-            self.set_execution_state("BUSY", f"{'TF preview' if self.debug else 'Real'} {action}")
-            self.action_thread = threading.Thread(target=self._run_action,
-                                                  args=(action,), daemon=True)
-            self.action_thread.start()
-        except Exception:
-            self.action_lock.release()
-            raise
+            self.stop_confirmed = False
+            self.stop_error = None
+            self.state_before_stop = None
+        self.active_action, self.phase, self.waypoint = name, "", ""
+        self.candidate_index = self.candidate_total = 0
 
-    def _loaded_home_reference(self, profile):
-        home_joints = tuple(profile["home"]["positions_rad"])
-        if (self.home_reference is None or self.home_reference_joints != home_joints):
-            raise ValueError("Loaded Home FK reference is unavailable or does not match profile")
-        return self.home_reference.copy()
+    def _end_operation(self):
+        self.active_goal = None
+        self.active_action = self.phase = self.waypoint = ""
+        self.candidate_index = self.candidate_total = 0
+        self.operation_lock.release()
+        self.publish_status()
 
-    def home(self, profile, *, require_suction=False, forbid_suction=False, preceding=()):
-        self.check_cancelled()
-        home = self._loaded_home_reference(profile)
-        current = (preceding[-1].matrix if preceding else
-                   self.kinematics.forward(self.current_joints()) if self.debug else
-                   self.hardware.current_pose())
-        targets = home_targets(current, home, profile["home"]["positions_rad"],
-                               speed_percent=profile["speed"]["travel_percent"],
-                               acceleration_percent=profile["acceleration"]["travel_percent"])
-        if not self.debug:
-            self.hardware.move_batch((*preceding, *targets), require_suction=require_suction,
-                                     forbid_suction=forbid_suction)
-        return (*preceding, *targets)
+    def cancel_requested(self):
+        return (self.cancel_event.is_set() or self.shutdown_event.is_set()
+                or not rclpy.ok())
 
-    def _remember_prepick(self, target, gripper):
-        with self.state_lock:
-            self.last_prepick = target
-            self.last_gripper = dict(gripper)
+    def raise_if_cancelled(self):
+        if self.cancel_requested():
+            raise OperationCanceled("Controller operation cancelled")
 
-    def pick(self, profile, digest):
-        with self.state_lock:
-            self.last_prepick = None
-            self.last_gripper = None
-        self.selection.validate(self.root)
-        if not self.pose_client.service_is_ready():
-            raise ValueError("Detector must be independently armed before Pick/Home travel")
-        self.check_detector_owner()
-        if not self.debug and self.hardware.sensor(True, 0, settling_sec=0):
-            raise ValueError("DI1 is already active; do not drop/repick a possibly held item")
-        home_plan = self.home(profile)
-        response = self._request_poses(None, SimpleNamespace())
-        if not response.success:
-            raise ValueError(response.message)
-        batch = json.loads(response.message)
-        evidence = batch["evidence"]
-        for key, expected in (("camera_sha256", self.selection.station.camera.sha256),
-                              ("platform_sha256", self.selection.station.platform.sha256),
-                              ("bin_sha256", self.selection.bin.sha256),
-                              ("model_sha256", profile["model"]["sha256"])):
-            if evidence.get(key) != expected:
-                raise ValueError(f"Detector/controller {key} mismatch; no pick")
-        stamp = min(batch["observation_stamp_ns"], batch["depth_stamp_ns"])
+    def wait_control(self, seconds):
+        self.shutdown_event.wait(seconds)
 
-        def check(index):
-            self.check_cancelled()
-            self.selection.validate(self.root)
-            if (not 0 <= (self.get_clock().now().nanoseconds-stamp)/1e9 <=
-                    profile["quality"]["result_max_age_sec"]):
-                raise ValueError(f"Candidate {index} expired; explicitly request another pick")
+    # ---------- configuration and lifecycle services ----------
 
-        check(1)
-        home = self._loaded_home_reference(profile)
-        plans = []
-        for index, candidate in enumerate(batch["targets"], 1):
-            xyz = self.selection.station.platform.base_from_platform @ np.array(
-                [*candidate["position_m"], 1.0])
-            plans.append(pick_targets(home, xyz[:3], profile, index))
-        if self.debug:
-            preview = list(home_plan)
-            for index, plan in enumerate(plans, 1):
-                preview.extend(plan[:4])
-                returned = self.home(profile, preceding=plan[4:])
-                preview.extend(replace(target, name=f"p{index}_{target.name}")
-                               if target.name.startswith("home") else target
-                               for target in returned)
-            self.install_preview(preview, digest)
-            self.set_execution_state("DEBUG", f"TF-only pick targets: {len(plans)} candidates")
-            return
-        outcome = PickExecutor(self.hardware, finish_home=True).run(
-            plans, profile, check=check,
-            return_home=lambda **kw: self.home(profile, **kw),
-            remember_prepick=self._remember_prepick)
-        self.holding_item = outcome["holding_item"]
-        if not outcome["picked"]:
-            with self.state_lock:
-                self.last_prepick = None
-                self.last_gripper = None
-        self.set_execution_state("HOLDING" if outcome["picked"] else "NO_PICK",
-                                 "Pick complete; item held with suction at Home" if
-                                 outcome["picked"] else
-                                 "No item picked; batch exhausted and Home completed")
+    def _log_configuration(self, event):
+        config = self.configuration
+        self.events.record(
+            "INFO", event, "Controller configuration installed",
+            configuration_id=config.configuration_id,
+            item_teach_file=str(config.item_path),
+            bin_teach_file=str(config.bin_path) if config.bin_path else "",
+            profile_sha256=config.profile_sha256,
+            pose_candidates=config.pose_candidates,
+            warning=config.selection.warning() if config.selection else "")
 
-    def _run_action(self, action):
+    def _configure(self, request, response):
+        acquired = False
         try:
-            profile, digest = load_item_profile(
-                self.profile_path, root=self.root, deployment=self.headless)
-            if digest != self.summary["profile_sha256"]:
-                raise ValueError("Loaded Item Teach changed; explicitly reload before action")
-            if action == "home":
-                if (not self.debug and not self.holding_item and
-                        self.hardware.sensor(True, 0, settling_sec=0)):
-                    raise ValueError("Unexpected DI1; held-item state unknown, Home blocked")
-                targets = self.home(profile, require_suction=self.holding_item)
-                self.install_preview(targets, digest)
-                self.set_execution_state("DEBUG" if self.debug else
-                                         ("HOLDING" if self.holding_item else "READY"),
-                                         "Home previewed" if self.debug else "Home completed")
-                return
-            self.pick(profile, digest)
+            if self.headless:
+                raise CommandRejected("Headless runtime_teach configuration is immutable")
+            if self.machine.state not in ("UNCONFIGURED", "INACTIVE"):
+                raise CommandRejected("Configure requires UNCONFIGURED or INACTIVE state")
+            self._begin_operation("configure")
+            acquired = True
+            config = load_configuration(
+                request.item_teach_file, request.bin_teach_file, self.root,
+                self.kinematics, deployment=False)
+            self.configuration = config
+            self.startup_complete = False
+            self.global_speed_percent = None
+            self.expected_outputs.clear()
+            self._transition("INACTIVE", "Teach files loaded; explicit Startup required")
+            self._log_configuration("configuration_loaded")
+            response.success = True
+            response.message = self.machine.message
+            response.configuration_id = config.configuration_id
         except Exception as exc:
-            self.clear_preview()
-            if self.hardware is not None and getattr(self.hardware, "moving", False):
-                self.request_stop()
-            self.set_execution_state("DEBUG" if self.debug else "FAILED", str(exc))
-            self.events.record("ERROR", "action_failed", str(exc), action=action)
+            response.success = False
+            response.message = str(exc)
+            response.configuration_id = ""
+            self.events.record("ERROR", "configuration_rejected", str(exc))
         finally:
-            self.action_lock.release()
+            if acquired:
+                self._end_operation()
+        return response
 
-    def clear_preview(self):
-        with self.state_lock:
-            self.preview_targets, self.preview_digest, self.preview_sources = (), None, ()
+    def _startup(self, _request, response):
+        acquired = False
+        try:
+            if self.configuration is None or self.machine.state != "INACTIVE":
+                raise CommandRejected("Startup requires configured INACTIVE state")
+            self._begin_operation("startup")
+            acquired = True
+            self.configuration.validate_sources(self.root)
+            self._transition("STARTING", "Explicit Startup accepted")
+            self.hardware.startup()
+            self.startup_complete = True
+            self.global_speed_percent = 100
+            self._transition("READY", "Startup completed; robot is READY")
+            response.success = True
+        except HeldUnknown as exc:
+            self.startup_complete = False
+            self._transition("HELD_UNKNOWN", str(exc))
+            response.success = False
+        except OperationCanceled as exc:
+            response.success = False
+            self._settle_lifecycle_cancellation(str(exc))
+        except Exception as exc:
+            response.success = False
+            if acquired and self.machine.state != "STOPPING":
+                self._transition("FAULT", f"Startup failed: {exc}")
+                event, level = "startup_failed", "ERROR"
+            else:
+                event, level = "startup_rejected", "WARNING"
+            self.events.record(level, event, str(exc))
+        finally:
+            if acquired:
+                self._end_operation()
+        response.message, response.state = self.machine.message, self.machine.state
+        return response
 
-    def install_preview(self, targets, digest):
-        if not self.debug:
+    def _recover(self, _request, response):
+        acquired = False
+        try:
+            if self.machine.state not in ("FAULT", "RECOVERY_REQUIRED"):
+                raise CommandRejected("Recover requires FAULT or RECOVERY_REQUIRED state")
+            self._begin_operation("recover")
+            acquired = True
+            if self.configuration is not None:
+                self.configuration.validate_sources(self.root)
+            self._transition("RECOVERING", "Explicit recovery accepted")
+            self.hardware.recover(self.global_speed_percent)
+            self.startup_complete = True
+            if self.global_speed_percent is None:
+                self.global_speed_percent = 100
+            target = "HOLDING" if self.holding_item else "READY"
+            self._transition(target, "Recovery completed; robot is " + target)
+            response.success = True
+        except HeldUnknown as exc:
+            self.startup_complete = False
+            self._transition("HELD_UNKNOWN", str(exc))
+            response.success = False
+        except OperationCanceled as exc:
+            response.success = False
+            self._settle_lifecycle_cancellation(str(exc))
+        except Exception as exc:
+            response.success = False
+            if acquired and self.machine.state != "STOPPING":
+                self._transition("FAULT", f"Recovery failed: {exc}")
+                event, level = "recovery_failed", "ERROR"
+            else:
+                event, level = "recovery_rejected", "WARNING"
+            self.events.record(level, event, str(exc))
+        finally:
+            if acquired:
+                self._end_operation()
+        response.message, response.state = self.machine.message, self.machine.state
+        return response
+
+    def _settle_lifecycle_cancellation(self, message):
+        try:
+            future = self._request_stop(message)
+            self._confirm_shared_stop(future)
+            self._finish_stop_state()
+        except Exception as exc:
+            if self.machine.state != "FAULT":
+                self._transition("FAULT", f"Cancellation Stop unconfirmed: {exc}")
+
+    def _set_global_speed(self, request, response):
+        acquired = False
+        try:
+            if self.machine.state not in ("READY", "HOLDING"):
+                raise CommandRejected("Global speed requires stationary READY or HOLDING")
+            self._begin_operation("set_global_speed")
+            acquired = True
+            value = int(request.percent)
+            self.hardware.set_global_speed(value)
+            self.global_speed_percent = value
+            response.success = True
+            response.message = f"SpeedFactor confirmed at {value}%"
+            response.confirmed_percent = value
+            self.events.record("INFO", "global_speed", response.message)
+        except Exception as exc:
+            response.success = False
+            response.message = str(exc)
+            response.confirmed_percent = (
+                self.global_speed_percent if self.global_speed_percent is not None else 0)
+            if acquired and self.machine.state != "STOPPING":
+                self._transition("FAULT", f"Global speed failed: {exc}")
+            self.events.record("WARNING", "global_speed_rejected", str(exc))
+        finally:
+            if acquired:
+                self._end_operation()
+        return response
+
+    # ---------- Stop and cancellation ----------
+
+    def _request_stop(self, reason):
+        self.cancel_event.set()
+        with self.stop_guard:
+            if self.state_before_stop is None:
+                self.state_before_stop = self.machine.state
+            if self.machine.state != "STOPPING":
+                self._transition("STOPPING", reason)
+            if self.stop_future is None:
+                self.stop_future = self.hardware.request_stop(reason)
+            return self.stop_future
+
+    def _confirm_shared_stop(self, future):
+        with self.stop_confirmation_guard:
+            if self.stop_confirmed:
+                return
+            if self.stop_error is not None:
+                raise self.stop_error
+            try:
+                self.hardware.confirm_stop(future)
+                self.stop_confirmed = True
+            except Exception as exc:
+                self.stop_error = StopUnconfirmed(str(exc))
+                raise self.stop_error
+
+    def _finish_stop_state(self):
+        previous = self.state_before_stop
+        if previous == "UNCONFIGURED":
+            target = "UNCONFIGURED"
+        elif previous == "INACTIVE":
+            target = "INACTIVE"
+        elif previous == "HELD_UNKNOWN":
+            try:
+                suction = bool(self.monitor.snapshot(
+                    require_enabled=False).feed["digital_input_bits"] & 1)
+            except FeedbackFailure:
+                suction = True
+            target = "HELD_UNKNOWN" if suction else "RECOVERY_REQUIRED"
+        else:
+            target = "RECOVERY_REQUIRED"
+        self.startup_complete = False
+        message = ("Stop confirmed; explicit recovery is required"
+                   if target == "RECOVERY_REQUIRED" else "Stop confirmed")
+        self._transition(target, message)
+
+    def _stop(self, _request, response):
+        try:
+            future = self._request_stop("Explicit Stop requested")
+            self._confirm_shared_stop(future)
+            self._finish_stop_state()
+            response.success = True
+        except Exception as exc:
+            if self.machine.state != "FAULT":
+                self._transition("FAULT", f"Stop unconfirmed: {exc}")
+            response.success = False
+        response.message, response.state = self.machine.message, self.machine.state
+        return response
+
+    def _cancel_goal(self, _goal_handle):
+        try:
+            self._request_stop("Native action cancellation requested")
+        except Exception as exc:
+            self.events.record("ERROR", "cancel_stop_dispatch_failed", str(exc))
+        return CancelResponse.ACCEPT
+
+    def on_late_motion_ack(self, future):
+        def confirm():
+            try:
+                self.hardware.confirm_stop(future)
+                if self.machine.state not in ("STOPPING", "RECOVERY_REQUIRED", "FAULT"):
+                    self._transition(
+                        "RECOVERY_REQUIRED",
+                        "Late motion acknowledgement stopped; recovery required")
+                self.events.record(
+                    "WARNING", "late_ack_stop_confirmed",
+                    "Second Stop after late motion acknowledgement confirmed")
+            except Exception as exc:
+                self._transition("FAULT", f"Late-ack Stop unconfirmed: {exc}")
+        if self.late_stop_thread is None or not self.late_stop_thread.is_alive():
+            self.late_stop_thread = threading.Thread(target=confirm, daemon=True)
+            self.late_stop_thread.start()
+
+    # ---------- Home/Pick actions ----------
+
+    def _reserve_goal(self, action, requested_id):
+        config = self.configuration
+        allowed = ("READY", "HOLDING") if action == "home" else ("READY",)
+        if (not self.startup_complete or config is None or self.machine.state not in allowed
+                or requested_id != config.configuration_id):
+            return GoalResponse.REJECT
+        if action == "pick" and (config.selection is None or self.holding_item):
+            return GoalResponse.REJECT
+        try:
+            self._begin_operation(action)
+        except CommandRejected:
+            return GoalResponse.REJECT
+        return GoalResponse.ACCEPT
+
+    def _home_goal(self, request):
+        return self._reserve_goal("home", request.configuration_id)
+
+    def _pick_goal(self, request):
+        return self._reserve_goal("pick", request.configuration_id)
+
+    def _preflight_item_state(self, expected_holding=None):
+        snapshot = self.monitor.snapshot(require_enabled=True)
+        suction = bool(snapshot.feed["digital_input_bits"] & 1)
+        expected = self.holding_item if expected_holding is None else expected_holding
+        if expected and not suction:
+            raise HeldUnknown("Trusted held-item context lost DI1")
+        if not expected and suction:
+            raise HeldUnknown("DI1 active without trusted held-item context")
+
+    def _home_plan(self, preceding=()):
+        config = self.configuration
+        config.validate_sources(self.root)
+        current = preceding[-1].matrix if preceding else self.hardware.current_pose()
+        return home_targets(
+            current, config.home_matrix, config.home_joints,
+            speed_percent=config.profile["speed"]["travel_percent"],
+            acceleration_percent=config.profile["acceleration"]["travel_percent"])
+
+    def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None):
+        self.raise_if_cancelled()
+        holding = self.holding_item if require_suction is None else require_suction
+        forbidden = not holding if forbid_suction is None else forbid_suction
+        self._preflight_item_state(holding)
+        targets = self._home_plan(preceding)
+        self.operation_progress("HOME", "Executing shared Home function", waypoint="home")
+        self.hardware.move_batch(
+            (*preceding, *targets), require_suction=holding,
+            forbid_suction=forbidden)
+        return targets
+
+    @staticmethod
+    def _failure_outcome(result, exc):
+        if isinstance(exc, (CommandRejected, CommandResponseTimeout)):
+            return result.COMMAND_REJECTED
+        if isinstance(exc, (FeedbackFailure, HeldUnknown)):
+            return result.FEEDBACK_FAILURE
+        return result.CONTROLLER_FAULT
+
+    def _action_failure(self, goal, result, exc, outcome):
+        message = str(exc)
+        cancelled = isinstance(exc, OperationCanceled) or self.cancel_event.is_set()
+        try:
+            future = self._request_stop(
+                "Action cancellation" if cancelled else "Non-suction action failure")
+            self._confirm_shared_stop(future)
+            self._finish_stop_state()
+        except Exception as stop_exc:
+            outcome = result.STOP_UNCONFIRMED
+            message = f"{message}; Stop unconfirmed: {stop_exc}"
+            if self.machine.state != "FAULT":
+                self._transition("FAULT", message)
+        result.outcome = (result.CANCELED
+                          if cancelled and outcome != result.STOP_UNCONFIRMED else outcome)
+        result.message = message
+        result.final_state = self.machine.state
+        if cancelled and goal.is_cancel_requested:
+            goal.canceled()
+        else:
+            goal.abort()
+        self.events.record(
+            "ERROR", "action_result", message, operation=self.active_action,
+            outcome=int(result.outcome), state=result.final_state)
+        return result
+
+    def _execute_home_action(self, goal):
+        self.active_goal = goal
+        result = GoHome.Result()
+        try:
+            self.configuration.validate_sources(self.root)
+            self._transition("HOMING", "Home action started")
+            self._execute_home()
+            state = "HOLDING" if self.holding_item else "READY"
+            self._transition(state, "Home completed at taught joints")
+            result.outcome = result.SUCCESS
+            result.message = self.machine.message
+            result.final_state = state
+            goal.succeed()
+            self.events.record("INFO", "action_result", result.message,
+                               operation="home", outcome=int(result.outcome), state=state)
+            return result
+        except Exception as exc:
+            return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
+        finally:
+            self._end_operation()
+
+    def _candidate_progress(self, phase, message, index):
+        self.operation_progress(
+            phase, message, candidate_index=index, candidate_total=self.candidate_total)
+
+    def _execute_pick_action(self, goal):
+        self.active_goal = goal
+        result = PickItem.Result()
+        result.attempted_candidates = 0
+        result.selected_candidate_id = ""
+        try:
+            config = self.configuration
+            config.validate_sources(self.root)
+            self._transition("PICKING", "Pick action started")
+            self._execute_home()
+            self.operation_progress("DETECT", "Requesting one fresh candidate batch")
+            batch = self.candidates.request(
+                config, save_debug_images=goal.request.save_debug_images,
+                cancel=self.cancel_requested)
+            self.candidate_total = len(batch.candidates)
+            self.operation_progress(
+                "PLAN", f"Validated {self.candidate_total} fresh candidates",
+                candidate_total=self.candidate_total)
+            if not batch.candidates:
+                self._transition("READY", "No valid pick candidates; robot remains Home")
+                result.outcome = result.NO_PICK
+                result.message = self.machine.message
+                result.final_state = "READY"
+                goal.succeed()
+                return result
+            plans = []
+            for index, candidate in enumerate(batch.candidates, 1):
+                xyz = config.selection.station.platform.base_from_platform @ np.array(
+                    [*candidate.position_m, 1.0])
+                plans.append(pick_targets(
+                    config.home_matrix, xyz[:3], config.profile, index))
+            oldest_stamp = min(batch.observation_stamp_ns, batch.depth_stamp_ns)
+
+            def check(index):
+                self.raise_if_cancelled()
+                config.validate_sources(self.root)
+                age = (self.get_clock().now().nanoseconds - oldest_stamp) / 1e9
+                if not 0 <= age <= config.profile["quality"]["result_max_age_sec"]:
+                    raise FeedbackFailure(
+                        f"Candidate {index} expired; request a new Pick action")
+                result.attempted_candidates = index
+
+            outcome = PickExecutor(self.hardware, finish_home=True).run(
+                plans, config.profile, check=check,
+                return_home=lambda **kwargs: self._execute_home(**kwargs),
+                progress=self._candidate_progress,
+                holding_changed=lambda value: setattr(self, "holding_item", value))
+            self.holding_item = outcome["holding_item"]
+            if outcome["picked"]:
+                candidate = batch.candidates[outcome["candidate"] - 1]
+                result.selected_candidate_id = candidate.identifier
+                self._transition("HOLDING", "Pick completed; item held at Home")
+                result.outcome = result.SUCCESS
+            else:
+                self._transition("READY", "Candidate batch exhausted; no item picked")
+                result.outcome = result.NO_PICK
+            result.message = self.machine.message
+            result.final_state = self.machine.state
+            goal.succeed()
+            self.events.record(
+                "INFO", "action_result", result.message, operation="pick",
+                outcome=int(result.outcome), attempted=result.attempted_candidates,
+                selected_candidate_id=result.selected_candidate_id,
+                state=result.final_state, debug_capture=batch.debug_message)
+            return result
+        except Exception as exc:
+            return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
+        finally:
+            self._end_operation()
+
+    # ---------- supervision/shutdown ----------
+
+    def _stop_unexpected_idle_motion(self):
+        """Pre-empt motion that was not started by the active executor."""
+        reason = "Unexpected queued/running motion while controller idle"
+        try:
+            future = self._request_stop(reason)
+        except Exception as exc:
+            self._transition("FAULT", f"Unexpected-motion Stop dispatch failed: {exc}")
             return
-        if file_profile_digest(self.profile_path, self.root, deployment=self.headless) != digest:
-            raise ValueError("Teach profile changed during TF preview calculation")
-        paths = [self.profile_path, self.profile_path.with_suffix(".pt")]
-        if self.selection is not None:
-            self.selection.validate(self.root)
-            paths.extend((self.selection.bin.path, self.selection.station.camera.path,
-                          self.selection.station.platform.path))
-        sources = tuple((path, source_signature(path)) for path in paths)
-        with self.state_lock:
-            self.preview_targets, self.preview_digest = tuple(targets), digest
-            self.preview_sources = sources
-        self.events.record("INFO", "debug_targets", "TF-only targets installed",
-                           frames=[f"robot_controller_debug_{t.name}" for t in targets])
+
+        def confirm():
+            try:
+                self._confirm_shared_stop(future)
+                self._finish_stop_state()
+                self.events.record(
+                    "ERROR", "unexpected_motion_stopped",
+                    "Unexpected idle motion was stopped; explicit recovery required")
+            except Exception as exc:
+                if self.machine.state != "FAULT":
+                    self._transition("FAULT", f"Unexpected-motion Stop unconfirmed: {exc}")
+
+        if (self.supervision_stop_thread is None
+                or not self.supervision_stop_thread.is_alive()):
+            self.supervision_stop_thread = threading.Thread(target=confirm, daemon=True)
+            self.supervision_stop_thread.start()
 
     def _supervise(self):
-        with self.state_lock:
-            targets, sources = self.preview_targets, self.preview_sources
-        if targets:
-            try:
-                if self.cancel.is_set() or any(source_signature(p) != sig for p, sig in sources):
-                    raise ValueError("Debug preview cancelled/profile changed")
-                transforms = []
-                for target in targets:
-                    message = TransformStamped()
-                    message.header.stamp = self.get_clock().now().to_msg()
-                    message.header.frame_id = "base_link"
-                    message.child_frame_id = f"robot_controller_debug_{target.name}"
-                    p, q = message.transform.translation, message.transform.rotation
-                    p.x, p.y, p.z = map(float, target.matrix[:3, 3])
-                    q.x, q.y, q.z, q.w = rotation_matrix_to_quaternion(target.matrix[:3, :3])
-                    transforms.append(message)
-                self.tf_broadcaster.sendTransform(transforms)
-            except Exception as exc:
-                self.clear_preview()
-                self.events.record("WARNING", "debug_targets_cleared", str(exc))
-        if self.hardware is not None and self.execution_state in (
-                "READY", "BUSY", "HOLDING", "NO_PICK"):
-            try:
-                self.feedback_snapshot(enabled=True)
-                if self.holding_item and not self.feed_feedback[0]["digital_input_bits"] & 1:
-                    raise ValueError("Suction lost while holding item")
-            except ValueError as exc:
-                self.cancel.set()
-                self.clear_preview()
-                if self.hardware.moving:
-                    self.request_stop()
-                self.set_execution_state("FAILED", str(exc))
-
-    def request_stop(self):
-        self.cancel.set()
-        self.clear_preview()
-        if self.hardware is not None and self.stop_future is None:
-            self.stop_future = self.hardware.stop()
-        return self.stop_future
-
-    def stop(self):
-        return self.request_stop()
-
-    def _stop_service(self, _request, response):
-        with self.state_lock:
-            return RobotController._handle_stop_service(self, response)
-
-    def _handle_stop_service(self, response):
-        if not self.live:
-            self.cancel.set()
-            self.clear_preview()
-            self.set_execution_state("DEBUG", "TF preview cleared; Live is OFF")
-            response.success, response.message = True, self.execution_message
-            return response
-        if self.stop_thread is not None and self.stop_thread.is_alive():
-            with self.state_lock:
-                self.stop_recovery_abort.set()
-                self.cancel.set()
-            future = self.hardware.stop()
-            self.stop_future = future
-            self.set_execution_state("FAILED", "Stop requested again; return recovery cancelled")
-            response.success = future is not None
-            response.message = self.execution_message
-            return response
-        self.stop_recovery_abort.clear()
-        active = (self.action_thread if self.action_thread is not None
-                  and self.action_thread.is_alive() else None)
-        future = self.stop()
-        if future is None:
-            response.success, response.message = False, "Stop service unavailable"
-            return response
-        self.set_execution_state("STOPPING", "Stop sent; confirming stationary feedback")
-        self.stop_thread = threading.Thread(
-            target=self._complete_operator_stop, args=(future, active), daemon=True)
-        self.stop_thread.start()
-        response.success = True
-        response.message = "Stop accepted; watch /robot_controller/status"
-        return response
-
-    def _complete_operator_stop(self, future, active_action):
-        acquired = False
-
-        def check_recovery_allowed():
-            if (self.stop_recovery_abort.is_set() or self.shutdown_requested.is_set()
-                    or not rclpy.ok()):
-                raise ValueError("Stop recovery cancelled; no further return motion or release")
-
+        if (not self.startup_complete or self.operation_lock.locked()
+                or self.machine.state not in ("READY", "HOLDING")):
+            return
         try:
-            self.hardware.confirm_stop(future, allow_not_ready=True)
-            check_recovery_allowed()
-            if active_action is not None:
-                active_action.join(timeout=5)
-                if active_action.is_alive():
-                    raise ValueError("Interrupted action did not terminate after Stop")
-            acquired = self.action_lock.acquire(timeout=5)
-            if not acquired:
-                raise ValueError("Controller action did not release after Stop")
-            snapshot = self.feedback_snapshot(enabled=False)
-            check_recovery_allowed()
-            suction = bool(snapshot["feed"]["digital_input_bits"] & 1)
-            if not suction:
-                if self.holding_item:
-                    raise ValueError(
-                        "DI1 cleared after Stop; previously held item state is unknown")
-                with self.state_lock:
-                    check_recovery_allowed()
-                    self.cancel.clear()
-                    self.stop_future = None
-                    self.last_prepick = None
-                    self.last_gripper = None
-                self.set_execution_state("RECOVERING", "Stop/Clear: recovering idle robot")
-                check_recovery_allowed()
-                if self.startup_settings_applied and self.global_speed_percent is not None:
-                    self.hardware.recover_idle(stop_already_confirmed=True)
-                else:
-                    # Explicit Stop/Clear restores incomplete or ambiguous startup
-                    # settings; unanswered normal responses still forbid overlap.
-                    self.hardware.initialize()
-                    if self.execution_state != "READY":
-                        raise ValueError(self.execution_message)
-                check_recovery_allowed()
-                if self.profile_path is not None:
-                    profile, digest = load_item_profile(
-                        self.profile_path, root=self.root, deployment=self.headless)
-                    if digest != self.summary["profile_sha256"]:
-                        raise ValueError("Item Teach changed; reload before Stop/Clear Home")
-                    self.set_execution_state(
-                        "RECOVERING", "Stop/Clear: Home from fresh actual Link6 pose")
-                    check_recovery_allowed()
-                    self.home(profile, forbid_suction=True)
-                    check_recovery_allowed()
-                    self.set_execution_state("READY", "Stop/Clear confirmed; Home completed")
-                else:
-                    self.set_execution_state(
-                        "READY", "Stop/Clear confirmed; robot re-enabled. "
-                        "Load Item Teach for Home recovery")
+            snapshot = self.monitor.snapshot(require_enabled=False)
+            feed = snapshot.feed
+            blockers = enabled_blockers(feed, snapshot.robot_enabled)
+            transient = {"ErrorStatus", "CollisionStates", "isPauseCmdFlag"}
+            blockers = [item for item in blockers
+                        if not any(item.startswith(key + "=") for key in transient)]
+            flags = self.monitor.consistent_flags(3)
+            if flags is not None:
+                pause, error, collision = flags
+                if pause or error or collision:
+                    blockers.append(
+                        f"persistent flags pause={pause}, error={error}, collision={collision}")
+            if blockers:
+                raise FeedbackFailure("; ".join(blockers))
+            if feed["isRunQueuedCmd"] or feed["RunningStatus"]:
+                self._stop_unexpected_idle_motion()
                 return
-            self.feedback_snapshot(enabled=True)
-            with self.state_lock:
-                target, gripper = self.last_prepick, self.last_gripper
-            if target is None or gripper is None:
-                raise ValueError("DI1 is ON but no validated last pre-pick target exists")
-            self.holding_item = True
-            with self.state_lock:
-                check_recovery_allowed()
-                self.cancel.clear()
-                self.stop_future = None
-            self.set_execution_state("RECOVERING", "Returning held item to last pre-pick pose")
-            check_recovery_allowed()
-            self.hardware.move(target, require_suction=True)
-            check_recovery_allowed()
-            self.hardware.output(13, False)
-            self.hardware.output(1, True)
-            if gripper["use_grip"]:
-                self.hardware.output(2, False)
-                self.hardware.output(14, True)
-            self.holding_item = False
-            with self.state_lock:
-                self.last_prepick = None
-                self.last_gripper = None
-            self.set_execution_state("READY", "Stopped; item returned and released at pre-pick")
+            suction = bool(feed["digital_input_bits"] & 1)
+            if self.holding_item != suction:
+                if suction:
+                    self._transition("HELD_UNKNOWN", "DI1 active without trusted context")
+                    return
+                raise HeldUnknown("DI1 lost while controller expected a held item")
+            for channel, expected in self.expected_outputs.items():
+                actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
+                if actual != expected:
+                    raise FeedbackFailure(
+                        f"Unexpected DO{channel}={int(actual)}; expected {int(expected)}")
         except Exception as exc:
-            self.cancel.set()
-            if self.hardware is not None and getattr(self.hardware, "moving", False):
-                self.request_stop()
-            self.set_execution_state("FAILED", f"Stop/recovery failed: {exc}")
-            self.events.record("ERROR", "stop_recovery_failed", str(exc))
-        finally:
-            if acquired:
-                self.action_lock.release()
+            if self.machine.state in ("READY", "HOLDING"):
+                self._transition("FAULT", f"Runtime supervision failed: {exc}")
 
-    def close_runtime(self):
-        with self.state_lock:
-            self.stop_recovery_abort.set()
-            self.cancel.set()
-        if self.hardware is not None and self.hardware.moving:
-            self.request_stop()
-        else:
-            self.cancel.set()
-            self.clear_preview()
-        if self.action_thread is not None:
-            self.action_thread.join(timeout=5)
-        if self.stop_thread is not None:
-            self.stop_thread.join(timeout=5)
-        if self.hardware is not None:
-            self.hardware.close()
-
-
-def file_profile_digest(path, root, *, deployment=False):
-    return load_item_profile(path, root=root, deployment=deployment)[1]
-
-
-def source_signature(path):
-    if path.is_symlink():
-        raise ValueError("Selected artifact replaced by symlink")
-    stat = path.stat()
-    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+    def shutdown_runtime(self):
+        self.shutdown_event.set()
+        if self.operation_lock.locked() or self.hardware.moving:
+            try:
+                future = self._request_stop("Controller shutdown during active operation")
+                self._confirm_shared_stop(future)
+            except Exception as exc:
+                self.events.record("ERROR", "shutdown_stop_unconfirmed", str(exc))
+        if self.operation_lock.locked():
+            completed = self.operation_lock.acquire(timeout=5.0)
+            if completed:
+                self.operation_lock.release()
+            else:
+                self.events.record(
+                    "ERROR", "shutdown_operation_unconfirmed",
+                    "Active operation did not terminate before client teardown")
+        if self.late_stop_thread is not None:
+            self.late_stop_thread.join(timeout=2.0)
+        if self.supervision_stop_thread is not None:
+            self.supervision_stop_thread.join(timeout=2.0)
+        self.candidates.close()
+        self.hardware.close()
 
 
 def main(args=None):
     if os.environ.get("ROS_LOCALHOST_ONLY") != "1":
         raise RuntimeError(
-            "Source scripts/source_ros_workspace.bash; ROS_LOCALHOST_ONLY=1 required"
-        )
-    # Keep DDS alive long enough to request Stop before teardown on Ctrl-C/SIGTERM.
-    shutdown_requested = threading.Event()
-    previous_handlers = {number: signal.getsignal(number)
-                         for number in (signal.SIGINT, signal.SIGTERM)}
-    for number in previous_handlers:
-        signal.signal(number, lambda _number, _frame: shutdown_requested.set())
-    node = None
+            "Source scripts/source_ros_workspace.bash; ROS_LOCALHOST_ONLY=1 required")
+    stop = threading.Event()
+    previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+    for number in previous:
+        signal.signal(number, lambda _number, _frame: stop.set())
+    node = executor = spin_thread = None
     try:
         rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
         node = RobotController()
-        node.shutdown_requested = shutdown_requested
-        executor = MultiThreadedExecutor(num_threads=3)
+        executor = MultiThreadedExecutor(num_threads=4)
         executor.add_node(node)
-        gui_thread = None
-        try:
-            if node.headless:
-                while (rclpy.ok() and node.fatal_error is None
-                       and not shutdown_requested.is_set()):
-                    executor.spin_once(timeout_sec=0.1)
-            else:
-                from .gui import run_gui
-                gui_thread = run_gui(node, executor)
-            if node.fatal_error is not None:
-                raise RuntimeError(node.fatal_error)
-        finally:
-            node.close_runtime()
-            executor.shutdown(timeout_sec=2)
-            if gui_thread is not None:
-                gui_thread.join(timeout=2)
-    except KeyboardInterrupt:
-        pass
+        spin_thread = threading.Thread(target=executor.spin, daemon=True)
+        spin_thread.start()
+        while rclpy.ok() and not stop.wait(0.1):
+            pass
     finally:
         if node is not None:
-            node.events.record("INFO", "node_stopped", "Controller stopped; no automatic release",
-                               live=node.live)
+            node.shutdown_runtime()
+            node.events.record(
+                "INFO", "node_stopped", "Controller stopped; gripper outputs preserved",
+                state=node.machine.state, holding_item=node.holding_item)
+        if executor is not None:
+            executor.shutdown(timeout_sec=2.0)
+        if spin_thread is not None:
+            spin_thread.join(timeout=2.0)
+        if node is not None:
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
-        for number, handler in previous_handlers.items():
+        for number, handler in previous.items():
             signal.signal(number, handler)

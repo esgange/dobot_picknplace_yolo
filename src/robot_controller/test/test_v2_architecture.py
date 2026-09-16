@@ -1,0 +1,100 @@
+from pathlib import Path
+import json
+
+import pytest
+
+from robot_controller.state_machine import ControllerStateMachine, STATES, legal_targets
+from robot_controller.controller import PackageEventLogger
+from robot_controller_interfaces.action import GoHome, PickItem
+from robot_controller_interfaces.srv import Preview
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PACKAGE = ROOT / "robot_controller"
+
+
+def test_every_declared_legal_transition_and_every_other_transition():
+    for source in STATES:
+        for target in STATES:
+            machine = ControllerStateMachine(initial=source)
+            if target == source or target in legal_targets(source):
+                assert machine.transition(target, "test").state == target
+            else:
+                with pytest.raises(ValueError, match="Illegal controller transition"):
+                    machine.transition(target, "test")
+
+
+def test_typed_action_result_codes_are_in_result_not_goal():
+    assert GoHome.Result.SUCCESS == 0
+    assert GoHome.Result.CANCELED == 2
+    assert PickItem.Result.NO_PICK == 1
+    assert PickItem.Result.STOP_UNCONFIRMED == 5
+    assert not hasattr(GoHome.Goal, "SUCCESS")
+
+
+def test_preview_constants_and_three_process_launch():
+    assert (Preview.Request.HOME, Preview.Request.PICK, Preview.Request.CLEAR) == (1, 2, 3)
+    launch = (PACKAGE / "launch/robot_controller.launch.py").read_text()
+    assert 'executable="robot_controller"' in launch
+    assert 'executable="robot_controller_preview"' in launch
+    assert 'executable="robot_controller_gui"' in launch
+    assert "UnlessCondition(headless)" in launch
+    assert "item_teach_file" not in launch
+    assert "bin_teach_file" not in launch
+    response = Preview.Response()
+    response.tf_frames = ["preview_home"]
+    assert response.tf_frames == ["preview_home"]
+    preview = (PACKAGE / "python/robot_controller/preview.py").read_text()
+    assert "tf_child_frames" not in preview
+
+
+def test_legacy_public_commands_are_absent_and_preview_has_no_dobot_transport():
+    controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
+    preview = (PACKAGE / "python/robot_controller/preview.py").read_text()
+    gui = (PACKAGE / "python/robot_controller/gui.py").read_text()
+    combined = controller + preview + gui
+    for legacy in ("validate_profile", "set_live", "enable_robot",
+                   "set_debug_images", "request_item_poses", "std_srvs"):
+        assert legacy not in combined
+    assert "DobotTransport" not in preview
+    assert "dobot_bringup_ros2/srv" not in preview
+    assert "dobot_msgs_v4.srv" not in preview
+    assert "DobotTransport" not in gui
+    assert "dobot_bringup_ros2/srv" not in gui
+
+
+def test_runtime_never_uses_continue_inverse_kin_or_empty_movlio():
+    runtime = "\n".join(
+        path.read_text() for path in (PACKAGE / "python/robot_controller").glob("*.py"))
+    assert "InverseKin" not in runtime
+    assert 'call("Continue"' not in runtime
+    assert 'service = "MovLIO" if events else "MovL"' in runtime
+    assert 'fields["mdis"] = events' in runtime
+
+
+def test_headless_configuration_does_not_call_startup():
+    controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
+    headless_block = controller.split("if self.headless:", 1)[1].split(
+        "self.create_timer", 1)[0]
+    assert "load_runtime_configuration" in headless_block
+    assert "hardware.startup" not in headless_block
+    assert '"INACTIVE"' in headless_block
+
+
+def test_idle_supervision_preempts_unexpected_motion():
+    controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
+    block = controller.split("def _stop_unexpected_idle_motion", 1)[1].split(
+        "def _supervise", 1)[0]
+    assert "_request_stop" in block
+    assert "_confirm_shared_stop" in block
+    assert "_finish_stop_state" in block
+
+
+def test_package_event_log_is_bounded(tmp_path):
+    logger = PackageEventLogger(tmp_path, "fixture")
+    for index in range(1001):
+        logger.record("INFO", "test", "event", index=index)
+    values = [json.loads(line) for line in logger.path.read_text().splitlines()]
+    assert len(values) == 1
+    assert values[0]["index"] == 1000
+    assert values[0]["node"] == "fixture"

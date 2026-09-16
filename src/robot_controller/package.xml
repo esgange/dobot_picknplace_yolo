@@ -8,11 +8,10 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
   <depend>item_perception_yolo</depend>
+  <depend>robot_controller_interfaces</depend>
   <depend>rclpy</depend>
   <depend>item_perception_interfaces</depend>
-  <depend>rcl_interfaces</depend>
   <depend>std_msgs</depend>
-  <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>tf2_ros</depend>

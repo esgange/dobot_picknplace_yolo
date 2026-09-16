@@ -2880,6 +2880,73 @@ Never use a floating “latest” version in an issue, script, or deployment not
   build succeed, with all 14 packages built, and `git diff --check` is clean.
   No physical robot, camera, RViz or operator model was launched or commanded.
 
+### 2026-09-15 — Robot Controller v2 deterministic action architecture
+
+- The earlier controller accumulated incompatible Live/debug/recovery semantics,
+  Trigger commands, JSON status, hardware and Qt in one process, and readiness
+  decisions spread across polling paths. The operator approved a clean v2
+  architecture focused on deterministic Home and Pick rather than continuing
+  incremental repair of that control surface.
+- Rule 64 supersedes the combined GUI/controller lifecycle portions of rules
+  51–63. A new `robot_controller_interfaces` package defines typed Home and Pick
+  actions, lifecycle/configuration/speed/preview services, and reliable
+  transient-local status. Every action carries the active configuration digest;
+  Pick's candidate count remains solely Item Teach `pose_candidates` and its
+  debug-image flag is a one-shot goal field.
+- Runtime responsibility is split three ways. `robot_controller` is headless and
+  is the only process that creates canonical Dobot command clients.
+  `robot_controller_preview` requests detector candidates and broadcasts only
+  planned TF targets, and `robot_controller_gui` is only an API client. The
+  ordinary launch starts all three; `headless:=true` starts only the authority
+  and strictly loads `runtime_teach/`. Neither mode calls Startup automatically,
+  enables the robot, changes outputs, or moves on launch.
+- The controller now has one exclusive operation generation and explicit
+  `UNCONFIGURED`, `INACTIVE`, `STARTING`, `READY`, `HOMING`, `PICKING`,
+  `HOLDING`, `STOPPING`, `RECOVERY_REQUIRED`, `RECOVERING`, `HELD_UNKNOWN`, and
+  `FAULT` states. Normal Dobot requests remain serialized and acknowledged one
+  at a time. An independent Stop client pre-empts a pending action; action
+  cancellation and `/stop` both discard motion, confirm stationary/empty queue,
+  preserve gripper outputs, and require explicit Recover. Late motion replies
+  receive another Stop. No Continue or InverseKin is created or called.
+- Startup is an explicit service and performs ownership/fresh-feedback checks,
+  best-effort StopMoveJog, strict Stop, cold-DI1 protection, Disable,
+  conditional ClearError, Enable, one bounded persistent-pause correction,
+  SpeedFactor/User/Tool/TCP/CP setup, unheld output reset, and stable READY. It
+  never calls Home. Recover performs Stop/error clear/enable/settings/readiness
+  without Home and retains a confirmed global factor. Cold DI1 preserves I/O in
+  HELD_UNKNOWN; after the operator resolves the physical condition, an explicit
+  Stop observing DI1 clear permits Recover.
+- Home reads canonical GetPose for the conditional current-XY rise and ends at
+  exact taught joints with joint-mode MovL. Pick executes Home, requests one
+  fresh hash/calibration/bin/model-matched pose batch, applies the existing
+  platform-to-base transform and schema-6 geometry/rates/I/O timing, and returns
+  Home after every attempt. Trusted holding state is established immediately on
+  DI1 acquisition so a later retract/Home fault preserves correct recovery
+  context. Only coherent DI1-not-acquired is a retryable miss; stale feedback,
+  command rejection, output mismatch, cancellation, or motion ambiguity Stops
+  and does not advance candidates. Rule 63's protocol-correct MovL versus
+  non-empty MovLIO dispatch is unchanged.
+- Final audit corrections bind the preview response to its generated
+  `tf_frames` field, require advancing FeedInfo samples for every stable-time
+  window, monitor trusted held-item DI/output integrity throughout Stop and
+  Recover, preserve the most recently acknowledged SpeedFactor even if a later
+  integrity check faults, and pre-empt unexpected idle queue motion through the
+  independent Stop path before entering recovery.
+- Software verification is intentionally synthetic/offscreen. No robot, camera,
+  detector model, RViz, or physical motion was launched or commanded. Physical
+  commissioning remains a separate, explicitly authorized safety task.
+- Verification completed with 53 focused controller-v2 synthetic tests passing
+  through package CTest, changed Python compiling, and ament_flake8 reporting no
+  issues across controller runtime/tests/launch/scripts. Typed interface
+  generation and the package build pass; the root build finishes all 15 packages.
+  An offscreen three-process launch remained UNCONFIGURED, exposed only the new
+  typed commands/actions, and exited without sending Startup or a hardware call.
+  The full root test sweep also passed the 356 Item Perception cases and all
+  controller cases; its only failing package is the unchanged vendored
+  `dobot_bringup_v4` lint suite (pre-existing upstream copyright, cpplint,
+  flake8, lint_cmake and uncrustify findings). Per repository rule, vendored
+  sources were not silently reformatted or patched to hide those failures.
+
 ### Future entry template
 
 ```text

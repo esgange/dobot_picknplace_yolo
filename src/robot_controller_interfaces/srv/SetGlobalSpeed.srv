@@ -1,0 +1,5 @@
+uint8 percent
+---
+bool success
+string message
+uint8 confirmed_percent

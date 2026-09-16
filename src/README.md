@@ -11,13 +11,15 @@ Every ROS 2 package in this workspace lives below `src/` and has a package-local
 | [`orbbec_camera_launcher`](orbbec_camera_launcher/) | Gemini 335 configuration GUI and strict three-attempt complete-set supervisor |
 | [`camera_calibration`](camera_calibration/) | Manual-prefix ChArUco camera-to-hand (`base_link`) and camera-on-hand (`Link6`) calibration |
 | [`item_perception_yolo`](item_perception_yolo/) | Fixed/on-hand ChArUco `platform_teach`, mode-matched four-marker `bin_teach`, and staged perception integration |
-| [`robot_controller`](robot_controller/) | Service-driven Home/pick/Stop; GUI starts TF-only, headless initializes permanently Live; optional requested debug pairs; legacy ownership migration pending |
+| [`robot_controller`](robot_controller/) | Deterministic headless Home/Pick hardware authority plus separate API-only GUI and TF-only preview |
+| [`robot_controller_interfaces`](robot_controller_interfaces/) | Typed controller actions, lifecycle/configuration services, preview service, and transient-local status |
 | [`item_perception_interfaces`](item_perception_interfaces/) | Ranked candidate message and read-only GetItemPoses service |
 
 `item_perception_yolo` also installs the `item_teach` GUI and shared headless
 `item_detect` runtime, with class checkboxes, RGB/depth preview and explicitly
 armed calibrated pose requests. The controller can request/log a candidate
-batch without robot execution.
+batch without robot execution. `robot_controller` requires explicit Startup in
+both GUI and headless deployments; launch itself never enables or moves.
 Imported `item_pick` is retained as reference source with `COLCON_IGNORE`;
 its unaligned execution path is not part of the root build or installed runtime.
 

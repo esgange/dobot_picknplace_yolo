@@ -1,350 +1,332 @@
-"""Explicit-action operator window; restored filenames remain unapplied prefill."""
+"""Qt client for Robot Controller v2; contains no Dobot command clients."""
 
+import os
+import sys
 import threading
 
 from PyQt5 import QtCore, QtWidgets
 import rclpy
-from rclpy.executors import ExternalShutdownException
-from std_srvs.srv import SetBool, Trigger
-from dobot_msgs_v4.srv import SpeedFactor
+from rclpy.action import ActionClient
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
-from .ui_state import save_state
+from item_perception_yolo.platform_teach_core import workspace_root
+from robot_controller_interfaces.action import GoHome, PickItem
+from robot_controller_interfaces.msg import ControllerStatus
+from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalSpeed
+
+from .ui_state import load_state, save_state
+
+
+class GuiNode(rclpy.node.Node):
+    def __init__(self):
+        super().__init__("robot_controller_gui")
+        self.root = workspace_root()
+        self.prefill = load_state(self.root / "logs/robot_controller/last_session.json")
+        self.status = None
+        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                         durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(
+            ControllerStatus, "/robot_controller/status", self._status, qos)
+        self.service_clients = {
+            "configure": self.create_client(Configure, "/robot_controller/configure"),
+            "startup": self.create_client(Command, "/robot_controller/startup"),
+            "recover": self.create_client(Command, "/robot_controller/recover"),
+            "stop": self.create_client(Command, "/robot_controller/stop"),
+            "speed": self.create_client(
+                SetGlobalSpeed, "/robot_controller/set_global_speed"),
+            "preview": self.create_client(Preview, "/robot_controller/preview"),
+        }
+        self.action_clients = {
+            "home": ActionClient(self, GoHome, "/robot_controller/go_home"),
+            "pick": ActionClient(self, PickItem, "/robot_controller/pick_item"),
+        }
+
+    def _status(self, message):
+        self.status = message
 
 
 class ControllerWindow(QtWidgets.QMainWindow):
     def __init__(self, node):
         super().__init__()
         self.node = node
-        self.service_clients = {
-            "home": node.create_client(Trigger, "/robot_controller/go_home"),
-            "pick": node.create_client(Trigger, "/robot_controller/pick_item"),
-            "stop": node.create_client(Trigger, "/robot_controller/stop"),
-            "global_speed": node.create_client(SpeedFactor, "/robot_controller/set_global_speed"),
-            "live": node.create_client(SetBool, "/robot_controller/set_live"),
-            "debug_images": node.create_client(
-                SetBool, "/robot_controller/set_debug_images"),
-        }
-        self.pending_calls = {}
-        self.last_recovery_prompt = None
-        self.state_path = node.root / "logs/robot_controller/last_session.json"
-        restored = node.ui_prefill  # Validated before real startup; never auto-applied.
-        self.setWindowTitle("Robot Controller")
-        self.resize(960, 550)
+        self.pending = {}
+        self.pending_goal = None
+        self.goal_handle = None
+        self.result_future = None
+        self.feedback_message = ""
+        self.saved_selection = None
+        self.setWindowTitle("Robot Controller v2")
+        self.resize(1050, 570)
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
-        self.mode = QtWidgets.QLabel()
-        self.mode.setStyleSheet("font-size:20px;font-weight:600;padding:12px;color:#1573b7")
-        layout.addWidget(self.mode)
+
+        title = QtWidgets.QLabel("Deterministic Home and Pick")
+        title.setStyleSheet("font-size:22px;font-weight:700;padding:8px")
+        layout.addWidget(title)
         self.item_path = QtWidgets.QLineEdit()
         self.bin_path = QtWidgets.QLineEdit()
-        self.browse_buttons = []
-        for label, edit, directory in (("Item Teach", self.item_path, "offline_teach/item_teach"),
-                                       ("Bin Teach", self.bin_path, "offline_teach/bin_teach")):
+        if node.prefill:
+            self.item_path.setText(str(
+                node.root / "offline_teach/item_teach" / node.prefill["item"]))
+            if node.prefill["bin"]:
+                self.bin_path.setText(str(
+                    node.root / "offline_teach/bin_teach" / node.prefill["bin"]))
+        for label, edit, directory in (
+                ("Item Teach", self.item_path, "offline_teach/item_teach"),
+                ("Bin Teach", self.bin_path, "offline_teach/bin_teach")):
             row = QtWidgets.QHBoxLayout()
             row.addWidget(QtWidgets.QLabel(label))
             row.addWidget(edit, 1)
-            browse = QtWidgets.QPushButton("Browse…")
-            self.browse_buttons.append(browse)
-            browse.clicked.connect(lambda _, e=edit, d=directory: self.browse(e, d))
-            row.addWidget(browse)
-            layout.addLayout(row)
-        if node.profile_path is not None:
-            self.item_path.setText(str(node.profile_path))
-            if node.selection is not None:
-                self.bin_path.setText(str(node.selection.bin.path))
-        elif restored is not None:
-            self.item_path.setText(str(node.root / "offline_teach/item_teach" / restored["item"]))
-            if restored["bin"] is not None:
-                self.bin_path.setText(str(node.root / "offline_teach/bin_teach" / restored["bin"]))
-        self.apply = QtWidgets.QPushButton("Load Selected Teach Files")
-        self.apply.clicked.connect(self.load_selected)
-        layout.addWidget(self.apply)
-        self.station = QtWidgets.QLabel("Bin required for Pick; Item Teach alone supplies Home.")
-        self.station.setWordWrap(True)
-        layout.addWidget(self.station)
-        row = QtWidgets.QHBoxLayout()
-        self.live = QtWidgets.QPushButton("Live: OFF")
-        self.live.setCheckable(True)
-        self.live.setMinimumHeight(60)
-        self.live.setToolTip(
-            "OFF publishes TF previews only. ON initializes and permits actual robot commands.")
-        self.live.toggled.connect(self.set_live)
-        row.addWidget(self.live)
-        self.debug_images = QtWidgets.QPushButton("Debug Images: OFF")
-        self.debug_images.setCheckable(True)
-        self.debug_images.setMinimumHeight(60)
-        self.debug_images.setToolTip(
-            "Save the exact annotated RGB/depth pair for each requested pick batch.")
-        self.debug_images.toggled.connect(self.set_debug_images)
-        row.addWidget(self.debug_images)
-        self.home = QtWidgets.QPushButton("Preview Home TF")
-        self.pick = QtWidgets.QPushButton("Preview Pick TF")
-        self.stop = QtWidgets.QPushButton("Clear / Cancel")
-        for button, action in ((self.home, "home"), (self.pick, "pick")):
-            button.setMinimumHeight(60)
-            button.clicked.connect(lambda _, a=action: self.start(a))
+            button = QtWidgets.QPushButton("Browse…")
+            button.clicked.connect(
+                lambda _checked, e=edit, d=directory: self._browse(e, d))
             row.addWidget(button)
-        self.stop.setMinimumHeight(60)
-        self.stop.setStyleSheet("color:#b51f24;font-weight:600")
-        self.stop.clicked.connect(self.stop_action)
-        row.addWidget(self.stop)
-        layout.addLayout(row)
-        speed_row = QtWidgets.QHBoxLayout()
-        self.global_speed_label = QtWidgets.QLabel("Global speed: Live OFF")
-        self.global_speed_label.setMinimumWidth(245)
-        speed_row.addWidget(self.global_speed_label)
-        speed_row.addWidget(QtWidgets.QLabel("1%"))
-        self.global_speed = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.global_speed.setRange(1, 100)
-        self.global_speed.setValue(100)
-        self.global_speed.setTracking(False)
-        self.global_speed.setSingleStep(1)
-        self.global_speed.setPageStep(10)
-        self.global_speed.setToolTip(
-            "Live/idle only. Sets robot SpeedFactor after release; taught v/a stay unchanged. "
-            "Every Live initialization resets global speed to 100%.")
-        speed_row.addWidget(self.global_speed, 1)
-        speed_row.addWidget(QtWidgets.QLabel("100%"))
-        layout.addLayout(speed_row)
-        self.speed_timer = QtCore.QTimer(self)
-        self.speed_timer.setSingleShot(True)
-        self.speed_timer.setInterval(300)
-        self.speed_timer.timeout.connect(self.set_global_speed)
-        self.global_speed.valueChanged.connect(self.global_speed_edited)
-        self.global_speed.sliderReleased.connect(
-            lambda: self.global_speed_edited(self.global_speed.sliderPosition()))
-        self.status = QtWidgets.QLabel()
+            layout.addLayout(row)
+        self.configure = QtWidgets.QPushButton("Load Teach Configuration")
+        self.configure.clicked.connect(self._configure)
+        layout.addWidget(self.configure)
+
+        lifecycle = QtWidgets.QHBoxLayout()
+        self.startup = QtWidgets.QPushButton("Startup")
+        self.recover = QtWidgets.QPushButton("Recover / Clear Error")
+        self.stop = QtWidgets.QPushButton("STOP")
+        self.stop.setStyleSheet(
+            "background:#b51f24;color:white;font-weight:800;font-size:18px")
+        self.startup.clicked.connect(lambda: self._command("startup"))
+        self.recover.clicked.connect(lambda: self._command("recover"))
+        self.stop.clicked.connect(self._stop)
+        for button in (self.startup, self.recover, self.stop):
+            button.setMinimumHeight(58)
+            lifecycle.addWidget(button)
+        layout.addLayout(lifecycle)
+
+        operations = QtWidgets.QGridLayout()
+        self.preview_home = QtWidgets.QPushButton("Preview Home TF")
+        self.preview_pick = QtWidgets.QPushButton("Preview Pick TFs")
+        self.hardware_home = QtWidgets.QPushButton("Hardware Home")
+        self.hardware_pick = QtWidgets.QPushButton("Hardware Pick Item")
+        self.debug_images = QtWidgets.QCheckBox("Save Pick debug RGB/depth")
+        self.preview_home.clicked.connect(lambda: self._preview(Preview.Request.HOME))
+        self.preview_pick.clicked.connect(lambda: self._preview(Preview.Request.PICK))
+        self.hardware_home.clicked.connect(lambda: self._action("home"))
+        self.hardware_pick.clicked.connect(lambda: self._action("pick"))
+        for button in (self.preview_home, self.preview_pick,
+                       self.hardware_home, self.hardware_pick):
+            button.setMinimumHeight(52)
+        operations.addWidget(self.preview_home, 0, 0)
+        operations.addWidget(self.preview_pick, 0, 1)
+        operations.addWidget(self.hardware_home, 1, 0)
+        operations.addWidget(self.hardware_pick, 1, 1)
+        operations.addWidget(self.debug_images, 2, 1)
+        layout.addLayout(operations)
+
+        speed = QtWidgets.QHBoxLayout()
+        self.speed_label = QtWidgets.QLabel("Global SpeedFactor: unavailable")
+        self.speed_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.speed_slider.setRange(1, 100)
+        self.speed_slider.setValue(100)
+        self.speed_slider.setTracking(False)
+        self.speed_slider.sliderReleased.connect(self._speed)
+        speed.addWidget(self.speed_label)
+        speed.addWidget(self.speed_slider, 1)
+        layout.addLayout(speed)
+
+        self.status = QtWidgets.QLabel("Waiting for /robot_controller/status")
         self.status.setWordWrap(True)
-        self.status.setStyleSheet("background:#202a35;color:white;padding:14px;font-size:16px")
+        self.status.setMinimumHeight(100)
+        self.status.setStyleSheet(
+            "background:#202a35;color:white;padding:14px;font-size:16px")
         layout.addWidget(self.status)
-        self.details = QtWidgets.QLabel(
-            "Pick always starts at Home. Success returns Home with suction ON; "
-            "an exhausted batch returns Home and reports failure.\n"
-            "Stop / Clear cancels the queue, confirms stationary feedback and "
-            "re-enables. With DI1 OFF and a loaded Home it returns Home from "
-            "fresh actual pose; DI1 ON uses the last pre-pick return/release.\n"
-            "Live canonical feedback is required, including for debug Home.\n"
-            "Debug Images saves one requested annotated pair in debug/pick_img; "
-            "it does not change poses or motion.\n"
-            "Load does not move; preview TFs are not collision validation.")
-        self.details.setWordWrap(True)
-        layout.addWidget(self.details)
+        note = QtWidgets.QLabel(
+            "Launching never enables or moves the robot. Startup is explicit. "
+            "Stop and native cancellation preserve suction/finger outputs, discard motion, "
+            "and require Recover. Preview is TF-only and cannot command Dobot.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
         layout.addStretch()
-        self.item_path.textEdited.connect(self.selection_edited)
-        self.bin_path.textEdited.connect(self.selection_edited)
+        self.item_path.textEdited.connect(self._selection_changed)
+        self.bin_path.textEdited.connect(self._selection_changed)
         self.timer = QtCore.QTimer(self)
-        self.timer.timeout.connect(self.refresh)
+        self.timer.timeout.connect(self._refresh)
         self.timer.start(100)
-        self.refresh()
 
-    def selection_edited(self):
-        if self.node.action_lock.locked():
-            self.node.request_stop()
-        self.node.clear_preview()
-        self.node.selection = None
-        self.node.profile_path = None
-        self.node.home_reference = None
-        self.node.home_reference_joints = None
-
-    def browse(self, edit, directory):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select " + directory, str(self.node.root / directory), "Teach YAML (*.yaml)")
+    def _browse(self, edit, directory):
+        path, _filter = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select Teach YAML", str(self.node.root / directory),
+            "Teach YAML (*.yaml)")
         if path:
-            self.selection_edited()
             edit.setText(path)
+            self._selection_changed()
 
-    def load_selected(self):
-        try:
-            self.node.apply_teach(self.item_path.text().strip(), self.bin_path.text().strip())
-            save_state(self.state_path, self.item_path.text(), self.bin_path.text().strip())
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Teach load rejected", str(exc))
-        self.refresh()
+    def _selection_changed(self):
+        self.saved_selection = None
+        if self.node.service_clients["preview"].service_is_ready():
+            request = Preview.Request()
+            request.operation = request.CLEAR
+            request.item_teach_file = ""
+            request.bin_teach_file = ""
+            self.node.service_clients["preview"].call_async(request)
 
-    def start(self, action):
-        self._call_service(action, Trigger.Request())
-
-    def stop_action(self):
-        self._call_service("stop", Trigger.Request())
-
-    def set_live(self, enabled):
-        self._set_live_visual(enabled)
-        self._call_service("live", SetBool.Request(data=enabled))
-
-    def set_debug_images(self, enabled):
-        self._set_debug_images_visual(enabled)
-        self._call_service("debug_images", SetBool.Request(data=enabled))
-
-    def global_speed_edited(self, value):
-        self.global_speed_label.setText(f"Global speed: {value}% · pending")
-        if self.global_speed.isEnabled():
-            self.speed_timer.start()
-
-    def set_global_speed(self):
-        if not self.global_speed.isEnabled():
+    def _call(self, name, request):
+        if name in self.pending:
             return
-        value = self.global_speed.value()
-        if value != self.node.global_speed_percent:
-            self._call_service("global_speed", SpeedFactor.Request(ratio=value))
-
-    def _set_live_visual(self, enabled):
-        self.live.setText("Live: ON" if enabled else "Live: OFF")
-        self.live.setStyleSheet(
-            "background:#b51f24;color:white;font-weight:700;border:2px solid #7c1115;"
-            if enabled else "")
-
-    def _set_debug_images_visual(self, enabled):
-        self.debug_images.setText("Debug Images: ON" if enabled else "Debug Images: OFF")
-        self.debug_images.setStyleSheet(
-            "background:#d77b00;color:white;font-weight:700;"
-            if enabled else "")
-
-    def _call_service(self, name, request):
-        if name in self.pending_calls:
-            return
-        client = self.service_clients[name]
+        client = self.node.service_clients[name]
         if not client.service_is_ready():
-            if name in ("live", "debug_images"):
-                button = self.live if name == "live" else self.debug_images
-                enabled = self.node.live if name == "live" else self.node.debug_images
-                with QtCore.QSignalBlocker(button):
-                    button.setChecked(enabled)
-                (self._set_live_visual if name == "live"
-                 else self._set_debug_images_visual)(enabled)
-            QtWidgets.QMessageBox.warning(self, "Service unavailable",
-                                          f"{client.srv_name} is unavailable")
+            QtWidgets.QMessageBox.warning(
+                self, "Unavailable", f"{client.srv_name} is unavailable")
             return
-        self.pending_calls[name] = client.call_async(request)
-        self.refresh()
+        self.pending[name] = client.call_async(request)
 
-    def _collect_service_results(self):
-        for name, future in list(self.pending_calls.items()):
+    def _configure(self):
+        request = Configure.Request()
+        request.item_teach_file = self.item_path.text().strip()
+        request.bin_teach_file = self.bin_path.text().strip()
+        self.saved_selection = (request.item_teach_file, request.bin_teach_file)
+        self._call("configure", request)
+
+    def _command(self, name):
+        self._call(name, Command.Request())
+
+    def _stop(self):
+        if self.goal_handle is not None:
+            self.goal_handle.cancel_goal_async()
+        self._command("stop")
+
+    def _preview(self, operation):
+        request = Preview.Request()
+        request.operation = operation
+        request.item_teach_file = self.item_path.text().strip()
+        request.bin_teach_file = self.bin_path.text().strip()
+        self._call("preview", request)
+
+    def _speed(self):
+        request = SetGlobalSpeed.Request()
+        request.percent = self.speed_slider.value()
+        self._call("speed", request)
+
+    def _feedback(self, message):
+        feedback = message.feedback
+        suffix = ""
+        if hasattr(feedback, "candidate_total") and feedback.candidate_total:
+            suffix = f" · candidate {feedback.candidate_index}/{feedback.candidate_total}"
+        self.feedback_message = f"{feedback.phase} · {feedback.message}{suffix}"
+
+    def _action(self, name):
+        if self.pending_goal is not None or self.result_future is not None:
+            return
+        status = self.node.status
+        if status is None or not status.configuration_id:
+            QtWidgets.QMessageBox.warning(self, "Not configured", "Load teach files first")
+            return
+        client = self.node.action_clients[name]
+        if not client.server_is_ready():
+            QtWidgets.QMessageBox.warning(self, "Unavailable", "Action server unavailable")
+            return
+        goal = GoHome.Goal() if name == "home" else PickItem.Goal()
+        goal.configuration_id = status.configuration_id
+        if name == "pick":
+            goal.save_debug_images = self.debug_images.isChecked()
+        self.pending_goal = client.send_goal_async(goal, feedback_callback=self._feedback)
+
+    def _collect(self):
+        for name, future in list(self.pending.items()):
             if not future.done():
                 continue
-            del self.pending_calls[name]
+            del self.pending[name]
             try:
                 result = future.result()
-                if name == "global_speed":
-                    if result is None or result.res != 0:
-                        self.node.execution_message = (
-                            "Global speed: no service response" if result is None else
-                            self.node.global_speed_message)
-                    continue
                 if result is None or not result.success:
                     message = "No response" if result is None else result.message
-                    self.node.execution_message = f"{name} rejected: {message}"
-                    if name in ("home", "pick"):
-                        QtWidgets.QMessageBox.warning(self, "Robot not ready", message)
+                    QtWidgets.QMessageBox.warning(self, f"{name} rejected", message)
+                elif name == "configure" and self.saved_selection is not None:
+                    save_state(
+                        self.node.root / "logs/robot_controller/last_session.json",
+                        *self.saved_selection)
+                elif name == "speed":
+                    self.speed_slider.setValue(result.confirmed_percent)
             except Exception as exc:
-                self.node.execution_message = f"{name} service failed: {exc}"
-                if name in ("home", "pick"):
-                    QtWidgets.QMessageBox.warning(self, "Robot action failed", str(exc))
+                QtWidgets.QMessageBox.warning(self, f"{name} failed", str(exc))
+        if self.pending_goal is not None and self.pending_goal.done():
+            try:
+                handle = self.pending_goal.result()
+                if handle is None or not handle.accepted:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Action rejected",
+                        "State/configuration does not permit that hardware action")
+                else:
+                    self.goal_handle = handle
+                    self.result_future = handle.get_result_async()
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Action failed", str(exc))
+            self.pending_goal = None
+        if self.result_future is not None and self.result_future.done():
+            try:
+                wrapped = self.result_future.result()
+                result = wrapped.result
+                self.feedback_message = f"Result {result.outcome}: {result.message}"
+                if result.outcome not in (result.SUCCESS, getattr(result, "NO_PICK", -1)):
+                    QtWidgets.QMessageBox.warning(self, "Action ended", result.message)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Action result failed", str(exc))
+            self.result_future = None
+            self.goal_handle = None
 
-    def refresh(self):
-        node = self.node
-        self._collect_service_results()
-        busy = ((node.action_thread is not None and node.action_thread.is_alive())
-                or (node.stop_thread is not None and node.stop_thread.is_alive())
-                or node.action_lock.locked())
-        ready = node.execution_state in ("DEBUG", "READY", "HOLDING", "NO_PICK") and not busy
-        action_clickable = (not busy and node.fatal_error is None
-                            and (node.live or node.execution_state == "DEBUG"))
-        service_pending = any(name in self.pending_calls for name in
-                              ("home", "pick", "live", "global_speed"))
-        actions_pending = service_pending or self.speed_timer.isActive()
-        self.apply.setEnabled(not busy)
-        self.item_path.setReadOnly(busy)
-        self.bin_path.setReadOnly(busy)
-        for button in self.browse_buttons:
-            button.setEnabled(not busy)
-        self.home.setEnabled(action_clickable and not actions_pending
-                             and node.profile_path is not None)
-        self.pick.setEnabled(action_clickable and not actions_pending
-                             and node.selection is not None
-                             and not node.holding_item)
-        self.stop.setEnabled("stop" not in self.pending_calls)
-        self.live.setEnabled(
-            not busy and not node.holding_item and not actions_pending)
-        self.debug_images.setEnabled("debug_images" not in self.pending_calls)
-        self.global_speed.setEnabled(
-            node.live and ready and not service_pending
-            and getattr(node, "startup_settings_applied", False)
-            and node.fatal_error is None and node.hardware is not None
-            and not node.hardware.moving and not node.cancel.is_set())
-        factor = node.global_speed_percent
-        self.global_speed_label.setToolTip(node.global_speed_message)
-        if not self.global_speed.isEnabled():
-            self.speed_timer.stop()
-        editing_speed = self.global_speed.isSliderDown() or self.speed_timer.isActive()
-        if not editing_speed and "global_speed" not in self.pending_calls:
-            with QtCore.QSignalBlocker(self.global_speed):
-                self.global_speed.setValue(100 if factor is None else factor)
-            self.global_speed_label.setText(
-                "Global speed: Live OFF" if not node.live else
-                "Global speed: unknown" if factor is None else f"Global speed: {factor}%")
-        elif "global_speed" in self.pending_calls:
-            self.global_speed_label.setText(
-                f"Global speed: {self.global_speed.value()}% · awaiting response")
-        with QtCore.QSignalBlocker(self.live):
-            self.live.setChecked(node.live)
-        self._set_live_visual(node.live)
-        with QtCore.QSignalBlocker(self.debug_images):
-            self.debug_images.setChecked(node.debug_images)
-        self._set_debug_images_visual(node.debug_images)
-        if node.live:
-            speed = "unknown" if factor is None else f"{factor}%"
-            self.mode.setText(f"LIVE ROBOT · Actual commands enabled · SpeedFactor {speed}")
-            self.mode.setStyleSheet(
-                "font-size:20px;font-weight:600;padding:12px;color:#b51f24")
-            self.home.setText("Go Home")
-            self.pick.setText("Pick Item")
-            self.stop.setText("Stop / Clear")
-        else:
-            self.mode.setText("TF-ONLY · Live OFF · No hardware commands")
-            self.mode.setStyleSheet(
-                "font-size:20px;font-weight:600;padding:12px;color:#1573b7")
-            self.home.setText("Preview Home TF")
-            self.pick.setText("Preview Pick TF")
-            self.stop.setText("Clear / Cancel")
-        self.status.setText(
-            f"{node.execution_state} · {node.execution_message}\n"
-            f"Debug images: {node.debug_capture_status}")
-        if node.execution_state != "FAILED":
-            self.last_recovery_prompt = None
-        elif (node.live and "recovery failed" in node.execution_message.lower()
-              and node.execution_message != self.last_recovery_prompt):
-            self.last_recovery_prompt = node.execution_message
-            QtWidgets.QMessageBox.warning(
-                self, "Robot recovery did not complete",
-                node.execution_message + "\n\nCheck whether the emergency stop is pressed. "
-                "If safe, use Stop / Clear and wait for READY before Home or Pick. "
-                "The controller will not resume a paused queue or send motion while blocked.")
-        if node.selection is not None:
-            selected = node.selection
-            warning = selected.warning() or "Destination station and portable bin validated."
-            self.station.setText(
-                "Platform: " + selected.station.platform.path.name + "\nCamera: " +
-                selected.station.camera.path.name + "\n" + warning)
-        if node.fatal_error is not None or node.shutdown_requested.is_set() or not rclpy.ok():
-            self.close()
+    def _refresh(self):
+        self._collect()
+        state = self.node.status
+        reachable = state is not None
+        active = bool(state and state.operation_active)
+        current = state.state if state else "UNREACHABLE"
+        self.configure.setEnabled(reachable and current in ("UNCONFIGURED", "INACTIVE")
+                                  and not active)
+        self.startup.setEnabled(reachable and current == "INACTIVE" and not active)
+        self.recover.setEnabled(reachable and current in ("FAULT", "RECOVERY_REQUIRED")
+                                and not active)
+        self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
+        self.hardware_home.setEnabled(reachable and current in ("READY", "HOLDING")
+                                      and not active)
+        self.hardware_pick.setEnabled(reachable and current == "READY" and not active)
+        self.preview_home.setEnabled(
+            self.node.service_clients["preview"].service_is_ready())
+        self.preview_pick.setEnabled(
+            self.node.service_clients["preview"].service_is_ready())
+        speed_enabled = reachable and current in ("READY", "HOLDING") and not active
+        self.speed_slider.setEnabled(speed_enabled)
+        if state:
+            if state.global_speed_percent >= 1 and not self.speed_slider.isSliderDown():
+                self.speed_slider.setValue(state.global_speed_percent)
+            speed_text = (f"{state.global_speed_percent}%"
+                          if state.global_speed_percent >= 1 else "unknown")
+            self.speed_label.setText(f"Global SpeedFactor: {speed_text}")
+            progress = f"\n{self.feedback_message}" if self.feedback_message else ""
+            self.status.setText(
+                f"{state.state} · {state.message}\n"
+                f"Configuration: {state.configuration_id[:16] or 'none'} · "
+                f"Startup: {'complete' if state.startup_complete else 'required'} · "
+                f"Feedback: {'fresh' if state.feedback_fresh else 'unavailable'}{progress}")
 
 
-def run_gui(node, executor):
-    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = ControllerWindow(node)
-
-    def spin():
-        try:
-            executor.spin()
-        except ExternalShutdownException:
-            pass
-
-    thread = threading.Thread(target=spin, daemon=True)
+def main(args=None):
+    if os.environ.get("ROS_LOCALHOST_ONLY") != "1":
+        raise RuntimeError(
+            "Source scripts/source_ros_workspace.bash; ROS_LOCALHOST_ONLY=1 required")
+    rclpy.init(args=args)
+    node = GuiNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
+    thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    window = ControllerWindow(node)
     window.show()
     try:
-        application.exec_()
+        code = app.exec_()
     finally:
-        node.close_runtime()
-    return thread
+        executor.shutdown(timeout_sec=2.0)
+        thread.join(timeout=2.0)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+    raise SystemExit(code)

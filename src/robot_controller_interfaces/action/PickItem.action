@@ -1,0 +1,21 @@
+string configuration_id
+bool save_debug_images
+---
+uint8 SUCCESS=0
+uint8 NO_PICK=1
+uint8 CANCELED=2
+uint8 COMMAND_REJECTED=3
+uint8 FEEDBACK_FAILURE=4
+uint8 STOP_UNCONFIRMED=5
+uint8 CONTROLLER_FAULT=6
+uint8 outcome
+string message
+string final_state
+uint32 attempted_candidates
+string selected_candidate_id
+---
+string phase
+string waypoint
+uint32 candidate_index
+uint32 candidate_total
+string message

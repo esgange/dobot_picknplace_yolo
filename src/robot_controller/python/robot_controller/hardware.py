@@ -1,4 +1,4 @@
-"""Canonical Dobot service transport; instantiated only while Live is ON."""
+"""Dobot transport used only by the headless hardware-authority node."""
 
 import math
 import re
@@ -7,335 +7,444 @@ import time
 
 import numpy as np
 
+from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
+                     HeldUnknown, OperationCanceled, StopUnconfirmed)
 from .kinematics import pose_matrix, pose_values
 from .motion import pose_reached
 
 
-SERVICE_TIMEOUT_SEC = 5.0
-MOTION_TIMEOUT_SEC = 30.0
+SERVICE_DISCOVERY_TIMEOUT_SEC = 5.0
+COMMAND_RESPONSE_TIMEOUT_SEC = 5.0
+MODE_TRANSITION_TIMEOUT_SEC = 2.0
+READY_STABLE_SEC = 0.2
+CONSISTENT_FLAG_SAMPLES = 3
 STATIONARY_SEC = 0.3
+MOTION_NO_PROGRESS_SEC = 3.0
+MOTION_HARD_CAP_SEC = 300.0
 CARTESIAN_POSITION_TOLERANCE_M = 0.005
 CARTESIAN_ORIENTATION_TOLERANCE_DEG = 1.0
 HOME_JOINT_TOLERANCE_RAD = math.radians(1.0)
 MOTION_SERVICES = ("MovL", "MovLIO", "RelMovLUser")
 
 
-class ResponsePending(ValueError):
-    """An unanswered command forbids dispatching a later normal command."""
-
-
 def robot_values(raw):
-    # The vendored bridge reports the TCP error ID in res and copies only the
-    # brace-delimited values into robot_return; the command echo is not present.
     match = re.fullmatch(r"\{([^{}]+)\}", raw) if isinstance(raw, str) else None
     if match is None:
-        raise ValueError("Malformed canonical GetPose reply")
+        raise CommandRejected("Malformed canonical GetPose reply")
     try:
-        values = [float(v) for v in match.group(1).split(",")]
+        values = [float(value) for value in match.group(1).split(",")]
     except ValueError as exc:
-        raise ValueError("Malformed canonical GetPose values") from exc
-    if len(values) != 6 or not all(math.isfinite(v) for v in values):
-        raise ValueError("GetPose must return six finite values")
+        raise CommandRejected("Malformed canonical GetPose values") from exc
+    if len(values) != 6 or not all(math.isfinite(value) for value in values):
+        raise CommandRejected("GetPose must return six finite values")
     return values
 
 
-class DobotHardware:
-    def __init__(self, node):
-        # Debug construction never imports these types or creates command clients.
+class DobotTransport:
+    """Serialized normal commands plus an independent pre-emptive Stop path."""
+
+    def __init__(self, node, monitor):
         from dobot_msgs_v4.srv import (CP, ClearError, DO, DisableRobot, EnableRobot,
-                                       GetPose, MovL, MovLIO, RelMovLUser, SetTool, SpeedFactor,
-                                       Stop, StopMoveJog, Tool)
+                                       GetPose, MovL, MovLIO, RelMovLUser, SetTool,
+                                       SpeedFactor, Stop, StopMoveJog, Tool, User)
         self.node = node
+        self.monitor = monitor
         kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetPose, MovL, MovLIO,
-                 RelMovLUser, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
+                 RelMovLUser, SetTool, SpeedFactor, StopMoveJog, Tool, User)
         self.types = {kind.__name__: kind for kind in kinds}
-        self.clients = {name: node.create_client(kind, f"/dobot_bringup_ros2/srv/{name}")
-                        for name, kind in self.types.items()}
-        self.moving = False
-        self.suction_stop = None
-        self.suction_interrupted = False
-        self.response_lock = threading.Lock()
+        self.clients = {
+            name: node.create_client(kind, f"/dobot_bringup_ros2/srv/{name}")
+            for name, kind in self.types.items()
+        }
+        self.stop_type = Stop
+        self.stop_client = node.create_client(Stop, "/dobot_bringup_ros2/srv/Stop")
+        # rclpy may invoke a callback inline when a future is already complete.
+        self.response_lock = threading.RLock()
+        self.stop_lock = threading.Lock()
         self.pending_response = None
+        self.stop_future = None
+        self.moving = False
+        self.suction_interrupted = False
+        self.suction_stop_future = None
 
-    def call(self, name, *, monitor_suction=False, require_clear=False, progress=None, **fields):
+    @property
+    def required_services(self):
+        return tuple(self.clients) + ("Stop",)
+
+    def close(self):
+        for client in self.clients.values():
+            self.node.destroy_client(client)
+        self.node.destroy_client(self.stop_client)
+        self.clients.clear()
+
+    def wait_services(self, *, optional=()):
+        deadline = time.monotonic() + SERVICE_DISCOVERY_TIMEOUT_SEC
+        while True:
+            missing = [name for name, client in self.clients.items()
+                       if name not in optional and not client.service_is_ready()]
+            if not self.stop_client.service_is_ready():
+                missing.append("Stop")
+            if not missing:
+                return
+            self.node.raise_if_cancelled()
+            if time.monotonic() >= deadline:
+                raise CommandRejected(
+                    "Required canonical services unavailable: " + ", ".join(missing))
+            self.node.wait_control(0.05)
+
+    def _pending_completed(self, name, future):
         with self.response_lock:
+            if self.pending_response == (name, future):
+                self.pending_response = None
+        if name in MOTION_SERVICES and self.node.cancel_requested():
             try:
-                if self.pending_response is not None:
-                    previous, future = self.pending_response
-                    if not future.done():
-                        raise ResponsePending(
-                            f"{name} not sent: still awaiting {previous} response")
-                    self.pending_response = None
-                return self._call(name, monitor_suction=monitor_suction,
-                                  require_clear=require_clear, progress=progress, **fields)
-            except Exception as exc:
-                self.node.events.record("ERROR", "robot_service_failed", str(exc), service=name)
-                raise
+                stop_future = self.request_stop("late motion acknowledgement")
+                self.node.on_late_motion_ack(stop_future)
+            except StopUnconfirmed as exc:
+                self.node.events.record("ERROR", "late_ack_stop_failed", str(exc))
+        elif name in MOTION_SERVICES and self.suction_interrupted:
+            # Normal DI1 acquisition intentionally interrupts the descent.  The
+            # owning pick thread confirms this Stop before queuing its retract.
+            self.request_stop("motion acknowledgement after suction acquisition")
 
-    def _call(self, name, *, monitor_suction=False, require_clear=False, progress=None, **fields):
-        self.node.check_cancelled()
-        self.node.check_command_owner(name)
-        self.node.feedback_snapshot(enabled=False)
-        client = self.clients[name]
-        if not client.service_is_ready():
-            raise ValueError(f"Required canonical {name} service unavailable")
-        request = self.types[name].Request(**fields)
-        self.node.events.record("INFO", "robot_service_sent", name, fields=fields)
-        future = client.call_async(request)
-        self.pending_response = name, future
-        if name in MOTION_SERVICES:
-            # A late accepted command after cancellation must receive another safety Stop.
-            # This is containment, not a retry of motion or a claim of confirmed stopping.
-            future.add_done_callback(self._late_motion_ack)
-        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
+    def ensure_no_pending_response(self):
+        with self.response_lock:
+            pending = self.pending_response
+        if pending is not None and not pending[1].done():
+            raise CommandResponseTimeout(
+                f"Still awaiting {pending[0]} response; no later command may be sent")
+
+    def call(self, name, *, check_cancel=True, progress=None, **fields):
+        with self.response_lock:
+            if self.pending_response is not None:
+                previous, future = self.pending_response
+                if not future.done():
+                    raise CommandResponseTimeout(
+                        f"{name} not sent: still awaiting {previous} response")
+                self.pending_response = None
+            self.node.check_command_owner(name)
+            self.monitor.snapshot(require_enabled=False)
+            client = self.clients[name]
+            if not client.service_is_ready():
+                raise CommandRejected(f"Required canonical {name} service unavailable")
+            request = self.types[name].Request(**fields)
+            self.node.events.record("INFO", "robot_service_sent", name, fields=fields)
+            future = client.call_async(request)
+            self.pending_response = (name, future)
+            future.add_done_callback(lambda done, service=name: self._pending_completed(
+                service, done))
+        deadline = time.monotonic() + COMMAND_RESPONSE_TIMEOUT_SEC
         while not future.done():
-            self.node.check_cancelled()
-            snapshot = self.node.feedback_snapshot(enabled=progress is not None)
+            if check_cancel and self.node.cancel_requested():
+                if name in MOTION_SERVICES:
+                    self.request_stop("operation cancellation during acknowledgement")
+                raise OperationCanceled(f"Cancelled while awaiting {name} response")
+            snapshot = self.monitor.snapshot(require_enabled=False)
             if progress is not None:
                 progress(snapshot)
-            if require_clear and snapshot["feed"]["digital_input_bits"] & 1:
-                raise ValueError("Unexpected DI1 during descent before suction; Stop required")
-            if monitor_suction and snapshot["feed"]["digital_input_bits"] & 1:
-                self._interrupt_suction()
             if time.monotonic() >= deadline:
-                raise ResponsePending(f"{name} response timeout; no later commands sent; no retry")
-            time.sleep(0.02)
+                raise CommandResponseTimeout(
+                    f"{name} response timeout; no later normal command sent")
+            self.node.wait_control(0.02)
         result = future.result()
-        self.pending_response = None
-        self.node.check_cancelled()
-        self.node.feedback_snapshot(enabled=False)
         if result is None or result.res != 0:
-            raise ValueError(f"{name} failed: {None if result is None else result.res}")
+            raise CommandRejected(f"{name} failed: {None if result is None else result.res}")
         self.node.events.record("INFO", "robot_service", name, fields=fields)
-        if name in MOTION_SERVICES and self.suction_interrupted:
-            # Stop might have been processed BEFORE this motion was accepted.
-            # Contain late acceptance synchronously after the awaited response,
-            # not via a callback that could run after stationary confirmation.
-            self.suction_stop = self.stop()
-            if self.suction_stop is None:
-                raise ValueError("Late motion acknowledgement after DI1 Stop; "
-                                 "new Stop unavailable, retract blocked")
-            self.node.events.record("WARNING", "late_suction_ack_stop",
-                                    "Motion acknowledged after DI1 Stop; Stop sent again")
         if progress is not None:
-            progress(self.node.feedback_snapshot(enabled=True))
+            progress(self.monitor.snapshot(require_enabled=False))
         return result
 
-    def _late_motion_ack(self, _future):
-        if self.node.cancel.is_set():
-            try:
-                self.stop()
-            except Exception as exc:
-                self.node.events.record("ERROR", "late_ack_stop_failed", str(exc))
+    def request_stop(self, reason="operator/cancellation request"):
+        with self.stop_lock:
+            if self.stop_future is not None and not self.stop_future.done():
+                return self.stop_future
+            self.node.check_command_owner("Stop")
+            if not self.stop_client.service_is_ready():
+                raise StopUnconfirmed("Canonical Stop service unavailable")
+            future = self.stop_client.call_async(self.stop_type.Request())
+            self.stop_future = future
+            self.node.events.record("WARNING", "stop_requested", reason)
+            return future
 
-    def wait(self, predicate, timeout, *, enabled=False):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            self.node.check_cancelled()
-            snapshot = self.node.feedback_snapshot(enabled=enabled)
-            if predicate(snapshot):
-                return True
-            time.sleep(0.02)
-        return False
-
-    def initialize(self):
-        self.node.startup_settings_applied = False
-        self.node.global_speed_percent = None
-        self.node.set_execution_state("INITIALIZING", "Checking canonical robot feedback")
-        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
-        while True:
+    def confirm_stop(self, future=None):
+        future = future or self.stop_future
+        if future is None:
+            raise StopUnconfirmed("No Stop request exists to confirm")
+        deadline = time.monotonic() + COMMAND_RESPONSE_TIMEOUT_SEC
+        while not future.done():
             try:
-                snapshot = self.node.feedback_snapshot(enabled=False)
-                if snapshot["feed"]["robot_mode"] not in (4, 5, 9, 10, 11):
-                    raise ValueError(
-                        "Initialization requires Disabled/Enabled/Error/Paused/Jogging mode")
-                break
-            except ValueError:
-                if time.monotonic() >= deadline:
-                    raise
-                self.node.check_cancelled()
-                time.sleep(0.02)
-        required = ("EnableRobot", "SpeedFactor", "Tool", "SetTool", "CP")
-        self.node.set_execution_state("INITIALIZING", "Waiting for required startup services")
-        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
-        while True:
-            missing = [name for name in required if not self.clients[name].service_is_ready()]
-            if not missing:
-                break
-            self.node.check_cancelled()
-            self.node.feedback_snapshot(enabled=False)
+                self.monitor.snapshot(require_enabled=False)
+            except FeedbackFailure:
+                pass
             if time.monotonic() >= deadline:
-                raise ValueError("Startup required services unavailable: " + ", ".join(missing))
-            time.sleep(0.02)
-        snapshot = self.node.feedback_snapshot(enabled=False)
-        feed = snapshot["feed"]
-        if feed["digital_input_bits"] & 1 or self.node.holding_item:
-            raise ValueError("DI1/held item active at Live startup; no robot enable sent")
-        if (feed["robot_mode"] in (9, 10) or feed["isPauseCmdFlag"]
-                or feed["ErrorStatus"] or feed["CollisionStates"]):
-            self.node.set_execution_state(
-                "INITIALIZING", "Cancelling paused/error queue before robot enable")
-            self.recover_idle(stop_already_confirmed=False, enable=False)
-            if not self.wait(lambda s: s["feed"]["robot_mode"] in (4, 5, 11)
-                             and not s["feed"]["ErrorStatus"]
-                             and not s["feed"]["CollisionStates"]
-                             and not s["feed"]["isPauseCmdFlag"], SERVICE_TIMEOUT_SEC):
-                raise ValueError("Startup recovery did not clear error/pause; "
-                                 "check emergency stop or paused command state")
-        for name in ("StopMoveJog", "DisableRobot"):
-            try:
-                self._startup_call(name)
-                if name == "DisableRobot" and not self.wait(
-                        lambda s: s["feed"]["robot_mode"] == 4, SERVICE_TIMEOUT_SEC):
-                    raise ValueError("DisableRobot did not confirm Disabled mode")
-            except ResponsePending:
-                raise  # No response is not a returned failure: never overlap the next call.
-            except ValueError as exc:
-                self.node.events.record("WARNING", "startup_best_effort", str(exc), service=name)
-        self._startup_call("EnableRobot")
-        self.node.set_execution_state("INITIALIZING", "Startup EnableRobot: confirming Enabled")
-        if not self.wait(lambda s: s["feed"]["robot_mode"] == 5 and s["enabled"]
-                         and s["feed"]["EnableStatus"] == 1,
-                         SERVICE_TIMEOUT_SEC):
-            raise ValueError("EnableRobot did not confirm Enabled mode")
-        self._startup_call("SpeedFactor", ratio=100)
-        self.node.global_speed_percent = 100
-        self.node.global_speed_message = "Startup SpeedFactor 100% response confirmed"
-        self._startup_call("Tool", index=0)
-        self._startup_call("SetTool", index=1, value="{0,0,0,0,0,0}")
-        self._startup_call("CP", r=100)
-        self.node.startup_settings_applied = True
+                raise StopUnconfirmed("Stop acknowledgement timeout")
+            self.node.wait_control(0.02)
+        result = future.result()
+        if result is None or result.res != 0:
+            raise StopUnconfirmed(
+                f"Stop rejected: {None if result is None else result.res}")
+        anchor = None
+        held_violation = None
+
+        def stationary(snapshot):
+            nonlocal anchor, held_violation
+            feed = snapshot.feed
+            if self.node.holding_item:
+                if not feed["digital_input_bits"] & 1:
+                    held_violation = "DI1 suction feedback was lost during Stop"
+                for channel, active in self.node.expected_outputs.items():
+                    actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
+                    if actual != active:
+                        held_violation = (
+                            f"DO{channel} changed during Stop; expected {int(active)}")
+            pose = np.asarray(feed["tool_vector_actual"], dtype=float)
+            unmoved = anchor is not None and np.max(np.abs(pose - anchor)) <= 0.05
+            anchor = pose
+            return (not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
+                    and not feed["isPauseCmdFlag"] and feed["robot_mode"] in (4, 5, 9, 10)
+                    and unmoved)
         try:
-            self.confirm_ready()
-        except ValueError as exc:
-            self.node.events.record("WARNING", "startup_readiness_recovery", str(exc))
-            try:
-                self.recover_idle(stop_already_confirmed=False)
-            except ValueError as recovery_exc:
-                message = f"Startup calls completed; recovery failed: {recovery_exc}"
-                self.node.events.record("ERROR", "startup_readiness_blocked", message)
-                self.node.set_execution_state("FAILED", message)
-                return
-        self.node.set_execution_state("READY", "Initialized at SpeedFactor 100%, Tool 0, CP 100%")
+            self.monitor.wait(stationary, MODE_TRANSITION_TIMEOUT_SEC,
+                              stable_sec=STATIONARY_SEC,
+                              description="stationary, empty, unpaused queue after Stop")
+        except FeedbackFailure as exc:
+            raise StopUnconfirmed(str(exc)) from exc
+        self.moving = False
+        if held_violation is not None:
+            raise StopUnconfirmed(
+                "Stop completed but held-item integrity was not preserved: "
+                + held_violation)
+        self.node.events.record("INFO", "stop_confirmed",
+                                "Stop acknowledged; stationary empty queue confirmed")
 
-    def confirm_ready(self):
-        """Boundedly await coherent feedback, without reissuing any command."""
-        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
-        while True:
-            self.node.check_cancelled()
-            try:
-                snapshot = self.node.feedback_snapshot(enabled=True)
-                feed = snapshot["feed"]
-                if feed["robot_mode"] != 5 or feed["isRunQueuedCmd"] or feed["RunningStatus"]:
-                    raise ValueError(
-                        f"Robot readiness blocked: robot_mode={feed['robot_mode']}, "
-                        f"isRunQueuedCmd={feed['isRunQueuedCmd']}, "
-                        f"RunningStatus={feed['RunningStatus']} (required idle Enabled mode 5)")
-                return snapshot
-            except ValueError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.02)
+    def _phase(self, phase, message, waypoint=""):
+        self.node.operation_progress(phase, message, waypoint=waypoint)
 
-    def enable_robot(self):
-        self.node.set_execution_state("ENABLING", "EnableRobot: waiting for response")
-        self.call("EnableRobot")
-        self.node.set_execution_state("ENABLING", "EnableRobot: confirming enabled readiness")
-        self.confirm_ready()
-        self.node.set_execution_state("READY", "EnableRobot confirmed; no Home or Pick sent")
+    def _validate_held_snapshot(self, snapshot, *, known_holding=None,
+                                expected_outputs=None):
+        holding = (self.node.holding_item
+                   if known_holding is None else known_holding)
+        outputs = (self.node.expected_outputs
+                   if expected_outputs is None else expected_outputs)
+        if not holding:
+            return snapshot
+        feed = snapshot.feed
+        if not feed["digital_input_bits"] & 1:
+            raise HeldUnknown("Known held-item context lost DI1 suction feedback")
+        for channel, active in outputs.items():
+            actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
+            if actual != active:
+                raise HeldUnknown(
+                    f"Known held-item output DO{channel}={int(actual)}; "
+                    f"expected {int(active)}")
+        return snapshot
 
-    def recover_idle(self, *, stop_already_confirmed, enable=True):
-        """Cancel the queue, conditionally clear alarms, and re-enable; never resume it."""
-        if not stop_already_confirmed:
-            future = self.stop()
-            if future is None:
-                raise ValueError("Recovery Stop service unavailable")
-            self.confirm_stop(future, allow_not_ready=True)
+    def _held_predicate(self, predicate):
+        def checked(snapshot):
+            self._validate_held_snapshot(snapshot)
+            return predicate(snapshot)
+        return checked
 
-        def idle():
-            feed = self.node.feedback_snapshot(enabled=False)["feed"]
-            if feed["digital_input_bits"] & 1 or self.node.holding_item:
-                raise ValueError("DI1/held item present; automatic enable/clear is forbidden")
-            if feed["isRunQueuedCmd"] or feed["RunningStatus"]:
-                raise ValueError("Queue still active after Stop; no alarm clear or enable sent")
-            return feed
+    def _call_startup(self, name, **fields):
+        self._phase("STARTUP_COMMAND", f"{name}: waiting for response", name)
+        progress = self._validate_held_snapshot if self.node.holding_item else None
+        return self.call(name, progress=progress, **fields)
 
-        feed = idle()
-        if feed["ErrorStatus"] or feed["CollisionStates"] or feed["robot_mode"] == 9:
-            self.node.set_execution_state("RECOVERING", "ClearError: awaiting response")
-            self.call("ClearError", require_clear=True)
-            idle()
-            if not self.wait(lambda s: s["feed"]["robot_mode"] != 9
-                             and not s["feed"]["ErrorStatus"]
-                             and not s["feed"]["CollisionStates"], SERVICE_TIMEOUT_SEC):
-                raise ValueError("Error remains after ClearError; check whether the "
-                                 "emergency stop is pressed")
-        if not enable:
+    @staticmethod
+    def _idle(snapshot):
+        feed = snapshot.feed
+        return (feed["robot_mode"] == 5 and feed["EnableStatus"] == 1
+                and not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
+                and not feed["ErrorStatus"] and not feed["CollisionStates"]
+                and not feed["isPauseCmdFlag"] and feed["userCoordinate"] == 0
+                and feed["toolCoordinate"] == 0)
+
+    def _wait_enabled(self):
+        self._phase("MODE_CONFIRM", "Confirming Enabled mode", "EnableRobot")
+        return self.monitor.wait_samples(
+            self._held_predicate(
+                lambda sample: sample.feed["robot_mode"] == 5
+                and sample.feed["EnableStatus"] == 1 and sample.robot_enabled),
+            CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
+            cancel=self.node.cancel_requested, description="Enabled mode")
+
+    def _correct_persistent_pause_once(self):
+        self._wait_enabled()
+        try:
+            sample = self.monitor.wait_samples(
+                self._held_predicate(
+                    lambda state: bool(state.feed["isPauseCmdFlag"])),
+                CONSISTENT_FLAG_SAMPLES, 0.25, cancel=self.node.cancel_requested,
+                description="persistent pause samples")
+        except FeedbackFailure:
+            sample = None
+        if sample is None:
             return
-        idle()
-        self.node.set_execution_state("RECOVERING", "EnableRobot: awaiting response")
-        self.call("EnableRobot", require_clear=True)
-        idle()
-        self.node.set_execution_state("RECOVERING", "Confirming enabled/idle feedback")
-        self.confirm_ready()
-        idle()
-        self.node.events.record("INFO", "robot_recovered", "Stop/Clear/Enable confirmed")
+        self.node.events.record(
+            "WARNING", "startup_pause_correction",
+            "Three consecutive pause samples; applying one Stop -> Enable correction")
+        self._phase("PAUSE_CORRECTION", "Discarding persistent paused queue", "Stop")
+        future = self.request_stop("persistent pause after EnableRobot")
+        self.confirm_stop(future)
+        self._call_startup("EnableRobot")
+        self._wait_enabled()
+        self.monitor.wait_samples(
+            self._held_predicate(
+                lambda state: not state.feed["isPauseCmdFlag"]),
+            CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
+            cancel=self.node.cancel_requested, description="cleared pause flag after correction")
 
-    def set_global_speed(self, ratio):
-        if type(ratio) is not int or not 1 <= ratio <= 100:
-            raise ValueError("Global speed must be an integer from 1 through 100")
+    def _check_held_context(self, known_holding, expected_outputs):
+        snapshot = self.monitor.snapshot(require_enabled=False)
+        suction = bool(snapshot.feed["digital_input_bits"] & 1)
+        if suction and not known_holding:
+            raise HeldUnknown(
+                "DI1 is active without trusted controller-owned pickup context; outputs preserved")
+        if known_holding:
+            self._validate_held_snapshot(
+                snapshot, known_holding=True, expected_outputs=expected_outputs)
+        return snapshot
 
-        def idle(snapshot):
-            feed = snapshot["feed"]
-            if (feed["robot_mode"] != 5 or feed["isRunQueuedCmd"] or feed["RunningStatus"]
-                    or self.moving):
-                raise ValueError("SpeedFactor requires fresh enabled idle feedback")
-            if (self.node.holding_item and not feed["digital_input_bits"] & 1):
-                raise ValueError("Suction lost while setting global speed")
-
-        idle(self.node.feedback_snapshot(enabled=True))
-        # A timeout/cancellation may still be followed by late acceptance. Do not
-        # report the old factor as confirmed after dispatch becomes ambiguous.
-        self.node.global_speed_percent = None
-        self.node._publish()
-        self.call("SpeedFactor", ratio=ratio, progress=idle)
-        self.node.global_speed_percent = ratio
-        self.node.events.record("INFO", "global_speed_changed", "SpeedFactor response confirmed",
-                                ratio=ratio)
-
-    def _startup_call(self, name, **fields):
-        snapshot = self.node.feedback_snapshot(enabled=False)
-        if snapshot["feed"]["digital_input_bits"] & 1 or self.node.holding_item:
-            raise RuntimeError(f"Startup {name}: DI1/held item became active; "
-                               "no further initialization commands sent")
-        self.node.set_execution_state("INITIALIZING", f"Startup {name}: waiting for response")
+    def _clear_errors_if_needed(self):
+        current = self._validate_held_snapshot(
+            self.monitor.snapshot(require_enabled=False))
+        feed = current.feed
+        if not (feed["ErrorStatus"] or feed["CollisionStates"] or feed["robot_mode"] == 9):
+            self.node.events.record("INFO", "clear_error_skipped", "No active robot alarm")
+            return
         try:
-            return self.call(name, **fields)
-        except ResponsePending as exc:
-            raise ResponsePending(f"Startup {name}: {exc}") from exc
-        except ValueError as exc:
-            raise ValueError(f"Startup {name}: {exc}") from exc
+            self.monitor.wait_samples(
+                self._held_predicate(
+                    lambda sample: sample.feed["robot_mode"] == 9
+                    or bool(sample.feed["ErrorStatus"])
+                    or bool(sample.feed["CollisionStates"])),
+                CONSISTENT_FLAG_SAMPLES, 0.25,
+                cancel=self.node.cancel_requested,
+                description="persistent error/collision samples")
+        except FeedbackFailure:
+            current = self._validate_held_snapshot(
+                self.monitor.snapshot(require_enabled=False)).feed
+            if not (current["ErrorStatus"] or current["CollisionStates"]
+                    or current["robot_mode"] == 9):
+                self.node.events.record(
+                    "WARNING", "transient_error_ignored",
+                    "Error/collision did not persist for three feedback samples")
+                return
+            raise
+        self._call_startup("ClearError")
+        self.monitor.wait_samples(
+            self._held_predicate(
+                lambda sample: sample.feed["robot_mode"] != 9
+                and not sample.feed["ErrorStatus"]
+                and not sample.feed["CollisionStates"]),
+            CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
+            cancel=self.node.cancel_requested, description="cleared error/collision feedback")
+
+    def _apply_settings(self, speed_percent):
+        for name, fields in (
+                ("SpeedFactor", {"ratio": speed_percent}),
+                ("User", {"index": 0}),
+                ("Tool", {"index": 0}),
+                ("SetTool", {"index": 1, "value": "{0,0,0,0,0,0}"}),
+                ("CP", {"r": 100})):
+            self._check_held_context(self.node.holding_item, self.node.expected_outputs)
+            self._call_startup(name, **fields)
+            if name == "SpeedFactor":
+                self.node.global_speed_percent = speed_percent
+                self.node.publish_status()
+
+    def _confirm_ready(self):
+        self._phase("READY_CONFIRM", "Confirming coherent enabled/idle feedback")
+        return self.monitor.wait(
+            self._held_predicate(self._idle), MODE_TRANSITION_TIMEOUT_SEC,
+            cancel=self.node.cancel_requested, require_enabled=True,
+            stable_sec=READY_STABLE_SEC, description="stable READY feedback")
+
+    def startup(self):
+        self.wait_services(optional=("StopMoveJog",))
+        strict = tuple(name for name in self.required_services if name != "StopMoveJog")
+        self.node.check_all_command_owners(strict)
+        self.node.check_feedback_owners()
+        self.monitor.snapshot(require_enabled=False)
+        try:
+            self._call_startup("StopMoveJog")
+        except (CommandRejected, CommandResponseTimeout) as exc:
+            self.node.events.record("WARNING", "startup_best_effort", str(exc),
+                                    service="StopMoveJog")
+            if isinstance(exc, CommandResponseTimeout):
+                raise
+        self._phase("QUEUE_RESET", "Stopping and discarding any queued motion", "Stop")
+        self.confirm_stop(self.request_stop("explicit Startup queue reset"))
+        self._check_held_context(False, {})
+        self._call_startup("DisableRobot")
+        self.monitor.wait_samples(
+            lambda sample: sample.feed["robot_mode"] == 4
+            and sample.feed["EnableStatus"] == 0 and not sample.robot_enabled,
+            CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
+            cancel=self.node.cancel_requested, description="Disabled mode")
+        self._clear_errors_if_needed()
+        self._call_startup("EnableRobot")
+        self._correct_persistent_pause_once()
+        self._apply_settings(100)
+        self._reset_outputs_if_unheld()
+        self._confirm_ready()
+
+    def recover(self, speed_percent):
+        self.wait_services(optional=("StopMoveJog",))
+        strict = tuple(name for name in self.required_services if name != "StopMoveJog")
+        self.node.check_all_command_owners(strict)
+        self.node.check_feedback_owners()
+        self.ensure_no_pending_response()
+        self._phase("QUEUE_RESET", "Stopping and discarding any queued motion", "Stop")
+        self.confirm_stop(self.request_stop("explicit Recover queue reset"))
+        self._check_held_context(self.node.holding_item, self.node.expected_outputs)
+        self._clear_errors_if_needed()
+        self._call_startup("EnableRobot")
+        self._correct_persistent_pause_once()
+        self._apply_settings(speed_percent if speed_percent is not None else 100)
+        self._reset_outputs_if_unheld()
+        self._confirm_ready()
+        self._check_held_context(self.node.holding_item, self.node.expected_outputs)
+
+    def _reset_outputs_if_unheld(self):
+        if self.node.holding_item:
+            return
+        for channel in (1, 2, 13, 14):
+            self._check_held_context(False, {})
+            self._phase("OUTPUT_RESET", f"Resetting DO{channel}=0", f"DO{channel}")
+            before = self.monitor.sequence
+            self.call("DO", index=channel, status=0, time=0)
+            mask = 1 << (channel - 1)
+            self.monitor.wait(
+                lambda sample, m=mask: sample.sequence > before
+                and not bool(sample.feed["digital_outputs"] & m),
+                COMMAND_RESPONSE_TIMEOUT_SEC, cancel=self.node.cancel_requested,
+                require_enabled=False, description=f"startup DO{channel}=0 feedback")
+            self.node.expected_outputs[channel] = False
+
+    def set_global_speed(self, percent):
+        if type(percent) is not int or not 1 <= percent <= 100:
+            raise CommandRejected("Global speed must be an integer from 1 through 100")
+        snapshot = self.monitor.snapshot(require_enabled=True)
+        if not self._idle(snapshot) or self.moving:
+            raise FeedbackFailure("SpeedFactor requires stationary READY/HOLDING feedback")
+        self._check_held_context(self.node.holding_item, self.node.expected_outputs)
+        progress = self._validate_held_snapshot if self.node.holding_item else None
+        self.call("SpeedFactor", ratio=percent, progress=progress)
+        # The successful service acknowledgement establishes the latest known
+        # factor even if the following held-item integrity check faults.
+        self.node.global_speed_percent = percent
+        self.node.publish_status()
+        self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 
     def current_pose(self):
-        snapshot = self.node.feedback_snapshot(enabled=True)
-        if (snapshot["feed"]["isRunQueuedCmd"] or snapshot["feed"]["RunningStatus"]
-                or snapshot["feed"]["robot_mode"] != 5):
-            raise ValueError("Current-pose acquisition requires stationary enabled robot")
+        snapshot = self.monitor.snapshot(require_enabled=True)
+        if not self._idle(snapshot):
+            raise FeedbackFailure("Current-pose acquisition requires stationary READY feedback")
         result = self.call("GetPose", user=0, tool=0)
         return pose_matrix(robot_values(result.robot_return))
 
-    def _target_reached(self, target, actual_pose):
-        if target.joints_rad is not None:
-            return max(abs(actual-target_value) for actual, target_value in zip(
-                self.node.current_joints(), target.joints_rad)) <= HOME_JOINT_TOLERANCE_RAD
-        return pose_reached(
-            actual_pose, target.matrix,
-            translation_m=CARTESIAN_POSITION_TOLERANCE_M,
-            rotation_deg=CARTESIAN_ORIENTATION_TOLERANCE_DEG,
-        )
-
     def _target_values(self, target):
-        """Validate target data and exact taught joints without a vendor IK call."""
         matrix = target.matrix
         if (not isinstance(matrix, np.ndarray) or matrix.shape != (4, 4)
                 or not np.issubdtype(matrix.dtype, np.number) or np.iscomplexobj(matrix)
@@ -343,357 +452,204 @@ class DobotHardware:
                 or not np.allclose(matrix[3], [0, 0, 0, 1], atol=1e-9, rtol=0)
                 or not np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3),
                                    atol=1e-6, rtol=0)
-                or not math.isclose(float(np.linalg.det(matrix[:3, :3])), 1.,
-                                    abs_tol=1e-6)):
-            raise ValueError(f"Invalid rigid target transform for {target.name}; no motion sent")
+                or not math.isclose(float(np.linalg.det(matrix[:3, :3])), 1., abs_tol=1e-6)):
+            raise CommandRejected(f"Invalid rigid target transform for {target.name}")
         values = pose_values(matrix)
-        if not all(math.isfinite(value) for value in values):
-            raise ValueError(f"Nonfinite target coordinates for {target.name}; no motion sent")
         if target.joints_rad is not None:
             modeled = self.node.kinematics.forward(target.joints_rad)
             if not pose_reached(modeled, matrix, translation_m=0.002, rotation_deg=0.5):
-                raise ValueError(f"Taught joint/FK mismatch for {target.name}; no motion sent")
+                raise CommandRejected(f"Taught joint/FK mismatch for {target.name}")
         return values
 
-    def _prepare_batch(self, targets, start, *, before_suction):
-        """Validate every target while idle, before creating any motion queue."""
-        prepared = []
-        origin = start
-        for target in targets:
-            if before_suction is not None:
+    def _target_reached(self, target, snapshot):
+        if target.joints_rad is not None:
+            return max(abs(actual - expected) for actual, expected in zip(
+                snapshot.joints, target.joints_rad)) <= HOME_JOINT_TOLERANCE_RAD
+        return pose_reached(
+            pose_matrix(snapshot.feed["tool_vector_actual"]), target.matrix,
+            translation_m=CARTESIAN_POSITION_TOLERANCE_M,
+            rotation_deg=CARTESIAN_ORIENTATION_TOLERANCE_DEG)
+
+    def _monitor_motion_policy(self, snapshot, *, require_suction, forbid_suction,
+                               stop_on_suction, before_suction):
+        feed = snapshot.feed
+        detected = bool(feed["digital_input_bits"] & 1)
+        vacuum = bool(feed["digital_outputs"] & (1 << 12))
+        if require_suction and not detected:
+            raise FeedbackFailure("Suction lost during retract/Home")
+        if require_suction:
+            if not vacuum:
+                raise FeedbackFailure("Suction output DO13 lost during retract/Home")
+            for channel, active in self.node.expected_outputs.items():
+                actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
+                if actual != active:
+                    raise FeedbackFailure(
+                        f"Held-item output DO{channel} changed during retract/Home")
+        if forbid_suction and detected:
+            raise FeedbackFailure("Late DI1 after missed pickup; candidate retry forbidden")
+        if stop_on_suction:
+            if detected and not vacuum:
+                raise FeedbackFailure("Unexpected DI1 before suction output became active")
+            if detected and not self.suction_interrupted:
+                self.suction_interrupted = True
+                self.suction_stop_future = self.request_stop("DI1 acquired during final approach")
+            if not vacuum and before_suction is not None:
                 before_suction()
-            self.node.check_cancelled()
-            snapshot = self.node.feedback_snapshot(enabled=True)
-            if (snapshot["feed"]["isRunQueuedCmd"] or snapshot["feed"]["RunningStatus"]
-                    or snapshot["feed"]["robot_mode"] != 5):
-                raise ValueError("Queue preflight requires stationary enabled robot")
-            values = self._target_values(target)
-            if target.relative_z:
-                if (not np.allclose(origin[:2, 3], target.matrix[:2, 3], atol=1e-12, rtol=0)
-                        or not np.allclose(origin[:3, :3], target.matrix[:3, :3],
-                                           atol=1e-12, rtol=0)
-                        or target.matrix[2, 3] < origin[2, 3]):
-                    raise ValueError("Queued relative Home-height move must rise only at same XY")
-            prepared.append((target, values, origin.copy()))
-            origin = target.matrix
-        return prepared
 
     def move_batch(self, targets, *, require_suction=False, forbid_suction=False,
                    stop_on_suction=False, before_suction=None):
-        """Queue response-serialized waypoints, then confirm the whole owned queue."""
         targets = tuple(targets)
-        if not targets:
-            raise ValueError("Motion batch cannot be empty")
-        if sum((require_suction, forbid_suction, stop_on_suction)) > 1:
-            raise ValueError("Motion batch suction policies are mutually exclusive")
-        start = self.current_pose()  # Canonical GetPose is the actual Cartesian queue origin.
-        self.suction_stop, self.suction_interrupted = None, False
-        suction_started = False
+        if not targets or sum((require_suction, forbid_suction, stop_on_suction)) > 1:
+            raise CommandRejected("Invalid motion-batch suction policy or empty batch")
+        start = self.current_pose()
+        origin = start
+        prepared = []
         expected_outputs = {}
         for target in targets:
+            values = self._target_values(target)
+            if target.relative_z and (
+                    not np.allclose(origin[:2, 3], target.matrix[:2, 3], atol=1e-12, rtol=0)
+                    or not np.allclose(origin[:3, :3], target.matrix[:3, :3],
+                                       atol=1e-12, rtol=0)
+                    or target.matrix[2, 3] < origin[2, 3]):
+                raise CommandRejected("Relative Home-height target must rise at unchanged XY")
             for event in target.motion_io:
                 expected_outputs[event.channel] = event.active
+            prepared.append((target, values, origin.copy()))
+            origin = target.matrix
+        self.suction_interrupted = False
+        self.suction_stop_future = None
+        initial = self.monitor.snapshot(require_enabled=True)
+        before_sequence = initial.sequence
+        self.moving = True
+        started = time.monotonic()
+        last_progress = started
+        last_vector = np.asarray(initial.feed["tool_vector_actual"], dtype=float)
 
-        def monitor(snapshot):
-            nonlocal suction_started
-            self.node.check_cancelled()
-            feed = snapshot["feed"]
-            detected = bool(feed["digital_input_bits"] & 1)
-            if require_suction and not detected:
-                raise ValueError("Suction lost during queued retract/Home")
-            if forbid_suction and detected:
-                raise ValueError("Late DI1 after missed pickup; Stop required, no candidate retry")
-            if stop_on_suction:
-                vacuum = bool(feed["digital_outputs"] & (1 << 12))
-                if not suction_started and not vacuum and before_suction is not None:
-                    before_suction()  # Expiry during queued transit stops the pending descent.
-                suction_started = suction_started or vacuum
-                if detected:
-                    if not vacuum:
-                        raise ValueError("Unexpected DI1 before queued suction start; "
-                                         "Stop required")
-                    self._interrupt_suction()
-                elif suction_started and not vacuum:
-                    raise ValueError("Suction output lost during queued approach")
+        def progress(snapshot):
+            self._monitor_motion_policy(
+                snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
+                stop_on_suction=stop_on_suction, before_suction=before_suction)
 
-        monitor(self.node.feedback_snapshot(enabled=True))
-        prepared = self._prepare_batch(targets, start, before_suction=before_suction)
-        before = self.node.feedback_snapshot(enabled=True)["sequence"]
-        deadline = time.monotonic() + MOTION_TIMEOUT_SEC
-        self.node.events.record("INFO", "motion_batch_started", "Queueing owned waypoints",
-                                targets=[target.name for target in targets])
-        for target, values, origin in prepared:
-            monitor(self.node.feedback_snapshot(enabled=True))
+        try:
+            for target, values, previous in prepared:
+                self.node.raise_if_cancelled()
+                progress(self.monitor.snapshot(require_enabled=True))
+                if self.suction_interrupted:
+                    break
+                self.node.operation_progress("MOTION", f"Dispatching {target.name}",
+                                             waypoint=target.name)
+                params = ["user=0", "tool=0", f"v={target.speed_percent}",
+                          f"a={target.acceleration_percent}", "cp=0"]
+                if target.relative_z:
+                    self.call("RelMovLUser", a=0., b=0.,
+                              c=(target.matrix[2, 3] - previous[2, 3]) * 1000,
+                              d=0., e=0., f=0., param_value=params, progress=progress)
+                else:
+                    command = values if target.joints_rad is None else list(
+                        np.rad2deg(target.joints_rad))
+                    events = [event.vendor_value() for event in target.motion_io]
+                    service = "MovLIO" if events else "MovL"
+                    fields = dict(zip("abcdef", map(float, command)))
+                    if events:
+                        fields["mdis"] = events
+                    self.call(service, mode=target.joints_rad is not None, **fields,
+                              param_value=params, progress=progress)
+                self.node.events.record(
+                    "INFO", "motion_queued", target.name,
+                    speed_percent=target.speed_percent,
+                    acceleration_percent=target.acceleration_percent,
+                    motion_io=[event.vendor_value() for event in target.motion_io])
             if self.suction_interrupted:
-                break  # Stop discarded the forward queue; never submit the rest of descent.
-            if time.monotonic() >= deadline:
-                raise ValueError("Motion batch deadline expired; no later waypoint sent")
-            params = ["user=0", "tool=0", f"v={target.speed_percent}",
-                      f"a={target.acceleration_percent}", "cp=0"]
-            self.moving = True  # An unanswered acknowledgement is ambiguous motion acceptance.
-            if target.relative_z:
-                self.call("RelMovLUser", a=0., b=0.,
-                          c=(target.matrix[2, 3] - origin[2, 3])*1000,
-                          d=0., e=0., f=0., param_value=params, progress=monitor)
-            else:
-                command_values = (values if target.joints_rad is None
-                                  else list(np.rad2deg(target.joints_rad)))
-                events = [event.vendor_value() for event in target.motion_io]
-                service = "MovLIO" if events else "MovL"
-                fields = dict(zip("abcdef", map(float, command_values)))
-                if events:
-                    fields["mdis"] = events
-                self.call(service, mode=target.joints_rad is not None,
-                          **fields, param_value=params, progress=monitor)
-            self.node.events.record("INFO", "motion_queued", target.name,
-                                    motion_io=[event.vendor_value() for event in target.motion_io],
-                                    speed_percent=target.speed_percent,
-                                    acceleration_percent=target.acceleration_percent)
-        stable_since = None
-        tail = targets[-1]
-
-        def complete(snapshot):
-            nonlocal stable_since
-            monitor(snapshot)
-            if self.suction_interrupted:
+                self.confirm_stop(self.suction_stop_future)
+                sample = self.monitor.snapshot(require_enabled=True)
+                if (not sample.feed["digital_input_bits"] & 1
+                        or not sample.feed["digital_outputs"] & (1 << 12)):
+                    raise FeedbackFailure("Suction lost after acquisition Stop")
+                for channel, active in expected_outputs.items():
+                    actual = bool(sample.feed["digital_outputs"] & (1 << (channel - 1)))
+                    if actual != active:
+                        raise FeedbackFailure(
+                            f"Motion-timed DO{channel} mismatch after suction Stop")
+                self.node.expected_outputs.update(expected_outputs)
                 return True
-            feed = snapshot["feed"]
-            reached = self._target_reached(tail, pose_matrix(feed["tool_vector_actual"]))
-            if (snapshot["sequence"] <= before or not reached or feed["isRunQueuedCmd"]
-                    or feed["RunningStatus"] or feed["robot_mode"] != 5):
-                stable_since = None
-                return False
-            stable_since = time.monotonic() if stable_since is None else stable_since
-            return time.monotonic() - stable_since >= STATIONARY_SEC
-
-        if not self.wait(complete, max(0., deadline-time.monotonic()), enabled=True):
-            raise ValueError("Motion batch completion timeout; acceptance is not arrival")
-        if self.suction_interrupted:
-            self._confirm_suction_stop()
-            feed = self.node.feedback_snapshot(enabled=True)["feed"]
-            if not feed["digital_input_bits"] & 1 or not feed["digital_outputs"] & (1 << 12):
-                raise ValueError("Suction lost after queued descent Stop; retract blocked")
-        # Hardware events must actually be reflected by fresh output feedback.
-
-        def outputs_confirmed(snapshot):
-            monitor(snapshot)
-            return snapshot["sequence"] > before and all(
-                bool(snapshot["feed"]["digital_outputs"] & (1 << (channel-1))) == active
-                for channel, active in expected_outputs.items())
-        if not self.wait(outputs_confirmed, SERVICE_TIMEOUT_SEC, enabled=True):
-            raise ValueError("MovLIO motion I/O feedback confirmation timeout; no retry")
-        self.moving = False
-        self.node.events.record("INFO", "motion_batch_completed", tail.name,
-                                targets=[target.name for target in targets],
-                                suction_stop=self.suction_interrupted)
-        return self.suction_interrupted
-
-    def move(self, target, *, require_suction=False, stop_on_suction=False):
-        snapshot = self.node.feedback_snapshot(enabled=True)
-        if require_suction and not snapshot["feed"]["digital_input_bits"] & 1:
-            raise ValueError("Suction lost before movement")
-        self.suction_stop, self.suction_interrupted = None, False
-        if stop_on_suction and snapshot["feed"]["digital_input_bits"] & 1:
-            self.moving = True
-            self._interrupt_suction()
-            self._confirm_suction_stop()
+            tail = targets[-1]
+            stable_since = None
+            sequence = self.monitor.sequence
+            while True:
+                self.node.raise_if_cancelled()
+                snapshot = self.monitor.snapshot(require_enabled=True)
+                progress(snapshot)
+                now = time.monotonic()
+                vector = np.asarray(snapshot.feed["tool_vector_actual"], dtype=float)
+                if np.max(np.abs(vector - last_vector)) > 0.05:
+                    last_progress, last_vector = now, vector
+                reached = self._target_reached(tail, snapshot)
+                idle = (snapshot.sequence > before_sequence and reached
+                        and not snapshot.feed["isRunQueuedCmd"]
+                        and not snapshot.feed["RunningStatus"]
+                        and snapshot.feed["robot_mode"] == 5)
+                stable_since = now if idle and stable_since is None else (
+                    stable_since if idle else None)
+                if stable_since is not None and now - stable_since >= STATIONARY_SEC:
+                    break
+                if now - last_progress >= MOTION_NO_PROGRESS_SEC:
+                    raise FeedbackFailure("Motion made no measurable progress for three seconds")
+                if now - started >= MOTION_HARD_CAP_SEC:
+                    raise FeedbackFailure("Motion exceeded the 300-second hard deadline")
+                sequence = self.monitor.wait_next(
+                    sequence, min(1.0, MOTION_HARD_CAP_SEC - (now - started)),
+                    cancel=self.node.cancel_requested)
+            if expected_outputs:
+                self.monitor.wait(
+                    lambda sample: all(
+                        bool(sample.feed["digital_outputs"] & (1 << (channel - 1))) == active
+                        for channel, active in expected_outputs.items()),
+                    COMMAND_RESPONSE_TIMEOUT_SEC, cancel=self.node.cancel_requested,
+                    require_enabled=True, description="motion-timed output feedback")
+                self.node.expected_outputs.update(expected_outputs)
+            self.node.events.record("INFO", "motion_batch_completed", tail.name,
+                                    targets=[target.name for target in targets])
+            return False
+        except OperationCanceled:
+            self.request_stop("motion operation cancelled")
+            raise
+        finally:
             self.moving = False
-            return True  # Vacuum may seal while its output acknowledgement arrives.
-        values = self._target_values(target)
-        require_clear = (not require_suction and not stop_on_suction and
-                         snapshot["feed"]["tool_vector_actual"][2] > values[2] + 0.1)
-        if require_clear and snapshot["feed"]["digital_input_bits"] & 1:
-            raise ValueError("Unexpected DI1 before suction descent")
-        before = self.node.feedback_snapshot(enabled=True)["sequence"]
-        if stop_on_suction and self.node.feedback_snapshot(enabled=True)["feed"][
-                "digital_input_bits"] & 1:
-            self.moving = True
-            self._interrupt_suction()
-            self._confirm_suction_stop()
-            self.moving = False
-            return True
-        self.moving = True  # A timeout is ambiguous acceptance: Stop must be attempted.
-        params = ["user=0", "tool=0", f"v={target.speed_percent}",
-                  f"a={target.acceleration_percent}"]
-        if target.relative_z:
-            actual = self.current_pose()
-            self.call("RelMovLUser", a=0.0, b=0.0,
-                      c=values[2] - actual[2, 3]*1000, d=0.0, e=0.0, f=0.0, param_value=params,
-                      require_clear=require_clear)
-        else:
-            command_values = values if target.joints_rad is None else list(
-                np.rad2deg(target.joints_rad))
-            events = [event.vendor_value() for event in target.motion_io]
-            service = "MovLIO" if events else "MovL"
-            fields = dict(zip("abcdef", map(float, command_values)))
-            if events:
-                fields["mdis"] = events
-            self.call(service, mode=target.joints_rad is not None, **fields,
-                      param_value=params,
-                      monitor_suction=stop_on_suction, require_clear=require_clear)
-        stable_since = None
-        suction_detected = False
 
-        def complete(s):
-            nonlocal stable_since, suction_detected
-            if require_clear and s["feed"]["digital_input_bits"] & 1:
-                raise ValueError("Unexpected DI1 during descent before suction; Stop required")
-            if stop_on_suction and (
-                    self.suction_interrupted or s["feed"]["digital_input_bits"] & 1):
-                suction_detected = True
-                return True
-            if require_suction and not s["feed"]["digital_input_bits"] & 1:
-                raise ValueError("Suction lost during retract/Home")
-            reached = self._target_reached(
-                target, pose_matrix(s["feed"]["tool_vector_actual"]))
-            if (s["sequence"] <= before or not reached or s["feed"]["isRunQueuedCmd"]
-                    or s["feed"]["RunningStatus"] or s["feed"]["robot_mode"] != 5):
-                stable_since = None
-                return False
-            stable_since = time.monotonic() if stable_since is None else stable_since
-            return time.monotonic() - stable_since >= STATIONARY_SEC
-
-        if not self.wait(complete, MOTION_TIMEOUT_SEC, enabled=True):
-            raise ValueError("Movement completion timeout; command acceptance is not completion")
-        if suction_detected:
-            self._interrupt_suction()
-            self._confirm_suction_stop()
-        self.moving = False
-        self.node.events.record("INFO", "motion_completed", target.name,
-                                target=values, joint_target=target.joints_rad is not None,
-                                speed_percent=target.speed_percent,
-                                acceleration_percent=target.acceleration_percent,
-                                suction_stop=suction_detected)
-        return suction_detected
-
-    def _interrupt_suction(self):
-        if self.suction_stop is None:
-            self.node.check_command_owner("Stop")
-            self.suction_stop = self.stop()
-            if self.suction_stop is None:
-                raise ValueError("DI1 Stop service unavailable; retract blocked")
-        self.suction_interrupted = True
-
-    def _confirm_suction_stop(self):
-        if self.suction_stop is None:
-            raise ValueError("DI1 Stop unavailable after motion acknowledgement; retract blocked")
-        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
-        while not self.suction_stop.done():
-            self.node.check_cancelled()
-            self.node.feedback_snapshot(enabled=True)
-            if time.monotonic() >= deadline:
-                raise ValueError("DI1 Stop acknowledgement timeout; retract blocked")
-            time.sleep(0.02)
-        result = self.suction_stop.result()
-        if result is None or result.res != 0:
-            raise ValueError("DI1 Stop rejected; retract blocked")
-        before = self.node.feedback_snapshot(enabled=True)["sequence"]
-        stable_since, anchor = None, None
-
-        def stopped(snapshot):
-            nonlocal stable_since, anchor
-            feed = snapshot["feed"]
-            actual = pose_matrix(feed["tool_vector_actual"])
-            stationary = (snapshot["sequence"] > before and not feed["isRunQueuedCmd"]
-                          and not feed["RunningStatus"] and feed["robot_mode"] == 5
-                          and anchor is not None and pose_reached(anchor, actual))
-            if not stationary:
-                stable_since = None
-                anchor = actual
-                return False
-            stable_since = time.monotonic() if stable_since is None else stable_since
-            return time.monotonic() - stable_since >= STATIONARY_SEC
-
-        if not self.wait(stopped, SERVICE_TIMEOUT_SEC, enabled=True):
-            raise ValueError("DI1 descent Stop did not confirm stationary robot")
-
-    def confirm_stop(self, future, *, allow_not_ready=False):
-        """Confirm an operator Stop without allowing cancellation to hide its result."""
-        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
-        while not future.done():
-            self.node.feedback_snapshot(enabled=False)
-            if time.monotonic() >= deadline:
-                raise ValueError("Stop acknowledgement timeout")
-            time.sleep(0.02)
-        result = future.result()
-        if result is None or result.res != 0:
-            raise ValueError("Stop rejected")
-        before = self.node.feedback_snapshot(enabled=False)["sequence"]
-        stable_since, anchor = None, None
-
-        def stopped(snapshot):
-            nonlocal stable_since, anchor
-            feed = snapshot["feed"]
-            actual = pose_matrix(feed["tool_vector_actual"])
-            stationary = (snapshot["sequence"] > before and not feed["isRunQueuedCmd"]
-                          and not feed["RunningStatus"]
-                          and feed["robot_mode"] in ((4, 5, 9, 10) if allow_not_ready else (5,))
-                          and anchor is not None and pose_reached(anchor, actual))
-            if not stationary:
-                stable_since = None
-                anchor = actual
-                return False
-            stable_since = time.monotonic() if stable_since is None else stable_since
-            return time.monotonic() - stable_since >= STATIONARY_SEC
-
-        deadline = time.monotonic() + SERVICE_TIMEOUT_SEC
-        while time.monotonic() < deadline:
-            if stopped(self.node.feedback_snapshot(enabled=False)):
-                self.moving = False
-                self.node.events.record("INFO", "stop_confirmed", "Robot stationary after Stop")
-                return
-            time.sleep(0.02)
-        raise ValueError("Stop did not confirm stationary robot")
+    def move(self, target, *, require_suction=False):
+        return self.move_batch((target,), require_suction=require_suction)
 
     def output(self, channel, active, *, require_clear=False):
-        def clear(snapshot):
-            if require_clear and snapshot["feed"]["digital_input_bits"] & 1:
-                raise ValueError("Unexpected/late DI1 before vacuum OFF; no candidate retry")
-
-        clear(self.node.feedback_snapshot(enabled=True))
-        before = self.node.feedback_snapshot(enabled=True)["sequence"]
-        self.call("DO", index=channel, status=int(active), time=0,
-                  progress=clear if require_clear else None)
+        snapshot = self.monitor.snapshot(require_enabled=True)
+        if require_clear and snapshot.feed["digital_input_bits"] & 1:
+            raise FeedbackFailure("Unexpected DI1 before output change")
+        before = snapshot.sequence
+        self.call("DO", index=channel, status=int(active), time=0)
         mask = 1 << (channel - 1)
-
-        def confirmed(snapshot):
-            clear(snapshot)
-            return (snapshot["sequence"] > before and
-                    bool(snapshot["feed"]["digital_outputs"] & mask) == active)
-
-        if not self.wait(confirmed, SERVICE_TIMEOUT_SEC, enabled=True):
-            raise ValueError(f"DO{channel} feedback confirmation timeout")
+        self.monitor.wait(
+            lambda sample: sample.sequence > before
+            and bool(sample.feed["digital_outputs"] & mask) == active,
+            COMMAND_RESPONSE_TIMEOUT_SEC, cancel=self.node.cancel_requested,
+            require_enabled=True, description=f"DO{channel} output feedback")
+        self.node.expected_outputs[channel] = active
 
     def sensor(self, active, timeout, *, settling_sec):
-        stable_since = None
-
-        def confirmed(s):
-            nonlocal stable_since
-            if bool(s["feed"]["digital_input_bits"] & 1) != active:
-                stable_since = None
-                return False
-            stable_since = time.monotonic() if stable_since is None else stable_since
-            return time.monotonic() - stable_since >= settling_sec
-
-        return (confirmed(self.node.feedback_snapshot(enabled=True))
-                or self.wait(confirmed, timeout, enabled=True))
-
-    def stop(self):
-        # Cancellation cannot prevent the safety stop. Never disable or release a held item.
+        def expected(sample):
+            return bool(sample.feed["digital_input_bits"] & 1) == active
         try:
-            self.node.check_command_owner("Stop")
-        except (ValueError, RuntimeError) as exc:
-            self.node.events.record("ERROR", "stop_owner_invalid", str(exc))
-            return None
-        client = self.clients["Stop"]
-        if client.service_is_ready():
-            future = client.call_async(self.types["Stop"].Request())
-            self.node.events.record("WARNING", "stop_requested", "Stop sent; confirmation pending")
-            return future
-        self.node.events.record("ERROR", "stop_unavailable", "Cannot confirm robot stopped")
-        return None
-
-    def close(self):
-        for client in self.clients.values():
-            self.node.destroy_client(client)
-        self.clients.clear()
+            self.monitor.wait(expected, timeout, cancel=self.node.cancel_requested,
+                              require_enabled=True, stable_sec=settling_sec,
+                              description=f"DI1={int(active)}")
+            return True
+        except FeedbackFailure as exc:
+            # A coherent, fresh opposite state is an ordinary missed-suction
+            # result.  Stale/malformed feedback is never converted into a miss.
+            try:
+                snapshot = self.monitor.snapshot(require_enabled=True)
+            except FeedbackFailure:
+                raise exc
+            actual = bool(snapshot.feed["digital_input_bits"] & 1)
+            if actual != active:
+                return False
+            raise exc

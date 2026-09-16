@@ -11,7 +11,8 @@ src/
 ├── orbbec_camera_launcher/ # Gemini 335 configuration and bounded supervisor GUI
 ├── camera_calibration/    # manual-prefix two-mode ChArUco calibration GUI
 ├── item_perception_yolo/  # platform teaching and perception integration
-├── robot_controller/      # service-driven Home/pick/Stop; GUI gate, headless Live
+├── robot_controller/      # deterministic Home/Pick hardware authority + GUI/preview clients
+├── robot_controller_interfaces/ # typed controller actions, services, and status
 ├── item_pick/             # imported reference only; excluded by COLCON_IGNORE
 ├── DOBOT_6Axis_ROS2_V4/  # Dobot official SDK, pruned to CR10
 └── OrbbecSDK_ROS2/       # Orbbec official ROS 2 wrapper snapshot
@@ -26,110 +27,49 @@ Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-ma
 
 ## Package organization
 
-The root build contains 14 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `robot_controller`, and `item_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
+The root build contains 15 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `robot_controller`, `robot_controller_interfaces`, and `item_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
 
-## Planned robot-command ownership
+## Robot Controller v2
 
-The full controller integration will make `robot_controller` the sole
-application allowed to issue motion, stop, robot-setting and gripper/I/O
-commands through Dobot bringup. Other applications, including the existing
-motion and gripper GUIs, will request actions through it. Bringup remains the
-hardware transport and feedback provider. This is a recorded architecture
-decision, not an implemented restriction yet: current direct clients still
-require migration. The imported `src/item_pick` package is reference code for
-that work and is not an approved ready-to-run integration. See the blueprint
-diary for the outstanding pick-profile and I/O decisions.
+`robot_controller` is now the production hardware authority for deterministic
+Home and Pick operations. Normal launch separates it into a headless controller,
+a TF-only preview process with no Dobot clients, and an API-only GUI. Headless
+launch starts only the controller and strictly loads the flat `runtime_teach/`
+catalog. Crucially, neither launch mode enables or moves the robot: both require
+an explicit typed `/robot_controller/startup` call.
 
-The controller will request a bounded candidate batch from `item_detect`, which
-loads the model/item profile and current camera/platform/bin artifacts and
-returns item targets in `platform_reference`. The item profile will save both
-`retry.pose_candidates` (maximum ranked poses requested for controller retries)
-and a separate `yolo.max_detections` per-image detection cap. The initial
-profile editor and shared GUI/headless detector described below implement
-read-only detection requests. Controller Home/pick execution is now explicit;
-the GUI starts Live OFF with TF-only previews, while headless initializes
-permanently Live before it accepts explicit actions. Imported
-prototype runtimes have not been enabled.
-
-Item Teach has no controller-validation button or controller client. Configure
-the controller independently in its GUI, or headlessly from a strict flat
-`runtime_teach/` set (one item YAML/paired model plus one bin YAML). It validates
-the latest hash-bound station calibration and can preview Home/pick TFs without
-commands. The red **Live** GUI control enables one-time robot startup
-initialization at SpeedFactor 100%, then service-triggered Home and vertical
-picking. Headless starts permanently Live but never initiates Home or Pick
-itself. No automatic pick, placement or
-hardware launch. Legacy direct clients still need
-migration before sole-command ownership can be claimed. See
-[controller README](src/robot_controller/README.md) for motion/safety requirements.
+Home and Pick are native ROS actions, and each goal carries the exact active
+configuration SHA-256 so stale clients cannot execute replaced teach files.
+Pick requests one fresh hash-matched batch from `item_detect`; candidate count
+always comes from Item Teach `pose_candidates`. Typed Startup, Recover, Stop,
+Configure and global-speed services support those actions, while reliable
+transient-local typed status reports the state and operation phase. The old
+Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image endpoints are removed.
 
 ```bash
+ros2 launch robot_controller robot_controller.launch.py
 ros2 launch robot_controller robot_controller.launch.py headless:=true
 ```
 
-This headless command starts Live and disables/re-enables the connected robot;
-check physical safety and independently launch canonical bringup first. The GUI
-starts Live OFF.
-GUI buttons and headless clients share `/robot_controller/set_live`, `/go_home`,
-`/pick_item`, `/stop`, and `/set_debug_images`; action replies acknowledge
-acceptance and completion is reported on `/robot_controller/status`. Optional
-debug-image capture saves the exact requested annotated RGB/depth pair under
-ignored `debug/pick_img/` without changing candidates or motion.
-Controller startup follows Motion Debug's ordered preconditioning/enable/settings
-cycle, with SpeedFactor 100%. Only StopMoveJog and DisableRobot are best-effort.
-The **Global speed** slider (1–100%) changes SpeedFactor while Live is ON and
-the controller is idle, separately from taught per-command speed/acceleration.
-It waits for the robot response and displays the confirmed factor. Each Live
-initialization resets it to 100%; this transient command is not saved in teach files.
-Headless clients use `/robot_controller/set_global_speed` with
-`dobot_msgs_v4/srv/SpeedFactor` and an integer `ratio`.
-Normal calls wait for each response before another is sent; an unanswered
-response timeout stops the sequence, including for a best-effort call. Startup
-and watchdog errors name the exact call or feedback blocker. A paused queue is
-never resumed, and READY requires fresh idle/fault-free feedback. Live ON enables
-the robot during its ordered startup; a persistent readiness blocker triggers
-one guarded Stop, conditional ClearError and EnableRobot recovery. Stop / Clear
-also confirms a stationary, empty queue and re-enables when safe. With DI1 OFF
-and an unchanged loaded Home profile, it then uses fresh actual GetPose and the
-profile-load-time cached Home FK reference to go Home; it never resumes a
-discarded queue or trusts an old EE target. A DI1-
-active/possibly held item instead follows the established last-prepick return
-policy, with no blind idle reset. If startup settings or global SpeedFactor are
-unknown, an explicit Stop / Clear re-runs the ordered initialization before
-Home rather than assuming a robot setting. The separate GUI Enable Robot button
-is removed; the optional headless
-`/robot_controller/enable_robot` Trigger service remains. Home/Pick stay clickable
-when Live recovery failed, but refuse motion and show the exact blocker plus an
-emergency-stop check prompt. Hardware calls remain response-serialized and
-unanswered calls never automatically advance.
-Home compares current Link6 Z with taught Home Z. Below Home Z, it first uses
-GetPose/RelMovLUser to rise to Home Z at current XY/attitude, then MovL joint
-mode reaches taught joints. At or above Home Z it skips the relative clearance
-move and sends only the direct joint-mode Home target. Debug uses the same branch
-and therefore omits `robot_controller_debug_home_height` when it is unnecessary.
-The Dobot ROS bridge returns GetPose's six values alone in `robot_return`
-(for example `{x,y,z,rx,ry,rz}`); its separate `res` field carries the TCP
-error ID. The controller treats that validated response as the actual Cartesian
-pose and does not compare it with current-joint FK. It caches taught-joint FK
-once when the profile loads, for Home Z/fixed-attitude planning only. Home
-completion requires each fresh actual joint within one degree of the taught
-value; Cartesian endpoints use 5 mm/one-degree tolerance. Both also require
-fresh enabled, stationary and queue-idle feedback. It does not call InverseKin:
-taught Home joints use MovL joint input. Item waypoints without timed output
-events use MovL Cartesian input; only waypoints with real motion-timed DO events
-use MovLIO. All remain linear moves, and MovLIO is never sent with an empty
-`mdis` array or a fake tool command.
-Pick holds Home attitude/base Z,
-uses MovL/MovLIO, stops on DI1 during final descent and confirms stationary feedback
-before retract. Forward and return waypoints are response-serialized queues,
-not host-side waits at every waypoint. MovLIO opens enabled fingers at 50% of
-the above-item clearance move and starts suction at final-descent start.
-Finger closing requires DI1-confirmed success: before retract when grip_onpick
-is true, otherwise at the end of slow retract-to-prepick. Missed suction waits
-saved pick_settling and confirms final
-retract and Home before another still-fresh candidate; other faults cancel
-without retry. Every Pick starts at Home. Successful picks return Home holding
-suction; an exhausted batch also returns Home and reports failure.
+Startup performs strict Stop/queue confirmation, DI1 protection,
+disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
+100, unheld output reset, and coherent READY confirmation. Recover performs the
+same guarded recovery without moving Home. Stop and native cancellation preserve
+all gripper outputs, discard queued motion, and finish in `RECOVERY_REQUIRED`;
+they never automatically Home, release, or resume. Trusted held-item DI/output
+feedback is checked throughout recovery and Stop confirmation. If idle
+supervision sees an unexpected running/nonempty queue, it pre-empts that motion
+with the independent Stop path before requiring recovery.
+
+Home uses fresh GetPose only to decide whether an upward current-XY rise is
+needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
+transforms platform-relative poses, applies schema-6 vertical geometry and
+timed gripper behavior, and returns Home after every attempt. Only missed suction
+advances to another candidate. No-I/O moves use MovL, real timed-output moves use
+non-empty MovLIO, and the conditional rise uses RelMovLUser. The controller never
+uses Continue or InverseKin. See the
+[controller README](src/robot_controller/README.md) for its typed APIs, state
+machine, raw CLI examples, timing policy and commissioning requirements.
 
 ## Item Teach and controller
 
@@ -306,10 +246,11 @@ read-only-preview exception; item settings, model execution and arming remain un
 `item_detect.launch.py` uses the same automatic station selection, with explicit
 item/bin artifact paths, `trusted_model:=true` and `armed:=true`; its
 `platform_teach_file` argument is removed. Platform/Bin Teach retain their
-explicit calibration selection. The controller can request up to
-the taught `pose_candidates` count through its read-only `/robot_controller/request_item_poses`
-Trigger action. Detector/teach nodes remain read-only; explicit controller real
-mode alone implements Home/pick/I/O. No training is included. Private inference
+explicit calibration selection. The controller requests one fresh batch directly
+from `/item_detect/get_item_poses`, always using the taught `pose_candidates`
+limit and exact profile/station hashes. Detector/teach nodes remain read-only;
+only explicit controller Startup followed by a typed Home/Pick action can issue
+motion or I/O. No training is included. Private inference
 wheels are pinned/verified/extracted offline; exact Torch/system dependencies
 still require separate provisioning. The retired training-oriented teacher
 and separate `item_detect_yolo_debug` sources/launchers have been removed.

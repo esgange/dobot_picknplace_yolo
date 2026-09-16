@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+from robot_controller.preview import main
+
+if __name__ == "__main__":
+    main()

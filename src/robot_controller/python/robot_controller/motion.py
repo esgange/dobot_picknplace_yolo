@@ -113,10 +113,13 @@ class PickExecutor:
         self.hardware = hardware
         self.finish_home = finish_home
 
-    def run(self, plans, settings, *, check, return_home, remember_prepick=None):
+    def run(self, plans, settings, *, check, return_home, remember_prepick=None,
+            progress=None, holding_changed=None):
         grip = settings["gripper"]["use_grip"]
         close = grip and settings["gripper"]["grip_onpick"]
         for index, plan in enumerate(plans, 1):
+            if progress is not None:
+                progress("CANDIDATE", f"Attempting candidate {index}", index)
             check(index)
             # Never turn vacuum off first and then discover a possibly held item.
             if not self.hardware.sensor(False, 0, settling_sec=0):
@@ -130,7 +133,13 @@ class PickExecutor:
             if not acquired:
                 acquired = self.hardware.sensor(True, settings["timing"]["pick_settling"],
                                                 settling_sec=0)
+            if acquired and holding_changed is not None:
+                # Establish trusted in-memory holding context before any gripper
+                # output or return motion can fail.
+                holding_changed(True)
             if acquired and close:
+                if progress is not None:
+                    progress("GRIP", "Suction confirmed; closing fingers", index)
                 self.hardware.output(14, False)
                 self.hardware.output(2, True)
             stopped_pose = self.hardware.current_pose()

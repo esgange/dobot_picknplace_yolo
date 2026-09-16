@@ -1,0 +1,15 @@
+std_msgs/Header header
+string state
+string message
+string configuration_id
+bool configured
+bool holding_item
+bool operation_active
+string operation
+string phase
+string waypoint
+uint32 candidate_index
+uint32 candidate_total
+int16 global_speed_percent
+bool startup_complete
+bool feedback_fresh

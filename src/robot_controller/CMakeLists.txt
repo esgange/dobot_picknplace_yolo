@@ -3,7 +3,11 @@ project(robot_controller)
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 ament_python_install_package(${PROJECT_NAME} PACKAGE_DIR python/${PROJECT_NAME})
-install(PROGRAMS scripts/robot_controller DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS
+  scripts/robot_controller
+  scripts/robot_controller_gui
+  scripts/robot_controller_preview
+  DESTINATION lib/${PROJECT_NAME})
 install(FILES launch/robot_controller.launch.py DESTINATION share/${PROJECT_NAME}/launch)
 install(FILES README.md DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)

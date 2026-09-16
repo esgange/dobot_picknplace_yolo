@@ -1,0 +1,11 @@
+uint8 HOME=1
+uint8 PICK=2
+uint8 CLEAR=3
+uint8 operation
+string item_teach_file
+string bin_teach_file
+---
+bool success
+string message
+string configuration_id
+string[] tf_frames

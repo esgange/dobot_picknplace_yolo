@@ -1,0 +1,6 @@
+string item_teach_file
+string bin_teach_file
+---
+bool success
+string message
+string configuration_id
