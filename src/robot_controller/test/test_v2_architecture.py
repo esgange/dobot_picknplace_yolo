@@ -110,6 +110,18 @@ def test_gui_configuration_can_reload_only_from_unheld_idle_ready():
     assert 'current in ("UNCONFIGURED", "INACTIVE", "READY")' in gui
 
 
+def test_hardware_and_preview_share_candidate_orientation_planner():
+    controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
+    preview = (PACKAGE / "python/robot_controller/preview.py").read_text()
+    motion = (PACKAGE / "python/robot_controller/motion.py").read_text()
+    assert "candidate_pose_in_base(" in controller
+    assert "candidate_pose_in_base(" in preview
+    assert "plan = pick_targets(" in controller
+    assert "plan = pick_targets(" in preview
+    assert "item[:3, 1]" in motion
+    assert "home_rotation @ local_z_rotation" in motion
+
+
 def test_idle_supervision_preempts_unexpected_motion():
     controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
     block = controller.split("def _stop_unexpected_idle_motion", 1)[1].split(

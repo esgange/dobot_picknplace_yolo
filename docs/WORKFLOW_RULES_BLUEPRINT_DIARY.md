@@ -3314,6 +3314,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   ament_flake8; the controller package and complete 15-package workspace build
   successfully. No detector request or robot command was issued.
 
+### 2026-09-16 — Align the gripper green axis to each item's short axis
+
+- Investigation confirmed perception was not the source of the observed fixed
+  orientation. The native geometry already defines candidate local X as the
+  metric long axis and local Y as the short axis and returns a normalized
+  platform-plane yaw quaternion. Candidate validation retained that quaternion,
+  but controller and TF-preview planning transformed only XYZ; `pick_targets`
+  copied the taught Home rotation into every item waypoint. Live audit records
+  corroborated this: distinct candidate positions were all dispatched with the
+  same `[-179.874, 0.085, -134.794]` degree RPY.
+- Rule 75 consumes the existing heading without treating it as a full TCP pose.
+  Compose the candidate through the destination platform transform, project its
+  base-relative short axis onto the plane perpendicular to taught Home tool Z,
+  then spin the Home attitude only about that local Z until Link6 green/Y is
+  parallel to the short-axis line. Preserve tool Z exactly. The undirected
+  rectangle permits a modulo-180-degree equivalent; choose the nearest solution,
+  limiting the change from Home to 90 degrees.
+- One aligned attitude applies to candidate transit, clearance, pre-pick, pick,
+  retract and final clearance. Early-suction stopped-pose recovery continues to
+  preserve the actual stopped attitude while rising, and the exact joint Home
+  target restores taught orientation. Platform tilt continues to affect XYZ and
+  item-heading transformation but never tilts the TCP or changes base-Z height
+  equations.
+- Hardware and TF Preview use the same candidate-pose composition and target
+  planner. Reject nonfinite, non-normalized, non-yaw candidate quaternions,
+  non-rigid transforms and degenerate short-axis projections before motion.
+  Record candidate quaternion, transformed short/commanded green axes, applied
+  tool-axis rotation and target RPY in the bounded controller event log.
+- No ROS interface, Item Teach schema, model, station artifact or operator teach
+  file changes are required. Existing source hashes, request ownership,
+  cancellation, Stop, vertical geometry, I/O, retry and completion policies are
+  unchanged.
+- Verification is source/synthetic only: test rotated items, tilted platforms,
+  nonvertical taught tool Z, modulo-180 shortest motion, every waypoint, malformed
+  headings, shared hardware/preview construction, compilation/lint, controller
+  package tests, package/root builds, staged review and `git diff --check`. Do not
+  request detector poses or issue robot commands. Physical verification begins
+  separately with TF Preview and then a supervised low-speed clearance trial.
+- Verification completed with all 110 focused Robot Controller tests passing
+  directly and all 111 package-reported results passing with zero errors,
+  failures, or skips. Python compilation and all 20 controller/test files pass
+  ament_flake8; the controller package and complete 15-package workspace build
+  successfully. An additional source-only station-math probe covered headings
+  from -90 through 179 degrees and confirmed exact tool-Z preservation, perfect
+  short-axis/green-axis line alignment and a commanded turn no greater than 90
+  degrees. No detector request or robot command was issued.
+
 ### Future entry template
 
 ```text

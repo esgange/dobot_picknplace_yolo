@@ -153,7 +153,7 @@ class CandidateClient:
                     or value.center_distance < previous_distance
                     or not all(math.isfinite(number) for number in numeric)
                     or abs(sum(number * number for number in (q.x, q.y, q.z, q.w)) - 1.0)
-                    > 1e-5):
+                    > 1e-5 or abs(q.x) > 1e-6 or abs(q.y) > 1e-6):
                 raise FeedbackFailure("Malformed, duplicate, or unordered detector candidate")
             identifiers.add(value.id)
             previous_distance = value.center_distance

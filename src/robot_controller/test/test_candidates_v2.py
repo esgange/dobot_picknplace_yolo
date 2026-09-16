@@ -107,6 +107,14 @@ def test_malformed_candidate_evidence_is_rejected(tmp_path, mutation, match):
         client(tmp_path)._validate_result(result, configuration(), False)
 
 
+def test_candidate_orientation_must_be_platform_plane_yaw(tmp_path):
+    result = valid_result()
+    result.candidates[0].pose.orientation.x = 0.1
+    result.candidates[0].pose.orientation.w = (1.0 - 0.1**2) ** 0.5
+    with pytest.raises(FeedbackFailure, match="Malformed"):
+        client(tmp_path)._validate_result(result, configuration(), False)
+
+
 def test_synchronized_positive_candidate_timestamps_do_not_expire(tmp_path):
     result = valid_result()
     result.header.stamp.sec = result.depth_stamp.sec = 1

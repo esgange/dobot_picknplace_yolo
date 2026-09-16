@@ -7,8 +7,6 @@ from pathlib import Path
 import signal
 import threading
 
-import numpy as np
-
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
@@ -35,8 +33,9 @@ from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldUnknown, OperationCanceled, StopUnconfirmed)
 from .feedback import FeedbackMonitor, enabled_blockers
 from .hardware import DobotTransport
-from .kinematics import Cr10Kinematics
-from .motion import PickExecutor, home_targets, pick_targets
+from .kinematics import Cr10Kinematics, pose_values
+from .motion import (PickExecutor, candidate_pose_in_base, home_targets,
+                     pick_attitude, pick_targets)
 from .state_machine import ControllerStateMachine
 
 
@@ -889,10 +888,21 @@ class RobotController(Node):
                 return result
             plans = []
             for index, candidate in enumerate(batch.candidates, 1):
-                xyz = config.selection.station.platform.base_from_platform @ np.array(
-                    [*candidate.position_m, 1.0])
-                plans.append(pick_targets(
-                    config.home_matrix, xyz[:3], config.profile, index))
+                item_pose = candidate_pose_in_base(
+                    config.selection.station.platform.base_from_platform,
+                    candidate.position_m, candidate.quaternion)
+                _rotation, delta_deg = pick_attitude(config.home_matrix, item_pose)
+                plan = pick_targets(config.home_matrix, item_pose, config.profile, index)
+                plans.append(plan)
+                self.events.record(
+                    "INFO", "pick_orientation_planned",
+                    "Aligned Link6 green/Y with the item short-axis line",
+                    candidate_id=candidate.identifier, candidate_index=index,
+                    candidate_quaternion_xyzw=list(candidate.quaternion),
+                    item_short_axis_base=item_pose[:3, 1].tolist(),
+                    target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
+                    tool_axis_rotation_deg=delta_deg,
+                    target_rpy_deg=pose_values(plan[0].matrix)[3:])
 
             def check(index):
                 self.raise_if_cancelled()

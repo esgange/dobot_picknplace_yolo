@@ -228,9 +228,22 @@ Pick is permitted only from `READY` with DI1 clear:
    `/item_detect/get_item_poses`, advertised by exactly one root node: headless
    `/item_detect` or explicitly Armed `/item_teach`;
 3. transform platform-relative targets into base coordinates;
-4. attempt up to Item Teach `pose_candidates` in detector rank order;
-5. after every miss, retract and return Home before advancing;
-6. after success, retract and return Home holding with suction on.
+4. align Link6 green/Y to each item's short-axis line while preserving taught
+   tool Z;
+5. attempt up to Item Teach `pose_candidates` in detector rank order;
+6. after every miss, retract and return Home before advancing;
+7. after success, retract and return Home holding with suction on.
+
+The detector pose uses local X for the measured long axis and local Y for the
+short axis. It is an in-plane heading, not a TCP attitude. The controller
+composes that heading through the destination platform transform, projects the
+short axis perpendicular to the exact taught Home tool Z, and spins the taught
+attitude around that local Z until Link6 green/Y is parallel to the projected
+short-axis line. Since a rectangle has no directed end, the equivalent
+modulo-180° solution nearest Home is used, so the commanded rotation is at most
+90°. All candidate transit/descent/retract targets share this attitude; exact
+joint Home restores the taught orientation. Platform tilt is not copied into
+TCP roll/pitch, and all waypoint heights remain referenced to base Z.
 
 The schema-7 geometry is unchanged: pick Z is item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
@@ -246,6 +259,8 @@ Service acknowledgement is acceptance only; actual
 feedback confirms every result. Only coherent missed suction advances to the
 next candidate. All command, feedback, state, cancellation, and result events
 are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.
+Each candidate plan also records its source quaternion, transformed short axis,
+commanded green axis, applied tool-axis rotation, and target RPY.
 
 Joint Home completion uses ±1° independently on every joint. Cartesian target
 completion uses 5 mm Euclidean translation and 1° orientation. Both require 300

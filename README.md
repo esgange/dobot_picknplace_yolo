@@ -103,10 +103,14 @@ control back while an edit or service confirmation is in progress.
 Home uses fresh GetPose only to decide whether an upward current-XY rise is
 needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
 transforms platform-relative poses, applies schema-7 vertical geometry and
-timed gripper behavior, and returns Home after every attempt. Only missed suction
-advances to another candidate. No-I/O moves use MovL, real timed-output moves use
-non-empty MovLIO, and the conditional rise uses RelMovLUser. Continue is used only
-by the explicit paused-queue service; the controller never uses InverseKin. See the
+timed gripper behavior, and returns Home after every attempt. Each candidate
+rotates the taught attitude only around its unchanged tool Z, choosing the
+nearest modulo-180° solution that makes Link6 green/Y parallel to the detected
+item short-axis line. Platform tilt never becomes TCP tilt and waypoint heights
+remain in base Z. Only missed suction advances to another candidate. No-I/O
+moves use MovL, real timed-output moves use non-empty MovLIO, and the conditional
+rise uses RelMovLUser. Continue is used only by the explicit paused-queue service;
+the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 

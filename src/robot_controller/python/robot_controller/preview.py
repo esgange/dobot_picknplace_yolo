@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import threading
 
-import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import TransformStamped
@@ -21,7 +20,7 @@ from .candidates import (
 from .configuration import load_configuration
 from .controller import PackageEventLogger
 from .kinematics import Cr10Kinematics
-from .motion import Target, pick_targets
+from .motion import Target, candidate_pose_in_base, pick_targets
 
 
 class RobotControllerPreview(rclpy.node.Node):
@@ -93,9 +92,11 @@ class RobotControllerPreview(rclpy.node.Node):
                 batch = self.client.request(
                     config, save_debug_images=False, cancel=self.cancel.is_set)
                 for index, candidate in enumerate(batch.candidates, 1):
-                    xyz = config.selection.station.platform.base_from_platform @ np.array(
-                        [*candidate.position_m, 1.0])
-                    plan = pick_targets(config.home_matrix, xyz[:3], config.profile, index)
+                    item_pose = candidate_pose_in_base(
+                        config.selection.station.platform.base_from_platform,
+                        candidate.position_m, candidate.quaternion)
+                    plan = pick_targets(
+                        config.home_matrix, item_pose, config.profile, index)
                     targets.extend(plan)
                     for target in reversed(plan[1:-1]):
                         targets.append(Target(

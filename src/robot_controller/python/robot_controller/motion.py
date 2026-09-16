@@ -5,7 +5,8 @@ import math
 
 import numpy as np
 
-from camera_calibration_gui.calibration_core import rotation_angle_deg
+from camera_calibration_gui.calibration_core import (
+    quaternion_to_rotation_matrix, rotation_angle_deg)
 from item_perception_yolo.item_teach_core import validate_speed, validate_acceleration
 
 
@@ -69,15 +70,75 @@ def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
             and rotation_angle_deg(actual[:3, :3].T @ goal[:3, :3]) <= rotation_deg)
 
 
+def _rigid_matrix(value, label):
+    matrix = np.asarray(value, dtype=float)
+    if (matrix.shape != (4, 4) or not np.all(np.isfinite(matrix))
+            or not np.allclose(matrix[3], [0, 0, 0, 1], atol=1e-9, rtol=0)
+            or not np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3),
+                               atol=1e-6, rtol=0)
+            or not math.isclose(float(np.linalg.det(matrix[:3, :3])), 1., abs_tol=1e-6)):
+        raise ValueError(f"{label} must be a finite rigid transform")
+    return matrix
+
+
+def candidate_pose_in_base(base_from_platform, position_m, quaternion):
+    """Compose the detector's platform XYZ/yaw without treating it as TCP attitude."""
+    platform = _rigid_matrix(base_from_platform, "Platform transform")
+    position = np.asarray(position_m, dtype=float)
+    q = np.asarray(quaternion, dtype=float)
+    if position.shape != (3,) or not np.all(np.isfinite(position)):
+        raise ValueError("Candidate position must contain three finite metres")
+    if (q.shape != (4,) or not np.all(np.isfinite(q))
+            or abs(float(np.dot(q, q)) - 1.0) > 1e-5):
+        raise ValueError("Candidate quaternion must be finite and normalized")
+    if abs(float(q[0])) > 1e-6 or abs(float(q[1])) > 1e-6:
+        raise ValueError("Candidate quaternion must contain platform-plane yaw only")
+    item = np.eye(4)
+    item[:3, :3] = quaternion_to_rotation_matrix(*q)
+    item[:3, 3] = position
+    return _rigid_matrix(platform @ item, "Base-relative candidate pose")
+
+
+def pick_attitude(home, item_in_base):
+    """Spin about taught tool Z until green/Y follows the item short-axis line."""
+    home = _rigid_matrix(home, "Home")
+    item = _rigid_matrix(item_in_base, "Base-relative candidate pose")
+    home_rotation = home[:3, :3]
+    tool_z = home_rotation[:, 2]
+    item_short = item[:3, 1]
+    projected = item_short - tool_z * float(np.dot(item_short, tool_z))
+    norm = float(np.linalg.norm(projected))
+    if norm <= 1e-6:
+        raise ValueError("Item short axis cannot be projected perpendicular to tool Z")
+    projected /= norm
+    home_green = home_rotation[:, 1]
+    sine = float(np.dot(tool_z, np.cross(home_green, projected)))
+    cosine = float(np.dot(home_green, projected))
+    raw = math.atan2(sine, cosine)
+    # A rectangle defines an undirected axis. Choose the equivalent orientation
+    # requiring at most 90 degrees of tool-axis rotation from taught Home.
+    delta = (raw + math.pi / 2) % math.pi - math.pi / 2
+    c, s = math.cos(delta), math.sin(delta)
+    local_z_rotation = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
+    rotation = home_rotation @ local_z_rotation
+    if (abs(abs(float(np.dot(rotation[:, 1], projected))) - 1.0) > 1e-6
+            or not np.allclose(rotation[:, 2], tool_z, atol=1e-9, rtol=0)):
+        raise ValueError("Failed to construct item-aligned pick attitude")
+    return rotation, math.degrees(delta)
+
+
 def pick_targets(home, item_in_base, settings, candidate_index):
     validate_speed(settings["speed"])
     validate_acceleration(settings["acceleration"])
+    item_in_base = _rigid_matrix(item_in_base, "Base-relative candidate pose")
+    rotation, _delta_deg = pick_attitude(home, item_in_base)
+    position = item_in_base[:3, 3]
     motion = settings["motion"]
-    pick_z = float(item_in_base[2]) + motion["standoff_height"] / 1000
+    pick_z = float(position[2]) + motion["standoff_height"] / 1000
     prepick_z = pick_z + motion["prepick_height"] / 1000
     clearance_z = prepick_z + motion["retract_height"] / 1000
     heights = (home[2, 3], clearance_z, prepick_z, pick_z, prepick_z, clearance_z)
-    if not all(math.isfinite(v) for v in (*item_in_base, *heights)):
+    if not all(math.isfinite(v) for v in (*position, *heights)):
         raise ValueError("Pick geometry contains nonfinite values")
     if home[2, 3] < max(heights[1:]):
         raise ValueError("Home Z must be at or above every pick clearance/retract height")
@@ -93,7 +154,8 @@ def pick_targets(home, item_in_base, settings, candidate_index):
     for name, z, percentage, acceleration in zip(names, heights, percentages,
                                                  acceleration_percentages):
         matrix = home.copy()
-        matrix[:3, 3] = [item_in_base[0], item_in_base[1], z]
+        matrix[:3, :3] = rotation
+        matrix[:3, 3] = [position[0], position[1], z]
         events = ()
         if name == "initial" and settings["gripper"]["use_grip"]:
             events = (MotionIO(50, 2, False), MotionIO(50, 14, True))
