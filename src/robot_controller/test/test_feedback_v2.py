@@ -42,7 +42,21 @@ def test_valid_feedback_snapshot_and_enabled_blockers():
     assert snapshot.sequence == 1
     assert snapshot.joints == (0.0,) * 6
     assert enabled_blockers(snapshot.feed, True) == []
-    assert "EnableStatus=0" in enabled_blockers(feed(EnableStatus=0), False)[1]
+    assert "EnableStatus=0" in enabled_blockers(feed(EnableStatus=0), False)[0]
+
+
+def test_mode_derived_robot_status_is_not_an_active_motion_enable_latch():
+    monitor = primed_monitor()
+    monitor.update_status(SimpleNamespace(is_connected=True, is_enable=False))
+    monitor.update_feed(feed(controller_timer=2, robot_mode=7, EnableStatus=1))
+    assert monitor.snapshot(require_enabled=True).feed["robot_mode"] == 7
+
+    # The two topics are asynchronous: a just-ended mode-7 RobotStatus sample
+    # may briefly coexist with a newer idle FeedInfo sample.  Idle consumers
+    # perform their own coherent is_enable check; the general operation gate
+    # must not fault on this cross-topic transition.
+    monitor.update_feed(feed(controller_timer=3, robot_mode=5, EnableStatus=1))
+    assert monitor.snapshot(require_enabled=True).feed["robot_mode"] == 5
 
 
 def test_pause_flag_is_not_a_general_readiness_blocker():

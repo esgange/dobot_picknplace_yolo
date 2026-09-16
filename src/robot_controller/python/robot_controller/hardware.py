@@ -1,5 +1,6 @@
 """Dobot transport used only by the headless hardware-authority node."""
 
+import json
 import math
 import re
 import threading
@@ -26,6 +27,7 @@ CARTESIAN_POSITION_TOLERANCE_M = 0.005
 CARTESIAN_ORIENTATION_TOLERANCE_DEG = 1.0
 HOME_JOINT_TOLERANCE_RAD = math.radians(1.0)
 MOTION_SERVICES = ("MovL", "MovLIO", "RelMovLUser")
+LATE_RESPONSE_OUTCOMES = ("timeout", "wait_canceled", "wait_aborted")
 
 
 def robot_values(raw):
@@ -68,8 +70,11 @@ class DobotTransport:
         # rclpy may invoke a callback inline when a future is already complete.
         self.response_lock = threading.RLock()
         self.stop_lock = threading.Lock()
+        self.service_audit_lock = threading.Lock()
+        self.service_audit_sequence = 0
         self.pending_response = None
         self.stop_future = None
+        self.stop_audit = None
         self.moving = False
         self.suction_interrupted = False
         self.suction_stop_future = None
@@ -105,10 +110,83 @@ class DobotTransport:
                     "Required canonical services unavailable: " + ", ".join(missing))
             self.node.wait_control(0.05)
 
-    def _pending_completed(self, name, future):
+    def _console_service_log(self, level, message):
+        logger_factory = getattr(self.node, "get_logger", None)
+        if logger_factory is None:
+            return
+        logger = logger_factory()
+        method = getattr(logger, "warning" if level == "WARNING" else level.lower())
+        method(message)
+
+    def _begin_service_audit(self, name, fields, *, reason=""):
+        with self.service_audit_lock:
+            self.service_audit_sequence += 1
+            request_id = self.service_audit_sequence
+        endpoint = f"/dobot_bringup_ros2/srv/{name}"
+        audit = {
+            "request_id": request_id,
+            "name": name,
+            "endpoint": endpoint,
+            "fields": dict(fields),
+            "started": time.monotonic(),
+            "terminal": False,
+        }
+        details = json.dumps(fields, sort_keys=True, separators=(",", ":"))
+        suffix = f" reason={reason}" if reason else ""
+        self._console_service_log(
+            "INFO", f"DOBOT SERVICE #{request_id} SEND {endpoint} request={details}{suffix}")
+        event_fields = {
+            "request_id": request_id, "endpoint": endpoint, "fields": dict(fields),
+        }
+        if reason:
+            event_fields["reason"] = reason
+        self.node.events.record("INFO", "robot_service_sent", name, **event_fields)
+        return audit
+
+    def _finish_service_audit(self, audit, outcome, *, result=None, detail="",
+                              level=None, late=False):
+        if audit is None or (audit.get("terminal") and not late):
+            return
+        if not late:
+            audit["terminal"] = True
+            audit["outcome"] = outcome
+        level = level or ("INFO" if outcome in ("accepted", "late_response") else "ERROR")
+        res = getattr(result, "res", None) if result is not None else None
+        robot_return = getattr(result, "robot_return", None) if result is not None else None
+        duration_ms = round((time.monotonic() - audit["started"]) * 1000.0, 3)
+        terminal = (
+            f"DOBOT SERVICE #{audit['request_id']} {outcome.upper()} "
+            f"{audit['endpoint']} res={res} duration_ms={duration_ms:.3f}")
+        if robot_return not in (None, ""):
+            terminal += f" robot_return={robot_return!r}"
+        if detail:
+            terminal += f" detail={detail}"
+        self._console_service_log(level, terminal)
+        event = "robot_service" if outcome == "accepted" else (
+            "robot_service_late_response" if outcome == "late_response"
+            else "robot_service_failed")
+        self.node.events.record(
+            level, event, audit["name"], request_id=audit["request_id"],
+            endpoint=audit["endpoint"], fields=audit["fields"], outcome=outcome,
+            response_res=res, robot_return=robot_return, duration_ms=duration_ms,
+            detail=detail)
+
+    def _pending_completed(self, name, future, audit):
         with self.response_lock:
-            if self.pending_response == (name, future):
+            if (self.pending_response is not None
+                    and self.pending_response[0] == name
+                    and self.pending_response[1] is future):
                 self.pending_response = None
+        if audit.get("outcome") in LATE_RESPONSE_OUTCOMES:
+            try:
+                result = future.result()
+                detail = "response arrived after caller stopped waiting"
+            except Exception as exc:  # rclpy future exception is terminal evidence.
+                result = None
+                detail = f"late response exception: {exc}"
+            self._finish_service_audit(
+                audit, "late_response", result=result, detail=detail,
+                level="WARNING", late=True)
         if name in MOTION_SERVICES and self.node.cancel_requested():
             try:
                 stop_future = self.request_stop("late motion acknowledgement")
@@ -120,6 +198,19 @@ class DobotTransport:
             # owning pick thread confirms this Stop before queuing its retract.
             self.request_stop("motion acknowledgement after suction acquisition")
 
+    def _late_service_completed(self, future, audit):
+        if audit.get("outcome") not in LATE_RESPONSE_OUTCOMES:
+            return
+        try:
+            result = future.result()
+            detail = "response arrived after caller stopped waiting"
+        except Exception as exc:
+            result = None
+            detail = f"late response exception: {exc}"
+        self._finish_service_audit(
+            audit, "late_response", result=result, detail=detail,
+            level="WARNING", late=True)
+
     def ensure_no_pending_response(self):
         with self.response_lock:
             pending = self.pending_response
@@ -130,7 +221,7 @@ class DobotTransport:
     def call(self, name, *, check_cancel=True, progress=None, **fields):
         with self.response_lock:
             if self.pending_response is not None:
-                previous, future = self.pending_response
+                previous, future, _audit = self.pending_response
                 if not future.done():
                     raise CommandResponseTimeout(
                         f"{name} not sent: still awaiting {previous} response")
@@ -141,28 +232,50 @@ class DobotTransport:
             if not client.service_is_ready():
                 raise CommandRejected(f"Required canonical {name} service unavailable")
             request = self.types[name].Request(**fields)
-            self.node.events.record("INFO", "robot_service_sent", name, fields=fields)
-            future = client.call_async(request)
-            self.pending_response = (name, future)
-            future.add_done_callback(lambda done, service=name: self._pending_completed(
-                service, done))
+            audit = self._begin_service_audit(name, fields)
+            try:
+                future = client.call_async(request)
+            except Exception as exc:
+                self._finish_service_audit(
+                    audit, "dispatch_error", detail=str(exc), level="ERROR")
+                raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
+            self.pending_response = (name, future, audit)
+            future.add_done_callback(
+                lambda done, service=name, record=audit: self._pending_completed(
+                    service, done, record))
         deadline = time.monotonic() + COMMAND_RESPONSE_TIMEOUT_SEC
-        while not future.done():
-            if check_cancel and self.node.cancel_requested():
-                if name in MOTION_SERVICES:
-                    self.request_stop("operation cancellation during acknowledgement")
-                raise OperationCanceled(f"Cancelled while awaiting {name} response")
-            snapshot = self.monitor.snapshot(require_enabled=False)
-            if progress is not None:
-                progress(snapshot)
-            if time.monotonic() >= deadline:
-                raise CommandResponseTimeout(
-                    f"{name} response timeout; no later normal command sent")
-            self.node.wait_control(0.02)
-        result = future.result()
+        try:
+            while not future.done():
+                if check_cancel and self.node.cancel_requested():
+                    self._finish_service_audit(
+                        audit, "wait_canceled",
+                        detail="operation canceled before response", level="WARNING")
+                    if name in MOTION_SERVICES:
+                        self.request_stop("operation cancellation during acknowledgement")
+                    raise OperationCanceled(f"Cancelled while awaiting {name} response")
+                snapshot = self.monitor.snapshot(require_enabled=False)
+                if progress is not None:
+                    progress(snapshot)
+                if time.monotonic() >= deadline:
+                    self._finish_service_audit(
+                        audit, "timeout", detail="no response within 5 seconds",
+                        level="ERROR")
+                    raise CommandResponseTimeout(
+                        f"{name} response timeout; no later normal command sent")
+                self.node.wait_control(0.02)
+            result = future.result()
+        except (OperationCanceled, CommandResponseTimeout):
+            raise
+        except Exception as exc:
+            self._finish_service_audit(
+                audit, "wait_aborted", detail=str(exc), level="ERROR")
+            raise
         if result is None or result.res != 0:
+            self._finish_service_audit(
+                audit, "rejected", result=result,
+                detail="canonical service returned nonzero/empty result", level="ERROR")
             raise CommandRejected(f"{name} failed: {None if result is None else result.res}")
-        self.node.events.record("INFO", "robot_service", name, fields=fields)
+        self._finish_service_audit(audit, "accepted", result=result)
         if progress is not None:
             progress(self.monitor.snapshot(require_enabled=False))
         return result
@@ -174,8 +287,17 @@ class DobotTransport:
             self.node.check_command_owner("Stop")
             if not self.stop_client.service_is_ready():
                 raise StopUnconfirmed("Canonical Stop service unavailable")
-            future = self.stop_client.call_async(self.stop_type.Request())
+            audit = self._begin_service_audit("Stop", {}, reason=reason)
+            try:
+                future = self.stop_client.call_async(self.stop_type.Request())
+            except Exception as exc:
+                self._finish_service_audit(
+                    audit, "dispatch_error", detail=str(exc), level="ERROR")
+                raise StopUnconfirmed(f"Stop dispatch failed: {exc}") from exc
             self.stop_future = future
+            self.stop_audit = (future, audit)
+            future.add_done_callback(
+                lambda done, record=audit: self._late_service_completed(done, record))
             self.node.events.record("WARNING", "stop_requested", reason)
             return future
 
@@ -183,6 +305,8 @@ class DobotTransport:
         future = future or self.stop_future
         if future is None:
             raise StopUnconfirmed("No Stop request exists to confirm")
+        stop_audit = getattr(self, "stop_audit", None)
+        audit = stop_audit[1] if stop_audit is not None and stop_audit[0] is future else None
         deadline = time.monotonic() + COMMAND_RESPONSE_TIMEOUT_SEC
         while not future.done():
             try:
@@ -190,12 +314,23 @@ class DobotTransport:
             except FeedbackFailure:
                 pass
             if time.monotonic() >= deadline:
+                self._finish_service_audit(
+                    audit, "timeout", detail="Stop acknowledgement timeout", level="ERROR")
                 raise StopUnconfirmed("Stop acknowledgement timeout")
             self.node.wait_control(0.02)
-        result = future.result()
+        try:
+            result = future.result()
+        except Exception as exc:
+            self._finish_service_audit(
+                audit, "response_error", detail=str(exc), level="ERROR")
+            raise StopUnconfirmed(f"Stop response failed: {exc}") from exc
         if result is None or result.res != 0:
+            self._finish_service_audit(
+                audit, "rejected", result=result,
+                detail="canonical Stop returned nonzero/empty result", level="ERROR")
             raise StopUnconfirmed(
                 f"Stop rejected: {None if result is None else result.res}")
+        self._finish_service_audit(audit, "accepted", result=result)
         anchor = None
         held_violation = None
 
@@ -235,20 +370,39 @@ class DobotTransport:
         client = self.queue_clients[name]
         if not client.service_is_ready():
             raise CommandRejected(f"Required canonical {name} service unavailable")
-        self.node.events.record("INFO", "robot_service_sent", name, fields={})
-        future = client.call_async(self.queue_types[name].Request())
+        audit = self._begin_service_audit(name, {})
+        try:
+            future = client.call_async(self.queue_types[name].Request())
+        except Exception as exc:
+            self._finish_service_audit(
+                audit, "dispatch_error", detail=str(exc), level="ERROR")
+            raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
+        future.add_done_callback(
+            lambda done, record=audit: self._late_service_completed(done, record))
         deadline = time.monotonic() + COMMAND_RESPONSE_TIMEOUT_SEC
-        while not future.done():
-            self.monitor.snapshot(require_enabled=False)
-            if time.monotonic() >= deadline:
-                raise CommandResponseTimeout(
-                    f"{name} response timeout; queue state is ambiguous")
-            self.node.wait_control(0.02)
-        result = future.result()
+        try:
+            while not future.done():
+                self.monitor.snapshot(require_enabled=False)
+                if time.monotonic() >= deadline:
+                    self._finish_service_audit(
+                        audit, "timeout", detail="queue state is ambiguous", level="ERROR")
+                    raise CommandResponseTimeout(
+                        f"{name} response timeout; queue state is ambiguous")
+                self.node.wait_control(0.02)
+            result = future.result()
+        except CommandResponseTimeout:
+            raise
+        except Exception as exc:
+            self._finish_service_audit(
+                audit, "wait_aborted", detail=str(exc), level="ERROR")
+            raise CommandRejected(f"{name} service wait failed: {exc}") from exc
         if result is None or result.res != 0:
+            self._finish_service_audit(
+                audit, "rejected", result=result,
+                detail="canonical service returned nonzero/empty result", level="ERROR")
             raise CommandRejected(
                 f"{name} failed: {None if result is None else result.res}")
-        self.node.events.record("INFO", "robot_service", name, fields={})
+        self._finish_service_audit(audit, "accepted", result=result)
 
     def pause_queue(self):
         self._call_queue_control("Pause")
@@ -330,7 +484,8 @@ class DobotTransport:
     @staticmethod
     def _idle(snapshot):
         feed = snapshot.feed
-        return (feed["robot_mode"] == 5 and feed["EnableStatus"] == 1
+        return (snapshot.robot_enabled and feed["robot_mode"] == 5
+                and feed["EnableStatus"] == 1
                 and not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
                 and not feed["ErrorStatus"] and not feed["CollisionStates"]
                 and feed["userCoordinate"] == 0 and feed["toolCoordinate"] == 0)
@@ -659,7 +814,8 @@ class DobotTransport:
                 if np.max(np.abs(vector - last_vector)) > 0.05:
                     last_progress, last_vector = now, vector
                 reached = self._target_reached(tail, snapshot)
-                idle = (snapshot.sequence > before_sequence and reached
+                idle = (snapshot.sequence > before_sequence and snapshot.robot_enabled
+                        and reached
                         and not snapshot.feed["isRunQueuedCmd"]
                         and not snapshot.feed["RunningStatus"]
                         and snapshot.feed["robot_mode"] == 5)

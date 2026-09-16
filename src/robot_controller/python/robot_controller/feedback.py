@@ -223,10 +223,18 @@ class FeedbackMonitor:
             return self._sequence
 
 
-def enabled_blockers(feed, status_enabled, *, allow_paused=False):
+def enabled_blockers(feed, _status_enabled, *, allow_paused=False):
+    """Return authoritative FeedInfo blockers for an enabled operation.
+
+    The vendored bridge publishes ``RobotStatus.is_enable`` as the expression
+    ``robot_mode == 5``.  It is therefore an idle-mode alias, not an independent
+    enabled latch, and its 10 Hz publication can legitimately disagree with the
+    newer FeedInfo sample while entering or leaving motion.  RobotStatus is
+    still required and freshness/connection checked by ``snapshot``; active
+    readiness comes from FeedInfo EnableStatus, robot_mode, and fault fields.
+    Callers that require coherent idle mode additionally check is_enable.
+    """
     blockers = []
-    if not status_enabled and feed["robot_mode"] not in (7, 8):
-        blockers.append("RobotStatus.is_enable=False")
     if feed["EnableStatus"] != 1:
         blockers.append(f"EnableStatus={feed['EnableStatus']} (required 1)")
     enabled_modes = (5, 7, 8, 10) if allow_paused else (5, 7, 8)

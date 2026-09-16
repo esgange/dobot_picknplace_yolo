@@ -166,6 +166,22 @@ three-second no-progress watchdog, and 300-second physical-motion cap. Home
 arrival is within one degree on every taught joint; Cartesian arrival is within
 5 mm and one degree, plus enabled, queue-idle and stationary confirmation.
 
+The bridge publishes `RobotStatus.is_enable` as `robot_mode == 5`; it is an
+idle-mode alias on a separate, slower publisher rather than an independent
+enable latch. Fresh RobotStatus remains mandatory for connection/liveness, and
+idle READY/final-arrival checks require its Boolean to converge. Active motion
+uses authoritative FeedInfo `EnableStatus`, mode, error/collision, user/tool and
+queue fields so an asynchronous status sample cannot cancel an accepted move.
+
+Every actual canonical Dobot call has paired audit output in the ROS console and
+`logs/robot_controller/events.jsonl`. Each `SEND` and terminal accepted,
+rejected, timed-out, canceled, errored or late-response record contains a
+process-local request ID, exact endpoint/request fields, ROS response `res`,
+available `robot_return`, and elapsed milliseconds. This covers Startup/Recover
+settings, GetPose, DO, all three motion services, Pause, Continue, and the
+independent Stop channel. A successful response is still only command acceptance;
+fresh robot feedback remains required for completion.
+
 ## Home and Pick
 
 Home is permitted from `READY` and trusted `HOLDING`. Fresh GetPose selects the
@@ -202,3 +218,7 @@ Software tests use synthetic services/feedback and must never commission
 physical motion. Real commissioning requires separate explicit authorization,
 clear workspace, functional physical emergency stop, verified wiring, and an
 attentive operator.
+
+`robot_controller` is the sole production/runtime Dobot command issuer.
+`motion_debug` may issue direct commands only as a mutually exclusive maintenance
+application; production Startup rejects competing maintenance command owners.

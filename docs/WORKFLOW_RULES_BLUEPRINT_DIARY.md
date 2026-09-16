@@ -3060,6 +3060,55 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and stops all processes cleanly. No hardware command was sent during this
   implementation check.
 
+### 2026-09-16 — Runtime enable semantics and complete Dobot call audit
+
+- Two supervised Pick attempts reached the robot and received successful raw
+  V4 acknowledgements for GetPose, RelMovLUser and joint-mode MovL. The accepted
+  Home queue IDs were 8 and 9. Roughly 0.67 seconds later the controller stopped
+  each path with `Robot readiness blocked: RobotStatus.is_enable=False`; no
+  motion service had failed. The controller event log contained only service
+  names/fields, while the bringup transport log was needed to prove `res=0` and
+  recover the returned queue IDs.
+- Inspection of the unchanged vendored bridge proved that
+  `CRCommanderRos2::isEnable()` returns exactly
+  `real_time_data_->robot_mode == 5`. RobotStatus publishes that Boolean on the
+  joint/status loop while FeedInfo arrives independently. It is therefore an
+  asynchronous idle-mode alias, not a second enable latch. During the
+  idle-to-motion transition the monitor combined a newer false RobotStatus
+  sample with a different FeedInfo mode sample and incorrectly converted a
+  valid accepted Home into a robot fault.
+- Rule 68 keeps fresh connected RobotStatus mandatory and retains strict
+  mode-derived status convergence for explicit enable/disable, idle READY and
+  final stationary arrival. Active/transitioning motion readiness now uses
+  FeedInfo `EnableStatus=1`, allowed robot mode, fault/collision and user/tool
+  fields without treating `RobotStatus.is_enable=False` as an independent
+  failure. This narrowly removes the cross-topic race without weakening final
+  Home-joint/Cartesian, stationary, queue, fault or held-item confirmation.
+- Every actual canonical Dobot request from the production controller now emits
+  a correlated console and bounded-event `SEND` record plus a terminal accepted,
+  rejected, timeout/cancellation/response-error or late-response record. Records
+  include a process-local request ID, exact endpoint and fields, ROS `res`, any
+  `robot_return`, outcome and elapsed milliseconds. The independent Stop and
+  explicit Pause/Continue paths use the same audit contract. Service success
+  remains acceptance only; all established feedback confirmation follows it.
+- Production command ownership remains unchanged: `robot_controller` is the
+  only runtime Dobot command client. `motion_debug` may still command Dobot as a
+  mutually exclusive maintenance application, and its presence blocks
+  production Startup rather than creating a bypass.
+- Verification is synthetic/source-only and must include controller feedback,
+  transport, lifecycle and architecture tests, Python compilation/lint, package
+  and root builds, staged review and `git diff --check`. No hardware service or
+  action is invoked by these checks.
+- Verification completed with all 70 focused controller tests passing directly
+  and through the package CTest wrapper (71 reported tests, zero errors,
+  failures or skips), controller Python compilation and all 21 Python/test files
+  passing ament_flake8. Both controller/interface packages and the complete
+  15-package workspace build successfully; `git diff --check` is clean. The
+  workspace-wide historical test-result aggregation still reports the unchanged
+  vendored `dobot_bringup_v4` lint failures and a stale removed `dobot_demo`
+  result path; neither package was edited. No robot, camera or detector service
+  was launched or commanded during verification.
+
 ### Future entry template
 
 ```text

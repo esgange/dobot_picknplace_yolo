@@ -69,6 +69,16 @@ queue is empty/not running; `Continue()` is rejected in that condition. The
 controller recognizes resumable Pause only from its own confirmed Pause request
 and retained operation context.
 
+The vendored `RobotStatus.is_enable` field is also not a separate enable latch:
+the bridge calculates it as `robot_mode == 5` on its slower status publisher.
+Active-motion supervision therefore uses fresh FeedInfo `EnableStatus`, mode and
+fault fields, while idle READY and final arrival still wait for the status field
+to converge. Every controller-issued Dobot service request is printed as a
+correlated `SEND` plus terminal result in the ROS console and in the bounded
+controller event log, including exact request fields, response code/payload and
+duration. `motion_debug` remains a direct-command maintenance tool only and must
+not run concurrently with the production controller.
+
 The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.

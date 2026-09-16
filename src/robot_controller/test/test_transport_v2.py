@@ -7,8 +7,11 @@ from robot_controller.hardware import DobotTransport
 
 
 class EventLog:
+    def __init__(self):
+        self.entries = []
+
     def record(self, *_args, **_kwargs):
-        pass
+        self.entries.append((_args, _kwargs))
 
 
 def snapshot(*, di1=False, outputs=0):
@@ -168,3 +171,29 @@ def test_only_fresh_coherent_opposite_di1_becomes_a_missed_pick():
     transport.monitor = SensorMonitor(fresh=False)
     with pytest.raises(FeedbackFailure, match="Timed out waiting"):
         transport.sensor(True, 0.2, settling_sec=0)
+
+
+def test_service_audit_records_exact_send_and_terminal_response():
+    transport = object.__new__(DobotTransport)
+    transport.service_audit_lock = __import__("threading").Lock()
+    transport.service_audit_sequence = 0
+    events = EventLog()
+    console = []
+    logger = SimpleNamespace(
+        info=console.append, warning=console.append, error=console.append)
+    transport.node = SimpleNamespace(
+        events=events, get_logger=lambda: logger)
+
+    audit = transport._begin_service_audit("SpeedFactor", {"ratio": 37})
+    transport._finish_service_audit(
+        audit, "accepted", result=SimpleNamespace(res=0, robot_return="{}"))
+
+    assert "SEND /dobot_bringup_ros2/srv/SpeedFactor" in console[0]
+    assert 'request={"ratio":37}' in console[0]
+    assert "ACCEPTED /dobot_bringup_ros2/srv/SpeedFactor res=0" in console[1]
+    sent = events.entries[0][1]
+    response = events.entries[1][1]
+    assert sent["request_id"] == response["request_id"] == 1
+    assert sent["endpoint"] == "/dobot_bringup_ros2/srv/SpeedFactor"
+    assert response["response_res"] == 0
+    assert response["robot_return"] == "{}"
