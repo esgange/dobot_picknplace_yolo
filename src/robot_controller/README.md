@@ -46,7 +46,10 @@ Actions:
 
 Services:
 
-- `/robot_controller/configure` loads explicit Item/Bin Teach in GUI mode.
+- `/robot_controller/configure` loads or reloads explicit Item/Bin Teach in GUI
+  mode. Reload is accepted only from idle, unheld `READY` or from `INACTIVE`;
+  success performs no robot command, returns to `INACTIVE`, and requires Startup
+  again. A rejected replacement preserves the current configuration and state.
 - `/robot_controller/startup` performs the deterministic cold Startup sequence.
 - `/robot_controller/recover` stops/clears/enables/restores settings without
   moving Home.
@@ -102,6 +105,16 @@ The states are `UNCONFIGURED`, `INACTIVE`, `STARTING`, `READY`, `HOMING`,
 `HELD_UNKNOWN`, and `FAULT`. One immutable configuration snapshot and one
 operation generation exist at a time. Action configuration IDs prevent a stale
 GUI or supervisor from executing a replaced profile.
+
+The non-headless GUI labels the configuration control **Reload Teach
+Configuration** after a profile is installed. It remains enabled in idle,
+unheld `READY`, so the operator can revalidate the selected files or install a
+different pair without restarting the controller process. A successful reload
+clears TF preview output and invalidates prior Startup, global-speed, and output
+assumptions; it does not call Dobot and the controller must be explicitly
+started again. Reload is blocked during Home/Pick, Pause, holding, Stop,
+recovery, unknown-held, and fault states. Headless configuration remains fixed
+to its startup `runtime_teach/` snapshot.
 
 Startup validates sole canonical services and publishers, then performs:
 

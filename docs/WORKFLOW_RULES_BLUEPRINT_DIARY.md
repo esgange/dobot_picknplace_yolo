@@ -3283,6 +3283,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   ordinary installed files; isolated OpenCV 4.10 import and the complete native
   worker tests then pass. No camera, detector service or robot command was launched.
 
+### 2026-09-16 — Reload Robot Controller teach configuration without restart
+
+- The non-headless controller previously accepted `/robot_controller/configure`
+  only in `UNCONFIGURED` or `INACTIVE`, while its GUI disabled the configuration
+  button after Startup reached `READY`. An operator therefore had to restart the
+  controller process merely to reload an updated Item/Bin Teach pair.
+- Rule 74 permits explicit configure/reload from idle unheld `READY` as well as
+  the existing pre-Startup states. The normal single-operation lock still rejects
+  concurrent Startup, Recover, Home, Pick, speed, or configuration work, and all
+  active, paused, holding, Stop/recovery, unknown-held, and fault states remain
+  ineligible.
+- The complete replacement is loaded and source-validated before installation.
+  Failure preserves the existing immutable configuration, configuration ID,
+  Startup state, expected outputs, and lifecycle state. Success sends no Dobot
+  command, installs the new snapshot/hash, clears preview TFs, invalidates prior
+  Startup/global-speed/output assumptions, and transitions to `INACTIVE`; the
+  operator must explicitly Start again before Home or Pick.
+- The GUI dynamically labels the control `Load Teach Configuration` before the
+  first load and `Reload Teach Configuration` while configured. Headless
+  `runtime_teach/` configuration remains immutable until process restart.
+- Verification is source/synthetic only: cover successful READY reload, rejected
+  replacement preservation, every disallowed lifecycle state, held-item and
+  headless rejection, GUI selection persistence/preview clearing, state-machine
+  legality, compilation/lint, controller and workspace builds, staged review and
+  `git diff --check`. Do not issue a detector request or robot command.
+- Verification completed with all 103 focused Robot Controller tests passing
+  directly and all 104 package-reported results passing with zero errors,
+  failures, or skips. Python compilation and all 20 controller/test files pass
+  ament_flake8; the controller package and complete 15-package workspace build
+  successfully. No detector request or robot command was issued.
+
 ### Future entry template
 
 ```text

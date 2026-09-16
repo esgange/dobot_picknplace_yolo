@@ -220,6 +220,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _selection_changed(self):
         self.saved_selection = None
+        self._clear_preview()
+
+    def _clear_preview(self):
         if self.node.service_clients["preview"].service_is_ready():
             request = Preview.Request()
             request.operation = request.CLEAR
@@ -243,7 +246,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         request.item_teach_file = self.item_path.text().strip()
         request.bin_teach_file = self.bin_path.text().strip()
         self.saved_selection = (request.item_teach_file, request.bin_teach_file)
-        self._call("configure", request)
+        if not self._call("configure", request):
+            self.saved_selection = None
 
     def _command(self, name):
         return self._call(name, Command.Request())
@@ -358,6 +362,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     save_state(
                         self.node.root / "logs/robot_controller/last_session.json",
                         *self.saved_selection)
+                    self._clear_preview()
                 elif name == "speed":
                     self.speed_pending_percent = result.confirmed_percent
                     self._sync_speed_slider(result.confirmed_percent)
@@ -405,8 +410,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         reachable = state is not None
         active = bool(state and state.operation_active)
         current = state.state if state else "UNREACHABLE"
-        self.configure.setEnabled(reachable and current in ("UNCONFIGURED", "INACTIVE")
-                                  and not active)
+        configured = bool(state and state.configured)
+        self.configure.setText(
+            "Reload Teach Configuration" if configured else "Load Teach Configuration")
+        self.configure.setEnabled(
+            reachable and current in ("UNCONFIGURED", "INACTIVE", "READY")
+            and not active)
         pause_pending = self.pause_requested_locally or "pause" in self.pending
         paused = current == "PAUSED" or pause_pending
         self.startup.setText("CONTINUE" if paused else "START")

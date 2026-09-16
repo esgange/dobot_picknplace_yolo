@@ -49,6 +49,14 @@ those actions, while reliable transient-local typed status reports the state and
 operation phase. The old Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image
 endpoints are removed.
 
+In the non-headless GUI, **Load Teach Configuration** becomes **Reload Teach
+Configuration** after the first successful load. Reload is available only while
+the controller is idle and unheld in `READY` (or already `INACTIVE`), performs no
+robot command, and returns the controller to `INACTIVE`; press **START** again
+before Hardware Home or Pick. An invalid replacement leaves the current
+configuration and state unchanged. Headless `runtime_teach/` configuration is
+immutable until the process is restarted.
+
 ```bash
 ros2 launch robot_controller robot_controller.launch.py
 ros2 launch robot_controller robot_controller.launch.py headless:=true

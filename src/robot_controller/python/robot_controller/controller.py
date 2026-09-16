@@ -410,8 +410,11 @@ class RobotController(Node):
         try:
             if self.headless:
                 raise CommandRejected("Headless runtime_teach configuration is immutable")
-            if self.machine.state not in ("UNCONFIGURED", "INACTIVE"):
-                raise CommandRejected("Configure requires UNCONFIGURED or INACTIVE state")
+            if self.machine.state not in ("UNCONFIGURED", "INACTIVE", "READY"):
+                raise CommandRejected(
+                    "Configure/reload requires UNCONFIGURED, INACTIVE, or READY state")
+            if self.holding_item:
+                raise CommandRejected("Configure/reload is blocked while holding an item")
             self._begin_operation("configure")
             acquired = True
             config = load_configuration(
@@ -890,6 +893,7 @@ class RobotController(Node):
                     [*candidate.position_m, 1.0])
                 plans.append(pick_targets(
                     config.home_matrix, xyz[:3], config.profile, index))
+
             def check(index):
                 self.raise_if_cancelled()
                 config.validate_sources(self.root)

@@ -5,6 +5,8 @@ import pytest
 from PyQt5 import QtWidgets
 from rclpy.action import GoalResponse
 
+import robot_controller.controller as controller_module
+import robot_controller.gui as gui_module
 from robot_controller.controller import RobotController
 from robot_controller.errors import FeedbackFailure
 from robot_controller.gui import ControllerWindow, GuiNode
@@ -107,6 +109,110 @@ def test_stop_does_not_activate_an_unconfigured_or_inactive_controller():
 def test_manual_cold_di1_resolution_is_observed_only_by_explicit_stop():
     assert finish_stop("HELD_UNKNOWN", di1=True)[0].state == "HELD_UNKNOWN"
     assert finish_stop("HELD_UNKNOWN", di1=False)[0].state == "RECOVERY_REQUIRED"
+
+
+def configuration_node(state="READY", *, headless=False):
+    machine = ControllerStateMachine(initial=state)
+    old = SimpleNamespace(configuration_id="old")
+    calls = []
+    node = SimpleNamespace(
+        headless=headless, machine=machine, configuration=old,
+        startup_complete=True, global_speed_percent=35, holding_item=False,
+        expected_outputs={13: 1}, root=object(), kinematics=object(),
+        events=EventLog())
+    node._begin_operation = lambda name: calls.append(("begin", name))
+    node._end_operation = lambda: calls.append(("end",))
+    node._transition = lambda target, message: machine.transition(target, message)
+    node._log_configuration = lambda event: calls.append(("log", event))
+    return node, old, calls
+
+
+def test_ready_configuration_reload_replaces_snapshot_and_requires_startup(monkeypatch):
+    node, old, calls = configuration_node()
+    new = SimpleNamespace(configuration_id="new")
+    monkeypatch.setattr(controller_module, "load_configuration", lambda *_args, **_kwargs: new)
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    response = SimpleNamespace(success=False, message="", configuration_id="")
+
+    RobotController._configure(node, request, response)
+
+    assert node.configuration is new and node.configuration is not old
+    assert node.machine.state == "INACTIVE"
+    assert not node.startup_complete
+    assert node.global_speed_percent is None
+    assert node.expected_outputs == {}
+    assert response.success and response.configuration_id == "new"
+    assert calls == [
+        ("begin", "configure"), ("log", "configuration_loaded"), ("end",)]
+
+
+def test_failed_ready_reload_preserves_active_configuration(monkeypatch):
+    node, old, calls = configuration_node()
+
+    def reject(*_args, **_kwargs):
+        raise ValueError("invalid replacement")
+
+    monkeypatch.setattr(controller_module, "load_configuration", reject)
+    request = SimpleNamespace(item_teach_file="bad.yaml", bin_teach_file="bin.yaml")
+    response = SimpleNamespace(success=True, message="", configuration_id="stale")
+
+    RobotController._configure(node, request, response)
+
+    assert node.configuration is old
+    assert node.machine.state == "READY"
+    assert node.startup_complete
+    assert node.global_speed_percent == 35
+    assert node.expected_outputs == {13: 1}
+    assert not response.success and response.configuration_id == ""
+    assert "invalid replacement" in response.message
+    assert calls == [("begin", "configure"), ("end",)]
+
+
+@pytest.mark.parametrize("state", [
+    "STARTING", "HOMING", "PICKING", "HOLDING", "PAUSED", "STOPPING",
+    "RECOVERY_REQUIRED", "RECOVERING", "HELD_UNKNOWN", "FAULT",
+])
+def test_configuration_reload_rejects_nonidle_or_held_states(state):
+    node, old, calls = configuration_node(state)
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    response = SimpleNamespace(success=True, message="", configuration_id="stale")
+
+    RobotController._configure(node, request, response)
+
+    assert node.configuration is old
+    assert node.machine.state == state
+    assert not response.success
+    assert "UNCONFIGURED, INACTIVE, or READY" in response.message
+    assert calls == []
+
+
+def test_headless_configuration_remains_immutable():
+    node, old, calls = configuration_node("INACTIVE", headless=True)
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    response = SimpleNamespace(success=True, message="", configuration_id="stale")
+
+    RobotController._configure(node, request, response)
+
+    assert node.configuration is old
+    assert node.machine.state == "INACTIVE"
+    assert not response.success
+    assert "immutable" in response.message
+    assert calls == []
+
+
+def test_ready_configuration_reload_rejects_inconsistent_holding_context():
+    node, old, calls = configuration_node("READY")
+    node.holding_item = True
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    response = SimpleNamespace(success=True, message="", configuration_id="stale")
+
+    RobotController._configure(node, request, response)
+
+    assert node.configuration is old
+    assert node.machine.state == "READY"
+    assert not response.success
+    assert "holding an item" in response.message
+    assert calls == []
 
 
 class EventLog:
@@ -386,3 +492,32 @@ def test_gui_queued_stop_dispatches_only_after_pause_response():
     assert calls == ["stop"]
     assert not window.pause_requested_locally
     assert not window.stop_after_pause
+
+
+def test_successful_gui_reload_saves_selection_and_clears_preview(monkeypatch, tmp_path):
+    class Future:
+        @staticmethod
+        def done():
+            return True
+
+        @staticmethod
+        def result():
+            return SimpleNamespace(success=True, message="loaded")
+
+    saved = []
+    cleared = []
+    monkeypatch.setattr(
+        gui_module, "save_state",
+        lambda path, item, bin_path: saved.append((path, item, bin_path)))
+    window = SimpleNamespace(
+        pending={"configure": Future()}, pending_goal=None, result_future=None,
+        saved_selection=("item.yaml", "bin.yaml"),
+        node=SimpleNamespace(root=tmp_path),
+        _clear_preview=lambda: cleared.append(True))
+
+    ControllerWindow._collect(window)
+
+    assert saved == [(
+        tmp_path / "logs/robot_controller/last_session.json",
+        "item.yaml", "bin.yaml")]
+    assert cleared == [True]
