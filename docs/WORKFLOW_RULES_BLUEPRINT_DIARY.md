@@ -3656,6 +3656,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   15-package `colcon build` pass. No robot, camera, or motion service was
   commanded.
 
+### 2026-09-16 — Dispatch complete motion groups before reply verification
+
+- Runtime evidence showed global `CP(100)` was accepted and no motion request
+  overrode it, but sequential service-response waits plus synchronous progress
+  work took roughly one second between adjacent queue entries. Short segments
+  could therefore empty the Dobot queue and decelerate even though CP remained
+  configured.
+- Rule 85 supersedes rules 64, 76, 77 and 84 only for motion-group admission.
+  Build the complete named `MovL`/`MovLIO`/`RelMovLUser` request group, dispatch
+  every request in target order without waiting between entries, then validate
+  all group replies under the two-second response deadline. Only after every
+  reply is `res=0` does the controller accept the group and continue its existing
+  terminal-only physical feedback verification. Non-motion calls remain strictly
+  response-serialized.
+- A partial dispatch, response exception, nonzero/empty response, cancellation,
+  or group timeout immediately requests independent Stop. Unfinished responses
+  are marked ambiguous, and a later motion acknowledgement invokes Stop again.
+  Per-request console/operator/event auditing remains mandatory even though
+  replies are verified as a group.
+- DI1 remains monitored during group-response validation and physical descent.
+  Early acquisition performs final Stop containment after all dispatched replies
+  resolve, then retracts under the established held-item contract. If terminal
+  pick feedback completes with DI1 clear, the attempt is now a miss immediately;
+  the controller no longer waits `timing.pick_settling`. Schema-9 profiles retain
+  that field to avoid invalidating current paired artifacts, but runtime execution
+  does not consume it. Terminal 300 ms stationary confirmation is retained as
+  motion verification, not suction settling.
+- Verification is source/synthetic only: exercise complete-before-wait dispatch,
+  all-response acceptance, rejection/timeout/cancellation Stop containment,
+  late response handling, terminal-only arrival, no final suction timer, CP
+  parameter preservation, compilation/lint, package tests, package/root builds,
+  staged review and `git diff --check`. Do not launch bringup, request detector
+  poses, or command physical hardware.
+- Verification completed with 125 direct Robot Controller tests passing and 126
+  package-reported results with zero errors, failures or skips. The synthetic
+  transport tests prove that every request is dispatched before reply waiting,
+  all replies are then validated, rejection requests Stop only after complete
+  dispatch, and a group timeout plus each late reply invokes Stop containment.
+  Python compilation and all 20 controller/test files pass `ament_flake8`; the
+  controller package and complete 15-package workspace build successfully. The
+  first full build encountered a transient generated egg-info race while two
+  unrelated Python packages rebuilt concurrently; an unchanged rerun completed
+  all packages. `git diff --check` passes. No bringup, detector request, camera
+  process or physical robot command was launched.
+
 ### Future entry template
 
 ```text

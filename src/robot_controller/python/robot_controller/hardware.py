@@ -74,6 +74,7 @@ class DobotTransport:
         self.service_audit_lock = threading.Lock()
         self.service_audit_sequence = 0
         self.pending_response = None
+        self.pending_group = None
         self.stop_future = None
         self.stop_audit = None
         self.moving = False
@@ -180,7 +181,8 @@ class DobotTransport:
                     and self.pending_response[0] == name
                     and self.pending_response[1] is future):
                 self.pending_response = None
-        if audit.get("outcome") in LATE_RESPONSE_OUTCOMES:
+        late_response = audit.get("outcome") in LATE_RESPONSE_OUTCOMES
+        if late_response:
             try:
                 result = future.result()
                 detail = "response arrived after caller stopped waiting"
@@ -190,9 +192,11 @@ class DobotTransport:
             self._finish_service_audit(
                 audit, "late_response", result=result, detail=detail,
                 level="WARNING", late=True)
-        if name in MOTION_SERVICES and self.node.cancel_requested():
+        if name in MOTION_SERVICES and (late_response or self.node.cancel_requested()):
             try:
-                stop_future = self.request_stop("late motion acknowledgement")
+                reason = ("late motion acknowledgement"
+                          if late_response else "motion acknowledgement after cancellation")
+                stop_future = self.request_stop(reason)
                 self.node.on_late_motion_ack(stop_future)
             except StopUnconfirmed as exc:
                 self.node.events.record("ERROR", "late_ack_stop_failed", str(exc))
@@ -217,12 +221,27 @@ class DobotTransport:
     def ensure_no_pending_response(self):
         with self.response_lock:
             pending = self.pending_response
+            group = getattr(self, "pending_group", None)
         if pending is not None and not pending[1].done():
             raise CommandResponseTimeout(
                 f"Still awaiting {pending[0]} response; no later command may be sent")
+        if group is not None:
+            unfinished = [name for name, future, _audit in group if not future.done()]
+            if unfinished:
+                raise CommandResponseTimeout(
+                    "Still awaiting motion-group responses: " + ", ".join(unfinished))
+            with self.response_lock:
+                if self.pending_group is group:
+                    self.pending_group = None
 
     def call(self, name, *, check_cancel=True, progress=None, **fields):
         with self.response_lock:
+            group = getattr(self, "pending_group", None)
+            if group is not None and any(not item[1].done() for item in group):
+                raise CommandResponseTimeout(
+                    f"{name} not sent: still awaiting motion-group responses")
+            if group is not None:
+                self.pending_group = None
             if self.pending_response is not None:
                 previous, future, _audit = self.pending_response
                 if not future.done():
@@ -283,6 +302,140 @@ class DobotTransport:
         if progress is not None:
             progress(self.monitor.snapshot(require_enabled=False))
         return result
+
+    def call_group(self, calls, *, progress=None):
+        """Dispatch one ordered motion group, then validate every acknowledgement."""
+        calls = tuple((name, dict(fields)) for name, fields in calls)
+        if not calls or any(name not in MOTION_SERVICES for name, _fields in calls):
+            raise CommandRejected("Motion group requires canonical motion services")
+        names = [name for name, _fields in calls]
+        self.node.check_all_command_owners(names)
+        self.monitor.snapshot(require_enabled=False)
+        for name in dict.fromkeys(names):
+            if not self.clients[name].service_is_ready():
+                raise CommandRejected(f"Required canonical {name} service unavailable")
+
+        with self.response_lock:
+            pending = self.pending_response
+            if pending is not None and not pending[1].done():
+                raise CommandResponseTimeout(
+                    f"Motion group not sent: still awaiting {pending[0]} response")
+            group = getattr(self, "pending_group", None)
+            if group is not None and any(not item[1].done() for item in group):
+                raise CommandResponseTimeout(
+                    "Motion group not sent: earlier group responses are pending")
+            self.pending_response = None
+            group = []
+            self.pending_group = group
+            try:
+                for name, fields in calls:
+                    audit = self._begin_service_audit(name, fields)
+                    try:
+                        future = self.clients[name].call_async(
+                            self.types[name].Request(**fields))
+                    except Exception as exc:
+                        self._finish_service_audit(
+                            audit, "dispatch_error", detail=str(exc), level="ERROR")
+                        raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
+                    group.append((name, future, audit))
+                    future.add_done_callback(
+                        lambda done, service=name, record=audit: self._pending_completed(
+                            service, done, record))
+            except Exception:
+                if not group:
+                    self.pending_group = None
+                else:
+                    for _name, _future, audit in group:
+                        self._finish_service_audit(
+                            audit, "wait_aborted",
+                            detail="motion-group dispatch did not complete", level="ERROR")
+                if group:
+                    self.request_stop("motion-group dispatch failure")
+                raise
+
+        deadline = max(
+            audit["started"] + COMMAND_RESPONSE_TIMEOUT_SEC
+            for _name, _future, audit in group)
+        results = [None] * len(group)
+        resolved = set()
+
+        def resolve_completed():
+            failure = None
+            for index, (name, future, audit) in enumerate(group):
+                if index in resolved or not future.done():
+                    continue
+                resolved.add(index)
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    self._finish_service_audit(
+                        audit, "wait_aborted", detail=str(exc), level="ERROR")
+                    failure = failure or CommandRejected(
+                        f"{name} response failed: {exc}")
+                    continue
+                if result is None or result.res != 0:
+                    self._finish_service_audit(
+                        audit, "rejected", result=result,
+                        detail="canonical service returned nonzero/empty result",
+                        level="ERROR")
+                    failure = failure or CommandRejected(
+                        f"{name} failed: {None if result is None else result.res}")
+                    continue
+                self._finish_service_audit(audit, "accepted", result=result)
+                results[index] = result
+            return failure
+
+        while len(resolved) != len(group):
+            failure = resolve_completed()
+            if failure is not None:
+                for index, (_name, _future, audit) in enumerate(group):
+                    if index not in resolved:
+                        self._finish_service_audit(
+                            audit, "wait_aborted",
+                            detail="another request in the motion group failed",
+                            level="ERROR")
+                if len(resolved) == len(group):
+                    with self.response_lock:
+                        if self.pending_group is group:
+                            self.pending_group = None
+                self.request_stop("motion-group acknowledgement failure")
+                raise failure
+            if len(resolved) == len(group):
+                break
+            if self.node.cancel_requested():
+                for index, (_name, _future, audit) in enumerate(group):
+                    if index not in resolved:
+                        self._finish_service_audit(
+                            audit, "wait_canceled",
+                            detail="operation canceled during group acknowledgement",
+                            level="WARNING")
+                self.request_stop("operation cancellation during group acknowledgement")
+                raise OperationCanceled(
+                    "Cancelled while awaiting motion-group responses")
+            snapshot = self.monitor.snapshot(require_enabled=False)
+            if progress is not None:
+                progress(snapshot)
+            if time.monotonic() >= deadline:
+                pending_names = []
+                for index, (name, _future, audit) in enumerate(group):
+                    if index not in resolved:
+                        pending_names.append(name)
+                        self._finish_service_audit(
+                            audit, "timeout",
+                            detail=("no group response within "
+                                    f"{COMMAND_RESPONSE_TIMEOUT_SEC:g} seconds"),
+                            level="ERROR")
+                self.request_stop("motion-group acknowledgement timeout")
+                raise CommandResponseTimeout(
+                    "Motion-group response timeout: " + ", ".join(pending_names))
+            self.node.wait_control(0.02)
+
+        with self.response_lock:
+            if self.pending_group is group:
+                self.pending_group = None
+        if progress is not None:
+            progress(self.monitor.snapshot(require_enabled=False))
+        return tuple(results)
 
     def request_stop(self, reason="operator/cancellation request"):
         with self.stop_lock:
@@ -808,29 +961,46 @@ class DobotTransport:
         self.node.events.record(
             "INFO", "motion_batch_dispatch_started", batch_name,
             batch=batch_name, targets=[target.name for target in targets],
-            policy="wait_for_each_queue_ack_then_terminal_feedback_only")
+            policy="dispatch_group_then_verify_all_replies_and_terminal_feedback")
 
         def progress(snapshot):
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
                 stop_on_suction=stop_on_suction, before_suction=before_suction)
 
+        def finish_suction_interrupt():
+            self.node.events.record(
+                "INFO", "motion_batch_interrupted", batch_name,
+                batch=batch_name, queued_targets=queued_targets,
+                reason="DI1 acquired during final approach")
+            final_stop = self.request_stop(
+                "final containment after suction acquisition group")
+            self.confirm_stop(final_stop)
+            sample = self.monitor.snapshot(require_enabled=True)
+            if (not sample.feed["digital_input_bits"] & 1
+                    or not sample.feed["digital_outputs"] & (1 << 12)):
+                raise FeedbackFailure("Suction lost after acquisition Stop")
+            for channel, active in expected_outputs.items():
+                actual = bool(sample.feed["digital_outputs"] & (1 << (channel - 1)))
+                if actual != active:
+                    raise FeedbackFailure(
+                        f"Motion-timed DO{channel} mismatch after suction Stop")
+            self.node.expected_outputs.update(expected_outputs)
+            return True
+
         try:
+            calls = []
+            target_records = []
             for target, values, previous in prepared:
-                self._wait_for_resume()
-                self.node.raise_if_cancelled()
-                progress(self._ready_snapshot())
-                if self.suction_interrupted:
-                    break
-                self.node.operation_progress(
-                    "MOTION", f"Queueing {batch_name}: {target.name}",
-                    waypoint=target.name)
                 params = ["user=0", "tool=0", f"v={target.speed_percent}",
                           f"a={target.acceleration_percent}"]
                 if target.relative_z:
-                    self.call("RelMovLUser", a=0., b=0.,
-                              c=(target.matrix[2, 3] - previous[2, 3]) * 1000,
-                              d=0., e=0., f=0., param_value=params, progress=progress)
+                    service = "RelMovLUser"
+                    fields = {
+                        "a": 0., "b": 0.,
+                        "c": (target.matrix[2, 3] - previous[2, 3]) * 1000,
+                        "d": 0., "e": 0., "f": 0., "param_value": params,
+                    }
                 else:
                     command = values if target.joints_rad is None else list(
                         np.rad2deg(target.joints_rad))
@@ -839,32 +1009,28 @@ class DobotTransport:
                     fields = dict(zip("abcdef", map(float, command)))
                     if events:
                         fields["mdis"] = events
-                    self.call(service, mode=target.joints_rad is not None, **fields,
-                              param_value=params, progress=progress)
+                    fields.update(mode=target.joints_rad is not None, param_value=params)
+                calls.append((service, fields))
+                target_records.append((target, [
+                    event.vendor_value() for event in target.motion_io]))
+
+            self._wait_for_resume()
+            self.node.raise_if_cancelled()
+            progress(self._ready_snapshot())
+            self.node.operation_progress(
+                "MOTION", f"Dispatching {batch_name} as one command group",
+                waypoint=targets[-1].name)
+            self.call_group(calls, progress=progress)
+            queued_targets.extend(target.name for target, _events in target_records)
+            for target, events in target_records:
                 self.node.events.record(
                     "INFO", "motion_queued", target.name,
                     batch=batch_name,
                     speed_percent=target.speed_percent,
                     acceleration_percent=target.acceleration_percent,
-                    motion_io=[event.vendor_value() for event in target.motion_io])
-                queued_targets.append(target.name)
+                    motion_io=events)
             if self.suction_interrupted:
-                self.node.events.record(
-                    "INFO", "motion_batch_interrupted", batch_name,
-                    batch=batch_name, queued_targets=queued_targets,
-                    reason="DI1 acquired during final approach")
-                self.confirm_stop(self.suction_stop_future)
-                sample = self.monitor.snapshot(require_enabled=True)
-                if (not sample.feed["digital_input_bits"] & 1
-                        or not sample.feed["digital_outputs"] & (1 << 12)):
-                    raise FeedbackFailure("Suction lost after acquisition Stop")
-                for channel, active in expected_outputs.items():
-                    actual = bool(sample.feed["digital_outputs"] & (1 << (channel - 1)))
-                    if actual != active:
-                        raise FeedbackFailure(
-                            f"Motion-timed DO{channel} mismatch after suction Stop")
-                self.node.expected_outputs.update(expected_outputs)
-                return True
+                return finish_suction_interrupt()
             self.node.events.record(
                 "INFO", "motion_batch_queued", batch_name,
                 batch=batch_name, targets=queued_targets,
@@ -879,6 +1045,8 @@ class DobotTransport:
                 self.node.raise_if_cancelled()
                 snapshot = self._ready_snapshot()
                 progress(snapshot)
+                if self.suction_interrupted:
+                    return finish_suction_interrupt()
                 now = time.monotonic()
                 vector = np.asarray(snapshot.feed["tool_vector_actual"], dtype=float)
                 if np.max(np.abs(vector - last_vector)) > 0.05:

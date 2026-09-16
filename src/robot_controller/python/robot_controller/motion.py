@@ -7,8 +7,8 @@ import numpy as np
 
 from camera_calibration_gui.calibration_core import rotation_angle_deg
 from item_perception_yolo.item_teach_core import validate_speed, validate_acceleration
-from item_perception_yolo.pick_planning import (
-    candidate_pose_in_base, pick_attitude, rigid_matrix)
+from item_perception_yolo.pick_planning import (  # noqa: F401
+    candidate_pose_in_base as candidate_pose_in_base, pick_attitude, rigid_matrix)
 
 
 @dataclass(frozen=True)
@@ -146,9 +146,6 @@ class PickExecutor:
             acquired = self.hardware.move_batch(
                 plan[:4], batch_name=f"candidate_{index}_home_to_pick",
                 stop_on_suction=True, before_suction=lambda: check(index))
-            if not acquired:
-                acquired = self.hardware.sensor(True, settings["timing"]["pick_settling"],
-                                                settling_sec=0)
             if acquired and holding_changed is not None:
                 # Establish trusted in-memory holding context before any gripper
                 # output or return motion can fail.

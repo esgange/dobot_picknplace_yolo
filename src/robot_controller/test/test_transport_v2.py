@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 import robot_controller.hardware as hardware_module
-from robot_controller.errors import CommandResponseTimeout, FeedbackFailure, HeldUnknown
+from robot_controller.errors import (CommandRejected, CommandResponseTimeout,
+                                     FeedbackFailure, HeldUnknown)
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
 from robot_controller.motion import Target
 
@@ -90,8 +91,8 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
     transport._idle = lambda _snapshot: True
     transport._target_reached = lambda target, _snapshot: (
         order.append(("reached", target.name)) or True)
-    transport.call = lambda service, **kwargs: order.append(
-        ("call", service, kwargs["param_value"]))
+    transport.call_group = lambda calls, **_kwargs: order.extend(
+        ("call", service, fields["param_value"]) for service, fields in calls)
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     transport.moving = False
@@ -105,6 +106,228 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
     assert names == ["motion_batch_dispatch_started", "motion_queued",
                      "motion_queued", "motion_batch_queued",
                      "motion_batch_completed"]
+
+
+def test_motion_group_dispatches_all_requests_before_waiting_for_replies():
+    class DeferredFuture:
+        def __init__(self):
+            self.completed = False
+            self.callbacks = []
+
+        def done(self):
+            return self.completed
+
+        def result(self):
+            return SimpleNamespace(res=0)
+
+        def add_done_callback(self, callback):
+            self.callbacks.append(callback)
+
+        def complete(self):
+            self.completed = True
+            for callback in self.callbacks:
+                callback(self)
+
+    dispatches = []
+    futures = []
+
+    def dispatch(name, request):
+        future = DeferredFuture()
+        dispatches.append((name, request))
+        futures.append(future)
+        return future
+
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.clients = {
+        name: SimpleNamespace(
+            service_is_ready=lambda: True,
+            call_async=lambda request, service=name: dispatch(service, request))
+        for name in ("MovL", "MovLIO")
+    }
+    transport.types = {
+        name: SimpleNamespace(Request=lambda **fields: fields)
+        for name in ("MovL", "MovLIO")
+    }
+    completed_wait = []
+
+    def wait_control(_seconds):
+        assert [name for name, _request in dispatches] == ["MovL", "MovLIO"]
+        completed_wait.append(True)
+        for future in futures:
+            future.complete()
+
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda names: None,
+        cancel_requested=lambda: False, wait_control=wait_control)
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport.suction_interrupted = False
+    transport.request_stop = lambda _reason: pytest.fail("Stop was not expected")
+    audits = []
+
+    def begin(name, fields):
+        audit = {"name": name, "fields": fields,
+                 "started": hardware_module.time.monotonic()}
+        audits.append(audit)
+        return audit
+
+    transport._begin_service_audit = begin
+    transport._finish_service_audit = lambda audit, outcome, **_fields: audit.update(
+        outcome=outcome)
+
+    results = transport.call_group((
+        ("MovL", {"mode": False}),
+        ("MovLIO", {"mode": False, "mdis": ["{1,0,13,1}"]}),
+    ))
+
+    assert len(results) == 2
+    assert completed_wait == [True]
+    assert [name for name, _request in dispatches] == ["MovL", "MovLIO"]
+    assert [audit["outcome"] for audit in audits] == ["accepted", "accepted"]
+    assert transport.pending_group is None
+
+
+def test_motion_group_timeout_stops_and_each_late_reply_is_contained(monkeypatch):
+    class DeferredFuture:
+        def __init__(self):
+            self.callbacks = []
+
+        def done(self):
+            return False
+
+        def result(self):
+            return SimpleNamespace(res=0)
+
+        def add_done_callback(self, callback):
+            self.callbacks.append(callback)
+
+        def complete(self):
+            self.done = lambda: True
+            for callback in self.callbacks:
+                callback(self)
+
+    dispatches = []
+    futures = []
+
+    def dispatch(request):
+        future = DeferredFuture()
+        dispatches.append(request)
+        futures.append(future)
+        return future
+
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.clients = {
+        "MovL": SimpleNamespace(service_is_ready=lambda: True, call_async=dispatch)}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+    stops = []
+    late_stops = []
+    events = EventLog()
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: False, wait_control=lambda _seconds: None,
+        on_late_motion_ack=late_stops.append, events=events)
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport.suction_interrupted = False
+    transport.request_stop = lambda reason: stops.append(reason) or object()
+    audits = []
+
+    def begin(name, fields):
+        audit = {"name": name, "fields": fields, "started": 0.0}
+        audits.append(audit)
+        return audit
+
+    def finish(audit, outcome, **fields):
+        if not fields.get("late"):
+            audit["outcome"] = outcome
+
+    transport._begin_service_audit = begin
+    transport._finish_service_audit = finish
+    monkeypatch.setattr(
+        hardware_module, "time", SimpleNamespace(monotonic=lambda: 3.0))
+
+    with pytest.raises(CommandResponseTimeout, match="Motion-group response timeout"):
+        transport.call_group((
+            ("MovL", {"a": 1.0}),
+            ("MovL", {"a": 2.0}),
+        ))
+
+    assert len(dispatches) == 2
+    assert stops == ["motion-group acknowledgement timeout"]
+    assert [audit["outcome"] for audit in audits] == ["timeout", "timeout"]
+    futures[0].complete()
+    futures[1].complete()
+    assert stops == ["motion-group acknowledgement timeout",
+                     "late motion acknowledgement", "late motion acknowledgement"]
+    assert len(late_stops) == 2
+
+
+def test_motion_group_rejection_stops_only_after_complete_group_dispatch():
+    class ImmediateFuture:
+        def __init__(self, result):
+            self.response = SimpleNamespace(res=result)
+
+        def done(self):
+            return True
+
+        def result(self):
+            return self.response
+
+        def add_done_callback(self, callback):
+            callback(self)
+
+    dispatches = []
+    responses = iter((0, -20000))
+
+    def dispatch(request):
+        dispatches.append(request)
+        return ImmediateFuture(next(responses))
+
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.clients = {
+        "MovL": SimpleNamespace(service_is_ready=lambda: True, call_async=dispatch)}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+    stops = []
+
+    def stop(reason):
+        assert len(dispatches) == 2
+        stops.append(reason)
+        return object()
+
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: False, wait_control=lambda _seconds: None)
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport.suction_interrupted = False
+    transport.request_stop = stop
+    audits = []
+
+    def begin(name, fields):
+        audit = {"name": name, "fields": fields,
+                 "started": hardware_module.time.monotonic()}
+        audits.append(audit)
+        return audit
+
+    transport._begin_service_audit = begin
+    transport._finish_service_audit = lambda audit, outcome, **_fields: audit.update(
+        outcome=outcome)
+
+    with pytest.raises(CommandRejected, match="MovL failed: -20000"):
+        transport.call_group((
+            ("MovL", {"a": 1.0}),
+            ("MovL", {"a": 2.0}),
+        ))
+
+    assert stops == ["motion-group acknowledgement failure"]
+    assert [audit["outcome"] for audit in audits] == ["accepted", "rejected"]
+    assert transport.pending_group is None
 
 
 def snapshot(*, di1=False, outputs=0, joints=None):

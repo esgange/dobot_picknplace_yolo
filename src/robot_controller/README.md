@@ -274,9 +274,11 @@ otherwise they close at the end of retract-to-prepick, still only after DI1.
 
 Each candidate has two named queue batches. `candidate_N_home_to_pick` submits
 item-XY transit at Home Z, clearance, pre-pick and pick without any intermediate
-arrival wait, then confirms only the terminal pick/stopped pose and performs the
-configured suction settling. Only after that decision does the controller submit
-the second queue. For an intermediate miss, `candidate_N_pick_to_retry` contains
+arrival wait, then confirms only the terminal pick/stopped pose. DI1 is checked
+throughout descent and at terminal completion; there is no additional
+`pick_settling` delay before declaring a miss. Only after that decision does the
+controller submit the second queue. For an intermediate miss,
+`candidate_N_pick_to_retry` contains
 stopped-pose retract and clearance only; after its terminal clearance/DI-clear
 confirmation, the next candidate forward queue begins directly, without Home.
 On success or final exhaustion, `candidate_N_pick_to_home` contains stopped-pose
@@ -284,12 +286,14 @@ retract, clearance, optional Home-Z rise and exact joint Home. Exact Home is tha
 return batch's sole terminal position check. Early DI1 still invokes
 the established Stop-and-confirm path before return planning.
 
-Every `MovL`/`MovLIO` service acknowledgement is nevertheless awaited before the
-next queue entry is submitted. It confirms ordered queue admission, not physical
-arrival. Fire-and-forget requests across separate ROS service endpoints could be
-reordered or leave later motion queued after an earlier rejection, so they are
-not used. Batch start, each admitted command, full-queue admission, interruption
-and terminal completion are recorded with the batch name.
+All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are dispatched
+in target order without waiting between requests. After the complete group has
+been sent, the controller validates every ROS response and requires `res=0` for
+the entire group before continuing terminal feedback verification. A response
+error, rejection, cancellation, or two-second group deadline invokes independent
+Stop containment; an outstanding late response remains contained by another
+Stop. Batch start, every dispatch/response, complete group admission,
+interruption and terminal completion are recorded with the batch name.
 
 Motion requests carry only `user=0`, `tool=0`, and their taught `v`/`a` rates;
 they never carry a per-command `cp` or `r`. The global `CP(100)` established by

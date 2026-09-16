@@ -270,6 +270,8 @@ def test_missed_suction_retracts_to_clearance_then_advances_without_home():
                                "candidate_2_home_to_pick"]
     assert sum(entry[:2] == ("output", 13) and entry[2] is False
                for entry in hardware.log) == 4
+    assert not any(entry[0] == "sensor" and entry[1] is True
+                   for entry in hardware.log)
 
 
 def test_second_candidate_success_returns_home_only_after_acquisition():

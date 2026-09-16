@@ -5,7 +5,8 @@ import math
 import numpy as np
 
 from camera_calibration_gui.calibration_core import rotation_matrix_to_rpy_deg
-from item_perception_yolo.pick_planning import Cr10Kinematics, rpy_matrix
+from item_perception_yolo.pick_planning import (  # noqa: F401
+    Cr10Kinematics as Cr10Kinematics, rpy_matrix)
 
 
 def pose_matrix(values):

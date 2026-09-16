@@ -127,14 +127,16 @@ machine, raw CLI examples, timing policy and commissioning requirements.
 Each candidate is dispatched as a forward queue followed by one terminal queue.
 The Home-to-pick queue
 contains transit, clearance, pre-pick and pick; only the terminal pick/stopped
-pose is checked before suction settling. An intermediate miss uses a
+pose is checked. DI1 is evaluated throughout descent and at terminal completion;
+there is no additional final-pose suction-settling delay. An intermediate miss uses a
 pick-to-retry queue containing only retract and clearance, then proceeds directly
 to the next candidate from that attitude. Success or final exhaustion uses a
 pick-to-Home queue containing retract, clearance, optional Home-Z rise and exact
 joint Home; only exact Home is checked. Intermediate waypoint arrivals are never
-awaited. Each ROS service
-acknowledgement is still awaited in order because it is queue-admission evidence,
-not evidence that the physical movement has finished.
+awaited. All service requests in one named motion group are dispatched first;
+the controller then requires every group response to return `res=0` before it
+accepts the group and continues terminal feedback verification. A rejection,
+response error, or two-second group timeout invokes independent Stop containment.
 
 Home arrival means every actual joint is within ±1° of its taught value for
 300 ms with enabled, fault-free, stationary, empty-queue feedback. Cartesian
@@ -225,7 +227,9 @@ Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
 applied by Startup/Recover governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
 only the terminal pick/stopped pose and exact taught-joint Home are physically
-confirmed. See the controller README for feedback/Stop confirmation and
+confirmed. Motion groups are submitted without a response wait between their
+entries, allowing the Dobot queue to remain populated for CP blending. See the
+controller README for feedback/Stop confirmation and
 deployment safety requirements.
 
 For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
