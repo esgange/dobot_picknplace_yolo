@@ -179,6 +179,62 @@ class Button:
         self.text = value
 
 
+class SpeedSlider:
+    def __init__(self, position, *, down=False, focus=True):
+        self.position = position
+        self.down = down
+        self.focus = focus
+
+    def sliderPosition(self):
+        return self.position
+
+    def isSliderDown(self):
+        return self.down
+
+    def hasFocus(self):
+        return self.focus
+
+
+class Timer:
+    def __init__(self):
+        self.started = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.started = False
+
+
+def test_gui_speed_uses_live_slider_position_and_suppresses_noop():
+    calls = []
+    window = SimpleNamespace(
+        pending={}, speed_slider=SpeedSlider(35), speed_debounce=Timer(),
+        speed_pending_percent=None, speed_label=Button(),
+        node=SimpleNamespace(status=SimpleNamespace(global_speed_percent=100)),
+        _call=lambda name, request: calls.append((name, request.percent)) or True)
+    ControllerWindow._speed(window)
+    assert calls == [("speed", 35)]
+    assert window.speed_pending_percent == 35
+    assert "requesting 35%" in window.speed_label.text
+
+    calls.clear()
+    window.speed_slider.position = 100
+    window.speed_pending_percent = None
+    ControllerWindow._speed(window)
+    assert calls == []
+
+
+def test_gui_keyboard_speed_change_is_debounced():
+    window = SimpleNamespace(
+        speed_syncing=False, speed_slider=SpeedSlider(42),
+        speed_debounce=Timer(), speed_label=Button())
+    window._speed_preview = lambda value: ControllerWindow._speed_preview(window, value)
+    ControllerWindow._speed_value_changed(window, 42)
+    assert window.speed_debounce.started
+    assert "42% selected" in window.speed_label.text
+
+
 def test_gui_second_pause_click_queues_stop_without_overlapping_pause():
     commands = []
     window = SimpleNamespace(

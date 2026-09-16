@@ -147,6 +147,11 @@ Live evidence showed `EnableRobot()` latching it to one with an idle empty queue
 and a raw `Continue()` returned `-1`. Only a controller-issued, acknowledged
 Pause with retained operation context enters `PAUSED`; an idle latch never does.
 
+The GUI SpeedFactor slider tracks the handle position and sends it once on
+release. Keyboard and groove changes are debounced for 350 ms. Controller status
+cannot overwrite an active or pending edit, and unchanged selections do not send
+another SpeedFactor request.
+
 The GUI presents these services as two dynamic controls. `START` calls Startup
 from `INACTIVE` and becomes `CONTINUE` in `PAUSED`. The amber `PAUSE` control
 immediately becomes red `STOP` on its first click. A rapid second click records

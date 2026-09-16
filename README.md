@@ -69,6 +69,10 @@ queue is empty/not running; `Continue()` is rejected in that condition. The
 controller recognizes resumable Pause only from its own confirmed Pause request
 and retained operation context.
 
+The global SpeedFactor slider sends its live 1–100 position on mouse release;
+keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
+control back while an edit or service confirmation is in progress.
+
 Home uses fresh GetPose only to decide whether an upward current-XY rise is
 needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
 transforms platform-relative poses, applies schema-6 vertical geometry and

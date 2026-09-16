@@ -3038,6 +3038,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   services in `UNCONFIGURED` and all three processes stopped cleanly. No movement
   target was sent during the live audit or implementation verification.
 
+### 2026-09-16 — Global-speed slider sends the selected position
+
+- The live event log proved the typed speed service and robot both succeeded,
+  but every post-Startup GUI request still contained `ratio=100`. The defect was
+  local to Qt: the slider used non-tracking mode and read `value()` from
+  `sliderReleased`, which could still contain the previous committed value.
+- Rule 67 makes the GUI track and send `sliderPosition()` on release, shows the
+  selected/requesting/confirmed value, suppresses unchanged requests, and keeps
+  the 10 Hz status refresh from snapping the handle back during editing or the
+  service/status round trip. Keyboard and groove edits use one 350 ms debounce.
+  Controller-side validation, stationary READY/HOLDING gating, canonical service
+  serialization and status authority are unchanged.
+- Verification passes all 68 focused controller tests directly and through the
+  package CTest wrapper; controller plus generated-interface results report 69
+  tests with zero errors/failures/skips. Regressions prove the request uses the
+  live position rather than the old committed value, unchanged values make no
+  request, and keyboard edits start the debounce. Python compilation and
+  ament_flake8 pass, both packages build, and the full workspace builds all 15
+  packages. An isolated-domain offscreen controller/preview/GUI launch starts
+  and stops all processes cleanly. No hardware command was sent during this
+  implementation check.
+
 ### Future entry template
 
 ```text

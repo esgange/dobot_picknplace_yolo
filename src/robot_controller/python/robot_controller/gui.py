@@ -62,6 +62,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.saved_selection = None
         self.pause_requested_locally = False
         self.stop_after_pause = False
+        self.speed_pending_percent = None
+        self.speed_syncing = False
         self.setWindowTitle("Robot Controller v2")
         self.resize(1050, 570)
         central = QtWidgets.QWidget()
@@ -131,8 +133,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.speed_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.speed_slider.setRange(1, 100)
         self.speed_slider.setValue(100)
-        self.speed_slider.setTracking(False)
-        self.speed_slider.sliderReleased.connect(self._speed)
+        self.speed_slider.setTracking(True)
+        self.speed_slider.sliderMoved.connect(self._speed_preview)
+        self.speed_slider.sliderReleased.connect(self._speed_released)
+        self.speed_slider.valueChanged.connect(self._speed_value_changed)
+        self.speed_debounce = QtCore.QTimer(self)
+        self.speed_debounce.setSingleShot(True)
+        self.speed_debounce.setInterval(350)
+        self.speed_debounce.timeout.connect(self._speed)
         speed.addWidget(self.speed_label)
         speed.addWidget(self.speed_slider, 1)
         layout.addLayout(speed)
@@ -227,10 +235,42 @@ class ControllerWindow(QtWidgets.QMainWindow):
         request.bin_teach_file = self.bin_path.text().strip()
         self._call("preview", request)
 
+    def _sync_speed_slider(self, percent):
+        self.speed_syncing = True
+        try:
+            self.speed_slider.setValue(percent)
+        finally:
+            self.speed_syncing = False
+
+    def _speed_preview(self, percent):
+        self.speed_label.setText(f"Global SpeedFactor: {int(percent)}% selected")
+
+    def _speed_value_changed(self, percent):
+        if self.speed_syncing:
+            return
+        self._speed_preview(percent)
+        if not self.speed_slider.isSliderDown() and self.speed_slider.hasFocus():
+            self.speed_debounce.start()
+
+    def _speed_released(self):
+        self.speed_debounce.stop()
+        self._speed()
+
     def _speed(self):
+        self.speed_debounce.stop()
+        if "speed" in self.pending:
+            return
+        percent = int(self.speed_slider.sliderPosition())
+        status = self.node.status
+        if (status is not None and status.global_speed_percent == percent
+                and self.speed_pending_percent is None):
+            self.speed_label.setText(f"Global SpeedFactor: {percent}%")
+            return
         request = SetGlobalSpeed.Request()
-        request.percent = self.speed_slider.value()
-        self._call("speed", request)
+        request.percent = percent
+        if self._call("speed", request):
+            self.speed_pending_percent = percent
+            self.speed_label.setText(f"Global SpeedFactor: requesting {percent}%")
 
     def _feedback(self, message):
         feedback = message.feedback
@@ -265,14 +305,23 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 result = future.result()
                 if result is None or not result.success:
                     message = "No response" if result is None else result.message
+                    if name == "speed":
+                        self.speed_pending_percent = None
+                        if result is not None and result.confirmed_percent >= 1:
+                            self._sync_speed_slider(result.confirmed_percent)
                     QtWidgets.QMessageBox.warning(self, f"{name} rejected", message)
                 elif name == "configure" and self.saved_selection is not None:
                     save_state(
                         self.node.root / "logs/robot_controller/last_session.json",
                         *self.saved_selection)
                 elif name == "speed":
-                    self.speed_slider.setValue(result.confirmed_percent)
+                    self.speed_pending_percent = result.confirmed_percent
+                    self._sync_speed_slider(result.confirmed_percent)
+                    self.speed_label.setText(
+                        f"Global SpeedFactor: {result.confirmed_percent}% confirmed")
             except Exception as exc:
+                if name == "speed":
+                    self.speed_pending_percent = None
                 QtWidgets.QMessageBox.warning(self, f"{name} failed", str(exc))
             finally:
                 if name == "pause":
@@ -347,12 +396,25 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.preview_pick.setEnabled(
             self.node.service_clients["preview"].service_is_ready())
         speed_enabled = reachable and current in ("READY", "HOLDING") and not active
-        self.speed_slider.setEnabled(speed_enabled)
+        self.speed_slider.setEnabled(speed_enabled and "speed" not in self.pending)
         if state:
-            if state.global_speed_percent >= 1 and not self.speed_slider.isSliderDown():
-                self.speed_slider.setValue(state.global_speed_percent)
-            speed_text = (f"{state.global_speed_percent}%"
-                          if state.global_speed_percent >= 1 else "unknown")
+            if (self.speed_pending_percent is not None
+                    and "speed" not in self.pending
+                    and state.global_speed_percent == self.speed_pending_percent):
+                self.speed_pending_percent = None
+            editing_speed = (
+                self.speed_slider.isSliderDown() or self.speed_debounce.isActive()
+                or "speed" in self.pending or self.speed_pending_percent is not None)
+            if state.global_speed_percent >= 1 and not editing_speed:
+                self._sync_speed_slider(state.global_speed_percent)
+            if self.speed_slider.isSliderDown() or self.speed_debounce.isActive():
+                speed_text = f"{self.speed_slider.sliderPosition()}% selected"
+            elif self.speed_pending_percent is not None:
+                suffix = "requesting" if "speed" in self.pending else "confirmed"
+                speed_text = f"{self.speed_pending_percent}% {suffix}"
+            else:
+                speed_text = (f"{state.global_speed_percent}%"
+                              if state.global_speed_percent >= 1 else "unknown")
             self.speed_label.setText(f"Global SpeedFactor: {speed_text}")
             progress = f"\n{self.feedback_message}" if self.feedback_message else ""
             self.status.setText(
