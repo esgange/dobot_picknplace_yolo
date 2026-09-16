@@ -3361,6 +3361,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   short-axis/green-axis line alignment and a commanded turn no greater than 90
   degrees. No detector request or robot command was issued.
 
+### 2026-09-16 — Make forward and return pick queues explicit
+
+- The requested Home-to-pick then pick-to-Home batching is already the core
+  behavior of `move_batch`: it dispatches all targets in order without waiting
+  for intermediate Cartesian arrival, then monitors only the final target. The
+  first candidate queue is transit at Home Z, clearance, pre-pick and pick. After
+  terminal pick/stopped-pose confirmation and suction settling, the second queue
+  is stopped-pose retract, clearance, conditional Home-Z rise and exact joint
+  Home. Return construction does not begin before the terminal pick decision.
+- Rule 76 makes those boundaries explicit and observable as
+  `candidate_N_home_to_pick` and `candidate_N_pick_to_home`. Record batch start,
+  each admitted target, complete queue admission, early-suction interruption and
+  terminal completion with the batch name. GUI/action progress identifies the
+  batch while its targets are being admitted.
+- “Do not care about responses” is interpreted as no intermediate *motion
+  completion* wait, not fire-and-forget ROS requests. The vendored bringup exposes
+  MovL and MovLIO as distinct ROS services and synchronously writes each command
+  over the dashboard socket. Preserve serialized request/response ordering:
+  every response is mandatory evidence that its target entered the queue before
+  the following target is sent. It is never treated as physical arrival. Ignoring
+  those acknowledgements could reorder cross-service requests or queue later
+  motion after an earlier rejection, violating deterministic Stop containment.
+- Existing early-DI1 Stop, cancellation, Pause/Continue, late acknowledgement,
+  timed outputs, settle, missed-pick retry, output integrity and terminal feedback
+  policies are unchanged. There is no interface/profile/artifact schema change
+  and no vendored source edit.
+- Verification is synthetic/source-only: prove exact forward/return batch names
+  for success and multiple missed candidates, no per-waypoint arrival API, return
+  queue forwarding through the shared Home function, batch observability, focused
+  controller tests, compilation/lint, controller/root builds, staged review and
+  `git diff --check`. Do not issue detector requests or robot commands.
+- Verification completed with all 112 focused Robot Controller tests passing and
+  all 113 package-reported results passing with zero errors, failures or skips.
+  Python compilation and all 20 controller/test files pass ament_flake8; the
+  controller package and complete 15-package workspace build successfully.
+  Source review confirms each normal command still waits for queue-admission
+  acknowledgement and that only the final target enters the arrival loop. No
+  detector request or robot command was issued.
+
 ### Future entry template
 
 ```text

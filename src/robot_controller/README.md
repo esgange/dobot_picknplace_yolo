@@ -252,6 +252,22 @@ uses retract rates. Enabled fingers open at 50% of the clearance move. Suction
 turns on at 0% of final descent. With `grip_onpick`, fingers close after DI1;
 otherwise they close at the end of retract-to-prepick, still only after DI1.
 
+Each candidate has two named queue batches. `candidate_N_home_to_pick` submits
+item-XY transit at Home Z, clearance, pre-pick and pick without any intermediate
+arrival wait, then confirms only the terminal pick/stopped pose and performs the
+configured suction settling. Only after that decision does
+`candidate_N_pick_to_home` submit stopped-pose retract, clearance, optional
+Home-Z rise and exact joint Home, again with no intermediate arrival wait. Exact
+Home is the return batch's sole terminal position check. Early DI1 still invokes
+the established Stop-and-confirm path before return planning.
+
+Every `MovL`/`MovLIO` service acknowledgement is nevertheless awaited before the
+next queue entry is submitted. It confirms ordered queue admission, not physical
+arrival. Fire-and-forget requests across separate ROS service endpoints could be
+reordered or leave later motion queued after an earlier rejection, so they are
+not used. Batch start, each admitted command, full-queue admission, interruption
+and terminal completion are recorded with the batch name.
+
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Conditional Home rise uses `RelMovLUser`. The controller never calls
 `InverseKin`; `Continue` is reserved solely for explicit resume from `PAUSED`.

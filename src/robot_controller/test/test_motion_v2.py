@@ -196,8 +196,11 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
         [plan], settings(), check=lambda _index: None,
         return_home=lambda **kwargs: returned.append(kwargs))
     assert outcome == {"picked": True, "candidate": 1, "holding_item": True}
+    forward = next(entry for entry in hardware.log if entry[0] == "move")
+    assert forward[2]["batch_name"] == "candidate_1_home_to_pick"
     assert ("output", 14, False) in hardware.log
     assert ("output", 2, True) in hardware.log
+    assert returned[0]["batch_name"] == "candidate_1_pick_to_home"
     assert returned[0]["require_suction"] is True
     assert returned[0]["forbid_suction"] is False
 
@@ -212,13 +215,18 @@ def test_missed_suction_returns_home_before_advancing_candidate():
         order.append(("candidate", index))
 
     def return_home(**kwargs):
-        order.append(("home", kwargs["forbid_suction"]))
+        order.append(("home", kwargs["forbid_suction"], kwargs["batch_name"]))
 
     outcome = PickExecutor(hardware, finish_home=True).run(
         plans, settings(), check=check, return_home=return_home)
     assert not outcome["picked"]
-    assert order == [("candidate", 1), ("home", True),
-                     ("candidate", 2), ("home", True)]
+    assert order == [
+        ("candidate", 1), ("home", True, "candidate_1_pick_to_home"),
+        ("candidate", 2), ("home", True, "candidate_2_pick_to_home")]
+    forward_batches = [entry[2]["batch_name"] for entry in hardware.log
+                       if entry[0] == "move"]
+    assert forward_batches == ["candidate_1_home_to_pick",
+                               "candidate_2_home_to_pick"]
     assert sum(entry[:2] == ("output", 13) and entry[2] is False
                for entry in hardware.log) == 4
 

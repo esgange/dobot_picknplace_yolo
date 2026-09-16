@@ -122,6 +122,15 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
     assert "home_rotation @ local_z_rotation" in motion
 
 
+def test_pick_uses_named_forward_and_return_queue_batches():
+    motion = (PACKAGE / "python/robot_controller/motion.py").read_text()
+    hardware = (PACKAGE / "python/robot_controller/hardware.py").read_text()
+    assert 'batch_name=f"candidate_{index}_home_to_pick"' in motion
+    assert 'batch_name=f"candidate_{index}_pick_to_home"' in motion
+    assert "wait_for_each_queue_ack_then_terminal_feedback_only" in hardware
+    assert '"motion_batch_queued"' in hardware
+
+
 def test_idle_supervision_preempts_unexpected_motion():
     controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
     block = controller.split("def _stop_unexpected_idle_motion", 1)[1].split(

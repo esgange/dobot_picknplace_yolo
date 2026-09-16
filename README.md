@@ -114,6 +114,14 @@ the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 
+Each candidate is dispatched as two explicit queues. The Home-to-pick queue
+contains transit, clearance, pre-pick and pick; only the terminal pick/stopped
+pose is checked before suction settling. The pick-to-Home queue is then sent as
+retract, clearance, optional Home-Z rise and exact joint Home; only exact Home is
+checked. Intermediate waypoint arrivals are never awaited. Each ROS service
+acknowledgement is still awaited in order because it is queue-admission evidence,
+not evidence that the physical movement has finished.
+
 Home arrival means every actual joint is within ±1° of its taught value for
 300 ms with enabled, fault-free, stationary, empty-queue feedback. Cartesian
 waypoints use 5 mm Euclidean translation and 1° orientation with the same final

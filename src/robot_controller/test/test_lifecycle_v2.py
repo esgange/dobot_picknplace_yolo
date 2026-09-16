@@ -440,10 +440,12 @@ def test_queued_pick_return_never_uses_current_home_skip():
     preceding = ("retract",)
     assert RobotController._execute_home(
         node, preceding=preceding, require_suction=False,
-        forbid_suction=True) == ("home",)
+        forbid_suction=True,
+        batch_name="candidate_1_pick_to_home") == ("home",)
     assert not any(entry[0] == "unexpected_check" for entry in calls)
     assert ("plan", preceding) in calls
-    assert any(entry[0] == "move" for entry in calls)
+    move = next(entry for entry in calls if entry[0] == "move")
+    assert move[2]["batch_name"] == "candidate_1_pick_to_home"
 
 
 def test_gui_second_pause_click_queues_stop_without_overlapping_pause():

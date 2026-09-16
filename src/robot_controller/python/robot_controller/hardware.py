@@ -770,11 +770,14 @@ class DobotTransport:
             if not vacuum and before_suction is not None:
                 before_suction()
 
-    def move_batch(self, targets, *, require_suction=False, forbid_suction=False,
-                   stop_on_suction=False, before_suction=None):
+    def move_batch(self, targets, *, batch_name="motion", require_suction=False,
+                   forbid_suction=False, stop_on_suction=False,
+                   before_suction=None):
         targets = tuple(targets)
-        if not targets or sum((require_suction, forbid_suction, stop_on_suction)) > 1:
+        if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
+                or sum((require_suction, forbid_suction, stop_on_suction)) > 1):
             raise CommandRejected("Invalid motion-batch suction policy or empty batch")
+        batch_name = batch_name.strip()
         start = self.current_pose()
         origin = start
         prepared = []
@@ -799,6 +802,11 @@ class DobotTransport:
         started = time.monotonic()
         last_progress = started
         last_vector = np.asarray(initial.feed["tool_vector_actual"], dtype=float)
+        queued_targets = []
+        self.node.events.record(
+            "INFO", "motion_batch_dispatch_started", batch_name,
+            batch=batch_name, targets=[target.name for target in targets],
+            policy="wait_for_each_queue_ack_then_terminal_feedback_only")
 
         def progress(snapshot):
             self._monitor_motion_policy(
@@ -812,8 +820,9 @@ class DobotTransport:
                 progress(self._ready_snapshot())
                 if self.suction_interrupted:
                     break
-                self.node.operation_progress("MOTION", f"Dispatching {target.name}",
-                                             waypoint=target.name)
+                self.node.operation_progress(
+                    "MOTION", f"Queueing {batch_name}: {target.name}",
+                    waypoint=target.name)
                 params = ["user=0", "tool=0", f"v={target.speed_percent}",
                           f"a={target.acceleration_percent}", "cp=0"]
                 if target.relative_z:
@@ -832,10 +841,16 @@ class DobotTransport:
                               param_value=params, progress=progress)
                 self.node.events.record(
                     "INFO", "motion_queued", target.name,
+                    batch=batch_name,
                     speed_percent=target.speed_percent,
                     acceleration_percent=target.acceleration_percent,
                     motion_io=[event.vendor_value() for event in target.motion_io])
+                queued_targets.append(target.name)
             if self.suction_interrupted:
+                self.node.events.record(
+                    "INFO", "motion_batch_interrupted", batch_name,
+                    batch=batch_name, queued_targets=queued_targets,
+                    reason="DI1 acquired during final approach")
                 self.confirm_stop(self.suction_stop_future)
                 sample = self.monitor.snapshot(require_enabled=True)
                 if (not sample.feed["digital_input_bits"] & 1
@@ -848,6 +863,10 @@ class DobotTransport:
                             f"Motion-timed DO{channel} mismatch after suction Stop")
                 self.node.expected_outputs.update(expected_outputs)
                 return True
+            self.node.events.record(
+                "INFO", "motion_batch_queued", batch_name,
+                batch=batch_name, targets=queued_targets,
+                terminal_target=targets[-1].name)
             tail = targets[-1]
             stable_since = None
             sequence = self.monitor.sequence
@@ -885,8 +904,10 @@ class DobotTransport:
                     pause=self._pause_requested, require_enabled=True,
                     description="motion-timed output feedback")
                 self.node.expected_outputs.update(expected_outputs)
-            self.node.events.record("INFO", "motion_batch_completed", tail.name,
-                                    targets=[target.name for target in targets])
+            self.node.events.record(
+                "INFO", "motion_batch_completed", batch_name,
+                batch=batch_name, terminal_target=tail.name,
+                targets=[target.name for target in targets])
             return False
         except OperationCanceled:
             self.request_stop("motion operation cancelled")

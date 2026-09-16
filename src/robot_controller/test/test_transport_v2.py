@@ -1,9 +1,12 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
+import robot_controller.hardware as hardware_module
 from robot_controller.errors import FeedbackFailure, HeldUnknown
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
+from robot_controller.motion import Target
 
 
 class EventLog:
@@ -12,6 +15,52 @@ class EventLog:
 
     def record(self, *_args, **_kwargs):
         self.entries.append((_args, _kwargs))
+
+
+def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
+        monkeypatch):
+    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+    transport = object.__new__(DobotTransport)
+    order = []
+    sequence = iter(range(1, 20))
+
+    def ready_snapshot():
+        return SimpleNamespace(
+            sequence=next(sequence),
+            feed={"tool_vector_actual": [0.0] * 6,
+                  "digital_input_bits": 0, "digital_outputs": 0})
+
+    first = np.eye(4)
+    first[0, 3] = 0.1
+    second = np.eye(4)
+    second[0, 3] = 0.2
+    targets = (Target("first", first, 100, 100),
+               Target("terminal", second, 100, 100))
+    events = EventLog()
+    transport.node = SimpleNamespace(
+        events=events, expected_outputs={}, raise_if_cancelled=lambda: None,
+        cancel_requested=lambda: False,
+        operation_progress=lambda *_args, **_kwargs: None)
+    transport.monitor = SimpleNamespace(sequence=99)
+    transport.current_pose = lambda: np.eye(4)
+    transport._target_values = lambda target: list(target.matrix[:3, 3]) + [0.] * 3
+    transport._ready_snapshot = ready_snapshot
+    transport._wait_for_resume = lambda: 0.0
+    transport._idle = lambda _snapshot: True
+    transport._target_reached = lambda target, _snapshot: (
+        order.append(("reached", target.name)) or True)
+    transport.call = lambda service, **_kwargs: order.append(("call", service))
+    transport.suction_interrupted = False
+    transport.suction_stop_future = None
+    transport.moving = False
+
+    assert transport.move_batch(targets, batch_name="forward") is False
+    assert order == [("call", "MovL"), ("call", "MovL"),
+                     ("reached", "terminal")]
+    names = [entry[0][1] for entry in events.entries]
+    assert names == ["motion_batch_dispatch_started", "motion_queued",
+                     "motion_queued", "motion_batch_queued",
+                     "motion_batch_completed"]
 
 
 def snapshot(*, di1=False, outputs=0, joints=None):

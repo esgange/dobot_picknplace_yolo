@@ -782,7 +782,8 @@ class RobotController(Node):
             speed_percent=config.profile["speed"]["travel_percent"],
             acceleration_percent=config.profile["acceleration"]["travel_percent"])
 
-    def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None):
+    def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None,
+                      batch_name="home"):
         self.raise_if_cancelled()
         self.wait_for_resume()
         holding = self.holding_item if require_suction is None else require_suction
@@ -797,7 +798,7 @@ class RobotController(Node):
         targets = self._home_plan(preceding)
         self.operation_progress("HOME", "Executing shared Home function", waypoint="home")
         self.hardware.move_batch(
-            (*preceding, *targets), require_suction=holding,
+            (*preceding, *targets), batch_name=batch_name, require_suction=holding,
             forbid_suction=forbidden)
         return targets
 

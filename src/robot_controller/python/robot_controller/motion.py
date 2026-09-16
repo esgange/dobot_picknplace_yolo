@@ -191,7 +191,8 @@ class PickExecutor:
             self.hardware.output(1, False)  # Exhaust stays off; no imported release/purge pattern.
             self.hardware.output(13, False, require_clear=True)
             acquired = self.hardware.move_batch(
-                plan[:4], stop_on_suction=True, before_suction=lambda: check(index))
+                plan[:4], batch_name=f"candidate_{index}_home_to_pick",
+                stop_on_suction=True, before_suction=lambda: check(index))
             if not acquired:
                 acquired = self.hardware.sensor(True, settings["timing"]["pick_settling"],
                                                 settling_sec=0)
@@ -223,10 +224,12 @@ class PickExecutor:
                 # The shared Home planner appends its conditional rise and exact
                 # joint Home to this return queue, instead of waiting at each stop.
                 return_home(preceding=tuple(upward), require_suction=acquired,
-                            forbid_suction=not acquired)
+                            forbid_suction=not acquired,
+                            batch_name=f"candidate_{index}_pick_to_home")
             else:
-                self.hardware.move_batch(upward, require_suction=acquired,
-                                         forbid_suction=not acquired)
+                self.hardware.move_batch(
+                    upward, batch_name=f"candidate_{index}_pick_to_retract",
+                    require_suction=acquired, forbid_suction=not acquired)
             if acquired:
                 return {"picked": True, "candidate": index, "holding_item": True}
             # Final retract has really completed before vacuum-off and candidate advance.
