@@ -182,6 +182,15 @@ settings, GetPose, DO, all three motion services, Pause, Continue, and the
 independent Stop channel. A successful response is still only command acceptance;
 fresh robot feedback remains required for completion.
 
+The authority publishes the same timestamped human-readable state, phase and
+Dobot audit lines on reliable transient-local
+`/robot_controller/operator_log` (`std_msgs/msg/String`) with a retained depth of
+1,000. The GUI lower panel is a read-only, no-wrap 1,000-line view of that topic.
+Text is selectable with Ctrl+C, **Copy Log** copies the entire displayed buffer,
+and incoming messages auto-scroll only while the operator is already following
+the bottom. The topic is observability-only and does not replace typed status,
+actions/services, or `events.jsonl`.
+
 ## Home and Pick
 
 Home is permitted from `READY` and trusted `HOLDING`. Fresh GetPose selects the

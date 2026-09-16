@@ -130,6 +130,11 @@ class RobotController(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.status_publisher = self.create_publisher(
             ControllerStatus, "/robot_controller/status", status_qos)
+        operator_log_qos = QoSProfile(
+            depth=1000, reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.operator_log_publisher = self.create_publisher(
+            String, "/robot_controller/operator_log", operator_log_qos)
         self.startup_service = self.create_service(
             Command, "/robot_controller/startup", self._startup,
             callback_group=self.control_group)
@@ -174,6 +179,8 @@ class RobotController(Node):
             "Controller available; launch performed no enable or motion command",
             headless=self.headless, state=self.machine.state,
             cr10_model_sha256=self.kinematics.sha256)
+        self.publish_operator_log(
+            "INFO", "Controller available; launch sent no enable or motion command")
 
     # ---------- feedback and ownership ----------
 
@@ -252,6 +259,8 @@ class RobotController(Node):
             "INFO", "state_transition", message, previous=before, state=snapshot.state,
             configuration_id=(self.configuration.configuration_id
                               if self.configuration else ""))
+        self.publish_operator_log(
+            "INFO", f"STATE {before} -> {snapshot.state}: {message}")
         self.publish_status()
 
     def operation_progress(self, phase, message, *, waypoint="", candidate_index=None,
@@ -268,6 +277,13 @@ class RobotController(Node):
             "INFO", "operation_phase", message, operation=self.active_action,
             phase=phase, waypoint=waypoint, candidate_index=self.candidate_index,
             candidate_total=self.candidate_total)
+        operation = self.active_action or "controller"
+        waypoint_text = f" waypoint={waypoint}" if waypoint else ""
+        candidate_text = (
+            f" candidate={self.candidate_index}/{self.candidate_total}"
+            if self.candidate_total else "")
+        self.publish_operator_log(
+            "INFO", f"{operation.upper()} {phase}:{waypoint_text}{candidate_text} {message}")
         goal = self.active_goal
         if goal is not None:
             feedback = GoHome.Feedback() if self.active_action == "home" else PickItem.Feedback()
@@ -303,6 +319,13 @@ class RobotController(Node):
         except FeedbackFailure:
             status.feedback_fresh = False
         self.status_publisher.publish(status)
+
+    def publish_operator_log(self, level, message):
+        if not hasattr(self, "operator_log_publisher"):
+            return
+        entry = String()
+        entry.data = f"{utc_now()} [{level}] {message}"
+        self.operator_log_publisher.publish(entry)
 
     def _begin_operation(self, name):
         if not self.operation_lock.acquire(blocking=False):

@@ -1,5 +1,6 @@
 """Qt client for Robot Controller v2; contains no Dobot command clients."""
 
+from collections import deque
 import os
 import signal
 import sys
@@ -11,6 +12,7 @@ from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
+from std_msgs.msg import String
 
 from item_perception_yolo.platform_teach_core import workspace_root
 from robot_controller_interfaces.action import GoHome, PickItem
@@ -26,10 +28,16 @@ class GuiNode(rclpy.node.Node):
         self.root = workspace_root()
         self.prefill = load_state(self.root / "logs/robot_controller/last_session.json")
         self.status = None
+        self.operator_logs = deque(maxlen=1000)
+        self.operator_log_lock = threading.Lock()
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
             ControllerStatus, "/robot_controller/status", self._status, qos)
+        log_qos = QoSProfile(depth=1000, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(
+            String, "/robot_controller/operator_log", self._operator_log, log_qos)
         self.service_clients = {
             "configure": self.create_client(Configure, "/robot_controller/configure"),
             "startup": self.create_client(Command, "/robot_controller/startup"),
@@ -49,6 +57,16 @@ class GuiNode(rclpy.node.Node):
     def _status(self, message):
         self.status = message
 
+    def _operator_log(self, message):
+        with self.operator_log_lock:
+            self.operator_logs.append(message.data)
+
+    def take_operator_logs(self):
+        with self.operator_log_lock:
+            values = tuple(self.operator_logs)
+            self.operator_logs.clear()
+        return values
+
 
 class ControllerWindow(QtWidgets.QMainWindow):
     def __init__(self, node):
@@ -65,7 +83,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.speed_pending_percent = None
         self.speed_syncing = False
         self.setWindowTitle("Robot Controller v2")
-        self.resize(1050, 570)
+        self.resize(1050, 760)
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
@@ -151,15 +169,27 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.status.setStyleSheet(
             "background:#202a35;color:white;padding:14px;font-size:16px")
         layout.addWidget(self.status)
-        note = QtWidgets.QLabel(
-            "Launching never enables or moves the robot. Start is explicit. Pause preserves "
-            "the queued operation; Continue resumes it. The next Pause/Stop press issues "
-            "Stop, preserves gripper outputs, discards queued motion, and requires Recover. "
-            "External callers may invoke Stop directly. Preview is TF-only and cannot "
-            "command Dobot.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        layout.addStretch()
+        log_header = QtWidgets.QHBoxLayout()
+        log_title = QtWidgets.QLabel("Controller command log")
+        log_title.setStyleSheet("font-size:15px;font-weight:700")
+        self.copy_log = QtWidgets.QPushButton("Copy Log")
+        self.copy_log.clicked.connect(self._copy_log)
+        log_header.addWidget(log_title)
+        log_header.addStretch()
+        log_header.addWidget(self.copy_log)
+        layout.addLayout(log_header)
+        self.log_view = QtWidgets.QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.log_view.setPlaceholderText(
+            "Controller state, operation phases, and every Dobot service request/response "
+            "will appear here.")
+        self.log_view.document().setMaximumBlockCount(1000)
+        self.log_view.setMinimumHeight(180)
+        self.log_view.setStyleSheet(
+            "QPlainTextEdit{background:#101820;color:#dce6ef;border:1px solid #465463;"
+            "font-family:monospace;font-size:13px;padding:8px;selection-background-color:#315f86}")
+        layout.addWidget(self.log_view, 1)
         self.item_path.textEdited.connect(self._selection_changed)
         self.bin_path.textEdited.connect(self._selection_changed)
         self.timer = QtCore.QTimer(self)
@@ -173,6 +203,20 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if path:
             edit.setText(path)
             self._selection_changed()
+
+    def _copy_log(self):
+        QtWidgets.QApplication.clipboard().setText(self.log_view.toPlainText())
+
+    def _append_operator_logs(self):
+        values = self.node.take_operator_logs()
+        if not values:
+            return
+        scroll = self.log_view.verticalScrollBar()
+        follow_tail = scroll.value() >= scroll.maximum() - 2
+        for value in values:
+            self.log_view.appendPlainText(value)
+        if follow_tail:
+            scroll.setValue(scroll.maximum())
 
     def _selection_changed(self):
         self.saved_selection = None
@@ -355,6 +399,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.goal_handle = None
 
     def _refresh(self):
+        self._append_operator_logs()
         self._collect()
         state = self.node.status
         reachable = state is not None

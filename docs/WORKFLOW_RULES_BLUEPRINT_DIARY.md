@@ -3109,6 +3109,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   result path; neither package was edited. No robot, camera or detector service
   was launched or commanded during verification.
 
+### 2026-09-16 — Copyable controller command log in the GUI
+
+- The operator requested that the unused lower instruction/blank area of the
+  Robot Controller GUI become a live text log, specifically so every controller
+  Dobot service call can be inspected and copied without opening a terminal or
+  the package JSONL file.
+- Rule 69 adds reliable transient-local `/robot_controller/operator_log` with a
+  retained depth of 1,000 in both GUI and headless deployments. The authority
+  publishes timestamped state transitions, operation phases, and the exact
+  paired service `SEND`/terminal lines introduced by rule 68. This is a
+  human-readable observability topic only; typed status/actions/services and the
+  bounded JSONL event log remain authoritative.
+- The GUI replaces the lower static explanatory label and stretch with a dark,
+  read-only, no-wrap `QPlainTextEdit` capped at 1,000 lines. It drains ROS
+  callbacks through a locked bounded queue on the Qt refresh timer, preserves
+  message order, follows the tail only when already at the bottom, supports
+  selection/Ctrl+C, and provides one `Copy Log` button for the complete visible
+  buffer. The GUI still creates no Dobot client.
+- Verification is source-only/offscreen: controller tests cover complete-buffer
+  clipboard copying and ordered queue draining; compilation, ament_flake8,
+  package/root builds, staged review and `git diff --check` remain required. No
+  hardware service or action may be invoked by verification.
+- Verification completed with all 73 focused tests passing directly and through
+  the package CTest wrapper (74 reported tests, zero errors, failures or skips),
+  Python compilation and all 21 controller/test files passing ament_flake8.
+  The controller package and full 15-package workspace build successfully. An
+  isolated ROS domain 229 offscreen launch started all three processes without a
+  hardware call; a reliable transient-local subscriber received the retained
+  startup line from `/robot_controller/operator_log`, and Ctrl+C stopped all
+  processes cleanly. `git diff --check` is clean.
+
 ### Future entry template
 
 ```text

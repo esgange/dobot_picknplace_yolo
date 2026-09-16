@@ -112,11 +112,13 @@ class DobotTransport:
 
     def _console_service_log(self, level, message):
         logger_factory = getattr(self.node, "get_logger", None)
-        if logger_factory is None:
-            return
-        logger = logger_factory()
-        method = getattr(logger, "warning" if level == "WARNING" else level.lower())
-        method(message)
+        if logger_factory is not None:
+            logger = logger_factory()
+            method = getattr(logger, "warning" if level == "WARNING" else level.lower())
+            method(message)
+        operator_log = getattr(self.node, "publish_operator_log", None)
+        if operator_log is not None:
+            operator_log(level, message)
 
     def _begin_service_audit(self, name, fields, *, reason=""):
         with self.service_audit_lock:

@@ -1,10 +1,11 @@
 from types import SimpleNamespace
 import threading
 
+from PyQt5 import QtWidgets
 from rclpy.action import GoalResponse
 
 from robot_controller.controller import RobotController
-from robot_controller.gui import ControllerWindow
+from robot_controller.gui import ControllerWindow, GuiNode
 from robot_controller.state_machine import ControllerStateMachine
 
 
@@ -233,6 +234,43 @@ def test_gui_keyboard_speed_change_is_debounced():
     ControllerWindow._speed_value_changed(window, 42)
     assert window.speed_debounce.started
     assert "42% selected" in window.speed_label.text
+
+
+def test_gui_operator_log_is_copyable_and_bounded_for_display():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    view = QtWidgets.QPlainTextEdit()
+    view.document().setMaximumBlockCount(1000)
+    view.setReadOnly(True)
+    view.setPlainText("first service\nsecond service")
+    window = SimpleNamespace(log_view=view)
+    ControllerWindow._copy_log(window)
+    assert app.clipboard().text() == "first service\nsecond service"
+    assert view.isReadOnly()
+    assert view.document().maximumBlockCount() == 1000
+
+
+def test_gui_drains_operator_log_queue_without_losing_order():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    assert app is not None
+    values = ["one", "two"]
+    view = QtWidgets.QPlainTextEdit()
+    view.setReadOnly(True)
+    window = SimpleNamespace(
+        log_view=view,
+        node=SimpleNamespace(take_operator_logs=lambda: tuple(values)))
+    ControllerWindow._append_operator_logs(window)
+    assert view.toPlainText() == "one\ntwo"
+
+
+def test_ros_operator_log_queue_is_locked_bounded_and_ordered():
+    from collections import deque
+
+    node = SimpleNamespace(
+        operator_logs=deque(maxlen=2), operator_log_lock=threading.Lock())
+    for value in ("discarded", "one", "two"):
+        GuiNode._operator_log(node, SimpleNamespace(data=value))
+    assert GuiNode.take_operator_logs(node) == ("one", "two")
+    assert GuiNode.take_operator_logs(node) == ()
 
 
 def test_gui_second_pause_click_queues_stop_without_overlapping_pause():

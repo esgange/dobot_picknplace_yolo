@@ -79,6 +79,12 @@ controller event log, including exact request fields, response code/payload and
 duration. `motion_debug` remains a direct-command maintenance tool only and must
 not run concurrently with the production controller.
 
+The GUI shows those timestamped state, phase and service-audit lines in a
+read-only controller command log below status. The view keeps up to 1,000 lines,
+supports normal selection and Ctrl+C, and **Copy Log** copies the complete
+displayed history. Headless deployments expose the same human-readable stream on
+`/robot_controller/operator_log`; the bounded JSONL file remains authoritative.
+
 The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.
