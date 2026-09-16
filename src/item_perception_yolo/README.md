@@ -141,7 +141,7 @@ The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
 Armed ON is highlighted red so advertised production pose-service state cannot
 be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
-a complete saved/loaded schema-8 profile, its verified model, matching current
+a complete saved/loaded schema-9 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
 first. It neither advertises/calls the pose service nor issues robot commands.
 
@@ -156,7 +156,8 @@ Production/simulated requests are mutually exclusive and report BUSY on overlap.
 The successful pair freezes on both views with **only returned candidates**,
 ranked P1…Pn and capped by `retry.pose_candidates`. Retain their mask shading,
 one green rectangle, X/Y axes, center dot, cyan metric sampling rings, black/red
-accepted/rejected depth pixels, and the green loaded bin ROI. Rejected or excess
+accepted/rejected depth pixels, the green loaded bin ROI and any configured
+light-blue pick clearance. Rejected or excess
 valid objects leave no overlays behind. Null depth is excluded before MAD; it
 never contributes to the pose. Top bands report counts, source age and the first
 three poses in platform_reference (XYZ, yaw, size and depth counts); all returned
@@ -190,7 +191,7 @@ recorded only in the existing bounded package events.
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict production item schema 8, class filters and quality gates remain enforced.
+strict production item schema 9, class filters and quality gates remain enforced.
 
 ### Pick-oriented RGB overlays
 
@@ -294,7 +295,7 @@ if weight replacement precedes a YAML write failure, restore the original model.
 YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
 never silently load. A success dialog names both files; the original external
 model remains untouched and the pair works without it.
-**Load Item Teach** accepts only that directory. Complete schema-8 files load
+**Load Item Teach** accepts only that directory. Complete schema-9 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
 trust/verification, YOLO ON and fresh station inputs remain mandatory. Loading
@@ -309,7 +310,7 @@ The warning/Activity log explains every cleared field. Missing internal
 `image_size` requires explicitly browsing a model to establish new-profile 640.
 Recovery also applies to named-file startup prefill, without executing weights.
 No recovered draft can simulate, arm or be validated in the controller until
-reviewed and saved as a strict schema-8 pair. Same known item name overwrites
+reviewed and saved as a strict schema-9 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
@@ -326,7 +327,7 @@ Startup form prefill remains weight-free; manually browsing a standalone model
 still requires the separate explicit Load Model/trust action.
 
 The YAML groups `item`, `model`, `units`, `home`, `pick_rotation`, `motion`, `speed`, `acceleration`, `timing`, `gripper`,
-`retry`, `yolo`, `geometry`, `geometry_source`, `quality`, and the non-executing
+`retry`, `yolo`, `geometry`, `geometry_source`, `bin_clearance`, `quality`, and the non-executing
 `controller_contract`. See
 [`offline_teach/item_teach/README.md`](../../offline_teach/item_teach/README.md)
 for field details. `retry.pose_candidates=3` requests up to three ranked poses
@@ -341,6 +342,13 @@ The motion form has only standoff_height, prepick_height and retract_height.
 from the detected short-axis line; Robot Controller chooses the lower-travel
 clockwise/counter-clockwise equivalent from taught Home independently for every
 candidate.
+`bin_clearance` contains the optional inward millimetre offsets for directed Bin
+Teach edges P1→P2, P2→P3, P3→P4 and P4→P1. Blank/null leaves that edge at the
+green ROI. Any configured valid inner polygon is light blue on RGB and depth.
+The green polygon remains the complete-footprint and pick-point boundary; only
+the exact depth-derived pick XY must additionally lie inside/on the blue border.
+The shared click, Simulate Trigger, Armed and headless candidate pipeline applies
+this before ranking; the controller receives the resulting filtered list.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
 in robot base Z. zheight_offset is removed. GUI-only old-file recovery leaves
 old retract_height blank because its reference changed; correction/Save is
@@ -351,13 +359,14 @@ percentages: travel/Home, final approach, pick-to-prepick retract. All must be
 integers 1–100. New-profile speed is explicitly 100/6/6 and acceleration
 100/100/100; loaded profiles retain their exact values. Speed and acceleration
 edits disarm and invalidate saved eligibility without interrupting read-only
-inference or automatically saving/commanding hardware. Save writes schema 8 with
+inference or automatically saving/commanding hardware. Save writes schema 9 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
 global SpeedFactor starts at 100% and the controller can adjust it explicitly
 while Live/idle, without rewriting these taught per-command rates. Production
-rejects schemas 1–7; old GUI recovery drafts leave missing/invalid rates and
-`pick_rotation` blank until the operator explicitly fills and saves them. Shared schema-6 named-file
+rejects schemas 1–8; old GUI recovery drafts leave missing/invalid rates,
+`pick_rotation`, and the four newer bin-clearance fields blank until the operator
+explicitly reviews and saves them. Shared schema-6 named-file
 UI state is unchanged.
 
 Item Teach has no controller-validation button or controller client. It creates
@@ -385,7 +394,8 @@ The Item Teach window uses one scrollable settings column, ordered camera/statio
 model, live YOLO, dimensions/depth, quality limits, then saved routine fields.
 RGB and native registered-depth views are side by side in a horizontal draggable
 splitter. Both carry mask shading, green/red/gray size borders, centered axes/dots,
-and loaded bin ROI. Depth geometry is projected through its own CameraInfo;
+the loaded green bin ROI, and any configured light-blue pick clearance. Depth
+geometry is projected through its own CameraInfo;
 straight RGB edges are sampled before projection to handle differing distortion.
 Both views freeze on the exact displayed pair when clicked, and only that item
 gets a pose calculation (no second inference or newer depth). All other outlines
@@ -445,6 +455,8 @@ blocking service request. All native operations are serialized in one worker.
   metric enclosing rectangle. Long side is X/`height`, short side Y/`width`,
   each within taught value plus/minus `tolerance` in mm. Do not move this plane
   to the item's depth. Require the selected footprint inside the bin ROI.
+- Require the final depth-derived pick XY inside/on the optional light-blue
+  `bin_clearance` polygon. Do not apply this inner polygon to the footprint.
 - The original pixel rectangle center is the pick ray; never relocate it.
   A mask whose rectangle center lies outside its own polygon is rejected.
 - `pickdepth_radius` is deliberately the sampling **diameter**, initially 30 mm.

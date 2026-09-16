@@ -248,7 +248,7 @@ transit/descent/retract targets share its selected attitude; exact
 joint Home restores the taught orientation. Platform tilt is not copied into
 TCP roll/pitch, and all waypoint heights remain referenced to base Z.
 
-The schema-8 geometry uses pick Z equal to item Z plus `standoff_height`,
+The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates, final descent uses approach rates, and pick-to-prepick
 uses retract rates. Enabled fingers open at 50% of the clearance move. Suction

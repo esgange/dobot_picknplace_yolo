@@ -3499,6 +3499,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   any previous-candidate orientation reference in controller, preview or planner.
   No detector request or robot command was issued.
 
+### 2026-09-16 — Item-specific inward bin-wall pick clearance
+
+- Rule 80 advances production Item Teach from schema 8 to strict schema 9 and
+  adds `bin_clearance.p1_p2`, `p2_p3`, `p3_p4` and `p4_p1`. Each nullable value
+  is an inward millimetre offset from the matching directed edge of the loaded
+  portable Bin Teach polygon. Four blanks retain the prior behavior and draw no
+  extra border; older profiles remain untouched and open only as GUI recovery
+  drafts with the four new fields blank.
+- The shared pure geometry shifts each edge toward the convex ROI centroid and
+  intersects adjacent shifted lines in `platform_reference`. Negative values and
+  collapsed, inverted, non-convex or outside inner polygons are rejected. A
+  configured valid polygon is projected with the calibrated camera model as a
+  light-blue border on both RGB and native registered-depth views.
+- The existing green ROI remains authoritative for the complete item footprint
+  and final depth-derived pick point. The new blue polygon is deliberately only
+  a wall-clearance test on the exact depth-derived pick XY; its boundary is
+  accepted and an item's detection/mask may cross it. Filtering occurs inside
+  the shared clicked-pose, Simulate Trigger, Armed Item Teach and headless Item
+  Detect candidate generator before ranking. Robot Controller receives the
+  filtered candidates and has no duplicate border calculation.
+- Invalid current-bin inset geometry blocks applying detection settings, Save,
+  simulation and arming. Camera/platform/bin/shared UI schemas, station
+  portability, model pairing, depth/MAD, pose orientation, controller motion,
+  queues and I/O are unchanged. Verification is source/synthetic only; no
+  detector service request or robot command is authorized for this change.
+- Validation completed without hardware access: Python compilation and 230
+  focused schema/GUI/detector tests passed; the complete source suite passed all
+  367 tests, including private OpenCV inference/geometry/overlay execution.
+  All 118 Robot Controller tests also passed. `colcon test` reported 368 Item
+  Perception results with zero errors, failures or skips. The changed package
+  and full 15-package workspace built successfully, and final diff checks
+  passed. No detector request or robot command was issued.
+
 ### Future entry template
 
 ```text

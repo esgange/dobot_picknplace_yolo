@@ -22,7 +22,7 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 8
+ITEM_SCHEMA_VERSION = 9
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height")
@@ -33,6 +33,7 @@ GRIPPER_FIELDS = ("use_grip", "grip_onpick")
 YOLO_FIELDS = ("confidence", "iou", "image_size", "max_detections", "class_ids")
 NEW_PROFILE_IMAGE_SIZE = 640  # Not an operator field; loaded profiles retain their exact value.
 GEOMETRY_FIELDS = ("height", "width", "tolerance", "pickdepth_radius")
+BIN_CLEARANCE_FIELDS = ("p1_p2", "p2_p3", "p3_p4", "p4_p1")
 DEFAULT_PICKDEPTH_DIAMETER_MM = 30.0
 NEW_PROFILE_PICK_ROTATION_DEG = 0.0
 QUALITY_DEFAULTS = {
@@ -83,6 +84,98 @@ def _integer(value, label, *, low=1, high=None):
         ))
 
 
+def validate_bin_clearance(clearance):
+    """Validate four optional inward offsets, stored in millimetres."""
+    _fields(clearance, BIN_CLEARANCE_FIELDS, "bin_clearance")
+    for key in BIN_CLEARANCE_FIELDS:
+        value = clearance[key]
+        if value is not None:
+            _number(value, f"bin_clearance.{key}")
+
+
+def inset_bin_roi(roi, clearance):
+    """Return the inward metric polygon, or None when all four offsets are blank.
+
+    Each field belongs to the matching directed Bin Teach edge. The edge normal
+    is selected from the polygon centroid, so this is independent of whether the
+    saved convex ROI happens to be clockwise or counter-clockwise.
+    """
+    validate_bin_clearance(clearance)
+    if all(clearance[key] is None for key in BIN_CLEARANCE_FIELDS):
+        return None
+    if type(roi) not in (list, tuple) or len(roi) != 4:
+        raise ValueError("Bin ROI must contain exactly four XY points")
+    points = []
+    for point in roi:
+        if type(point) not in (list, tuple) or len(point) != 2:
+            raise ValueError("Bin ROI points must be XY pairs")
+        x, y = point
+        _number(x, "Bin ROI X", low=-math.inf)
+        _number(y, "Bin ROI Y", low=-math.inf)
+        points.append((float(x), float(y)))
+
+    def signed_area(polygon):
+        return 0.5 * sum(
+            polygon[index][0] * polygon[(index + 1) % 4][1]
+            - polygon[(index + 1) % 4][0] * polygon[index][1]
+            for index in range(4)
+        )
+
+    def cross(a, b, c):
+        return ((b[0] - a[0]) * (c[1] - b[1])
+                - (b[1] - a[1]) * (c[0] - b[0]))
+
+    area = signed_area(points)
+    if abs(area) <= 1e-12:
+        raise ValueError("Bin ROI is degenerate")
+    orientation = 1.0 if area > 0 else -1.0
+    if any(orientation * cross(points[index], points[(index + 1) % 4],
+                               points[(index + 2) % 4]) <= 1e-12
+           for index in range(4)):
+        raise ValueError("Bin ROI must be strictly convex")
+    centroid = (sum(point[0] for point in points) / 4,
+                sum(point[1] for point in points) / 4)
+    lines = []
+    for index, key in enumerate(BIN_CLEARANCE_FIELDS):
+        start, end = points[index], points[(index + 1) % 4]
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        length = math.hypot(dx, dy)
+        if length <= 1e-12:
+            raise ValueError("Bin ROI contains a zero-length edge")
+        normal = (-dy / length, dx / length)
+        midpoint = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+        if normal[0] * (centroid[0] - midpoint[0]) + normal[1] * (
+                centroid[1] - midpoint[1]) < 0:
+            normal = (-normal[0], -normal[1])
+        offset_m = 0.0 if clearance[key] is None else float(clearance[key]) / 1000.0
+        lines.append((normal, normal[0] * start[0] + normal[1] * start[1] + offset_m))
+
+    inner = []
+    for index in range(4):
+        (n1, c1), (n2, c2) = lines[index - 1], lines[index]
+        determinant = n1[0] * n2[1] - n1[1] * n2[0]
+        if abs(determinant) <= 1e-12:
+            raise ValueError("Bin-wall inset has parallel adjacent edges")
+        inner.append(((c1 * n2[1] - n1[1] * c2) / determinant,
+                      (n1[0] * c2 - c1 * n2[0]) / determinant))
+    inner_area = signed_area(inner)
+    if abs(inner_area) <= 1e-12 or inner_area * area <= 0:
+        raise ValueError("Bin-wall inset collapses or inverts the pick region")
+    if any(orientation * cross(inner[index], inner[(index + 1) % 4],
+                               inner[(index + 2) % 4]) <= 1e-12
+           for index in range(4)):
+        raise ValueError("Bin-wall inset must remain strictly convex")
+    tolerance = 1e-10
+    for point in inner:
+        for index in range(4):
+            start, end = points[index], points[(index + 1) % 4]
+            side = ((end[0] - start[0]) * (point[1] - start[1])
+                    - (end[1] - start[1]) * (point[0] - start[0]))
+            if orientation * side < -tolerance:
+                raise ValueError("Bin-wall inset lies outside the loaded bin ROI")
+    return [[x, y] for x, y in inner]
+
+
 def _timestamp(value, label):
     if type(value) is not str or not value.endswith("Z"):
         raise ValueError(f"{label} must be a UTC timestamp")
@@ -98,7 +191,7 @@ def validate_settings(settings):
     _fields(settings, ("item", "model_task", "pick_rotation", "motion", "speed",
                        "acceleration", "timing",
                        "gripper", "retry", "yolo",
-                       "geometry", "geometry_source", "quality"),
+                       "geometry", "geometry_source", "bin_clearance", "quality"),
             "Item settings")
     _fields(settings["item"], ("name",), "item")
     name = settings["item"]["name"]
@@ -129,6 +222,7 @@ def validate_settings(settings):
         raise ValueError("height is the long side and must be >= width")
     if settings["geometry_source"] not in ("mask", "obb", "none"):
         raise ValueError("geometry_source must be mask, obb or none (preview only)")
+    validate_bin_clearance(settings["bin_clearance"])
     validate_quality(settings["quality"])
     if settings["retry"]["pose_candidates"] > settings["yolo"]["max_detections"]:
         raise ValueError("pose_candidates cannot exceed max_detections")
@@ -163,12 +257,16 @@ def validate_quality(quality):
 
 def detection_settings(settings):
     return copy.deepcopy({key: settings[key] for key in
-                          ("model_task", "yolo", "geometry", "geometry_source", "quality")})
+                          ("model_task", "yolo", "geometry", "geometry_source",
+                           "bin_clearance", "quality")})
 
 
 def validate_detection_settings(settings, *, geometry_required):
+    _fields(settings, ("model_task", "yolo", "geometry", "geometry_source",
+                       "bin_clearance", "quality"), "Detection settings")
     validate_yolo_settings(settings["model_task"], settings["yolo"])
     validate_quality(settings["quality"])
+    validate_bin_clearance(settings["bin_clearance"])
     if geometry_required:
         if settings["geometry_source"] not in ("mask", "obb"):
             raise ValueError("Mask or OBB geometry is required")
@@ -255,7 +353,8 @@ def settings_from_profile(profile):
         "pick_rotation": profile["pick_rotation"],
         **{key: profile[key] for key in ("motion", "speed", "acceleration", "timing",
                                          "gripper", "retry", "yolo",
-                                         "geometry", "geometry_source", "quality")},
+                                         "geometry", "geometry_source", "bin_clearance",
+                                         "quality")},
     })
 
 
@@ -263,14 +362,15 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 8 "
-            "(explicit pick_rotation and no candidate result-age expiry); "
-            "schemas 1–7 are unsupported; no compatibility reader")
+            "Item teach schema_version must be exactly 9 "
+            "(four optional inward bin-wall offsets); "
+            "schemas 1–8 are unsupported; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",
                       "gripper", "retry", "yolo",
-                      "geometry", "geometry_source", "quality", "controller_contract"),
+                      "geometry", "geometry_source", "bin_clearance", "quality",
+                      "controller_contract"),
             "Item teach artifact")
     if profile["artifact_type"] != "item_teach":
         raise ValueError("Expected item_teach artifact")
@@ -480,7 +580,7 @@ def save_item_profile(settings, home, model_source: Path, *, root: Path | None =
         "pick_rotation": settings["pick_rotation"],
         **{key: copy.deepcopy(settings[key])
            for key in ("motion", "speed", "acceleration", "timing", "gripper", "retry",
-                       "yolo", "geometry",
+                       "yolo", "geometry", "bin_clearance",
                        "geometry_source", "quality")},
         "controller_contract": {
             "stage": "profile_validation_only", "motion_enabled": False,

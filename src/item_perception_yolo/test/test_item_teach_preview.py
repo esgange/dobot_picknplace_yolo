@@ -287,10 +287,11 @@ def test_visual_first_layout_has_one_settings_column_and_persistent_actions(wind
     assert isinstance(window.settings_column, gui.QtWidgets.QVBoxLayout)
     groups = [window.settings_column.itemAt(i).widget()
               for i in range(window.settings_column.count())]
-    assert len(groups) == 11
+    assert len(groups) == 12
     assert all(isinstance(g, gui.QtWidgets.QGroupBox) for g in groups)
     assert "Camera" in groups[0].title() and "Item / model" in groups[1].title()
     assert "YOLO" in groups[2].title() and "Item size" in groups[3].title()
+    assert "Bin wall" in groups[4].title()
     assert all(a.geometry().bottom() < b.geometry().top()
                for a, b in zip(groups, groups[1:]))
     assert window.image_split.orientation() == gui.QtCore.Qt.Horizontal
@@ -732,6 +733,7 @@ def paired_teach(window, tmp_path, monkeypatch):
     settings = {
         "item": {"name": "paired_part"}, "model_task": "segment", "geometry_source": "mask",
         "pick_rotation": 12.5,
+        "bin_clearance": dict.fromkeys(core.BIN_CLEARANCE_FIELDS),
         "quality": dict(core.QUALITY_DEFAULTS),
         "motion": dict(zip(core.MOTION_FIELDS, [90., 50., 60., 100.])),
         "speed": dict(core.NEW_PROFILE_SPEED),
@@ -968,7 +970,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 8 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 9 and saved["retry"] == {"pose_candidates": 3}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings

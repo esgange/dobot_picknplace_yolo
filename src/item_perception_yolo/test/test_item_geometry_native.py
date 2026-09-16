@@ -15,7 +15,8 @@ def exercise_geometry():
     from item_perception_yolo.item_geometry import (
         generate_candidates, filter_depth, objects_from_result, on_plane,
         plane_dimensions, preview_detections, rectangle_axes, draw_pick_axes, draw_pick_geometry,
-        draw_bin_roi, project_bin_roi, classify_size, selected_pose, depth_sampling_circle,
+        draw_bin_roi, draw_bin_clearance, project_bin_roi, classify_size, selected_pose,
+        depth_sampling_circle,
     )
     from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
     assert cv2.__version__ == "4.10.0"
@@ -28,6 +29,8 @@ def exercise_geometry():
                "platform_from_optical": transform.tolist(),
                "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
     settings = {"geometry_source": "mask",
+                "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                                  "p3_p4": None, "p4_p1": None},
                 "geometry": {"height": 80., "width": 32., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "quality": dict(QUALITY_DEFAULTS), "yolo": {"class_ids": [1], "confidence": .5}}
@@ -74,6 +77,20 @@ def exercise_geometry():
     assert overlay[240, 320].tolist() == [255, 255, 255]
     assert draw_bin_roi(overlay, context, "", cv2, np)["visible"]
     assert overlay[240, 70, 1] > 240  # Bin border and item annotations coexist.
+    clearance = {"p1_p2": 50., "p2_p3": 50., "p3_p4": 50., "p4_p1": 50.}
+    assert draw_bin_clearance(overlay, context, clearance, cv2, np)
+    assert np.any(np.all(overlay == [102, 204, 255], axis=2))
+    # The footprint stays inside green, but the exact depth pick point is beyond
+    # the right-edge 100 mm light-blue clearance and is therefore excluded.
+    near_wall = {**item, "center": np.array([480., 240.]),
+                 "polygon": polygon + [160., 0.], "rectangle": polygon + [160., 0.]}
+    wall_settings = {**settings, "bin_clearance": {
+        "p1_p2": None, "p2_p3": None, "p3_p4": 100., "p4_p1": None}}
+    _, _, wall_candidates, wall_rejected = generate_candidates(
+        [near_wall], rgb, depth, context, wall_settings, cv2, np)
+    assert not wall_candidates
+    assert wall_rejected == [{"source_index": 0,
+                              "reason": "pick point outside bin-wall clearance"}]
     for z in (600, 900):
         depth[:] = z
         _, _, points, _ = generate_candidates([item], rgb, depth, context, settings, cv2, np)
@@ -335,6 +352,8 @@ def exercise_registered_depth():
     original = depth.copy()
     length, width, _ = plane_dimensions(polygon, context, cv2, np)
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
+                "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                                  "p3_p4": None, "p4_p1": None},
                 "yolo": {"class_ids": [1], "confidence": .5},
                 "geometry": {"height": length*1000, "width": width*1000,
                              "tolerance": .1, "pickdepth_radius": 30.}}
@@ -372,6 +391,8 @@ def exercise_candidate_batch_overlay():
                "platform_from_optical": transform.tolist(),
                "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
+                "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                                  "p3_p4": None, "p4_p1": None},
                 "geometry": {"height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5}}
     rgb = np.full((480, 640, 3), 80, np.uint8)

@@ -33,7 +33,8 @@ from .platform_teach_core import (
     PackageEventLogger, resolve_base_from_camera_link, workspace_root,
 )
 from .item_teach_core import (file_sha256, load_item_profile, settings_from_profile,
-                              validate_detection_settings, detection_settings, validate_quality)
+                              validate_detection_settings, detection_settings, validate_quality,
+                              validate_bin_clearance, inset_bin_roi, BIN_CLEARANCE_FIELDS)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
 from .item_native_client import NativeClient
 from .station_calibration import latest_station_calibration
@@ -268,6 +269,7 @@ class ItemDetectNode(Node):
         self.preview_yolo = None
         self.preview_geometry = self.preview_quality = None
         self.preview_depth_diameter = None
+        self.preview_bin_clearance = dict.fromkeys(BIN_CLEARANCE_FIELDS)
         self.service = None
         self.arm_epoch = 0
         self.last_view = None
@@ -394,6 +396,9 @@ class ItemDetectNode(Node):
 
     def enable_yolo(self, settings):
         validate_detection_settings(settings, geometry_required=self.applied is not None)
+        if getattr(self, "bin_artifact", None) is not None:
+            inset_bin_roi([[point.x_m, point.y_m] for point in self.bin_artifact.points],
+                          settings["bin_clearance"])
         if self.model_config is None or self.model_metadata is None:
             raise ValueError("Load/inspect the model first")
         if settings["model_task"] != self.model_metadata["task"]:
@@ -404,7 +409,7 @@ class ItemDetectNode(Node):
         self.settings = copy.deepcopy(settings)
         self.yolo_enabled = True
 
-    def enable_preview(self, source, yolo, *, geometry, quality, diameter_mm):
+    def enable_preview(self, source, yolo, *, geometry, quality, diameter_mm, bin_clearance):
         if self.model_config is None or self.model_metadata is None:
             raise ValueError("Load/inspect the model first")
         if source != "none" and source not in self.model_metadata["geometry_sources"]:
@@ -414,17 +419,23 @@ class ItemDetectNode(Node):
         yolo = {**yolo, "class_ids": sorted(int(k) for k in self.model_metadata["classes"])}
         validate_preview_settings(self.model_metadata["task"], yolo)
         validate_quality(quality)
+        validate_bin_clearance(bin_clearance)
+        if getattr(self, "bin_artifact", None) is not None:
+            inset_bin_roi([[point.x_m, point.y_m] for point in self.bin_artifact.points],
+                          bin_clearance)
         if not math.isfinite(diameter_mm) or diameter_mm <= 0:
             raise ValueError("pickdepth_radius must be a positive diameter in millimetres")
         if geometry is not None:
             validate_detection_settings({"model_task": self.model_metadata["task"],
                                          "yolo": yolo, "quality": quality,
-                                         "geometry_source": source, "geometry": geometry},
+                                         "geometry_source": source, "geometry": geometry,
+                                         "bin_clearance": bin_clearance},
                                         geometry_required=source != "none")
         self.preview_yolo = copy.deepcopy(yolo)
         self.preview_geometry = copy.deepcopy(geometry)
         self.preview_quality = copy.deepcopy(quality)
         self.preview_depth_diameter = diameter_mm
+        self.preview_bin_clearance = copy.deepcopy(bin_clearance)
         self.preview_source = source
         self.preview_mode = "all"
         self.yolo_enabled = True
@@ -679,7 +690,10 @@ class ItemDetectNode(Node):
                 result, pixels = self.native.call({
                     "operation": "overlay_roi", "generation": epoch,
                     "width": rgb["width"], "height": rgb["height"],
-                    "context": context, "error": ""}, pixels)
+                    "context": context, "error": "",
+                    "bin_clearance": copy.deepcopy(getattr(
+                        self, "preview_bin_clearance", dict.fromkeys(BIN_CLEARANCE_FIELDS)))},
+                    pixels)
                 try:
                     if (set(result) != {"state", "generation", "width", "height", "roi_overlay"}
                             or result["generation"] != epoch
@@ -743,7 +757,9 @@ class ItemDetectNode(Node):
                 preview = {"settings": {"yolo": copy.deepcopy(self.preview_yolo),
                                         "geometry": copy.deepcopy(self.preview_geometry),
                                         "quality": copy.deepcopy(self.preview_quality),
-                                        "pickdepth_radius": self.preview_depth_diameter},
+                                        "pickdepth_radius": self.preview_depth_diameter,
+                                        "bin_clearance": copy.deepcopy(
+                                            self.preview_bin_clearance)},
                            "context": measurement, "error": error,
                            "depth_cameras": depth_cameras}
                 view = self.infer(rgb, depth, preview=preview)

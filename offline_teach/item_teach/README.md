@@ -17,7 +17,7 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 8 groups data by purpose. Production rejects schemas 1–7;
+Strict item schema 9 groups data by purpose. Production rejects schemas 1–8;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
@@ -36,6 +36,7 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 | `yolo` | `confidence`, `iou`, `image_size`, `max_detections`, `class_ids` |
 | `geometry_source` | Explicit mask, OBB, or none for RGB-only preview |
 | `geometry` | Long-side `height`, short-side `width`, ± `tolerance`, `pickdepth_radius` (all mm; the last key means diameter, default 30 mm) |
+| `bin_clearance` | Optional inward mm offsets for directed Bin Teach edges `p1_p2`, `p2_p3`, `p3_p4`, `p4_p1`; null means no inset on that edge |
 | `quality` | Input/TF age, RGB-depth synchronization, request deadline, depth range, minimum retained-depth count/fraction |
 | `controller_contract` | Validation-only stage, motion disabled, Link6, vertical routine, start/end home and fixed I/O map |
 
@@ -66,6 +67,11 @@ Old retract_height is also blank in GUI recovery: its meaning changed from an
 offset above pick to extra clearance above pre-pick. Review and fill it explicitly.
 Schema-7 and older recovery drafts also leave `pick_rotation` blank rather than
 assuming zero; review and enter 0–90° explicitly.
+Schema-8 and older recovery drafts leave all four bin-wall fields blank. A valid
+configured inset is shown light blue on RGB/depth and filters only the final
+depth-derived pick point; the green ROI still requires the complete item
+footprint and pick point inside it. Collapsed/inverted/non-convex inset geometry
+cannot be saved or armed.
 
 GUI recovery keeps validated fields and blanks unclear/missing ones; unknown
 booleans require an explicit choice. A clear old `retry_limit` is mapped for

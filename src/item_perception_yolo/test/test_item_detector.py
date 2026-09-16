@@ -84,6 +84,8 @@ def service_node(monkeypatch, tmp_path):
                            service=object(), arm_epoch=1, yolo_enabled=True, pose_candidates=3,
                            profile_digest="a"*64, profile_path="profile.yaml", native=SimpleNamespace(failed=False),
                            settings={"quality": dict(QUALITY_DEFAULTS), "geometry_source": "mask",
+                                     "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                                                       "p3_p4": None, "p4_p1": None},
                                      "yolo": {"max_detections": 20, "class_ids": [1], "confidence": .6}},
                            _validate_sources=MagicMock(), events=MagicMock(), disarm=MagicMock(),
                            model_config={"sha256": "b"*64}, get_logger=MagicMock(),
@@ -385,7 +387,10 @@ def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
     yolo = {**detector.INITIAL_PREVIEW_YOLO, "confidence": .9, "iou": .35,
             "max_detections": 20, "class_ids": []}
     detector.ItemDetectNode.enable_preview(node, "mask", yolo,
-                                          geometry=None, quality=QUALITY_DEFAULTS, diameter_mm=30.)
+                                          geometry=None, quality=QUALITY_DEFAULTS,
+                                          diameter_mm=30.,
+                                          bin_clearance={"p1_p2": None, "p2_p3": None,
+                                                         "p3_p4": None, "p4_p1": None})
     assert node.settings is None
     view = detector.ItemDetectNode.preview_once(node)
     assert view["rgb"] == b"preview" and view["observation"]["depth"] is None
@@ -395,7 +400,10 @@ def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
     yolo["confidence"] = .8  # Applied state is an owned snapshot, not a mutable form dict.
     assert node.preview_yolo["confidence"] == .9
     detector.ItemDetectNode.enable_preview(node, "mask", yolo,
-                                          geometry=None, quality=QUALITY_DEFAULTS, diameter_mm=60.)
+                                          geometry=None, quality=QUALITY_DEFAULTS,
+                                          diameter_mm=60.,
+                                          bin_clearance={"p1_p2": None, "p2_p3": None,
+                                                         "p3_p4": None, "p4_p1": None})
     assert preview["error"] == "No platform applied" and preview["context"] is None
     node._measurement_context.side_effect = None
     node._measurement_context.return_value = {"calibrated": True}
@@ -426,6 +434,30 @@ def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
     rgb["received_at"] -= 1
     with pytest.raises(ValueError, match="stale"):
         detector.ItemDetectNode.preview_once(node)
+
+
+def test_enable_yolo_rejects_clearance_that_collapses_current_bin():
+    points = [SimpleNamespace(x_m=x, y_m=y)
+              for x, y in [(-.2, -.15), (-.2, .15), (.2, .15), (.2, -.15)]]
+    node = SimpleNamespace(
+        applied=object(), bin_artifact=SimpleNamespace(points=points),
+        model_config={"sha256": "a" * 64},
+        model_metadata={"task": "segment", "classes": {"1": "part"}},
+        yolo_enabled=False,
+    )
+    settings = {
+        "model_task": "segment", "geometry_source": "mask",
+        "geometry": {"height": 80., "width": 40., "tolerance": 5.,
+                     "pickdepth_radius": 30.},
+        "quality": dict(QUALITY_DEFAULTS),
+        "yolo": {"confidence": .5, "iou": .35, "image_size": 640,
+                 "max_detections": 20, "class_ids": [1]},
+        "bin_clearance": {"p1_p2": 400., "p2_p3": None,
+                          "p3_p4": None, "p4_p1": None},
+    }
+    with pytest.raises(ValueError, match="collapses or inverts"):
+        detector.ItemDetectNode.enable_yolo(node, settings)
+    assert not node.yolo_enabled
 
 
 def test_measurement_protocol_rejects_bad_geometry_and_units():

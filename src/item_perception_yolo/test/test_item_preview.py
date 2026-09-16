@@ -155,7 +155,9 @@ def test_roi_then_model_load_and_detection_share_worker(synthetic_model):
     client = NativeClient(MagicMock())
     try:
         header = {"operation": "overlay_roi", "generation": 1, "width": 320,
-                  "height": 240, "context": None, "error": "Synthetic missing TF"}
+                  "height": 240, "context": None, "error": "Synthetic missing TF",
+                  "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                                    "p3_p4": None, "p4_p1": None}}
         pixels = bytes(320 * 240 * 3)
         metadata, overlay = client.call(header, pixels)
         assert metadata["roi_overlay"]["visible"] is False and overlay == pixels
@@ -181,7 +183,9 @@ def test_native_all_detections_without_depth_or_production_settings(native_paths
         header["model"]["yolo"]["confidence"] = 0.0
         header.update(operation="preview", geometry_source="none", measurement_context=None,
                       measurement_error="No platform applied",
-                      settings={"geometry": None, "pickdepth_radius": 30.})
+                      settings={"geometry": None, "pickdepth_radius": 30.,
+                                "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                                                  "p3_p4": None, "p4_p1": None}})
         send_packet(child.stdin, header, bytes(320 * 240 * 3))
         result, pixels = receive_packet(child.stdout)
         assert result["state"] == "ok", result
@@ -227,7 +231,9 @@ def test_private_roi_overlay_without_model_or_depth(native_paths):
             "platform_from_optical": [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, .8], [0, 0, 0, 1]],
             "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
         header = {"operation": "overlay_roi", "generation": 4, "width": 320,
-                  "height": 240, "context": context, "error": ""}
+                  "height": 240, "context": context, "error": "",
+                  "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                                    "p3_p4": None, "p4_p1": None}}
         # No model path/trust, YOLO setting, geometry filter or depth payload supplied.
         send_packet(child.stdin, header, pixels)
         result, image = receive_packet(child.stdout)
@@ -285,6 +291,8 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
     header["settings"] = {
         "model_task": "segment", "yolo": header["model"]["yolo"],
         "geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
+        "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                          "p3_p4": None, "p4_p1": None},
         "geometry": {"height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 30.}}
     header["context"] = {
         "camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},

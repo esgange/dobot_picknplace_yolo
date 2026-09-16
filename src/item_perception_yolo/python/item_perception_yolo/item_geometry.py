@@ -3,6 +3,10 @@
 import math
 
 from .planar_bin_roi import border_in_optical
+from .item_teach_core import inset_bin_roi
+
+
+BIN_CLEARANCE_COLOR = (102, 204, 255)
 
 
 def rectangle_axes(rectangle, np):
@@ -89,6 +93,32 @@ def draw_bin_roi(overlay, context, unavailable_reason, cv2, np):
     cv2.putText(overlay, "Loaded Bin ROI", (12, height - 15), cv2.FONT_HERSHEY_SIMPLEX,
                 .65, (0, 255, 0), 2, cv2.LINE_AA)
     return {"visible": True, "reason": ""}
+
+
+def draw_bin_clearance(overlay, context, clearance, cv2, np):
+    """Draw the optional pick-point-only wall clearance on the platform plane."""
+    if context is None:
+        return False
+    inner = inset_bin_roi(context["roi"], clearance)
+    if inner is None:
+        return False
+    pixels = project_bin_roi({**context, "roi": inner}, cv2, np)
+    if not np.isfinite(pixels).all() or np.any(np.abs(pixels) > 2_000_000_000):
+        raise ValueError("Bin-wall inset projection exceeds safe drawing range")
+    height, width = overlay.shape[:2]
+    visible = False
+    for start, end in zip(pixels, np.roll(pixels, -1, axis=0)):
+        start = tuple(np.rint(start).astype(int))
+        end = tuple(np.rint(end).astype(int))
+        intersects, clipped_start, clipped_end = cv2.clipLine((0, 0, width, height), start, end)
+        if intersects:
+            cv2.line(overlay, clipped_start, clipped_end, BIN_CLEARANCE_COLOR,
+                     2, cv2.LINE_AA)
+            visible = True
+    if visible:
+        cv2.putText(overlay, "Pick clearance", (12, height - 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, .65, BIN_CLEARANCE_COLOR, 2, cv2.LINE_AA)
+    return visible
 
 
 def rays(pixels, camera, cv2, np):
@@ -298,7 +328,8 @@ def render_depth(depth_mm, quality, cv2, np):
     return view
 
 
-def draw_depth_geometry(view, detections, source, cameras, context, cv2, np):
+def draw_depth_geometry(view, detections, source, cameras, context, cv2, np,
+                        *, bin_clearance=None):
     """Mirror RGB geometry onto original depth pixels, never copy RGB pixel indices."""
     color_camera, depth = cameras["camera"], cameras["depth_camera"]
 
@@ -318,7 +349,10 @@ def draw_depth_geometry(view, detections, source, cameras, context, cv2, np):
     if source == "mask":
         view[:] = shade_masks(view, [mapped(item["polygon"]) for item in detections], cv2, np)
     if context is not None:
-        draw_bin_roi(view, {**context, "camera": depth}, "", cv2, np)
+        depth_context = {**context, "camera": depth}
+        draw_bin_roi(view, depth_context, "", cv2, np)
+        if bin_clearance is not None:
+            draw_bin_clearance(view, depth_context, bin_clearance, cv2, np)
     if source == "none":
         return
     for item in detections:
@@ -370,6 +404,9 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
         raise RuntimeError("Invalid platform-from-optical rigid transform")
     if roi.shape != (4, 2) or not np.isfinite(roi).all():
         raise RuntimeError("Invalid bin ROI")
+    clearance_roi = inset_bin_roi(context["roi"], settings["bin_clearance"])
+    clearance_roi = (None if clearance_roi is None
+                     else np.asarray(clearance_roi, dtype=np.float64))
     quality, geometry = settings["quality"], settings["geometry"]
     low, high = quality["depth_min_mm"], quality["depth_max_mm"]
     overlay = (shade_masks(rgb, [item["polygon"] for item in objects], cv2, np)
@@ -386,9 +423,10 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
         depth_objects.append({**item, "size_valid": valid})
     depth_objects = depth_objects if display_detections is None else display_detections
     draw_depth_geometry(depth_view, depth_objects, settings["geometry_source"], context,
-                        context, cv2, np)
+                        context, cv2, np, bin_clearance=settings["bin_clearance"])
     center_roi = polygon_centroid(roi, np)
     draw_bin_roi(overlay, context, "", cv2, np)
+    draw_bin_clearance(overlay, context, settings["bin_clearance"], cv2, np)
     candidates, rejected = [], []
     samples = {}
     for item in objects:
@@ -449,6 +487,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             position = transform[:3, :3] @ optical_point + transform[:3, 3]
             if not inside(position[:2], roi, cv2, np):
                 raise ValueError("depth-derived pick position outside bin ROI")
+            if clearance_roi is not None and not inside(position[:2], clearance_roi, cv2, np):
+                raise ValueError("pick point outside bin-wall clearance")
             axis = edges[axis_index] / length
             if axis[0] < 0 or (abs(axis[0]) < 1e-9 and axis[1] < 0):
                 axis = -axis
@@ -485,8 +525,10 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                    if settings["geometry_source"] == "mask" else rgb.copy())
         depth_view = render_depth(depth_mm, quality, cv2, np)
         draw_bin_roi(overlay, context, "", cv2, np)
+        draw_bin_clearance(overlay, context, settings["bin_clearance"], cv2, np)
         draw_depth_geometry(depth_view, [{**o, "size_valid": True} for o in chosen_objects],
-                            settings["geometry_source"], context, context, cv2, np)
+                            settings["geometry_source"], context, context, cv2, np,
+                            bin_clearance=settings["bin_clearance"])
         for rank, candidate in enumerate(chosen, 1):
             item = by_id[candidate["source_index"]]
             draw_pick_geometry(overlay, item["rectangle"], cv2, np, color=(0, 255, 0))

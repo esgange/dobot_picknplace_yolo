@@ -46,6 +46,8 @@ def exercise_service():
         detector._validate_sources = MagicMock()
         settings = {"model_task": "segment", "geometry_source": "mask",
             "geometry": {"height": 100., "width": 50., "tolerance": 5., "pickdepth_radius": 30.},
+            "bin_clearance": {"p1_p2": None, "p2_p3": None,
+                              "p3_p4": None, "p4_p1": None},
             "quality": dict(QUALITY_DEFAULTS), "yolo": {"class_ids": [1], "confidence": .6,
                 "max_detections": 20, "image_size": 640, "iou": .5}}
         profile = {

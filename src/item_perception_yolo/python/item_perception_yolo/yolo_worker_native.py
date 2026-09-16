@@ -128,14 +128,18 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                 continue
             if request["operation"] == "overlay_roi":
                 # Pure geometry: no model loading, prediction or production settings.
-                from .item_geometry import draw_bin_roi
+                from .item_geometry import draw_bin_roi, draw_bin_clearance
+                from .item_teach_core import validate_bin_clearance
                 width, height = request["width"], request["height"]
                 if (type(width) is not int or type(height) is not int
                         or not 0 < width <= 4096 or not 0 < height <= 4096
                         or len(data) != width * height * 3):
                     raise RuntimeError("Malformed ROI RGB frame")
                 overlay = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3).copy()
+                validate_bin_clearance(request["bin_clearance"])
                 status = draw_bin_roi(overlay, request["context"], request["error"], cv2, np)
+                draw_bin_clearance(overlay, request["context"], request["bin_clearance"],
+                                   cv2, np)
                 response = {"state": "ok", "generation": request["generation"],
                             "width": width, "height": height, "roi_overlay": status}
                 send_packet(output_stream, response, overlay.tobytes())
@@ -210,10 +214,12 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
             roi_status = {"visible": False, "reason": "No calibrated bin ROI applied"}
             if preview:
                 from .item_geometry import (
-                    preview_detections, draw_pick_geometry, draw_bin_roi, classify_size,
-                    render_depth, draw_depth_geometry,
+                    preview_detections, draw_pick_geometry, draw_bin_roi, draw_bin_clearance,
+                    classify_size, render_depth, draw_depth_geometry,
                 )
+                from .item_teach_core import validate_bin_clearance
                 source = request["geometry_source"]
+                validate_bin_clearance(request["settings"]["bin_clearance"])
                 if source != "none" and source not in available:
                     raise RuntimeError("Selected preview geometry is unavailable")
                 detections = preview_detections(
@@ -233,11 +239,16 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                     depth_view = render_depth(depth, request["settings"]["quality"], cv2, np)
                     draw_depth_geometry(depth_view, detections, source,
                                         request["depth_cameras"], request["measurement_context"],
-                                        cv2, np)
+                                        cv2, np,
+                                        bin_clearance=request["settings"]["bin_clearance"])
                 roi_status = draw_bin_roi(overlay, request["measurement_context"],
                                           request["measurement_error"], cv2, np)
+                draw_bin_clearance(overlay, request["measurement_context"],
+                                   request["settings"]["bin_clearance"], cv2, np)
             if context is not None:
-                from .item_geometry import objects_from_result, generate_candidates, draw_bin_roi
+                from .item_geometry import (
+                    objects_from_result, generate_candidates, draw_bin_roi, draw_bin_clearance,
+                )
                 from .item_teach_core import validate_detection_settings
                 validate_detection_settings(request["settings"], geometry_required=True)
                 limit = request.get("candidate_limit")
@@ -251,6 +262,8 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                     objects, rgb, depth, context, request["settings"], cv2, np,
                     candidate_limit=limit)
                 roi_status = draw_bin_roi(overlay, context, "", cv2, np)
+                draw_bin_clearance(overlay, context, request["settings"]["bin_clearance"],
+                                   cv2, np)
             send_packet(output_stream, {
                 "state": "ok", "generation": request["generation"], "width": width,
                 "height": height, "count": count, "task": model.task,

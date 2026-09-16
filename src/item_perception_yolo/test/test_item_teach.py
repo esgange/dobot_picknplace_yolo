@@ -31,6 +31,7 @@ def settings():
         "retry": {"pose_candidates": 3},
         "geometry": {"height": 100.0, "width": 50.0, "tolerance": 5.0,
                      "pickdepth_radius": 30.0},
+        "bin_clearance": dict.fromkeys(core.BIN_CLEARANCE_FIELDS),
         "yolo": {"confidence": 0.6, "iou": 0.5, "image_size": 640,
                  "max_detections": 20, "class_ids": [0, 1]},
     }
@@ -67,7 +68,7 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
-    assert profile["schema_version"] == 8
+    assert profile["schema_version"] == 9
     assert profile["pick_rotation"] == 15.0
     assert "result_max_age_sec" not in profile["quality"]
     assert profile["retry"] == {"pose_candidates": 3}
@@ -256,9 +257,9 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    for old_version in (1, 2, 3, 4, 5, 6, 7):
+    for old_version in (1, 2, 3, 4, 5, 6, 7, 8):
         profile["schema_version"] = old_version
-        with pytest.raises(ValueError, match="exactly 8"):
+        with pytest.raises(ValueError, match="exactly 9"):
             core.validate_profile(profile)
 
 
@@ -303,7 +304,7 @@ def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair)
     assert draft.model_path == path.with_suffix(".pt")
     assert draft.model_sha256 == profile["model"]["sha256"]
     assert "retry_limit" in " ".join(draft.issues)
-    with pytest.raises(ValueError, match="exactly 8"):
+    with pytest.raises(ValueError, match="exactly 9"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -422,9 +423,38 @@ def test_schema_seven_recovery_requires_explicit_pick_rotation(pair):
     draft = recover_item_fields(path, root=root)
     assert draft.values["pick_rotation"] is None
     assert any("predates explicit pick_rotation" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 8"):
+    with pytest.raises(ValueError, match="exactly 9"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
+
+
+def test_schema_eight_recovery_requires_explicit_bin_clearance(pair):
+    root, _, path, profile = pair
+    profile["schema_version"] = 8
+    del profile["bin_clearance"]
+    path.write_text(yaml.safe_dump(profile))
+    original = path.read_bytes()
+    draft = recover_item_fields(path, root=root)
+    assert all(draft.values[key] is None for key in core.BIN_CLEARANCE_FIELDS)
+    assert any("predates optional bin-wall clearance" in issue for issue in draft.issues)
+    with pytest.raises(ValueError, match="exactly 9"):
+        core.load_item_profile(path, root=root)
+    assert path.read_bytes() == original
+
+
+def test_bin_clearance_insets_directed_edges_and_rejects_invalid_regions(settings):
+    roi = [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]
+    blank = dict.fromkeys(core.BIN_CLEARANCE_FIELDS)
+    assert core.inset_bin_roi(roi, blank) is None
+    clearance = dict.fromkeys(core.BIN_CLEARANCE_FIELDS, 10.0)
+    assert all(actual == pytest.approx(expected) for actual, expected in zip(
+        core.inset_bin_roi(roi, clearance),
+        [[-.19, -.14], [-.19, .14], [.19, .14], [.19, -.14]]))
+    settings["bin_clearance"] = {**blank, "p1_p2": -1.0}
+    with pytest.raises(ValueError, match="bin_clearance.p1_p2"):
+        core.validate_settings(settings)
+    with pytest.raises(ValueError, match="collapses or inverts"):
+        core.inset_bin_roi(roi, {**blank, "p1_p2": 400.0})
 
 
 def test_rate_settings_round_trip_and_explicit_overwrite_preserve_other_fields(pair):
@@ -477,7 +507,7 @@ def test_schema_four_recovery_leaves_unknown_rates_blank_and_does_not_write(pair
         assert draft.values[key] is None
         assert draft.values[f"acceleration_{key}"] is None
     assert path.read_bytes() == original
-    with pytest.raises(ValueError, match="exactly 8"):
+    with pytest.raises(ValueError, match="exactly 9"):
         core.load_item_profile(path, root=root)
 
 

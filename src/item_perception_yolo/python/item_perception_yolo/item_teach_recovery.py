@@ -41,7 +41,7 @@ def recover_item_fields(path, *, root=None):
         return draft
     if (type(payload) is not dict or payload.get("artifact_type") != "item_teach"
             or type(payload.get("schema_version")) is not int
-            or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8)):
+            or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9)):
         draft.issues.append("Unrecognized item format/schema; all fields cleared")
         return draft
 
@@ -106,6 +106,22 @@ def recover_item_fields(path, *, root=None):
     for key in core.GEOMETRY_FIELDS:
         number("geometry", key, low=0 if key == "tolerance" else 0.000001,
                unit=("distance", "mm"))
+    clearance = group("bin_clearance")
+    for key in core.BIN_CLEARANCE_FIELDS:
+        value = clearance.get(key)
+        try:
+            if payload["schema_version"] < 9:
+                raise ValueError("schema predates optional bin-wall clearance")
+            if group("units").get("distance") != "mm":
+                raise ValueError("missing or ambiguous distance units")
+            if key not in clearance:
+                raise ValueError("missing optional field; explicitly leave blank or enter mm")
+            if value is not None:
+                core._number(value, f"bin_clearance.{key}")
+        except ValueError as exc:
+            accept(key, value, False, str(exc))
+        else:
+            accept(key, value, True)
     for key in ("confidence", "iou"):
         number("yolo", key, high=1)
     number("yolo", "max_detections", integer=True, low=1, high=1000)

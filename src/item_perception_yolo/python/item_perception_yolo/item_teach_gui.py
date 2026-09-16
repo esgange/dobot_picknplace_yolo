@@ -24,7 +24,7 @@ from .item_teach_core import (
     settings_from_profile, item_save_target, file_sha256,
     GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS,
     NEW_PROFILE_IMAGE_SIZE, SPEED_FIELDS, NEW_PROFILE_SPEED, NEW_PROFILE_ACCELERATION,
-    NEW_PROFILE_PICK_ROTATION_DEG,
+    NEW_PROFILE_PICK_ROTATION_DEG, BIN_CLEARANCE_FIELDS, inset_bin_roi,
 )
 from .platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, ui_state_path, workspace_root,
@@ -601,6 +601,21 @@ class ItemTeachWindow(QtWidgets.QWidget):
         )
         geometry_help.setWordWrap(True)
         geometry.addRow(geometry_help)
+        clearance = group("Bin wall pick clearance — inward mm", 3.5)
+        for key, label in zip(BIN_CLEARANCE_FIELDS,
+                              ("P1 → P2", "P2 → P3", "P3 → P4", "P4 → P1")):
+            field = QtWidgets.QLineEdit()
+            field.setPlaceholderText("Optional; blank = no inset")
+            field.setToolTip(
+                "Inward offset from this directed Bin Teach edge. The light-blue polygon "
+                "filters only the final depth-derived pick point.")
+            self.inputs[key] = field
+            clearance.addRow(label, field)
+        clearance_help = QtWidgets.QLabel(
+            "Green remains the item-footprint boundary. Light blue is the optional "
+            "pick-point-only wall clearance; boundary points are accepted.")
+        clearance_help.setWordWrap(True)
+        clearance.addRow(clearance_help)
         quality = group("Data-quality limits", 4)
         for key, value in QUALITY_DEFAULTS.items():
             field = QtWidgets.QLineEdit(str(value))
@@ -630,7 +645,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.activity_toggle.toggled.connect(lambda checked: self.activity_toggle.setArrowType(
             QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow))
         outer.addWidget(self.status)
-        live_fields = {"confidence", "iou", "max_detections", *GEOMETRY_FIELDS, *QUALITY_DEFAULTS}
+        live_fields = {"confidence", "iou", "max_detections", *GEOMETRY_FIELDS,
+                       *BIN_CLEARANCE_FIELDS, *QUALITY_DEFAULTS}
         for key in live_fields:
             self.inputs[key].textChanged.connect(self._detection_settings_changed)
         text_fields = [v for key, v in self.inputs.items()
@@ -716,7 +732,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         quality = self._quality_settings()
         self.node.enable_preview(self.geometry_source.currentData(), self._yolo_settings(),
                                  geometry=geometry, quality=quality,
-                                 diameter_mm=self._number("pickdepth_radius"))
+                                 diameter_mm=self._number("pickdepth_radius"),
+                                 bin_clearance=self._bin_clearance_settings())
         yolo = self.node.preview_yolo
         self.preview_help.setText(
             f"Active: confidence {yolo['confidence']:g}, IoU {yolo['iou']:g}, "
@@ -999,6 +1016,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     "Latest platform/camera loaded. Select a bin teach to display its ROI.")
                 return
             self.node.apply_station(platform, bin_path, expected_station=latest)
+            self._sync_bin_clearance_preview()
             self.camera_prefix.setText(self.node.camera_prefix)
             write_item_station_state(ui_state_path(), Path(platform).name, Path(bin_path).name)
             write_item_preview_state(ui_state_path(), self.node.camera_prefix)
@@ -1459,6 +1477,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node.disarm()
         self.armed_toggle.setChecked(False)
         self.saved_path = None
+        self._sync_bin_clearance_preview()
         if not self.yolo_toggle.isChecked():
             return  # Editing a form never starts YOLO automatically.
         self.preview_revision += 1
@@ -1557,10 +1576,38 @@ class ItemTeachWindow(QtWidgets.QWidget):
             raise ValueError(f"Setting '{key}' must be finite")
         return parsed
 
+    def _optional_number(self, key):
+        value = self.inputs[key].text().strip()
+        if not value:
+            return None
+        return self._number(key)
+
+    def _bin_clearance_settings(self, *, require_loaded_bin=True):
+        values = {key: self._optional_number(key) for key in BIN_CLEARANCE_FIELDS}
+        if any(value is not None for value in values.values()):
+            artifact = getattr(self.node, "bin_artifact", None)
+            if artifact is None:
+                if require_loaded_bin:
+                    raise ValueError("Load a valid Bin Teach before using wall clearance")
+            else:
+                inset_bin_roi([[point.x_m, point.y_m]
+                               for point in artifact.points], values)
+        return values
+
+    def _sync_bin_clearance_preview(self):
+        """Never retain an old blue border while the operator edits an invalid value."""
+        self.node.preview_bin_clearance = dict.fromkeys(BIN_CLEARANCE_FIELDS)
+        try:
+            self.node.preview_bin_clearance = self._bin_clearance_settings(
+                require_loaded_bin=False)
+        except ValueError:
+            pass
+
     def _inference_settings(self):
         geometry = {key: self._number(key) for key in GEOMETRY_FIELDS}
         return {"model_task": self.task.currentData(), "yolo": self._yolo_settings(),
                 "geometry": geometry, "geometry_source": self.geometry_source.currentData(),
+                "bin_clearance": self._bin_clearance_settings(),
                 "quality": self._quality_settings()}
 
     def _quality_settings(self):
@@ -1699,11 +1746,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
         source = settings["geometry_source"]
         self._populate_sources([source] if source != "none" else [], source)
         self.inputs["pick_rotation"].setText(str(settings["pick_rotation"]))
-        for section in ("motion", "speed", "timing", "retry", "yolo", "geometry", "quality"):
+        for section in ("motion", "speed", "timing", "retry", "yolo", "geometry",
+                        "bin_clearance", "quality"):
             for key, value in settings[section].items():
                 if key in ("class_ids", "image_size"):
                     continue
                 self.inputs[key].setText(
+                    "" if value is None else
                     ",".join(map(str, value)) if isinstance(value, list) else str(value)
                 )
         for key, value in settings["acceleration"].items():

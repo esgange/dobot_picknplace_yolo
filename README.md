@@ -102,7 +102,7 @@ control back while an edit or service confirmation is in progress.
 
 Home uses fresh GetPose only to decide whether an upward current-XY rise is
 needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
-transforms platform-relative poses, applies schema-8 vertical/rotation geometry
+transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
 Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
 uses the detected item short-axis line plus the taught unsigned `pick_rotation`;
@@ -150,7 +150,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-8 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-9 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -178,15 +178,25 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-8 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-9 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-8 profiles; they never recover old files.
+accept only complete schema-9 profiles; they never recover old files.
 The removed zheight_offset is not recovered. Old retract_height is blank in GUI
 drafts because it now means extra clearance above pre-pick, not above pick.
 Schema-7 and older drafts also leave `pick_rotation` blank; explicitly enter
-0–90° before saving schema 8.
+0–90° before saving schema 9. Schema-8 and older drafts leave all four optional
+bin-wall clearance fields blank for explicit review.
+
+Item Teach schema 9 provides optional inward clearances for Bin Teach edges
+P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
+valid inset is projected in light blue on both RGB and registered depth. The
+green ROI still rejects any item whose complete footprint or final pick point is
+outside the bin; the light-blue region additionally rejects only the exact
+depth-derived pick point near a wall. Simulate Trigger, Armed Item Teach and
+headless Item Detect share this filter before ranking poses, so Robot Controller
+receives only accepted candidates and does not reinterpret the border.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
@@ -197,7 +207,7 @@ The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
-never silently defaulted. Production rejects schemas 1–7.
+never silently defaulted. Production rejects schemas 1–8.
 Motion saves only standoff_height, prepick_height and retract_height:
 pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
 clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.
