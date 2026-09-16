@@ -71,7 +71,9 @@ Schema-8 and older recovery drafts leave all four bin-wall fields blank. A valid
 configured inset is shown light blue on RGB/depth and filters only the final
 depth-derived pick point. Detection geometry may overlap or touch the green ROI;
 only a fully disjoint detection is ignored. The final pick point must be
-inside/on green and, when configured, inside/on light blue.
+inside/on green and, when configured, inside/on light blue. Its unchanged RGB
+pixel must also appear inside/on the corresponding projected allowed-pick
+polygon, so parallax cannot produce a returned candidate visibly outside it.
 Collapsed/inverted/non-convex inset geometry cannot be saved or armed.
 
 GUI recovery keeps validated fields and blanks unclear/missing ones; unknown

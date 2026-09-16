@@ -463,6 +463,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     clearance_roi = inset_bin_roi(context["roi"], settings["bin_clearance"])
     clearance_roi = (None if clearance_roi is None
                      else np.asarray(clearance_roi, dtype=np.float64))
+    projected_pick_roi = project_bin_roi(
+        {**context, "roi": roi if clearance_roi is None else clearance_roi}, cv2, np)
     quality, geometry = settings["quality"], settings["geometry"]
     low, high = quality["depth_min_mm"], quality["depth_max_mm"]
     overlay = (shade_masks(rgb, [item["polygon"] for item in objects], cv2, np)
@@ -507,6 +509,10 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             if (abs(length * 1000 - geometry["height"]) > geometry["tolerance"]
                     or abs(width * 1000 - geometry["width"]) > geometry["tolerance"]):
                 raise ValueError("projected size outside tolerance")
+            if not inside(center, projected_pick_roi, cv2, np):
+                raise ValueError(
+                    "pick pixel outside projected bin ROI" if clearance_roi is None
+                    else "pick pixel outside projected bin-wall clearance")
             flat_center, radius, circle_px = depth_sampling_circle(
                 center, geometry["pickdepth_radius"], context, cv2, np,
                 output_camera=depth_camera)

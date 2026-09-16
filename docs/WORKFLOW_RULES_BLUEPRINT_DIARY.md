@@ -3560,6 +3560,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   workspace build passed. No camera/detector node, pose-service request, Dobot
   bringup or robot command was launched.
 
+### 2026-09-16 — Conservative projected-pixel pick clearance
+
+- A live Simulate Trigger audit exposed item-height parallax at the bin edge.
+  One returned point was `(-415.676, 320.037) mm` in `platform_reference`,
+  mathematically 11.076 mm inside the configured blue inset, while its exact RGB
+  center pixel `(310, 358)` appeared outside the blue polygon projected at
+  platform Z=0. Its vertical plane projection would be near `(341.7, 353.7)`,
+  explaining the discrepancy, but that substituted pixel is not the pick ray.
+- Rule 82 adds a conservative visual gate without weakening physical geometry.
+  A candidate must still pass depth-derived metric XY containment. Its unchanged
+  RGB rectangle-center pixel must additionally be inside/on the projected blue
+  polygon, or projected green polygon when no inset is configured. The worker
+  rejects visible parallax failures before depth sampling and reports a precise
+  projected-border reason; it never moves the center or changes returned XYZ.
+- Clicked selection, Simulate Trigger, Armed Item Teach and headless Item Detect
+  share the candidate generator, so the new gate applies uniformly before
+  ranking. Detection-footprint overlap and live all-detection preview remain
+  governed by rule 81 and may cross the light-blue point-only boundary.
+- Verification reproduced both parallax directions synthetically: metric-safe
+  but visually outside is rejected, visually inside but metric-outside remains
+  rejected, and exact projected-boundary contact is accepted. All 367 direct
+  Item Perception tests passed; package testing reported 368 results with zero
+  errors, failures or skips. Python compilation, focused source `ament_flake8`,
+  the changed package build, `git diff --check`, and the complete 15-package
+  workspace build passed. The running Item Teach process and its historical
+  read-only event log were inspected, but no camera/detector node was launched,
+  no pose-service request was made, and no robot command was issued.
+
 ### Future entry template
 
 ```text

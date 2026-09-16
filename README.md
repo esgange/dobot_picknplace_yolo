@@ -195,7 +195,9 @@ valid inset is projected in light blue on both RGB and registered depth. The
 green ROI ignores a detection only when its platform-plane footprint is fully
 disjoint; overlap or edge contact is accepted. The final depth-derived pick
 point must remain inside/on green, and the light-blue region additionally rejects
-that exact point near a wall. Simulate Trigger, Armed Item Teach and
+that exact point near a wall. To keep frozen feedback conservative under
+parallax, the unchanged RGB pick pixel must also appear inside/on the projected
+green/light-blue allowed-pick polygon. Simulate Trigger, Armed Item Teach and
 headless Item Detect share this filter before ranking poses, so Robot Controller
 receives only accepted candidates and does not reinterpret the border.
 

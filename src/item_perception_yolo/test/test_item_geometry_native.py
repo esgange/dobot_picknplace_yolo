@@ -16,9 +16,9 @@ def exercise_geometry():
         generate_candidates, filter_depth, objects_from_result, on_plane,
         plane_dimensions, preview_detections, rectangle_axes, draw_pick_axes, draw_pick_geometry,
         draw_bin_roi, draw_bin_clearance, project_bin_roi, classify_size, selected_pose,
-        depth_sampling_circle, polygons_overlap_or_touch,
+        depth_sampling_circle, polygons_overlap_or_touch, inside,
     )
-    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS, inset_bin_roi
     assert cv2.__version__ == "4.10.0"
     cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
@@ -91,17 +91,41 @@ def exercise_geometry():
     clearance = {"p1_p2": 50., "p2_p3": 50., "p3_p4": 50., "p4_p1": 50.}
     assert draw_bin_clearance(overlay, context, clearance, cv2, np)
     assert np.any(np.all(overlay == [102, 204, 255], axis=2))
-    # The footprint stays inside green, but the exact depth pick point is beyond
-    # the right-edge 100 mm light-blue clearance and is therefore excluded.
-    near_wall = {**item, "center": np.array([480., 240.]),
-                 "polygon": polygon + [160., 0.], "rectangle": polygon + [160., 0.]}
+    # A farther-than-plane point can look inside blue while its actual metric XY
+    # is outside; metric containment remains independently mandatory.
+    near_wall = {**item, "center": np.array([440., 240.]),
+                 "polygon": polygon + [120., 0.], "rectangle": polygon + [120., 0.]}
     wall_settings = {**settings, "bin_clearance": {
         "p1_p2": None, "p2_p3": None, "p3_p4": 100., "p4_p1": None}}
+    wall_depth = np.full_like(depth, 900)
     _, _, wall_candidates, wall_rejected = generate_candidates(
-        [near_wall], rgb, depth, context, wall_settings, cv2, np)
+        [near_wall], rgb, wall_depth, context, wall_settings, cv2, np)
     assert not wall_candidates
     assert wall_rejected == [{"source_index": 0,
                               "reason": "pick point outside bin-wall clearance"}]
+    # A closer item can be metric-safe but visibly outside the blue platform-Z=0
+    # projection. Reject it too so frozen candidate feedback matches the overlay.
+    parallax = {**item, "center": np.array([540., 240.]),
+                "polygon": polygon + [220., 0.], "rectangle": polygon + [220., 0.]}
+    parallax_settings = {**settings, "bin_clearance": {
+        "p1_p2": None, "p2_p3": None, "p3_p4": 30., "p4_p1": None}}
+    inner = np.asarray(inset_bin_roi(context["roi"], parallax_settings["bin_clearance"]))
+    projected_inner = project_bin_roi({**context, "roi": inner}, cv2, np)
+    parallax_position = transform[:3, :3] @ (
+        np.array([(540.-320.)/1000., 0., 1.]) * .7) + transform[:3, 3]
+    assert inside(parallax_position[:2], inner, cv2, np)
+    assert not inside(parallax["center"], projected_inner, cv2, np)
+    _, _, parallax_candidates, parallax_rejected = generate_candidates(
+        [parallax], rgb, depth, context, parallax_settings, cv2, np)
+    assert not parallax_candidates
+    assert parallax_rejected == [{
+        "source_index": 0, "reason": "pick pixel outside projected bin-wall clearance"}]
+    boundary_center = np.array([532.5, 240.])
+    boundary = {**item, "center": boundary_center,
+                "polygon": polygon + [212.5, 0.], "rectangle": polygon + [212.5, 0.]}
+    _, _, boundary_candidates, boundary_rejected = generate_candidates(
+        [boundary], rgb, depth, context, parallax_settings, cv2, np)
+    assert len(boundary_candidates) == 1 and not boundary_rejected
     # Green ROI membership is intersection-based: a partially crossing
     # footprint is eligible when its final depth-derived point remains inside.
     crossing = {**item, "center": np.array([540., 240.]),

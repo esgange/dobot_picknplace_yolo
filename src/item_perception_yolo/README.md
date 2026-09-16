@@ -347,7 +347,10 @@ Teach edges P1→P2, P2→P3, P3→P4 and P4→P1. Blank/null leaves that edge a
 green ROI. Any configured valid inner polygon is light blue on RGB and depth.
 A detection is eligible when its platform-plane footprint overlaps or touches
 green and is ignored only when fully disjoint. The exact depth-derived pick XY
-must remain inside/on green and additionally inside/on the blue border.
+must remain inside/on green and additionally inside/on the blue border. The
+original RGB pick pixel must also lie inside/on the corresponding projected
+allowed-pick polygon, preventing item-height parallax from showing a returned
+candidate outside the blue/green overlay.
 The shared click, Simulate Trigger, Armed and headless candidate pipeline applies
 this before ranking; the controller receives the resulting filtered list.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
@@ -460,6 +463,10 @@ blocking service request. All native operations are serialized in one worker.
 - Require the final depth-derived pick XY inside/on the green bin ROI.
 - Require the final depth-derived pick XY inside/on the optional light-blue
   `bin_clearance` polygon. Do not apply this inner polygon to the footprint.
+- Independently require the unchanged RGB pick pixel inside/on that same
+  allowed-pick polygon as projected at platform Z=0 (light blue when configured,
+  otherwise green). This conservative visual gate handles item-height parallax;
+  never relocate the pixel to its vertical projection merely to make it pass.
 - The original pixel rectangle center is the pick ray; never relocate it.
   A mask whose rectangle center lies outside its own polygon is rejected.
 - `pickdepth_radius` is deliberately the sampling **diameter**, initially 30 mm.
