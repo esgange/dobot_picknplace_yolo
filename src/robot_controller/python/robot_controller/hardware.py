@@ -9,6 +9,7 @@ import numpy as np
 
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldUnknown, OperationCanceled, StopUnconfirmed)
+from .feedback import enabled_blockers
 from .kinematics import pose_matrix, pose_values
 from .motion import pose_reached
 
@@ -279,7 +280,7 @@ class DobotTransport:
         except FeedbackFailure:
             sample = None
         if sample is None:
-            return
+            return False
         self.node.events.record(
             "WARNING", "startup_pause_correction",
             "Three consecutive pause samples; applying one Stop -> Enable correction")
@@ -293,6 +294,7 @@ class DobotTransport:
                 lambda state: not state.feed["isPauseCmdFlag"]),
             CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
             cancel=self.node.cancel_requested, description="cleared pause flag after correction")
+        return True
 
     def _check_held_context(self, known_holding, expected_outputs):
         snapshot = self.monitor.snapshot(require_enabled=False)
@@ -355,10 +357,30 @@ class DobotTransport:
 
     def _confirm_ready(self):
         self._phase("READY_CONFIRM", "Confirming coherent enabled/idle feedback")
-        return self.monitor.wait(
-            self._held_predicate(self._idle), MODE_TRANSITION_TIMEOUT_SEC,
-            cancel=self.node.cancel_requested, require_enabled=True,
-            stable_sec=READY_STABLE_SEC, description="stable READY feedback")
+        try:
+            return self.monitor.wait(
+                self._held_predicate(self._idle), MODE_TRANSITION_TIMEOUT_SEC,
+                cancel=self.node.cancel_requested, require_enabled=True,
+                stable_sec=READY_STABLE_SEC, description="stable READY feedback")
+        except FeedbackFailure as exc:
+            try:
+                snapshot = self.monitor.snapshot(require_enabled=False)
+            except FeedbackFailure:
+                raise exc
+            blockers = enabled_blockers(snapshot.feed, snapshot.robot_enabled)
+            feed = snapshot.feed
+            if feed["robot_mode"] in (7, 8):
+                blockers.append(
+                    f"robot_mode={feed['robot_mode']} (required idle mode 5)")
+            if feed["isRunQueuedCmd"]:
+                blockers.append(f"isRunQueuedCmd={feed['isRunQueuedCmd']}")
+            if feed["RunningStatus"]:
+                blockers.append(f"RunningStatus={feed['RunningStatus']}")
+            if blockers:
+                raise FeedbackFailure(
+                    "Stable READY blocked: " + "; ".join(blockers)) from exc
+            raise FeedbackFailure(
+                "READY fields were valid but did not remain coherent for 200 ms") from exc
 
     def startup(self):
         self.wait_services(optional=("StopMoveJog",))
@@ -384,9 +406,11 @@ class DobotTransport:
             cancel=self.node.cancel_requested, description="Disabled mode")
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
-        self._correct_persistent_pause_once()
+        pause_corrected = self._correct_persistent_pause_once()
         self._apply_settings(100)
         self._reset_outputs_if_unheld()
+        if not pause_corrected:
+            self._correct_persistent_pause_once()
         self._confirm_ready()
 
     def recover(self, speed_percent):
@@ -400,9 +424,11 @@ class DobotTransport:
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
-        self._correct_persistent_pause_once()
+        pause_corrected = self._correct_persistent_pause_once()
         self._apply_settings(speed_percent if speed_percent is not None else 100)
         self._reset_outputs_if_unheld()
+        if not pause_corrected:
+            self._correct_persistent_pause_once()
         self._confirm_ready()
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 

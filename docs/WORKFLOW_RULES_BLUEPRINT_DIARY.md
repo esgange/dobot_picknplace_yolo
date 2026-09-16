@@ -2947,6 +2947,29 @@ Never use a floating “latest” version in an issue, script, or deployment not
   flake8, lint_cmake and uncrustify findings). Per repository rule, vendored
   sources were not silently reformatted or patched to hide those failures.
 
+### 2026-09-16 — Late persistent-pause recovery check
+
+- A passive live-robot inspection after two operator-triggered Recover calls
+  found that every service response succeeded: Stop, EnableRobot, SpeedFactor,
+  User, Tool, SetTool, CP and DO1/2/13/14. Canonical feedback remained fresh at
+  approximately 100 Hz and reported connected/enabled idle mode 5, an empty
+  queue, zero running/error/collision flags, user/tool 0 and DI/output bits 0.
+  The sole READY blocker was `isPauseCmdFlag=1`; no robot service had failed.
+- The existing one-correction policy checked for persistent pause immediately
+  after Enable, while this controller asserted the flag later during remaining
+  setup. Startup and Recover now check immediately after Enable and, only when
+  the correction remains unused, once again after settings/output reset. At
+  most one strict Stop→Enable correction is still issued; Continue remains
+  forbidden and there is no retry loop or pause bypass.
+- Final READY timeout reporting now evaluates the latest fresh snapshot and
+  names the exact mode/enable/pause/error/collision/user/tool/queue blocker. A
+  valid snapshot that merely fails the 200 ms stability window is reported
+  separately. The inspection was read-only; no service or motion command was
+  sent by the verifier.
+- Verification passes all 55 focused controller tests through package CTest,
+  including the late-pause and exact-blocker cases. The complete 15-package
+  root build and the generated controller-interface tests also pass.
+
 ### Future entry template
 
 ```text

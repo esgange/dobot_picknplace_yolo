@@ -53,7 +53,8 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 
 Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
-100, unheld output reset, and coherent READY confirmation. Recover performs the
+100, unheld output reset, one bounded persistent-pause correction checked both
+after Enable and before READY, and coherent READY confirmation. Recover performs the
 same guarded recovery without moving Home. Stop and native cancellation preserve
 all gripper outputs, discard queued motion, and finish in `RECOVERY_REQUIRED`;
 they never automatically Home, release, or resume. Trusted held-item DI/output

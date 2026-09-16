@@ -39,7 +39,12 @@ def test_known_holding_requires_di1_and_exact_expected_outputs():
         transport._check_held_context(True, {13: True})
 
 
-def test_startup_sequence_is_explicit_and_never_calls_home():
+@pytest.mark.parametrize(
+    ("pause_results", "expected_pause_checks"),
+    [((False, False), 2), ((True,), 1)],
+)
+def test_startup_sequence_is_explicit_and_never_calls_home(
+        pause_results, expected_pause_checks):
     transport = object.__new__(DobotTransport)
     order = []
     transport.node = SimpleNamespace(
@@ -60,7 +65,9 @@ def test_startup_sequence_is_explicit_and_never_calls_home():
     transport._check_held_context = lambda known, expected: order.append(
         ("held_check", known, expected))
     transport._clear_errors_if_needed = lambda: order.append(("clear_if_needed",))
-    transport._correct_persistent_pause_once = lambda: order.append(("pause_correction",))
+    pause_results = iter(pause_results)
+    transport._correct_persistent_pause_once = lambda: (
+        order.append(("pause_check",)) or next(pause_results))
     transport._apply_settings = lambda speed: order.append(("settings", speed))
     transport._reset_outputs_if_unheld = lambda: order.append(("output_reset",))
     transport._confirm_ready = lambda: order.append(("ready",))
@@ -71,8 +78,31 @@ def test_startup_sequence_is_explicit_and_never_calls_home():
     assert calls == ["StopMoveJog", "DisableRobot", "EnableRobot"]
     assert order.index(("stop_confirmed",)) < order.index(("call", "DisableRobot"))
     assert order.index(("call", "EnableRobot")) < order.index(("settings", 100))
-    assert order[-2:] == [("output_reset",), ("ready",)]
+    assert order.index(("output_reset",)) < order.index(("ready",))
+    assert order.count(("pause_check",)) == expected_pause_checks
+    if expected_pause_checks == 2:
+        assert order[-3:] == [("output_reset",), ("pause_check",), ("ready",)]
     assert all("Home" not in str(entry) and "MovL" not in str(entry) for entry in order)
+
+
+def test_final_ready_failure_names_the_exact_live_blocker():
+    transport = object.__new__(DobotTransport)
+    paused = snapshot()
+    paused.feed["isPauseCmdFlag"] = 1
+
+    class Monitor:
+        def wait(self, *_args, **_kwargs):
+            raise FeedbackFailure("Timed out waiting for stable READY feedback")
+
+        def snapshot(self, **_kwargs):
+            return paused
+
+    transport.monitor = Monitor()
+    transport.node = SimpleNamespace(
+        holding_item=False, expected_outputs={}, cancel_requested=lambda: False,
+        operation_progress=lambda *_args, **_kwargs: None)
+    with pytest.raises(FeedbackFailure, match="isPauseCmdFlag=1"):
+        transport._confirm_ready()
 
 
 class CompletedFuture:

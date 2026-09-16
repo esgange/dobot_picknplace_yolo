@@ -102,7 +102,8 @@ Startup validates sole canonical services and publishers, then performs:
 3. cold DI1 check (active DI1 preserves I/O and enters `HELD_UNKNOWN`);
 4. Disable and conditional ClearError;
 5. Enable, with at most one Stop→Enable correction after three persistent pause
-   samples;
+   samples. Pause is checked immediately after Enable and once more before READY
+   only if that correction has not already been used;
 6. SpeedFactor 100, User 0, Tool 0, Tool 1 TCP zero, and CP 100;
 7. DO1/DO2/DO13/DO14 reset only when no item is held;
 8. 200 ms of coherent `READY` feedback.
