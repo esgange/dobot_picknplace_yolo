@@ -47,7 +47,7 @@ def teaching_node(monkeypatch):
         get_clock=lambda: clock, selected_pose_broadcaster=MagicMock(),
         _validate_sources=MagicMock(), applied=SimpleNamespace(
             platform=SimpleNamespace(base_from_platform=base)),
-        settings={"quality": {"result_max_age_sec": 2.}}, disarm=MagicMock())
+        settings={"quality": {}}, disarm=MagicMock())
     monkeypatch.setattr(detector, "file_sha256", lambda _: "a" * 64)
     for name in ("clear_selected_pose", "show_selected_pose", "show_simulated_poses",
                  "_broadcast_selected_pose"):
@@ -153,16 +153,14 @@ def test_batch_timer_clears_on_invalidation_without_gui_progress(
 
 
 @pytest.mark.parametrize("failure", [
-    "stale", "future", "stamp", "frame", "failed",
+    "future", "stamp", "frame", "failed",
     "priority", "duplicate", "nonfinite", "rotation",
 ])
 def test_invalid_simulated_batch_clears_old_tf_without_partial_publication(teaching_node, failure):
     node = teaching_node
     node.show_simulated_poses(*batch(3))
     response, view = batch(3)
-    if failure == "stale":
-        node.get_clock().now = lambda: Time(nanoseconds=103_000_000_000)
-    elif failure == "future":
+    if failure == "future":
         node.get_clock().now = lambda: Time(nanoseconds=99_000_000_000)
     elif failure == "stamp":
         view["stamp_ns"] += 1
@@ -183,6 +181,13 @@ def test_invalid_simulated_batch_clears_old_tf_without_partial_publication(teach
     node._broadcast_selected_pose()
     assert node.selected_pose is None
     node.selected_pose_broadcaster.sendTransform.assert_not_called()
+
+
+def test_old_simulated_batch_remains_valid_for_teaching_tf(teaching_node):
+    node = teaching_node
+    node.get_clock().now = lambda: Time(nanoseconds=200_000_000_000)
+    node.show_simulated_poses(*batch(3))
+    assert len(node.selected_pose[1]) == 3
 
 
 def test_epoch_change_during_batch_validation_does_not_publish(teaching_node):
@@ -218,7 +223,7 @@ def exercise_tf_transport():
         native=SimpleNamespace(failed=False), fatal_error=None, service=None, events=MagicMock(),
         get_clock=publisher.get_clock, validate_simulation_view=lambda _: None,
         applied=SimpleNamespace(platform=SimpleNamespace(base_from_platform=np.eye(4))),
-        settings={"quality": {"result_max_age_sec": 2.}})
+        settings={"quality": {}})
 
     def send(transforms):
         sent.append(deepcopy(transforms))

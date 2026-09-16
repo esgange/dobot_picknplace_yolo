@@ -28,7 +28,7 @@ tolerance: green borders pass size, red fail size, gray means not checked.
 Clicking calculates only that item's RGB/depth pose with the strict class/ROI/size
 and MAD depth checks. A valid pose shows platform XYZ/yaw and publishes teaching-only
 `base_link -> item_teach_selected_item` for RViz's TF display. No RViz launch or
-robot movement occurs. Failed/expired clicks show a reason without a new TF.
+robot movement occurs. Failed or invalidated clicks show a reason without a new TF.
 Click the image again to resume and clear the frozen pose/TF. The depth view shows
 accepted points black and rejected red. Missing registered depth blocks poses,
 not RGB detection. Preview uses visible confidence/IoU/cap and all model classes.

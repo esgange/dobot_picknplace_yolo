@@ -890,15 +890,9 @@ class RobotController(Node):
                     [*candidate.position_m, 1.0])
                 plans.append(pick_targets(
                     config.home_matrix, xyz[:3], config.profile, index))
-            oldest_stamp = min(batch.observation_stamp_ns, batch.depth_stamp_ns)
-
             def check(index):
                 self.raise_if_cancelled()
                 config.validate_sources(self.root)
-                age = (self.get_clock().now().nanoseconds - oldest_stamp) / 1e9
-                if not 0 <= age <= config.profile["quality"]["result_max_age_sec"]:
-                    raise FeedbackFailure(
-                        f"Candidate {index} expired; request a new Pick action")
                 result.attempted_candidates = index
 
             outcome = PickExecutor(self.hardware, finish_home=True).run(

@@ -219,7 +219,7 @@ Pick is permitted only from `READY` with DI1 clear:
 5. after every miss, retract and return Home before advancing;
 6. after success, retract and return Home holding with suction on.
 
-The schema-6 geometry is unchanged: pick Z is item Z plus `standoff_height`,
+The schema-7 geometry is unchanged: pick Z is item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates, final descent uses approach rates, and pick-to-prepick
 uses retract rates. Enabled fingers open at 50% of the clearance move. Suction

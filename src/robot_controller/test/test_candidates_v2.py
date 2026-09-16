@@ -19,7 +19,7 @@ def configuration():
     profile = {
         "model": {"sha256": "model"},
         "yolo": {"confidence": 0.4, "class_ids": [0, 2]},
-        "quality": {"result_max_age_sec": 2.0, "sync_tolerance_sec": 0.1},
+        "quality": {"sync_tolerance_sec": 0.1},
     }
     station = SimpleNamespace(
         camera=SimpleNamespace(sha256="camera"),
@@ -92,7 +92,7 @@ def test_every_detector_binding_hash_is_mandatory(tmp_path, key):
 @pytest.mark.parametrize("mutation,match", [
     (lambda result: setattr(result.header, "frame_id", "base_link"), "frame"),
     (lambda result: setattr(result, "batch_id", ""), "batch ID/count"),
-    (lambda result: setattr(result.header.stamp, "sec", 90), "stale"),
+    (lambda result: setattr(result.header.stamp, "sec", 0), "invalid"),
     (lambda result: setattr(result.depth_stamp, "nanosec", 200_000_000),
      "not synchronized"),
     (lambda result: setattr(result.candidates[0], "priority", 2), "Malformed"),
@@ -100,11 +100,18 @@ def test_every_detector_binding_hash_is_mandatory(tmp_path, key):
     (lambda result: setattr(result.candidates[0], "confidence", 0.1), "Malformed"),
     (lambda result: setattr(result.candidates[0].pose.orientation, "w", 0.5), "Malformed"),
 ])
-def test_malformed_or_stale_candidate_evidence_is_rejected(tmp_path, mutation, match):
+def test_malformed_candidate_evidence_is_rejected(tmp_path, mutation, match):
     result = valid_result()
     mutation(result)
     with pytest.raises(FeedbackFailure, match=match):
         client(tmp_path)._validate_result(result, configuration(), False)
+
+
+def test_synchronized_positive_candidate_timestamps_do_not_expire(tmp_path):
+    result = valid_result()
+    result.header.stamp.sec = result.depth_stamp.sec = 1
+    batch = client(tmp_path)._validate_result(result, configuration(), False)
+    assert batch.observation_stamp_ns == 1_000_000_000
 
 
 def test_duplicate_and_out_of_order_candidates_are_rejected(tmp_path):

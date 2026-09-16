@@ -3235,6 +3235,54 @@ Never use a floating “latest” version in an issue, script, or deployment not
   workspace packages build successfully. No hardware or detector request was
   issued during verification.
 
+### 2026-09-16 — Remove candidate result-age expiry
+
+- The operator confirmed that accepted detection poses should remain valid until
+  a later acquisition replaces them, rather than expiring while the robot runs
+  Home, approach, settle, retract or candidate-retry motion. The editable
+  `quality.result_max_age_sec` setting was therefore unnecessary and caused a
+  valid batch to fail after motion consumed more than its two-second default.
+- Rule 73 advances strict production Item Teach artifacts to schema 7 and removes
+  `result_max_age_sec` from the YAML shape, Item Teach form/recovery, clicked and
+  simulated previews, Item Detect response construction, and Robot Controller
+  response/execution validation. Existing schema-6 artifacts remain loadable only
+  as GUI recovery drafts and can be explicitly saved as schema 7; runtime readers
+  do not gain a compatibility alias or implicit conversion.
+- Acquisition safety is unchanged: RGB/depth/TF freshness and RGB/depth timestamp
+  synchronization are checked while selecting the fresh request observation;
+  `request_timeout_sec` still bounds queueing, inference, optional debug capture
+  and response creation. Positive, synchronized, non-future result timestamps
+  remain mandatory. Profile/model/camera/platform/bin hashes, generation/disarm,
+  cancellation/Stop and source-file validation still invalidate results.
+- Once one response passes those checks, Robot Controller latches that exact batch
+  for its owning Pick action with no wall-clock expiry and no automatic
+  reacquisition. Configuration/source validation continues before each candidate,
+  so this change removes only elapsed-time rejection and does not permit stale
+  configuration, altered artifacts or cached batches from another request.
+- Shared Item Perception UI schema 6, camera schema 7, platform/bin schema 3,
+  model bytes, item geometry/ranking, controller actions, motion and all robot
+  feedback/safety gates are unchanged. The user-authorized workstation water
+  teach/runtime YAML copies are updated separately to schema 7 with the removed
+  quality key; their paired model is not modified and those operator artifacts
+  remain outside the source commit.
+- Verification is synthetic/source-only and must cover strict schema shape, UI
+  field absence, accepted old clicked/simulated/service results, future/invalid
+  timestamp rejection, request timeout, source invalidation, controller batch
+  acceptance and unchanged synchronization checks. Run perception/controller
+  tests, compilation/lint, package/root builds, staged review and
+  `git diff --check`; do not call a detector service or robot command.
+- Verification completed with all 442 focused perception/controller tests
+  passing. Package-native CTest reports 356 Item Perception and 88 Robot
+  Controller results with zero errors, failures or skips; the package builds and
+  complete 15-package root build pass. Python compilation, Robot Controller
+  ament_flake8, strict schema-7 offline/runtime profile loading, paired model hash
+  validation and `git diff --check` pass. The broad Item Perception ament_flake8
+  invocation still reports its existing 84-error package style backlog on
+  pre-existing lines; no new functional failure was introduced. An accidental
+  generated symlink-install cache was removed and the private runtime rebuilt as
+  ordinary installed files; isolated OpenCV 4.10 import and the complete native
+  worker tests then pass. No camera, detector service or robot command was launched.
+
 ### Future entry template
 
 ```text

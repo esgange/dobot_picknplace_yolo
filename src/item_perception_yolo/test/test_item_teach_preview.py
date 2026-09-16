@@ -58,6 +58,7 @@ def test_single_view_starts_with_blank_dimensions_and_no_production_profile(wind
     assert window.node.yolo_enabled
     assert window.node.settings is None  # No production parser needed.
     assert "image_size" not in window.inputs
+    assert "result_max_age_sec" not in window.inputs
     assert window.profile_image_size == 640
     assert window.node.preview_geometry is None  # Explicit gray/unchecked size, no guess.
     assert window.node.preview_quality == gui.QUALITY_DEFAULTS
@@ -238,7 +239,8 @@ def test_simulation_freeze_clears_if_profile_or_station_changes(window):
 
 def test_simulation_tf_rejection_never_keeps_old_preview(window):
     simulation_setup(window)
-    window.node.show_simulated_poses.side_effect = ValueError("Simulated batch snapshot is stale")
+    window.node.show_simulated_poses.side_effect = ValueError(
+        "Simulated batch snapshot was invalidated")
     window.simulate_button.click()
     window._refresh_video()
     finish_model_job(window)
@@ -522,7 +524,7 @@ def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, 
               "depth_rgb": bytes(640*480*3), "stamp_ns": view["stamp_ns"], "epoch": 1}
     window.node.clicked_pose.return_value = result
     if outcome == "error":
-        window.node.clicked_pose.side_effect = ValueError("Snapshot expired")
+        window.node.clicked_pose.side_effect = ValueError("Snapshot invalidated")
     window.node.last_view = view
     window._refresh_video()
     center = gui.QtCore.QPointF(window.video.contentsRect().center())
@@ -960,7 +962,8 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 6 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 7 and saved["retry"] == {"pose_candidates": 3}
+    assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings
     assert path.read_bytes() != original and path.with_suffix(".pt").read_bytes() == model_original

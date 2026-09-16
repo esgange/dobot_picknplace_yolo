@@ -128,8 +128,9 @@ arming changes, YOLO OFF, native/source failure or exit. ROS TF clients may reta
 previous transforms briefly in their buffers after publication stops.
 Click calculation reuses the exact displayed geometry and synchronized raw
 RGB/depth/TF snapshot, without re-running YOLO or substituting newer sensor data.
-Input checks apply when acquiring the snapshot; `result_max_age_sec` bounds its
-age at click and completion. An expired click requires resuming live; no retry.
+Input freshness checks apply when acquiring the snapshot. Once the exact pair is
+accepted, it remains valid for that frozen click calculation; settings/source
+changes still invalidate it, and the request deadline still bounds native work.
 Only a bounded current/in-flight/selected snapshot is held in memory. The sole
 persistence exception is an explicitly requested controller troubleshooting pair
 described below; there is no continuous image archive.
@@ -140,14 +141,14 @@ The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
 Armed ON is highlighted red so advertised production pose-service state cannot
 be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
-a complete saved/loaded schema-6 profile, its verified model, matching current
+a complete saved/loaded schema-7 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
 first. It neither advertises/calls the pose service nor issues robot commands.
 
 It uses the very same acquisition, inference, class/size/ROI/depth filtering,
 center-first ranking and typed response builder as a real service request.
 Acquire one new synchronized RGB/depth pair after the click, resolve RGB-time TF,
-and enforce the same input/result ages, request deadline and hash/generation
+and enforce the same input freshness, request deadline and hash/generation
 checks. One action queues behind the current GUI job, with progress shown on the
 button; no repeated clicks or automatic retry. The deadline includes queue time.
 Production/simulated requests are mutually exclusive and report BUSY on overlap.
@@ -170,7 +171,7 @@ Use an already-running RViz TF display; Item Teach never launches RViz.
 
 The complete batch replaces any previous clicked-item or simulated preview.
 Validate the response frame, priorities, IDs, pose values, source/profile identity
-and snapshot age before installing all TFs atomically. While frozen, only their
+and snapshot identity before installing all TFs atomically. While frozen, only their
 broadcast timestamps refresh; their positions/orientations do not follow newer
 images or robot TF. The timer independently checks source/profile, arming epoch,
 YOLO and native/fatal state so invalidation stops publication even if Qt is busy.
@@ -189,7 +190,7 @@ recorded only in the existing bounded package events.
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict production item schema 6, class filters and quality gates remain enforced.
+strict production item schema 7, class filters and quality gates remain enforced.
 
 ### Pick-oriented RGB overlays
 
@@ -293,7 +294,7 @@ if weight replacement precedes a YAML write failure, restore the original model.
 YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
 never silently load. A success dialog names both files; the original external
 model remains untouched and the pair works without it.
-**Load Item Teach** accepts only that directory. Complete schema-6 files load
+**Load Item Teach** accepts only that directory. Complete schema-7 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
 trust/verification, YOLO ON and fresh station inputs remain mandatory. Loading
@@ -308,7 +309,7 @@ The warning/Activity log explains every cleared field. Missing internal
 `image_size` requires explicitly browsing a model to establish new-profile 640.
 Recovery also applies to named-file startup prefill, without executing weights.
 No recovered draft can simulate, arm or be validated in the controller until
-reviewed and saved as a strict schema-6 pair. Same known item name overwrites
+reviewed and saved as a strict schema-7 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
@@ -346,14 +347,14 @@ percentages: travel/Home, final approach, pick-to-prepick retract. All must be
 integers 1–100. New-profile speed is explicitly 100/6/6 and acceleration
 100/100/100; loaded profiles retain their exact values. Speed and acceleration
 edits disarm and invalidate saved eligibility without interrupting read-only
-inference or automatically saving/commanding hardware. Save writes schema 6 with
+inference or automatically saving/commanding hardware. Save writes schema 7 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
 global SpeedFactor starts at 100% and the controller can adjust it explicitly
 while Live/idle, without rewriting these taught per-command rates. Production
-rejects schemas 1–5; old GUI recovery drafts leave missing/invalid rates blank
-until the operator explicitly fills and
-saves them. Shared schema-6 named-file UI state is unchanged.
+rejects schemas 1–6; old GUI recovery drafts leave missing/invalid rates blank
+until the operator explicitly fills and saves them. Shared schema-6 named-file
+UI state is unchanged.
 
 Item Teach has no controller-validation button or controller client. It creates
 profiles, inspects detections and exposes read-only poses when explicitly armed;
@@ -467,12 +468,14 @@ blocking service request. All native operations are serialized in one worker.
   deterministic sign; it is not estimated surface tilt or a TCP command.
 - Replies carry metre poses/dimensions, timestamps, batch-local IDs, confidence,
   depth counts/spread and artifact/transform evidence. Disarm/config changes,
-  source tampering, expired observations and malformed worker output never
-  return usable targets. The controller checks frame/profile/freshness again.
+  source tampering, invalidated observations and malformed worker output never
+  return usable targets. The controller checks frame/profile and timestamp
+  validity again.
 
 Initial form values are explicit and saved in `quality`: input age 0.5 s,
-RGB/depth separation 0.1 s, robot TF age 1 s, request deadline 10 s, result age
-2 s, at least 30 accepted samples and 50% of circle pixels, depth 200–1000 mm.
+RGB/depth separation 0.1 s, robot TF age 1 s, request deadline 10 s, at least
+30 accepted samples and 50% of circle pixels, and depth 200–1000 mm. There is no
+result-age field: an accepted batch remains valid until invalidated or replaced.
 Edit and save these fields deliberately; a file missing them is rejected.
 Frames/overlays are bounded transient memory, never saved as an accumulating
 archive. Events remain timestamped and bounded at 1,000 package records.

@@ -112,15 +112,14 @@ class ItemTeachNode(ItemDetectNode):
                            candidate=candidate)
 
     def show_simulated_poses(self, response, view):
-        """Install only the successful, still-fresh returned batch, not raw detections."""
+        """Install only the successful returned batch, not raw detections."""
         self.clear_selected_pose()
         self.validate_simulation_view(view)
         epoch = view["simulation_epoch"]
         stamp_ns = response.header.stamp.sec * 1_000_000_000 + response.header.stamp.nanosec
         now = self.get_clock().now()
-        if (stamp_ns != view["stamp_ns"] or not 0 <= (now.nanoseconds - stamp_ns) / 1e9
-                <= self.settings["quality"]["result_max_age_sec"]):
-            raise ValueError("Simulated snapshot is stale or mismatched before TF publication")
+        if stamp_ns != view["stamp_ns"] or stamp_ns <= 0 or stamp_ns > now.nanoseconds:
+            raise ValueError("Simulated snapshot timestamp is invalid or mismatched")
         transforms = build_simulated_pose_transforms(
             self.applied.platform.base_from_platform, response, now.to_msg())
         # Keep only identity evidence in the timer state, never another image/depth snapshot.

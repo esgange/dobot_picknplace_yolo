@@ -785,13 +785,6 @@ class ItemDetectNode(Node):
             raise ValueError("Selection does not belong to the displayed result")
         self._validate_sources()
         rgb, depth = observation["rgb"], observation["depth"]
-
-        def check_age():
-            age = (self.get_clock().now().nanoseconds - min(
-                rgb["stamp_ns"], depth["stamp_ns"])) / 1e9
-            if not 0 <= age <= settings["quality"]["result_max_age_sec"]:
-                raise ValueError("Selected snapshot is too old for a pose; click to resume live")
-        check_age()
         if not self.operation_lock.acquire(blocking=False):
             raise ValueError("Pose operation busy; no selected pose published")
         try:
@@ -824,7 +817,6 @@ class ItemDetectNode(Node):
                 self.native.close()
                 self.events.record("FATAL", "item_selected_result_invalid", str(exc))
                 raise RuntimeError(f"Malformed selected pose result: {exc}") from exc
-            check_age()
             self._validate_sources()
             if observation["epoch"] != self.arm_epoch or not self.yolo_enabled:
                 raise ValueError("Selection invalidated while calculating pose")
@@ -908,10 +900,6 @@ class ItemDetectNode(Node):
             if file_sha256(profile_path) != profile_digest:
                 self.disarm()
                 raise ValueError("Item profile changed during request")
-            age = (self.get_clock().now().nanoseconds -
-                   min(rgb["stamp_ns"], depth["stamp_ns"])) / 1e9
-            if not 0 <= age <= self.settings["quality"]["result_max_age_sec"]:
-                raise ValueError(f"Observation expired during processing: {age:.3f}s")
             if time.monotonic() > deadline:
                 raise ValueError("Request deadline exceeded")
             response.batch_id = uuid.uuid4().hex
@@ -962,11 +950,8 @@ class ItemDetectNode(Node):
                 if file_sha256(profile_path) != profile_digest:
                     self.disarm()
                     raise ValueError("Item profile changed while saving debug images")
-                age = (self.get_clock().now().nanoseconds -
-                       min(rgb["stamp_ns"], depth["stamp_ns"])) / 1e9
-                if (not 0 <= age <= self.settings["quality"]["result_max_age_sec"]
-                        or time.monotonic() > deadline):
-                    raise ValueError("Observation/request expired while saving debug images")
+                if time.monotonic() > deadline:
+                    raise ValueError("Request deadline exceeded while saving debug images")
             evidence = {"profile_sha256": profile_digest,
                         "model_sha256": self.model_config["sha256"],
                         "camera_sha256": self.applied.camera.sha256,

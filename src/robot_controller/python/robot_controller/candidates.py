@@ -133,9 +133,9 @@ class CandidateClient:
         now_ns = self.node.get_clock().now().nanoseconds
         stamps = tuple(value.sec * 1_000_000_000 + value.nanosec for value in
                        (result.header.stamp, result.depth_stamp))
-        if any(stamp <= 0 or not 0 <= (now_ns - stamp) / 1e9 <=
-               profile["quality"]["result_max_age_sec"] for stamp in stamps):
-            raise FeedbackFailure("Returned detector observation is stale or future-dated")
+        if any(stamp <= 0 or stamp > now_ns for stamp in stamps):
+            raise FeedbackFailure(
+                "Returned detector observation timestamp is invalid or future-dated")
         if abs(stamps[0] - stamps[1]) / 1e9 > profile["quality"]["sync_tolerance_sec"]:
             raise FeedbackFailure("Detector RGB/depth timestamps are not synchronized")
         if not result.batch_id or len(result.candidates) > configuration.pose_candidates:

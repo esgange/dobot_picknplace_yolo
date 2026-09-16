@@ -17,7 +17,7 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 6 groups data by purpose. Production rejects schemas 1–5;
+Strict item schema 7 groups data by purpose. Production rejects schemas 1–6;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
@@ -35,7 +35,7 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 | `yolo` | `confidence`, `iou`, `image_size`, `max_detections`, `class_ids` |
 | `geometry_source` | Explicit mask, OBB, or none for RGB-only preview |
 | `geometry` | Long-side `height`, short-side `width`, ± `tolerance`, `pickdepth_radius` (all mm; the last key means diameter, default 30 mm) |
-| `quality` | Input/TF age, RGB-depth synchronization, request/result deadline, depth range, minimum retained-depth count/fraction |
+| `quality` | Input/TF age, RGB-depth synchronization, request deadline, depth range, minimum retained-depth count/fraction |
 | `controller_contract` | Validation-only stage, motion disabled, Link6, vertical routine, start/end home and fixed I/O map |
 
 `yolo.image_size` is retained as reproducible inference metadata, not an editable
@@ -55,7 +55,8 @@ Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick, clearance Z=pre-pick Z+retrac
 in robot base Z with Home attitude. zheight_offset is removed, not an alias.
 The controller supplies vendor
 per-command `v=`/`a=` while global SpeedFactor stays 100%. These are percentages,
-not absolute velocity/acceleration. Slow rates do not relax freshness/deadlines.
+not absolute velocity/acceleration. Slow rates do not relax acquisition
+freshness or the request deadline; an accepted candidate batch has no age expiry.
 Missing/invalid rates in recovery drafts are blank, never automatically filled.
 Old retract_height is also blank in GUI recovery: its meaning changed from an
 offset above pick to extra clearance above pre-pick. Review and fill it explicitly.

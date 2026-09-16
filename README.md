@@ -94,7 +94,7 @@ control back while an edit or service confirmation is in progress.
 
 Home uses fresh GetPose only to decide whether an upward current-XY rise is
 needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
-transforms platform-relative poses, applies schema-6 vertical geometry and
+transforms platform-relative poses, applies schema-7 vertical geometry and
 timed gripper behavior, and returns Home after every attempt. Only missed suction
 advances to another candidate. No-I/O moves use MovL, real timed-output moves use
 non-empty MovLIO, and the conditional rise uses RelMovLUser. Continue is used only
@@ -123,7 +123,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-6 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-7 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -151,11 +151,11 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-6 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-7 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-6 profiles; they never recover old files.
+accept only complete schema-7 profiles; they never recover old files.
 The removed zheight_offset is not recovered. Old retract_height is blank in GUI
 drafts because it now means extra clearance above pre-pick, not above pick.
 
@@ -205,7 +205,8 @@ models to map the physical sampling circle and RGB mask onto native depth pixels
 Depth is not resized or interpolated; the original RGB pick center is unchanged.
 Click an item to freeze the exact RGB/depth observation and calculate only its pose.
 Class, size, ROI, freshness and MAD depth checks must pass. No newer image/depth
-or TF is substituted, and an expired snapshot is rejected. The top-left shows
+or TF is substituted. Once that exact pair passes acquisition checks it remains
+valid for the frozen click calculation. The top-left shows
 platform-relative XYZ/yaw and dimensions. A valid click publishes teaching-only
 `base_link -> item_teach_selected_item` at 10 Hz, composed with the platform's
 full tilt/height. This frozen TF is not a live tracked item or a robot command;

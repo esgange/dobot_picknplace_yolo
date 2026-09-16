@@ -41,7 +41,7 @@ def recover_item_fields(path, *, root=None):
         return draft
     if (type(payload) is not dict or payload.get("artifact_type") != "item_teach"
             or type(payload.get("schema_version")) is not int
-            or payload["schema_version"] not in (1, 2, 3, 4, 5, 6)):
+            or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7)):
         draft.issues.append("Unrecognized item format/schema; all fields cleared")
         return draft
 
@@ -121,7 +121,7 @@ def recover_item_fields(path, *, root=None):
             number("quality", key, integer=True, low=3, high=100000)
         else:
             high = (1 if key == "minimum_depth_fraction" else
-                    30 if key in ("request_timeout_sec", "result_max_age_sec") else None)
+                    30 if key == "request_timeout_sec" else None)
             # Quality field names explicitly encode seconds/mm; require corresponding units.
             unit = (("distance", "mm") if key.endswith("_mm") else
                     ("time", "s") if key.endswith("_sec") else None)

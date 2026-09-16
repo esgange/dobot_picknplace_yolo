@@ -22,7 +22,7 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 6
+ITEM_SCHEMA_VERSION = 7
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height")
@@ -37,8 +37,8 @@ DEFAULT_PICKDEPTH_DIAMETER_MM = 30.0
 QUALITY_DEFAULTS = {
     "input_max_age_sec": 0.5, "sync_tolerance_sec": 0.1,
     "robot_tf_max_age_sec": 1.0, "request_timeout_sec": 10.0,
-    "result_max_age_sec": 2.0, "minimum_depth_samples": 30,
-    "minimum_depth_fraction": 0.5, "depth_min_mm": 200.0, "depth_max_mm": 1000.0,
+    "minimum_depth_samples": 30, "minimum_depth_fraction": 0.5,
+    "depth_min_mm": 200.0, "depth_max_mm": 1000.0,
 }
 IO_MAP = {
     "exhaust_do": 1, "finger_close_do": 2, "suction_do": 13,
@@ -154,8 +154,8 @@ def validate_quality(quality):
         raise ValueError("depth_min_mm must be smaller than depth_max_mm")
     if quality["sync_tolerance_sec"] > quality["input_max_age_sec"]:
         raise ValueError("Synchronization tolerance cannot exceed input freshness")
-    if quality["request_timeout_sec"] > 30 or quality["result_max_age_sec"] > 30:
-        raise ValueError("Request/result deadline cannot exceed 30 seconds")
+    if quality["request_timeout_sec"] > 30:
+        raise ValueError("Request deadline cannot exceed 30 seconds")
 
 
 def detection_settings(settings):
@@ -259,9 +259,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 6 "
-            "(additive pre-pick/clearance heights, no zheight_offset); "
-            "schemas 1–5 are unsupported; no compatibility reader")
+            "Item teach schema_version must be exactly 7 "
+            "(candidate batches do not have a result-age expiry); "
+            "schemas 1–6 are unsupported; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "motion", "speed", "acceleration", "timing",
                       "gripper", "retry", "yolo",

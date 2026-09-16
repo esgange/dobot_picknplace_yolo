@@ -167,17 +167,11 @@ def test_debug_image_failure_is_diagnostic_only(service_node, monkeypatch):
     assert not capture["rgb_path"] and not capture["depth_path"]
 
 
-@pytest.mark.parametrize("failure", ["disarm", "expired"])
-def test_debug_saving_cannot_return_invalidated_or_expired_candidates(
-        service_node, monkeypatch, failure):
+def test_debug_saving_cannot_return_invalidated_candidates(service_node, monkeypatch):
     node, _ = service_node
 
     def saved(*_):
-        if failure == "disarm":
-            node.arm_epoch += 1
-        else:
-            node.get_clock = lambda: SimpleNamespace(
-                now=lambda: SimpleNamespace(nanoseconds=105_200_000_000))
+        node.arm_epoch += 1
         return {"rgb_path": "rgb.png", "depth_path": "depth.png"}
 
     monkeypatch.setattr(detector, "save_pick_debug_pair", saved)
@@ -185,6 +179,21 @@ def test_debug_saving_cannot_return_invalidated_or_expired_candidates(
                                    save_debug_images=True)
     result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
     assert not result.success and not result.candidates
+
+
+def test_debug_saving_does_not_expire_an_accepted_batch(service_node, monkeypatch):
+    node, _ = service_node
+
+    def saved(*_):
+        node.get_clock = lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(nanoseconds=105_200_000_000))
+        return {"rgb_path": "rgb.png", "depth_path": "depth.png"}
+
+    monkeypatch.setattr(detector, "save_pick_debug_pair", saved)
+    result = detector.ItemDetectNode._request(
+        node, GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+                                   save_debug_images=True), GetItemPoses.Response())
+    assert result.success and len(result.candidates) == 1
 
 
 def test_pose_candidates_caps_returned_batch_without_adding_a_first_attempt(service_node):
@@ -216,7 +225,7 @@ def test_disarmed_busy_mismatch_count_and_no_valid_items(service_node):
     assert result.success and result.status == "NO_VALID_ITEMS" and not result.candidates
 
 
-def test_disarm_during_request_and_expired_result_never_return_pose(service_node):
+def test_disarm_invalidates_request_but_old_accepted_observation_remains_valid(service_node):
     node, _ = service_node
     original = node.infer.return_value
 
@@ -230,7 +239,8 @@ def test_disarm_during_request_and_expired_result_never_return_pose(service_node
     node.infer.side_effect = None
     old = {"stamp_ns": 95_000_000_000}
     node._snapshot.return_value = (old, old, {})
-    assert "expired" in call(node).message
+    result = call(node)
+    assert result.success and len(result.candidates) == 1
 
 
 def test_native_protocol_candidate_checks(service_node):
@@ -284,7 +294,7 @@ def test_simulation_uses_real_batch_rules_and_never_arms(service_node, armed, va
 
 @pytest.mark.parametrize("failure", ["busy", "off", "invalid_profile", "queued_hash",
                                     "source", "hash", "cancel", "queued_timeout",
-                                    "expired", "changed", "native"])
+                                    "changed", "native"])
 def test_simulation_failure_never_freezes_or_returns_old_candidates(service_node, monkeypatch, failure):
     node, _ = service_node
     kwargs = {}
@@ -304,9 +314,6 @@ def test_simulation_failure_never_freezes_or_returns_old_candidates(service_node
         kwargs["cancelled"] = lambda: True
     elif failure == "queued_timeout":
         kwargs["requested_at"] = (100_200_000_000, time.monotonic()-40)
-    elif failure == "expired":
-        node._snapshot.return_value = ({"stamp_ns": 95_000_000_000},
-                                      {"stamp_ns": 95_000_000_000}, {})
     elif failure == "changed":
         def changed(*args, **kwargs):
             node.arm_epoch += 1
@@ -445,7 +452,7 @@ def test_measurement_protocol_rejects_bad_geometry_and_units():
         [{**item, "sampling_circle": None, "sampling_circle_error": "Missing platform"}], 1, [7])
 
 
-@pytest.mark.parametrize("failure", [None, "depth", "epoch", "old", "busy", "native_id",
+@pytest.mark.parametrize("failure", [None, "depth", "epoch", "busy", "native_id",
                                       "changed_during_call", "rejected"])
 def test_selected_pose_snapshot_contract(service_node, failure):
     node, candidate = service_node
@@ -468,8 +475,6 @@ def test_selected_pose_snapshot_contract(service_node, failure):
         observation["depth"] = None
     elif failure == "epoch":
         observation["epoch"] = 0
-    elif failure == "old":
-        rgb["stamp_ns"] -= 3_000_000_000
     elif failure == "busy":
         node.operation_lock.acquire()
     elif failure == "native_id":
@@ -493,6 +498,28 @@ def test_selected_pose_snapshot_contract(service_node, failure):
         assert sent["detection"] is detection
         assert payload == rgb["rgb"] + depth["depth"]
     node.infer.assert_not_called()  # No prediction, newer observation or cached service request.
+
+
+def test_selected_pose_does_not_expire_after_snapshot_was_accepted(service_node):
+    node, candidate = service_node
+    node._camera_generation = 1
+    node.settings.update(model_task="segment", geometry_source="mask",
+                         geometry={"height": 100., "width": 50., "tolerance": 1.,
+                                   "pickdepth_radius": 30.})
+    node.settings["yolo"].update(iou=.35, image_size=640)
+    rgb = {"stamp_ns": 1_000_000_000, "width": 2, "height": 2, "rgb": bytes(12)}
+    depth = {"stamp_ns": 1_000_000_000, "depth": bytes(8)}
+    detection = {"source_index": 4}
+    view = {"observation": {
+        "rgb": rgb, "depth": depth, "context": {"frozen": True},
+        "epoch": 1, "camera_generation": 1, "error": ""},
+        "metadata": {"detections": [detection]}}
+    response = {"state": "ok", "generation": 1, "width": 2, "height": 2,
+                "candidates": [candidate], "rejected": []}
+    node.native = MagicMock(failed=False)
+    node.native.call.return_value = response, bytes(12)
+    result = detector.ItemDetectNode.clicked_pose(node, view, detection, node.settings)
+    assert result["candidate"] == candidate
 
 
 def test_roi_off_uses_same_worker_and_never_infers():
