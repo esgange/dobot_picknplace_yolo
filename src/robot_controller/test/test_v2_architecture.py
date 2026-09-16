@@ -134,7 +134,7 @@ def test_pick_uses_named_forward_and_return_queue_batches():
     assert 'batch_name=f"candidate_{index}_pick_to_home"' in motion
     assert 'batch_name=f"candidate_{index}_pick_to_retry"' in motion
     assert "dispatch_group_then_verify_all_replies_and_terminal_feedback" in hardware
-    assert "self.call_group(calls, progress=progress)" in hardware
+    assert "calls, progress=progress, outputs_by_call=outputs_by_call" in hardware
     assert "pick_settling" not in motion
     assert '"motion_batch_queued"' in hardware
     assert '"cp=0"' not in hardware

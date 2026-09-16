@@ -305,11 +305,19 @@ class DobotTransport:
             progress(self.monitor.snapshot(require_enabled=False))
         return result
 
-    def call_group(self, calls, *, progress=None):
+    def call_group(self, calls, *, progress=None, outputs_by_call=None):
         """Dispatch one ordered motion group, then validate every acknowledgement."""
         calls = tuple((name, dict(fields)) for name, fields in calls)
         if not calls or any(name not in MOTION_SERVICES for name, _fields in calls):
             raise CommandRejected("Motion group requires canonical motion services")
+        if outputs_by_call is None:
+            outputs_by_call = tuple({} for _call in calls)
+        else:
+            outputs_by_call = tuple(dict(outputs) for outputs in outputs_by_call)
+        if len(outputs_by_call) != len(calls):
+            raise CommandRejected("Motion group output plan must match its request count")
+        if not hasattr(self, "pending_motion_outputs"):
+            self.pending_motion_outputs = {}
         names = [name for name, _fields in calls]
         self.node.check_all_command_owners(names)
         self.monitor.snapshot(require_enabled=False)
@@ -331,7 +339,7 @@ class DobotTransport:
             self.pending_group = group
             last_dispatch = None
             try:
-                for name, fields in calls:
+                for (name, fields), planned_outputs in zip(calls, outputs_by_call):
                     if last_dispatch is not None:
                         earliest = last_dispatch + MIN_MOTION_DISPATCH_INTERVAL_SEC
                         while time.monotonic() < earliest:
@@ -352,6 +360,7 @@ class DobotTransport:
                             audit, "dispatch_error", detail=str(exc), level="ERROR")
                         raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
                     last_dispatch = time.monotonic()
+                    self.pending_motion_outputs.update(planned_outputs)
                     group.append((name, future, audit))
                     future.add_done_callback(
                         lambda done, service=name, record=audit: self._pending_completed(
@@ -984,7 +993,7 @@ class DobotTransport:
         self.suction_stop_future = None
         initial = self._ready_snapshot()
         before_sequence = initial.sequence
-        self.pending_motion_outputs = dict(expected_outputs)
+        self.pending_motion_outputs = {}
         self.moving = True
         started = time.monotonic()
         last_progress = started
@@ -999,7 +1008,7 @@ class DobotTransport:
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
                 stop_on_suction=stop_on_suction, before_suction=before_suction,
-                planned_outputs=expected_outputs)
+                planned_outputs=self.pending_motion_outputs)
 
         def finish_suction_interrupt():
             self.node.events.record(
@@ -1023,6 +1032,7 @@ class DobotTransport:
 
         try:
             calls = []
+            outputs_by_call = []
             target_records = []
             for target, values, previous in prepared:
                 params = ["user=0", "tool=0", f"v={target.speed_percent}",
@@ -1044,6 +1054,8 @@ class DobotTransport:
                         fields["mdis"] = events
                     fields.update(mode=target.joints_rad is not None, param_value=params)
                 calls.append((service, fields))
+                outputs_by_call.append({
+                    event.channel: event.active for event in target.motion_io})
                 target_records.append((target, [
                     event.vendor_value() for event in target.motion_io]))
 
@@ -1053,7 +1065,8 @@ class DobotTransport:
             self.node.operation_progress(
                 "MOTION", f"Dispatching {batch_name} as one command group",
                 waypoint=targets[-1].name)
-            self.call_group(calls, progress=progress)
+            self.call_group(
+                calls, progress=progress, outputs_by_call=outputs_by_call)
             queued_targets.extend(target.name for target, _events in target_records)
             for target, events in target_records:
                 self.node.events.record(

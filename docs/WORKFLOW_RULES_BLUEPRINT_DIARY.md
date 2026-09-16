@@ -3720,10 +3720,11 @@ Never use a floating “latest” version in an issue, script, or deployment not
   transition, commits the commanded state when observed, and reconciles that
   legal observed state if Stop interrupts the group. DI1/DO13 loss, uncommanded
   channels and wrong final output feedback remain failures.
-- Verification was source/synthetic only. All 128 direct Robot Controller tests
-  and 129 package-reported tests pass, including exact 0/50/100 ms dispatch
-  times, the planned DO2/DO14 return transition, rejection of an uncommanded DO1
-  change, and the existing Stop/late-response cases. Python compilation and all
+- Verification was source/synthetic only. All 129 direct Robot Controller tests
+  and 130 package-reported tests pass, including exact 0/50/100 ms dispatch
+  times, activation of each output allowance only after its owning MovLIO send,
+  the planned DO2/DO14 return transition, rejection of an uncommanded DO1 change,
+  and the existing Stop/late-response cases. Python compilation and all
   20 controller/test files pass `ament_flake8`; the package build and complete
   15-package workspace build pass. No bringup, detector request, camera process
   or physical robot command was launched.

@@ -382,6 +382,57 @@ def test_motion_group_dispatches_are_separated_by_at_least_fifty_ms(monkeypatch)
                for earlier, later in zip(sent_at, sent_at[1:]))
 
 
+def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched(
+        monkeypatch):
+    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
+
+    class ImmediateFuture:
+        def done(self):
+            return True
+
+        def result(self):
+            return SimpleNamespace(res=0)
+
+        def add_done_callback(self, callback):
+            callback(self)
+
+    observed = []
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.pending_motion_outputs = {}
+
+    def dispatch(name):
+        observed.append((name, dict(transport.pending_motion_outputs)))
+        return ImmediateFuture()
+
+    transport.clients = {
+        "MovLIO": SimpleNamespace(
+            service_is_ready=lambda: True,
+            call_async=lambda _request: dispatch("MovLIO"))}
+    transport.types = {
+        "MovLIO": SimpleNamespace(Request=lambda **fields: fields)}
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: False, wait_control=lambda _seconds: None)
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport.suction_interrupted = False
+    transport.request_stop = lambda _reason: pytest.fail("Stop was not expected")
+    transport._begin_service_audit = lambda name, fields: {
+        "name": name, "fields": fields, "started": 0.0}
+    transport._finish_service_audit = lambda audit, outcome, **_fields: audit.update(
+        outcome=outcome)
+
+    transport.call_group(
+        (("MovLIO", {"a": 1.0, "mdis": ["{0,50,14,1}"]}),
+         ("MovLIO", {"a": 2.0, "mdis": ["{1,0,13,1}"]})),
+        outputs_by_call=({14: True}, {13: True}))
+
+    assert observed == [("MovLIO", {}), ("MovLIO", {14: True})]
+    assert transport.pending_motion_outputs == {13: True, 14: True}
+
+
 def snapshot(*, di1=False, outputs=0, joints=None):
     return SimpleNamespace(
         robot_enabled=True,

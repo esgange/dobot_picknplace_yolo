@@ -297,7 +297,8 @@ Stop. Batch start, every dispatch/response, complete group admission,
 interruption and terminal completion are recorded with the batch name.
 The independent Stop path bypasses this pacing. During a held-item return, a
 timed DO2/DO14 transition requested by MovLIO is accepted only as the exact
-old-to-commanded state change and becomes the new expected state when observed;
+old-to-commanded state change after that MovLIO has been sent, and becomes the
+new expected state when observed;
 uncommanded output changes, lost DI1/DO13, and wrong terminal states still fail.
 
 Motion requests carry only `user=0`, `tool=0`, and their taught `v`/`a` rates;
