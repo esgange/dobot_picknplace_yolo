@@ -55,7 +55,7 @@ def _fingerprint(path):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
-def render_result(result, rgb, names, task, maximum, cv2, np):
+def render_result(result, rgb, names, task, maximum, cv2, np, *, included_indices=None):
     overlay = rgb.copy()
     boxes = result.obb if task == "obb" else result.boxes
     if boxes is None:
@@ -70,7 +70,11 @@ def render_result(result, rgb, names, task, maximum, cv2, np):
         if result.masks is None or len(result.masks.xy) != len(classes):
             raise RuntimeError("Segmentation result is missing matching masks")
         from .item_geometry import shade_masks
-        overlay = shade_masks(rgb, result.masks.xy, cv2, np)
+        polygons_to_draw = result.masks.xy
+        if included_indices is not None:
+            polygons_to_draw = [polygon for index, polygon in enumerate(polygons_to_draw)
+                                if index in included_indices]
+        overlay = shade_masks(rgb, polygons_to_draw, cv2, np)
     for i, (label, confidence) in enumerate(zip(classes, scores)):
         if (not math.isfinite(float(label)) or int(label) != label or int(label) not in names
                 or not math.isfinite(float(confidence)) or not 0 <= confidence <= 1):
@@ -226,6 +230,12 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                     results[0], source, names, settings["max_detections"],
                     request["measurement_context"], request["measurement_error"], cv2, np,
                     diameter_mm=request["settings"]["pickdepth_radius"])
+                if request["measurement_context"] is not None:
+                    overlay, _ = render_result(
+                        results[0], rgb, names, config["task"], settings["max_detections"],
+                        cv2, np,
+                        included_indices={item["source_index"] for item in detections},
+                    )
                 for item in detections:
                     valid, reason = classify_size(item["measurement"],
                                                   request["settings"].get("geometry"))

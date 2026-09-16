@@ -3532,6 +3532,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and full 15-package workspace built successfully, and final diff checks
   passed. No detector request or robot command was issued.
 
+### 2026-09-16 — Green ROI overlap eligibility and exact pick-point containment
+
+- Rule 81 supersedes the complete-footprint portion of rules 32 and 80. A
+  calibrated detection is eligible when its selected platform-Z=0 polygon
+  overlaps or touches the green Bin Teach ROI. Only a fully disjoint detection
+  is ignored; partial crossings, edge contact, containment in either direction,
+  and edge crossings with no contained vertex are accepted.
+- The shared calibrated live RGB/depth preview omits fully disjoint detections.
+  Clicked selection, Simulate Trigger, Armed Item Teach and headless Item Detect
+  apply the identical geometry rule in the candidate generator. If calibrated
+  projection itself is unavailable, the live detection remains visible with its
+  explicit measurement reason, but pose generation remains blocked.
+- Candidate validity remains stricter at the exact pose: the final
+  depth-derived pick XY must independently be inside/on the green ROI and,
+  whenever configured, inside/on the light-blue wall-clearance polygon. A mask
+  or OBB may cross either border; crossing light blue does not admit an outside
+  pick point. Schema 9, artifact formats, model pairing, size/depth filters,
+  ranking and Robot Controller behavior are unchanged.
+- Verification completed without hardware access. Regressions cover partial
+  overlap, exact touch, complete disjointness, containment in either direction,
+  the no-contained-vertex edge-crossing case, candidate pick-point containment,
+  calibrated live-preview omission, and filtered mask rendering. All 367 direct
+  Item Perception tests passed; package testing reported 368 results with zero
+  errors, failures or skips. Python compilation, focused source `ament_flake8`,
+  `git diff --check`, the changed package build and the complete 15-package
+  workspace build passed. No camera/detector node, pose-service request, Dobot
+  bringup or robot command was launched.
+
 ### Future entry template
 
 ```text

@@ -192,9 +192,10 @@ bin-wall clearance fields blank for explicit review.
 Item Teach schema 9 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
 valid inset is projected in light blue on both RGB and registered depth. The
-green ROI still rejects any item whose complete footprint or final pick point is
-outside the bin; the light-blue region additionally rejects only the exact
-depth-derived pick point near a wall. Simulate Trigger, Armed Item Teach and
+green ROI ignores a detection only when its platform-plane footprint is fully
+disjoint; overlap or edge contact is accepted. The final depth-derived pick
+point must remain inside/on green, and the light-blue region additionally rejects
+that exact point near a wall. Simulate Trigger, Armed Item Teach and
 headless Item Detect share this filter before ranking poses, so Robot Controller
 receives only accepted candidates and does not reinterpret the border.
 

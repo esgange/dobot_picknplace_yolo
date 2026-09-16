@@ -177,6 +177,48 @@ def inside(point, polygon, cv2, np):
                                 False) >= 0
 
 
+def polygons_overlap_or_touch(first, second, cv2, np):
+    """Return true unless two finite 2-D polygons are completely disjoint."""
+    polygons = []
+    for value in (first, second):
+        polygon = np.asarray(value, dtype=np.float64)
+        if (polygon.ndim != 2 or polygon.shape[1] != 2 or len(polygon) < 3
+                or not np.isfinite(polygon).all()):
+            raise RuntimeError("Malformed polygon overlap geometry")
+        polygons.append(polygon)
+    first, second = polygons
+    if (any(inside(point, second, cv2, np) for point in first)
+            or any(inside(point, first, cv2, np) for point in second)):
+        return True
+
+    # Vertex containment misses the valid crossing case where long, thin
+    # polygons intersect but every vertex remains outside the other polygon.
+    def cross(start, end, point):
+        edge, offset = end - start, point - start
+        return float(edge[0] * offset[1] - edge[1] * offset[0])
+
+    def on_segment(start, end, point, epsilon):
+        return (abs(cross(start, end, point)) <= epsilon
+                and np.all(point >= np.minimum(start, end) - epsilon)
+                and np.all(point <= np.maximum(start, end) + epsilon))
+
+    scale = max(1.0, float(np.max(np.abs(np.vstack((first, second))))))
+    epsilon = 1e-10 * scale
+    for a, b in zip(first, np.roll(first, -1, axis=0)):
+        for c, d in zip(second, np.roll(second, -1, axis=0)):
+            ab_c, ab_d = cross(a, b, c), cross(a, b, d)
+            cd_a, cd_b = cross(c, d, a), cross(c, d, b)
+            if ((ab_c > epsilon and ab_d < -epsilon
+                 or ab_c < -epsilon and ab_d > epsilon)
+                    and (cd_a > epsilon and cd_b < -epsilon
+                         or cd_a < -epsilon and cd_b > epsilon)):
+                return True
+            if (on_segment(a, b, c, epsilon) or on_segment(a, b, d, epsilon)
+                    or on_segment(c, d, a, epsilon) or on_segment(c, d, b, epsilon)):
+                return True
+    return False
+
+
 def filter_depth(values, minimum, maximum, cv2, np):
     del cv2
     valid = np.isfinite(values) & (values > 0) & (values >= minimum) & (values <= maximum)
@@ -259,7 +301,7 @@ def depth_sampling_circle(center, diameter_mm, context, cv2, np, *, output_camer
 
 
 def preview_detections(result, source, names, maximum, context, reason, cv2, np, *, diameter_mm):
-    """Unfiltered, frame-local clickable geometry; never generates pick poses."""
+    """Frame-local clickable geometry overlapping the green ROI when calibrated."""
     if source == "none":
         # Detection-only boxes are clickable but are not a production geometry source.
         boxes = result.obb if result.obb is not None else result.boxes
@@ -280,6 +322,20 @@ def preview_detections(result, source, names, maximum, context, reason, cv2, np,
         objects = objects_from_result(result, source, names, maximum, cv2, np)
     detections = []
     for item in objects:
+        if context is not None:
+            try:
+                footprint = on_plane(
+                    item["polygon"], context["camera"],
+                    np.asarray(context["platform_from_optical"], dtype=np.float64), cv2, np,
+                )[:, :2]
+            except ValueError:
+                # Preserve a visible detection with an explicit measurement error
+                # when its plane projection itself is unavailable. Production pose
+                # generation will reject the same geometry.
+                footprint = None
+            if (footprint is not None
+                    and not polygons_overlap_or_touch(footprint, context["roi"], cv2, np)):
+                continue
         measurement, error = None, reason
         circle, circle_error = None, reason
         if source == "none":
@@ -440,8 +496,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             if not inside(center, item["polygon"], cv2, np):
                 raise ValueError("rectangle center is outside item mask")
             flat = on_plane(item["polygon"], camera, transform, cv2, np)[:, :2]
-            if not all(inside(point, roi, cv2, np) for point in flat):
-                raise ValueError("item footprint outside bin ROI")
+            if not polygons_overlap_or_touch(flat, roi, cv2, np):
+                raise ValueError("item footprint fully outside bin ROI")
             # Perspective can turn a pixel OBB into a quadrilateral. Fit the
             # metric enclosing rectangle on the agreed Z=0 plane, never at depth Z.
             length, width, edges = plane_dimensions(item["rectangle"], context, cv2, np)

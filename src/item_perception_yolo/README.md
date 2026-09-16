@@ -345,8 +345,9 @@ candidate.
 `bin_clearance` contains the optional inward millimetre offsets for directed Bin
 Teach edges P1→P2, P2→P3, P3→P4 and P4→P1. Blank/null leaves that edge at the
 green ROI. Any configured valid inner polygon is light blue on RGB and depth.
-The green polygon remains the complete-footprint and pick-point boundary; only
-the exact depth-derived pick XY must additionally lie inside/on the blue border.
+A detection is eligible when its platform-plane footprint overlaps or touches
+green and is ignored only when fully disjoint. The exact depth-derived pick XY
+must remain inside/on green and additionally inside/on the blue border.
 The shared click, Simulate Trigger, Armed and headless candidate pipeline applies
 this before ranking; the controller receives the resulting filtered list.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
@@ -454,7 +455,9 @@ blocking service request. All native operations are serialized in one worker.
   perspective its projection can be a quadrilateral: measure its minimum-area
   metric enclosing rectangle. Long side is X/`height`, short side Y/`width`,
   each within taught value plus/minus `tolerance` in mm. Do not move this plane
-  to the item's depth. Require the selected footprint inside the bin ROI.
+  to the item's depth. Keep a detection when its selected footprint overlaps or
+  touches the green bin ROI; ignore it only when the polygons are fully disjoint.
+- Require the final depth-derived pick XY inside/on the green bin ROI.
 - Require the final depth-derived pick XY inside/on the optional light-blue
   `bin_clearance` polygon. Do not apply this inner polygon to the footprint.
 - The original pixel rectangle center is the pick ray; never relocate it.

@@ -16,7 +16,7 @@ def exercise_geometry():
         generate_candidates, filter_depth, objects_from_result, on_plane,
         plane_dimensions, preview_detections, rectangle_axes, draw_pick_axes, draw_pick_geometry,
         draw_bin_roi, draw_bin_clearance, project_bin_roi, classify_size, selected_pose,
-        depth_sampling_circle,
+        depth_sampling_circle, polygons_overlap_or_touch,
     )
     from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
     assert cv2.__version__ == "4.10.0"
@@ -28,6 +28,17 @@ def exercise_geometry():
     context = {"camera": camera, "depth_camera": camera,
                "platform_from_optical": transform.tolist(),
                "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
+    roi = np.asarray(context["roi"])
+    assert polygons_overlap_or_touch(
+        [[.19, -.02], [.25, -.02], [.25, .02], [.19, .02]], roi, cv2, np)
+    assert polygons_overlap_or_touch(
+        [[.2, -.02], [.25, -.02], [.25, .02], [.2, .02]], roi, cv2, np)
+    assert not polygons_overlap_or_touch(
+        [[.201, -.02], [.25, -.02], [.25, .02], [.201, .02]], roi, cv2, np)
+    # Edge crossings count even when neither polygon contains a vertex.
+    assert polygons_overlap_or_touch(
+        [[-2., -.1], [2., -.1], [2., .1], [-2., .1]],
+        [[-.1, -2.], [.1, -2.], [.1, 2.], [-.1, 2.]], cv2, np)
     settings = {"geometry_source": "mask",
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
@@ -91,6 +102,20 @@ def exercise_geometry():
     assert not wall_candidates
     assert wall_rejected == [{"source_index": 0,
                               "reason": "pick point outside bin-wall clearance"}]
+    # Green ROI membership is intersection-based: a partially crossing
+    # footprint is eligible when its final depth-derived point remains inside.
+    crossing = {**item, "center": np.array([540., 240.]),
+                "polygon": polygon + [220., 0.], "rectangle": polygon + [220., 0.]}
+    _, _, crossing_candidates, crossing_rejected = generate_candidates(
+        [crossing], rgb, depth, context, settings, cv2, np)
+    assert len(crossing_candidates) == 1 and not crossing_rejected
+    disjoint = {**item, "center": np.array([650., 240.]),
+                "polygon": polygon + [330., 0.], "rectangle": polygon + [330., 0.]}
+    _, _, disjoint_candidates, disjoint_rejected = generate_candidates(
+        [disjoint], rgb, depth, context, settings, cv2, np)
+    assert not disjoint_candidates
+    assert disjoint_rejected == [{"source_index": 0,
+                                  "reason": "item footprint fully outside bin ROI"}]
     for z in (600, 900):
         depth[:] = z
         _, _, points, _ = generate_candidates([item], rgb, depth, context, settings, cv2, np)
@@ -112,7 +137,8 @@ def exercise_geometry():
     too_large = {**settings, "geometry": {**settings["geometry"], "height": 100.}}
     assert not generate_candidates([item], rgb, depth, context, too_large, cv2, np)[2]
     tiny_roi = {**context, "roi": [[-.02, -.02], [-.02, .02], [.02, .02], [.02, -.02]]}
-    assert not generate_candidates([item], rgb, depth, tiny_roi, settings, cv2, np)[2]
+    # Containment in either direction is overlap, and the exact pick point is inside.
+    assert len(generate_candidates([item], rgb, depth, tiny_roi, settings, cv2, np)[2]) == 1
     values = np.array([699., 700., 700., 700., 701., 999., 0., np.nan, np.inf])
     accepted, median, sigma = filter_depth(values, 200, 1000, cv2, np)
     assert median == 700 and not accepted[-4:].any() and sigma > 0
@@ -129,6 +155,15 @@ def exercise_geometry():
 
         def numpy(self):
             return self.value
+
+        def __getitem__(self, index):
+            return Tensor(self.value[index])
+
+        def __int__(self):
+            return int(self.value)
+
+        def __float__(self):
+            return float(self.value)
 
     class Boxes(SimpleNamespace):
         def __len__(self):
@@ -147,6 +182,21 @@ def exercise_geometry():
     assert len(measured) == 1
     assert np.allclose(list(measured[0]["measurement"].values()), [80., 32.])
     assert measured[0]["measurement_error"] == ""
+    outside_polygon = polygon + [350., 0.]
+    outside_boxes = Boxes(cls=Tensor([1]), conf=Tensor([.8]),
+                          xyxy=Tensor([[620, 220, 720, 260]]))
+    outside_native = SimpleNamespace(
+        boxes=outside_boxes, obb=None, masks=SimpleNamespace(xy=[outside_polygon]))
+    assert preview_detections(
+        outside_native, "mask", {1: "test"}, 100, context, "", cv2, np,
+        diameter_mm=30.) == []
+    assert preview_detections(
+        outside_native, "none", {1: "test"}, 100, context, "", cv2, np,
+        diameter_mm=30.) == []
+    # Without calibrated ROI geometry the same raw detections remain visible.
+    assert len(preview_detections(
+        outside_native, "mask", {1: "test"}, 100, None, "No calibration", cv2, np,
+        diameter_mm=30.)) == 1
     for source in ("mask", "obb"):
         geometry_object = objects_from_result(native, source, {1: "test"}, 100, cv2, np)[0]
         size = plane_dimensions(geometry_object["rectangle"], context, cv2, np)[:2]
@@ -211,6 +261,14 @@ def exercise_geometry():
             return getattr(cv2, key)
     masked, count = render_result(native, rgb, {1: "test"}, "segment", 100, NoBoxes(), np)
     assert count == 1 and not np.array_equal(masked, rgb)  # Mask remains visible.
+    omitted, count = render_result(
+        native, rgb, {1: "test"}, "segment", 100, NoBoxes(), np,
+        included_indices=set())
+    assert count == 1 and np.array_equal(omitted, rgb)  # Disjoint masks are absent.
+    included, count = render_result(
+        native, rgb, {1: "test"}, "segment", 100, NoBoxes(), np,
+        included_indices={0})
+    assert count == 1 and np.array_equal(included, masked)
     draw_pick_geometry(masked, mask_object["rectangle"], cv2, np)
     assert draw_bin_roi(masked, context, "", cv2, np)["visible"]
     assert masked[225, 285, 1] > rgb[225, 285, 1]  # Mask fill stays under the geometry.
