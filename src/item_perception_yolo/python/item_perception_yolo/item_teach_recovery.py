@@ -41,7 +41,7 @@ def recover_item_fields(path, *, root=None):
         return draft
     if (type(payload) is not dict or payload.get("artifact_type") != "item_teach"
             or type(payload.get("schema_version")) is not int
-            or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7)):
+            or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8)):
         draft.issues.append("Unrecognized item format/schema; all fields cleared")
         return draft
 
@@ -77,6 +77,17 @@ def recover_item_fields(path, *, root=None):
     accept("model_task", task, type(task) is str and task in core.MODEL_TASKS)
     source = payload.get("geometry_source")
     accept("geometry_source", source, type(source) is str and source in ("mask", "obb", "none"))
+    rotation = payload.get("pick_rotation")
+    try:
+        if payload["schema_version"] < 8:
+            raise ValueError("schema predates explicit pick_rotation")
+        if group("units").get("pick_rotation") != "deg":
+            raise ValueError("missing or ambiguous degree unit")
+        core._number(rotation, "pick_rotation", high=90.0)
+    except ValueError as exc:
+        accept("pick_rotation", rotation, False, str(exc))
+    else:
+        accept("pick_rotation", rotation, True)
     for key in core.MOTION_FIELDS:
         if key == "retract_height" and payload["schema_version"] < 6:
             accept(key, None, False, "old height was relative to pick; now extra above pre-pick")

@@ -22,7 +22,7 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 7
+ITEM_SCHEMA_VERSION = 8
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height")
@@ -34,6 +34,7 @@ YOLO_FIELDS = ("confidence", "iou", "image_size", "max_detections", "class_ids")
 NEW_PROFILE_IMAGE_SIZE = 640  # Not an operator field; loaded profiles retain their exact value.
 GEOMETRY_FIELDS = ("height", "width", "tolerance", "pickdepth_radius")
 DEFAULT_PICKDEPTH_DIAMETER_MM = 30.0
+NEW_PROFILE_PICK_ROTATION_DEG = 0.0
 QUALITY_DEFAULTS = {
     "input_max_age_sec": 0.5, "sync_tolerance_sec": 0.1,
     "robot_tf_max_age_sec": 1.0, "request_timeout_sec": 10.0,
@@ -94,7 +95,8 @@ def _timestamp(value, label):
 
 
 def validate_settings(settings):
-    _fields(settings, ("item", "model_task", "motion", "speed", "acceleration", "timing",
+    _fields(settings, ("item", "model_task", "pick_rotation", "motion", "speed",
+                       "acceleration", "timing",
                        "gripper", "retry", "yolo",
                        "geometry", "geometry_source", "quality"),
             "Item settings")
@@ -104,6 +106,7 @@ def validate_settings(settings):
         raise ValueError("Item name must be 1-64 letters, digits, underscores or hyphens")
     if settings["model_task"] not in MODEL_TASKS:
         raise ValueError("Model task must be exactly detect, segment or obb")
+    _number(settings["pick_rotation"], "pick_rotation", high=90.0)
     _fields(settings["motion"], MOTION_FIELDS, "motion")
     for field in MOTION_FIELDS:
         _number(settings["motion"][field], field)
@@ -249,6 +252,7 @@ def record_home(names, positions, sec, nanosec, *, now_ns, robot_ip, publisher):
 def settings_from_profile(profile):
     return copy.deepcopy({
         "item": profile["item"], "model_task": profile["model"]["declared_task"],
+        "pick_rotation": profile["pick_rotation"],
         **{key: profile[key] for key in ("motion", "speed", "acceleration", "timing",
                                          "gripper", "retry", "yolo",
                                          "geometry", "geometry_source", "quality")},
@@ -259,11 +263,12 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 7 "
-            "(candidate batches do not have a result-age expiry); "
-            "schemas 1–6 are unsupported; no compatibility reader")
+            "Item teach schema_version must be exactly 8 "
+            "(explicit pick_rotation and no candidate result-age expiry); "
+            "schemas 1–7 are unsupported; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
-                      "units", "home", "motion", "speed", "acceleration", "timing",
+                      "units", "home", "pick_rotation", "motion", "speed", "acceleration",
+                      "timing",
                       "gripper", "retry", "yolo",
                       "geometry", "geometry_source", "quality", "controller_contract"),
             "Item teach artifact")
@@ -280,8 +285,9 @@ def validate_profile(profile):
     if model["verification"] != "file_sha256_only":
         raise ValueError("Stage-one model verification must be file_sha256_only")
     if profile["units"] != {"distance": "mm", "time": "s", "home_joints": "rad",
-                            "speed": "%", "acceleration": "%"}:
-        raise ValueError("Item units must be mm, seconds, home radians and motion percentages")
+                            "pick_rotation": "deg", "speed": "%", "acceleration": "%"}:
+        raise ValueError(
+            "Item units must be mm, seconds, degrees, home radians and motion percentages")
     contract = profile["controller_contract"]
     if type(contract) is not dict or contract.get("motion_enabled") is not False or contract != {
         "stage": "profile_validation_only", "motion_enabled": False,
@@ -469,8 +475,9 @@ def save_item_profile(settings, home, model_source: Path, *, root: Path | None =
         "model": {"filename": model_output.name, "sha256": source_digest,
                   "declared_task": settings["model_task"], "verification": "file_sha256_only"},
         "units": {"distance": "mm", "time": "s", "home_joints": "rad",
-                  "speed": "%", "acceleration": "%"},
+                  "pick_rotation": "deg", "speed": "%", "acceleration": "%"},
         "home": copy.deepcopy(home),
+        "pick_rotation": settings["pick_rotation"],
         **{key: copy.deepcopy(settings[key])
            for key in ("motion", "speed", "acceleration", "timing", "gripper", "retry",
                        "yolo", "geometry",

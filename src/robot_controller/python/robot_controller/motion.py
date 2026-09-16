@@ -99,39 +99,71 @@ def candidate_pose_in_base(base_from_platform, position_m, quaternion):
     return _rigid_matrix(platform @ item, "Base-relative candidate pose")
 
 
-def pick_attitude(home, item_in_base):
-    """Spin about taught tool Z until green/Y follows the item short-axis line."""
+def _spin_about_axis(vector, axis, angle):
+    return (vector * math.cos(angle) + np.cross(axis, vector) * math.sin(angle)
+            + axis * float(np.dot(axis, vector)) * (1.0 - math.cos(angle)))
+
+
+def _rotation_matrix(value, label):
+    rotation = np.asarray(value, dtype=float)
+    if (rotation.shape != (3, 3) or not np.all(np.isfinite(rotation))
+            or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6, rtol=0)
+            or not math.isclose(float(np.linalg.det(rotation)), 1., abs_tol=1e-6)):
+        raise ValueError(f"{label} must be a finite rotation matrix")
+    return rotation
+
+
+def pick_attitude(home, item_in_base, pick_rotation_deg=0.0, reference_rotation=None):
+    """Choose the nearest legal ±offset attitude about the unchanged taught tool Z."""
     home = _rigid_matrix(home, "Home")
     item = _rigid_matrix(item_in_base, "Base-relative candidate pose")
+    if (type(pick_rotation_deg) not in (int, float)
+            or not math.isfinite(pick_rotation_deg)
+            or not 0.0 <= pick_rotation_deg <= 90.0):
+        raise ValueError("pick_rotation must be a finite number from 0 to 90 degrees")
     home_rotation = home[:3, :3]
     tool_z = home_rotation[:, 2]
+    reference = (home_rotation if reference_rotation is None
+                 else _rotation_matrix(reference_rotation, "Reference attitude"))
+    if not np.allclose(reference[:, 2], tool_z, atol=1e-6, rtol=0):
+        raise ValueError("Reference attitude must preserve the taught Home tool Z axis")
     item_short = item[:3, 1]
     projected = item_short - tool_z * float(np.dot(item_short, tool_z))
     norm = float(np.linalg.norm(projected))
     if norm <= 1e-6:
         raise ValueError("Item short axis cannot be projected perpendicular to tool Z")
     projected /= norm
-    home_green = home_rotation[:, 1]
-    sine = float(np.dot(tool_z, np.cross(home_green, projected)))
-    cosine = float(np.dot(home_green, projected))
-    raw = math.atan2(sine, cosine)
-    # A rectangle defines an undirected axis. Choose the equivalent orientation
-    # requiring at most 90 degrees of tool-axis rotation from taught Home.
-    delta = (raw + math.pi / 2) % math.pi - math.pi / 2
-    c, s = math.cos(delta), math.sin(delta)
-    local_z_rotation = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
-    rotation = home_rotation @ local_z_rotation
-    if (abs(abs(float(np.dot(rotation[:, 1], projected))) - 1.0) > 1e-6
-            or not np.allclose(rotation[:, 2], tool_z, atol=1e-9, rtol=0)):
-        raise ValueError("Failed to construct item-aligned pick attitude")
-    return rotation, math.degrees(delta)
+    reference_green = reference[:, 1]
+    offset = math.radians(pick_rotation_deg)
+    choices = (("none", projected),) if offset == 0.0 else (
+        ("ccw", _spin_about_axis(projected, tool_z, offset)),
+        ("cw", _spin_about_axis(projected, tool_z, -offset)),
+    )
+    candidates = []
+    for priority, (direction, desired_line) in enumerate(choices):
+        sine = float(np.dot(tool_z, np.cross(reference_green, desired_line)))
+        cosine = float(np.dot(reference_green, desired_line))
+        raw = math.atan2(sine, cosine)
+        # Both directions along the desired line are physically equivalent.
+        delta = (raw + math.pi / 2) % math.pi - math.pi / 2
+        target_green = _spin_about_axis(reference_green, tool_z, delta)
+        target_green /= np.linalg.norm(target_green)
+        target_red = np.cross(target_green, tool_z)
+        target_red /= np.linalg.norm(target_red)
+        rotation = np.column_stack((target_red, target_green, tool_z))
+        if abs(abs(float(np.dot(target_green, desired_line))) - 1.0) > 1e-6:
+            raise ValueError("Failed to construct offset item pick attitude")
+        candidates.append((abs(delta), priority, rotation, math.degrees(delta), direction))
+    _, _, rotation, travel_deg, direction = min(candidates, key=lambda value: value[:2])
+    return rotation, travel_deg, direction
 
 
-def pick_targets(home, item_in_base, settings, candidate_index):
+def pick_targets(home, item_in_base, settings, candidate_index, *, reference_rotation=None):
     validate_speed(settings["speed"])
     validate_acceleration(settings["acceleration"])
     item_in_base = _rigid_matrix(item_in_base, "Base-relative candidate pose")
-    rotation, _delta_deg = pick_attitude(home, item_in_base)
+    rotation, _travel_deg, _direction = pick_attitude(
+        home, item_in_base, settings["pick_rotation"], reference_rotation)
     position = item_in_base[:3, 3]
     motion = settings["motion"]
     pick_z = float(position[2]) + motion["standoff_height"] / 1000
@@ -220,15 +252,15 @@ class PickExecutor:
                     and stopped_pose[2, 3] > plan[2].matrix[2, 3]):
                 remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
                                  settings["gripper"])
-            if self.finish_home or index < len(plans):
+            if acquired or (self.finish_home and index == len(plans)):
                 # The shared Home planner appends its conditional rise and exact
-                # joint Home to this return queue, instead of waiting at each stop.
+                # joint Home only after success or terminal candidate exhaustion.
                 return_home(preceding=tuple(upward), require_suction=acquired,
                             forbid_suction=not acquired,
                             batch_name=f"candidate_{index}_pick_to_home")
             else:
                 self.hardware.move_batch(
-                    upward, batch_name=f"candidate_{index}_pick_to_retract",
+                    upward, batch_name=f"candidate_{index}_pick_to_retry",
                     require_suction=acquired, forbid_suction=not acquired)
             if acquired:
                 return {"picked": True, "candidate": index, "holding_item": True}

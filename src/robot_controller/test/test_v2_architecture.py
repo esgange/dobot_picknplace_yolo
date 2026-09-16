@@ -119,7 +119,9 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
     assert "plan = pick_targets(" in controller
     assert "plan = pick_targets(" in preview
     assert "item[:3, 1]" in motion
-    assert "home_rotation @ local_z_rotation" in motion
+    assert "reference_rotation=reference_rotation" in controller
+    assert "reference_rotation=reference_rotation" in preview
+    assert "selected_offset_direction" in controller
 
 
 def test_pick_uses_named_forward_and_return_queue_batches():
@@ -127,6 +129,7 @@ def test_pick_uses_named_forward_and_return_queue_batches():
     hardware = (PACKAGE / "python/robot_controller/hardware.py").read_text()
     assert 'batch_name=f"candidate_{index}_home_to_pick"' in motion
     assert 'batch_name=f"candidate_{index}_pick_to_home"' in motion
+    assert 'batch_name=f"candidate_{index}_pick_to_retry"' in motion
     assert "wait_for_each_queue_ack_then_terminal_feedback_only" in hardware
     assert '"motion_batch_queued"' in hardware
     assert '"cp=0"' not in hardware

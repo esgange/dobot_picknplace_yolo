@@ -17,15 +17,16 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 7 groups data by purpose. Production rejects schemas 1–6;
+Strict item schema 8 groups data by purpose. Production rejects schemas 1–7;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
 | --- | --- |
 | `item` | Item name |
 | `model` | Paired filename, SHA-256, declared task, `file_sha256_only` verification |
-| `units` | Motion distances in mm, time in seconds, home joints in radians, speed/acceleration in % |
+| `units` | Motion distances in mm, time in seconds, `pick_rotation` in degrees, home joints in radians, speed/acceleration in % |
 | `home` | Six named joint positions, feedback timestamp, recording time, source IP/node/topic |
+| `pick_rotation` | Unsigned 0–90° offset from the detected item short-axis line |
 | `motion` | `standoff_height`, `prepick_height`, `retract_height` |
 | `speed` | `travel_percent`, `approach_percent`, `retract_percent` (integers 1–100; initial 100/6/6) |
 | `acceleration` | The same three phase keys (integers 1–100; initial 100/100/100) |
@@ -52,7 +53,9 @@ Travel rates apply to Home, XY transit, initial positioning and descent to
 pre-pick; approach rates apply only to final descent. Slow retract applies to
 pick-to-prepick; the remaining clearance and Home return use travel rates.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick, clearance Z=pre-pick Z+retract,
-in robot base Z with Home attitude. zheight_offset is removed, not an alias.
+in robot base Z. The candidate attitude preserves taught tool Z and applies the
+nearest legal clockwise/counter-clockwise `pick_rotation` offset from the item
+short-axis line. zheight_offset is removed, not an alias.
 The controller supplies vendor
 per-command `v=`/`a=` while global SpeedFactor stays 100%. These are percentages,
 not absolute velocity/acceleration. Slow rates do not relax acquisition
@@ -60,6 +63,8 @@ freshness or the request deadline; an accepted candidate batch has no age expiry
 Missing/invalid rates in recovery drafts are blank, never automatically filled.
 Old retract_height is also blank in GUI recovery: its meaning changed from an
 offset above pick to extra clearance above pre-pick. Review and fill it explicitly.
+Schema-7 and older recovery drafts also leave `pick_rotation` blank rather than
+assuming zero; review and enter 0–90° explicitly.
 
 GUI recovery keeps validated fields and blanks unclear/missing ones; unknown
 booleans require an explicit choice. A clear old `retry_limit` is mapped for

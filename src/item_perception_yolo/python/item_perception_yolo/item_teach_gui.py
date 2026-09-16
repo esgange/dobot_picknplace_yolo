@@ -24,6 +24,7 @@ from .item_teach_core import (
     settings_from_profile, item_save_target, file_sha256,
     GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS,
     NEW_PROFILE_IMAGE_SIZE, SPEED_FIELDS, NEW_PROFILE_SPEED, NEW_PROFILE_ACCELERATION,
+    NEW_PROFILE_PICK_ROTATION_DEG,
 )
 from .platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, ui_state_path, workspace_root,
@@ -514,6 +515,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
             field.setToolTip(descriptions[key])
             self.inputs[key] = field
             motion.addRow(key, field)
+        pick_rotation = QtWidgets.QLineEdit(str(NEW_PROFILE_PICK_ROTATION_DEG))
+        pick_rotation.setPlaceholderText("Required; 0–90 degrees")
+        pick_rotation.setToolTip(
+            "Unsigned offset from the detected item short-axis line. The controller chooses "
+            "the equivalent clockwise or counter-clockwise tool rotation with least travel.")
+        self.inputs["pick_rotation"] = pick_rotation
+        motion.addRow("pick_rotation [deg]", pick_rotation)
 
         speed = group("Motion speeds — %", 7)
         speed_labels = {"travel_percent": "Travel / Home", "approach_percent": "Final approach",
@@ -1565,6 +1573,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 raise ValueError(f"Recovered {key} is unknown; explicitly choose on or off")
         return {
             "item": {"name": self.name.text().strip()}, "model_task": self.task.currentData(),
+            "pick_rotation": self._number("pick_rotation"),
             "motion": {key: self._number(key) for key in MOTION_FIELDS},
             "speed": {key: self._number(key, int) for key in SPEED_FIELDS},
             "acceleration": {key: self._number(f"acceleration_{key}", int) for key in SPEED_FIELDS},
@@ -1689,6 +1698,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                settings["yolo"]["class_ids"])
         source = settings["geometry_source"]
         self._populate_sources([source] if source != "none" else [], source)
+        self.inputs["pick_rotation"].setText(str(settings["pick_rotation"]))
         for section in ("motion", "speed", "timing", "retry", "yolo", "geometry", "quality"):
             for key, value in settings[section].items():
                 if key in ("class_ids", "image_size"):

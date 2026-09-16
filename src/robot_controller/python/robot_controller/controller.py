@@ -888,21 +888,29 @@ class RobotController(Node):
                 goal.succeed()
                 return result
             plans = []
+            reference_rotation = config.home_matrix[:3, :3]
             for index, candidate in enumerate(batch.candidates, 1):
                 item_pose = candidate_pose_in_base(
                     config.selection.station.platform.base_from_platform,
                     candidate.position_m, candidate.quaternion)
-                _rotation, delta_deg = pick_attitude(config.home_matrix, item_pose)
-                plan = pick_targets(config.home_matrix, item_pose, config.profile, index)
+                _rotation, delta_deg, offset_direction = pick_attitude(
+                    config.home_matrix, item_pose, config.profile["pick_rotation"],
+                    reference_rotation)
+                plan = pick_targets(
+                    config.home_matrix, item_pose, config.profile, index,
+                    reference_rotation=reference_rotation)
                 plans.append(plan)
+                reference_rotation = plan[0].matrix[:3, :3]
                 self.events.record(
                     "INFO", "pick_orientation_planned",
-                    "Aligned Link6 green/Y with the item short-axis line",
+                    "Applied the nearest legal offset from the item short-axis line",
                     candidate_id=candidate.identifier, candidate_index=index,
                     candidate_quaternion_xyzw=list(candidate.quaternion),
                     item_short_axis_base=item_pose[:3, 1].tolist(),
                     target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
-                    tool_axis_rotation_deg=delta_deg,
+                    configured_pick_rotation_deg=config.profile["pick_rotation"],
+                    selected_offset_direction=offset_direction,
+                    rotation_from_reference_deg=delta_deg,
                     target_rpy_deg=pose_values(plan[0].matrix)[3:])
 
             def check(index):

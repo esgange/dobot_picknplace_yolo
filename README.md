@@ -102,23 +102,30 @@ control back while an edit or service confirmation is in progress.
 
 Home uses fresh GetPose only to decide whether an upward current-XY rise is
 needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
-transforms platform-relative poses, applies schema-7 vertical geometry and
-timed gripper behavior, and returns Home after every attempt. Each candidate
-rotates the taught attitude only around its unchanged tool Z, choosing the
-nearest modulo-180° solution that makes Link6 green/Y parallel to the detected
-item short-axis line. Platform tilt never becomes TCP tilt and waypoint heights
-remain in base Z. Only missed suction advances to another candidate. No-I/O
+transforms platform-relative poses, applies schema-8 vertical/rotation geometry
+and timed gripper behavior, and returns Home after success or final exhaustion.
+Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
+uses the detected item short-axis line plus the taught unsigned `pick_rotation`;
+the planner evaluates both clockwise and counter-clockwise offsets and both
+modulo-180° line directions. Candidate 1 minimizes rotation from Home and each
+retry minimizes from the preceding candidate attitude. Platform tilt never
+becomes TCP tilt and waypoint heights remain in base Z. Only missed suction
+advances to another candidate. No-I/O
 moves use MovL, real timed-output moves use non-empty MovLIO, and the conditional
 rise uses RelMovLUser. Continue is used only by the explicit paused-queue service;
 the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 
-Each candidate is dispatched as two explicit queues. The Home-to-pick queue
+Each candidate is dispatched as a forward queue followed by one terminal queue.
+The Home-to-pick queue
 contains transit, clearance, pre-pick and pick; only the terminal pick/stopped
-pose is checked before suction settling. The pick-to-Home queue is then sent as
-retract, clearance, optional Home-Z rise and exact joint Home; only exact Home is
-checked. Intermediate waypoint arrivals are never awaited. Each ROS service
+pose is checked before suction settling. An intermediate miss uses a
+pick-to-retry queue containing only retract and clearance, then proceeds directly
+to the next candidate from that attitude. Success or final exhaustion uses a
+pick-to-Home queue containing retract, clearance, optional Home-Z rise and exact
+joint Home; only exact Home is checked. Intermediate waypoint arrivals are never
+awaited. Each ROS service
 acknowledgement is still awaited in order because it is queue-admission evidence,
 not evidence that the physical movement has finished.
 
@@ -143,7 +150,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-7 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-8 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -171,13 +178,15 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-7 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-8 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-7 profiles; they never recover old files.
+accept only complete schema-8 profiles; they never recover old files.
 The removed zheight_offset is not recovered. Old retract_height is blank in GUI
 drafts because it now means extra clearance above pre-pick, not above pick.
+Schema-7 and older drafts also leave `pick_rotation` blank; explicitly enter
+0–90° before saving schema 8.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
@@ -188,7 +197,7 @@ The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
-never silently defaulted. Production rejects schemas 1–5.
+never silently defaulted. Production rejects schemas 1–7.
 Motion saves only standoff_height, prepick_height and retract_height:
 pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
 clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.

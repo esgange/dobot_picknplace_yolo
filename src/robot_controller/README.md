@@ -228,24 +228,26 @@ Pick is permitted only from `READY` with DI1 clear:
    `/item_detect/get_item_poses`, advertised by exactly one root node: headless
    `/item_detect` or explicitly Armed `/item_teach`;
 3. transform platform-relative targets into base coordinates;
-4. align Link6 green/Y to each item's short-axis line while preserving taught
-   tool Z;
+4. offset Link6 green/Y by the taught `pick_rotation` from each item's short-axis
+   line while preserving taught tool Z;
 5. attempt up to Item Teach `pose_candidates` in detector rank order;
-6. after every miss, retract and return Home before advancing;
+6. after an intermediate miss, retract to that candidate's final clearance and
+   proceed directly to the next candidate without returning Home;
 7. after success, retract and return Home holding with suction on.
 
 The detector pose uses local X for the measured long axis and local Y for the
 short axis. It is an in-plane heading, not a TCP attitude. The controller
 composes that heading through the destination platform transform, projects the
-short axis perpendicular to the exact taught Home tool Z, and spins the taught
-attitude around that local Z until Link6 green/Y is parallel to the projected
-short-axis line. Since a rectangle has no directed end, the equivalent
-modulo-180° solution nearest Home is used, so the commanded rotation is at most
-90°. All candidate transit/descent/retract targets share this attitude; exact
+short axis perpendicular to the exact taught Home tool Z, then considers the
+taught unsigned 0–90° `pick_rotation` on either side of that line. Since a
+rectangle has no directed end, both modulo-180° directions are equivalent.
+Candidate 1 chooses the legal attitude with the least CW/CCW travel from Home;
+each later retry chooses from the preceding candidate attitude. All candidate
+transit/descent/retract targets share its selected attitude; exact
 joint Home restores the taught orientation. Platform tilt is not copied into
 TCP roll/pitch, and all waypoint heights remain referenced to base Z.
 
-The schema-7 geometry is unchanged: pick Z is item Z plus `standoff_height`,
+The schema-8 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates, final descent uses approach rates, and pick-to-prepick
 uses retract rates. Enabled fingers open at 50% of the clearance move. Suction
@@ -255,10 +257,13 @@ otherwise they close at the end of retract-to-prepick, still only after DI1.
 Each candidate has two named queue batches. `candidate_N_home_to_pick` submits
 item-XY transit at Home Z, clearance, pre-pick and pick without any intermediate
 arrival wait, then confirms only the terminal pick/stopped pose and performs the
-configured suction settling. Only after that decision does
-`candidate_N_pick_to_home` submit stopped-pose retract, clearance, optional
-Home-Z rise and exact joint Home, again with no intermediate arrival wait. Exact
-Home is the return batch's sole terminal position check. Early DI1 still invokes
+configured suction settling. Only after that decision does the controller submit
+the second queue. For an intermediate miss, `candidate_N_pick_to_retry` contains
+stopped-pose retract and clearance only; after its terminal clearance/DI-clear
+confirmation, the next candidate forward queue begins directly, without Home.
+On success or final exhaustion, `candidate_N_pick_to_home` contains stopped-pose
+retract, clearance, optional Home-Z rise and exact joint Home. Exact Home is that
+return batch's sole terminal position check. Early DI1 still invokes
 the established Stop-and-confirm path before return planning.
 
 Every `MovL`/`MovLIO` service acknowledgement is nevertheless awaited before the
@@ -283,7 +288,8 @@ feedback confirms every result. Only coherent missed suction advances to the
 next candidate. All command, feedback, state, cancellation, and result events
 are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.
 Each candidate plan also records its source quaternion, transformed short axis,
-commanded green axis, applied tool-axis rotation, and target RPY.
+commanded green axis, configured offset, selected CW/CCW side, rotation from the
+current path reference, and target RPY.
 
 Joint Home completion uses ±1° independently on every joint. Cartesian target
 completion uses 5 mm Euclidean translation and 1° orientation. Both require 300

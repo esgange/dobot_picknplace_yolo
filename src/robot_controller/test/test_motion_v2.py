@@ -29,6 +29,7 @@ def item_pose(x=0.1, y=0.2, z=0.3, yaw_deg=0.0):
 
 def settings(*, use_grip=True, close_on_pick=True):
     return {
+        "pick_rotation": 0.0,
         "motion": {"standoff_height": 0.0, "prepick_height": 50.0,
                    "retract_height": 100.0},
         "speed": {"travel_percent": 100, "approach_percent": 6,
@@ -82,10 +83,11 @@ def test_pick_geometry_rates_and_real_timed_io():
 def test_pick_green_axis_follows_item_short_axis_through_every_waypoint():
     home = matrix(1.0)
     item = item_pose(yaw_deg=30.0)
-    rotation, delta_deg = pick_attitude(home, item)
+    rotation, delta_deg, direction = pick_attitude(home, item)
     plan = pick_targets(home, item, settings(), 1)
 
     assert delta_deg == pytest.approx(30.0)
+    assert direction == "none"
     assert np.allclose(rotation[:, 1], item[:3, 1])
     assert np.allclose(rotation[:, 2], home[:3, 2])
     assert all(np.allclose(target.matrix[:3, :3], rotation) for target in plan)
@@ -94,7 +96,7 @@ def test_pick_green_axis_follows_item_short_axis_through_every_waypoint():
 def test_rectangular_axis_uses_nearest_equivalent_tool_rotation():
     home = matrix(1.0)
     item = item_pose(yaw_deg=170.0)
-    rotation, delta_deg = pick_attitude(home, item)
+    rotation, delta_deg, _direction = pick_attitude(home, item)
 
     assert delta_deg == pytest.approx(-10.0)
     assert abs(float(np.dot(rotation[:, 1], item[:3, 1]))) == pytest.approx(1.0)
@@ -112,7 +114,7 @@ def test_tilted_platform_short_axis_is_projected_while_tool_z_stays_fixed():
         platform, (0.1, 0.2, 0.3),
         (0., 0., np.sin(yaw / 2), np.cos(yaw / 2)))
     home = matrix(1.0)
-    rotation, _delta_deg = pick_attitude(home, item)
+    rotation, _delta_deg, _direction = pick_attitude(home, item)
     projected = item[:3, 1].copy()
     projected[2] = 0.0
     projected /= np.linalg.norm(projected)
@@ -130,7 +132,7 @@ def test_alignment_preserves_a_nonvertical_taught_tool_axis():
                     [0., 1., 0.],
                     [-np.sin(pitch), 0., np.cos(pitch)]]
     item = item_pose(yaw_deg=42.0)
-    rotation, delta_deg = pick_attitude(home, item)
+    rotation, delta_deg, _direction = pick_attitude(home, item)
     projected = item[:3, 1] - home[:3, 2] * float(
         np.dot(item[:3, 1], home[:3, 2]))
     projected /= np.linalg.norm(projected)
@@ -182,7 +184,7 @@ class FakeHardware:
     def move_batch(self, targets, **kwargs):
         names = tuple(target.name for target in targets)
         self.log.append(("move", names, kwargs))
-        return next(self.acquisitions)
+        return next(self.acquisitions) if kwargs.get("stop_on_suction") else False
 
     def current_pose(self):
         return self.pose.copy()
@@ -205,7 +207,7 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert returned[0]["forbid_suction"] is False
 
 
-def test_missed_suction_returns_home_before_advancing_candidate():
+def test_missed_suction_retracts_to_clearance_then_advances_without_home():
     hardware = FakeHardware([False, False])
     plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), settings(), index)
              for index in (1, 2)]
@@ -221,14 +223,54 @@ def test_missed_suction_returns_home_before_advancing_candidate():
         plans, settings(), check=check, return_home=return_home)
     assert not outcome["picked"]
     assert order == [
-        ("candidate", 1), ("home", True, "candidate_1_pick_to_home"),
-        ("candidate", 2), ("home", True, "candidate_2_pick_to_home")]
+        ("candidate", 1), ("candidate", 2),
+        ("home", True, "candidate_2_pick_to_home")]
     forward_batches = [entry[2]["batch_name"] for entry in hardware.log
                        if entry[0] == "move"]
     assert forward_batches == ["candidate_1_home_to_pick",
+                               "candidate_1_pick_to_retry",
                                "candidate_2_home_to_pick"]
     assert sum(entry[:2] == ("output", 13) and entry[2] is False
                for entry in hardware.log) == 4
+
+
+def test_second_candidate_success_returns_home_only_after_acquisition():
+    hardware = FakeHardware([False, True])
+    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), settings(), index)
+             for index in (1, 2)]
+    returned = []
+    outcome = PickExecutor(hardware, finish_home=True).run(
+        plans, settings(), check=lambda _index: None,
+        return_home=lambda **kwargs: returned.append(kwargs))
+
+    assert outcome == {"picked": True, "candidate": 2, "holding_item": True}
+    batches = [entry[2]["batch_name"] for entry in hardware.log if entry[0] == "move"]
+    assert batches == ["candidate_1_home_to_pick", "candidate_1_pick_to_retry",
+                       "candidate_2_home_to_pick"]
+    assert [entry["batch_name"] for entry in returned] == ["candidate_2_pick_to_home"]
+    assert returned[0]["require_suction"] is True
+
+
+def test_pick_rotation_selects_nearest_offset_and_retry_reference():
+    home = matrix(1.0)
+    first = item_pose(yaw_deg=80.0)
+    rotation, travel, direction = pick_attitude(home, first, 20.0)
+    assert direction == "cw"
+    assert travel == pytest.approx(60.0)
+    assert np.allclose(rotation[:, 1], item_pose(yaw_deg=60.0)[:3, 1])
+
+    second = item_pose(yaw_deg=100.0)
+    next_rotation, next_travel, next_direction = pick_attitude(
+        home, second, 20.0, rotation)
+    assert next_direction == "cw"
+    assert next_travel == pytest.approx(20.0)
+    assert np.allclose(next_rotation[:, 1], item_pose(yaw_deg=80.0)[:3, 1])
+
+
+@pytest.mark.parametrize("value", [-0.1, 90.1, float("nan"), "10"])
+def test_pick_rotation_rejects_out_of_range_or_non_numeric_values(value):
+    with pytest.raises(ValueError, match="pick_rotation"):
+        pick_attitude(matrix(1.0), item_pose(), value)
 
 
 def test_motion_io_rejects_noncanonical_or_empty_semantics():

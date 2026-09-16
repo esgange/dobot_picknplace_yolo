@@ -3440,6 +3440,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   tests reject any controller `cp=` or `r=` parameter. No detector request or
   robot command was issued.
 
+### 2026-09-16 — Teach offset rotation and skip Home between missed candidates
+
+- Item Teach now saves strict schema 8. Rule 78 adds one required top-level
+  `pick_rotation` value with explicit degree units and an inclusive 0–90 range.
+  It is an unsigned offset from the detected short-axis line. Production readers
+  reject schemas 1–7; GUI recovery preserves those files and intentionally leaves
+  the new field blank so the operator must review it before a schema-8 Save.
+- The shared controller/preview orientation planner evaluates the +offset and
+  -offset lines together with each line's modulo-180 equivalent while preserving
+  taught Home tool Z. Candidate one minimizes absolute rotation from Home; later
+  candidates minimize from the preceding candidate's selected attitude. Logs
+  record the configured offset, chosen clockwise/counter-clockwise side, motion
+  from the current reference, source/target axes and target RPY.
+- A missed non-final candidate no longer returns exact Home. Its second queue is
+  `candidate_N_pick_to_retry`: actual stopped-pose vertical retract followed by
+  that candidate's final clearance. Only after terminal feedback and DI1-clear
+  confirmation is suction turned off and the next forward queue started. Success
+  and final exhaustion retain `candidate_N_pick_to_home` and exact taught Home.
+  The same accepted candidate batch remains latched, and non-suction faults never
+  advance.
+- No ROS interface, detector response, station/bin/camera schema, vendored source,
+  I/O timing, CP, response serialization, Stop/cancellation, or terminal-feedback
+  contract changes. Verification is source/synthetic only and must not request
+  detector poses or issue robot commands.
+- Verification completed without hardware access: all 482 direct Item Perception
+  and Robot Controller tests passed. Installed package testing reported 365 Item
+  Perception and 119 Robot Controller results with zero failures, errors or skips,
+  including the private native inference runtime. Python compilation and focused
+  ament_flake8 checks for the changed core/controller/planner tests passed. Both
+  changed packages and the complete 15-package workspace built successfully.
+  Source review and synthetic tests cover schema-8 round trip/recovery, inclusive
+  rotation limits, both offset directions, retry-reference selection, first-miss
+  clearance-only routing, second-candidate success and final exact-Home return.
+  No detector request or robot command was issued.
+
 ### Future entry template
 
 ```text

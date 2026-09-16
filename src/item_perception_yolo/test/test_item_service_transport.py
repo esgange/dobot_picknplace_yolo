@@ -50,7 +50,7 @@ def exercise_service():
                 "max_detections": 20, "image_size": 640, "iou": .5}}
         profile = {
             **settings, "model": {"declared_task": "segment", "sha256": "b"*64},
-            "item": {}, "motion": {}, "speed": {}, "acceleration": {},
+            "item": {}, "pick_rotation": 0.0, "motion": {}, "speed": {}, "acceleration": {},
             "timing": {}, "gripper": {}, "retry": {"pose_candidates": 3}}
         module.load_item_profile = lambda _: (profile, "a"*64)
         module.file_sha256 = lambda _: "a"*64

@@ -731,6 +731,7 @@ def test_failed_model_load_unlocks_controls_without_retry(window, monkeypatch):
 def paired_teach(window, tmp_path, monkeypatch):
     settings = {
         "item": {"name": "paired_part"}, "model_task": "segment", "geometry_source": "mask",
+        "pick_rotation": 12.5,
         "quality": dict(core.QUALITY_DEFAULTS),
         "motion": dict(zip(core.MOTION_FIELDS, [90., 50., 60., 100.])),
         "speed": dict(core.NEW_PROFILE_SPEED),
@@ -943,15 +944,20 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     path.write_text(yaml.safe_dump(profile))
     original, model_original = path.read_bytes(), path.with_suffix(".pt").read_bytes()
     window._load(path, prefill=True)
-    assert window.recovered_draft and window.inputs["retract_height"].text() == ""
-    with pytest.raises(ValueError, match="retract_height"):
+    assert window.recovered_draft
+    assert window.inputs["pick_rotation"].text() == ""
+    assert window.inputs["retract_height"].text() == ""
+    with pytest.raises(ValueError, match="pick_rotation"):
         window._settings()
     assert window.saved_path is None
     window.node.inspect_model.assert_not_called()
     window._load_dialog()
     finish_model_job(window)
-    assert window.recovered_draft and window.inputs["retract_height"].text() == ""
+    assert window.recovered_draft
+    assert window.inputs["pick_rotation"].text() == ""
+    assert window.inputs["retract_height"].text() == ""
     window.inputs["retract_height"].setText(str(settings["motion"]["retract_height"]))
+    window.inputs["pick_rotation"].setText(str(settings["pick_rotation"]))
     assert window._settings() == settings
     assert window.saved_path is None
     window.armed_toggle.setChecked(True)
@@ -962,7 +968,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 7 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 8 and saved["retry"] == {"pose_candidates": 3}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings

@@ -20,6 +20,7 @@ from item_perception_yolo.item_teach_recovery import recover_item_fields
 def settings():
     return {
         "item": {"name": "test_part"}, "model_task": "detect",
+        "pick_rotation": 15.0,
         "geometry_source": "none", "quality": dict(core.QUALITY_DEFAULTS),
         "motion": {"standoff_height": 150.0,
                    "prepick_height": 50.0, "retract_height": 80.0},
@@ -66,7 +67,8 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
-    assert profile["schema_version"] == 7
+    assert profile["schema_version"] == 8
+    assert profile["pick_rotation"] == 15.0
     assert "result_max_age_sec" not in profile["quality"]
     assert profile["retry"] == {"pose_candidates": 3}
     assert "retry_limit" not in path.read_text()
@@ -254,9 +256,9 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    for old_version in (1, 2, 3, 4, 5, 6):
+    for old_version in (1, 2, 3, 4, 5, 6, 7):
         profile["schema_version"] = old_version
-        with pytest.raises(ValueError, match="exactly 7"):
+        with pytest.raises(ValueError, match="exactly 8"):
             core.validate_profile(profile)
 
 
@@ -270,7 +272,7 @@ def test_old_retry_name_is_not_an_alias(pair, fields):
         core.load_item_profile(path, root=root)
 
 
-def test_schema_seven_forbids_removed_height_and_older_height_requires_gui_review(pair):
+def test_schema_eight_forbids_removed_height_and_older_height_requires_gui_review(pair):
     root, _, path, profile = pair
     assert "zheight_offset" not in profile["motion"]
     profile["motion"]["zheight_offset"] = 50.
@@ -301,7 +303,7 @@ def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair)
     assert draft.model_path == path.with_suffix(".pt")
     assert draft.model_sha256 == profile["model"]["sha256"]
     assert "retry_limit" in " ".join(draft.issues)
-    with pytest.raises(ValueError, match="exactly 7"):
+    with pytest.raises(ValueError, match="exactly 8"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -397,6 +399,34 @@ def test_disabled_grip_retains_but_does_not_enable_onpick(settings):
     core.validate_settings(settings)
 
 
+@pytest.mark.parametrize("value", [-0.1, 90.1, float("nan"), True, "10"])
+def test_pick_rotation_is_required_numeric_degrees_in_inclusive_range(settings, value):
+    settings["pick_rotation"] = value
+    with pytest.raises(ValueError, match="pick_rotation"):
+        core.validate_settings(settings)
+
+
+@pytest.mark.parametrize("value", [0, 90, 12.5])
+def test_pick_rotation_valid_boundaries(settings, value):
+    settings["pick_rotation"] = value
+    core.validate_settings(settings)
+
+
+def test_schema_seven_recovery_requires_explicit_pick_rotation(pair):
+    root, _, path, profile = pair
+    profile["schema_version"] = 7
+    del profile["pick_rotation"]
+    del profile["units"]["pick_rotation"]
+    path.write_text(yaml.safe_dump(profile))
+    original = path.read_bytes()
+    draft = recover_item_fields(path, root=root)
+    assert draft.values["pick_rotation"] is None
+    assert any("predates explicit pick_rotation" in issue for issue in draft.issues)
+    with pytest.raises(ValueError, match="exactly 8"):
+        core.load_item_profile(path, root=root)
+    assert path.read_bytes() == original
+
+
 def test_rate_settings_round_trip_and_explicit_overwrite_preserve_other_fields(pair):
     root, _, path, original = pair
     settings = core.settings_from_profile(original)
@@ -447,7 +477,7 @@ def test_schema_four_recovery_leaves_unknown_rates_blank_and_does_not_write(pair
         assert draft.values[key] is None
         assert draft.values[f"acceleration_{key}"] is None
     assert path.read_bytes() == original
-    with pytest.raises(ValueError, match="exactly 7"):
+    with pytest.raises(ValueError, match="exactly 8"):
         core.load_item_profile(path, root=root)
 
 
