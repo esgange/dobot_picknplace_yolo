@@ -54,6 +54,7 @@ def test_startup_sequence_is_explicit_and_never_calls_home(
         operation_progress=lambda phase, message, **fields: order.append(
             ("phase", phase, message, fields)))
     transport.clients = {"EnableRobot": object()}
+    transport.queue_clients = {"Pause": object(), "Continue": object()}
     transport.monitor = SimpleNamespace(
         snapshot=lambda **_kwargs: snapshot(),
         wait_samples=lambda *_args, **_kwargs: order.append(("wait_samples",)))
@@ -138,6 +139,20 @@ def test_stop_confirmation_detects_held_item_loss_without_changing_outputs():
     with pytest.raises(Exception, match="held-item integrity"):
         transport.confirm_stop(CompletedFuture())
     assert transport.node.expected_outputs == {13: True}
+
+
+def test_stop_confirmation_accepts_a_latched_pause_after_queue_is_empty():
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(
+        holding_item=False, expected_outputs={}, events=EventLog(),
+        wait_control=lambda _seconds: None)
+    stopped = snapshot()
+    stopped.feed["isPauseCmdFlag"] = 1
+    stopped.feed["tool_vector_actual"] = [0.0] * 6
+    transport.monitor = StopMonitor(stopped)
+    transport.moving = True
+    transport.confirm_stop(CompletedFuture())
+    assert not transport.moving
 
 
 class SensorMonitor:

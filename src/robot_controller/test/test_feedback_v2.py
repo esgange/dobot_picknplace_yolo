@@ -45,6 +45,18 @@ def test_valid_feedback_snapshot_and_enabled_blockers():
     assert "EnableStatus=0" in enabled_blockers(feed(EnableStatus=0), False)[1]
 
 
+def test_pause_is_not_ready_but_is_valid_for_confirmed_pause_monitoring():
+    paused = feed(robot_mode=10, isPauseCmdFlag=1)
+    assert "isPauseCmdFlag=1" in enabled_blockers(paused, True)
+    assert enabled_blockers(paused, True, allow_paused=True) == []
+    monitor = primed_monitor()
+    monitor.update_feed(paused)
+    with pytest.raises(FeedbackFailure, match="isPauseCmdFlag=1"):
+        monitor.snapshot(require_enabled=True)
+    assert monitor.snapshot(require_enabled=True, allow_paused=True).feed[
+        "isPauseCmdFlag"] == 1
+
+
 @pytest.mark.parametrize("key", [
     "tool_vector_actual", "q_actual", "qd_actual", "TCP_speed_actual"])
 def test_all_six_axis_feed_arrays_are_required(key):
@@ -107,6 +119,28 @@ def test_wait_is_native_cancel_aware():
     monitor = primed_monitor()
     with pytest.raises(OperationCanceled):
         monitor.wait(lambda _sample: False, 1.0, cancel=lambda: True)
+
+
+def test_explicit_pause_suspends_a_feedback_wait_deadline():
+    monitor = primed_monitor()
+    paused = threading.Event()
+    paused.set()
+
+    def update():
+        time.sleep(0.03)
+        monitor.update_feed(feed(
+            controller_timer=2, robot_mode=10, isPauseCmdFlag=1))
+        time.sleep(0.08)
+        paused.clear()
+        monitor.update_feed(feed(controller_timer=3, robot_mode=4, EnableStatus=0))
+
+    thread = threading.Thread(target=update)
+    thread.start()
+    result = monitor.wait(
+        lambda sample: sample.feed["robot_mode"] == 4, 0.05,
+        pause=paused.is_set, description="post-pause disabled mode")
+    thread.join()
+    assert result.feed["robot_mode"] == 4
 
 
 def test_invalid_joint_source_stamp_is_rejected():

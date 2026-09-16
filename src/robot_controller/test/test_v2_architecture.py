@@ -63,13 +63,23 @@ def test_legacy_public_commands_are_absent_and_preview_has_no_dobot_transport():
     assert "dobot_bringup_ros2/srv" not in gui
 
 
-def test_runtime_never_uses_continue_inverse_kin_or_empty_movlio():
+def test_runtime_uses_typed_continue_but_never_inverse_kin_or_empty_movlio():
     runtime = "\n".join(
         path.read_text() for path in (PACKAGE / "python/robot_controller").glob("*.py"))
     assert "InverseKin" not in runtime
-    assert 'call("Continue"' not in runtime
+    assert 'self._call_queue_control("Continue")' in runtime
     assert 'service = "MovLIO" if events else "MovL"' in runtime
     assert 'fields["mdis"] = events' in runtime
+
+
+def test_pause_continue_are_controller_services_and_stop_remains_direct():
+    controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
+    gui = (PACKAGE / "python/robot_controller/gui.py").read_text()
+    assert '"/robot_controller/pause"' in controller
+    assert '"/robot_controller/continue"' in controller
+    assert '"/robot_controller/stop"' in controller
+    assert 'self._command("stop")' in gui
+    assert 'self.stop_after_pause = True' in gui
 
 
 def test_headless_configuration_does_not_call_startup():

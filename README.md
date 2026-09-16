@@ -41,9 +41,9 @@ an explicit typed `/robot_controller/startup` call.
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
 Pick requests one fresh hash-matched batch from `item_detect`; candidate count
-always comes from Item Teach `pose_candidates`. Typed Startup, Recover, Stop,
-Configure and global-speed services support those actions, while reliable
-transient-local typed status reports the state and operation phase. The old
+always comes from Item Teach `pose_candidates`. Typed Startup, Recover, Pause,
+Continue, direct Stop, Configure and global-speed services support those actions,
+while reliable transient-local typed status reports the state and operation phase. The old
 Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image endpoints are removed.
 
 ```bash
@@ -55,9 +55,11 @@ Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
 100, unheld output reset, one bounded persistent-pause correction checked both
 after Enable and before READY, and coherent READY confirmation. Recover performs the
-same guarded recovery without moving Home. Stop and native cancellation preserve
-all gripper outputs, discard queued motion, and finish in `RECOVERY_REQUIRED`;
-they never automatically Home, release, or resume. Trusted held-item DI/output
+same guarded recovery without moving Home. Pause preserves the current queue and
+active Home/Pick generation; Continue resumes only that confirmed paused state.
+Direct Stop and native cancellation preserve all gripper outputs, discard queued
+motion, and finish in `RECOVERY_REQUIRED`; Stop never requires Pause first and
+never automatically Homes, releases, or resumes. Trusted held-item DI/output
 feedback is checked throughout recovery and Stop confirmation. If idle
 supervision sees an unexpected running/nonempty queue, it pre-empts that motion
 with the independent Stop path before requiring recovery.
@@ -67,8 +69,8 @@ needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
 transforms platform-relative poses, applies schema-6 vertical geometry and
 timed gripper behavior, and returns Home after every attempt. Only missed suction
 advances to another candidate. No-I/O moves use MovL, real timed-output moves use
-non-empty MovLIO, and the conditional rise uses RelMovLUser. The controller never
-uses Continue or InverseKin. See the
+non-empty MovLIO, and the conditional rise uses RelMovLUser. Continue is used only
+by the explicit paused-queue service; the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 

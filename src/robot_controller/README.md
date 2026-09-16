@@ -11,7 +11,7 @@ service call before a hardware action can be accepted.
 ## Processes
 
 - `robot_controller` is headless hardware authority. It alone creates Dobot
-  motion, Stop, robot-setting, and gripper-output clients.
+  motion, Pause/Continue/Stop, robot-setting, and gripper-output clients.
 - `robot_controller_preview` calculates and broadcasts TF-only Home/Pick plans.
   It has no Dobot command client and cannot actuate the robot.
 - `robot_controller_gui` is a client of the controller and preview APIs. It has
@@ -50,7 +50,11 @@ Services:
 - `/robot_controller/startup` performs the deterministic cold Startup sequence.
 - `/robot_controller/recover` stops/clears/enables/restores settings without
   moving Home.
+- `/robot_controller/pause` pauses and confirms the current Dobot queue without
+  canceling the active Home/Pick action.
+- `/robot_controller/continue` resumes only a confirmed `PAUSED` queue.
 - `/robot_controller/stop` pre-empts and confirms Stop while preserving outputs.
+  It is always direct and never requires a preceding Pause.
 - `/robot_controller/set_global_speed` accepts an integer 1–100 only while
   stationary in `READY` or `HOLDING`.
 - `/robot_controller/preview` belongs to the TF-only preview node.
@@ -79,6 +83,10 @@ ros2 action send_goal /robot_controller/pick_item \
   robot_controller_interfaces/action/PickItem \
   "{configuration_id: '<exact status configuration_id>', save_debug_images: false}" \
   --feedback
+ros2 service call /robot_controller/pause \
+  robot_controller_interfaces/srv/Command '{}'
+ros2 service call /robot_controller/continue \
+  robot_controller_interfaces/srv/Command '{}'
 ros2 service call /robot_controller/stop \
   robot_controller_interfaces/srv/Command '{}'
 ros2 service call /robot_controller/recover \
@@ -90,7 +98,7 @@ ros2 service call /robot_controller/set_global_speed \
 ## State and safety contract
 
 The states are `UNCONFIGURED`, `INACTIVE`, `STARTING`, `READY`, `HOMING`,
-`PICKING`, `HOLDING`, `STOPPING`, `RECOVERY_REQUIRED`, `RECOVERING`,
+`PICKING`, `HOLDING`, `PAUSED`, `STOPPING`, `RECOVERY_REQUIRED`, `RECOVERING`,
 `HELD_UNKNOWN`, and `FAULT`. One immutable configuration snapshot and one
 operation generation exist at a time. Action configuration IDs prevent a stale
 GUI or supervisor from executing a replaced profile.
@@ -98,7 +106,8 @@ GUI or supervisor from executing a replaced profile.
 Startup validates sole canonical services and publishers, then performs:
 
 1. best-effort `StopMoveJog`;
-2. strict `Stop` with stationary, empty, unpaused queue confirmation;
+2. strict `Stop` with stationary, empty queue confirmation (a latched pause flag
+   does not invalidate a confirmed Stop);
 3. cold DI1 check (active DI1 preserves I/O and enters `HELD_UNKNOWN`);
 4. Disable and conditional ClearError;
 5. Enable, with at most one Stop→Enable correction after three persistent pause
@@ -123,6 +132,23 @@ unconfirmed stopping is `FAULT`. Held-item DI1 and expected-output integrity are
 checked throughout Stop and Recover. Unexpected running/nonempty queue feedback
 while otherwise idle is immediately routed through the same Stop confirmation
 path rather than merely changing the state label.
+
+Pause is different from Stop. From `READY`, `HOLDING`, `HOMING`, or `PICKING`,
+it waits for the canonical Pause response plus pause-flagged, stationary
+feedback, enters `PAUSED`, and retains the queued path and active action context.
+No later host-side waypoint or I/O command is dispatched while paused. Continue
+is accepted only from that confirmed state; it waits for the canonical response
+and three fresh cleared-pause samples before restoring the suspended state.
+Feedback, held suction, and expected outputs remain supervised. An ambiguous
+Pause/Continue is contained by direct Stop. Intentional pause duration is not
+charged to sensor, no-progress, arrival, or hard-motion deadlines.
+
+The GUI presents these services as two dynamic controls. `START` calls Startup
+from `INACTIVE` and becomes `CONTINUE` in `PAUSED`. The amber `PAUSE` control
+immediately becomes red `STOP` on its first click. A rapid second click records
+a Stop request locally, waits for the Pause response, and then calls direct
+Stop—never overlapping the two vendor requests. External nodes do not use this
+two-click policy and may call `/robot_controller/stop` immediately in any state.
 
 Feedback is condition-driven from the approximately 100 Hz FeedInfo stream.
 Policies are: five seconds for service discovery/response, one-second feedback
@@ -157,7 +183,8 @@ otherwise they close at the end of retract-to-prepick, still only after DI1.
 
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Conditional Home rise uses `RelMovLUser`. The controller never calls
-`Continue` or `InverseKin`. Service acknowledgement is acceptance only; actual
+`InverseKin`; `Continue` is reserved solely for explicit resume from `PAUSED`.
+Service acknowledgement is acceptance only; actual
 feedback confirms every result. Only coherent missed suction advances to the
 next candidate. All command, feedback, state, cancellation, and result events
 are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.

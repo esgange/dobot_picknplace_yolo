@@ -2970,6 +2970,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   including the late-pause and exact-blocker cases. The complete 15-package
   root build and the generated controller-interface tests also pass.
 
+### 2026-09-16 — Explicit Pause/Continue with unconditional direct Stop
+
+- The operator selected all three canonical Dobot queue controls. Rule 65 adds
+  typed `/robot_controller/pause` and `/robot_controller/continue` services to
+  the existing unconditional `/robot_controller/stop`; GUI and headless clients
+  never call bringup directly. External nodes may invoke controller Stop from
+  any state and never need to Pause first.
+- `PAUSED` now preserves the active Home/Pick generation, previous lifecycle
+  state, phase/waypoint, queued robot path, gripper outputs and trusted holding
+  context. Pause and Continue use independent controller-owned canonical clients,
+  await each service response, and confirm pause-flag/stationary or cleared-pause
+  feedback respectively. Host-side phase, waypoint and I/O dispatch waits while
+  paused, and intentional pause time is excluded from feedback and motion
+  deadlines. Paused feedback and held I/O remain supervised.
+- Stop still pre-empts without taking the Pause/Continue lock. It invalidates the
+  active action and requires acknowledged stationary/empty-queue feedback, but a
+  still-latched pause flag no longer makes a confirmed Stop fail. Stop clears
+  suspended context and requires recovery; untrusted active DI1 is preserved as
+  `HELD_UNKNOWN`. Ambiguous Pause or Continue is contained with the same direct
+  Stop path.
+- The GUI Start control becomes Continue only for a confirmed/pending Pause.
+  Its amber Pause control immediately becomes red Stop after the first click. A
+  rapid second click queues Stop locally and sends it only after the Pause reply,
+  preserving the established wait-for-response rule. In non-pausable states the
+  red button calls Stop directly.
+- No physical robot, camera, detector, RViz or maintenance application was
+  launched or commanded during implementation and software verification.
+- Verification passes all 64 focused controller tests through package CTest,
+  including paused-state restoration, direct Stop, retained pause flags,
+  suspended deadlines and serialized rapid GUI clicks. Python compilation and
+  ament_flake8 pass, as do the generated interface tests and complete
+  15-package root build. An isolated-domain offscreen launch exposed all seven
+  intended controller services and remained `UNCONFIGURED`; SIGINT then stopped
+  the controller, preview and GUI cleanly. The GUI now owns SIGINT/SIGTERM long
+  enough to stop its Qt timer before destroying the ROS context, preventing the
+  prior shutdown-only invalid-context traceback.
+
 ### Future entry template
 
 ```text

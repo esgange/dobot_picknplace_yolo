@@ -111,6 +111,10 @@ class RobotController(Node):
         self.state_before_stop = None
         self.late_stop_thread = None
         self.supervision_stop_thread = None
+        self.pause_guard = threading.Lock()
+        self.pause_event = threading.Event()
+        self.continue_event = threading.Event()
+        self.paused_context = None
 
         self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
@@ -134,6 +138,12 @@ class RobotController(Node):
             callback_group=self.control_group)
         self.stop_service = self.create_service(
             Command, "/robot_controller/stop", self._stop,
+            callback_group=self.control_group)
+        self.pause_service = self.create_service(
+            Command, "/robot_controller/pause", self._pause,
+            callback_group=self.control_group)
+        self.continue_service = self.create_service(
+            Command, "/robot_controller/continue", self._continue,
             callback_group=self.control_group)
         self.configure_service = self.create_service(
             Configure, "/robot_controller/configure", self._configure,
@@ -246,6 +256,8 @@ class RobotController(Node):
 
     def operation_progress(self, phase, message, *, waypoint="", candidate_index=None,
                            candidate_total=None):
+        if self.active_action in ("home", "pick"):
+            self.wait_for_resume()
         self.phase, self.waypoint = phase, waypoint
         if candidate_index is not None:
             self.candidate_index = candidate_index
@@ -321,6 +333,38 @@ class RobotController(Node):
 
     def wait_control(self, seconds):
         self.shutdown_event.wait(seconds)
+
+    def pause_requested(self):
+        return self.pause_event.is_set()
+
+    def _validate_pause_integrity(self, snapshot, *, require_flag):
+        blockers = enabled_blockers(
+            snapshot.feed, snapshot.robot_enabled, allow_paused=True)
+        if require_flag and not snapshot.feed["isPauseCmdFlag"]:
+            blockers.append("isPauseCmdFlag=0 while controller state is PAUSED")
+        suction = bool(snapshot.feed["digital_input_bits"] & 1)
+        if self.holding_item != suction:
+            blockers.append(
+                "DI1 lost for held item" if self.holding_item
+                else "DI1 active without trusted holding context")
+        for channel, expected in self.expected_outputs.items():
+            actual = bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
+            if actual != expected:
+                blockers.append(
+                    f"DO{channel}={int(actual)} while expected {int(expected)}")
+        if blockers:
+            raise FeedbackFailure("Paused-queue integrity failed: " + "; ".join(blockers))
+        return snapshot
+
+    def wait_for_resume(self):
+        while self.pause_event.is_set():
+            self.raise_if_cancelled()
+            snapshot = self.monitor.snapshot(require_enabled=False)
+            self._validate_pause_integrity(
+                snapshot,
+                require_flag=(self.machine.state == "PAUSED"
+                              and not self.continue_event.is_set()))
+            self.wait_control(0.05)
 
     # ---------- configuration and lifecycle services ----------
 
@@ -475,7 +519,116 @@ class RobotController(Node):
                 self._end_operation()
         return response
 
-    # ---------- Stop and cancellation ----------
+    # ---------- Pause, Continue, Stop, and cancellation ----------
+
+    @staticmethod
+    def _clear_pause_context(instance):
+        event = getattr(instance, "pause_event", None)
+        if event is not None:
+            event.clear()
+        continuing = getattr(instance, "continue_event", None)
+        if continuing is not None:
+            continuing.clear()
+        instance.paused_context = None
+
+    def _contain_queue_control_failure(self, operation, error):
+        try:
+            future = self._request_stop(
+                f"{operation} was not safely confirmed: {error}")
+            self._confirm_shared_stop(future)
+            self._finish_stop_state()
+        except Exception as stop_exc:
+            if self.machine.state != "FAULT":
+                self._transition(
+                    "FAULT", f"{operation} failed and Stop was unconfirmed: {stop_exc}")
+
+    def _pause(self, _request, response):
+        guarded = self.pause_guard.acquire(blocking=False)
+        dispatched = False
+        failure = ""
+        try:
+            if not guarded:
+                raise CommandRejected("Another Pause/Continue request is active")
+            if (not self.startup_complete
+                    or self.machine.state not in ("READY", "HOLDING", "HOMING", "PICKING")):
+                raise CommandRejected(
+                    "Pause requires a started READY/HOLDING/Home/Pick controller")
+            if (self.operation_lock.locked()
+                    and self.active_action not in ("home", "pick")):
+                raise CommandRejected("Pause cannot interrupt a lifecycle/settings operation")
+            if self.pause_event.is_set():
+                raise CommandRejected("Controller Pause is already pending or confirmed")
+            self.paused_context = {
+                "state": self.machine.state,
+                "message": self.machine.message,
+                "phase": self.phase,
+                "waypoint": self.waypoint,
+            }
+            self.pause_event.set()
+            dispatched = True
+            self.hardware.pause_queue()
+            self.raise_if_cancelled()
+            previous = self.paused_context["state"]
+            self.phase = "PAUSED"
+            self._transition("PAUSED", f"Pause confirmed; suspended {previous}")
+            self.events.record(
+                "INFO", "pause_confirmed", self.machine.message,
+                suspended_state=previous, operation=self.active_action)
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            failure = str(exc)
+            if dispatched:
+                self._contain_queue_control_failure("Pause", exc)
+            else:
+                self.events.record("WARNING", "pause_rejected", str(exc))
+        finally:
+            if guarded:
+                self.pause_guard.release()
+        response.message = self.machine.message if response.success else failure
+        response.state = self.machine.state
+        return response
+
+    def _continue(self, _request, response):
+        guarded = self.pause_guard.acquire(blocking=False)
+        dispatched = False
+        failure = ""
+        try:
+            if not guarded:
+                raise CommandRejected("Another Pause/Continue request is active")
+            if (self.machine.state != "PAUSED" or not self.pause_event.is_set()
+                    or self.paused_context is None):
+                raise CommandRejected("Continue requires a confirmed PAUSED controller")
+            self._validate_pause_integrity(
+                self.monitor.snapshot(require_enabled=False), require_flag=True)
+            self.continue_event.set()
+            dispatched = True
+            resumed = self.hardware.continue_queue()
+            self._validate_pause_integrity(resumed, require_flag=False)
+            self.raise_if_cancelled()
+            context = self.paused_context
+            restored = context["state"]
+            self.phase, self.waypoint = context["phase"], context["waypoint"]
+            self._transition(restored, f"Continue confirmed; resumed {restored}")
+            RobotController._clear_pause_context(self)
+            self.events.record(
+                "INFO", "continue_confirmed", self.machine.message,
+                resumed_state=restored, operation=self.active_action)
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            failure = str(exc)
+            if dispatched:
+                self._contain_queue_control_failure("Continue", exc)
+            else:
+                self.events.record("WARNING", "continue_rejected", str(exc))
+        finally:
+            self.continue_event.clear()
+            if guarded:
+                self.pause_guard.release()
+        response.message = self.machine.message if response.success else failure
+        response.state = self.machine.state
+        return response
 
     def _request_stop(self, reason):
         self.cancel_event.set()
@@ -503,20 +656,23 @@ class RobotController(Node):
 
     def _finish_stop_state(self):
         previous = self.state_before_stop
-        if previous == "UNCONFIGURED":
+        try:
+            suction = bool(self.monitor.snapshot(
+                require_enabled=False).feed["digital_input_bits"] & 1)
+        except FeedbackFailure:
+            suction = getattr(self, "holding_item", False) or previous == "HELD_UNKNOWN"
+        if suction and not getattr(self, "holding_item", False):
+            target = "HELD_UNKNOWN"
+        elif previous == "UNCONFIGURED":
             target = "UNCONFIGURED"
         elif previous == "INACTIVE":
             target = "INACTIVE"
         elif previous == "HELD_UNKNOWN":
-            try:
-                suction = bool(self.monitor.snapshot(
-                    require_enabled=False).feed["digital_input_bits"] & 1)
-            except FeedbackFailure:
-                suction = True
             target = "HELD_UNKNOWN" if suction else "RECOVERY_REQUIRED"
         else:
             target = "RECOVERY_REQUIRED"
         self.startup_complete = False
+        RobotController._clear_pause_context(self)
         message = ("Stop confirmed; explicit recovery is required"
                    if target == "RECOVERY_REQUIRED" else "Stop confirmed")
         self._transition(target, message)
@@ -600,6 +756,7 @@ class RobotController(Node):
 
     def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None):
         self.raise_if_cancelled()
+        self.wait_for_resume()
         holding = self.holding_item if require_suction is None else require_suction
         forbidden = not holding if forbid_suction is None else forbid_suction
         self._preflight_item_state(holding)
@@ -651,6 +808,7 @@ class RobotController(Node):
             self.configuration.validate_sources(self.root)
             self._transition("HOMING", "Home action started")
             self._execute_home()
+            self.wait_for_resume()
             state = "HOLDING" if self.holding_item else "READY"
             self._transition(state, "Home completed at taught joints")
             result.outcome = result.SUCCESS
@@ -716,6 +874,7 @@ class RobotController(Node):
                 return_home=lambda **kwargs: self._execute_home(**kwargs),
                 progress=self._candidate_progress,
                 holding_changed=lambda value: setattr(self, "holding_item", value))
+            self.wait_for_resume()
             self.holding_item = outcome["holding_item"]
             if outcome["picked"]:
                 candidate = batch.candidates[outcome["candidate"] - 1]
@@ -741,9 +900,9 @@ class RobotController(Node):
 
     # ---------- supervision/shutdown ----------
 
-    def _stop_unexpected_idle_motion(self):
-        """Pre-empt motion that was not started by the active executor."""
-        reason = "Unexpected queued/running motion while controller idle"
+    def _stop_unexpected_idle_motion(
+            self, reason="Unexpected queued/running motion while controller idle"):
+        """Pre-empt unexpected or unsafe queue state through independent Stop."""
         try:
             future = self._request_stop(reason)
         except Exception as exc:
@@ -767,7 +926,18 @@ class RobotController(Node):
             self.supervision_stop_thread.start()
 
     def _supervise(self):
-        if (not self.startup_complete or self.operation_lock.locked()
+        if not self.startup_complete:
+            return
+        if self.machine.state == "PAUSED":
+            try:
+                self._validate_pause_integrity(
+                    self.monitor.snapshot(require_enabled=False),
+                    require_flag=not self.continue_event.is_set())
+            except Exception as exc:
+                self._stop_unexpected_idle_motion(
+                    f"Paused-queue supervision requires Stop: {exc}")
+            return
+        if (self.operation_lock.locked()
                 or self.machine.state not in ("READY", "HOLDING")):
             return
         try:

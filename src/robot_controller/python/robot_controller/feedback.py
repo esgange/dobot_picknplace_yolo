@@ -91,7 +91,7 @@ class FeedbackMonitor:
                                 feed["ErrorStatus"], feed["CollisionStates"]))
             self._condition.notify_all()
 
-    def snapshot(self, *, require_enabled=False):
+    def snapshot(self, *, require_enabled=False, allow_paused=False):
         with self._condition:
             joints, status, feedback = self._joints, self._status, self._feed
             sequence, progress = self._sequence, self._controller_progress_at
@@ -109,7 +109,7 @@ class FeedbackMonitor:
                 or progress is None or now - progress > FEEDBACK_MAX_AGE_SEC):
             raise FeedbackFailure("Canonical robot connection/feedback is unavailable or stale")
         if require_enabled:
-            blockers = enabled_blockers(feed, status_enabled)
+            blockers = enabled_blockers(feed, status_enabled, allow_paused=allow_paused)
             if blockers:
                 raise FeedbackFailure("Robot readiness blocked: " + "; ".join(blockers))
         return FeedbackSnapshot(feed, values, connected, status_enabled, sequence, feed_received)
@@ -122,8 +122,9 @@ class FeedbackMonitor:
         values = [sample[1:] for sample in samples]
         return values[0] if all(value == values[0] for value in values) else None
 
-    def wait(self, predicate, timeout, *, cancel=None, require_enabled=False,
-             stable_sec=0.0, description="feedback condition"):
+    def wait(self, predicate, timeout, *, cancel=None, pause=None,
+             require_enabled=False, allow_paused=False, stable_sec=0.0,
+             description="feedback condition"):
         deadline = self._monotonic() + timeout
         stable_since = None
         observed = self.sequence
@@ -131,8 +132,21 @@ class FeedbackMonitor:
         while True:
             if cancel is not None and cancel():
                 raise OperationCanceled("Controller operation cancelled")
+            if pause is not None and pause():
+                paused_at = self._monotonic()
+                while pause():
+                    if cancel is not None and cancel():
+                        raise OperationCanceled("Controller operation cancelled")
+                    self.snapshot(require_enabled=True, allow_paused=True)
+                    with self._condition:
+                        self._condition.wait(0.05)
+                deadline += self._monotonic() - paused_at
+                stable_since = None
+                observed = self.sequence
+                continue
             try:
-                snapshot = self.snapshot(require_enabled=require_enabled)
+                snapshot = self.snapshot(
+                    require_enabled=require_enabled, allow_paused=allow_paused)
                 new_sample = snapshot.sequence != evaluated_sequence
                 matched = bool(predicate(snapshot)) if new_sample or stable_sec == 0 else None
             except FeedbackFailure:
@@ -156,16 +170,30 @@ class FeedbackMonitor:
                     self._condition.wait(min(remaining, 0.1))
                 observed = self._sequence
 
-    def wait_samples(self, predicate, count, timeout, *, cancel=None,
-                     require_enabled=False, description="consistent feedback"):
+    def wait_samples(self, predicate, count, timeout, *, cancel=None, pause=None,
+                     require_enabled=False, allow_paused=False,
+                     description="consistent feedback"):
         deadline = self._monotonic() + timeout
         matched = 0
         observed = self.sequence
         while True:
             if cancel is not None and cancel():
                 raise OperationCanceled("Controller operation cancelled")
+            if pause is not None and pause():
+                paused_at = self._monotonic()
+                while pause():
+                    if cancel is not None and cancel():
+                        raise OperationCanceled("Controller operation cancelled")
+                    self.snapshot(require_enabled=True, allow_paused=True)
+                    with self._condition:
+                        self._condition.wait(0.05)
+                deadline += self._monotonic() - paused_at
+                matched = 0
+                observed = self.sequence
+                continue
             try:
-                snapshot = self.snapshot(require_enabled=require_enabled)
+                snapshot = self.snapshot(
+                    require_enabled=require_enabled, allow_paused=allow_paused)
             except FeedbackFailure:
                 snapshot = None
             with self._condition:
@@ -195,17 +223,21 @@ class FeedbackMonitor:
             return self._sequence
 
 
-def enabled_blockers(feed, status_enabled):
+def enabled_blockers(feed, status_enabled, *, allow_paused=False):
     blockers = []
     if not status_enabled and feed["robot_mode"] not in (7, 8):
         blockers.append("RobotStatus.is_enable=False")
     if feed["EnableStatus"] != 1:
         blockers.append(f"EnableStatus={feed['EnableStatus']} (required 1)")
-    if feed["robot_mode"] not in (5, 7, 8):
-        blockers.append(f"robot_mode={feed['robot_mode']} (expected 5/7/8)")
-    for key in ("ErrorStatus", "CollisionStates", "isPauseCmdFlag"):
+    enabled_modes = (5, 7, 8, 10) if allow_paused else (5, 7, 8)
+    if feed["robot_mode"] not in enabled_modes:
+        expected = "5/7/8/10" if allow_paused else "5/7/8"
+        blockers.append(f"robot_mode={feed['robot_mode']} (expected {expected})")
+    for key in ("ErrorStatus", "CollisionStates"):
         if feed[key]:
             blockers.append(f"{key}={feed[key]}")
+    if feed["isPauseCmdFlag"] and not allow_paused:
+        blockers.append(f"isPauseCmdFlag={feed['isPauseCmdFlag']}")
     for key in ("userCoordinate", "toolCoordinate"):
         if feed[key] != 0:
             blockers.append(f"nonzero user/tool: {key}={feed[key]} (required 0)")

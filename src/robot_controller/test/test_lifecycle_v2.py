@@ -1,8 +1,10 @@
 from types import SimpleNamespace
+import threading
 
 from rclpy.action import GoalResponse
 
 from robot_controller.controller import RobotController
+from robot_controller.gui import ControllerWindow
 from robot_controller.state_machine import ControllerStateMachine
 
 
@@ -81,3 +83,122 @@ def test_stop_does_not_activate_an_unconfigured_or_inactive_controller():
 def test_manual_cold_di1_resolution_is_observed_only_by_explicit_stop():
     assert finish_stop("HELD_UNKNOWN", di1=True)[0].state == "HELD_UNKNOWN"
     assert finish_stop("HELD_UNKNOWN", di1=False)[0].state == "RECOVERY_REQUIRED"
+
+
+class EventLog:
+    def record(self, *_args, **_kwargs):
+        pass
+
+
+class PauseHardware:
+    def __init__(self, sample):
+        self.sample = sample
+        self.calls = []
+
+    def pause_queue(self):
+        self.calls.append("Pause")
+        return self.sample
+
+    def continue_queue(self):
+        self.calls.append("Continue")
+        return self.sample
+
+
+def pause_node(state="PICKING"):
+    machine = ControllerStateMachine(initial=state)
+    sample = SimpleNamespace(robot_enabled=True, feed={
+        "robot_mode": 10, "EnableStatus": 1, "ErrorStatus": 0,
+        "CollisionStates": 0, "isPauseCmdFlag": 1,
+        "digital_input_bits": 0, "digital_outputs": 0,
+        "userCoordinate": 0, "toolCoordinate": 0,
+    })
+    node = SimpleNamespace(
+        startup_complete=True, machine=machine, operation_lock=threading.Lock(),
+        active_action="pick" if state == "PICKING" else "",
+        phase="MOTION", waypoint="p1_pick", pause_guard=threading.Lock(),
+        pause_event=threading.Event(), continue_event=threading.Event(),
+        paused_context=None,
+        hardware=PauseHardware(sample), monitor=SimpleNamespace(
+            snapshot=lambda **_kwargs: sample), holding_item=False,
+        expected_outputs={}, events=EventLog())
+    node._transition = lambda target, message: machine.transition(target, message)
+    node.raise_if_cancelled = lambda: None
+    node._validate_pause_integrity = lambda value, **_kwargs: value
+    node._contain_queue_control_failure = lambda *_args: None
+    return node
+
+
+def test_pause_preserves_action_context_and_continue_restores_it():
+    node = pause_node()
+    response = SimpleNamespace(success=False, message="", state="")
+    RobotController._pause(node, None, response)
+    assert response.success and response.state == "PAUSED"
+    assert node.pause_event.is_set()
+    assert node.paused_context["state"] == "PICKING"
+    RobotController._continue(node, None, response)
+    assert response.success and response.state == "PICKING"
+    assert not node.pause_event.is_set()
+    assert node.hardware.calls == ["Pause", "Continue"]
+
+
+def test_stop_after_pause_is_direct_and_enters_recovery():
+    snapshot, startup = finish_stop("PAUSED")
+    assert snapshot.state == "RECOVERY_REQUIRED"
+    assert not startup
+    assert finish_stop("PAUSED", di1=True)[0].state == "HELD_UNKNOWN"
+
+
+class Button:
+    def __init__(self):
+        self.text = ""
+
+    def setText(self, value):
+        self.text = value
+
+
+def test_gui_second_pause_click_queues_stop_without_overlapping_pause():
+    commands = []
+    window = SimpleNamespace(
+        node=SimpleNamespace(status=SimpleNamespace(state="PICKING")), pending={},
+        pause_requested_locally=False, stop_after_pause=False, stop=Button(),
+        _command=lambda name: commands.append(name) or True,
+        _immediate_stop=lambda: commands.append("stop"))
+    ControllerWindow._pause_or_stop(window)
+    ControllerWindow._pause_or_stop(window)
+    assert commands == ["pause"]
+    assert window.stop_after_pause
+    assert window.stop.text == "STOP QUEUED"
+
+
+def test_gui_nonpausable_state_calls_stop_directly_and_paused_start_continues():
+    commands = []
+    window = SimpleNamespace(
+        node=SimpleNamespace(status=SimpleNamespace(state="FAULT")), pending={},
+        pause_requested_locally=False, stop_after_pause=False, stop=Button(),
+        _command=lambda name: commands.append(name) or True,
+        _immediate_stop=lambda: commands.append("stop"))
+    ControllerWindow._pause_or_stop(window)
+    window.node.status.state = "PAUSED"
+    ControllerWindow._start_or_continue(window)
+    assert commands == ["stop", "continue"]
+
+
+def test_gui_queued_stop_dispatches_only_after_pause_response():
+    class Future:
+        @staticmethod
+        def done():
+            return True
+
+        @staticmethod
+        def result():
+            return SimpleNamespace(success=True, message="paused")
+
+    calls = []
+    window = SimpleNamespace(
+        pending={"pause": Future()}, pending_goal=None, result_future=None,
+        pause_requested_locally=True, stop_after_pause=True,
+        _immediate_stop=lambda: calls.append("stop"))
+    ControllerWindow._collect(window)
+    assert calls == ["stop"]
+    assert not window.pause_requested_locally
+    assert not window.stop_after_pause

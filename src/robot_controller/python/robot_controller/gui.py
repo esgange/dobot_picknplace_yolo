@@ -1,6 +1,7 @@
 """Qt client for Robot Controller v2; contains no Dobot command clients."""
 
 import os
+import signal
 import sys
 import threading
 
@@ -9,6 +10,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
 
 from item_perception_yolo.platform_teach_core import workspace_root
 from robot_controller_interfaces.action import GoHome, PickItem
@@ -32,6 +34,8 @@ class GuiNode(rclpy.node.Node):
             "configure": self.create_client(Configure, "/robot_controller/configure"),
             "startup": self.create_client(Command, "/robot_controller/startup"),
             "recover": self.create_client(Command, "/robot_controller/recover"),
+            "pause": self.create_client(Command, "/robot_controller/pause"),
+            "continue": self.create_client(Command, "/robot_controller/continue"),
             "stop": self.create_client(Command, "/robot_controller/stop"),
             "speed": self.create_client(
                 SetGlobalSpeed, "/robot_controller/set_global_speed"),
@@ -56,6 +60,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.result_future = None
         self.feedback_message = ""
         self.saved_selection = None
+        self.pause_requested_locally = False
+        self.stop_after_pause = False
         self.setWindowTitle("Robot Controller v2")
         self.resize(1050, 570)
         central = QtWidgets.QWidget()
@@ -89,14 +95,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.configure)
 
         lifecycle = QtWidgets.QHBoxLayout()
-        self.startup = QtWidgets.QPushButton("Startup")
+        self.startup = QtWidgets.QPushButton("START")
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
-        self.stop = QtWidgets.QPushButton("STOP")
-        self.stop.setStyleSheet(
-            "background:#b51f24;color:white;font-weight:800;font-size:18px")
-        self.startup.clicked.connect(lambda: self._command("startup"))
+        self.stop = QtWidgets.QPushButton("PAUSE")
+        self.startup.clicked.connect(self._start_or_continue)
         self.recover.clicked.connect(lambda: self._command("recover"))
-        self.stop.clicked.connect(self._stop)
+        self.stop.clicked.connect(self._pause_or_stop)
         for button in (self.startup, self.recover, self.stop):
             button.setMinimumHeight(58)
             lifecycle.addWidget(button)
@@ -140,9 +144,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "background:#202a35;color:white;padding:14px;font-size:16px")
         layout.addWidget(self.status)
         note = QtWidgets.QLabel(
-            "Launching never enables or moves the robot. Startup is explicit. "
-            "Stop and native cancellation preserve suction/finger outputs, discard motion, "
-            "and require Recover. Preview is TF-only and cannot command Dobot.")
+            "Launching never enables or moves the robot. Start is explicit. Pause preserves "
+            "the queued operation; Continue resumes it. The next Pause/Stop press issues "
+            "Stop, preserves gripper outputs, discards queued motion, and requires Recover. "
+            "External callers may invoke Stop directly. Preview is TF-only and cannot "
+            "command Dobot.")
         note.setWordWrap(True)
         layout.addWidget(note)
         layout.addStretch()
@@ -171,13 +177,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _call(self, name, request):
         if name in self.pending:
-            return
+            return False
         client = self.node.service_clients[name]
         if not client.service_is_ready():
             QtWidgets.QMessageBox.warning(
                 self, "Unavailable", f"{client.srv_name} is unavailable")
-            return
+            return False
         self.pending[name] = client.call_async(request)
+        return True
 
     def _configure(self):
         request = Configure.Request()
@@ -187,12 +194,31 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._call("configure", request)
 
     def _command(self, name):
-        self._call(name, Command.Request())
+        return self._call(name, Command.Request())
 
-    def _stop(self):
+    def _start_or_continue(self):
+        state = self.node.status
+        operation = "continue" if state is not None and state.state == "PAUSED" else "startup"
+        self._command(operation)
+
+    def _immediate_stop(self):
         if self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
         self._command("stop")
+
+    def _pause_or_stop(self):
+        state = self.node.status
+        current = state.state if state is not None else "UNREACHABLE"
+        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING")
+        if self.pause_requested_locally or "pause" in self.pending:
+            self.stop_after_pause = True
+            self.stop.setText("STOP QUEUED")
+        elif pausable:
+            self.pause_requested_locally = True
+            if not self._command("pause"):
+                self.pause_requested_locally = False
+        else:
+            self._immediate_stop()
 
     def _preview(self, operation):
         request = Preview.Request()
@@ -248,6 +274,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     self.speed_slider.setValue(result.confirmed_percent)
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(self, f"{name} failed", str(exc))
+            finally:
+                if name == "pause":
+                    self.pause_requested_locally = False
+                    if self.stop_after_pause:
+                        self.stop_after_pause = False
+                        self._immediate_stop()
         if self.pending_goal is not None and self.pending_goal.done():
             try:
                 handle = self.pending_goal.result()
@@ -281,10 +313,32 @@ class ControllerWindow(QtWidgets.QMainWindow):
         current = state.state if state else "UNREACHABLE"
         self.configure.setEnabled(reachable and current in ("UNCONFIGURED", "INACTIVE")
                                   and not active)
-        self.startup.setEnabled(reachable and current == "INACTIVE" and not active)
+        pause_pending = self.pause_requested_locally or "pause" in self.pending
+        paused = current == "PAUSED" or pause_pending
+        self.startup.setText("CONTINUE" if paused else "START")
+        self.startup.setEnabled(
+            reachable and ((current == "INACTIVE" and not active)
+                           or (current == "PAUSED" and "continue" not in self.pending
+                               and "stop" not in self.pending)))
         self.recover.setEnabled(reachable and current in ("FAULT", "RECOVERY_REQUIRED")
                                 and not active)
-        self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
+        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING")
+        if self.stop_after_pause:
+            self.stop.setText("STOP QUEUED")
+        elif paused:
+            self.stop.setText("STOP")
+        elif pausable:
+            self.stop.setText("PAUSE")
+        else:
+            self.stop.setText("STOP")
+        if self.stop.text() == "PAUSE":
+            self.stop.setStyleSheet(
+                "background:#d18b00;color:white;font-weight:800;font-size:18px")
+            self.stop.setEnabled(self.node.service_clients["pause"].service_is_ready())
+        else:
+            self.stop.setStyleSheet(
+                "background:#b51f24;color:white;font-weight:800;font-size:18px")
+            self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
         self.hardware_home.setEnabled(reachable and current in ("READY", "HOLDING")
                                       and not active)
         self.hardware_pick.setEnabled(reachable and current == "READY" and not active)
@@ -312,21 +366,35 @@ def main(args=None):
     if os.environ.get("ROS_LOCALHOST_ONLY") != "1":
         raise RuntimeError(
             "Source scripts/source_ros_workspace.bash; ROS_LOCALHOST_ONLY=1 required")
-    rclpy.init(args=args)
-    node = GuiNode()
-    executor = MultiThreadedExecutor(num_threads=2)
-    executor.add_node(node)
-    thread = threading.Thread(target=executor.spin, daemon=True)
-    thread.start()
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    window = ControllerWindow(node)
-    window.show()
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    previous = {
+        number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+    for number in previous:
+        signal.signal(number, lambda _number, _frame: app.quit())
+    node = executor = thread = window = None
+    code = 1
     try:
+        node = GuiNode()
+        executor = MultiThreadedExecutor(num_threads=2)
+        executor.add_node(node)
+        thread = threading.Thread(target=executor.spin, daemon=True)
+        thread.start()
+        window = ControllerWindow(node)
+        window.show()
         code = app.exec_()
     finally:
-        executor.shutdown(timeout_sec=2.0)
-        thread.join(timeout=2.0)
-        node.destroy_node()
+        if window is not None:
+            window.timer.stop()
+            window.close()
+        if executor is not None:
+            executor.shutdown(timeout_sec=2.0)
+        if thread is not None:
+            thread.join(timeout=2.0)
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+        for number, handler in previous.items():
+            signal.signal(number, handler)
     raise SystemExit(code)
