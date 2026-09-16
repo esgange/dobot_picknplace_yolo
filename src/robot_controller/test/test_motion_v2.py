@@ -6,7 +6,8 @@ import pytest
 from item_perception_yolo.pick_planning import select_pick_attitude
 from robot_controller.hardware import (
     CARTESIAN_POSITION_TOLERANCE_M, COMMAND_RESPONSE_TIMEOUT_SEC,
-    HOME_JOINT_TOLERANCE_RAD, MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
+    HOME_JOINT_TOLERANCE_RAD, MIN_MOTION_DISPATCH_INTERVAL_SEC,
+    MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
     OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC,
     robot_values)
 from robot_controller.motion import (
@@ -46,6 +47,7 @@ def settings(*, use_grip=True, close_on_pick=True):
 def test_timing_and_arrival_policy_constants():
     assert SERVICE_DISCOVERY_TIMEOUT_SEC == OUTPUT_FEEDBACK_TIMEOUT_SEC == 5.0
     assert COMMAND_RESPONSE_TIMEOUT_SEC == 2.0
+    assert MIN_MOTION_DISPATCH_INTERVAL_SEC == pytest.approx(0.05)
     assert READY_STABLE_SEC == 0.2
     assert MOTION_NO_PROGRESS_SEC == 3.0
     assert MOTION_HARD_CAP_SEC == 300.0

@@ -108,7 +108,9 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
                      "motion_batch_completed"]
 
 
-def test_motion_group_dispatches_all_requests_before_waiting_for_replies():
+def test_motion_group_dispatches_all_requests_before_waiting_for_replies(monkeypatch):
+    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
+
     class DeferredFuture:
         def __init__(self):
             self.completed = False
@@ -190,6 +192,8 @@ def test_motion_group_dispatches_all_requests_before_waiting_for_replies():
 
 
 def test_motion_group_timeout_stops_and_each_late_reply_is_contained(monkeypatch):
+    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
+
     class DeferredFuture:
         def __init__(self):
             self.callbacks = []
@@ -266,7 +270,9 @@ def test_motion_group_timeout_stops_and_each_late_reply_is_contained(monkeypatch
     assert len(late_stops) == 2
 
 
-def test_motion_group_rejection_stops_only_after_complete_group_dispatch():
+def test_motion_group_rejection_stops_only_after_complete_group_dispatch(monkeypatch):
+    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
+
     class ImmediateFuture:
         def __init__(self, result):
             self.response = SimpleNamespace(res=result)
@@ -328,6 +334,52 @@ def test_motion_group_rejection_stops_only_after_complete_group_dispatch():
     assert stops == ["motion-group acknowledgement failure"]
     assert [audit["outcome"] for audit in audits] == ["accepted", "rejected"]
     assert transport.pending_group is None
+
+
+def test_motion_group_dispatches_are_separated_by_at_least_fifty_ms(monkeypatch):
+    class ImmediateFuture:
+        def done(self):
+            return True
+
+        def result(self):
+            return SimpleNamespace(res=0)
+
+        def add_done_callback(self, callback):
+            callback(self)
+
+    clock = [0.0]
+    sent_at = []
+
+    def wait_control(seconds):
+        clock[0] += seconds
+
+    client = SimpleNamespace(
+        service_is_ready=lambda: True,
+        call_async=lambda _request: sent_at.append(clock[0]) or ImmediateFuture())
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.clients = {"MovL": client}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: False, wait_control=wait_control)
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport.suction_interrupted = False
+    transport.request_stop = lambda _reason: pytest.fail("Stop was not expected")
+    transport._begin_service_audit = lambda name, fields: {
+        "name": name, "fields": fields, "started": clock[0]}
+    transport._finish_service_audit = lambda audit, outcome, **_fields: audit.update(
+        outcome=outcome)
+    monkeypatch.setattr(
+        hardware_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    transport.call_group(tuple(("MovL", {"a": float(index)}) for index in range(3)))
+
+    assert sent_at == pytest.approx([0.0, 0.05, 0.10])
+    assert all(later - earlier >= 0.05 - 1e-12
+               for earlier, later in zip(sent_at, sent_at[1:]))
 
 
 def snapshot(*, di1=False, outputs=0, joints=None):
@@ -467,6 +519,52 @@ def test_stop_confirmation_accepts_a_latched_pause_after_queue_is_empty():
     transport.moving = True
     transport.confirm_stop(CompletedFuture())
     assert not transport.moving
+
+
+def test_stop_confirmation_accepts_commanded_finger_transition_during_return():
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(
+        holding_item=True,
+        expected_outputs={2: False, 13: True, 14: True},
+        events=EventLog(), wait_control=lambda _seconds: None)
+    transport.pending_motion_outputs = {2: True, 14: False}
+    stopped = snapshot(
+        di1=True, outputs=(1 << (2 - 1)) | (1 << (13 - 1)))
+    stopped.feed["tool_vector_actual"] = [0.0] * 6
+    transport.monitor = StopMonitor(stopped)
+    transport.moving = True
+
+    transport.confirm_stop(CompletedFuture())
+
+    assert transport.node.expected_outputs == {2: True, 13: True, 14: False}
+    assert transport.pending_motion_outputs == {}
+    assert not transport.moving
+
+
+def test_held_motion_monitor_adopts_only_commanded_finger_transition():
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(
+        expected_outputs={2: False, 13: True, 14: True})
+    transport.suction_interrupted = False
+    transitioned = snapshot(
+        di1=True, outputs=(1 << (2 - 1)) | (1 << (13 - 1)))
+
+    transport._monitor_motion_policy(
+        transitioned, require_suction=True, forbid_suction=False,
+        stop_on_suction=False, before_suction=None,
+        planned_outputs={2: True, 14: False})
+
+    assert transport.node.expected_outputs == {2: True, 13: True, 14: False}
+
+    transport.node.expected_outputs[1] = False
+    changed_without_command = snapshot(
+        di1=True,
+        outputs=(1 << (1 - 1)) | (1 << (2 - 1)) | (1 << (13 - 1)))
+    with pytest.raises(FeedbackFailure, match="Held-item output DO1 changed"):
+        transport._monitor_motion_policy(
+            changed_without_command, require_suction=True, forbid_suction=False,
+            stop_on_suction=False, before_suction=None,
+            planned_outputs={2: True, 14: False})
 
 
 class SensorMonitor:

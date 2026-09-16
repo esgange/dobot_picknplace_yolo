@@ -287,13 +287,18 @@ return batch's sole terminal position check. Early DI1 still invokes
 the established Stop-and-confirm path before return planning.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are dispatched
-in target order without waiting between requests. After the complete group has
+in target order with at least 50 ms between adjacent sends, without waiting for
+individual replies. After the complete group has
 been sent, the controller validates every ROS response and requires `res=0` for
 the entire group before continuing terminal feedback verification. A response
 error, rejection, cancellation, or two-second group deadline invokes independent
 Stop containment; an outstanding late response remains contained by another
 Stop. Batch start, every dispatch/response, complete group admission,
 interruption and terminal completion are recorded with the batch name.
+The independent Stop path bypasses this pacing. During a held-item return, a
+timed DO2/DO14 transition requested by MovLIO is accepted only as the exact
+old-to-commanded state change and becomes the new expected state when observed;
+uncommanded output changes, lost DI1/DO13, and wrong terminal states still fail.
 
 Motion requests carry only `user=0`, `tool=0`, and their taught `v`/`a` rates;
 they never carry a per-command `cp` or `r`. The global `CP(100)` established by

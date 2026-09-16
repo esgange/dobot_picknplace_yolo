@@ -17,6 +17,7 @@ from .motion import pose_reached
 
 SERVICE_DISCOVERY_TIMEOUT_SEC = 5.0
 COMMAND_RESPONSE_TIMEOUT_SEC = 2.0
+MIN_MOTION_DISPATCH_INTERVAL_SEC = 0.050
 OUTPUT_FEEDBACK_TIMEOUT_SEC = 5.0
 MODE_TRANSITION_TIMEOUT_SEC = 2.0
 READY_STABLE_SEC = 0.2
@@ -75,6 +76,7 @@ class DobotTransport:
         self.service_audit_sequence = 0
         self.pending_response = None
         self.pending_group = None
+        self.pending_motion_outputs = {}
         self.stop_future = None
         self.stop_audit = None
         self.moving = False
@@ -327,8 +329,20 @@ class DobotTransport:
             self.pending_response = None
             group = []
             self.pending_group = group
+            last_dispatch = None
             try:
                 for name, fields in calls:
+                    if last_dispatch is not None:
+                        earliest = last_dispatch + MIN_MOTION_DISPATCH_INTERVAL_SEC
+                        while time.monotonic() < earliest:
+                            if self.node.cancel_requested():
+                                raise OperationCanceled(
+                                    "Cancelled while spacing motion-group dispatches")
+                            snapshot = self.monitor.snapshot(require_enabled=False)
+                            if progress is not None:
+                                progress(snapshot)
+                            self.node.wait_control(min(
+                                0.01, max(0.0, earliest - time.monotonic())))
                     audit = self._begin_service_audit(name, fields)
                     try:
                         future = self.clients[name].call_async(
@@ -337,6 +351,7 @@ class DobotTransport:
                         self._finish_service_audit(
                             audit, "dispatch_error", detail=str(exc), level="ERROR")
                         raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
+                    last_dispatch = time.monotonic()
                     group.append((name, future, audit))
                     future.add_done_callback(
                         lambda done, service=name, record=audit: self._pending_completed(
@@ -490,16 +505,20 @@ class DobotTransport:
         self._finish_service_audit(audit, "accepted", result=result)
         anchor = None
         held_violation = None
+        last_snapshot = None
+        planned_outputs = dict(getattr(self, "pending_motion_outputs", {}))
 
         def stationary(snapshot):
-            nonlocal anchor, held_violation
+            nonlocal anchor, held_violation, last_snapshot
+            last_snapshot = snapshot
             feed = snapshot.feed
             if self.node.holding_item:
                 if not feed["digital_input_bits"] & 1:
                     held_violation = "DI1 suction feedback was lost during Stop"
                 for channel, active in self.node.expected_outputs.items():
                     actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
-                    if actual != active:
+                    planned = planned_outputs.get(channel, active)
+                    if actual not in (active, planned):
                         held_violation = (
                             f"DO{channel} changed during Stop; expected {int(active)}")
             pose = np.asarray(feed["tool_vector_actual"], dtype=float)
@@ -518,6 +537,14 @@ class DobotTransport:
             raise StopUnconfirmed(
                 "Stop completed but held-item integrity was not preserved: "
                 + held_violation)
+        if last_snapshot is not None:
+            outputs = last_snapshot.feed["digital_outputs"]
+            for channel, planned in planned_outputs.items():
+                current = self.node.expected_outputs.get(channel, planned)
+                actual = bool(outputs & (1 << (channel - 1)))
+                if actual in (current, planned):
+                    self.node.expected_outputs[channel] = actual
+        self.pending_motion_outputs = {}
         self.node.events.record("INFO", "stop_confirmed",
                                 "Stop acknowledged; stationary empty queue confirmed")
 
@@ -900,10 +927,14 @@ class DobotTransport:
         return True
 
     def _monitor_motion_policy(self, snapshot, *, require_suction, forbid_suction,
-                               stop_on_suction, before_suction):
+                               stop_on_suction, before_suction, planned_outputs):
         feed = snapshot.feed
         detected = bool(feed["digital_input_bits"] & 1)
         vacuum = bool(feed["digital_outputs"] & (1 << 12))
+        for channel, planned in planned_outputs.items():
+            actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
+            if actual == planned:
+                self.node.expected_outputs[channel] = planned
         if require_suction and not detected:
             raise FeedbackFailure("Suction lost during retract/Home")
         if require_suction:
@@ -953,6 +984,7 @@ class DobotTransport:
         self.suction_stop_future = None
         initial = self._ready_snapshot()
         before_sequence = initial.sequence
+        self.pending_motion_outputs = dict(expected_outputs)
         self.moving = True
         started = time.monotonic()
         last_progress = started
@@ -966,7 +998,8 @@ class DobotTransport:
         def progress(snapshot):
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
-                stop_on_suction=stop_on_suction, before_suction=before_suction)
+                stop_on_suction=stop_on_suction, before_suction=before_suction,
+                planned_outputs=expected_outputs)
 
         def finish_suction_interrupt():
             self.node.events.record(
@@ -1074,6 +1107,7 @@ class DobotTransport:
                     pause=self._pause_requested, require_enabled=True,
                     description="motion-timed output feedback")
                 self.node.expected_outputs.update(expected_outputs)
+            self.pending_motion_outputs = {}
             self.node.events.record(
                 "INFO", "motion_batch_completed", batch_name,
                 batch=batch_name, terminal_target=tail.name,

@@ -3701,6 +3701,33 @@ Never use a floating “latest” version in an issue, script, or deployment not
   all packages. `git diff --check` passes. No bringup, detector request, camera
   process or physical robot command was launched.
 
+### 2026-09-16 — Pace grouped motion dispatch and track timed outputs
+
+- Rule 86 refines rule 85: send adjacent `MovL`, `MovLIO`, and `RelMovLUser`
+  requests in a named group at least 50 ms apart using monotonic time, while
+  still dispatching the complete group before waiting for replies. Independent
+  Stop remains immediate and bypasses this pacing; non-motion commands retain
+  strict response serialization.
+- Runtime service evidence showed the prior complete-group implementation sent
+  adjacent requests only one to three milliseconds apart. The 50 ms lower bound
+  is now explicit, cancellation-aware and continues feedback/suction monitoring
+  during each short inter-dispatch interval.
+- The same evidence exposed a false held-item fault. A successful pick with
+  `use_grip=true` and `grip_onpick=false` correctly commanded DO14 OFF and DO2 ON
+  at 100% of retract, but held-item monitoring still compared feedback with the
+  pre-retract finger state. The controller now records pending timed outputs,
+  accepts only the previously confirmed or exact commanded state during the
+  transition, commits the commanded state when observed, and reconciles that
+  legal observed state if Stop interrupts the group. DI1/DO13 loss, uncommanded
+  channels and wrong final output feedback remain failures.
+- Verification was source/synthetic only. All 128 direct Robot Controller tests
+  and 129 package-reported tests pass, including exact 0/50/100 ms dispatch
+  times, the planned DO2/DO14 return transition, rejection of an uncommanded DO1
+  change, and the existing Stop/late-response cases. Python compilation and all
+  20 controller/test files pass `ament_flake8`; the package build and complete
+  15-package workspace build pass. No bringup, detector request, camera process
+  or physical robot command was launched.
+
 ### Future entry template
 
 ```text

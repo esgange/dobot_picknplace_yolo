@@ -133,10 +133,15 @@ pick-to-retry queue containing only retract and clearance, then proceeds directl
 to the next candidate from that attitude. Success or final exhaustion uses a
 pick-to-Home queue containing retract, clearance, optional Home-Z rise and exact
 joint Home; only exact Home is checked. Intermediate waypoint arrivals are never
-awaited. All service requests in one named motion group are dispatched first;
+awaited. All service requests in one named motion group are dispatched first,
+with at least 50 ms between adjacent motion-service sends;
 the controller then requires every group response to return `res=0` before it
 accepts the group and continues terminal feedback verification. A rejection,
 response error, or two-second group timeout invokes independent Stop containment.
+The independent Stop path is never delayed by group pacing. Planned timed DO
+changes are tracked as commanded transitions, so finger movement requested by
+MovLIO is not mistaken for an external output change while held-item integrity
+monitoring remains active.
 
 Home arrival means every actual joint is within ±1° of its taught value for
 300 ms with enabled, fault-free, stationary, empty-queue feedback. Cartesian
