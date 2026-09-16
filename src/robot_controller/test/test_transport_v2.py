@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from robot_controller.errors import FeedbackFailure, HeldUnknown
-from robot_controller.hardware import DobotTransport
+from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
 
 
 class EventLog:
@@ -14,13 +14,16 @@ class EventLog:
         self.entries.append((_args, _kwargs))
 
 
-def snapshot(*, di1=False, outputs=0):
-    return SimpleNamespace(robot_enabled=True, feed={
-        "digital_input_bits": int(di1), "digital_outputs": outputs,
-        "robot_mode": 5, "EnableStatus": 1, "isRunQueuedCmd": 0,
-        "RunningStatus": 0, "ErrorStatus": 0, "CollisionStates": 0,
-        "isPauseCmdFlag": 0, "userCoordinate": 0, "toolCoordinate": 0,
-    })
+def snapshot(*, di1=False, outputs=0, joints=None):
+    return SimpleNamespace(
+        robot_enabled=True,
+        joints=tuple([0.0] * 6 if joints is None else joints),
+        feed={
+            "digital_input_bits": int(di1), "digital_outputs": outputs,
+            "robot_mode": 5, "EnableStatus": 1, "isRunQueuedCmd": 0,
+            "RunningStatus": 0, "ErrorStatus": 0, "CollisionStates": 0,
+            "isPauseCmdFlag": 0, "userCoordinate": 0, "toolCoordinate": 0,
+        })
 
 
 def test_cold_di1_is_held_unknown_and_preserves_output_context():
@@ -197,3 +200,46 @@ def test_service_audit_records_exact_send_and_terminal_response():
     assert sent["endpoint"] == "/dobot_bringup_ros2/srv/SpeedFactor"
     assert response["response_res"] == 0
     assert response["robot_return"] == "{}"
+
+
+class HomeReachedMonitor:
+    def __init__(self, sample):
+        self.sample = sample
+        self.wait_calls = 0
+
+    def snapshot(self, **_kwargs):
+        return self.sample
+
+    def wait(self, predicate, _timeout, **kwargs):
+        self.wait_calls += 1
+        assert kwargs["stable_sec"] == pytest.approx(0.3)
+        assert predicate(self.sample)
+        return self.sample
+
+
+def home_reached_transport(sample):
+    transport = object.__new__(DobotTransport)
+    transport.monitor = HomeReachedMonitor(sample)
+    transport.node = SimpleNamespace(
+        holding_item=False, expected_outputs={}, cancel_requested=lambda: False)
+    return transport
+
+
+def test_existing_home_uses_same_one_degree_stable_completion_gate():
+    transport = home_reached_transport(
+        snapshot(joints=[HOME_JOINT_TOLERANCE_RAD] * 6))
+    assert transport.home_already_reached((0.0,) * 6)
+    assert transport.monitor.wait_calls == 1
+
+    transport = home_reached_transport(
+        snapshot(joints=[1.01 * HOME_JOINT_TOLERANCE_RAD] * 6))
+    assert not transport.home_already_reached((0.0,) * 6)
+    assert transport.monitor.wait_calls == 0
+
+
+def test_existing_home_skip_requires_idle_empty_queue():
+    sample = snapshot(joints=[0.0] * 6)
+    sample.feed["isRunQueuedCmd"] = 1
+    transport = home_reached_transport(sample)
+    assert not transport.home_already_reached((0.0,) * 6)
+    assert transport.monitor.wait_calls == 0

@@ -198,6 +198,16 @@ branch: below taught Home Z, `RelMovLUser` first rises at current XY/attitude;
 at/above it, that segment is skipped. Exact taught Home joints are then sent via
 joint-mode `MovL`. Holding Home preserves and monitors suction.
 
+Before that planning, an initial Home with no preceding queued targets checks
+the normal completion gate directly: all six fresh actual joints within ±1° of
+the taught tuple for 300 ms, idle mode 5, mode-derived RobotStatus enabled,
+`EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not running,
+and held-item I/O intact where applicable. If already complete, Hardware Home
+and Pick's initial shared Home report `motion skipped` and issue no GetPose,
+RelMovLUser, MovL, or MovLIO. If outside tolerance, the existing Home planner
+runs unchanged. Return queues after pick motion always append exact Home because
+their preceding retract path is not complete when planned.
+
 Pick is permitted only from `READY` with DI1 clear:
 
 1. run the same Home function;
@@ -222,6 +232,11 @@ Service acknowledgement is acceptance only; actual
 feedback confirms every result. Only coherent missed suction advances to the
 next candidate. All command, feedback, state, cancellation, and result events
 are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.
+
+Joint Home completion uses ±1° independently on every joint. Cartesian target
+completion uses 5 mm Euclidean translation and 1° orientation. Both require 300
+ms of coherent enabled, idle, queue-empty feedback; Home remains joint-only and
+does not additionally compare Cartesian FK/GetPose.
 
 Software tests use synthetic services/feedback and must never commission
 physical motion. Real commissioning requires separate explicit authorization,

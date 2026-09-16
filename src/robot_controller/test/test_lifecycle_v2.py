@@ -273,6 +273,50 @@ def test_ros_operator_log_queue_is_locked_bounded_and_ordered():
     assert GuiNode.take_operator_logs(node) == ()
 
 
+def test_shared_initial_home_skips_all_motion_when_joint_gate_is_already_met():
+    calls = []
+    hardware = SimpleNamespace(
+        home_already_reached=lambda joints: calls.append(("check", joints)) or True,
+        move_batch=lambda *_args, **_kwargs: calls.append(("move",)))
+    node = SimpleNamespace(
+        hardware=hardware, holding_item=False,
+        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda holding: calls.append(("preflight", holding)),
+        _home_plan=lambda _preceding: calls.append(("plan",)) or (),
+        operation_progress=lambda phase, message, **fields: calls.append(
+            ("progress", phase, message, fields)))
+
+    assert RobotController._execute_home(node) == ()
+    assert calls[0] == ("preflight", False)
+    assert calls[1] == ("check", (0.1,) * 6)
+    assert not any(entry[0] in ("plan", "move") for entry in calls)
+    assert "motion skipped" in calls[-1][2]
+
+
+def test_queued_pick_return_never_uses_current_home_skip():
+    calls = []
+    hardware = SimpleNamespace(
+        home_already_reached=lambda _joints: calls.append(("unexpected_check",)),
+        move_batch=lambda targets, **kwargs: calls.append(("move", targets, kwargs)))
+    node = SimpleNamespace(
+        hardware=hardware, holding_item=False,
+        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda holding: calls.append(("preflight", holding)),
+        _home_plan=lambda preceding: calls.append(("plan", preceding)) or ("home",),
+        operation_progress=lambda phase, message, **fields: calls.append(
+            ("progress", phase, message, fields)))
+
+    preceding = ("retract",)
+    assert RobotController._execute_home(
+        node, preceding=preceding, require_suction=False,
+        forbid_suction=True) == ("home",)
+    assert not any(entry[0] == "unexpected_check" for entry in calls)
+    assert ("plan", preceding) in calls
+    assert any(entry[0] == "move" for entry in calls)
+
+
 def test_gui_second_pause_click_queues_stop_without_overlapping_pause():
     commands = []
     window = SimpleNamespace(

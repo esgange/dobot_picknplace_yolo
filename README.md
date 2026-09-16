@@ -99,6 +99,14 @@ by the explicit paused-queue service; the controller never uses InverseKin. See 
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 
+Home arrival means every actual joint is within ±1° of its taught value for
+300 ms with enabled, fault-free, stationary, empty-queue feedback. Cartesian
+waypoints use 5 mm Euclidean translation and 1° orientation with the same final
+feedback gates. Hardware Home and Pick's initial shared-Home step first apply
+that exact joint gate; if the robot is already Home, they log the skip and send
+no GetPose or Home motion. Queued return-to-Home paths after a pick attempt are
+not skipped.
+
 ## Item Teach and controller
 
 In separate terminals after building and sourcing the workspace:

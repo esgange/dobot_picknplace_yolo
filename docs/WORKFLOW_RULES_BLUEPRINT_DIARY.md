@@ -3140,6 +3140,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   startup line from `/robot_controller/operator_log`, and Ctrl+C stopped all
   processes cleanly. `git diff --check` is clean.
 
+### 2026-09-16 — Skip redundant initial Home within completion tolerance
+
+- The operator asked for the existing arrival tolerance to be stated and reused
+  before Home, so Hardware Home and Pick do not send a redundant Home path when
+  the robot is already sufficiently close to taught Home.
+- The established completion limits are unchanged: Home is within one degree on
+  each of six actual joints; Cartesian targets are within 5 mm Euclidean
+  translation and one degree orientation. Both require fresh enabled,
+  fault-free, queue-empty/stationary feedback coherent for 300 ms. Home remains a
+  joint-only completion contract and does not add an FK/GetPose equality test.
+- Rule 70 applies the exact joint Home gate before only the shared initial Home
+  step used by both native actions. A passing gate logs `motion skipped` and
+  bypasses GetPose plus every Home motion service. An outside-tolerance sample
+  follows the unchanged conditional GetPose/vertical-rise/joint-MovL plan.
+  Trusted holding still validates DI1 and all expected outputs throughout.
+- Pick-attempt return Home is deliberately not optimized away: that Home is
+  appended while retract targets are still merely planned, so current feedback
+  cannot prove the future queue endpoint. Those queued returns continue to end
+  at exact taught Home before success or candidate advance.
+- Verification is synthetic/source-only and must cover the inside/outside
+  one-degree boundary, queue-idle requirement, 300 ms coherence, shared
+  Home/Pick skip path and unchanged queued returns, plus compilation, lint,
+  package/root builds, staged review and `git diff --check`. No hardware service
+  or action may be invoked.
+- Verification completed with all 77 focused controller tests passing directly
+  and through the package CTest wrapper (78 reported tests, zero errors,
+  failures or skips). Tests accept the exact one-degree boundary, reject 1.01
+  degrees, require an empty queue and the 300 ms stable gate, prove the shared
+  initial Home sends no plan/move, and prove queued pick returns bypass the skip
+  check. Python compilation and all 21 controller/test files pass ament_flake8;
+  the controller package and complete 15-package workspace build successfully,
+  and `git diff --check` is clean. No hardware was launched or commanded.
+
 ### Future entry template
 
 ```text

@@ -783,6 +783,12 @@ class RobotController(Node):
         holding = self.holding_item if require_suction is None else require_suction
         forbidden = not holding if forbid_suction is None else forbid_suction
         self._preflight_item_state(holding)
+        if (not preceding
+                and self.hardware.home_already_reached(self.configuration.home_joints)):
+            self.operation_progress(
+                "HOME", "Already within ±1° of every taught Home joint; motion skipped",
+                waypoint="home")
+            return ()
         targets = self._home_plan(preceding)
         self.operation_progress("HOME", "Executing shared Home function", waypoint="home")
         self.hardware.move_batch(

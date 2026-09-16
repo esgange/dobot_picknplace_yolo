@@ -697,6 +697,26 @@ class DobotTransport:
             translation_m=CARTESIAN_POSITION_TOLERANCE_M,
             rotation_deg=CARTESIAN_ORIENTATION_TOLERANCE_DEG)
 
+    def home_already_reached(self, joints_rad):
+        """Confirm the normal joint-Home completion gate without commanding motion."""
+        if len(joints_rad) != 6:
+            raise CommandRejected("Home skip check requires six taught joints")
+
+        def reached(snapshot):
+            return (self._idle(snapshot)
+                    and max(abs(actual - expected) for actual, expected in zip(
+                        snapshot.joints, joints_rad)) <= HOME_JOINT_TOLERANCE_RAD)
+
+        initial = self._validate_held_snapshot(self._ready_snapshot())
+        if not reached(initial):
+            return False
+        self.monitor.wait(
+            self._held_predicate(reached), MODE_TRANSITION_TIMEOUT_SEC,
+            cancel=self.node.cancel_requested, pause=self._pause_requested,
+            require_enabled=True, stable_sec=STATIONARY_SEC,
+            description="existing taught Home within one-degree joint tolerance")
+        return True
+
     def _monitor_motion_policy(self, snapshot, *, require_suction, forbid_suction,
                                stop_on_suction, before_suction):
         feed = snapshot.feed
@@ -816,11 +836,8 @@ class DobotTransport:
                 if np.max(np.abs(vector - last_vector)) > 0.05:
                     last_progress, last_vector = now, vector
                 reached = self._target_reached(tail, snapshot)
-                idle = (snapshot.sequence > before_sequence and snapshot.robot_enabled
-                        and reached
-                        and not snapshot.feed["isRunQueuedCmd"]
-                        and not snapshot.feed["RunningStatus"]
-                        and snapshot.feed["robot_mode"] == 5)
+                idle = (snapshot.sequence > before_sequence and reached
+                        and self._idle(snapshot))
                 stable_since = now if idle and stable_since is None else (
                     stable_since if idle else None)
                 if stable_since is not None and now - stable_since >= STATIONARY_SEC:
