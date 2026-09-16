@@ -26,6 +26,7 @@ def window(tmp_path, monkeypatch):
         events=MagicMock(), disarm=MagicMock(), arm=MagicMock(), close_runtime=MagicMock(),
         clear_selected_pose=MagicMock(), show_selected_pose=MagicMock(), clicked_pose=MagicMock(),
         show_simulated_poses=MagicMock(),
+        pick_planning_context=MagicMock(return_value={"synthetic": "planning"}),
         native=SimpleNamespace(failed=False), service=None, yolo_enabled=False,
         preview_source="mask", preview_mode="all", last_view=None, settings=None,
         model_config={"path": str(tmp_path / "model.pt"), "task": "segment"},
@@ -507,6 +508,8 @@ def test_invalid_pickdepth_diameter_pauses_even_with_blank_size_fields(window, b
 def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, outcome):
     for key, value in (("height", "80"), ("width", "32"), ("tolerance", "1")):
         window.inputs[key].setText(value)
+    window.inputs["standoff_height"].setText("90")
+    window.home = {"positions_rad": [0.] * 6}
     window.classes.item(0).setCheckState(gui.QtCore.Qt.Checked)
     window.yolo_toggle.setChecked(True)
     item = {"source_index": 0, "class_id": 1, "class_name": "part", "confidence": .8,
@@ -519,9 +522,11 @@ def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, 
             "sequence": 1, "preview_mode": "all", "metadata": {"detections": [item]}}
     candidate = {"position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.],
                  "filtered_camera_depth": .7, "accepted_depth_count": 100,
-                 "rejected_depth_count": 2}
+                 "rejected_depth_count": 2,
+                 "robot_camera_clearance": {"mirrored": False}}
     result = {"candidate": candidate if outcome in ("valid", "cancel") else None,
               "reason": "insufficient accepted depth samples/fraction",
+              "rgb": bytes(640*480*3),
               "depth_rgb": bytes(640*480*3), "stamp_ns": view["stamp_ns"], "epoch": 1}
     window.node.clicked_pose.return_value = result
     if outcome == "error":
@@ -551,6 +556,7 @@ def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, 
             assert "FROZEN SELECTION" in feedback.text()
             assert "X / height: 80.00 mm" in feedback.text()
             assert "platform_reference XYZ [mm]: +10.00, +20.00, +100.00" in feedback.text()
+            assert "CAM normal" in feedback.text()
         assert "100 accepted / 2 rejected" in window.depth_feedback.text()
         window._select_detection(center)
         assert window.selected_pose_result is None and window.frozen_view is None
@@ -1261,8 +1267,13 @@ def automatic_station_fixture(window, monkeypatch, source_sha="a" * 64):
         camera=SimpleNamespace(path=Path("/selected/camera_to_hand_calibration_test.yaml"),
                                sha256="c" * 64))
     monkeypatch.setattr(gui, "latest_station_calibration", MagicMock(return_value=latest))
+    robot_camera = SimpleNamespace(
+        path=Path("/selected/camera_on_hand_calibration_robot_camera.yaml"),
+        sha256="r" * 64)
+    monkeypatch.setattr(gui, "latest_robot_camera_calibration",
+                        MagicMock(return_value=robot_camera))
 
-    def apply(platform, bin_path, *, expected_station=None):
+    def apply(platform, bin_path, *, expected_station=None, expected_robot_camera=None):
         window.node.applied = SimpleNamespace(
             platform=SimpleNamespace(path=Path(platform), sha256="a" * 64),
             camera=SimpleNamespace(settings=SimpleNamespace(camera_prefix="station_camera")))
@@ -1270,6 +1281,7 @@ def automatic_station_fixture(window, monkeypatch, source_sha="a" * 64):
             path=Path(bin_path), source_platform_calibration_sha256=source_sha,
             source_platform_calibration_filename="platform_calibration_source.yaml")
         window.node.camera_prefix = "station_camera"
+        window.node.robot_camera = expected_robot_camera
         window.node.yolo_enabled = False
     window.node.apply_station = MagicMock(side_effect=apply)
     return station_write, prefix_write
@@ -1287,7 +1299,8 @@ def test_station_files_automatically_enable_roi_when_stream_arrives(window, monk
     window.bin_path.setText("/selected/bin_teach_test.yaml")
     window.node.apply_station.assert_called_once_with(
         "/selected/platform_calibration_test.yaml", "/selected/bin_teach_test.yaml",
-        expected_station=gui.latest_station_calibration.return_value)
+        expected_station=gui.latest_station_calibration.return_value,
+        expected_robot_camera=gui.latest_robot_camera_calibration.return_value)
     assert window.camera_prefix.text() == "station_camera"
     station_write.assert_called_once()
     prefix_write.assert_called_once()
@@ -1432,7 +1445,8 @@ def test_restored_station_files_connect_readonly_preview_without_apply(window, m
         window.node.apply_station.assert_called_once_with(
             "/selected/platform_calibration_test.yaml",
             str(gui.workspace_root() / "offline_teach/bin_teach/bin_teach_saved.yaml"),
-            expected_station=gui.latest_station_calibration.return_value)
+            expected_station=gui.latest_station_calibration.return_value,
+            expected_robot_camera=gui.latest_robot_camera_calibration.return_value)
         assert "saved.yaml" not in restored.platform_path.text()  # Old prefill is not authority.
         assert restored.camera_prefix.text() == "station_camera"
         assert restored.saved_path is None and restored.home is None
@@ -1460,7 +1474,9 @@ def test_reload_latest_calibration_clears_old_preview_and_invalid_selection(wind
     window.node.clear_selected_pose.assert_called()
     assert "Newest calibration is invalid" in window.station_status.text()
     assert not window.platform_path.text() and not window.calibration_camera_path.text()
+    assert not window.robot_camera_path.text()
     assert not window.platform_path.toolTip() and not window.calibration_camera_path.toolTip()
+    assert not window.robot_camera_path.toolTip()
     gui.QtWidgets.QMessageBox.warning.assert_not_called()
     calls = gui.latest_station_calibration.call_count
     window._refresh_video()

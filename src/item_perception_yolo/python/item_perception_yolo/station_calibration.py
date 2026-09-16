@@ -10,6 +10,11 @@ from .item_teach_core import _UniqueKeyLoader
 from .platform_teach_core import calibration_directory, load_camera_calibration, load_robot_lan1_ip
 
 
+ROBOT_CAMERA_PREFIX = "robot_camera"
+ROBOT_CAMERA_REFERENCE_FRAME = "Link6"
+ROBOT_CAMERA_LINK_FRAME = "robot_camera_link"
+
+
 def _stamp(path, pattern):
     match = re.fullmatch(pattern, path.name)
     if match is None:
@@ -81,3 +86,52 @@ def latest_station_calibration(root=None):
             f"{platform_path.name}. Teach a new platform with that camera calibration; "
             "older-camera fallback and mixing transforms are forbidden.")
     return applied
+
+
+def _validate_robot_camera_binding(camera):
+    if (camera.calibration_mode != "camera_on_hand"
+            or camera.reference_frame != ROBOT_CAMERA_REFERENCE_FRAME
+            or camera.settings.camera_prefix != ROBOT_CAMERA_PREFIX
+            or camera.settings.camera_link_frame != ROBOT_CAMERA_LINK_FRAME):
+        raise ValueError(
+            "Robot-camera calibration must be camera_on_hand "
+            "Link6 <- robot_camera_link")
+    return camera
+
+
+def validate_robot_camera_calibration(camera, root=None):
+    """Require the selected file still be the unchanged newest robot-camera file."""
+    current = latest_robot_camera_calibration(root=root)
+    if (current.path != camera.path or current.sha256 != camera.sha256
+            or current.created_at_utc != camera.created_at_utc):
+        raise ValueError("Selected robot-camera calibration changed; reload calibration")
+    return current
+
+
+def latest_robot_camera_calibration(root=None):
+    """Select the newest strict robot_camera calibration by filename UTC.
+
+    Selection never falls back past an invalid newest robot_camera artifact and
+    never uses the bin-camera calibration as a substitute.
+    """
+    directory = calibration_directory(root).resolve()
+    candidates = []
+    for path in sorted(directory.glob("camera_*_calibration_*.yaml")):
+        stamp = _stamp(
+            path, r"camera_(?:to_hand|on_hand)_calibration_(\d{8}T\d{6}_\d{6}Z)\.yaml")
+        try:
+            payload = yaml.load(path.read_bytes(), Loader=_UniqueKeyLoader)
+            prefix = payload["camera"]["prefix"]
+            if type(prefix) is not str or not prefix:
+                raise ValueError("Missing camera prefix")
+        except (OSError, yaml.YAMLError, KeyError, TypeError, UnicodeError, ValueError) as exc:
+            raise ValueError(f"Cannot identify calibration camera: {path.name}: {exc}") from exc
+        if prefix == ROBOT_CAMERA_PREFIX:
+            candidates.append((stamp, path))
+    path, stamp = _newest(candidates, f"camera {ROBOT_CAMERA_PREFIX}")
+    camera = load_camera_calibration(path, root=root)
+    expected_created = stamp.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    if camera.created_at_utc != expected_created:
+        raise ValueError(
+            "Latest robot-camera filename timestamp conflicts with its saved creation time")
+    return _validate_robot_camera_binding(camera)

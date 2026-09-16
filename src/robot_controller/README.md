@@ -248,6 +248,21 @@ transit/descent/retract targets share its selected attitude; exact
 joint Home restores the taught orientation. Platform tilt is not copied into
 TCP roll/pitch, and all waypoint heights remain referenced to base Z.
 
+The current station also requires the latest strict schema-7 robot-camera
+transform `Link6 <- robot_camera_link` (transform only). For every candidate,
+preview and hardware independently compose its calibrated camera-link origin
+at Link6's pick height (`item Z + standoff_height`) into `platform_reference`.
+The normal Home-relative pick attitude is used if that origin is inside/on the
+green Bin Teach ROI; otherwise the exact 180° tool-Z mirror is used if safe.
+The mirror preserves the undirected short-axis line and unchanged tool Z but
+may exceed the normal 90° Home-relative travel limit. If both origins are
+outside, planning fails before hardware candidate motion; the detector must
+have excluded that pose before ranking, allowing the next safe candidate to
+take its place. Robot-camera calibration SHA-256 is part of configuration and
+detector evidence. This origin-only constraint does not model the housing;
+maintain actual physical safety margin inside green. Blue inset checks still
+apply solely to the item pick point.
+
 The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates, final descent uses approach rates, and pick-to-prepick

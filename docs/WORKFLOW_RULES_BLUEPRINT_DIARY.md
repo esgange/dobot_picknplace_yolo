@@ -3588,6 +3588,55 @@ Never use a floating “latest” version in an issue, script, or deployment not
   read-only event log were inspected, but no camera/detector node was launched,
   no pose-service request was made, and no robot command was issued.
 
+### 2026-09-16 — Link6 robot-camera-origin clearance and safe mirror
+
+- Rule 83 extends the strict calibrated pick contract without changing Item
+  Teach schema 9, Bin Teach schema 3, camera schema 7, or the raw
+  platform-relative candidate message. In addition to the platform-bound bin
+  camera, Item Teach/Detect and controller select the newest independently
+  validated `robot_camera` schema-7 `camera_on_hand` calibration, strictly
+  `Link6 <- robot_camera_link`. The robot-camera artifact supplies only a saved
+  rigid transform: no robot-camera RGB/depth/CameraInfo/TF subscription or new
+  live camera prerequisite. Missing, ambiguous, invalid, superseded or changed
+  calibration blocks pose generation/planning without an older-file fallback.
+- The shared pure `pick_planning` module holds canonical CR10 Home FK, the
+  original shortest taught-Home-relative item short-axis/`pick_rotation`
+  attitude, and the new clearance selector. Compose Link6 at the planned
+  item's base XYZ plus `standoff_height`, then compose `Link6 <- robot_camera_link`
+  and convert the camera origin to `platform_reference`. Its XY must be inside
+  or exactly on the green Bin Teach ROI. If the normal shortest attitude is
+  outside, retest precisely 180° around the unchanged taught Home tool-Z;
+  the fallback reverses Link6 red/X and green/Y without changing pick XY/Z,
+  item-axis line, offset angle, or vertical geometry. Only this safety fallback
+  may exceed the normal ≤90° Home-relative turn.
+- If both camera origins are outside green, discard the detection before
+  center-first ranking and `pose_candidates` capping. The next safe detection
+  moves into the batch and is tried on a missed-suction retry; no unsafe pose is
+  returned. Clicked Item Teach, Simulate Trigger, Armed Item Teach and headless
+  Item Detect use the same worker candidate generator. Controller TF Preview
+  and hardware independently recompute the same selection using the selected
+  calibration and saved Home; disagreement blocks planning before any new
+  candidate motion and is a non-suction failure, not a retry. Robot-camera
+  SHA-256 is included in controller configuration and detector evidence.
+- Draw selected magenta `CAM`/`CAM 180` camera-origin footprints projected onto
+  platform Z=0 on both bin RGB and registered-depth views; uncapped rejected
+  previews show both outside camera origins in red with a precise reason, and
+  candidate-only simulation preserves the previous returned-candidates-only
+  overlay while reporting excluded camera candidates in text/diagnostics.
+  Existing green detection overlap, exact green/blue pick-point tests,
+  projected-pixel parallax check, size/depth/MAD filters, model-pair integrity
+  and queue/Stop/I/O behavior remain intact. Green safety considers only the
+  calibrated camera-link origin, not its housing; physical green-ROI safety
+  margin is the operator's responsibility. No physical commissioning occurred.
+- Software verification: 495 direct Item Perception and Controller tests pass,
+  including unsafe-first/safe-next ranking, exact tool-Z mirroring, shared
+  waypoint attitude, strict latest calibration binding, and independent
+  controller evidence checks. Scoped `colcon test` summaries pass (375 Item
+  Perception tests and 122 Controller tests, zero errors/failures/skips).
+  The full 15-package `colcon build`, Python compilation, focused Python lint,
+  unchanged `ItemCandidate` interface inspection, and `git diff --check` pass.
+  No camera stream or physical robot was commanded or commissioned.
+
 ### Future entry template
 
 ```text

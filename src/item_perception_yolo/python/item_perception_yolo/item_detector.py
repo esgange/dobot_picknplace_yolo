@@ -14,6 +14,7 @@ import zlib
 
 import numpy as np
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
@@ -34,10 +35,14 @@ from .platform_teach_core import (
 )
 from .item_teach_core import (file_sha256, load_item_profile, settings_from_profile,
                               validate_detection_settings, detection_settings, validate_quality,
-                              validate_bin_clearance, inset_bin_roi, BIN_CLEARANCE_FIELDS)
+                              validate_bin_clearance, inset_bin_roi, BIN_CLEARANCE_FIELDS,
+                              validate_home)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
 from .item_native_client import NativeClient
-from .station_calibration import latest_station_calibration
+from .pick_planning import Cr10Kinematics, rigid_matrix
+from .station_calibration import (
+    latest_station_calibration, latest_robot_camera_calibration,
+    validate_robot_camera_calibration)
 
 
 SERVICE_NAME = "/item_detect/get_item_poses"
@@ -161,6 +166,33 @@ def validate_candidates(result, settings):
             if len(values) != count or not all(type(v) in (int, float) and math.isfinite(v)
                                                for v in values):
                 raise RuntimeError("Malformed native pose")
+        planned = candidate.get("planned_link6_matrix")
+        clearance = candidate.get("robot_camera_clearance")
+        if (type(planned) is not list or len(planned) != 4
+                or any(type(row) is not list or len(row) != 4 for row in planned)
+                or not all(type(v) in (int, float) and math.isfinite(v)
+                           for row in planned for v in row)
+                or type(clearance) is not dict
+                or set(clearance) != {"mirrored", "normal_platform_xy",
+                                      "mirrored_platform_xy", "selected_platform_xy",
+                                      "rotation_from_home_deg", "offset_direction"}
+                or type(clearance["mirrored"]) is not bool
+                or clearance["offset_direction"] not in ("none", "cw", "ccw")
+                or type(clearance["rotation_from_home_deg"]) not in (int, float)
+                or not math.isfinite(clearance["rotation_from_home_deg"])
+                or abs(clearance["rotation_from_home_deg"]) > 180
+                or any(type(values) is not list or len(values) != 2
+                       or not all(type(v) in (int, float) and math.isfinite(v)
+                                  for v in values)
+                       for values in (clearance["normal_platform_xy"],
+                                      clearance["mirrored_platform_xy"],
+                                      clearance["selected_platform_xy"]))):
+            raise RuntimeError("Malformed robot-camera clearance plan")
+        rigid_matrix(planned, "Native planned Link6 pose")
+        chosen = (clearance["mirrored_platform_xy"] if clearance["mirrored"] else
+                  clearance["normal_platform_xy"])
+        if chosen != clearance["selected_platform_xy"]:
+            raise RuntimeError("Native robot-camera footprint conflicts with selected attitude")
         if abs(sum(v*v for v in candidate["quaternion"]) - 1) > 1e-6:
             raise RuntimeError("Native quaternion is not normalized")
         for name in ("confidence", "length", "width", "center_distance",
@@ -248,6 +280,8 @@ class ItemDetectNode(Node):
         super().__init__(name)
         self.root = workspace_root()
         self.events = PackageEventLogger(node_name=name)
+        model = Path(get_package_share_directory("cra_description")) / "urdf/cr10_robot.xacro"
+        self.kinematics = Cr10Kinematics(model)
         self.native = NativeClient(self.events)
         self._feedback_lock = threading.Lock()
         self.request_lock = threading.Lock()
@@ -260,7 +294,7 @@ class ItemDetectNode(Node):
         self._camera_subscriptions = []
         self.camera_status = "Camera not connected"
         self.model_metadata = self.model_config = None
-        self.applied = self.bin_artifact = None
+        self.applied = self.bin_artifact = self.robot_camera = None
         self.settings = self.profile_path = None
         self.profile_digest = None
         self.yolo_enabled = False
@@ -294,7 +328,7 @@ class ItemDetectNode(Node):
         self.disarm()
         self.yolo_enabled = False
         if self.applied is not None and prefix != self.applied.camera.settings.camera_prefix:
-            self.applied = self.bin_artifact = None
+            self.applied = self.bin_artifact = self.robot_camera = None
         with self.condition:
             self._camera_generation += 1
             generation = self._camera_generation
@@ -377,7 +411,8 @@ class ItemDetectNode(Node):
                            **config, task=metadata["task"], classes=metadata["classes"])
         return metadata
 
-    def apply_station(self, platform_path, bin_path, *, expected_station=None):
+    def apply_station(self, platform_path, bin_path, *, expected_station=None,
+                      expected_robot_camera=None):
         self.disarm()
         applied = load_bin_teach_calibration_context(Path(platform_path))
         if expected_station is not None and (
@@ -387,12 +422,21 @@ class ItemDetectNode(Node):
                 or applied.camera.sha256 != expected_station.camera.sha256):
             raise ValueError(
                 "Automatically selected station calibration changed before application")
+        robot_camera = latest_robot_camera_calibration(root=self.root)
+        if expected_robot_camera is not None and (
+                robot_camera.path != expected_robot_camera.path
+                or robot_camera.sha256 != expected_robot_camera.sha256):
+            raise ValueError(
+                "Automatically selected robot-camera calibration changed before application")
         template = load_bin_teach(Path(bin_path))
         place_bin_roi(template, applied.platform)
-        self.applied, self.bin_artifact = applied, template
+        self.applied, self.bin_artifact, self.robot_camera = applied, template, robot_camera
         self.connect_camera(applied.camera.settings.camera_prefix)
-        self.events.record("INFO", "item_station_applied", "Validated station and bin ROI",
-                           platform=str(applied.platform.path), bin=str(template.path))
+        self.events.record(
+            "INFO", "item_station_applied",
+            "Validated station, bin ROI, and Link6 robot-camera transform",
+            platform=str(applied.platform.path), bin=str(template.path),
+            robot_camera=str(robot_camera.path), robot_camera_sha256=robot_camera.sha256)
 
     def enable_yolo(self, settings):
         validate_detection_settings(settings, geometry_required=self.applied is not None)
@@ -484,10 +528,12 @@ class ItemDetectNode(Node):
         return profile, digest
 
     def _validate_sources(self):
-        if self.applied is None or self.bin_artifact is None:
-            raise ValueError("Valid station platform and bin teach files are required")
+        if self.applied is None or self.bin_artifact is None or self.robot_camera is None:
+            raise ValueError(
+                "Valid station, bin teach, and robot-camera calibration are required")
         try:
             validate_applied_sources(self.applied)
+            validate_robot_camera_calibration(self.robot_camera, root=self.root)
             if file_sha256(self.bin_artifact.path) != self.bin_artifact.sha256:
                 raise ValueError("Applied bin teach changed")
         except (ValueError, OSError):
@@ -495,6 +541,24 @@ class ItemDetectNode(Node):
             if self.service is not None:
                 self.disarm()
             raise
+
+    def pick_planning_context(self, home, pick_rotation, standoff_height):
+        """Build one serializable immutable planning snapshot without live robot input."""
+        self._validate_sources()
+        validate_home(home)
+        if (type(pick_rotation) not in (int, float) or not math.isfinite(pick_rotation)
+                or not 0 <= pick_rotation <= 90):
+            raise ValueError("pick_rotation must be from 0 through 90 degrees")
+        if (type(standoff_height) not in (int, float)
+                or not math.isfinite(standoff_height)):
+            raise ValueError("standoff_height must be finite millimetres")
+        return {
+            "home_matrix": self.kinematics.forward(home["positions_rad"]).tolist(),
+            "base_from_platform": self.applied.platform.base_from_platform.tolist(),
+            "link6_from_robot_camera": self.robot_camera.reference_from_camera_link.tolist(),
+            "pick_rotation_deg": float(pick_rotation),
+            "standoff_height_mm": float(standoff_height),
+        }
 
     def _check_arm_inputs(self):
         """Availability gate only; generated poses always use image-timestamp TF."""
@@ -787,7 +851,7 @@ class ItemDetectNode(Node):
         finally:
             self.operation_lock.release()
 
-    def clicked_pose(self, view, detection, settings):
+    def clicked_pose(self, view, detection, settings, planning):
         """Teaching-only result from one exact displayed snapshot; never a service response."""
         validate_detection_settings(settings, geometry_required=True)
         observation = view.get("observation")
@@ -808,7 +872,7 @@ class ItemDetectNode(Node):
                       "width": rgb["width"], "height": rgb["height"],
                       "detection": detection, "settings": settings,
                       "display_detections": view["metadata"]["detections"],
-                      "context": observation["context"]}
+                      "context": {**observation["context"], "pick_planning": planning}}
             result, pixels = self.native.call(header, rgb["rgb"] + depth["depth"],
                                               settings["quality"]["request_timeout_sec"])
             try:
@@ -816,7 +880,7 @@ class ItemDetectNode(Node):
                                     "candidates", "rejected"}
                         or result["generation"] != header["generation"]
                         or (result["width"], result["height"]) != (rgb["width"], rgb["height"])
-                        or len(pixels) != len(rgb["rgb"])
+                        or len(pixels) != 2 * len(rgb["rgb"])
                         or type(result["candidates"]) is not list
                         or type(result["rejected"]) is not list
                         or len(result["candidates"]) + len(result["rejected"]) != 1):
@@ -838,7 +902,8 @@ class ItemDetectNode(Node):
                 raise ValueError("Selection invalidated while calculating pose")
             return {"candidate": result["candidates"][0] if result["candidates"] else None,
                     "reason": result["rejected"][0]["reason"] if result["rejected"] else "",
-                    "depth_rgb": pixels, "stamp_ns": rgb["stamp_ns"],
+                    "rgb": pixels[:len(rgb["rgb"])],
+                    "depth_rgb": pixels[len(rgb["rgb"]):], "stamp_ns": rgb["stamp_ns"],
                     "epoch": observation["epoch"]}
         finally:
             self.operation_lock.release()
@@ -905,6 +970,9 @@ class ItemDetectNode(Node):
                 raise ValueError("Item profile changed")
             options = {"cancelled": cancelled} if simulated else {}
             rgb, depth, context = self._snapshot(start_ns, deadline, wait=True, **options)
+            context = {**context, "pick_planning": self.pick_planning_context(
+                _profile["home"], _profile["pick_rotation"],
+                _profile["motion"]["standoff_height"])}
             check_active()
             if time.monotonic() >= deadline:
                 raise ValueError("Request deadline exceeded before inference")
@@ -971,6 +1039,7 @@ class ItemDetectNode(Node):
             evidence = {"profile_sha256": profile_digest,
                         "model_sha256": self.model_config["sha256"],
                         "camera_sha256": self.applied.camera.sha256,
+                        "robot_camera_sha256": self.robot_camera.sha256,
                         "platform_sha256": self.applied.platform.sha256,
                         "bin_sha256": self.bin_artifact.sha256, "snapshot_context": context,
                         "rejected": result["rejected"], "inference_ms": result["inference_ms"],
@@ -1036,13 +1105,18 @@ def main(args=None):
             raise ValueError(
                 "Set trusted_model:=true only for a trusted .pt; weights can execute code")
         latest = latest_station_calibration()
+        robot_camera = latest_robot_camera_calibration()
         node.events.record(
             "INFO", "item_latest_station_selected", "Selected newest hash-bound calibration",
             platform=str(latest.platform.path), platform_sha256=latest.platform.sha256,
-            camera=str(latest.camera.path), camera_sha256=latest.camera.sha256)
+            camera=str(latest.camera.path), camera_sha256=latest.camera.sha256,
+            robot_camera=str(robot_camera.path),
+            robot_camera_sha256=robot_camera.sha256)
         profile, _digest = load_item_profile(Path(paths["item_teach_file"]))
         node.inspect_model(Path(paths["item_teach_file"]).parent / profile["model"]["filename"])
-        node.apply_station(latest.platform.path, paths["bin_teach_file"], expected_station=latest)
+        node.apply_station(
+            latest.platform.path, paths["bin_teach_file"], expected_station=latest,
+            expected_robot_camera=robot_camera)
         node.enable_yolo(detection_settings(settings_from_profile(profile)))
         if not node.declare_parameter("armed", False).value:
             raise ValueError("Headless service requires explicit armed:=true; never inferred")

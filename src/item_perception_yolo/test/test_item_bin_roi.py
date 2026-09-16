@@ -64,7 +64,8 @@ def transferred_node(tmp_path, monkeypatch, mode):
     info = {"width": 848, "height": 480,
             "k": [461., 0., 424., 0., 461., 240., 0., 0., 1.], "d": [0.] * 5}
     node = SimpleNamespace(
-        applied=None, bin_artifact=None, camera_prefix=None,
+        root=destination_root, applied=None, bin_artifact=None, robot_camera=None,
+        camera_prefix=None,
         disarm=MagicMock(), events=MagicMock(), _feedback_lock=threading.RLock(),
         _validate_sources=MagicMock(), _color_info=info, tf_buffer=MagicMock(),
         get_clock=lambda: SimpleNamespace(now=lambda: Time(nanoseconds=100_100_000_000)),
@@ -84,6 +85,8 @@ def transferred_node(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(detector, "load_bin_teach_calibration_context", lambda _: applied)
     monkeypatch.setattr(detector, "load_bin_teach",
                         lambda path: core.load_bin_teach(path, root=destination_root))
+    monkeypatch.setattr(detector, "latest_robot_camera_calibration", MagicMock(
+        return_value=SimpleNamespace(path=Path("robot_camera.yaml"), sha256="r" * 64)))
     detector.ItemDetectNode.apply_station(node, applied.platform.path, copied)
     return node, frame, view, original
 

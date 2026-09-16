@@ -109,9 +109,16 @@ uses the detected item short-axis line plus the taught unsigned `pick_rotation`;
 the planner evaluates both clockwise and counter-clockwise offsets and both
 modulo-180° line directions. Every candidate independently minimizes rotation
 from Home, so retry rotations never accumulate. Platform tilt never
-becomes TCP tilt and waypoint heights remain in base Z. Only missed suction
-advances to another candidate. No-I/O
-moves use MovL, real timed-output moves use non-empty MovLIO, and the conditional
+becomes TCP tilt and waypoint heights remain in base Z. The latest strict
+`Link6 <- robot_camera_link` calibration is transform-only: no robot-camera
+stream is subscribed. The calibrated camera origin at the planned pick height
+must lie inside/on the green Bin ROI; otherwise the equivalent 180° tool-Z
+mirror is tested. If both are outside, the detector removes that pose before
+ranking so the next safe item is eligible, and the controller independently
+rejects a disagreement before motion. A magenta `CAM`/`CAM 180` footprint is
+shown on bin-camera RGB/depth; light blue remains pick-point-only. Only missed
+suction advances to another candidate. No-I/O moves use MovL, real timed-output
+moves use non-empty MovLIO, and the conditional
 rise uses RelMovLUser. Continue is used only by the explicit paused-queue service;
 the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state

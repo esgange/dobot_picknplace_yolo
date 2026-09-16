@@ -56,7 +56,13 @@ ros2 launch item_perception_yolo item_teach.launch.py
    platform for `.env`'s `DOBOT_ROBOT_LAN1_IP`, then newest camera calibration
    matching that platform's camera prefix. Canonical filename UTC timestamps,
    not file modification times, define newest. Read-only **Latest platform**
-   and **Camera calibration** fields show the selected files; no platform picker.
+   **Bin camera calibration** and **Robot camera calibration** fields show the
+   selected files; no platform picker. The separate newest strict schema-7
+   robot-camera calibration must be `camera_on_hand` and exactly
+   `Link6 <- robot_camera_link`. It supplies only the calibrated camera-origin
+   offset for pick clearance; no robot-camera RGB/depth/CameraInfo/TF subscription
+   is created. Missing, ambiguous or invalid robot-camera calibration blocks
+   pose generation rather than accepting an unverified camera position.
    The camera must match the platform's recorded SHA-256/mode/settings/transform.
    A newer calibration for that camera requires a newly taught platform. A
    newer file for another camera is not substituted. Invalid/missing/ambiguous
@@ -70,8 +76,9 @@ ros2 launch item_perception_yolo item_teach.launch.py
    on startup; an old platform prefill is not authoritative. This narrow
    read-only-preview exception to unapplied prefill never launches a camera,
    loads model weights, enables YOLO or arms the service. Incomplete/invalid files
-   leave the ROI hidden with a status reason; validation runs on selection/startup,
-   not repeatedly each timer tick or during pose requests. Use **Reload Latest
+   leave the ROI hidden with a status reason. Selection validates on startup,
+   and pose requests recheck the selected source files and robot-camera hash;
+   no calibration is silently replaced during a request. Use **Reload Latest
    Calibration** after teaching/correcting files, or reselect the bin, to revalidate.
    Reloading/changing selection stops YOLO, disarms and clears old overlays/TF.
 5. **Click an item** to freeze that exact displayed RGB/depth result, highlight
@@ -353,6 +360,16 @@ allowed-pick polygon, preventing item-height parallax from showing a returned
 candidate outside the blue/green overlay.
 The shared click, Simulate Trigger, Armed and headless candidate pipeline applies
 this before ranking; the controller receives the resulting filtered list.
+At the planned pick Link6 pose (`item Z + standoff_height`), the shared planner
+uses taught Home and the calibrated Link6-relative robot-camera origin. If the
+normal shortest pick attitude places that origin outside green, it checks the
+equivalent 180° tool-Z mirror; when neither origin is inside/on green, the item
+is rejected before ranking/capping and the next safe pose can take its place.
+Green is the robot-camera-origin constraint, independent of the blue pick-point
+inset. A magenta `CAM` or `CAM 180` footprint shows the selected projected
+camera origin on both bin RGB and registered depth, with camera-clearance
+rejection reasons in result diagnostics. The camera housing is not modeled;
+allow sufficient physical margin inside the taught green ROI.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
 in robot base Z. zheight_offset is removed. GUI-only old-file recovery leaves
 old retract_height blank because its reference changed; correction/Save is

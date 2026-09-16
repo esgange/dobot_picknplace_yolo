@@ -4,9 +4,12 @@ import math
 
 from .planar_bin_roi import border_in_optical
 from .item_teach_core import inset_bin_roi
+from .pick_planning import candidate_pose_in_base, select_pick_attitude
 
 
 BIN_CLEARANCE_COLOR = (102, 204, 255)
+ROBOT_CAMERA_COLOR = (255, 0, 255)
+ROBOT_CAMERA_REJECTED_COLOR = (255, 0, 0)
 
 
 def rectangle_axes(rectangle, np):
@@ -119,6 +122,28 @@ def draw_bin_clearance(overlay, context, clearance, cv2, np):
         cv2.putText(overlay, "Pick clearance", (12, height - 40),
                     cv2.FONT_HERSHEY_SIMPLEX, .65, BIN_CLEARANCE_COLOR, 2, cv2.LINE_AA)
     return visible
+
+
+def draw_robot_camera_footprint(overlay, context, platform_xy, mirrored, accepted, cv2, np):
+    """Project one planned camera origin down to platform Z=0."""
+    pixels = project([[float(platform_xy[0]), float(platform_xy[1]), 0.0]],
+                     context["camera"],
+                     np.asarray(context["platform_from_optical"], dtype=np.float64),
+                     cv2, np)
+    if not np.isfinite(pixels).all() or np.any(np.abs(pixels) > 2_000_000_000):
+        raise ValueError("Robot-camera footprint projection exceeds safe drawing range")
+    point = tuple(np.rint(pixels[0]).astype(int))
+    color = ROBOT_CAMERA_COLOR if accepted else ROBOT_CAMERA_REJECTED_COLOR
+    cv2.circle(overlay, point, 8, color, 2, cv2.LINE_AA)
+    cv2.line(overlay, (point[0] - 5, point[1]), (point[0] + 5, point[1]),
+             color, 2, cv2.LINE_AA)
+    cv2.line(overlay, (point[0], point[1] - 5), (point[0], point[1] + 5),
+             color, 2, cv2.LINE_AA)
+    label = "CAM 180" if mirrored else "CAM"
+    if not accepted:
+        label += " REJECT"
+    cv2.putText(overlay, label, (point[0] + 10, point[1] - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, .5, color, 2, cv2.LINE_AA)
 
 
 def rays(pixels, camera, cv2, np):
@@ -487,6 +512,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     draw_bin_clearance(overlay, context, settings["bin_clearance"], cv2, np)
     candidates, rejected = [], []
     samples = {}
+    camera_plans = {}
     for item in objects:
         center = item["center"]
         label = f"#{item['index']} {item['class_name']} {item['confidence']:.2f}"
@@ -555,17 +581,55 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             if axis[0] < 0 or (abs(axis[0]) < 1e-9 and axis[1] < 0):
                 axis = -axis
             yaw = math.atan2(float(axis[1]), float(axis[0]))
+            quaternion = [0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)]
+            planning = context.get("pick_planning")
+            if type(planning) is not dict or set(planning) != {
+                    "home_matrix", "base_from_platform", "link6_from_robot_camera",
+                    "pick_rotation_deg", "standoff_height_mm"}:
+                raise ValueError("Robot-camera pick-planning context is missing or malformed")
+            item_in_base = candidate_pose_in_base(
+                planning["base_from_platform"], position, quaternion)
+            attitude = select_pick_attitude(
+                planning["home_matrix"], item_in_base, planning["pick_rotation_deg"],
+                planning["standoff_height_mm"], planning["base_from_platform"],
+                planning["link6_from_robot_camera"], roi)
+            camera_plans[item["index"]] = attitude
+            if not attitude.accepted:
+                for mirrored, point in ((False, attitude.normal_camera_platform_xy),
+                                        (True, attitude.mirrored_camera_platform_xy)):
+                    draw_robot_camera_footprint(
+                        overlay, context, point, mirrored, False, cv2, np)
+                    draw_robot_camera_footprint(
+                        depth_view, {**context, "camera": depth_camera}, point,
+                        mirrored, False, cv2, np)
+                raise ValueError(
+                    "robot-camera origin outside bin ROI for normal and 180-degree attitudes")
             draw_pick_geometry(overlay, item["rectangle"], cv2, np)
+            draw_robot_camera_footprint(
+                overlay, context, attitude.selected_camera_platform_xy,
+                attitude.mirrored, True, cv2, np)
+            draw_robot_camera_footprint(
+                depth_view, {**context, "camera": depth_camera},
+                attitude.selected_camera_platform_xy, attitude.mirrored, True, cv2, np)
             candidates.append({
                 "source_index": item["index"], "class_id": item["class_id"],
                 "class_name": item["class_name"], "confidence": item["confidence"],
                 "position": position.tolist(),
-                "quaternion": [0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)],
+                "quaternion": quaternion,
                 "length": length, "width": width,
                 "center_distance": float(np.linalg.norm(position[:2] - center_roi)),
                 "filtered_camera_depth": median / 1000, "depth_sigma": sigma / 1000,
                 "accepted_depth_count": good, "rejected_depth_count": total - good,
                 "pixel": center.tolist(),
+                "planned_link6_matrix": attitude.planned_link6.tolist(),
+                "robot_camera_clearance": {
+                    "mirrored": attitude.mirrored,
+                    "normal_platform_xy": list(attitude.normal_camera_platform_xy),
+                    "mirrored_platform_xy": list(attitude.mirrored_camera_platform_xy),
+                    "selected_platform_xy": list(attitude.selected_camera_platform_xy),
+                    "rotation_from_home_deg": attitude.rotation_from_home_deg,
+                    "offset_direction": attitude.offset_direction,
+                },
             })
             if candidate_limit is not None:
                 samples[item["index"]] = (pixels, accepted, circle_px)
@@ -606,6 +670,13 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                               (0, 255, 255), 2, cv2.LINE_AA)
                 cv2.putText(image, f"P{rank}", tuple(np.rint(center).astype(int) + [8, 20]),
                             cv2.FONT_HERSHEY_SIMPLEX, .7, (0, 255, 0), 2, cv2.LINE_AA)
+            attitude = camera_plans[candidate["source_index"]]
+            draw_robot_camera_footprint(
+                overlay, context, attitude.selected_camera_platform_xy,
+                attitude.mirrored, True, cv2, np)
+            draw_robot_camera_footprint(
+                depth_view, {**context, "camera": depth_camera},
+                attitude.selected_camera_platform_xy, attitude.mirrored, True, cv2, np)
         # All candidates/diagnostics still describe the uncapped valid set.
         # The shared response builder selects the identical leading subset.
         return overlay, depth_view, candidates, rejected

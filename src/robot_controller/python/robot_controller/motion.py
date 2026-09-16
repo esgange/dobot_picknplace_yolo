@@ -5,9 +5,10 @@ import math
 
 import numpy as np
 
-from camera_calibration_gui.calibration_core import (
-    quaternion_to_rotation_matrix, rotation_angle_deg)
+from camera_calibration_gui.calibration_core import rotation_angle_deg
 from item_perception_yolo.item_teach_core import validate_speed, validate_acceleration
+from item_perception_yolo.pick_planning import (
+    candidate_pose_in_base, pick_attitude, rigid_matrix)
 
 
 @dataclass(frozen=True)
@@ -70,87 +71,20 @@ def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
             and rotation_angle_deg(actual[:3, :3].T @ goal[:3, :3]) <= rotation_deg)
 
 
-def _rigid_matrix(value, label):
-    matrix = np.asarray(value, dtype=float)
-    if (matrix.shape != (4, 4) or not np.all(np.isfinite(matrix))
-            or not np.allclose(matrix[3], [0, 0, 0, 1], atol=1e-9, rtol=0)
-            or not np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3),
-                               atol=1e-6, rtol=0)
-            or not math.isclose(float(np.linalg.det(matrix[:3, :3])), 1., abs_tol=1e-6)):
-        raise ValueError(f"{label} must be a finite rigid transform")
-    return matrix
-
-
-def candidate_pose_in_base(base_from_platform, position_m, quaternion):
-    """Compose the detector's platform XYZ/yaw without treating it as TCP attitude."""
-    platform = _rigid_matrix(base_from_platform, "Platform transform")
-    position = np.asarray(position_m, dtype=float)
-    q = np.asarray(quaternion, dtype=float)
-    if position.shape != (3,) or not np.all(np.isfinite(position)):
-        raise ValueError("Candidate position must contain three finite metres")
-    if (q.shape != (4,) or not np.all(np.isfinite(q))
-            or abs(float(np.dot(q, q)) - 1.0) > 1e-5):
-        raise ValueError("Candidate quaternion must be finite and normalized")
-    if abs(float(q[0])) > 1e-6 or abs(float(q[1])) > 1e-6:
-        raise ValueError("Candidate quaternion must contain platform-plane yaw only")
-    item = np.eye(4)
-    item[:3, :3] = quaternion_to_rotation_matrix(*q)
-    item[:3, 3] = position
-    return _rigid_matrix(platform @ item, "Base-relative candidate pose")
-
-
-def _spin_about_axis(vector, axis, angle):
-    return (vector * math.cos(angle) + np.cross(axis, vector) * math.sin(angle)
-            + axis * float(np.dot(axis, vector)) * (1.0 - math.cos(angle)))
-
-
-def pick_attitude(home, item_in_base, pick_rotation_deg=0.0):
-    """Choose each candidate's nearest legal ±offset attitude from taught Home."""
-    home = _rigid_matrix(home, "Home")
-    item = _rigid_matrix(item_in_base, "Base-relative candidate pose")
-    if (type(pick_rotation_deg) not in (int, float)
-            or not math.isfinite(pick_rotation_deg)
-            or not 0.0 <= pick_rotation_deg <= 90.0):
-        raise ValueError("pick_rotation must be a finite number from 0 to 90 degrees")
-    home_rotation = home[:3, :3]
-    tool_z = home_rotation[:, 2]
-    item_short = item[:3, 1]
-    projected = item_short - tool_z * float(np.dot(item_short, tool_z))
-    norm = float(np.linalg.norm(projected))
-    if norm <= 1e-6:
-        raise ValueError("Item short axis cannot be projected perpendicular to tool Z")
-    projected /= norm
-    reference_green = home_rotation[:, 1]
-    offset = math.radians(pick_rotation_deg)
-    choices = (("none", projected),) if offset == 0.0 else (
-        ("ccw", _spin_about_axis(projected, tool_z, offset)),
-        ("cw", _spin_about_axis(projected, tool_z, -offset)),
-    )
-    candidates = []
-    for priority, (direction, desired_line) in enumerate(choices):
-        sine = float(np.dot(tool_z, np.cross(reference_green, desired_line)))
-        cosine = float(np.dot(reference_green, desired_line))
-        raw = math.atan2(sine, cosine)
-        # Both directions along the desired line are physically equivalent.
-        delta = (raw + math.pi / 2) % math.pi - math.pi / 2
-        target_green = _spin_about_axis(reference_green, tool_z, delta)
-        target_green /= np.linalg.norm(target_green)
-        target_red = np.cross(target_green, tool_z)
-        target_red /= np.linalg.norm(target_red)
-        rotation = np.column_stack((target_red, target_green, tool_z))
-        if abs(abs(float(np.dot(target_green, desired_line))) - 1.0) > 1e-6:
-            raise ValueError("Failed to construct offset item pick attitude")
-        candidates.append((abs(delta), priority, rotation, math.degrees(delta), direction))
-    _, _, rotation, travel_deg, direction = min(candidates, key=lambda value: value[:2])
-    return rotation, travel_deg, direction
-
-
-def pick_targets(home, item_in_base, settings, candidate_index):
+def pick_targets(home, item_in_base, settings, candidate_index, *, rotation=None):
     validate_speed(settings["speed"])
     validate_acceleration(settings["acceleration"])
-    item_in_base = _rigid_matrix(item_in_base, "Base-relative candidate pose")
-    rotation, _travel_deg, _direction = pick_attitude(
-        home, item_in_base, settings["pick_rotation"])
+    item_in_base = rigid_matrix(item_in_base, "Base-relative candidate pose")
+    if rotation is None:
+        rotation, _travel_deg, _direction = pick_attitude(
+            home, item_in_base, settings["pick_rotation"])
+    else:
+        rotation = np.asarray(rotation, dtype=float)
+        if rotation.shape != (3, 3):
+            raise ValueError("Selected pick attitude must be a 3x3 rotation")
+        frame = np.eye(4)
+        frame[:3, :3] = rotation
+        rotation = rigid_matrix(frame, "Selected pick attitude")[:3, :3]
     position = item_in_base[:3, 3]
     motion = settings["motion"]
     pick_z = float(position[2]) + motion["standoff_height"] / 1000

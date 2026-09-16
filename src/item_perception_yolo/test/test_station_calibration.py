@@ -192,10 +192,51 @@ def test_missing_current_station_has_no_other_robot_or_env_fallback(root):
         station.latest_station_calibration(root)
 
 
+def test_latest_robot_camera_requires_exact_on_hand_link6_binding(root):
+    older = _camera(root, stamp="20260909T083036_133658Z", prefix="robot_camera",
+                    mode=camera_core.CAMERA_ON_HAND)
+    latest = _camera(root, stamp="20260910T083036_133658Z", prefix="robot_camera",
+                     mode=camera_core.CAMERA_ON_HAND)
+    selected = station.latest_robot_camera_calibration(root)
+    assert selected.path == latest.path and selected.sha256 == latest.sha256
+    assert selected.reference_frame == "Link6"
+    assert selected.settings.camera_link_frame == "robot_camera_link"
+    older.path.write_bytes(older.path.read_bytes())  # mtime cannot change selection.
+    assert station.latest_robot_camera_calibration(root).path == latest.path
+    with pytest.raises(ValueError, match="changed"):
+        station.validate_robot_camera_calibration(older, root=root)
+    station.validate_robot_camera_calibration(latest, root=root)
+    payload = yaml.safe_load(latest.path.read_text())
+    payload["schema_version"] = 6
+    latest.path.write_text(yaml.safe_dump(payload))
+    with pytest.raises(ValueError, match="schema_version must be exactly 7"):
+        station.validate_robot_camera_calibration(latest, root=root)
+
+
+def test_robot_camera_missing_wrong_mode_and_invalid_latest_never_fall_back(root):
+    _camera(root, prefix="bin_camera", mode=camera_core.CAMERA_TO_HAND)
+    with pytest.raises(ValueError, match="No camera robot_camera"):
+        station.latest_robot_camera_calibration(root)
+    wrong = _camera(root, stamp="20260910T083036_133658Z",
+                    prefix="robot_camera", mode=camera_core.CAMERA_TO_HAND)
+    with pytest.raises(ValueError, match="camera_on_hand"):
+        station.latest_robot_camera_calibration(root)
+    wrong.path.unlink()
+    _camera(root, prefix="robot_camera", mode=camera_core.CAMERA_ON_HAND)
+    latest = _camera(root, stamp="20260911T083036_133658Z", prefix="robot_camera",
+                     mode=camera_core.CAMERA_ON_HAND)
+    payload = yaml.safe_load(latest.path.read_text())
+    payload["schema_version"] = 6
+    latest.path.write_text(yaml.safe_dump(payload))
+    with pytest.raises(ValueError, match="schema_version must be exactly 7"):
+        station.latest_robot_camera_calibration(root)
+
+
 @pytest.mark.parametrize("changed", ("platform", "camera"))
 def test_selected_hash_changes_before_application_cannot_replace_binding(
         root, monkeypatch, changed):
     _platform(root, _camera(root))
+    robot_camera = _camera(root, prefix="robot_camera", mode=camera_core.CAMERA_ON_HAND)
     expected = station.latest_station_calibration(root)
     current = SimpleNamespace(platform=expected.platform, camera=expected.camera)
     artifact = getattr(current, changed)
@@ -203,7 +244,10 @@ def test_selected_hash_changes_before_application_cannot_replace_binding(
     monkeypatch.setattr(detector, "load_bin_teach_calibration_context", lambda _: current)
     reader = MagicMock()
     monkeypatch.setattr(detector, "load_bin_teach", reader)
-    node = SimpleNamespace(disarm=MagicMock(), connect_camera=MagicMock(), applied=None)
+    monkeypatch.setattr(detector, "latest_robot_camera_calibration",
+                        MagicMock(return_value=robot_camera))
+    node = SimpleNamespace(disarm=MagicMock(), connect_camera=MagicMock(), applied=None,
+                           root=root)
     with pytest.raises(ValueError, match="changed before application"):
         detector.ItemDetectNode.apply_station(
             node, expected.platform.path, "bin.yaml", expected_station=expected)
@@ -217,11 +261,14 @@ def test_headless_main_uses_automatic_station_and_keeps_explicit_trust(
         root, monkeypatch, selection_error):
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     _platform(root, _camera(root))
+    robot_camera = _camera(root, prefix="robot_camera", mode=camera_core.CAMERA_ON_HAND)
     latest = station.latest_station_calibration(root)
     selection = MagicMock(return_value=latest)
     if selection_error:
         selection.side_effect = ValueError("Latest calibration invalid")
     monkeypatch.setattr(detector, "latest_station_calibration", selection)
+    robot_selection = MagicMock(return_value=robot_camera)
+    monkeypatch.setattr(detector, "latest_robot_camera_calibration", robot_selection)
     values = {"item_teach_file": "/selected/item.yaml", "bin_teach_file": "/selected/bin.yaml",
               "trusted_model": True, "armed": True}
     node = MagicMock(fatal_error=None)
@@ -244,10 +291,12 @@ def test_headless_main_uses_automatic_station_and_keeps_explicit_trust(
     else:
         detector.main()
         node.apply_station.assert_called_once_with(
-            latest.platform.path, "/selected/bin.yaml", expected_station=latest)
+            latest.platform.path, "/selected/bin.yaml", expected_station=latest,
+            expected_robot_camera=robot_camera)
         node.arm.assert_called_once_with(Path("/selected/item.yaml"))
         node._snapshot.assert_called_once()
         selection.assert_called_once_with()
+        robot_selection.assert_called_once_with()
         declared = [call.args[0] for call in node.declare_parameter.call_args_list]
         assert "platform_teach_file" not in declared
     node.close_runtime.assert_called_once()

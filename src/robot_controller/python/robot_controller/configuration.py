@@ -45,6 +45,7 @@ def _identifier(profile_digest, selection):
         "bin": selection.bin.sha256 if selection else "",
         "platform": selection.station.platform.sha256 if selection else "",
         "camera": selection.station.camera.sha256 if selection else "",
+        "robot_camera": selection.robot_camera.sha256 if selection else "",
     }
     return hashlib.sha256(json.dumps(
         evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()

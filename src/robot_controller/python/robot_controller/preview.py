@@ -13,6 +13,7 @@ from tf2_ros import TransformBroadcaster
 
 from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternion
 from item_perception_yolo.platform_teach_core import workspace_root
+from item_perception_yolo.pick_planning import select_pick_attitude
 from robot_controller_interfaces.srv import Preview
 
 from .candidates import (
@@ -95,8 +96,19 @@ class RobotControllerPreview(rclpy.node.Node):
                     item_pose = candidate_pose_in_base(
                         config.selection.station.platform.base_from_platform,
                         candidate.position_m, candidate.quaternion)
+                    attitude = select_pick_attitude(
+                        config.home_matrix, item_pose, config.profile["pick_rotation"],
+                        config.profile["motion"]["standoff_height"],
+                        config.selection.station.platform.base_from_platform,
+                        config.selection.robot_camera.reference_from_camera_link,
+                        [[point.x_m, point.y_m] for point in config.selection.bin.points])
+                    if not attitude.accepted:
+                        raise ValueError(
+                            "Detector returned a candidate whose normal and 180-degree "
+                            "robot-camera attitudes are outside the Bin ROI")
                     plan = pick_targets(
-                        config.home_matrix, item_pose, config.profile, index)
+                        config.home_matrix, item_pose, config.profile, index,
+                        rotation=attitude.rotation)
                     targets.extend(plan)
                     if index == len(batch.candidates):
                         targets.append(Target(

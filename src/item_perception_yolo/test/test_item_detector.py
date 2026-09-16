@@ -55,10 +55,12 @@ def test_paired_digest_is_checked_before_native_model_load(tmp_path, matching):
 
 
 def test_station_source_changes_disarm(monkeypatch):
-    node = SimpleNamespace(applied=object(),
+    node = SimpleNamespace(applied=object(), root=None,
+        robot_camera=SimpleNamespace(path="robot", sha256="robot"),
         bin_artifact=SimpleNamespace(path="bin", sha256="old"), disarm=MagicMock(),
         service=object(), last_view={"old": "overlay"})
     monkeypatch.setattr(detector, "validate_applied_sources", lambda _: None)
+    monkeypatch.setattr(detector, "validate_robot_camera_calibration", lambda *args, **kwargs: None)
     monkeypatch.setattr(detector, "file_sha256", lambda _: "changed")
     with pytest.raises(ValueError, match="bin teach changed"):
         detector.ItemDetectNode._validate_sources(node)
@@ -76,7 +78,14 @@ def service_node(monkeypatch, tmp_path):
                  "position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.],
                  "length": .1, "width": .05, "center_distance": .01,
                  "filtered_camera_depth": .7, "depth_sigma": .001,
-                 "accepted_depth_count": 100, "rejected_depth_count": 10, "pixel": [100., 100.]}
+                 "accepted_depth_count": 100, "rejected_depth_count": 10, "pixel": [100., 100.],
+                 "planned_link6_matrix": [[1., 0., 0., 0.], [0., 1., 0., 0.],
+                                          [0., 0., 1., .1], [0., 0., 0., 1.]],
+                 "robot_camera_clearance": {
+                     "mirrored": False, "normal_platform_xy": [.01, .02],
+                     "mirrored_platform_xy": [.01, .02],
+                     "selected_platform_xy": [.01, .02],
+                     "rotation_from_home_deg": 0., "offset_direction": "none"}}
     result = {"candidates": [candidate], "rejected": [], "count": 1, "inference_ms": 10.}
     node = SimpleNamespace(request_lock=threading.Lock(), operation_lock=threading.Lock(),
                            root=tmp_path,
@@ -88,18 +97,21 @@ def service_node(monkeypatch, tmp_path):
                                                        "p3_p4": None, "p4_p1": None},
                                      "yolo": {"max_detections": 20, "class_ids": [1], "confidence": .6}},
                            _validate_sources=MagicMock(), events=MagicMock(), disarm=MagicMock(),
+                           pick_planning_context=MagicMock(return_value={"planning": True}),
                            model_config={"sha256": "b"*64}, get_logger=MagicMock(),
                            applied=SimpleNamespace(camera=SimpleNamespace(sha256="c"*64),
                                                    platform=SimpleNamespace(sha256="d"*64)),
+                           robot_camera=SimpleNamespace(sha256="f"*64),
                            bin_artifact=SimpleNamespace(sha256="e"*64),
                            get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=100_200_000_000)))
     frame = {"stamp_ns": 100_200_000_000}
     node._snapshot = MagicMock(return_value=(frame, frame, {"synthetic": True}))
     node.infer = MagicMock(return_value={"metadata": result})
     node._pose_batch = lambda *a, **kw: detector.ItemDetectNode._pose_batch(node, *a, **kw)
-    node._validate_pose_profile = MagicMock(return_value=(
-        {"retry": {"pose_candidates": 3}}, "a"*64))
-    monkeypatch.setattr(detector, "load_item_profile", lambda _: ({}, "a"*64))
+    profile = {"retry": {"pose_candidates": 3}, "home": {"positions_rad": [0.]*6},
+               "pick_rotation": 0., "motion": {"standoff_height": 90.}}
+    node._validate_pose_profile = MagicMock(return_value=(profile, "a"*64))
+    monkeypatch.setattr(detector, "load_item_profile", lambda _: (profile, "a"*64))
     monkeypatch.setattr(detector, "file_sha256", lambda _: "a"*64)
     return node, candidate
 
@@ -502,7 +514,7 @@ def test_selected_pose_snapshot_contract(service_node, failure):
     response = {"state": "ok", "generation": 1, "width": 2, "height": 2,
                 "candidates": [candidate], "rejected": []}
     node.native = MagicMock(failed=False)
-    node.native.call.return_value = (response, bytes(12))
+    node.native.call.return_value = (response, bytes(24))
     if failure == "depth":
         observation["depth"] = None
     elif failure == "epoch":
@@ -514,19 +526,22 @@ def test_selected_pose_snapshot_contract(service_node, failure):
     elif failure == "changed_during_call":
         def change(*args):
             node.arm_epoch += 1
-            return response, bytes(12)
+            return response, bytes(24)
         node.native.call.side_effect = change
     elif failure == "rejected":
         response.update(candidates=[], rejected=[{"source_index": 4, "reason": "bad depth"}])
     if failure not in (None, "rejected"):
         with pytest.raises((ValueError, RuntimeError)):
-            detector.ItemDetectNode.clicked_pose(node, view, detection, node.settings)
+            detector.ItemDetectNode.clicked_pose(
+                node, view, detection, node.settings, {"planning": True})
         assert node.native.failed is (failure == "native_id")
     else:
-        result = detector.ItemDetectNode.clicked_pose(node, view, detection, node.settings)
+        result = detector.ItemDetectNode.clicked_pose(
+            node, view, detection, node.settings, {"planning": True})
         assert result["candidate"] == (None if failure else candidate)
         sent, payload = node.native.call.call_args.args[:2]
-        assert sent["context"] is observation["context"]
+        assert sent["context"] == {**observation["context"],
+                                   "pick_planning": {"planning": True}}
         assert sent["detection"] is detection
         assert payload == rgb["rgb"] + depth["depth"]
     node.infer.assert_not_called()  # No prediction, newer observation or cached service request.
@@ -549,8 +564,9 @@ def test_selected_pose_does_not_expire_after_snapshot_was_accepted(service_node)
     response = {"state": "ok", "generation": 1, "width": 2, "height": 2,
                 "candidates": [candidate], "rejected": []}
     node.native = MagicMock(failed=False)
-    node.native.call.return_value = response, bytes(12)
-    result = detector.ItemDetectNode.clicked_pose(node, view, detection, node.settings)
+    node.native.call.return_value = response, bytes(24)
+    result = detector.ItemDetectNode.clicked_pose(
+        node, view, detection, node.settings, {"planning": True})
     assert result["candidate"] == candidate
 
 

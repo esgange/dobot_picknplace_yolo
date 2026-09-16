@@ -24,7 +24,8 @@ def configuration():
     station = SimpleNamespace(
         camera=SimpleNamespace(sha256="camera"),
         platform=SimpleNamespace(sha256="platform"))
-    selection = SimpleNamespace(bin=SimpleNamespace(sha256="bin"), station=station)
+    selection = SimpleNamespace(bin=SimpleNamespace(sha256="bin"), station=station,
+                                robot_camera=SimpleNamespace(sha256="robot_camera"))
     return SimpleNamespace(
         profile=profile, profile_sha256="profile", selection=selection,
         pose_candidates=3, configuration_id="configuration")
@@ -41,6 +42,7 @@ def valid_result(*, candidate_count=1):
     result.diagnostics_json = json.dumps({
         "profile_sha256": "profile", "model_sha256": "model",
         "camera_sha256": "camera", "platform_sha256": "platform",
+        "robot_camera_sha256": "robot_camera",
         "bin_sha256": "bin",
         "debug_capture": {
             "requested": False, "rgb_path": "", "depth_path": "", "error": ""},
@@ -79,7 +81,8 @@ def test_fresh_hash_matched_ranked_batch_is_accepted(tmp_path):
 
 
 @pytest.mark.parametrize("key", [
-    "profile_sha256", "model_sha256", "camera_sha256", "platform_sha256", "bin_sha256"])
+    "profile_sha256", "model_sha256", "camera_sha256", "robot_camera_sha256",
+    "platform_sha256", "bin_sha256"])
 def test_every_detector_binding_hash_is_mandatory(tmp_path, key):
     result = valid_result()
     evidence = json.loads(result.diagnostics_json)

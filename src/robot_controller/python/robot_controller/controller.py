@@ -20,6 +20,7 @@ from std_msgs.msg import String
 
 from dobot_msgs_v4.msg import RobotStatus
 from item_perception_yolo.item_teach_core import utc_now
+from item_perception_yolo.pick_planning import select_pick_attitude
 from item_perception_yolo.platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, workspace_root)
 from robot_controller_interfaces.action import GoHome, PickItem
@@ -34,8 +35,7 @@ from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
 from .feedback import FeedbackMonitor, enabled_blockers
 from .hardware import DobotTransport
 from .kinematics import Cr10Kinematics, pose_values
-from .motion import (PickExecutor, candidate_pose_in_base, home_targets,
-                     pick_attitude, pick_targets)
+from .motion import PickExecutor, candidate_pose_in_base, home_targets, pick_targets
 from .state_machine import ControllerStateMachine
 
 
@@ -892,9 +892,19 @@ class RobotController(Node):
                 item_pose = candidate_pose_in_base(
                     config.selection.station.platform.base_from_platform,
                     candidate.position_m, candidate.quaternion)
-                _rotation, delta_deg, offset_direction = pick_attitude(
-                    config.home_matrix, item_pose, config.profile["pick_rotation"])
-                plan = pick_targets(config.home_matrix, item_pose, config.profile, index)
+                attitude = select_pick_attitude(
+                    config.home_matrix, item_pose, config.profile["pick_rotation"],
+                    config.profile["motion"]["standoff_height"],
+                    config.selection.station.platform.base_from_platform,
+                    config.selection.robot_camera.reference_from_camera_link,
+                    [[point.x_m, point.y_m] for point in config.selection.bin.points])
+                if not attitude.accepted:
+                    raise FeedbackFailure(
+                        "Detector returned a candidate whose normal and 180-degree "
+                        "robot-camera attitudes are outside the Bin ROI")
+                plan = pick_targets(
+                    config.home_matrix, item_pose, config.profile, index,
+                    rotation=attitude.rotation)
                 plans.append(plan)
                 self.events.record(
                     "INFO", "pick_orientation_planned",
@@ -904,8 +914,11 @@ class RobotController(Node):
                     item_short_axis_base=item_pose[:3, 1].tolist(),
                     target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
                     configured_pick_rotation_deg=config.profile["pick_rotation"],
-                    selected_offset_direction=offset_direction,
-                    rotation_from_home_deg=delta_deg,
+                    selected_offset_direction=attitude.offset_direction,
+                    rotation_from_home_deg=attitude.rotation_from_home_deg,
+                    robot_camera_mirrored=attitude.mirrored,
+                    robot_camera_platform_xy=list(attitude.selected_camera_platform_xy),
+                    robot_camera_sha256=config.selection.robot_camera.sha256,
                     target_rpy_deg=pose_values(plan[0].matrix)[3:])
 
             def check(index):

@@ -101,6 +101,7 @@ class CandidateClient:
             "profile_sha256": configuration.profile_sha256,
             "model_sha256": profile["model"]["sha256"],
             "camera_sha256": selection.station.camera.sha256,
+            "robot_camera_sha256": selection.robot_camera.sha256,
             "platform_sha256": selection.station.platform.sha256,
             "bin_sha256": selection.bin.sha256,
         }

@@ -27,7 +27,15 @@ def exercise_geometry():
     transform[2, 3] = .8
     context = {"camera": camera, "depth_camera": camera,
                "platform_from_optical": transform.tolist(),
-               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
+               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]],
+               "pick_planning": {
+                   "home_matrix": np.eye(4).tolist(),
+                   "base_from_platform": np.eye(4).tolist(),
+                   "link6_from_robot_camera": [[1., 0., 0., .04], [0., 1., 0., 0.],
+                                                [0., 0., 1., 0.], [0., 0., 0., 1.]],
+                   "pick_rotation_deg": 0.0,
+                   "standoff_height_mm": 0.0,
+               }}
     roi = np.asarray(context["roi"])
     assert polygons_overlap_or_touch(
         [[.19, -.02], [.25, -.02], [.25, .02], [.19, .02]], roi, cv2, np)
@@ -160,7 +168,9 @@ def exercise_geometry():
         assert not generate_candidates([changed], rgb, depth, context, settings, cv2, np)[2]
     too_large = {**settings, "geometry": {**settings["geometry"], "height": 100.}}
     assert not generate_candidates([item], rgb, depth, context, too_large, cv2, np)[2]
-    tiny_roi = {**context, "roi": [[-.02, -.02], [-.02, .02], [.02, .02], [.02, -.02]]}
+    tiny_roi = {**context, "roi": [[-.02, -.02], [-.02, .02], [.02, .02], [.02, -.02]],
+                "pick_planning": {**context["pick_planning"],
+                                  "link6_from_robot_camera": np.eye(4).tolist()}}
     # Containment in either direction is overlap, and the exact pick point is inside.
     assert len(generate_candidates([item], rgb, depth, tiny_roi, settings, cv2, np)[2]) == 1
     values = np.array([699., 700., 700., 700., 701., 999., 0., np.nan, np.inf])
@@ -393,7 +403,13 @@ def exercise_registered_depth():
     transform[2, 3] = .8
     context = {"camera": color, "depth_camera": depth_camera,
                "platform_from_optical": transform.tolist(),
-               "roi": [[-.7, -.4], [-.7, .4], [.7, .4], [.7, -.4]]}
+               "roi": [[-.7, -.4], [-.7, .4], [.7, .4], [.7, -.4]],
+               "pick_planning": {
+                   "home_matrix": np.eye(4).tolist(),
+                   "base_from_platform": np.eye(4).tolist(),
+                   "link6_from_robot_camera": [[1., 0., 0., 0.], [0., 1., 0., -.07],
+                                                [0., 0., 1., 0.], [0., 0., 0., 1.]],
+                   "pick_rotation_deg": 0.0, "standoff_height_mm": 0.0}}
     center = np.array([660., 360.])  # Off-axis: equal pixel indices would be incorrect.
     polygon = center + np.array([[-34., -20.], [34., -20.], [34., 20.], [-34., 20.]])
     item = {"index": 3, "class_id": 1, "class_name": "part", "confidence": .9,
@@ -471,7 +487,13 @@ def exercise_candidate_batch_overlay():
     transform[2, 3] = .8
     context = {"camera": camera, "depth_camera": camera,
                "platform_from_optical": transform.tolist(),
-               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
+               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]],
+               "pick_planning": {
+                   "home_matrix": np.eye(4).tolist(),
+                   "base_from_platform": np.eye(4).tolist(),
+                   "link6_from_robot_camera": [[1., 0., 0., 0.], [0., 1., 0., -.07],
+                                                [0., 0., 1., 0.], [0., 0., 0., 1.]],
+                   "pick_rotation_deg": 0.0, "standoff_height_mm": 0.0}}
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
@@ -520,8 +542,56 @@ def exercise_candidate_batch_overlay():
         assert np.array_equal(empty_depth[200:300, 260:380], baseline_depth[200:300, 260:380])
 
 
+def exercise_robot_camera_rejects_before_ranking():
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import generate_candidates
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+
+    camera = {"k": [1000., 0., 320., 0., 1000., 240., 0., 0., 1.], "d": [0.] * 5}
+    optical = np.diag([1., -1., -1., 1.])
+    optical[2, 3] = .8
+    link6_camera = np.eye(4)
+    link6_camera[0, 3] = .25
+    context = {"camera": camera, "depth_camera": camera,
+               "platform_from_optical": optical.tolist(),
+               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]],
+               "pick_planning": {
+                   "home_matrix": np.eye(4).tolist(),
+                   "base_from_platform": np.eye(4).tolist(),
+                   "link6_from_robot_camera": link6_camera.tolist(),
+                   "pick_rotation_deg": 0., "standoff_height_mm": 90.}}
+    settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
+                "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
+                "geometry": {"height": 80., "width": 32., "tolerance": .1,
+                             "pickdepth_radius": 30.},
+                "yolo": {"class_ids": [1], "confidence": .5}}
+    rect = np.array([[-50, -20], [50, -20], [50, 20], [-50, 20]], np.float32)
+    objects = [{"index": index, "class_id": 1, "class_name": "part", "confidence": .8,
+                "rectangle": rect + [x, 240], "polygon": rect + [x, 240],
+                "center": np.array([x, 240.])}
+               for index, x in ((0, 320), (1, 400))]
+    rgb = np.full((480, 640, 3), 80, np.uint8)
+    depth = np.full((480, 640), 700, np.uint16)
+    overlay, depth_view, candidates, rejected = generate_candidates(
+        objects, rgb, depth, context, settings, cv2, np, candidate_limit=1)
+    assert [entry["source_index"] for entry in candidates] == [1]
+    assert rejected == [{"source_index": 0, "reason":
+                         "robot-camera origin outside bin ROI for normal and "
+                         "180-degree attitudes"}]
+    selected = candidates[0]["robot_camera_clearance"]
+    assert selected["mirrored"] is True
+    assert selected["normal_platform_xy"][0] > .2
+    assert -.2 < selected["selected_platform_xy"][0] < .2
+    # The native preview displays exactly the selected mirrored footprint on
+    # both images, and excludes the rejected item from the capped pose batch.
+    assert np.any(np.all(overlay == [255, 0, 255], axis=2))
+    assert np.any(np.all(depth_view == [255, 0, 255], axis=2))
+
+
 @pytest.mark.parametrize("exercise", ["exercise_geometry", "exercise_registered_depth",
-                                     "exercise_candidate_batch_overlay"])
+                                     "exercise_candidate_batch_overlay",
+                                     "exercise_robot_camera_rejects_before_ranking"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

@@ -298,7 +298,15 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         "camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},
         "depth_camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},
         "platform_from_optical": [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, .8], [0, 0, 0, 1]],
-        "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]]}
+        "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]],
+        "pick_planning": {
+            "home_matrix": [[1, 0, 0, 0], [0, 1, 0, 0],
+                            [0, 0, 1, 0], [0, 0, 0, 1]],
+            "base_from_platform": [[1, 0, 0, 0], [0, 1, 0, 0],
+                                   [0, 0, 1, 0], [0, 0, 0, 1]],
+            "link6_from_robot_camera": [[1, 0, 0, .03], [0, 1, 0, 0],
+                                        [0, 0, 1, 0], [0, 0, 0, 1]],
+            "pick_rotation_deg": 0.0, "standoff_height_mm": 90.0}}
     try:
         pixels = bytes([40, 50, 60] * (320 * 240))
         depth = struct.pack("<H", 700) * (320 * 240)
@@ -341,13 +349,14 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
             {"source_index": 8, "rectangle": other, "polygon": other, "size_valid": False},
         ]
         send_packet(child.stdin, click, pixels + depth)
-        selected, depth_overlay = receive_packet(child.stdout)
+        selected, selected_pair = receive_packet(child.stdout)
         assert selected["state"] == "ok", selected
         assert not selected["rejected"] and len(selected["candidates"]) == 1
         point = selected["candidates"][0]
         assert point["source_index"] == 7 and point["pixel"] == [160., 120.]
         assert point["position"] == pytest.approx([0, 0, .1])
-        assert len(depth_overlay) == len(pixels)
+        assert len(selected_pair) == 2 * len(pixels)
+        depth_overlay = selected_pair[len(pixels):]
         assert depth_overlay[(120*320+162)*3:(120*320+162)*3+3] == bytes(3)
         assert depth_overlay[(180*320+260)*3:(180*320+260)*3+3] == bytes([255]*3)
         # Other displayed items remain overlaid, but only the clicked item gets a pose.

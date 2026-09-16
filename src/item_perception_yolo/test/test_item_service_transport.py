@@ -43,7 +43,9 @@ def exercise_service():
             platform=SimpleNamespace(base_from_platform=np.eye(4), sha256="d"*64))
         detector.bin_artifact = SimpleNamespace(sha256="e"*64, points=[
             SimpleNamespace(x_m=x, y_m=y) for x, y in [(-.2,-.2),(-.2,.2),(.2,.2),(.2,-.2)]])
+        detector.robot_camera = SimpleNamespace(sha256="f"*64)
         detector._validate_sources = MagicMock()
+        detector.pick_planning_context = MagicMock(return_value={"synthetic": "plan"})
         settings = {"model_task": "segment", "geometry_source": "mask",
             "geometry": {"height": 100., "width": 50., "tolerance": 5., "pickdepth_radius": 30.},
             "bin_clearance": {"p1_p2": None, "p2_p3": None,
@@ -52,7 +54,8 @@ def exercise_service():
                 "max_detections": 20, "image_size": 640, "iou": .5}}
         profile = {
             **settings, "model": {"declared_task": "segment", "sha256": "b"*64},
-            "item": {}, "pick_rotation": 0.0, "motion": {}, "speed": {}, "acceleration": {},
+            "item": {}, "home": {"positions_rad": [0.] * 6}, "pick_rotation": 0.0,
+            "motion": {"standoff_height": 90.}, "speed": {}, "acceleration": {},
             "timing": {}, "gripper": {}, "retry": {"pose_candidates": 3}}
         module.load_item_profile = lambda _: (profile, "a"*64)
         module.file_sha256 = lambda _: "a"*64
@@ -113,6 +116,7 @@ def exercise_service():
         assert result.header.frame_id == "platform_reference"
         assert min(observed[0][:2]) >= start
         assert np.allclose(observed[0][2]["platform_from_optical"], transform)
+        assert observed[0][2]["pick_planning"] == {"synthetic": "plan"}
         # A delayed TF must not cause the detector to chase newer incoming frames.
         real_lookup = detector.tf_buffer.lookup_transform
         looked_up = []

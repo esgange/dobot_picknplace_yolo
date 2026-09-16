@@ -3,6 +3,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from item_perception_yolo.pick_planning import select_pick_attitude
 from robot_controller.hardware import (
     CARTESIAN_POSITION_TOLERANCE_M, COMMAND_RESPONSE_TIMEOUT_SEC,
     HOME_JOINT_TOLERANCE_RAD, MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
@@ -93,6 +94,23 @@ def test_pick_green_axis_follows_item_short_axis_through_every_waypoint():
     assert all(np.allclose(target.matrix[:3, :3], rotation) for target in plan)
 
 
+def test_camera_safe_mirror_is_used_for_every_motion_waypoint():
+    home = matrix(1.0)
+    candidate = item_pose(x=0.18, y=0.0)
+    robot_camera = np.eye(4)
+    robot_camera[0, 3] = 0.05
+    selected = select_pick_attitude(
+        home, candidate, 0.0, 0.0, np.eye(4), robot_camera,
+        [[-0.2, -0.15], [-0.2, 0.15], [0.2, 0.15], [0.2, -0.15]])
+    assert selected.accepted and selected.mirrored
+    plan = pick_targets(home, candidate, settings(), 1, rotation=selected.rotation)
+    assert all(np.allclose(target.matrix[:3, :3], selected.rotation)
+               for target in plan)
+    assert all(np.allclose(target.matrix[:2, 3], candidate[:2, 3])
+               for target in plan)
+    assert plan[3].matrix[2, 3] == selected.planned_link6[2, 3]
+
+
 def test_rectangular_axis_uses_nearest_equivalent_tool_rotation():
     home = matrix(1.0)
     item = item_pose(yaw_deg=170.0)
@@ -101,6 +119,24 @@ def test_rectangular_axis_uses_nearest_equivalent_tool_rotation():
     assert delta_deg == pytest.approx(-10.0)
     assert abs(float(np.dot(rotation[:, 1], item[:3, 1]))) == pytest.approx(1.0)
     assert np.allclose(rotation[:, 2], home[:3, 2])
+
+
+def test_controller_waypoints_use_selected_camera_safe_mirror_without_moving_pick_point():
+    home = matrix(1.0)
+    item = item_pose(x=0.18, y=0.0)
+    camera = np.eye(4)
+    camera[0, 3] = 0.05
+    roi = [[-0.2, -0.15], [-0.2, 0.15], [0.2, 0.15], [0.2, -0.15]]
+    attitude = select_pick_attitude(
+        home, item, 0.0, 0.0, np.eye(4), camera, roi)
+    assert attitude.accepted and attitude.mirrored
+    plan = pick_targets(home, item, settings(), 1, rotation=attitude.rotation)
+    assert all(np.allclose(target.matrix[:3, :3], attitude.rotation) for target in plan)
+    assert all(target.matrix[0, 3] == pytest.approx(item[0, 3]) for target in plan)
+    assert all(target.matrix[1, 3] == pytest.approx(item[1, 3]) for target in plan)
+    assert plan[3].matrix[2, 3] == pytest.approx(item[2, 3])
+    with pytest.raises(ValueError, match="3x3 rotation"):
+        pick_targets(home, item, settings(), 1, rotation=np.eye(4))
 
 
 def test_tilted_platform_short_axis_is_projected_while_tool_z_stays_fixed():

@@ -122,13 +122,14 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                 rgb_bytes = width * height * 3
                 rgb = np.frombuffer(data[:rgb_bytes], np.uint8).reshape(height, width, 3)
                 depth = np.frombuffer(data[rgb_bytes:], "<u2").reshape(height, width)
-                _rgb, depth_view, candidates, rejected = selected_pose(
+                selected_rgb, depth_view, candidates, rejected = selected_pose(
                     request["detection"], rgb, depth, request["context"],
                     request["settings"], cv2, np, display_detections=request["display_detections"])
                 send_packet(output_stream, {
                     "state": "ok", "generation": request["generation"],
                     "width": width, "height": height,
-                    "candidates": candidates, "rejected": rejected}, depth_view.tobytes())
+                    "candidates": candidates, "rejected": rejected},
+                    selected_rgb.tobytes() + depth_view.tobytes())
                 continue
             if request["operation"] == "overlay_roi":
                 # Pure geometry: no model loading, prediction or production settings.

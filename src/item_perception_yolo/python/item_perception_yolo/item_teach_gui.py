@@ -36,7 +36,7 @@ from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matri
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
 from .bin_teach_core import bin_platform_warning
-from .station_calibration import latest_station_calibration
+from .station_calibration import latest_station_calibration, latest_robot_camera_calibration
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -340,9 +340,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
         station.addRow(camera_row)
         self.platform_path = QtWidgets.QLineEdit()
         self.calibration_camera_path = QtWidgets.QLineEdit()
+        self.robot_camera_path = QtWidgets.QLineEdit()
         self.bin_path = QtWidgets.QLineEdit()
         for label, field in (("Latest platform", self.platform_path),
-                             ("Camera calibration", self.calibration_camera_path)):
+                             ("Bin camera calibration", self.calibration_camera_path),
+                             ("Robot camera calibration", self.robot_camera_path)):
             field.setReadOnly(True)
             field.setPlaceholderText("Automatically selected from calibration/")
             station.addRow(label, field)
@@ -790,7 +792,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
             settings = self._inference_settings()
             if self.selected_detection.get("size_valid") is False:
                 raise ValueError("Size outside tolerance; no pose TF")
-            self.pending_pose = (view, self.selected_detection, settings)
+            if self.home is None:
+                raise ValueError("Record or load taught Home joints before calculating pose")
+            planning = self.node.pick_planning_context(
+                self.home, self._number("pick_rotation"), self._number("standoff_height"))
+            self.pending_pose = (view, self.selected_detection, settings, planning)
             self.selected_pose_status = "Calculating selected RGB/depth pose…"
         except ValueError as exc:
             self.selected_pose_status = "Pose unavailable: " + str(exc)
@@ -988,7 +994,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.yolo_toggle.setChecked(False)
         self.node.disarm()
         self.armed_toggle.setChecked(False)
-        self.node.applied = self.node.bin_artifact = None
+        self.node.applied = self.node.bin_artifact = self.node.robot_camera = None
         self.node.last_view = None
         self.last_preview_sequence = None
         self._resume_live()
@@ -998,24 +1004,34 @@ class ItemTeachWindow(QtWidgets.QWidget):
         platform, bin_path = "", self.bin_path.text()
         self.platform_path.clear()
         self.calibration_camera_path.clear()
+        self.robot_camera_path.clear()
         self.platform_path.setToolTip("")
         self.calibration_camera_path.setToolTip("")
+        self.robot_camera_path.setToolTip("")
         try:
             latest = latest_station_calibration(root=workspace_root())
+            robot_camera = latest_robot_camera_calibration(root=workspace_root())
             platform = str(latest.platform.path)
             self.platform_path.setText(platform)
             self.calibration_camera_path.setText(str(latest.camera.path))
+            self.robot_camera_path.setText(str(robot_camera.path))
             self.platform_path.setToolTip(platform)
             self.calibration_camera_path.setToolTip(str(latest.camera.path))
+            self.robot_camera_path.setToolTip(str(robot_camera.path))
             self.node.events.record(
                 "INFO", "item_latest_station_selected", "Selected newest hash-bound calibration",
                 platform=platform, platform_sha256=latest.platform.sha256,
-                camera=str(latest.camera.path), camera_sha256=latest.camera.sha256)
+                camera=str(latest.camera.path), camera_sha256=latest.camera.sha256,
+                robot_camera=str(robot_camera.path),
+                robot_camera_sha256=robot_camera.sha256)
             if not bin_path:
                 self.station_status.setText(
-                    "Latest platform/camera loaded. Select a bin teach to display its ROI.")
+                    "Latest platform, bin camera and robot-camera transform loaded. "
+                    "Select a bin teach to display its ROI.")
                 return
-            self.node.apply_station(platform, bin_path, expected_station=latest)
+            self.node.apply_station(
+                platform, bin_path, expected_station=latest,
+                expected_robot_camera=robot_camera)
             self._sync_bin_clearance_preview()
             self.camera_prefix.setText(self.node.camera_prefix)
             write_item_station_state(ui_state_path(), Path(platform).name, Path(bin_path).name)
@@ -1047,11 +1063,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     selected_platform_sha256=selected_platform.sha256)
         except (ValueError, OSError, RuntimeError) as exc:
             self.node.disarm()
-            self.node.applied = self.node.bin_artifact = self.node.last_view = None
+            self.node.applied = self.node.bin_artifact = self.node.robot_camera = None
+            self.node.last_view = None
             self.bin_platform_warning.clear()
             self.bin_platform_warning.setToolTip("")
             self.bin_platform_warning.hide()
-            message = f"Bin ROI hidden: {exc}. Check latest station calibration and bin teach."
+            message = (f"Bin ROI hidden: {exc}. Check latest station, robot-camera "
+                       "calibration and bin teach.")
             self.station_status.setText(message)
             self._message(message)
             self.node.events.record("WARNING", "item_station_preview_invalid", message,
@@ -1180,7 +1198,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.preview_error = response.message
                 self._message(self.preview_status)
             elif kind == "pose" and value is not None and self.frozen_view is not None:
-                self.frozen_view = {**self.frozen_view, "depth_rgb": value["depth_rgb"]}
+                self.frozen_view = {**self.frozen_view, "rgb": value["rgb"],
+                                    "depth_rgb": value["depth_rgb"]}
                 candidate = value["candidate"]
                 try:
                     if candidate is not None:
@@ -1227,9 +1246,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._apply_live_detection_settings()
         if (self.pending_pose is not None and not self.job_busy and not self.model_load_reserved
                 and self.frozen_view is not None and self.node.yolo_enabled):
-            view, detection, settings = self.pending_pose
+            view, detection, settings, planning = self.pending_pose
             self.pending_pose = None
-            self._job("pose", lambda: self.node.clicked_pose(view, detection, settings))
+            self._job("pose", lambda: self.node.clicked_pose(
+                view, detection, settings, planning))
         if (self.pending_simulation is not None and not self.job_busy
                 and not self.model_load_reserved):
             path, digest, requested_at = self.pending_simulation
@@ -1337,6 +1357,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 "RViz TF: no candidate frames (empty batch)")
             for candidate in batch.candidates[:3]:
                 batch_lines.append(self._batch_candidate_text(candidate))
+            camera_rejections = [entry for entry in metadata.get("rejected", [])
+                                 if "robot-camera origin" in entry.get("reason", "")]
+            if camera_rejections:
+                batch_lines.append(
+                    f"Camera clearance excluded {len(camera_rejections)} item(s): "
+                    + ", ".join(f"#{entry['source_index']}" for entry in camera_rejections))
             if len(batch.candidates) > 3:
                 batch_lines.append(f"{len(batch.candidates)-3} more poses labelled on image; "
                                    "full details in Activity log")
@@ -1377,6 +1403,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 yaw = math.degrees(2 * math.atan2(q[2], q[3]))
                 rgb_lines.extend([f"platform_reference XYZ [mm]: {xyz}",
                                   f"Yaw: {yaw:+.2f}° | Teaching snapshot TF — no motion"])
+                camera_plan = pose["robot_camera_clearance"]
+                camera_note = ("Robot camera origin: "
+                               + ("CAM 180 mirrored" if camera_plan["mirrored"] else
+                                  "CAM normal")
+                               + " | green ROI")
+                rgb_lines.append(camera_note)
                 pose_text += f"\nplatform_reference XYZ [mm]: {xyz}; yaw {yaw:+.2f}°"
             else:
                 rgb_lines.append("Pose: " + self.selected_pose_status)
@@ -1411,7 +1443,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     depth_lines.append(dimension_note)
                 if self.selected_pose_result is not None:
                     depth_lines.extend([f"platform_reference XYZ [mm]: {xyz}",
-                                        f"Yaw: {yaw:+.2f}° | Teaching snapshot TF"])
+                                        f"Yaw: {yaw:+.2f}° | Teaching snapshot TF",
+                                        camera_note])
                     pose = self.selected_pose_result
                     depth_lines.append(
                         f"Depth {pose['filtered_camera_depth']*1000:.1f} mm | "

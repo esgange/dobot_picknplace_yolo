@@ -114,12 +114,15 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
     controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
     preview = (PACKAGE / "python/robot_controller/preview.py").read_text()
     motion = (PACKAGE / "python/robot_controller/motion.py").read_text()
+    shared = (ROOT / "item_perception_yolo/python/item_perception_yolo/pick_planning.py"
+              ).read_text()
     assert "candidate_pose_in_base(" in controller
     assert "candidate_pose_in_base(" in preview
     assert "plan = pick_targets(" in controller
     assert "plan = pick_targets(" in preview
-    assert "item[:3, 1]" in motion
-    assert "reference_rotation" not in controller + preview + motion
+    assert "item[:3, 1]" in shared
+    assert "select_pick_attitude(" in controller and "select_pick_attitude(" in preview
+    assert "reference_rotation" not in controller + preview + motion + shared
     assert "selected_offset_direction" in controller
     assert "rotation_from_home_deg" in controller
 
