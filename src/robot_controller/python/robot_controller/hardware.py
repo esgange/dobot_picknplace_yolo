@@ -16,7 +16,8 @@ from .motion import pose_reached
 
 
 SERVICE_DISCOVERY_TIMEOUT_SEC = 5.0
-COMMAND_RESPONSE_TIMEOUT_SEC = 5.0
+COMMAND_RESPONSE_TIMEOUT_SEC = 2.0
+OUTPUT_FEEDBACK_TIMEOUT_SEC = 5.0
 MODE_TRANSITION_TIMEOUT_SEC = 2.0
 READY_STABLE_SEC = 0.2
 CONSISTENT_FLAG_SAMPLES = 3
@@ -260,7 +261,8 @@ class DobotTransport:
                     progress(snapshot)
                 if time.monotonic() >= deadline:
                     self._finish_service_audit(
-                        audit, "timeout", detail="no response within 5 seconds",
+                        audit, "timeout",
+                        detail=f"no response within {COMMAND_RESPONSE_TIMEOUT_SEC:g} seconds",
                         level="ERROR")
                     raise CommandResponseTimeout(
                         f"{name} response timeout; no later normal command sent")
@@ -658,7 +660,7 @@ class DobotTransport:
             self.monitor.wait(
                 lambda sample, m=mask: sample.sequence > before
                 and not bool(sample.feed["digital_outputs"] & m),
-                COMMAND_RESPONSE_TIMEOUT_SEC, cancel=self.node.cancel_requested,
+                OUTPUT_FEEDBACK_TIMEOUT_SEC, cancel=self.node.cancel_requested,
                 require_enabled=False, description=f"startup DO{channel}=0 feedback")
             self.node.expected_outputs[channel] = False
 
@@ -900,7 +902,7 @@ class DobotTransport:
                     lambda sample: all(
                         bool(sample.feed["digital_outputs"] & (1 << (channel - 1))) == active
                         for channel, active in expected_outputs.items()),
-                    COMMAND_RESPONSE_TIMEOUT_SEC, cancel=self.node.cancel_requested,
+                    OUTPUT_FEEDBACK_TIMEOUT_SEC, cancel=self.node.cancel_requested,
                     pause=self._pause_requested, require_enabled=True,
                     description="motion-timed output feedback")
                 self.node.expected_outputs.update(expected_outputs)
@@ -928,7 +930,7 @@ class DobotTransport:
         self.monitor.wait(
             lambda sample: sample.sequence > before
             and bool(sample.feed["digital_outputs"] & mask) == active,
-            COMMAND_RESPONSE_TIMEOUT_SEC, cancel=self.node.cancel_requested,
+            OUTPUT_FEEDBACK_TIMEOUT_SEC, cancel=self.node.cancel_requested,
             pause=self._pause_requested, require_enabled=True,
             description=f"DO{channel} output feedback")
         self.node.expected_outputs[channel] = active

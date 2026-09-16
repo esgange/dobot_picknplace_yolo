@@ -3637,6 +3637,25 @@ Never use a floating “latest” version in an issue, script, or deployment not
   unchanged `ItemCandidate` interface inspection, and `git diff --check` pass.
   No camera stream or physical robot was commanded or commissioned.
 
+### 2026-09-16 — Two-second controller service replies
+
+- Rule 84 supersedes only the previous five-second Dobot service-response
+  deadline. Every serialized normal request, independent Stop acknowledgement,
+  and Pause/Continue request now has two seconds for a ROS reply with `res=0`.
+  A timeout remains ambiguous: send no later normal command, preserve the
+  existing Stop/recovery containment, and log the exact timed-out service.
+- Service discovery remains five seconds. The distinct five-second DO/output
+  feedback window is retained rather than silently shortening physical output
+  confirmation. Feedback age, mode transitions, motion watchdog/cap, and final
+  target arrival checks are unchanged; queued pick commands still await each
+  service reply but do not wait for intermediate physical arrival.
+- Verification is software-only; 122 direct Robot Controller tests and 123
+  package-reported tests pass with zero errors/failures/skips, including a
+  synthetic MovL reply timeout that blocks the next dispatch at two seconds.
+  Python compilation, focused lint, `git diff --check`, and the complete
+  15-package `colcon build` pass. No robot, camera, or motion service was
+  commanded.
+
 ### Future entry template
 
 ```text

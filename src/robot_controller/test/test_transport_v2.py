@@ -1,10 +1,11 @@
 from types import SimpleNamespace
+import threading
 
 import numpy as np
 import pytest
 
 import robot_controller.hardware as hardware_module
-from robot_controller.errors import FeedbackFailure, HeldUnknown
+from robot_controller.errors import CommandResponseTimeout, FeedbackFailure, HeldUnknown
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
 from robot_controller.motion import Target
 
@@ -15,6 +16,46 @@ class EventLog:
 
     def record(self, *_args, **_kwargs):
         self.entries.append((_args, _kwargs))
+
+
+def test_normal_service_timeout_after_two_seconds_blocks_later_dispatch(monkeypatch):
+    class PendingFuture:
+        def done(self):
+            return False
+
+        def add_done_callback(self, _callback):
+            pass
+
+    dispatches = []
+    client = SimpleNamespace(
+        service_is_ready=lambda: True,
+        call_async=lambda request: dispatches.append(request) or PendingFuture())
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.clients = {"MovL": client}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+    transport.node = SimpleNamespace(
+        check_command_owner=lambda _name: None,
+        cancel_requested=lambda: False,
+        wait_control=lambda _seconds: None)
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    outcomes = []
+    transport._begin_service_audit = lambda name, fields: {"name": name}
+    transport._finish_service_audit = lambda _audit, outcome, **fields: outcomes.append(
+        (outcome, fields))
+    ticks = iter((10.0, 10.5, 11.5, 12.0))
+    monkeypatch.setattr(hardware_module, "time",
+                        SimpleNamespace(monotonic=lambda: next(ticks)))
+
+    with pytest.raises(CommandResponseTimeout, match="MovL response timeout"):
+        transport.call("MovL", mode=False)
+    assert len(dispatches) == 1
+    assert outcomes == [("timeout", {"detail": "no response within 2 seconds",
+                                     "level": "ERROR"})]
+    with pytest.raises(CommandResponseTimeout, match="still awaiting MovL response"):
+        transport.call("MovL", mode=False)
+    assert len(dispatches) == 1
 
 
 def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(

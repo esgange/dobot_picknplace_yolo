@@ -173,9 +173,11 @@ Stop—never overlapping the two vendor requests. External nodes do not use this
 two-click policy and may call `/robot_controller/stop` immediately in any state.
 
 Feedback is condition-driven from the approximately 100 Hz FeedInfo stream.
-Policies are: five seconds for service discovery/response, one-second feedback
-age, two-second expected mode changes, three consistent pause/error samples,
-three-second no-progress watchdog, and 300-second physical-motion cap. Home
+Policies are: five seconds for service discovery, two seconds for each Dobot
+service response (including Stop and Pause/Continue), five seconds for output
+feedback, one-second feedback age, two-second expected mode changes, three
+consistent pause/error samples, three-second no-progress watchdog, and a
+300-second physical-motion cap. Home
 arrival is within one degree on every taught joint; Cartesian arrival is within
 5 mm and one degree, plus enabled, queue-idle and stationary confirmation.
 
