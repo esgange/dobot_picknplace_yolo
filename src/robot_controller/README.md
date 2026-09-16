@@ -268,6 +268,13 @@ reordered or leave later motion queued after an earlier rejection, so they are
 not used. Batch start, each admitted command, full-queue admission, interruption
 and terminal completion are recorded with the batch name.
 
+Motion requests carry only `user=0`, `tool=0`, and their taught `v`/`a` rates;
+they never carry a per-command `cp` or `r`. The global `CP(100)` established by
+Startup/Recover therefore controls all transitions. As specified by the Dobot
+protocol, smoothing can bypass exact intermediate coordinates and timed I/O can
+occur during a blended transition. The controller still confirms the terminal
+pick/stopped pose before return planning and exact taught joints at Home.
+
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Conditional Home rise uses `RelMovLUser`. The controller never calls
 `InverseKin`; `Continue` is reserved solely for explicit resume from `PAUSED`.

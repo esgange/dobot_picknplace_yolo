@@ -49,13 +49,16 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
     transport._idle = lambda _snapshot: True
     transport._target_reached = lambda target, _snapshot: (
         order.append(("reached", target.name)) or True)
-    transport.call = lambda service, **_kwargs: order.append(("call", service))
+    transport.call = lambda service, **kwargs: order.append(
+        ("call", service, kwargs["param_value"]))
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     transport.moving = False
 
     assert transport.move_batch(targets, batch_name="forward") is False
-    assert order == [("call", "MovL"), ("call", "MovL"),
+    parameters = ["user=0", "tool=0", "v=100", "a=100"]
+    assert order == [("call", "MovL", parameters),
+                     ("call", "MovL", parameters),
                      ("reached", "terminal")]
     names = [entry[0][1] for entry in events.entries]
     assert names == ["motion_batch_dispatch_started", "motion_queued",

@@ -3400,6 +3400,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   acknowledgement and that only the final target enters the arrival loop. No
   detector request or robot command was issued.
 
+### 2026-09-16 — Let every motion inherit global CP 100
+
+- The latest hardware log proves Startup/Recover successfully sent `CP(100)`,
+  while every subsequent MovL, MovLIO and RelMovLUser request explicitly supplied
+  `cp=0`. The controller did not wait for intermediate positions: for candidate
+  one it admitted all four forward commands before one terminal-pick completion,
+  then admitted all four return commands before one exact-Home completion. The
+  visible stop at each waypoint therefore came from the local zero-blending
+  override, not a per-waypoint arrival loop.
+- The vendored Dobot V4.6.5 manual defines per-command `cp` as the transition
+  blend from the current instruction into the following instruction; when neither
+  `cp` nor `r` is supplied, the configured global CP value applies. It also warns
+  that smoothing can bypass the exact intermediate point and can execute timed
+  output during the transition.
+- Rule 77 removes `cp` and `r` from every controller MovL, MovLIO and RelMovLUser
+  `param_value`. The strict Startup/Recover `CP(100)` response remains mandatory
+  and is now the sole blending setting. Retain user/tool zero, per-target speed
+  and acceleration, response serialization, named forward/return batches,
+  terminal pick settling/stopped-pose confirmation, and exact taught-joint Home
+  confirmation.
+- This means transit, clearance, pre-pick, retract and conditional Home-height
+  coordinates are blended planning control points, not guaranteed physical stop
+  points. No schema, interface, teach artifact, target geometry or vendored source
+  changes. Physical path-clearance commissioning remains an explicit separate
+  task because CP 100 may round the horizontal/vertical and return-to-Home
+  transitions.
+- Verification is source/synthetic only: assert every generated motion parameter
+  list contains exactly user/tool/v/a and no cp/r, preserve all-command admission
+  before the single tail check, run compilation/lint, the full controller tests,
+  package/root builds, staged review and `git diff --check`. Do not issue detector
+  requests or robot commands.
+- Verification completed with all 112 focused Robot Controller tests passing and
+  all 113 package-reported results passing with zero errors, failures or skips.
+  Python compilation and all 20 controller/test files pass ament_flake8; the
+  controller package and complete 15-package workspace build successfully. The
+  transport test proves each generated request contains exactly user/tool/v/a,
+  both commands are admitted before the sole terminal check, and architecture
+  tests reject any controller `cp=` or `r=` parameter. No detector request or
+  robot command was issued.
+
 ### Future entry template
 
 ```text

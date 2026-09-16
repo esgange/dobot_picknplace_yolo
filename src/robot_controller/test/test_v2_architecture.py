@@ -129,6 +129,9 @@ def test_pick_uses_named_forward_and_return_queue_batches():
     assert 'batch_name=f"candidate_{index}_pick_to_home"' in motion
     assert "wait_for_each_queue_ack_then_terminal_feedback_only" in hardware
     assert '"motion_batch_queued"' in hardware
+    assert '"cp=0"' not in hardware
+    assert '"cp="' not in hardware
+    assert '"r="' not in hardware
 
 
 def test_idle_supervision_preempts_unexpected_motion():

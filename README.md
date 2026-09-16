@@ -192,9 +192,12 @@ never silently defaulted. Production rejects schemas 1–5.
 Motion saves only standoff_height, prepick_height and retract_height:
 pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
 clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.
-Queued commands use cp=0 to preserve these corners and rate boundaries;
-startup/global CP remains 100%. See the controller README for feedback/Stop
-confirmation and deployment safety requirements.
+Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
+applied by Startup/Recover governs every transition. Intermediate waypoints are
+therefore blended planning control points rather than guaranteed exact stops;
+only the terminal pick/stopped pose and exact taught-joint Home are physically
+confirmed. See the controller README for feedback/Stop confirmation and
+deployment safety requirements.
 
 For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
 load while the automatic bin border is updating: the confirmed

@@ -824,7 +824,7 @@ class DobotTransport:
                     "MOTION", f"Queueing {batch_name}: {target.name}",
                     waypoint=target.name)
                 params = ["user=0", "tool=0", f"v={target.speed_percent}",
-                          f"a={target.acceleration_percent}", "cp=0"]
+                          f"a={target.acceleration_percent}"]
                 if target.relative_z:
                     self.call("RelMovLUser", a=0., b=0.,
                               c=(target.matrix[2, 3] - previous[2, 3]) * 1000,
