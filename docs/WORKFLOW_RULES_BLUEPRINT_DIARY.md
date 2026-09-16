@@ -3203,6 +3203,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   15 workspace packages build successfully. Live graph inspection was read-only,
   and no candidate request or robot command was issued during verification.
 
+### 2026-09-16 — Stabilize current-pose acquisition after DO and Stop
+
+- The first live Pick using the corrected armed-Item-Teach provider received and
+  validated three fresh candidates. Candidate 1 confirmed DI1 clear, then sent
+  and received successful `DO1=0` and `DO13=0` acknowledgements. Six milliseconds
+  after the latter acknowledgement, `move_batch` sampled feedback once before
+  GetPose and rejected it as not stationary READY. No GetPose or motion command
+  was dispatched; the controller sent and confirmed Stop and correctly entered
+  `RECOVERY_REQUIRED`.
+- Service acknowledgement did not guarantee that the independently published
+  RobotStatus/FeedInfo transition had already returned to idle. Treating that
+  one transient sample as terminal was therefore an internal race, not a missing
+  operator prerequisite.
+- Rule 72 makes current-pose acquisition wait at most two seconds for 300 ms of
+  advancing coherent idle feedback before dispatching GetPose. It uses the exact
+  existing idle fields and trusted holding checks and remains cancellation/Pause
+  aware. If the wait fails, no GetPose is sent: the error lists every current
+  blocker, or distinguishes valid fields that failed only the stability window.
+- Verification is source/synthetic only: test the stable wait parameters,
+  delayed GetPose ordering, detailed blocker timeout, instability-only timeout,
+  held-item validation and unchanged motion behavior; then run controller tests,
+  compilation/lint, package/root builds, staged review and `git diff --check`.
+  Do not send a detector request or robot command during verification.
+- Verification completed with all 86 focused controller tests passing directly
+  and through the package CTest wrapper (87 reported tests, zero errors,
+  failures or skips). New tests prove the two-second/300 ms gate, that GetPose is
+  dispatched only after it passes, and that blocked/unstable timeouts dispatch
+  no GetPose and report the appropriate diagnostics. Python compilation and all
+  20 controller/test files pass ament_flake8; the controller package and all 15
+  workspace packages build successfully. No hardware or detector request was
+  issued during verification.
+
 ### Future entry template
 
 ```text

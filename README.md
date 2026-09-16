@@ -108,7 +108,9 @@ waypoints use 5 mm Euclidean translation and 1° orientation with the same final
 feedback gates. Hardware Home and Pick's initial shared-Home step first apply
 that exact joint gate; if the robot is already Home, they log the skip and send
 no GetPose or Home motion. Queued return-to-Home paths after a pick attempt are
-not skipped.
+not skipped. Every required GetPose waits up to two seconds for that stationary
+idle state to remain coherent for 300 ms, so a just-acknowledged DO or Stop cannot
+cause a false one-sample rejection.
 
 ## Item Teach and controller
 

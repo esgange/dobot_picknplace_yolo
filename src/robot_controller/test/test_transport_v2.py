@@ -243,3 +243,68 @@ def test_existing_home_skip_requires_idle_empty_queue():
     transport = home_reached_transport(sample)
     assert not transport.home_already_reached((0.0,) * 6)
     assert transport.monitor.wait_calls == 0
+
+
+class CurrentPoseMonitor:
+    def __init__(self, sample, *, fail=False):
+        self.sample = sample
+        self.fail = fail
+        self.wait_kwargs = None
+
+    def wait(self, predicate, timeout, **kwargs):
+        self.wait_kwargs = {"timeout": timeout, **kwargs}
+        if self.fail:
+            raise FeedbackFailure("synthetic stationary timeout")
+        assert predicate(self.sample)
+        return self.sample
+
+    def snapshot(self, **_kwargs):
+        return self.sample
+
+
+def current_pose_transport(sample, *, fail=False):
+    transport = object.__new__(DobotTransport)
+    transport.monitor = CurrentPoseMonitor(sample, fail=fail)
+    transport.node = SimpleNamespace(
+        holding_item=False, expected_outputs={}, cancel_requested=lambda: False)
+    calls = []
+    transport.call = lambda name, **fields: (
+        calls.append((name, fields)) or SimpleNamespace(robot_return="{1,2,3,0,0,0}"))
+    return transport, calls
+
+
+def test_current_pose_waits_for_300ms_stationary_idle_before_getpose():
+    transport, calls = current_pose_transport(snapshot())
+
+    matrix = transport.current_pose()
+
+    assert transport.monitor.wait_kwargs["timeout"] == pytest.approx(2.0)
+    assert transport.monitor.wait_kwargs["stable_sec"] == pytest.approx(0.3)
+    assert transport.monitor.wait_kwargs["require_enabled"] is True
+    assert calls == [("GetPose", {"user": 0, "tool": 0})]
+    assert tuple(matrix[:3, 3]) == pytest.approx((0.001, 0.002, 0.003))
+
+
+def test_current_pose_timeout_reports_exact_idle_blockers_and_skips_getpose():
+    blocked = snapshot()
+    blocked.robot_enabled = False
+    blocked.feed.update(robot_mode=7, isRunQueuedCmd=1, RunningStatus=1)
+    transport, calls = current_pose_transport(blocked, fail=True)
+
+    with pytest.raises(FeedbackFailure) as captured:
+        transport.current_pose()
+
+    message = str(captured.value)
+    assert "RobotStatus.is_enable=False" in message
+    assert "robot_mode=7" in message
+    assert "isRunQueuedCmd=1" in message
+    assert "RunningStatus=1" in message
+    assert calls == []
+
+
+def test_current_pose_reports_unstable_idle_without_inventing_a_blocker():
+    transport, calls = current_pose_transport(snapshot(), fail=True)
+
+    with pytest.raises(FeedbackFailure, match="did not remain coherent for 300 ms"):
+        transport.current_pose()
+    assert calls == []

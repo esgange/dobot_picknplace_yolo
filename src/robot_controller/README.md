@@ -239,6 +239,13 @@ completion uses 5 mm Euclidean translation and 1° orientation. Both require 300
 ms of coherent enabled, idle, queue-empty feedback; Home remains joint-only and
 does not additionally compare Cartesian FK/GetPose.
 
+Before every GetPose used as a motion-batch origin or stopped-pose measurement,
+the controller waits up to two seconds for the same idle fields to stay coherent
+for 300 ms. This absorbs the normal feedback transition immediately after an
+acknowledged DO or Stop. A timeout sends no GetPose and names every current
+RobotStatus/FeedInfo blocker, or reports that otherwise-valid fields could not
+stay coherent for the full interval.
+
 Software tests use synthetic services/feedback and must never commission
 physical motion. Real commissioning requires separate explicit authorization,
 clear workspace, functional physical emergency stop, verified wiring, and an

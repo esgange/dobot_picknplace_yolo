@@ -485,12 +485,25 @@ class DobotTransport:
 
     @staticmethod
     def _idle(snapshot):
+        return not DobotTransport._idle_blockers(snapshot)
+
+    @staticmethod
+    def _idle_blockers(snapshot):
         feed = snapshot.feed
-        return (snapshot.robot_enabled and feed["robot_mode"] == 5
-                and feed["EnableStatus"] == 1
-                and not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
-                and not feed["ErrorStatus"] and not feed["CollisionStates"]
-                and feed["userCoordinate"] == 0 and feed["toolCoordinate"] == 0)
+        blockers = []
+        if not snapshot.robot_enabled:
+            blockers.append("RobotStatus.is_enable=False (required true in idle mode 5)")
+        if feed["robot_mode"] != 5:
+            blockers.append(f"robot_mode={feed['robot_mode']} (required idle mode 5)")
+        if feed["EnableStatus"] != 1:
+            blockers.append(f"EnableStatus={feed['EnableStatus']} (required 1)")
+        for key in ("isRunQueuedCmd", "RunningStatus", "ErrorStatus", "CollisionStates"):
+            if feed[key]:
+                blockers.append(f"{key}={feed[key]} (required 0)")
+        for key in ("userCoordinate", "toolCoordinate"):
+            if feed[key] != 0:
+                blockers.append(f"{key}={feed[key]} (required 0)")
+        return blockers
 
     def _wait_enabled(self):
         self._phase("MODE_CONFIRM", "Confirming Enabled mode", "EnableRobot")
@@ -665,9 +678,23 @@ class DobotTransport:
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 
     def current_pose(self):
-        snapshot = self._ready_snapshot()
-        if not self._idle(snapshot):
-            raise FeedbackFailure("Current-pose acquisition requires stationary READY feedback")
+        try:
+            self.monitor.wait(
+                self._held_predicate(self._idle), MODE_TRANSITION_TIMEOUT_SEC,
+                cancel=self.node.cancel_requested, pause=self._pause_requested,
+                require_enabled=True, stable_sec=STATIONARY_SEC,
+                description="stationary READY feedback before GetPose")
+        except FeedbackFailure as exc:
+            try:
+                snapshot = self.monitor.snapshot(require_enabled=False)
+            except FeedbackFailure:
+                raise exc
+            blockers = self._idle_blockers(snapshot)
+            if blockers:
+                raise FeedbackFailure(
+                    "Current-pose acquisition blocked: " + "; ".join(blockers)) from exc
+            raise FeedbackFailure(
+                "Current-pose READY fields did not remain coherent for 300 ms") from exc
         result = self.call("GetPose", user=0, tool=0)
         return pose_matrix(robot_values(result.robot_return))
 
