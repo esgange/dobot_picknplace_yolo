@@ -272,23 +272,26 @@ def test_missed_suction_queues_direct_retract_next_prepick_and_pick():
     assert forward_batches == ["candidate_1_home_to_pick",
                                "candidate_1_pick_to_retry_2_pick",
                                "candidate_2_miss_retract"]
+    assert [target.name for target in hardware.targets[2]] == ["p2_final"]
     retry = next(entry for entry in hardware.log if entry[0] == "move"
                  and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
-    assert retry[1] == ("p1_retract", "p2_prepick", "p2_pick")
+    assert retry[1] == ("p1_final", "p2_initial", "p2_prepick", "p2_pick")
     assert retry[2]["stop_on_suction"] is True
     assert retry[2]["require_suction_reset"] is True
     assert retry[2]["settle_suction_sec"] == pytest.approx(0.2)
-    retract, next_prepick, next_pick = [
+    retract, next_approach, next_prepick, next_pick = [
         target for target in hardware.targets[1]]
     assert retract.speed_percent == 100
+    assert retract.matrix[2, 3] == pytest.approx(plans[0][5].matrix[2, 3])
     assert [(event.percent, event.channel, event.active)
             for event in retract.motion_io] == [
                 (20, 13, False), (20, 1, True), (20, 2, False), (20, 14, True)]
     assert [(event.percent, event.channel, event.active)
-            for event in next_prepick.motion_io] == [
+            for event in next_approach.motion_io] == [
                 (0, 1, False), (0, 2, False), (0, 14, True)]
+    assert not next_prepick.motion_io
     assert next_pick.motion_io == (MotionIO(0, 13, True),)
-    assert not any(name in retry[1] for name in ("p2_transit", "p2_initial"))
+    assert "p2_transit" not in retry[1]
     assert sum(entry[:2] == ("output", 13) and entry[2] is False
                for entry in hardware.log) == 1
     assert not any(entry[0] == "sensor" and entry[1] is True
@@ -322,9 +325,10 @@ def test_missed_repick_without_finger_control_changes_only_vacuum_and_exhaust():
         plans, taught, check=lambda _index: None,
         return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
 
-    retract, next_prepick, _pick = hardware.targets[1]
+    retract, next_approach, next_prepick, _pick = hardware.targets[1]
     assert [event.channel for event in retract.motion_io] == [13, 1]
-    assert [event.channel for event in next_prepick.motion_io] == [1]
+    assert [event.channel for event in next_approach.motion_io] == [1]
+    assert not next_prepick.motion_io
     assert all(entry[1] not in (2, 14) for entry in hardware.log
                if entry[0] == "output")
 

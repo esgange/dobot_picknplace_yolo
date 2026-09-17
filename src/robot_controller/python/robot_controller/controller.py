@@ -773,10 +773,10 @@ class RobotController(Node):
         if not expected and suction:
             raise HeldUnknown("DI1 active without trusted held-item context")
 
-    def _home_plan(self, preceding=()):
+    def _home_plan(self):
         config = self.configuration
         config.validate_sources(self.root)
-        current = preceding[-1].matrix if preceding else self.hardware.current_pose()
+        current = self.hardware.current_pose()
         return home_targets(
             current, config.home_matrix, config.home_joints,
             speed_percent=config.profile["speed"]["travel_percent"],
@@ -789,16 +789,35 @@ class RobotController(Node):
         holding = self.holding_item if require_suction is None else require_suction
         forbidden = not holding if forbid_suction is None else forbid_suction
         self._preflight_item_state(holding)
-        if (not preceding
-                and self.hardware.home_already_reached(self.configuration.home_joints)):
+        if preceding:
+            self.operation_progress(
+                "HOME_CLEARANCE", "Finishing above-item clearance before Home",
+                waypoint=preceding[-1].name)
+            self.hardware.move_batch(
+                preceding, batch_name=f"{batch_name}_clearance",
+                require_suction=holding, forbid_suction=forbidden)
+            self.raise_if_cancelled()
+            self.wait_for_resume()
+            self._preflight_item_state(holding)
+        if self.hardware.home_already_reached(self.configuration.home_joints):
             self.operation_progress(
                 "HOME", "Already within ±1° of every taught Home joint; motion skipped",
                 waypoint="home")
             return ()
-        targets = self._home_plan(preceding)
-        self.operation_progress("HOME", "Executing shared Home function", waypoint="home")
+        targets = self._home_plan()
+        if len(targets) > 1:
+            self.operation_progress(
+                "HOME_HEIGHT", "Rising vertically to verified Home Z",
+                waypoint="home_height")
+            self.hardware.move_batch(
+                (targets[0],), batch_name=f"{batch_name}_height",
+                require_suction=holding, forbid_suction=forbidden)
+            self.raise_if_cancelled()
+            self.wait_for_resume()
+            self._preflight_item_state(holding)
+        self.operation_progress("HOME", "Moving to exact taught Home joints", waypoint="home")
         self.hardware.move_batch(
-            (*preceding, *targets), batch_name=batch_name, require_suction=holding,
+            (targets[-1],), batch_name=batch_name, require_suction=holding,
             forbid_suction=forbidden)
         return targets
 

@@ -211,7 +211,11 @@ actions/services, or `events.jsonl`.
 Home is permitted from `READY` and trusted `HOLDING`. Fresh GetPose selects the
 branch: below taught Home Z, `RelMovLUser` first rises at current XY/attitude;
 at/above it, that segment is skipped. Exact taught Home joints are then sent via
-joint-mode `MovL`. Holding Home preserves and monitors suction.
+joint-mode `MovL`. The rise is a separate motion with confirmed 5 mm/1°
+Cartesian arrival, stationary/empty queue, and fresh held-item feedback before
+the joint Home command is sent. Holding Home preserves and monitors suction.
+When returning from Pick, the above-item approach/clearance motion is likewise
+confirmed first; every target that is Home uses this same rule.
 
 Before that planning, an initial Home with no preceding queued targets checks
 the normal completion gate directly: all six fresh actual joints within ±1° of
@@ -219,9 +223,9 @@ the taught tuple for 300 ms, idle mode 5, mode-derived RobotStatus enabled,
 `EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not running,
 and held-item I/O intact where applicable. If already complete, Hardware Home
 and Pick's initial shared Home report `motion skipped` and issue no GetPose,
-RelMovLUser, MovL, or MovLIO. If outside tolerance, the existing Home planner
-runs unchanged. Return queues after pick motion always append exact Home because
-their preceding retract path is not complete when planned.
+RelMovLUser, MovL, or MovLIO. If outside tolerance, the shared Home planner
+runs. Return paths finish and verify above-item clearance before testing the
+Home joint gate and planning the conditional height rise.
 
 Pick is permitted only from `READY` with DI1 clear:
 
@@ -268,7 +272,7 @@ apply solely to the item pick point.
 The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates, final descent uses approach rates, and successful
-pick-to-prepick uses retract rates; missed-pick retract commands `v=100`.
+pick-to-prepick uses retract rates; missed-pick rise to approach commands `v=100`.
 Enabled fingers open at 50% of the clearance move. Suction
 turns on at 0% of final descent. With `grip_onpick`, fingers close after DI1;
 otherwise they close at the end of retract-to-prepick, still only after DI1.
@@ -278,25 +282,26 @@ clearance, pre-pick and pick without intermediate arrival waits. DI1 is checked
 throughout descent and for the profile's `pick_settling` interval after terminal
 pick arrival. A missed non-final candidate starts a single
 `candidate_N_pick_to_retry_M_pick` group: direct vertical rise to that item's
-pre-pick at `v=100`; at 20% of the rise, DO13 suction OFF and DO1 exhaust ON,
+approach/clearance at `v=100`; at 20% of the rise, DO13 suction OFF and DO1 exhaust ON,
 plus DO2 fingers-close OFF/DO14 fingers-open ON when `use_grip` is enabled.
-At 0% of the direct move to candidate M's pre-pick, DO1 goes OFF and the enabled
-finger-open state is reissued. The next final descent begins directly from that
-pre-pick, with DO13 ON at 0%. No clearance, Home-Z or Home target is inserted,
+At 0% of the lateral transfer to candidate M's approach, DO1 goes OFF and the enabled
+finger-open state is reissued. The next descent passes through pre-pick and
+then final pick with DO13 ON at 0% of that final segment. No Home-Z or Home target is inserted,
 and only the next final pick is checked; its attitude was independently planned
 from taught Home. DI1 before the missed-pick suction reset is a fault, not the
 next item's acquisition. If DI1 remains clear after the final candidate, the
-miss retract completes, exhaust is cleared, and shared Home runs. A successful
-pickup uses `candidate_N_pick_to_home` with held-item monitoring. Early DI1
+miss rise to approach completes, exhaust is cleared, and shared Home runs. A successful
+pickup completes retract and approach clearance before the same shared Home
+rule with held-item monitoring. Early DI1
 during a final descent still invokes the Stop-and-confirm path before return
 planning.
 
-All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are dispatched
-in target order with at least 50 ms between adjacent sends, without waiting for
-individual replies. After the complete group has
-been sent, the controller validates every ROS response and requires `res=0` for
-the entire group before continuing terminal feedback verification. A response
-error, rejection, cancellation, or two-second group deadline invokes independent
+All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
+in target order with at least 50 ms between adjacent sends. Each must return
+`res=0` before the next is sent. This is an admission barrier, not an
+intermediate physical-arrival wait: it prevents separate ROS services from
+reversing their dashboard TCP queue order, as observed in a failed Home return.
+A response error, rejection, cancellation, or two-second response deadline invokes independent
 Stop containment; an outstanding late response remains contained by another
 Stop. Batch start, every dispatch/response, complete group admission,
 interruption and terminal completion are recorded with the batch name.
@@ -310,9 +315,11 @@ uncommanded output changes, lost DI1/DO13, and wrong terminal states still fail.
 Motion requests carry only `user=0`, `tool=0`, and their taught `v`/`a` rates;
 they never carry a per-command `cp` or `r`. The global `CP(100)` established by
 Startup/Recover therefore controls all transitions. As specified by the Dobot
-protocol, smoothing can bypass exact intermediate coordinates and timed I/O can
-occur during a blended transition. The controller still confirms the terminal
-pick/stopped pose before return planning and exact taught joints at Home.
+protocol, smoothing can bypass exact intermediate pick coordinates and timed
+I/O can occur during a blended transition. It does not bypass the physically
+verified above-item clearance and Home-Z barrier. Serialized service responses
+may let a short pick segment decelerate despite global CP 100; queue order and
+safe Home clearance take precedence over uninterrupted blending.
 
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Conditional Home rise uses `RelMovLUser`. The controller never calls

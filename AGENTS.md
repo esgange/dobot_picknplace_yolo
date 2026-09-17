@@ -92,6 +92,11 @@ Rule 87 restores taught final-pick suction settling and queues each missed-pick
 retract directly through the next pre-pick/final pick with timed release and
 exhaust events; no per-motion CP override is permitted, and a Stop/DI1 during
 group dispatch prevents later group commands.
+Rule 88 makes every Home path confirm above-item clearance when applicable,
+then a vertical rise to Home Z before joint Home; missed-pick retries rise to
+the old item's approach height and transfer via the next approach. Motion
+requests must receive acceptance in order before the next is sent, because
+independent ROS services can reverse dashboard queue order.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

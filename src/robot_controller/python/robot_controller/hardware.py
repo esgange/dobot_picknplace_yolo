@@ -312,7 +312,7 @@ class DobotTransport:
         return result
 
     def call_group(self, calls, *, progress=None, outputs_by_call=None):
-        """Dispatch one ordered motion group, then validate every acknowledgement."""
+        """Admit motion in dashboard order, without intermediate arrival waits."""
         calls = tuple((name, dict(fields)) for name, fields in calls)
         if not calls or any(name not in MOTION_SERVICES for name, _fields in calls):
             raise CommandRejected("Motion group requires canonical motion services")
@@ -344,6 +344,7 @@ class DobotTransport:
             group = []
             self.pending_group = group
             last_dispatch = None
+            results = []
             try:
                 for (name, fields), planned_outputs in zip(calls, outputs_by_call):
                     if self.node.cancel_requested():
@@ -379,102 +380,58 @@ class DobotTransport:
                     future.add_done_callback(
                         lambda done, service=name, record=audit: self._pending_completed(
                             service, done, record))
+                    # ROS services have independent callbacks. Dispatch order is
+                    # not dashboard TCP order: actual hardware logs showed a
+                    # joint Home command overtaking its earlier vertical rise.
+                    # Require each queue-admission response before the next send.
+                    deadline = audit["started"] + COMMAND_RESPONSE_TIMEOUT_SEC
+                    while not future.done():
+                        if self.node.cancel_requested():
+                            self._finish_service_audit(
+                                audit, "wait_canceled",
+                                detail="operation canceled during motion acknowledgement",
+                                level="WARNING")
+                            raise OperationCanceled(
+                                f"Cancelled while awaiting {name} response")
+                        snapshot = self.monitor.snapshot(require_enabled=False)
+                        if progress is not None:
+                            progress(snapshot)
+                        if time.monotonic() >= deadline:
+                            self._finish_service_audit(
+                                audit, "timeout",
+                                detail=("no response within "
+                                        f"{COMMAND_RESPONSE_TIMEOUT_SEC:g} seconds"),
+                                level="ERROR")
+                            raise CommandResponseTimeout(
+                                f"{name} response timeout; no later motion sent")
+                        self.node.wait_control(0.02)
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        self._finish_service_audit(
+                            audit, "wait_aborted", detail=str(exc), level="ERROR")
+                        raise CommandRejected(f"{name} response failed: {exc}") from exc
+                    if result is None or result.res != 0:
+                        self._finish_service_audit(
+                            audit, "rejected", result=result,
+                            detail="canonical service returned nonzero/empty result",
+                            level="ERROR")
+                        raise CommandRejected(
+                            f"{name} failed: {None if result is None else result.res}")
+                    self._finish_service_audit(audit, "accepted", result=result)
+                    results.append(result)
+                    if progress is not None:
+                        progress(self.monitor.snapshot(require_enabled=False))
             except Exception:
-                if not group:
-                    self.pending_group = None
-                else:
-                    for _name, _future, audit in group:
+                for _name, _future, audit in group:
+                    if "outcome" not in audit:
                         self._finish_service_audit(
                             audit, "wait_aborted",
-                            detail="motion-group dispatch did not complete", level="ERROR")
+                            detail="motion-group admission did not complete", level="ERROR")
+                if not group or all(future.done() for _name, future, _audit in group):
+                    self.pending_group = None
                 self.request_stop("motion-group dispatch failure")
                 raise
-
-        if not group:
-            # DI1 may have interrupted the group before its first admission.
-            with self.response_lock:
-                if self.pending_group is group:
-                    self.pending_group = None
-            return ()
-
-        deadline = max(
-            audit["started"] + COMMAND_RESPONSE_TIMEOUT_SEC
-            for _name, _future, audit in group)
-        results = [None] * len(group)
-        resolved = set()
-
-        def resolve_completed():
-            failure = None
-            for index, (name, future, audit) in enumerate(group):
-                if index in resolved or not future.done():
-                    continue
-                resolved.add(index)
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    self._finish_service_audit(
-                        audit, "wait_aborted", detail=str(exc), level="ERROR")
-                    failure = failure or CommandRejected(
-                        f"{name} response failed: {exc}")
-                    continue
-                if result is None or result.res != 0:
-                    self._finish_service_audit(
-                        audit, "rejected", result=result,
-                        detail="canonical service returned nonzero/empty result",
-                        level="ERROR")
-                    failure = failure or CommandRejected(
-                        f"{name} failed: {None if result is None else result.res}")
-                    continue
-                self._finish_service_audit(audit, "accepted", result=result)
-                results[index] = result
-            return failure
-
-        while len(resolved) != len(group):
-            failure = resolve_completed()
-            if failure is not None:
-                for index, (_name, _future, audit) in enumerate(group):
-                    if index not in resolved:
-                        self._finish_service_audit(
-                            audit, "wait_aborted",
-                            detail="another request in the motion group failed",
-                            level="ERROR")
-                if len(resolved) == len(group):
-                    with self.response_lock:
-                        if self.pending_group is group:
-                            self.pending_group = None
-                self.request_stop("motion-group acknowledgement failure")
-                raise failure
-            if len(resolved) == len(group):
-                break
-            if self.node.cancel_requested():
-                for index, (_name, _future, audit) in enumerate(group):
-                    if index not in resolved:
-                        self._finish_service_audit(
-                            audit, "wait_canceled",
-                            detail="operation canceled during group acknowledgement",
-                            level="WARNING")
-                self.request_stop("operation cancellation during group acknowledgement")
-                raise OperationCanceled(
-                    "Cancelled while awaiting motion-group responses")
-            snapshot = self.monitor.snapshot(require_enabled=False)
-            if progress is not None:
-                progress(snapshot)
-            if time.monotonic() >= deadline:
-                pending_names = []
-                for index, (name, _future, audit) in enumerate(group):
-                    if index not in resolved:
-                        pending_names.append(name)
-                        self._finish_service_audit(
-                            audit, "timeout",
-                            detail=("no group response within "
-                                    f"{COMMAND_RESPONSE_TIMEOUT_SEC:g} seconds"),
-                            level="ERROR")
-                self.request_stop("motion-group acknowledgement timeout")
-                raise CommandResponseTimeout(
-                    "Motion-group response timeout: " + ", ".join(pending_names))
-            self.node.wait_control(0.02)
-
-        with self.response_lock:
             if self.pending_group is group:
                 self.pending_group = None
         if progress is not None:
@@ -1004,12 +961,15 @@ class DobotTransport:
         expected_outputs = {}
         for target in targets:
             values = self._target_values(target)
-            if target.relative_z and (
-                    not np.allclose(origin[:2, 3], target.matrix[:2, 3], atol=1e-12, rtol=0)
-                    or not np.allclose(origin[:3, :3], target.matrix[:3, :3],
-                                       atol=1e-12, rtol=0)
-                    or target.matrix[2, 3] < origin[2, 3]):
-                raise CommandRejected("Relative Home-height target must rise at unchanged XY")
+            if target.relative_z:
+                same_height_frame = target.matrix.copy()
+                same_height_frame[2, 3] = origin[2, 3]
+                if (not pose_reached(
+                        origin, same_height_frame, translation_m=0.001,
+                        rotation_deg=0.5)
+                        or target.matrix[2, 3] < origin[2, 3]):
+                    raise CommandRejected(
+                        "Relative Home-height target must rise at unchanged XY/attitude")
             for event in target.motion_io:
                 expected_outputs[event.channel] = event.active
             prepared.append((target, values, origin.copy()))
@@ -1031,7 +991,7 @@ class DobotTransport:
         self.node.events.record(
             "INFO", "motion_batch_dispatch_started", batch_name,
             batch=batch_name, targets=[target.name for target in targets],
-            policy="dispatch_group_then_verify_all_replies_and_terminal_feedback")
+            policy="admit_each_reply_in_order_then_verify_terminal_feedback")
 
         def progress(snapshot):
             nonlocal suction_reset_seen

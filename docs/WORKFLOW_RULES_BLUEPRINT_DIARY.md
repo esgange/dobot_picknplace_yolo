@@ -3772,6 +3772,56 @@ Never use a floating “latest” version in an issue, script, or deployment not
   15-package workspace build pass; `git diff --check` passes. No Dobot service,
   detector service or live camera was commanded by this change.
 
+### 2026-09-17 — Verified Home height and higher repick approach
+
+- Rule 88 supersedes rule 85's simultaneous multi-service dispatch and rule
+  87's pre-pick-height missed-pick transfer. During a live final-miss return,
+  controller audit sent `RelMovLUser(+151.010 mm)` before joint-mode `MovL`
+  Home, but the Dobot dashboard log actually accepted the joint command as
+  queue ID 22 before the rise as ID 23. Both returned `res=0`, yet FeedInfo
+  showed no measurable motion; the controller's three-second watchdog issued
+  Stop and ended in `RECOVERY_REQUIRED`. Independent ROS service callbacks do
+  not preserve cross-service dashboard order. Acceptance never proves arrival.
+- Every normal motion group now waits for each individual `res=0` acceptance
+  before dispatching the next command, with the existing ≥50 ms lower spacing
+  bound. It does not wait for intermediate physical arrival in pick/retry
+  groups. Any response timeout, rejection, cancellation, feedback fault, or
+  DI1 interruption sends no later group command and uses independent Stop
+  containment. Late acknowledgements still invoke another Stop. This may
+  reduce CP smoothing on short segments, but preserves command order.
+- Every Home target, from initial Home, Pick start, successful return, or final
+  missed return, uses one shared physically confirmed rule. A Pick return first
+  completes and verifies its above-item approach/clearance; final miss now
+  reaches that same clearance before Home. If the current measured Link6 Z is
+  below taught Home Z, send only the current-XY/attitude vertical
+  `RelMovLUser` rise and confirm its Cartesian 5 mm/1° endpoint plus 300 ms
+  stationary/empty-queue feedback before sending joint Home. When already at
+  or above Home Z, the conditional rise is omitted. Exact taught Home joints
+  are then sent and confirmed within ±1°. Failed height confirmation blocks
+  the joint Home command. Trusted held-item suction/output monitoring remains
+  active through all three return phases; Stop/cancellation still never
+  releases, resumes or automatically homes.
+- A missed non-final item now rises vertically to its taught approach height
+  (`pick Z + prepick_height + retract_height`) at commanded `v=100`, with
+  suction OFF/exhaust ON and enabled finger-open at 20% of that rise. The
+  direct lateral transfer targets the next item's approach/clearance, turning
+  exhaust OFF and reissuing enabled finger-open at its 0% start; descent then
+  passes through next pre-pick to next final pick with suction ON at 0% of
+  final approach. The group keeps only final-pick physical arrival checking.
+  Candidate attitudes remain independently planned from taught Home.
+- Global `CP(100)` is still established by Startup/Recover and no motion call
+  overrides `cp` or `r`. Home clearance and height are intentional confirmed
+  barriers, not CP-blended waypoints. No profile/interface schema, station
+  artifact, vendor source, or detector change is made. Physical clearance of
+  the direct high-level inter-item transfer remains a separate commissioning
+  responsibility; this change does not command the robot.
+- Verification is software-only: 137 direct controller tests and 138
+  package-reported tests pass, including ordered cross-service admission,
+  Home-height failure containment, measured-pose jitter, and higher retry
+  clearance. All 20 controller/test Python files pass compilation and
+  `ament_flake8`; package and full 15-package workspace builds pass, and
+  `git diff --check` passes. No Dobot motion service was invoked by this work.
+
 ### Future entry template
 
 ```text

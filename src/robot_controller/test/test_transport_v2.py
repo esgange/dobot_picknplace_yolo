@@ -139,7 +139,58 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
                      "motion_batch_completed"]
 
 
-def test_motion_group_dispatches_all_requests_before_waiting_for_replies(monkeypatch):
+def test_home_height_accepts_small_getpose_jitter_but_never_descends(monkeypatch):
+    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+    transport = object.__new__(DobotTransport)
+    origin = np.eye(4)
+    origin[0, 3] = 0.0005
+    origin[2, 3] = 0.1
+    height = np.eye(4)
+    height[2, 3] = 0.2
+    sequence = iter(range(1, 20))
+
+    def sample():
+        return SimpleNamespace(
+            sequence=next(sequence),
+            feed={"tool_vector_actual": [0.0] * 6,
+                  "digital_input_bits": 0, "digital_outputs": 0})
+    transport.node = SimpleNamespace(
+        events=EventLog(), expected_outputs={}, raise_if_cancelled=lambda: None,
+        cancel_requested=lambda: False,
+        operation_progress=lambda *_args, **_kwargs: None)
+    transport.monitor = SimpleNamespace(sequence=0)
+    transport.current_pose = lambda: origin
+    transport._target_values = lambda _target: [0.0] * 6
+    transport._ready_snapshot = sample
+    transport._wait_for_resume = lambda: 0.0
+    transport._idle = lambda _snapshot: True
+    transport._target_reached = lambda _target, _snapshot: True
+    calls = []
+
+    def call_group(requests, **_kwargs):
+        calls.extend(requests)
+        return (None,)
+
+    transport.call_group = call_group
+    transport.suction_interrupted = False
+    transport.suction_stop_future = None
+    transport.moving = False
+
+    target = Target("home_height", height, 100, 100, relative_z=True)
+    assert transport.move_batch((target,), batch_name="home_height") is False
+    assert calls[0][0] == "RelMovLUser"
+    assert calls[0][1]["c"] == pytest.approx(100.0)
+
+    lower = height.copy()
+    lower[2, 3] = 0.09
+    with pytest.raises(CommandRejected, match="must rise"):
+        transport.move_batch(
+            (Target("home_height", lower, 100, 100, relative_z=True),),
+            batch_name="unsafe_home_height")
+    assert len(calls) == 1
+
+
+def test_motion_group_preserves_cross_service_dashboard_order(monkeypatch):
     monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
 
     class DeferredFuture:
@@ -187,10 +238,9 @@ def test_motion_group_dispatches_all_requests_before_waiting_for_replies(monkeyp
     completed_wait = []
 
     def wait_control(_seconds):
-        assert [name for name, _request in dispatches] == ["MovL", "MovLIO"]
-        completed_wait.append(True)
-        for future in futures:
-            future.complete()
+        assert len(dispatches) == len(completed_wait) + 1
+        completed_wait.append(dispatches[-1][0])
+        futures[-1].complete()
 
     transport.node = SimpleNamespace(
         check_all_command_owners=lambda names: None,
@@ -216,13 +266,13 @@ def test_motion_group_dispatches_all_requests_before_waiting_for_replies(monkeyp
     ))
 
     assert len(results) == 2
-    assert completed_wait == [True]
+    assert completed_wait == ["MovL", "MovLIO"]
     assert [name for name, _request in dispatches] == ["MovL", "MovLIO"]
     assert [audit["outcome"] for audit in audits] == ["accepted", "accepted"]
     assert transport.pending_group is None
 
 
-def test_motion_group_timeout_stops_and_each_late_reply_is_contained(monkeypatch):
+def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeypatch):
     monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
 
     class DeferredFuture:
@@ -285,23 +335,22 @@ def test_motion_group_timeout_stops_and_each_late_reply_is_contained(monkeypatch
     monkeypatch.setattr(
         hardware_module, "time", SimpleNamespace(monotonic=lambda: 3.0))
 
-    with pytest.raises(CommandResponseTimeout, match="Motion-group response timeout"):
+    with pytest.raises(CommandResponseTimeout, match="MovL response timeout"):
         transport.call_group((
             ("MovL", {"a": 1.0}),
             ("MovL", {"a": 2.0}),
+            ("MovL", {"a": 3.0}),
         ))
 
-    assert len(dispatches) == 2
-    assert stops == ["motion-group acknowledgement timeout"]
-    assert [audit["outcome"] for audit in audits] == ["timeout", "timeout"]
+    assert len(dispatches) == 1
+    assert stops == ["motion-group dispatch failure"]
+    assert [audit["outcome"] for audit in audits] == ["timeout"]
     futures[0].complete()
-    futures[1].complete()
-    assert stops == ["motion-group acknowledgement timeout",
-                     "late motion acknowledgement", "late motion acknowledgement"]
-    assert len(late_stops) == 2
+    assert stops == ["motion-group dispatch failure", "late motion acknowledgement"]
+    assert len(late_stops) == 1
 
 
-def test_motion_group_rejection_stops_only_after_complete_group_dispatch(monkeypatch):
+def test_motion_group_rejection_stops_before_later_dispatch(monkeypatch):
     monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
 
     class ImmediateFuture:
@@ -360,9 +409,11 @@ def test_motion_group_rejection_stops_only_after_complete_group_dispatch(monkeyp
         transport.call_group((
             ("MovL", {"a": 1.0}),
             ("MovL", {"a": 2.0}),
+            ("MovL", {"a": 3.0}),
         ))
 
-    assert stops == ["motion-group acknowledgement failure"]
+    assert len(dispatches) == 2
+    assert stops == ["motion-group dispatch failure"]
     assert [audit["outcome"] for audit in audits] == ["accepted", "rejected"]
     assert transport.pending_group is None
 

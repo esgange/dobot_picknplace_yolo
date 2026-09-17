@@ -423,29 +423,82 @@ def test_shared_initial_home_skips_all_motion_when_joint_gate_is_already_met():
     assert "motion skipped" in calls[-1][2]
 
 
-def test_queued_pick_return_never_uses_current_home_skip():
+@pytest.mark.parametrize("holding", [False, True])
+def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holding):
     calls = []
+    clearance = SimpleNamespace(name="p1_final")
+    height = SimpleNamespace(name="home_height")
+    home = SimpleNamespace(name="home")
     hardware = SimpleNamespace(
-        home_already_reached=lambda _joints: calls.append(("unexpected_check",)),
+        home_already_reached=lambda _joints: calls.append(("check",)) or False,
         move_batch=lambda targets, **kwargs: calls.append(("move", targets, kwargs)))
     node = SimpleNamespace(
-        hardware=hardware, holding_item=False,
+        hardware=hardware, holding_item=holding,
         configuration=SimpleNamespace(home_joints=(0.1,) * 6),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
         _preflight_item_state=lambda holding: calls.append(("preflight", holding)),
-        _home_plan=lambda preceding: calls.append(("plan", preceding)) or ("home",),
+        _home_plan=lambda: calls.append(("plan",)) or (height, home),
         operation_progress=lambda phase, message, **fields: calls.append(
             ("progress", phase, message, fields)))
 
-    preceding = ("retract",)
+    preceding = (clearance,)
     assert RobotController._execute_home(
-        node, preceding=preceding, require_suction=False,
-        forbid_suction=True,
-        batch_name="candidate_1_pick_to_home") == ("home",)
-    assert not any(entry[0] == "unexpected_check" for entry in calls)
-    assert ("plan", preceding) in calls
-    move = next(entry for entry in calls if entry[0] == "move")
-    assert move[2]["batch_name"] == "candidate_1_pick_to_home"
+        node, preceding=preceding, require_suction=holding,
+        forbid_suction=not holding,
+        batch_name="candidate_1_pick_to_home") == (height, home)
+    moves = [entry for entry in calls if entry[0] == "move"]
+    assert [entry[1] for entry in moves] == [preceding, (height,), (home,)]
+    assert [entry[2]["batch_name"] for entry in moves] == [
+        "candidate_1_pick_to_home_clearance",
+        "candidate_1_pick_to_home_height",
+        "candidate_1_pick_to_home"]
+    assert all(entry[2]["require_suction"] is holding
+               and entry[2]["forbid_suction"] is not holding for entry in moves)
+    assert calls.index(("check",)) > calls.index(moves[0])
+
+
+def test_home_height_failure_prevents_joint_home_dispatch():
+    calls = []
+    height = SimpleNamespace(name="home_height")
+    home = SimpleNamespace(name="home")
+
+    def move(targets, **_kwargs):
+        calls.append(tuple(target.name for target in targets))
+        if targets == (height,):
+            raise FeedbackFailure("Home Z not reached")
+
+    node = SimpleNamespace(
+        hardware=SimpleNamespace(
+            home_already_reached=lambda _joints: False, move_batch=move),
+        holding_item=False,
+        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda _holding: None,
+        _home_plan=lambda: (height, home),
+        operation_progress=lambda *_args, **_kwargs: None)
+
+    with pytest.raises(FeedbackFailure, match="Home Z not reached"):
+        RobotController._execute_home(node)
+    assert calls == [("home_height",)]
+
+
+def test_home_above_home_z_uses_exact_joint_target_without_extra_rise():
+    calls = []
+    home = SimpleNamespace(name="home")
+    node = SimpleNamespace(
+        hardware=SimpleNamespace(
+            home_already_reached=lambda _joints: False,
+            move_batch=lambda targets, **_kwargs: calls.append(
+                tuple(target.name for target in targets))),
+        holding_item=False,
+        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda _holding: None,
+        _home_plan=lambda: (home,),
+        operation_progress=lambda *_args, **_kwargs: None)
+
+    assert RobotController._execute_home(node) == (home,)
+    assert calls == [("home",)]
 
 
 def test_gui_second_pause_click_queues_stop_without_overlapping_pause():

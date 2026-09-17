@@ -161,7 +161,7 @@ class PickExecutor:
             stopped_pose = self.hardware.current_pose()
             stopped_z = stopped_pose[2, 3]
             upward = []
-            for target in (plan[4:] if acquired else plan[4:5]):
+            for target in (plan[4:] if acquired else plan[5:6]):
                 # Vertical recovery preserves actual stopped XY/attitude.
                 matrix = stopped_pose.copy()
                 matrix[2, 3] = max(stopped_z, target.matrix[2, 3])
@@ -210,14 +210,15 @@ class PickExecutor:
             next_plan = plans[index]
             if remember_prepick is not None:
                 remember_prepick(next_plan[2], settings["gripper"])
-            # Queue the direct rise, next pre-pick, and next final descent in one
-            # group. Timed output events travel with their owning motion.
+            # Lift to the old item's approach height before any lateral travel.
+            # Cross to the next approach height, then descend via pre-pick.
+            # Timed output events travel with their owning motion.
             transfer_events = [MotionIO(0, 1, False)]
             if grip:
                 transfer_events.extend((MotionIO(0, 2, False), MotionIO(0, 14, True)))
-            next_prepick = replace(next_plan[2], motion_io=tuple(transfer_events))
+            next_approach = replace(next_plan[1], motion_io=tuple(transfer_events))
             acquired = self.hardware.move_batch(
-                (*upward, next_prepick, next_plan[3]),
+                (*upward, next_approach, next_plan[2], next_plan[3]),
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
                 settle_suction_sec=settling)

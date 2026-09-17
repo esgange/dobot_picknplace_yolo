@@ -100,8 +100,10 @@ The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.
 
-Home uses fresh GetPose only to decide whether an upward current-XY rise is
-needed, then sends exact taught joints through joint-mode MovL. Pick runs Home,
+Home uses fresh GetPose to decide whether an upward current-XY rise is needed.
+When below taught Home Z, it sends that rise alone and confirms the actual
+height before sending exact taught joints through joint-mode MovL. A return
+from Pick first confirms its above-item clearance. Pick runs Home,
 transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
 Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
@@ -124,22 +126,22 @@ the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 
-Each candidate is dispatched as a forward queue followed by one terminal queue.
-The Home-to-pick queue
+The first Home-to-pick queue
 contains transit, clearance, pre-pick and pick; only the terminal pick/stopped
 pose is checked. DI1 is evaluated throughout descent and for the taught
 `pick_settling` time after terminal arrival. On an intermediate miss, one queued
-group rises directly to the old pre-pick at `v=100`, opens the enabled fingers,
+group rises vertically to the old item's approach/clearance at `v=100`, opens the enabled fingers,
 turns suction off and exhaust on at 20% of that rise, then travels directly to
-the next pre-pick, turning exhaust off and reissuing finger-open at the start of
-that travel. It descends to the next pick with suction on at 0%; no Home-Z or
-clearance detour or intermediate arrival wait separates those motions. A final
-miss completes its release/retract, clears exhaust, then returns Home. A
-confirmed pickup retracts and returns Home holding suction. All service requests
-in one named motion group are dispatched first,
-with at least 50 ms between adjacent motion-service sends;
-the controller then requires every group response to return `res=0` before it
-accepts the group and continues terminal feedback verification. A rejection,
+the next item's approach, turning exhaust off and reissuing finger-open at the
+start of that transfer. It descends via the next pre-pick to final pick with
+suction on at 0%; no intermediate arrival wait separates those retry motions.
+A final miss completes its release/rise to approach, clears exhaust, then uses
+the shared verified Home rule. A confirmed pickup retracts, confirms clearance,
+then uses the same Home rule while holding suction. Motion services are admitted
+in order: each response must be `res=0` before the next request is sent, with
+at least 50 ms between adjacent sends. This prevents independent ROS services
+from reversing the dashboard queue, as observed in a failed Home return.
+Responses confirm queue acceptance, not physical arrival. A rejection,
 response error, or two-second group timeout invokes independent Stop containment.
 The independent Stop path is never delayed by group pacing. Planned timed DO
 changes are tracked as commanded transitions, so finger movement requested by
@@ -222,8 +224,8 @@ receives only accepted candidates and does not reinterpret the border.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
-speed 6% and successful pick-to-prepick retract speed 6%; a missed-pick direct
-retract commands 100% speed before the next pre-pick. Remaining clearance/Home
+speed 6% and successful pick-to-prepick retract speed 6%; a missed-pick rise
+to approach commands 100% speed before the next approach. Remaining clearance/Home
 moves use travel speed. Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
@@ -237,9 +239,10 @@ clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.
 Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
 applied by Startup/Recover governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
-only the terminal pick/stopped pose and exact taught-joint Home are physically
-confirmed. Motion groups are submitted without a response wait between their
-entries, allowing the Dobot queue to remain populated for CP blending. See the
+only the terminal pick/stopped pose, return clearance, Home-height rise, and
+exact taught-joint Home are physically confirmed. Motion requests wait for
+queue-admission responses in order but not intermediate physical arrival;
+short segments may still decelerate despite CP 100. See the
 controller README for feedback/Stop confirmation and
 deployment safety requirements.
 
