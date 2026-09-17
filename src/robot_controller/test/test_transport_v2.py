@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import inspect
 import threading
 
 import numpy as np
@@ -8,7 +9,7 @@ import robot_controller.hardware as hardware_module
 from robot_controller.errors import (CommandRejected, CommandResponseTimeout,
                                      FeedbackFailure, HeldUnknown)
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
-from robot_controller.motion import Target
+from robot_controller.motion import MotionIO, Target
 
 
 class EventLog:
@@ -17,6 +18,32 @@ class EventLog:
 
     def record(self, *_args, **_kwargs):
         self.entries.append((_args, _kwargs))
+
+
+def test_service_console_levels_use_distinct_rclpy_call_sites():
+    seen = {}
+
+    class StrictLogger:
+        def log(self, level, _message):
+            caller = inspect.currentframe().f_back.f_back
+            location = (caller.f_code.co_filename, caller.f_lineno)
+            previous = seen.setdefault(location, level)
+            assert previous == level
+
+        def info(self, message):
+            self.log("INFO", message)
+
+        def warning(self, message):
+            self.log("WARNING", message)
+
+        def error(self, message):
+            self.log("ERROR", message)
+
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(get_logger=lambda: StrictLogger())
+    for level in ("INFO", "ERROR", "WARNING", "INFO", "ERROR"):
+        transport._console_service_log(level, "service result")
+    assert set(seen.values()) == {"INFO", "WARNING", "ERROR"}
 
 
 def test_normal_service_timeout_after_two_seconds_blocks_later_dispatch(monkeypatch):
@@ -91,8 +118,12 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
     transport._idle = lambda _snapshot: True
     transport._target_reached = lambda target, _snapshot: (
         order.append(("reached", target.name)) or True)
-    transport.call_group = lambda calls, **_kwargs: order.extend(
-        ("call", service, fields["param_value"]) for service, fields in calls)
+
+    def call_group(calls, **_kwargs):
+        order.extend(("call", service, fields["param_value"])
+                     for service, fields in calls)
+        return tuple(None for _call in calls)
+    transport.call_group = call_group
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     transport.moving = False
@@ -380,6 +411,131 @@ def test_motion_group_dispatches_are_separated_by_at_least_fifty_ms(monkeypatch)
     assert sent_at == pytest.approx([0.0, 0.05, 0.10])
     assert all(later - earlier >= 0.05 - 1e-12
                for earlier, later in zip(sent_at, sent_at[1:]))
+
+
+def test_suction_interrupt_during_dispatch_prevents_later_motion(monkeypatch):
+    class ImmediateFuture:
+        def done(self):
+            return True
+
+        def result(self):
+            return SimpleNamespace(res=0)
+
+        def add_done_callback(self, callback):
+            callback(self)
+
+    clock = [0.0]
+    sent = []
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.suction_interrupted = False
+    transport.clients = {"MovL": SimpleNamespace(
+        service_is_ready=lambda: True,
+        call_async=lambda request: sent.append(request) or ImmediateFuture())}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: False,
+        wait_control=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport._begin_service_audit = lambda name, fields: {
+        "name": name, "fields": fields, "started": clock[0]}
+    transport._finish_service_audit = lambda audit, outcome, **_fields: audit.update(
+        outcome=outcome)
+    monkeypatch.setattr(
+        hardware_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    def observe(_snapshot):
+        if sent and clock[0] >= 0.02:
+            transport.suction_interrupted = True
+
+    results = transport.call_group(tuple(
+        ("MovL", {"a": float(index)}) for index in range(3)), progress=observe)
+
+    assert len(sent) == len(results) == 1
+    assert transport.pending_group is None
+
+
+def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypatch):
+    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+    transport = object.__new__(DobotTransport)
+    events = EventLog()
+    transport.node = SimpleNamespace(
+        events=events, expected_outputs={}, raise_if_cancelled=lambda: None,
+        cancel_requested=lambda: False,
+        operation_progress=lambda *_args, **_kwargs: None)
+    count = [0]
+
+    def sample(outputs):
+        count[0] += 1
+        return SimpleNamespace(
+            sequence=count[0],
+            feed={"tool_vector_actual": [0.0] * 6,
+                  "digital_input_bits": 0, "digital_outputs": outputs})
+
+    vacuum_on = (1 << 12) | (1 << 13)
+    vacuum_off = 1 << 13
+    transport.current_pose = lambda: np.eye(4)
+    transport._target_values = lambda target: list(target.matrix[:3, 3]) + [0.] * 3
+    transport._ready_snapshot = lambda: sample(vacuum_on)
+    transport._wait_for_resume = lambda: 0.0
+    transport._idle = lambda _snapshot: True
+    transport._target_reached = lambda _target, _snapshot: True
+    transport.monitor = SimpleNamespace(sequence=0, wait=lambda predicate, *_a, **_k: (
+        predicate(sample(vacuum_on)) or pytest.fail("Expected timed outputs")))
+    settling = []
+    transport.sensor = lambda active, timeout, **kwargs: (
+        settling.append((active, timeout, kwargs)) or False)
+    transport.moving = False
+    transport.suction_interrupted = False
+    transport.suction_stop_future = None
+    captured = []
+
+    def call_group(calls, *, progress, outputs_by_call):
+        captured.extend(calls)
+        assert outputs_by_call == [{13: False, 1: True},
+                                   {1: False, 14: True}, {13: True}]
+        transport.pending_motion_outputs = {13: False, 1: True}
+        progress(sample(vacuum_off))
+        transport.pending_motion_outputs = {13: True, 1: False, 14: True}
+        progress(sample(vacuum_on))
+        return (None, None, None)
+
+    transport.call_group = call_group
+    targets = (
+        Target("old_retract", np.eye(4), 100, 100, motion_io=(
+            MotionIO(20, 13, False), MotionIO(20, 1, True))),
+        Target("next_prepick", np.eye(4), 100, 100, motion_io=(
+            MotionIO(0, 1, False), MotionIO(0, 14, True))),
+        Target("next_pick", np.eye(4), 6, 100, motion_io=(
+            MotionIO(0, 13, True),)),
+    )
+
+    assert not transport.move_batch(
+        targets, batch_name="retry", stop_on_suction=True,
+        require_suction_reset=True, settle_suction_sec=0.2)
+    assert [name for name, _fields in captured] == ["MovLIO"] * 3
+    assert [fields["param_value"] for _name, fields in captured] == [
+        ["user=0", "tool=0", "v=100", "a=100"],
+        ["user=0", "tool=0", "v=100", "a=100"],
+        ["user=0", "tool=0", "v=6", "a=100"]]
+    assert all(not any(value.startswith(("cp=", "r="))
+                       for value in fields["param_value"])
+               for _name, fields in captured)
+    assert settling == [(True, 0.2, {"settling_sec": 0})]
+
+    def no_reset(calls, *, progress, outputs_by_call):
+        progress(sample(vacuum_on))
+        return (None,) * len(calls)
+
+    transport.call_group = no_reset
+    with pytest.raises(FeedbackFailure, match="DO13 OFF was not observed"):
+        transport.move_batch(
+            targets, batch_name="retry_without_reset", stop_on_suction=True,
+            require_suction_reset=True, settle_suction_sec=0.2)
+    assert settling == [(True, 0.2, {"settling_sec": 0})]
 
 
 def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched(

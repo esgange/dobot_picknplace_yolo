@@ -210,6 +210,7 @@ class FakeHardware:
     def __init__(self, acquisitions):
         self.acquisitions = iter(acquisitions)
         self.log = []
+        self.targets = []
         self.pose = matrix(0.3)
 
     def sensor(self, active, timeout, *, settling_sec):
@@ -222,6 +223,7 @@ class FakeHardware:
         self.log.append(("output", channel, active))
 
     def move_batch(self, targets, **kwargs):
+        self.targets.append(tuple(targets))
         names = tuple(target.name for target in targets)
         self.log.append(("move", names, kwargs))
         return next(self.acquisitions) if kwargs.get("stop_on_suction") else False
@@ -247,7 +249,7 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert returned[0]["forbid_suction"] is False
 
 
-def test_missed_suction_retracts_to_clearance_then_advances_without_home():
+def test_missed_suction_queues_direct_retract_next_prepick_and_pick():
     hardware = FakeHardware([False, False])
     plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), settings(), index)
              for index in (1, 2)]
@@ -268,10 +270,27 @@ def test_missed_suction_retracts_to_clearance_then_advances_without_home():
     forward_batches = [entry[2]["batch_name"] for entry in hardware.log
                        if entry[0] == "move"]
     assert forward_batches == ["candidate_1_home_to_pick",
-                               "candidate_1_pick_to_retry",
-                               "candidate_2_home_to_pick"]
+                               "candidate_1_pick_to_retry_2_pick",
+                               "candidate_2_miss_retract"]
+    retry = next(entry for entry in hardware.log if entry[0] == "move"
+                 and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
+    assert retry[1] == ("p1_retract", "p2_prepick", "p2_pick")
+    assert retry[2]["stop_on_suction"] is True
+    assert retry[2]["require_suction_reset"] is True
+    assert retry[2]["settle_suction_sec"] == pytest.approx(0.2)
+    retract, next_prepick, next_pick = [
+        target for target in hardware.targets[1]]
+    assert retract.speed_percent == 100
+    assert [(event.percent, event.channel, event.active)
+            for event in retract.motion_io] == [
+                (20, 13, False), (20, 1, True), (20, 2, False), (20, 14, True)]
+    assert [(event.percent, event.channel, event.active)
+            for event in next_prepick.motion_io] == [
+                (0, 1, False), (0, 2, False), (0, 14, True)]
+    assert next_pick.motion_io == (MotionIO(0, 13, True),)
+    assert not any(name in retry[1] for name in ("p2_transit", "p2_initial"))
     assert sum(entry[:2] == ("output", 13) and entry[2] is False
-               for entry in hardware.log) == 4
+               for entry in hardware.log) == 1
     assert not any(entry[0] == "sensor" and entry[1] is True
                    for entry in hardware.log)
 
@@ -287,10 +306,27 @@ def test_second_candidate_success_returns_home_only_after_acquisition():
 
     assert outcome == {"picked": True, "candidate": 2, "holding_item": True}
     batches = [entry[2]["batch_name"] for entry in hardware.log if entry[0] == "move"]
-    assert batches == ["candidate_1_home_to_pick", "candidate_1_pick_to_retry",
-                       "candidate_2_home_to_pick"]
+    assert batches == ["candidate_1_home_to_pick",
+                       "candidate_1_pick_to_retry_2_pick"]
     assert [entry["batch_name"] for entry in returned] == ["candidate_2_pick_to_home"]
     assert returned[0]["require_suction"] is True
+
+
+def test_missed_repick_without_finger_control_changes_only_vacuum_and_exhaust():
+    taught = settings(use_grip=False)
+    hardware = FakeHardware([False, False])
+    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), taught, index)
+             for index in (1, 2)]
+
+    PickExecutor(hardware, finish_home=False).run(
+        plans, taught, check=lambda _index: None,
+        return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
+
+    retract, next_prepick, _pick = hardware.targets[1]
+    assert [event.channel for event in retract.motion_io] == [13, 1]
+    assert [event.channel for event in next_prepick.motion_io] == [1]
+    assert all(entry[1] not in (2, 14) for entry in hardware.log
+               if entry[0] == "output")
 
 
 def test_every_pick_rotation_selects_nearest_offset_from_home_independently():

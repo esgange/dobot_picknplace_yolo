@@ -130,12 +130,12 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
 def test_pick_uses_named_forward_and_return_queue_batches():
     motion = (PACKAGE / "python/robot_controller/motion.py").read_text()
     hardware = (PACKAGE / "python/robot_controller/hardware.py").read_text()
-    assert 'batch_name=f"candidate_{index}_home_to_pick"' in motion
+    assert 'batch_name="candidate_1_home_to_pick"' in motion
     assert 'batch_name=f"candidate_{index}_pick_to_home"' in motion
-    assert 'batch_name=f"candidate_{index}_pick_to_retry"' in motion
+    assert 'batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick"' in motion
     assert "dispatch_group_then_verify_all_replies_and_terminal_feedback" in hardware
     assert "calls, progress=progress, outputs_by_call=outputs_by_call" in hardware
-    assert "pick_settling" not in motion
+    assert 'settings["timing"]["pick_settling"]' in motion
     assert '"motion_batch_queued"' in hardware
     assert '"cp=0"' not in hardware
     assert '"cp="' not in hardware

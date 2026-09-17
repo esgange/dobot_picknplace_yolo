@@ -3729,6 +3729,49 @@ Never use a floating “latest” version in an issue, script, or deployment not
   15-package workspace build pass. No bringup, detector request, camera process
   or physical robot command was launched.
 
+### 2026-09-17 — Continuous CP-100 missed-pick retry queue
+
+- Rule 87 supersedes rule 85's immediate terminal-suction miss and rule 78's
+  intermediate clearance return. After the first Home-to-pick group reaches its
+  final pose with DI1 clear, observe DI1 for the taught `timing.pick_settling`
+  interval before declaring a miss. DI1 acquired in descent still invokes
+  immediate independent Stop containment; terminal idle acquisition needs no
+  extra motion Stop.
+- On a missed non-final candidate, admit one group with stopped-pose vertical
+  retract directly to the old pre-pick at `v=100`, the next candidate pre-pick,
+  and its final descent. At 20% of retract, turn DO13 OFF and DO1 exhaust ON;
+  when `use_grip`, also set DO2 OFF/DO14 ON. At 0% of the next pre-pick transfer,
+  turn exhaust OFF and reissue enabled finger-open outputs. At 0% of the next
+  final descent, turn suction ON. No old clearance, Home-Z, Home, or per-waypoint
+  arrival wait is inserted. The next attitude remains independently derived
+  from taught Home. If the missed-pick DO13-OFF feedback is not observed, or
+  DI1 activates before that reset, fault and Stop rather than crediting the
+  next item. After final exhaustion, finish the release/retract, clear exhaust,
+  and run shared Home. Success still retracts/returns Home holding suction.
+- Every motion request continues to omit `cp` and `r`; Startup/Recover's strict
+  global `CP(100)` applies. Group requests retain ≥50 ms spacing and all ROS
+  response verification. If DI1/Stop/cancellation occurs during dispatch,
+  later targets in that group are not sent. Independent Stop is not paced.
+  Candidate source hashes are checked before each group, not repeatedly inside
+  every 100 Hz feedback callback; repeated file hashing had delayed motion
+  admission and could empty the CP-blended queue.
+  CP blending makes intermediate points approximate, so direct low-height
+  inter-item travel requires separate physical collision-clearance commissioning.
+- The same controller audit fixes the ROS logger's severity-by-callsite conflict:
+  INFO/WARNING/ERROR service audit lines now originate at distinct static lines.
+  A failed Stop or Recover response must be reported as itself, not masked by
+  rclpy's "Logger severity cannot be changed between calls" exception.
+- Verification is software-only: inspect timed-I/O ordering and motion
+  parameter lists, test missed/success/final retry and interruption behavior,
+  run controller tests, compilation/lint, package and root builds, and review
+  the staged diff. Verification completed with 133 direct controller tests and
+  134 package-reported tests passing, including timed-output order, no per-call
+  CP/r override, observed vacuum reset, settled miss, and suppression of later
+  motion dispatch after suction interruption. All 20 controller/test Python
+  files pass compilation and ament_flake8. The controller package and full
+  15-package workspace build pass; `git diff --check` passes. No Dobot service,
+  detector service or live camera was commanded by this change.
+
 ### Future entry template
 
 ```text

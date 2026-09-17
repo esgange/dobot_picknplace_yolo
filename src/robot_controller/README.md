@@ -267,24 +267,29 @@ apply solely to the item pick point.
 
 The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
-uses taught travel rates, final descent uses approach rates, and pick-to-prepick
-uses retract rates. Enabled fingers open at 50% of the clearance move. Suction
+uses taught travel rates, final descent uses approach rates, and successful
+pick-to-prepick uses retract rates; missed-pick retract commands `v=100`.
+Enabled fingers open at 50% of the clearance move. Suction
 turns on at 0% of final descent. With `grip_onpick`, fingers close after DI1;
 otherwise they close at the end of retract-to-prepick, still only after DI1.
 
-Each candidate has two named queue batches. `candidate_N_home_to_pick` submits
-item-XY transit at Home Z, clearance, pre-pick and pick without any intermediate
-arrival wait, then confirms only the terminal pick/stopped pose. DI1 is checked
-throughout descent and at terminal completion; there is no additional
-`pick_settling` delay before declaring a miss. Only after that decision does the
-controller submit the second queue. For an intermediate miss,
-`candidate_N_pick_to_retry` contains
-stopped-pose retract and clearance only; after its terminal clearance/DI-clear
-confirmation, the next candidate forward queue begins directly, without Home.
-On success or final exhaustion, `candidate_N_pick_to_home` contains stopped-pose
-retract, clearance, optional Home-Z rise and exact joint Home. Exact Home is that
-return batch's sole terminal position check. Early DI1 still invokes
-the established Stop-and-confirm path before return planning.
+The first `candidate_1_home_to_pick` queue submits item-XY transit at Home Z,
+clearance, pre-pick and pick without intermediate arrival waits. DI1 is checked
+throughout descent and for the profile's `pick_settling` interval after terminal
+pick arrival. A missed non-final candidate starts a single
+`candidate_N_pick_to_retry_M_pick` group: direct vertical rise to that item's
+pre-pick at `v=100`; at 20% of the rise, DO13 suction OFF and DO1 exhaust ON,
+plus DO2 fingers-close OFF/DO14 fingers-open ON when `use_grip` is enabled.
+At 0% of the direct move to candidate M's pre-pick, DO1 goes OFF and the enabled
+finger-open state is reissued. The next final descent begins directly from that
+pre-pick, with DO13 ON at 0%. No clearance, Home-Z or Home target is inserted,
+and only the next final pick is checked; its attitude was independently planned
+from taught Home. DI1 before the missed-pick suction reset is a fault, not the
+next item's acquisition. If DI1 remains clear after the final candidate, the
+miss retract completes, exhaust is cleared, and shared Home runs. A successful
+pickup uses `candidate_N_pick_to_home` with held-item monitoring. Early DI1
+during a final descent still invokes the Stop-and-confirm path before return
+planning.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are dispatched
 in target order with at least 50 ms between adjacent sends, without waiting for
@@ -295,7 +300,8 @@ error, rejection, cancellation, or two-second group deadline invokes independent
 Stop containment; an outstanding late response remains contained by another
 Stop. Batch start, every dispatch/response, complete group admission,
 interruption and terminal completion are recorded with the batch name.
-The independent Stop path bypasses this pacing. During a held-item return, a
+DI1 or cancellation during admission prevents all later targets in that group
+from being sent; the independent Stop path bypasses pacing. During a held-item return, a
 timed DO2/DO14 transition requested by MovLIO is accepted only as the exact
 old-to-commanded state change after that MovLIO has been sent, and becomes the
 new expected state when observed;

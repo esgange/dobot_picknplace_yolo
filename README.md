@@ -127,13 +127,16 @@ machine, raw CLI examples, timing policy and commissioning requirements.
 Each candidate is dispatched as a forward queue followed by one terminal queue.
 The Home-to-pick queue
 contains transit, clearance, pre-pick and pick; only the terminal pick/stopped
-pose is checked. DI1 is evaluated throughout descent and at terminal completion;
-there is no additional final-pose suction-settling delay. An intermediate miss uses a
-pick-to-retry queue containing only retract and clearance, then proceeds directly
-to the next candidate from that attitude. Success or final exhaustion uses a
-pick-to-Home queue containing retract, clearance, optional Home-Z rise and exact
-joint Home; only exact Home is checked. Intermediate waypoint arrivals are never
-awaited. All service requests in one named motion group are dispatched first,
+pose is checked. DI1 is evaluated throughout descent and for the taught
+`pick_settling` time after terminal arrival. On an intermediate miss, one queued
+group rises directly to the old pre-pick at `v=100`, opens the enabled fingers,
+turns suction off and exhaust on at 20% of that rise, then travels directly to
+the next pre-pick, turning exhaust off and reissuing finger-open at the start of
+that travel. It descends to the next pick with suction on at 0%; no Home-Z or
+clearance detour or intermediate arrival wait separates those motions. A final
+miss completes its release/retract, clears exhaust, then returns Home. A
+confirmed pickup retracts and returns Home holding suction. All service requests
+in one named motion group are dispatched first,
 with at least 50 ms between adjacent motion-service sends;
 the controller then requires every group response to return `res=0` before it
 accepts the group and continues terminal feedback verification. A rejection,
@@ -141,7 +144,9 @@ response error, or two-second group timeout invokes independent Stop containment
 The independent Stop path is never delayed by group pacing. Planned timed DO
 changes are tracked as commanded transitions, so finger movement requested by
 MovLIO is not mistaken for an external output change while held-item integrity
-monitoring remains active.
+monitoring remains active. DI1 during the missed-pick suction reset is a fault,
+not a successful acquisition of the next item; a Stop or cancellation during
+group admission prevents any later group command from being sent.
 
 Home arrival means every actual joint is within ±1° of its taught value for
 300 ms with enabled, fault-free, stationary, empty-queue feedback. Cartesian
@@ -217,8 +222,9 @@ receives only accepted candidates and does not reinterpret the border.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
-speed 6% and pick-to-prepick retract speed 6%; remaining clearance/Home moves
-use travel speed. Acceleration starts at 100%
+speed 6% and successful pick-to-prepick retract speed 6%; a missed-pick direct
+retract commands 100% speed before the next pre-pick. Remaining clearance/Home
+moves use travel speed. Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor

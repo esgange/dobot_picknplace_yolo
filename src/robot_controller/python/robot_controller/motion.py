@@ -132,20 +132,23 @@ class PickExecutor:
             progress=None, holding_changed=None):
         grip = settings["gripper"]["use_grip"]
         close = grip and settings["gripper"]["grip_onpick"]
+        if not plans:
+            return {"picked": False, "candidate": None, "holding_item": False}
+        settling = settings["timing"]["pick_settling"]
+        if progress is not None:
+            progress("CANDIDATE", "Attempting candidate 1", 1)
+        check(1)
+        # Never turn vacuum off first and then discover a possibly held item.
+        if not self.hardware.sensor(False, 0, settling_sec=0):
+            raise ValueError("DI1 failed to clear before pickup")
+        if remember_prepick is not None:
+            remember_prepick(plans[0][2], settings["gripper"])
+        self.hardware.output(1, False)
+        self.hardware.output(13, False, require_clear=True)
+        acquired = self.hardware.move_batch(
+            plans[0][:4], batch_name="candidate_1_home_to_pick",
+            stop_on_suction=True, settle_suction_sec=settling)
         for index, plan in enumerate(plans, 1):
-            if progress is not None:
-                progress("CANDIDATE", f"Attempting candidate {index}", index)
-            check(index)
-            # Never turn vacuum off first and then discover a possibly held item.
-            if not self.hardware.sensor(False, 0, settling_sec=0):
-                raise ValueError("DI1 failed to clear before pickup")
-            if remember_prepick is not None:
-                remember_prepick(plan[2], settings["gripper"])
-            self.hardware.output(1, False)  # Exhaust stays off; no imported release/purge pattern.
-            self.hardware.output(13, False, require_clear=True)
-            acquired = self.hardware.move_batch(
-                plan[:4], batch_name=f"candidate_{index}_home_to_pick",
-                stop_on_suction=True, before_suction=lambda: check(index))
             if acquired and holding_changed is not None:
                 # Establish trusted in-memory holding context before any gripper
                 # output or return motion can fail.
@@ -158,30 +161,64 @@ class PickExecutor:
             stopped_pose = self.hardware.current_pose()
             stopped_z = stopped_pose[2, 3]
             upward = []
-            for target in plan[4:]:
+            for target in (plan[4:] if acquired else plan[4:5]):
                 # Vertical recovery preserves actual stopped XY/attitude.
                 matrix = stopped_pose.copy()
                 matrix[2, 3] = max(stopped_z, target.matrix[2, 3])
-                events = ((MotionIO(100, 14, False), MotionIO(100, 2, True))
-                          if acquired and grip and not close and not upward else ())
-                upward.append(replace(target, matrix=matrix, motion_io=events))
+                if acquired:
+                    events = ((MotionIO(100, 14, False), MotionIO(100, 2, True))
+                              if grip and not close and not upward else ())
+                    upward.append(replace(target, matrix=matrix, motion_io=events))
+                else:
+                    # The miss is decided only after the taught final-pose settle.
+                    # Release and exhaust together at 20% of the direct rise.
+                    events = [MotionIO(20, 13, False), MotionIO(20, 1, True)]
+                    if grip:
+                        events.extend((MotionIO(20, 2, False), MotionIO(20, 14, True)))
+                    upward.append(replace(
+                        target, matrix=matrix, speed_percent=100,
+                        motion_io=tuple(events)))
                 stopped_z = matrix[2, 3]
             if (acquired and remember_prepick is not None
                     and stopped_pose[2, 3] > plan[2].matrix[2, 3]):
                 remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
                                  settings["gripper"])
-            if acquired or (self.finish_home and index == len(plans)):
-                # The shared Home planner appends its conditional rise and exact
-                # joint Home only after success or terminal candidate exhaustion.
-                return_home(preceding=tuple(upward), require_suction=acquired,
-                            forbid_suction=not acquired,
-                            batch_name=f"candidate_{index}_pick_to_home")
-            else:
-                self.hardware.move_batch(
-                    upward, batch_name=f"candidate_{index}_pick_to_retry",
-                    require_suction=acquired, forbid_suction=not acquired)
             if acquired:
+                # The shared Home planner appends its conditional rise and exact
+                # joint Home after confirmed acquisition.
+                return_home(preceding=tuple(upward), require_suction=acquired,
+                            forbid_suction=False,
+                            batch_name=f"candidate_{index}_pick_to_home")
                 return {"picked": True, "candidate": index, "holding_item": True}
-            # Final retract has really completed before vacuum-off and candidate advance.
-            self.hardware.output(13, False, require_clear=True)
+            if index == len(plans):
+                # There is no next pick to blend into. Complete the miss release,
+                # clear exhaust, then return Home with DI1 required clear.
+                self.hardware.move_batch(
+                    upward, batch_name=f"candidate_{index}_miss_retract",
+                    forbid_suction=True)
+                self.hardware.output(1, False)
+                if self.finish_home:
+                    return_home(forbid_suction=True,
+                                batch_name=f"candidate_{index}_pick_to_home")
+                break
+            next_index = index + 1
+            if progress is not None:
+                progress("CANDIDATE", f"Attempting candidate {next_index}", next_index)
+            check(next_index)
+            if not self.hardware.sensor(False, 0, settling_sec=0):
+                raise ValueError("DI1 activated after missed pickup")
+            next_plan = plans[index]
+            if remember_prepick is not None:
+                remember_prepick(next_plan[2], settings["gripper"])
+            # Queue the direct rise, next pre-pick, and next final descent in one
+            # group. Timed output events travel with their owning motion.
+            transfer_events = [MotionIO(0, 1, False)]
+            if grip:
+                transfer_events.extend((MotionIO(0, 2, False), MotionIO(0, 14, True)))
+            next_prepick = replace(next_plan[2], motion_io=tuple(transfer_events))
+            acquired = self.hardware.move_batch(
+                (*upward, next_prepick, next_plan[3]),
+                batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
+                stop_on_suction=True, require_suction_reset=True,
+                settle_suction_sec=settling)
         return {"picked": False, "candidate": None, "holding_item": False}

@@ -118,8 +118,14 @@ class DobotTransport:
         logger_factory = getattr(self.node, "get_logger", None)
         if logger_factory is not None:
             logger = logger_factory()
-            method = getattr(logger, "warning" if level == "WARNING" else level.lower())
-            method(message)
+            # rclpy fixes severity by caller location. Keep one source line per
+            # severity so a later failure cannot mask the real Stop response.
+            if level == "ERROR":
+                logger.error(message)
+            elif level == "WARNING":
+                logger.warning(message)
+            else:
+                logger.info(message)
         operator_log = getattr(self.node, "publish_operator_log", None)
         if operator_log is not None:
             operator_log(level, message)
@@ -340,6 +346,10 @@ class DobotTransport:
             last_dispatch = None
             try:
                 for (name, fields), planned_outputs in zip(calls, outputs_by_call):
+                    if self.node.cancel_requested():
+                        raise OperationCanceled("Cancelled before motion-group dispatch")
+                    if self.suction_interrupted:
+                        break
                     if last_dispatch is not None:
                         earliest = last_dispatch + MIN_MOTION_DISPATCH_INTERVAL_SEC
                         while time.monotonic() < earliest:
@@ -351,6 +361,10 @@ class DobotTransport:
                                 progress(snapshot)
                             self.node.wait_control(min(
                                 0.01, max(0.0, earliest - time.monotonic())))
+                    if self.node.cancel_requested():
+                        raise OperationCanceled("Cancelled before motion-group dispatch")
+                    if self.suction_interrupted:
+                        break
                     audit = self._begin_service_audit(name, fields)
                     try:
                         future = self.clients[name].call_async(
@@ -373,9 +387,15 @@ class DobotTransport:
                         self._finish_service_audit(
                             audit, "wait_aborted",
                             detail="motion-group dispatch did not complete", level="ERROR")
-                if group:
-                    self.request_stop("motion-group dispatch failure")
+                self.request_stop("motion-group dispatch failure")
                 raise
+
+        if not group:
+            # DI1 may have interrupted the group before its first admission.
+            with self.response_lock:
+                if self.pending_group is group:
+                    self.pending_group = None
+            return ()
 
         deadline = max(
             audit["started"] + COMMAND_RESPONSE_TIMEOUT_SEC
@@ -967,10 +987,15 @@ class DobotTransport:
 
     def move_batch(self, targets, *, batch_name="motion", require_suction=False,
                    forbid_suction=False, stop_on_suction=False,
-                   before_suction=None):
+                   before_suction=None, settle_suction_sec=0.0,
+                   require_suction_reset=False):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
-                or sum((require_suction, forbid_suction, stop_on_suction)) > 1):
+                or sum((require_suction, forbid_suction, stop_on_suction)) > 1
+                or (type(settle_suction_sec) not in (int, float)
+                    or not math.isfinite(settle_suction_sec) or settle_suction_sec < 0)
+                or (settle_suction_sec and not stop_on_suction)
+                or (require_suction_reset and not stop_on_suction)):
             raise CommandRejected("Invalid motion-batch suction policy or empty batch")
         batch_name = batch_name.strip()
         start = self.current_pose()
@@ -992,6 +1017,10 @@ class DobotTransport:
         self.suction_interrupted = False
         self.suction_stop_future = None
         initial = self._ready_snapshot()
+        if (require_suction_reset
+                and not initial.feed["digital_outputs"] & (1 << 12)):
+            raise FeedbackFailure("Previous final approach lacks active DO13 before retry")
+        suction_reset_seen = not require_suction_reset
         before_sequence = initial.sequence
         self.pending_motion_outputs = {}
         self.moving = True
@@ -1005,6 +1034,15 @@ class DobotTransport:
             policy="dispatch_group_then_verify_all_replies_and_terminal_feedback")
 
         def progress(snapshot):
+            nonlocal suction_reset_seen
+            if require_suction_reset:
+                vacuum = bool(snapshot.feed["digital_outputs"] & (1 << 12))
+                detected = bool(snapshot.feed["digital_input_bits"] & 1)
+                if not vacuum:
+                    suction_reset_seen = True
+                if detected and not suction_reset_seen:
+                    raise FeedbackFailure(
+                        "DI1 activated before missed-pick suction reset; retry stopped")
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
                 stop_on_suction=stop_on_suction, before_suction=before_suction,
@@ -1065,10 +1103,14 @@ class DobotTransport:
             self.node.operation_progress(
                 "MOTION", f"Dispatching {batch_name} as one command group",
                 waypoint=targets[-1].name)
-            self.call_group(
+            replies = self.call_group(
                 calls, progress=progress, outputs_by_call=outputs_by_call)
-            queued_targets.extend(target.name for target, _events in target_records)
-            for target, events in target_records:
+            queued_targets.extend(
+                target.name for target, _events in target_records[0:len(replies)])
+            expected_outputs = {}
+            for target, events in target_records[0:len(replies)]:
+                expected_outputs.update({event.channel: event.active
+                                         for event in target.motion_io})
                 self.node.events.record(
                     "INFO", "motion_queued", target.name,
                     batch=batch_name,
@@ -1077,6 +1119,8 @@ class DobotTransport:
                     motion_io=events)
             if self.suction_interrupted:
                 return finish_suction_interrupt()
+            if len(replies) != len(calls):
+                raise FeedbackFailure("Motion group stopped before all targets were admitted")
             self.node.events.record(
                 "INFO", "motion_batch_queued", batch_name,
                 batch=batch_name, targets=queued_targets,
@@ -1120,12 +1164,18 @@ class DobotTransport:
                     pause=self._pause_requested, require_enabled=True,
                     description="motion-timed output feedback")
                 self.node.expected_outputs.update(expected_outputs)
+            if require_suction_reset and not suction_reset_seen:
+                raise FeedbackFailure(
+                    "Missed-pick DO13 OFF was not observed before the next pick")
             self.pending_motion_outputs = {}
+            acquired_at_settle = (self.sensor(True, settle_suction_sec, settling_sec=0)
+                                  if stop_on_suction else False)
             self.node.events.record(
                 "INFO", "motion_batch_completed", batch_name,
                 batch=batch_name, terminal_target=tail.name,
-                targets=[target.name for target in targets])
-            return False
+                targets=[target.name for target in targets],
+                suction_confirmed=acquired_at_settle)
+            return acquired_at_settle
         except OperationCanceled:
             self.request_stop("motion operation cancelled")
             raise

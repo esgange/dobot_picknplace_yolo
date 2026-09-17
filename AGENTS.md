@@ -88,6 +88,10 @@ Rule 85 dispatches each complete controller motion group before validating all
 group replies and removes the additional final-pick suction-settling delay.
 Rule 86 spaces adjacent motion-group service dispatches by at least 50 ms and
 tracks commanded timed-output transitions without weakening held-item checks.
+Rule 87 restores taught final-pick suction settling and queues each missed-pick
+retract directly through the next pre-pick/final pick with timed release and
+exhaust events; no per-motion CP override is permitted, and a Stop/DI1 during
+group dispatch prevents later group commands.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
