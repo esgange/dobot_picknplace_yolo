@@ -100,7 +100,8 @@ The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.
 
-Home uses fresh GetPose to decide whether an upward current-XY rise is needed.
+Home uses the actual `tool_vector_actual` pose from a fresh, stationary
+100 Hz FeedInfo sample to decide whether an upward current-XY rise is needed.
 When below taught Home Z, it sends that rise alone and confirms the actual
 height before sending exact taught joints through joint-mode MovL. A return
 from Pick first confirms its above-item clearance. Pick runs Home,
@@ -155,10 +156,12 @@ Home arrival means every actual joint is within ±1° of its taught value for
 waypoints use 5 mm Euclidean translation and 1° orientation with the same final
 feedback gates. Hardware Home and Pick's initial shared-Home step first apply
 that exact joint gate; if the robot is already Home, they log the skip and send
-no GetPose or Home motion. Queued return-to-Home paths after a pick attempt are
-not skipped. Every required GetPose waits up to two seconds for that stationary
-idle state to remain coherent for 300 ms, so a just-acknowledged DO or Stop cannot
-cause a false one-sample rejection.
+no motion-origin read or Home motion. Queued return-to-Home paths after a pick
+attempt are not skipped. Each motion-origin pose waits up to two seconds for
+stationary idle feedback with an advancing `controller_timer` to remain coherent
+for 300 ms; stale or frozen feedback cannot supply a motion origin. The
+controller no longer calls the Dobot `GetPose` service or subscribes to the
+slower, unstamped `ToolVectorActual` topic.
 
 ## Item Teach and controller
 

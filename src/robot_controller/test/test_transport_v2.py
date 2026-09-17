@@ -9,6 +9,7 @@ import robot_controller.hardware as hardware_module
 from robot_controller.errors import (CommandRejected, CommandResponseTimeout,
                                      FeedbackFailure, HeldUnknown)
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
+from robot_controller.kinematics import pose_values
 from robot_controller.motion import MotionIO, Target
 
 
@@ -649,6 +650,8 @@ def snapshot(*, di1=False, outputs=0, joints=None):
             "robot_mode": 5, "EnableStatus": 1, "isRunQueuedCmd": 0,
             "RunningStatus": 0, "ErrorStatus": 0, "CollisionStates": 0,
             "isPauseCmdFlag": 0, "userCoordinate": 0, "toolCoordinate": 0,
+            "controller_timer": 1,
+            "tool_vector_actual": [1.0, 2.0, 3.0, 0.0, 0.0, 0.0],
         })
 
 
@@ -918,34 +921,43 @@ def test_existing_home_skip_requires_idle_empty_queue():
 
 
 class CurrentPoseMonitor:
-    def __init__(self, sample, *, fail=False):
+    def __init__(self, sample, *, fail=False, stale=False, frozen=False):
         self.sample = sample
         self.fail = fail
+        self.stale = stale
+        self.frozen = frozen
         self.wait_kwargs = None
 
     def wait(self, predicate, timeout, **kwargs):
         self.wait_kwargs = {"timeout": timeout, **kwargs}
-        if self.fail:
+        if self.fail or self.stale:
             raise FeedbackFailure("synthetic stationary timeout")
-        assert predicate(self.sample)
+        assert not predicate(self.sample)
+        if not self.frozen:
+            self.sample.feed["controller_timer"] += 1
+        if not predicate(self.sample):
+            raise FeedbackFailure("synthetic stationary timeout")
+        assert predicate(self.sample)  # One repeated ROS payload is not a frozen source.
         return self.sample
 
     def snapshot(self, **_kwargs):
+        if self.stale:
+            raise FeedbackFailure("Canonical robot connection/feedback is unavailable or stale")
         return self.sample
 
 
-def current_pose_transport(sample, *, fail=False):
+def current_pose_transport(sample, *, fail=False, stale=False, frozen=False):
     transport = object.__new__(DobotTransport)
-    transport.monitor = CurrentPoseMonitor(sample, fail=fail)
+    transport.monitor = CurrentPoseMonitor(
+        sample, fail=fail, stale=stale, frozen=frozen)
     transport.node = SimpleNamespace(
         holding_item=False, expected_outputs={}, cancel_requested=lambda: False)
     calls = []
-    transport.call = lambda name, **fields: (
-        calls.append((name, fields)) or SimpleNamespace(robot_return="{1,2,3,0,0,0}"))
+    transport.call = lambda name, **fields: calls.append((name, fields))
     return transport, calls
 
 
-def test_current_pose_waits_for_300ms_stationary_idle_before_getpose():
+def test_current_pose_uses_the_stable_feed_sample_without_dashboard_service():
     transport, calls = current_pose_transport(snapshot())
 
     matrix = transport.current_pose()
@@ -953,11 +965,21 @@ def test_current_pose_waits_for_300ms_stationary_idle_before_getpose():
     assert transport.monitor.wait_kwargs["timeout"] == pytest.approx(2.0)
     assert transport.monitor.wait_kwargs["stable_sec"] == pytest.approx(0.3)
     assert transport.monitor.wait_kwargs["require_enabled"] is True
-    assert calls == [("GetPose", {"user": 0, "tool": 0})]
+    assert calls == []
     assert tuple(matrix[:3, 3]) == pytest.approx((0.001, 0.002, 0.003))
 
 
-def test_current_pose_timeout_reports_exact_idle_blockers_and_skips_getpose():
+def test_current_pose_preserves_feed_position_and_attitude_in_motion_frame():
+    sample = snapshot()
+    sample.feed["tool_vector_actual"] = [300.0, -430.0, 350.0, -170.0, 5.0, -135.0]
+    transport, calls = current_pose_transport(sample)
+
+    assert pose_values(transport.current_pose()) == pytest.approx(
+        sample.feed["tool_vector_actual"], abs=1e-6)
+    assert calls == []
+
+
+def test_current_pose_timeout_reports_exact_idle_blockers_and_skips_motion_origin():
     blocked = snapshot()
     blocked.robot_enabled = False
     blocked.feed.update(robot_mode=7, isRunQueuedCmd=1, RunningStatus=1)
@@ -971,6 +993,63 @@ def test_current_pose_timeout_reports_exact_idle_blockers_and_skips_getpose():
     assert "robot_mode=7" in message
     assert "isRunQueuedCmd=1" in message
     assert "RunningStatus=1" in message
+    assert calls == []
+
+
+def test_current_pose_rejects_nonzero_user_or_tool_before_using_feed():
+    for key in ("userCoordinate", "toolCoordinate"):
+        blocked = snapshot()
+        blocked.feed[key] = 1
+        transport, calls = current_pose_transport(blocked, fail=True)
+
+        with pytest.raises(FeedbackFailure, match=f"{key}=1"):
+            transport.current_pose()
+        assert calls == []
+
+
+def test_current_pose_never_reuses_stale_feed_vector():
+    transport, calls = current_pose_transport(snapshot(), stale=True)
+
+    with pytest.raises(FeedbackFailure, match="unavailable or stale"):
+        transport.current_pose()
+    assert calls == []
+
+
+def test_current_pose_rejects_republished_feed_with_frozen_controller_timer():
+    transport, calls = current_pose_transport(snapshot(), frozen=True)
+
+    with pytest.raises(FeedbackFailure, match="did not remain coherent for 300 ms"):
+        transport.current_pose()
+    assert calls == []
+
+
+def test_current_pose_rejects_source_that_freezes_after_one_timer_tick(monkeypatch):
+    ticks = iter((0.0, 0.02, 0.20))
+    monkeypatch.setattr(hardware_module, "time", SimpleNamespace(
+        monotonic=lambda: next(ticks)))
+    sample = snapshot()
+    transport, calls = current_pose_transport(sample)
+
+    def wait(predicate, _timeout, **_kwargs):
+        assert not predicate(sample)
+        sample.feed["controller_timer"] += 1
+        assert predicate(sample)
+        assert not predicate(sample)
+        raise FeedbackFailure("synthetic stationary timeout")
+
+    transport.monitor.wait = wait
+    with pytest.raises(FeedbackFailure, match="did not remain coherent for 300 ms"):
+        transport.current_pose()
+    assert calls == []
+
+
+def test_current_pose_rejects_invalid_stationary_feed_vector():
+    invalid = snapshot()
+    invalid.feed["tool_vector_actual"] = [float("nan")] * 6
+    transport, calls = current_pose_transport(invalid)
+
+    with pytest.raises(FeedbackFailure, match="Invalid stationary FeedInfo"):
+        transport.current_pose()
     assert calls == []
 
 

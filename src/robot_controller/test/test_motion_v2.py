@@ -8,8 +8,7 @@ from robot_controller.hardware import (
     CARTESIAN_POSITION_TOLERANCE_M, COMMAND_RESPONSE_TIMEOUT_SEC,
     HOME_JOINT_TOLERANCE_RAD, MIN_MOTION_DISPATCH_INTERVAL_SEC,
     MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
-    OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC,
-    robot_values)
+    OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC)
 from robot_controller.motion import (
     MotionIO, PickExecutor, Target, candidate_pose_in_base, home_targets,
     pick_attitude, pick_targets, pose_reached)
@@ -194,10 +193,7 @@ def test_candidate_pose_rejects_nonplanar_heading_and_degenerate_projection():
         pick_attitude(matrix(1.0), item)
 
 
-def test_robot_reply_and_cartesian_tolerance_are_strict():
-    assert robot_values("{1,2,3,4,5,6}") == [1, 2, 3, 4, 5, 6]
-    with pytest.raises(Exception, match="Malformed canonical"):
-        robot_values("0,{1,2,3,4,5,6},GetPose();")
+def test_cartesian_tolerance_is_strict():
     goal = matrix()
     actual = goal.copy()
     actual[0, 3] += 0.005

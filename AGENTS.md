@@ -97,6 +97,11 @@ then a vertical rise to Home Z before joint Home; missed-pick retries rise to
 the old item's approach height and transfer via the next approach. Motion
 requests must receive acceptance in order before the next is sent, because
 independent ROS services can reverse dashboard queue order.
+Rule 89 supersedes historical GetPose-as-motion-origin requirements: the
+controller uses the same fresh, stationary, advancing FeedInfo sample's
+`tool_vector_actual` for current Link6 pose, keeps user/tool zero and all
+existing safety gates, and has no GetPose client or separate ToolVectorActual
+subscription.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

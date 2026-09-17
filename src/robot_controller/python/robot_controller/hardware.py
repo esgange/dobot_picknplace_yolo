@@ -2,7 +2,6 @@
 
 import json
 import math
-import re
 import threading
 import time
 
@@ -23,6 +22,7 @@ MODE_TRANSITION_TIMEOUT_SEC = 2.0
 READY_STABLE_SEC = 0.2
 CONSISTENT_FLAG_SAMPLES = 3
 STATIONARY_SEC = 0.3
+POSE_SOURCE_PROGRESS_MAX_GAP_SEC = 0.15
 MOTION_NO_PROGRESS_SEC = 3.0
 MOTION_HARD_CAP_SEC = 300.0
 CARTESIAN_POSITION_TOLERANCE_M = 0.005
@@ -32,30 +32,17 @@ MOTION_SERVICES = ("MovL", "MovLIO", "RelMovLUser")
 LATE_RESPONSE_OUTCOMES = ("timeout", "wait_canceled", "wait_aborted")
 
 
-def robot_values(raw):
-    match = re.fullmatch(r"\{([^{}]+)\}", raw) if isinstance(raw, str) else None
-    if match is None:
-        raise CommandRejected("Malformed canonical GetPose reply")
-    try:
-        values = [float(value) for value in match.group(1).split(",")]
-    except ValueError as exc:
-        raise CommandRejected("Malformed canonical GetPose values") from exc
-    if len(values) != 6 or not all(math.isfinite(value) for value in values):
-        raise CommandRejected("GetPose must return six finite values")
-    return values
-
-
 class DobotTransport:
     """Serialized normal commands plus an independent pre-emptive Stop path."""
 
     def __init__(self, node, monitor):
         from dobot_msgs_v4.srv import (CP, ClearError, Continue, DO, DisableRobot,
-                                       EnableRobot, GetPose, MovL, MovLIO, Pause,
+                                       EnableRobot, MovL, MovLIO, Pause,
                                        RelMovLUser, SetTool, SpeedFactor, Stop,
                                        StopMoveJog, Tool, User)
         self.node = node
         self.monitor = monitor
-        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetPose, MovL, MovLIO,
+        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, MovL, MovLIO,
                  RelMovLUser, SetTool, SpeedFactor, StopMoveJog, Tool, User)
         self.types = {kind.__name__: kind for kind in kinds}
         self.clients = {
@@ -846,25 +833,46 @@ class DobotTransport:
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 
     def current_pose(self):
+        idle_and_held = self._held_predicate(self._idle)
+        previous_timer = None
+        last_timer_change = None
+
+        def advancing_stationary(sample):
+            nonlocal previous_timer, last_timer_change
+            timer = sample.feed["controller_timer"]
+            now = time.monotonic()
+            if previous_timer is not None and timer != previous_timer:
+                last_timer_change = now
+            previous_timer = timer
+            source_advancing = (last_timer_change is not None
+                                and now - last_timer_change <= POSE_SOURCE_PROGRESS_MAX_GAP_SEC)
+            return idle_and_held(sample) and source_advancing
+
         try:
-            self.monitor.wait(
-                self._held_predicate(self._idle), MODE_TRANSITION_TIMEOUT_SEC,
+            snapshot = self.monitor.wait(
+                advancing_stationary, MODE_TRANSITION_TIMEOUT_SEC,
                 cancel=self.node.cancel_requested, pause=self._pause_requested,
                 require_enabled=True, stable_sec=STATIONARY_SEC,
-                description="stationary READY feedback before GetPose")
+                description="stationary READY feedback for actual tool pose")
         except FeedbackFailure as exc:
             try:
                 snapshot = self.monitor.snapshot(require_enabled=False)
-            except FeedbackFailure:
-                raise exc
+            except FeedbackFailure as stale_exc:
+                raise FeedbackFailure(
+                    f"Current-pose feedback unavailable: {stale_exc}") from exc
             blockers = self._idle_blockers(snapshot)
             if blockers:
                 raise FeedbackFailure(
                     "Current-pose acquisition blocked: " + "; ".join(blockers)) from exc
             raise FeedbackFailure(
                 "Current-pose READY fields did not remain coherent for 300 ms") from exc
-        result = self.call("GetPose", user=0, tool=0)
-        return pose_matrix(robot_values(result.robot_return))
+        # The exact FeedInfo sample that passed the stationary/user=0/tool=0
+        # gate is the motion origin. Do not issue a later dashboard GetPose or
+        # combine pose and readiness from different feedback instants.
+        try:
+            return pose_matrix(snapshot.feed["tool_vector_actual"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise FeedbackFailure("Invalid stationary FeedInfo tool_vector_actual") from exc
 
     def _target_values(self, target):
         matrix = target.matrix

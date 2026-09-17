@@ -193,7 +193,7 @@ Every actual canonical Dobot call has paired audit output in the ROS console and
 rejected, timed-out, canceled, errored or late-response record contains a
 process-local request ID, exact endpoint/request fields, ROS response `res`,
 available `robot_return`, and elapsed milliseconds. This covers Startup/Recover
-settings, GetPose, DO, all three motion services, Pause, Continue, and the
+settings, DO, all three motion services, Pause, Continue, and the
 independent Stop channel. A successful response is still only command acceptance;
 fresh robot feedback remains required for completion.
 
@@ -208,9 +208,10 @@ actions/services, or `events.jsonl`.
 
 ## Home and Pick
 
-Home is permitted from `READY` and trusted `HOLDING`. Fresh GetPose selects the
-branch: below taught Home Z, `RelMovLUser` first rises at current XY/attitude;
-at/above it, that segment is skipped. Exact taught Home joints are then sent via
+Home is permitted from `READY` and trusted `HOLDING`. The actual pose from a
+fresh, stationary FeedInfo sample selects the branch: below taught Home Z,
+`RelMovLUser` first rises at current XY/attitude; at/above it, that segment is
+skipped. Exact taught Home joints are then sent via
 joint-mode `MovL`. The rise is a separate motion with confirmed 5 mm/1°
 Cartesian arrival, stationary/empty queue, and fresh held-item feedback before
 the joint Home command is sent. Holding Home preserves and monitors suction.
@@ -222,8 +223,8 @@ the normal completion gate directly: all six fresh actual joints within ±1° of
 the taught tuple for 300 ms, idle mode 5, mode-derived RobotStatus enabled,
 `EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not running,
 and held-item I/O intact where applicable. If already complete, Hardware Home
-and Pick's initial shared Home report `motion skipped` and issue no GetPose,
-RelMovLUser, MovL, or MovLIO. If outside tolerance, the shared Home planner
+and Pick's initial shared Home report `motion skipped` and issue no pose-origin
+read, RelMovLUser, MovL, or MovLIO. If outside tolerance, the shared Home planner
 runs. Return paths finish and verify above-item clearance before testing the
 Home joint gate and planning the conditional height rise.
 
@@ -335,14 +336,21 @@ taught Home reference, and target RPY.
 Joint Home completion uses ±1° independently on every joint. Cartesian target
 completion uses 5 mm Euclidean translation and 1° orientation. Both require 300
 ms of coherent enabled, idle, queue-empty feedback; Home remains joint-only and
-does not additionally compare Cartesian FK/GetPose.
+does not additionally compare Cartesian FK with the streamed actual tool pose.
 
-Before every GetPose used as a motion-batch origin or stopped-pose measurement,
-the controller waits up to two seconds for the same idle fields to stay coherent
-for 300 ms. This absorbs the normal feedback transition immediately after an
-acknowledged DO or Stop. A timeout sends no GetPose and names every current
+Before every motion-batch origin or stopped-pose measurement, the controller
+waits up to two seconds for 300 ms of coherent idle feedback and an advancing
+FeedInfo `controller_timer` (brief duplicate publishes are allowed, but no
+source freeze longer than 150 ms). It uses `tool_vector_actual` from the same
+validated sample; it never sends a separate `GetPose` request or subscribes to
+the slower, unstamped `ToolVectorActual` topic. This absorbs the normal feedback
+transition immediately after an acknowledged DO or Stop. A timeout names every current
 RobotStatus/FeedInfo blocker, or reports that otherwise-valid fields could not
-stay coherent for the full interval.
+stay coherent for the full interval. Fresh connected RobotStatus, joints,
+FeedInfo, user/tool zero, held-item integrity, and the normal final-arrival
+checks remain mandatory. A live comparison of streamed pose with
+`GetPose(user=0,tool=0)` is a separate commissioning check, not an automatic
+fallback or an extra runtime service dependency.
 
 Software tests use synthetic services/feedback and must never commission
 physical motion. Real commissioning requires separate explicit authorization,

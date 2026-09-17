@@ -3822,6 +3822,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `ament_flake8`; package and full 15-package workspace builds pass, and
   `git diff --check` passes. No Dobot motion service was invoked by this work.
 
+### 2026-09-17 — Streamed actual tool pose for controller motion origins
+
+- Rule 89 supersedes the historical `GetPose(user=0,tool=0)` motion-origin
+  requirements in rules 51, 53, 62, 64, 70 and 72 without changing their
+  other Home, feedback or Stop contracts. Read-only ROS graph inspection found
+  that the vendored bringup publishes `ToolVectorActual` at approximately 10 Hz
+  and embeds the same actual six-axis tool vector in FeedInfo at approximately
+  100 Hz. The controller already consumes FeedInfo for final Cartesian arrival,
+  while repeated dashboard GetPose requests added response latency and could
+  describe a later instant than the feedback sample that passed readiness.
+- Each Home branch, stopped-pick measurement, and motion-batch origin now uses
+  `tool_vector_actual` from the exact FeedInfo snapshot that passed the existing
+  two-second maximum wait for 300 ms of coherent stationary idle state. The
+  snapshot must also show an advancing `controller_timer`; duplicate ROS
+  publishes are tolerated for up to 150 ms, but a frozen controller source
+  cannot establish or sustain a motion origin. Keep sole canonical
+  fresh/connected RobotStatus, FeedInfo and joints, mode 5,
+  enabled, fault/collision/queue clear, user/tool coordinate indices zero,
+  cancellation/Pause handling and trusted held-item integrity. Invalid or stale
+  vectors fail closed; no cached pose, GetPose fallback or separate 10 Hz
+  ToolVectorActual subscription is permitted.
+- Remove the controller's GetPose service client and brace-reply parser from
+  runtime prerequisites. Motion commands, exact taught-Home joint completion,
+  Cartesian arrival tolerances, response ordering, suction, Stop, Item Teach
+  schemas and vendor code remain unchanged. An attended, read-only comparison
+  of streamed pose against explicit GetPose(0,0) should be completed during
+  physical commissioning before relying on the new motion-origin source; no
+  robot motion is authorized by this software change.
+- Verification is software-only: 144 direct controller tests and 145
+  package-reported tests pass, including pose position/attitude conversion,
+  advancing-timer gating with duplicate-publish tolerance, held/idle frame
+  blockers, stale/frozen/malformed feedback, and absence of the GetPose client.
+  All 20 controller/test Python
+  files pass compilation and `ament_flake8`; package and full 15-package
+  workspace builds pass, and `git diff --check` passes. No detector request,
+  Dobot service or physical robot motion was issued for this change.
+
 ### Future entry template
 
 ```text
