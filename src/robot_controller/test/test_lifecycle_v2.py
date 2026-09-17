@@ -426,7 +426,7 @@ def test_shared_initial_home_skips_all_motion_when_joint_gate_is_already_met():
 
 
 @pytest.mark.parametrize("holding", [False, True])
-def test_hardware_home_confirms_two_cartesian_waypoints_in_order(holding):
+def test_hardware_home_queues_two_cartesian_waypoints_in_one_group(holding):
     calls = []
     current = np.eye(4)
     current[:3, 3] = [0.1, 0.2, 0.1]
@@ -450,17 +450,15 @@ def test_hardware_home_confirms_two_cartesian_waypoints_in_order(holding):
 
     targets = RobotController._execute_cartesian_home(node)
     moves = [call for call in calls if call[0] == "move"]
-    assert len(moves) == 2
-    assert [call[1][0].name for call in moves] == ["home_align", "home"]
-    assert all(len(call[1]) == 1 and call[1][0].joints_rad is None
-               and not call[1][0].relative_z for call in moves)
-    assert moves[0][2] == {"batch_name": "home_align", "require_suction": holding,
+    assert len(moves) == 1
+    assert [target.name for target in moves[0][1]] == ["home_align", "home"]
+    assert all(target.joints_rad is None and not target.relative_z
+               for target in moves[0][1])
+    assert moves[0][2] == {"batch_name": "home", "require_suction": holding,
                            "forbid_suction": not holding}
-    assert moves[1][2] == {"batch_name": "home", "require_suction": holding,
-                           "forbid_suction": not holding}
-    assert targets == (moves[0][1][0], moves[1][1][0])
+    assert targets == moves[0][1]
     assert calls.index(("preflight", holding)) < calls.index(moves[0])
-    assert calls.count(("preflight", holding)) == 2
+    assert calls.count(("preflight", holding)) == 1
 
 
 def test_hardware_home_skips_when_cartesian_feedback_is_already_within_tolerance():
@@ -483,14 +481,14 @@ def test_hardware_home_skips_when_cartesian_feedback_is_already_within_tolerance
     assert moves == []
 
 
-def test_hardware_home_alignment_failure_prevents_lateral_home_dispatch():
+def test_hardware_home_group_failure_is_propagated():
     home = np.eye(4)
     home[:3, 3] = [0.3, -0.4, 0.5]
     calls = []
 
     def move(targets, **_kwargs):
-        calls.append(targets[0].name)
-        raise FeedbackFailure("Alignment not reached")
+        calls.append(tuple(target.name for target in targets))
+        raise FeedbackFailure("Home group failed")
 
     node = SimpleNamespace(
         root="/unused", holding_item=False,
@@ -504,9 +502,9 @@ def test_hardware_home_alignment_failure_prevents_lateral_home_dispatch():
         _preflight_item_state=lambda _holding: None,
         operation_progress=lambda *_args, **_kwargs: None)
 
-    with pytest.raises(FeedbackFailure, match="Alignment not reached"):
+    with pytest.raises(FeedbackFailure, match="Home group failed"):
         RobotController._execute_cartesian_home(node)
-    assert calls == ["home_align"]
+    assert calls == [("home_align", "home")]
 
 
 def test_home_action_uses_cartesian_route_without_changing_pick_home():

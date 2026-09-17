@@ -102,10 +102,12 @@ control back while an edit or service confirmation is in progress.
 
 The explicit Hardware Home action reads the actual `tool_vector_actual` pose
 from a fresh, stationary 100 Hz FeedInfo sample. Unless already within
-5 mm/1° of taught Home, it sends two separately confirmed Cartesian `MovL`
-targets: current X/Y with taught Home Z/attitude, then full taught Home
-XYZ/attitude. This first segment can rotate or descend at current XY and is
-not collision-checked for an arbitrary starting pose. Pick retains its
+5 mm/1° of taught Home, it queues two Cartesian `MovL` targets in one
+CP(100)-blended group: current X/Y with taught Home Z/attitude, then full taught
+Home XYZ/attitude. Each service must return `res=0` in order, but only final
+Home is physically confirmed. The first control point can be rounded, rotate or
+descend at current XY and is not collision-checked for an arbitrary starting
+pose. Pick retains its
 separate shared Home rule: below taught Home Z it confirms an upward
 current-XY rise before sending the exact taught joints. A return from Pick
 first confirms its above-item clearance. Pick runs Home,
@@ -158,9 +160,10 @@ group admission prevents any later group command from being sent.
 
 Pick's initial and return Home arrival means every actual joint is within ±1°
 of its taught value for 300 ms with enabled, fault-free, stationary,
-empty-queue feedback. Cartesian waypoints, including both Hardware Home
-targets, use 5 mm Euclidean translation and 1° orientation with the same
-final feedback gates. Hardware Home skips motion when its fresh stationary
+empty-queue feedback. The terminal Hardware Home target uses 5 mm Euclidean
+translation and 1° orientation with the same final feedback gates; its first
+alignment target is a CP-blended control point and is not separately confirmed.
+Hardware Home skips motion when its fresh stationary
 Cartesian pose is already within that tolerance; Pick's initial shared-Home
 step instead applies the joint Home gate. Queued return-to-Home paths after a
 pick attempt are not skipped. Each motion-origin pose waits up to two seconds for

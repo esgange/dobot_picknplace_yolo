@@ -162,16 +162,17 @@ def test_hardware_home_waypoints_dispatch_cartesian_movl_only(monkeypatch):
               "digital_input_bits": 0, "digital_outputs": 0})
     transport._wait_for_resume = lambda: 0.0
     transport._idle = lambda _sample: True
-    transport._target_reached = lambda _target, _sample: True
+    reached = []
+    transport._target_reached = lambda target, _sample: (
+        reached.append(target.name) or True)
     calls = []
     transport.call_group = lambda group, **_kwargs: (
-        calls.extend(group) or (None,))
+        calls.extend(group) or tuple(None for _call in group))
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     transport.moving = False
 
-    for target in targets:
-        assert transport.move_batch((target,), batch_name=target.name) is False
+    assert transport.move_batch(targets, batch_name="home") is False
 
     assert [name for name, _fields in calls] == ["MovL", "MovL"]
     assert all(fields["mode"] is False and "mdis" not in fields
@@ -180,6 +181,7 @@ def test_hardware_home_waypoints_dispatch_cartesian_movl_only(monkeypatch):
     assert [fields["a"] for _name, fields in calls] == pytest.approx([100., 300.])
     assert [fields["b"] for _name, fields in calls] == pytest.approx([200., -400.])
     assert [fields["c"] for _name, fields in calls] == pytest.approx([500., 500.])
+    assert set(reached) == {"home"}
 
 
 def test_home_height_accepts_small_getpose_jitter_but_never_descends(monkeypatch):

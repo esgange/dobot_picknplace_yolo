@@ -211,16 +211,18 @@ actions/services, or `events.jsonl`.
 The explicit Hardware Home action is permitted from `READY` and trusted
 `HOLDING`. It obtains current Link6 XYZ/RPY from fresh, stationary FeedInfo.
 Unless that Cartesian pose is already within 5 mm/1° of the FK-derived taught
-Home pose, it sends exactly two Cartesian-mode `MovL` targets in separate
-verified batches: `(current X, current Y, Home Z, Home Rx, Home Ry, Home Rz)`,
-then `(Home X, Home Y, Home Z, Home Rx, Home Ry, Home Rz)`. The first target must
-reach 5 mm/1° with stationary, empty-queue feedback before the second is
-dispatched; the same Cartesian gate confirms the final target. Both use the
-taught travel `v`/`a`, no timed I/O, and preserve/monitor suction when holding.
+Home pose, it sends exactly two Cartesian-mode `MovL` targets in one named
+motion group: `(current X, current Y, Home Z, Home Rx, Home Ry, Home Rz)`, then
+`(Home X, Home Y, Home Z, Home Rx, Home Ry, Home Rz)`. Each service must return
+`res=0` before the next is sent, without an added delay, so both enter the Dobot
+queue in order and inherit global `CP(100)`. Only the final Home target receives
+the 5 mm/1° stationary, empty-queue physical confirmation. Both use the taught
+travel `v`/`a`, no timed I/O, and preserve/monitor suction when holding.
 This action does not send `RelMovLUser` or joint-mode Home. Cartesian arrival
 does not prove the joints match the recorded Home tuple. The first segment may
 rotate the tool or descend at current XY; the controller has no collision model
-for an arbitrary starting pose, so the operator must verify that path is clear.
+for an arbitrary starting pose, and CP may round that alignment control point,
+so the operator must verify that the complete blended path is clear.
 
 Pick's initial and return Home paths retain the shared joint-Home rule. The
 initial step skips if all six fresh actual joints are within ±1° of the taught

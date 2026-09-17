@@ -3941,6 +3941,31 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and `git diff --check` passed. No physical Dobot service or camera action was
   invoked.
 
+### 2026-09-17 — CP-blend explicit Hardware Home targets
+
+- Rule 93 supersedes rule 90 only where it physically confirmed `home_align`
+  before dispatching final Cartesian Home. Explicit `/robot_controller/go_home`
+  now submits both Cartesian `MovL` targets as one named motion group, requires
+  each service response with `res=0` in order and without an added delay, and
+  physically confirms only the final Home target. Both requests omit per-motion
+  `cp`/`r`, so Startup/Recover's global `CP(100)` blends the transition.
+- `home_align` remains current X/Y with taught Home Z/attitude, but it is now an
+  approximate CP control point rather than a guaranteed reached pose. The
+  operator must commission the complete blended route because the controller
+  has no collision model and CP may round the intermediate point. Cartesian
+  skip, 5 mm/1° final tolerance, 300 ms stationary confirmation, held-item
+  monitoring, response failure containment, cancellation and Stop are retained.
+- Pick's shared Home contract is unchanged: above-item clearance, conditional
+  current-XY rise to Home Z, and exact taught-joint Home remain separately
+  confirmed safety barriers. This change does not blend those safety segments.
+- Verification is software-only: 152 direct controller tests and 153
+  package-reported tests passed with zero failures/errors/skips, including one
+  two-target Hardware Home batch and final-target-only arrival checking. All 20
+  controller/test Python files passed compilation and `ament_flake8`; the
+  controller package and complete 15-package workspace built successfully, and
+  `git diff --check` passed. No Dobot service, detector request, or camera action
+  was invoked.
+
 ### Future entry template
 
 ```text

@@ -846,18 +846,10 @@ class RobotController(Node):
             current, config.home_matrix, speed_percent=speed,
             acceleration_percent=acceleration)
         self.operation_progress(
-            "HOME_ALIGN", "Moving at current XY to taught Home Z and attitude",
-            waypoint=alignment.name)
+            "HOME", "Queueing Home alignment and final Cartesian Home",
+            waypoint=home.name)
         self.hardware.move_batch(
-            (alignment,), batch_name="home_align", require_suction=holding,
-            forbid_suction=not holding)
-        self.raise_if_cancelled()
-        self.wait_for_resume()
-        self._preflight_item_state(holding)
-        self.operation_progress(
-            "HOME", "Moving to taught Cartesian Home pose", waypoint=home.name)
-        self.hardware.move_batch(
-            (home,), batch_name="home", require_suction=holding,
+            (alignment, home), batch_name="home", require_suction=holding,
             forbid_suction=not holding)
         return (alignment, home)
 
