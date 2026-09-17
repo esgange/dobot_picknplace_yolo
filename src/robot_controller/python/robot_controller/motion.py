@@ -169,7 +169,10 @@ class PickExecutor:
             stopped_pose = self.hardware.current_pose()
             stopped_z = stopped_pose[2, 3]
             upward = []
-            for target in (plan[4:] if acquired else plan[5:6]):
+            # A retry passes the old pre-pick before its clearance; the final
+            # miss keeps the existing direct clearance rise before Home.
+            retrying = not acquired and index < len(plans)
+            for target in (plan[4:] if acquired or retrying else plan[5:6]):
                 # Vertical recovery preserves actual stopped XY/attitude.
                 matrix = stopped_pose.copy()
                 matrix[2, 3] = max(stopped_z, target.matrix[2, 3])
@@ -179,12 +182,16 @@ class PickExecutor:
                     upward.append(replace(target, matrix=matrix, motion_io=events))
                 else:
                     # The miss is decided only after the taught final-pose settle.
-                    # Release and exhaust together at 20% of the direct rise.
-                    events = [MotionIO(20, 13, False), MotionIO(20, 1, True)]
-                    if grip:
-                        events.extend((MotionIO(20, 2, False), MotionIO(20, 14, True)))
+                    # Release and exhaust on the first upward segment only.
+                    events = []
+                    if not upward:
+                        events = [MotionIO(20, 13, False), MotionIO(20, 1, True)]
+                        if grip:
+                            events.extend((MotionIO(20, 2, False),
+                                           MotionIO(20, 14, True)))
                     upward.append(replace(
                         target, matrix=matrix, speed_percent=100,
+                        acceleration_percent=settings["acceleration"]["travel_percent"],
                         motion_io=tuple(events)))
                 stopped_z = matrix[2, 3]
             if (acquired and remember_prepick is not None
@@ -218,8 +225,8 @@ class PickExecutor:
             next_plan = plans[index]
             if remember_prepick is not None:
                 remember_prepick(next_plan[2], settings["gripper"])
-            # Lift to the old item's approach height before any lateral travel.
-            # Cross to the next approach height, then descend via pre-pick.
+            # Rise via the old pre-pick to its clearance before lateral travel.
+            # Cross to the next clearance, then descend via its pre-pick.
             # Timed output events travel with their owning motion.
             transfer_events = [MotionIO(0, 1, False)]
             if grip:

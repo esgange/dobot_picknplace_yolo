@@ -105,6 +105,9 @@ subscription.
 Rule 90 makes the explicit Hardware Home action use two separately confirmed
 Cartesian MovL targets: current XY with taught Home Z/attitude, then full
 taught Home Cartesian pose. Pick's shared joint-Home return rule is unchanged.
+Rule 91 adds the old item's pre-pick waypoint before its clearance on a missed
+non-final Pick retry. Both old-item rises and the next item's clearance,
+pre-pick, and final pick stay in one CP-blended group; final exhaustion is unchanged.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

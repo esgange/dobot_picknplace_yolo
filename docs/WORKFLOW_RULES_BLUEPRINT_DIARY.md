@@ -3891,6 +3891,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `git diff --check` passed, and the root 15-package `colcon build` passed.
   No Dobot service or physical robot motion was invoked.
 
+### 2026-09-17 — Add old-item pre-pick to continuous repick queue
+
+- Rule 91 supersedes rule 88 only for a missed non-final candidate's upward
+  transfer. After DI1 remains clear through the taught final-pick settling,
+  form one `candidate_N_pick_to_retry_M_pick` motion group in this order:
+  stopped-pose vertical rise to candidate N's pre-pick, continue vertically
+  at the same XY/attitude to N's clearance, cross to M's clearance using M's
+  independently preplanned attitude, descend through M's pre-pick, then reach
+  M's final pick. No Home, Home-Z or intermediate physical-arrival wait is
+  inserted. Admit each service response in order, retain the ≥50 ms spacing,
+  and check only M's terminal pick and suction. Global CP(100) may round every
+  intermediate target; clearance remains a commissioning responsibility.
+- Both old-item upward segments use `v=100` and the taught travel acceleration.
+  At 20% of only the first rise, turn suction DO13 OFF and exhaust DO1 ON,
+  and open DO2/DO14 when enabled. The second rise repeats no output event. At
+  0% of M's clearance transfer, turn exhaust OFF and reissue enabled finger
+  open; turn suction ON at 0% of M's final approach. Keep DI1-before-suction-
+  reset and all Stop/cancellation/output checks. Final candidate exhaustion
+  retains its direct single rise to clearance, exhaust clear and shared Home;
+  confirmed pickup and the initial Home-to-pick queue are unchanged.
+- Validation performed: 152 direct controller tests and 153 package-reported
+  tests passed, including five-target retry order, one-time timed release,
+  travel acceleration on both upward segments, next-item transfer I/O,
+  unchanged final-miss return, and transport `MovL`/`MovLIO` selection.
+  Changed Python files passed compilation and `ament_flake8`; `git diff --check`
+  and the root 15-package `colcon build` passed. No Dobot service or physical
+  robot motion was invoked.
+
 ### Future entry template
 
 ```text

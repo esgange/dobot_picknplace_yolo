@@ -135,10 +135,11 @@ The first Home-to-pick queue
 contains transit, clearance, pre-pick and pick; only the terminal pick/stopped
 pose is checked. DI1 is evaluated throughout descent and for the taught
 `pick_settling` time after terminal arrival. On an intermediate miss, one queued
-group rises vertically to the old item's approach/clearance at `v=100`, opens the enabled fingers,
-turns suction off and exhaust on at 20% of that rise, then travels directly to
-the next item's approach, turning exhaust off and reissuing finger-open at the
-start of that transfer. It descends via the next pre-pick to final pick with
+group rises vertically through the old item's pre-pick and clearance at `v=100`
+using taught travel acceleration. At 20% of the first rise it opens enabled
+fingers, turns suction off and exhaust on. It then travels to the next item's
+clearance, turning exhaust off and reissuing finger-open at the start of that
+transfer. It descends via the next pre-pick to final pick with
 suction on at 0%; no intermediate arrival wait separates those retry motions.
 A final miss completes its release/rise to approach, clears exhaust, then uses
 the shared verified Home rule. A confirmed pickup retracts, confirms clearance,
@@ -232,9 +233,9 @@ receives only accepted candidates and does not reinterpret the border.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
-speed 6% and successful pick-to-prepick retract speed 6%; a missed-pick rise
-to approach commands 100% speed before the next approach. Remaining clearance/Home
-moves use travel speed. Acceleration starts at 100%
+speed 6% and successful pick-to-prepick retract speed 6%; a missed-pick retry
+rises through the old pre-pick to clearance at 100% speed before the next
+clearance. Remaining clearance/Home moves use travel speed. Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor

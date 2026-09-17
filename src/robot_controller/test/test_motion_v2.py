@@ -263,9 +263,12 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert returned[0]["forbid_suction"] is False
 
 
-def test_missed_suction_queues_direct_retract_next_prepick_and_pick():
+def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
+    taught = settings()
+    taught["acceleration"]["travel_percent"] = 80
+    taught["acceleration"]["retract_percent"] = 40
     hardware = FakeHardware([False, False])
-    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), settings(), index)
+    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), taught, index)
              for index in (1, 2)]
     order = []
 
@@ -276,7 +279,7 @@ def test_missed_suction_queues_direct_retract_next_prepick_and_pick():
         order.append(("home", kwargs["forbid_suction"], kwargs["batch_name"]))
 
     outcome = PickExecutor(hardware, finish_home=True).run(
-        plans, settings(), check=check, return_home=return_home)
+        plans, taught, check=check, return_home=return_home)
     assert not outcome["picked"]
     assert order == [
         ("candidate", 1), ("candidate", 2),
@@ -289,17 +292,26 @@ def test_missed_suction_queues_direct_retract_next_prepick_and_pick():
     assert [target.name for target in hardware.targets[2]] == ["p2_final"]
     retry = next(entry for entry in hardware.log if entry[0] == "move"
                  and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
-    assert retry[1] == ("p1_final", "p2_initial", "p2_prepick", "p2_pick")
+    assert retry[1] == ("p1_retract", "p1_final", "p2_initial",
+                        "p2_prepick", "p2_pick")
     assert retry[2]["stop_on_suction"] is True
     assert retry[2]["require_suction_reset"] is True
     assert retry[2]["settle_suction_sec"] == pytest.approx(0.2)
-    retract, next_approach, next_prepick, next_pick = [
+    retract, old_clearance, next_approach, next_prepick, next_pick = [
         target for target in hardware.targets[1]]
     assert retract.speed_percent == 100
-    assert retract.matrix[2, 3] == pytest.approx(plans[0][5].matrix[2, 3])
+    assert retract.acceleration_percent == 80
+    assert retract.matrix[2, 3] == pytest.approx(plans[0][4].matrix[2, 3])
     assert [(event.percent, event.channel, event.active)
             for event in retract.motion_io] == [
                 (20, 13, False), (20, 1, True), (20, 2, False), (20, 14, True)]
+    assert old_clearance.speed_percent == 100
+    assert old_clearance.acceleration_percent == 80
+    assert old_clearance.matrix[2, 3] == pytest.approx(plans[0][5].matrix[2, 3])
+    assert not old_clearance.motion_io
+    assert np.allclose(retract.matrix[:2, 3], old_clearance.matrix[:2, 3])
+    assert np.allclose(retract.matrix[:3, :3], old_clearance.matrix[:3, :3])
+    assert np.allclose(next_approach.matrix[:2, 3], plans[1][1].matrix[:2, 3])
     assert [(event.percent, event.channel, event.active)
             for event in next_approach.motion_io] == [
                 (0, 1, False), (0, 2, False), (0, 14, True)]
@@ -339,8 +351,9 @@ def test_missed_repick_without_finger_control_changes_only_vacuum_and_exhaust():
         plans, taught, check=lambda _index: None,
         return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
 
-    retract, next_approach, next_prepick, _pick = hardware.targets[1]
+    retract, old_clearance, next_approach, next_prepick, _pick = hardware.targets[1]
     assert [event.channel for event in retract.motion_io] == [13, 1]
+    assert not old_clearance.motion_io
     assert [event.channel for event in next_approach.motion_io] == [1]
     assert not next_prepick.motion_io
     assert all(entry[1] not in (2, 14) for entry in hardware.log

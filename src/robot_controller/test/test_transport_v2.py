@@ -590,19 +590,21 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     def call_group(calls, *, progress, outputs_by_call):
         captured.extend(calls)
         assert outputs_by_call == [{13: False, 1: True},
-                                   {1: False, 14: True}, {13: True}]
+                                   {}, {1: False, 14: True}, {}, {13: True}]
         transport.pending_motion_outputs = {13: False, 1: True}
         progress(sample(vacuum_off))
         transport.pending_motion_outputs = {13: True, 1: False, 14: True}
         progress(sample(vacuum_on))
-        return (None, None, None)
+        return (None,) * len(calls)
 
     transport.call_group = call_group
     targets = (
         Target("old_retract", np.eye(4), 100, 100, motion_io=(
             MotionIO(20, 13, False), MotionIO(20, 1, True))),
-        Target("next_prepick", np.eye(4), 100, 100, motion_io=(
+        Target("old_clearance", np.eye(4), 100, 100),
+        Target("next_clearance", np.eye(4), 100, 100, motion_io=(
             MotionIO(0, 1, False), MotionIO(0, 14, True))),
+        Target("next_prepick", np.eye(4), 100, 100),
         Target("next_pick", np.eye(4), 6, 100, motion_io=(
             MotionIO(0, 13, True),)),
     )
@@ -610,8 +612,11 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     assert not transport.move_batch(
         targets, batch_name="retry", stop_on_suction=True,
         require_suction_reset=True, settle_suction_sec=0.2)
-    assert [name for name, _fields in captured] == ["MovLIO"] * 3
+    assert [name for name, _fields in captured] == [
+        "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO"]
     assert [fields["param_value"] for _name, fields in captured] == [
+        ["user=0", "tool=0", "v=100", "a=100"],
+        ["user=0", "tool=0", "v=100", "a=100"],
         ["user=0", "tool=0", "v=100", "a=100"],
         ["user=0", "tool=0", "v=100", "a=100"],
         ["user=0", "tool=0", "v=6", "a=100"]]

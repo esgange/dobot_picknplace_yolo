@@ -277,7 +277,8 @@ apply solely to the item pick point.
 The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates, final descent uses approach rates, and successful
-pick-to-prepick uses retract rates; missed-pick rise to approach commands `v=100`.
+pick-to-prepick uses retract rates; missed-pick rise to approach commands `v=100`
+with taught travel acceleration.
 Enabled fingers open at 50% of the clearance move. Suction
 turns on at 0% of final descent. With `grip_onpick`, fingers close after DI1;
 otherwise they close at the end of retract-to-prepick, still only after DI1.
@@ -286,17 +287,23 @@ The first `candidate_1_home_to_pick` queue submits item-XY transit at Home Z,
 clearance, pre-pick and pick without intermediate arrival waits. DI1 is checked
 throughout descent and for the profile's `pick_settling` interval after terminal
 pick arrival. A missed non-final candidate starts a single
-`candidate_N_pick_to_retry_M_pick` group: direct vertical rise to that item's
-approach/clearance at `v=100`; at 20% of the rise, DO13 suction OFF and DO1 exhaust ON,
-plus DO2 fingers-close OFF/DO14 fingers-open ON when `use_grip` is enabled.
-At 0% of the lateral transfer to candidate M's approach, DO1 goes OFF and the enabled
-finger-open state is reissued. The next descent passes through pre-pick and
-then final pick with DO13 ON at 0% of that final segment. No Home-Z or Home target is inserted,
-and only the next final pick is checked; its attitude was independently planned
-from taught Home. DI1 before the missed-pick suction reset is a fault, not the
-next item's acquisition. If DI1 remains clear after the final candidate, the
-miss rise to approach completes, exhaust is cleared, and shared Home runs. A successful
-pickup completes retract and approach clearance before the same shared Home
+`candidate_N_pick_to_retry_M_pick` group: rise at the old actual stopped XY and
+attitude to its pre-pick, continue up to its clearance, transfer to candidate
+M's clearance, descend through M's pre-pick, then reach M's final pick. Both
+old-item upward segments command `v=100` and taught travel acceleration. At
+20% of the first rise, DO13 suction turns OFF and DO1 exhaust ON, plus DO2
+fingers-close OFF/DO14 fingers-open ON when `use_grip` is enabled. The second
+old-item rise has no repeated I/O. At 0% of the lateral transfer to candidate
+M's clearance, DO1 goes OFF and the enabled finger-open state is reissued.
+DO13 turns ON at 0% of M's final descent. These five targets remain in one
+CP-blended group: each service acceptance precedes the next dispatch, but
+only the next final pick is physically checked. The intermediate clearances
+may be rounded; no Home-Z or Home target is inserted. Candidate M's attitude
+is independently planned from taught Home. DI1 before the missed-pick suction
+reset is a fault, not the next item's acquisition. If DI1 remains clear after
+the final candidate, its unchanged direct miss rise to clearance completes,
+exhaust is cleared, and shared Home runs. A successful pickup completes retract
+and approach clearance before the same shared Home
 rule with held-item monitoring. Early DI1
 during a final descent still invokes the Stop-and-confirm path before return
 planning.
