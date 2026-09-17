@@ -102,6 +102,9 @@ controller uses the same fresh, stationary, advancing FeedInfo sample's
 `tool_vector_actual` for current Link6 pose, keeps user/tool zero and all
 existing safety gates, and has no GetPose client or separate ToolVectorActual
 subscription.
+Rule 90 makes the explicit Hardware Home action use two separately confirmed
+Cartesian MovL targets: current XY with taught Home Z/attitude, then full
+taught Home Cartesian pose. Pick's shared joint-Home return rule is unchanged.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

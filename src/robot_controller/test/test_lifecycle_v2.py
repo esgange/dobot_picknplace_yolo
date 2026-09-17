@@ -1,9 +1,11 @@
 from types import SimpleNamespace
 import threading
 
+import numpy as np
 import pytest
 from PyQt5 import QtWidgets
 from rclpy.action import GoalResponse
+from robot_controller_interfaces.action import GoHome
 
 import robot_controller.controller as controller_module
 import robot_controller.gui as gui_module
@@ -421,6 +423,116 @@ def test_shared_initial_home_skips_all_motion_when_joint_gate_is_already_met():
     assert calls[1] == ("check", (0.1,) * 6)
     assert not any(entry[0] in ("plan", "move") for entry in calls)
     assert "motion skipped" in calls[-1][2]
+
+
+@pytest.mark.parametrize("holding", [False, True])
+def test_hardware_home_confirms_two_cartesian_waypoints_in_order(holding):
+    calls = []
+    current = np.eye(4)
+    current[:3, 3] = [0.1, 0.2, 0.1]
+    home = np.eye(4)
+    home[:3, 3] = [0.3, -0.4, 0.5]
+    config = SimpleNamespace(
+        home_matrix=home,
+        profile={"speed": {"travel_percent": 75},
+                 "acceleration": {"travel_percent": 60}},
+        validate_sources=lambda _root: calls.append(("validate",)))
+    hardware = SimpleNamespace(
+        current_pose=lambda: calls.append(("current_pose",)) or current,
+        move_batch=lambda targets, **kwargs: calls.append(("move", targets, kwargs)))
+    node = SimpleNamespace(
+        root="/unused", hardware=hardware, configuration=config,
+        holding_item=holding, raise_if_cancelled=lambda: None,
+        wait_for_resume=lambda: None,
+        _preflight_item_state=lambda expected: calls.append(("preflight", expected)),
+        operation_progress=lambda phase, message, **fields: calls.append(
+            ("progress", phase, message, fields)))
+
+    targets = RobotController._execute_cartesian_home(node)
+    moves = [call for call in calls if call[0] == "move"]
+    assert len(moves) == 2
+    assert [call[1][0].name for call in moves] == ["home_align", "home"]
+    assert all(len(call[1]) == 1 and call[1][0].joints_rad is None
+               and not call[1][0].relative_z for call in moves)
+    assert moves[0][2] == {"batch_name": "home_align", "require_suction": holding,
+                           "forbid_suction": not holding}
+    assert moves[1][2] == {"batch_name": "home", "require_suction": holding,
+                           "forbid_suction": not holding}
+    assert targets == (moves[0][1][0], moves[1][1][0])
+    assert calls.index(("preflight", holding)) < calls.index(moves[0])
+    assert calls.count(("preflight", holding)) == 2
+
+
+def test_hardware_home_skips_when_cartesian_feedback_is_already_within_tolerance():
+    home = np.eye(4)
+    current = home.copy()
+    current[0, 3] = 0.004
+    moves = []
+    node = SimpleNamespace(
+        root="/unused", holding_item=False,
+        configuration=SimpleNamespace(
+            home_matrix=home, validate_sources=lambda _root: None),
+        hardware=SimpleNamespace(
+            current_pose=lambda: current,
+            move_batch=lambda *_args, **_kwargs: moves.append("move")),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda _holding: None,
+        operation_progress=lambda *_args, **_kwargs: None)
+
+    assert RobotController._execute_cartesian_home(node) == ()
+    assert moves == []
+
+
+def test_hardware_home_alignment_failure_prevents_lateral_home_dispatch():
+    home = np.eye(4)
+    home[:3, 3] = [0.3, -0.4, 0.5]
+    calls = []
+
+    def move(targets, **_kwargs):
+        calls.append(targets[0].name)
+        raise FeedbackFailure("Alignment not reached")
+
+    node = SimpleNamespace(
+        root="/unused", holding_item=False,
+        configuration=SimpleNamespace(
+            home_matrix=home,
+            profile={"speed": {"travel_percent": 100},
+                     "acceleration": {"travel_percent": 100}},
+            validate_sources=lambda _root: None),
+        hardware=SimpleNamespace(current_pose=lambda: np.eye(4), move_batch=move),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda _holding: None,
+        operation_progress=lambda *_args, **_kwargs: None)
+
+    with pytest.raises(FeedbackFailure, match="Alignment not reached"):
+        RobotController._execute_cartesian_home(node)
+    assert calls == ["home_align"]
+
+
+def test_home_action_uses_cartesian_route_without_changing_pick_home():
+    calls = []
+    machine = SimpleNamespace(message="")
+
+    def transition(state, message):
+        machine.message = message
+        calls.append(("state", state))
+
+    node = SimpleNamespace(
+        root="/unused", active_goal=None, holding_item=False, machine=machine,
+        configuration=SimpleNamespace(validate_sources=lambda _root: None),
+        _transition=transition,
+        _execute_cartesian_home=lambda: calls.append(("cartesian_home",)),
+        _execute_home=lambda: pytest.fail("Pick's shared Home was called"),
+        wait_for_resume=lambda: None,
+        events=SimpleNamespace(record=lambda *_args, **_kwargs: None),
+        _end_operation=lambda: calls.append(("end",)))
+    goal = SimpleNamespace(succeed=lambda: calls.append(("succeed",)))
+
+    result = RobotController._execute_home_action(node, goal)
+    assert result.outcome == GoHome.Result.SUCCESS
+    assert result.final_state == "READY"
+    assert calls == [("state", "HOMING"), ("cartesian_home",),
+                     ("state", "READY"), ("succeed",), ("end",)]
 
 
 @pytest.mark.parametrize("holding", [False, True])

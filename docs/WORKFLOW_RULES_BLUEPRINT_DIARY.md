@@ -3859,6 +3859,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   workspace builds pass, and `git diff --check` passes. No detector request,
   Dobot service or physical robot motion was issued for this change.
 
+### 2026-09-17 — Two Cartesian waypoints for explicit Hardware Home
+
+- Rule 90 supersedes rule 88 only for the explicit `/robot_controller/go_home`
+  action used by the Hardware Home GUI button and headless action clients. Read
+  one fresh, stationary, advancing FeedInfo Link6 pose. If it is already within
+  the existing 5 mm/1° Cartesian arrival tolerance of the FK-derived taught
+  Home pose, send no motion. Otherwise send two separately confirmed
+  Cartesian-mode `MovL` targets: current X/Y with taught Home Z and attitude,
+  then the complete taught Home Cartesian pose. Each target uses taught travel
+  speed/acceleration, user/tool zero, no timed I/O or per-command CP override;
+  the first must be accepted and physically confirmed stationary/queue-empty
+  before the second is sent. Preserve trusted held-item suction/output checks,
+  native cancellation and independent Stop containment. The final confirmation
+  is Cartesian, not a taught-joint equality claim.
+- Pick's initial and return Home path remains the rule-88 shared conditional
+  vertical `RelMovLUser` rise plus joint-mode `MovL` to exact taught joints.
+  This intentionally distinguishes the explicit Hardware Home action from
+  Pick's recovery/return contract without changing Item Teach schema or
+  calibration/model files.
+- This two-target Cartesian route is not collision-validated from an arbitrary
+  starting pose: the first segment may rotate or descend at current XY, and
+  the same Cartesian Home can have a different joint solution. Physical
+  clearance, reachability and acceptable configuration require separate
+  attended commissioning; software verification must not command the robot.
+- Validation performed: 152 direct controller tests and 153 package-reported
+  tests passed, including Cartesian target construction for starts below and
+  above Home Z, both `MovL` requests in Cartesian mode, ordered waypoint
+  completion, first-waypoint failure containment, Cartesian skip, and unchanged
+  Pick return. Changed Python files passed compilation and `ament_flake8`,
+  `git diff --check` passed, and the root 15-package `colcon build` passed.
+  No Dobot service or physical robot motion was invoked.
+
 ### Future entry template
 
 ```text

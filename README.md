@@ -100,11 +100,15 @@ The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.
 
-Home uses the actual `tool_vector_actual` pose from a fresh, stationary
-100 Hz FeedInfo sample to decide whether an upward current-XY rise is needed.
-When below taught Home Z, it sends that rise alone and confirms the actual
-height before sending exact taught joints through joint-mode MovL. A return
-from Pick first confirms its above-item clearance. Pick runs Home,
+The explicit Hardware Home action reads the actual `tool_vector_actual` pose
+from a fresh, stationary 100 Hz FeedInfo sample. Unless already within
+5 mm/1° of taught Home, it sends two separately confirmed Cartesian `MovL`
+targets: current X/Y with taught Home Z/attitude, then full taught Home
+XYZ/attitude. This first segment can rotate or descend at current XY and is
+not collision-checked for an arbitrary starting pose. Pick retains its
+separate shared Home rule: below taught Home Z it confirms an upward
+current-XY rise before sending the exact taught joints. A return from Pick
+first confirms its above-item clearance. Pick runs Home,
 transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
 Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
@@ -121,8 +125,8 @@ ranking so the next safe item is eligible, and the controller independently
 rejects a disagreement before motion. A magenta `CAM`/`CAM 180` footprint is
 shown on bin-camera RGB/depth; light blue remains pick-point-only. Only missed
 suction advances to another candidate. No-I/O moves use MovL, real timed-output
-moves use non-empty MovLIO, and the conditional
-rise uses RelMovLUser. Continue is used only by the explicit paused-queue service;
+moves use non-empty MovLIO, and Pick's conditional Home rise uses RelMovLUser.
+Continue is used only by the explicit paused-queue service;
 the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
@@ -151,13 +155,14 @@ monitoring remains active. DI1 during the missed-pick suction reset is a fault,
 not a successful acquisition of the next item; a Stop or cancellation during
 group admission prevents any later group command from being sent.
 
-Home arrival means every actual joint is within ±1° of its taught value for
-300 ms with enabled, fault-free, stationary, empty-queue feedback. Cartesian
-waypoints use 5 mm Euclidean translation and 1° orientation with the same final
-feedback gates. Hardware Home and Pick's initial shared-Home step first apply
-that exact joint gate; if the robot is already Home, they log the skip and send
-no motion-origin read or Home motion. Queued return-to-Home paths after a pick
-attempt are not skipped. Each motion-origin pose waits up to two seconds for
+Pick's initial and return Home arrival means every actual joint is within ±1°
+of its taught value for 300 ms with enabled, fault-free, stationary,
+empty-queue feedback. Cartesian waypoints, including both Hardware Home
+targets, use 5 mm Euclidean translation and 1° orientation with the same
+final feedback gates. Hardware Home skips motion when its fresh stationary
+Cartesian pose is already within that tolerance; Pick's initial shared-Home
+step instead applies the joint Home gate. Queued return-to-Home paths after a
+pick attempt are not skipped. Each motion-origin pose waits up to two seconds for
 stationary idle feedback with an advancing `controller_timer` to remain coherent
 for 300 ms; stale or frozen feedback cannot supply a motion origin. The
 controller no longer calls the Dobot `GetPose` service or subscribes to the

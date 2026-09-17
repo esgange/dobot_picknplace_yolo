@@ -10,8 +10,8 @@ from robot_controller.hardware import (
     MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
     OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC)
 from robot_controller.motion import (
-    MotionIO, PickExecutor, Target, candidate_pose_in_base, home_targets,
-    pick_attitude, pick_targets, pose_reached)
+    MotionIO, PickExecutor, Target, candidate_pose_in_base, cartesian_home_targets,
+    home_targets, pick_attitude, pick_targets, pose_reached)
 
 
 def matrix(z=0.5):
@@ -67,6 +67,24 @@ def test_home_rises_only_when_below_and_finishes_at_exact_joint_target():
     assert [target.name for target in home_targets(
         matrix(0.8), home, joints, speed_percent=100,
         acceleration_percent=100)] == ["home"]
+
+
+@pytest.mark.parametrize("current_z", [0.2, 0.8])
+def test_hardware_home_uses_current_xy_then_full_cartesian_home(current_z):
+    current = item_pose(x=0.12, y=-0.18, z=current_z, yaw_deg=-45)
+    home = item_pose(x=0.30, y=-0.40, z=0.35, yaw_deg=30)
+    first, final = cartesian_home_targets(
+        current, home, speed_percent=75, acceleration_percent=60)
+
+    assert [first.name, final.name] == ["home_align", "home"]
+    assert np.allclose(first.matrix[:2, 3], current[:2, 3])
+    assert first.matrix[2, 3] == pytest.approx(home[2, 3])
+    assert np.allclose(first.matrix[:3, :3], home[:3, :3])
+    assert np.allclose(final.matrix, home)
+    assert all(target.joints_rad is None and not target.relative_z
+               and not target.motion_io for target in (first, final))
+    assert [(target.speed_percent, target.acceleration_percent)
+            for target in (first, final)] == [(75, 60), (75, 60)]
 
 
 def test_pick_geometry_rates_and_real_timed_io():

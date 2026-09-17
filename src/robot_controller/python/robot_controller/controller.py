@@ -33,9 +33,11 @@ from .configuration import load_configuration, load_runtime_configuration
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldUnknown, OperationCanceled, StopUnconfirmed)
 from .feedback import FeedbackMonitor, enabled_blockers
-from .hardware import DobotTransport
+from .hardware import (CARTESIAN_ORIENTATION_TOLERANCE_DEG,
+                       CARTESIAN_POSITION_TOLERANCE_M, DobotTransport)
 from .kinematics import Cr10Kinematics, pose_values
-from .motion import PickExecutor, candidate_pose_in_base, home_targets, pick_targets
+from .motion import (PickExecutor, candidate_pose_in_base, cartesian_home_targets,
+                     home_targets, pick_targets, pose_reached)
 from .state_machine import ControllerStateMachine
 
 
@@ -821,6 +823,44 @@ class RobotController(Node):
             forbid_suction=forbidden)
         return targets
 
+    def _execute_cartesian_home(self):
+        """Run the explicit Home action without changing Pick's shared return route."""
+        self.raise_if_cancelled()
+        self.wait_for_resume()
+        holding = self.holding_item
+        self._preflight_item_state(holding)
+        config = self.configuration
+        config.validate_sources(self.root)
+        current = self.hardware.current_pose()
+        if pose_reached(
+                current, config.home_matrix,
+                translation_m=CARTESIAN_POSITION_TOLERANCE_M,
+                rotation_deg=CARTESIAN_ORIENTATION_TOLERANCE_DEG):
+            self.operation_progress(
+                "HOME", "Already within 5 mm/1° of taught Cartesian Home; motion skipped",
+                waypoint="home")
+            return ()
+        speed = config.profile["speed"]["travel_percent"]
+        acceleration = config.profile["acceleration"]["travel_percent"]
+        alignment, home = cartesian_home_targets(
+            current, config.home_matrix, speed_percent=speed,
+            acceleration_percent=acceleration)
+        self.operation_progress(
+            "HOME_ALIGN", "Moving at current XY to taught Home Z and attitude",
+            waypoint=alignment.name)
+        self.hardware.move_batch(
+            (alignment,), batch_name="home_align", require_suction=holding,
+            forbid_suction=not holding)
+        self.raise_if_cancelled()
+        self.wait_for_resume()
+        self._preflight_item_state(holding)
+        self.operation_progress(
+            "HOME", "Moving to taught Cartesian Home pose", waypoint=home.name)
+        self.hardware.move_batch(
+            (home,), batch_name="home", require_suction=holding,
+            forbid_suction=not holding)
+        return (alignment, home)
+
     @staticmethod
     def _failure_outcome(result, exc):
         if isinstance(exc, (CommandRejected, CommandResponseTimeout)):
@@ -861,10 +901,10 @@ class RobotController(Node):
         try:
             self.configuration.validate_sources(self.root)
             self._transition("HOMING", "Home action started")
-            self._execute_home()
+            self._execute_cartesian_home()
             self.wait_for_resume()
             state = "HOLDING" if self.holding_item else "READY"
-            self._transition(state, "Home completed at taught joints")
+            self._transition(state, "Home completed at taught Cartesian pose")
             result.outcome = result.SUCCESS
             result.message = self.machine.message
             result.final_state = state

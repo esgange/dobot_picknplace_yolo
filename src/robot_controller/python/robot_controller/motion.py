@@ -66,6 +66,14 @@ def home_targets(current, home, joints, *, speed_percent, acceleration_percent):
             final)
 
 
+def cartesian_home_targets(current, home, *, speed_percent, acceleration_percent):
+    """Standalone Hardware Home: current XY with Home Z/attitude, then Home XYZ/attitude."""
+    alignment = home.copy()
+    alignment[:2, 3] = current[:2, 3]
+    return (Target("home_align", alignment, speed_percent, acceleration_percent),
+            Target("home", home.copy(), speed_percent, acceleration_percent))
+
+
 def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
     return (np.linalg.norm(actual[:3, 3] - goal[:3, 3]) <= translation_m
             and rotation_angle_deg(actual[:3, :3].T @ goal[:3, :3]) <= rotation_deg)

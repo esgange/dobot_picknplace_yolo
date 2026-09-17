@@ -208,25 +208,29 @@ actions/services, or `events.jsonl`.
 
 ## Home and Pick
 
-Home is permitted from `READY` and trusted `HOLDING`. The actual pose from a
-fresh, stationary FeedInfo sample selects the branch: below taught Home Z,
-`RelMovLUser` first rises at current XY/attitude; at/above it, that segment is
-skipped. Exact taught Home joints are then sent via
-joint-mode `MovL`. The rise is a separate motion with confirmed 5 mm/1°
-Cartesian arrival, stationary/empty queue, and fresh held-item feedback before
-the joint Home command is sent. Holding Home preserves and monitors suction.
-When returning from Pick, the above-item approach/clearance motion is likewise
-confirmed first; every target that is Home uses this same rule.
+The explicit Hardware Home action is permitted from `READY` and trusted
+`HOLDING`. It obtains current Link6 XYZ/RPY from fresh, stationary FeedInfo.
+Unless that Cartesian pose is already within 5 mm/1° of the FK-derived taught
+Home pose, it sends exactly two Cartesian-mode `MovL` targets in separate
+verified batches: `(current X, current Y, Home Z, Home Rx, Home Ry, Home Rz)`,
+then `(Home X, Home Y, Home Z, Home Rx, Home Ry, Home Rz)`. The first target must
+reach 5 mm/1° with stationary, empty-queue feedback before the second is
+dispatched; the same Cartesian gate confirms the final target. Both use the
+taught travel `v`/`a`, no timed I/O, and preserve/monitor suction when holding.
+This action does not send `RelMovLUser` or joint-mode Home. Cartesian arrival
+does not prove the joints match the recorded Home tuple. The first segment may
+rotate the tool or descend at current XY; the controller has no collision model
+for an arbitrary starting pose, so the operator must verify that path is clear.
 
-Before that planning, an initial Home with no preceding queued targets checks
-the normal completion gate directly: all six fresh actual joints within ±1° of
-the taught tuple for 300 ms, idle mode 5, mode-derived RobotStatus enabled,
-`EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not running,
-and held-item I/O intact where applicable. If already complete, Hardware Home
-and Pick's initial shared Home report `motion skipped` and issue no pose-origin
-read, RelMovLUser, MovL, or MovLIO. If outside tolerance, the shared Home planner
-runs. Return paths finish and verify above-item clearance before testing the
-Home joint gate and planning the conditional height rise.
+Pick's initial and return Home paths retain the shared joint-Home rule. The
+initial step skips if all six fresh actual joints are within ±1° of the taught
+tuple for 300 ms with idle mode 5, RobotStatus enabled, `EnableStatus=1`,
+fault/collision clear, user/tool zero, queue empty/not running, and held-item
+I/O intact where applicable. Otherwise, below taught Home Z, `RelMovLUser`
+first rises at current XY/attitude and confirms 5 mm/1° Cartesian arrival plus
+stationary/empty-queue feedback; at/above it, that rise is skipped. Exact
+taught Home joints then use joint-mode `MovL` and ±1° joint confirmation.
+Pick returns first confirm the above-item approach/clearance before this rule.
 
 Pick is permitted only from `READY` with DI1 clear:
 
@@ -323,7 +327,7 @@ may let a short pick segment decelerate despite global CP 100; queue order and
 safe Home clearance take precedence over uninterrupted blending.
 
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
-tuple. Conditional Home rise uses `RelMovLUser`. The controller never calls
+tuple. Pick's conditional Home rise uses `RelMovLUser`. The controller never calls
 `InverseKin`; `Continue` is reserved solely for explicit resume from `PAUSED`.
 Service acknowledgement is acceptance only; actual
 feedback confirms every result. Only coherent missed suction advances to the

@@ -10,7 +10,7 @@ from robot_controller.errors import (CommandRejected, CommandResponseTimeout,
                                      FeedbackFailure, HeldUnknown)
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
 from robot_controller.kinematics import pose_values
-from robot_controller.motion import MotionIO, Target
+from robot_controller.motion import MotionIO, Target, cartesian_home_targets
 
 
 class EventLog:
@@ -138,6 +138,48 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
     assert names == ["motion_batch_dispatch_started", "motion_queued",
                      "motion_queued", "motion_batch_queued",
                      "motion_batch_completed"]
+
+
+def test_hardware_home_waypoints_dispatch_cartesian_movl_only(monkeypatch):
+    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+    transport = object.__new__(DobotTransport)
+    current = np.eye(4)
+    current[:3, 3] = [0.1, 0.2, 0.1]
+    home = np.eye(4)
+    home[:3, 3] = [0.3, -0.4, 0.5]
+    targets = cartesian_home_targets(
+        current, home, speed_percent=75, acceleration_percent=60)
+    sequence = iter(range(1, 20))
+    transport.node = SimpleNamespace(
+        events=EventLog(), expected_outputs={}, raise_if_cancelled=lambda: None,
+        cancel_requested=lambda: False,
+        operation_progress=lambda *_args, **_kwargs: None)
+    transport.monitor = SimpleNamespace(sequence=0)
+    transport.current_pose = lambda: current
+    transport._ready_snapshot = lambda: SimpleNamespace(
+        sequence=next(sequence),
+        feed={"tool_vector_actual": [0.0] * 6,
+              "digital_input_bits": 0, "digital_outputs": 0})
+    transport._wait_for_resume = lambda: 0.0
+    transport._idle = lambda _sample: True
+    transport._target_reached = lambda _target, _sample: True
+    calls = []
+    transport.call_group = lambda group, **_kwargs: (
+        calls.extend(group) or (None,))
+    transport.suction_interrupted = False
+    transport.suction_stop_future = None
+    transport.moving = False
+
+    for target in targets:
+        assert transport.move_batch((target,), batch_name=target.name) is False
+
+    assert [name for name, _fields in calls] == ["MovL", "MovL"]
+    assert all(fields["mode"] is False and "mdis" not in fields
+               and fields["param_value"] == ["user=0", "tool=0", "v=75", "a=60"]
+               for _name, fields in calls)
+    assert [fields["a"] for _name, fields in calls] == pytest.approx([100., 300.])
+    assert [fields["b"] for _name, fields in calls] == pytest.approx([200., -400.])
+    assert [fields["c"] for _name, fields in calls] == pytest.approx([500., 500.])
 
 
 def test_home_height_accepts_small_getpose_jitter_but_never_descends(monkeypatch):
