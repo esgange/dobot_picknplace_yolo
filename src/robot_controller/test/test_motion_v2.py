@@ -10,7 +10,9 @@ from robot_controller.hardware import (
     OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC)
 from robot_controller.motion import (
     MotionIO, PickExecutor, Target, candidate_pose_in_base, cartesian_home_targets,
-    home_targets, pick_attitude, pick_targets, pose_reached)
+    gripper_close_events, gripper_neutral_events, gripper_open_events, home_targets,
+    pick_attitude, pick_targets, pose_reached, vacuum_exhaust_events,
+    vacuum_neutral_events, vacuum_suck_events)
 
 
 def matrix(z=0.5):
@@ -94,10 +96,11 @@ def test_pick_geometry_rates_and_real_timed_io():
     assert [target.matrix[2, 3] for target in plan] == pytest.approx(
         [1.0, 0.45, 0.35, 0.3, 0.35, 0.45])
     assert [target.speed_percent for target in plan] == [100, 100, 100, 6, 6, 100]
-    assert [event.vendor_value() for event in plan[1].motion_io] == [
+    assert [event.vendor_value() for event in plan[0].motion_io] == [
         "{0,50,2,0}", "{0,50,14,1}"]
-    assert [event.vendor_value() for event in plan[3].motion_io] == ["{1,0,13,1}"]
-    assert all(not target.motion_io for target in (plan[0], plan[2], plan[4], plan[5]))
+    assert [event.vendor_value() for event in plan[3].motion_io] == [
+        "{0,20,1,0}", "{0,20,13,1}"]
+    assert all(not target.motion_io for target in (plan[1], plan[2], plan[4], plan[5]))
 
 
 def test_pick_green_axis_follows_item_short_axis_through_every_waypoint():
@@ -254,11 +257,31 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert outcome == {"picked": True, "candidate": 1, "holding_item": True}
     forward = next(entry for entry in hardware.log if entry[0] == "move")
     assert forward[2]["batch_name"] == "candidate_1_home_to_pick"
+    assert forward[1] == ("p1_transit", "p1_prepick", "p1_pick")
     assert ("output", 14, False) in hardware.log
     assert ("output", 2, True) in hardware.log
     assert returned[0]["batch_name"] == "candidate_1_pick_to_home"
     assert returned[0]["require_suction"] is True
     assert returned[0]["forbid_suction"] is False
+    assert [target.name for target in returned[0]["preceding"]] == [
+        "p1_retract", "p1_final", "p1_transit"]
+
+
+def test_success_with_deferred_grip_closes_at_start_of_home_z_transit():
+    taught = settings(close_on_pick=False)
+    hardware = FakeHardware([True])
+    plan = pick_targets(matrix(1.0), item_pose(), taught, 1)
+    returned = []
+
+    outcome = PickExecutor(hardware, finish_home=True).run(
+        [plan], taught, check=lambda _index: None,
+        return_home=lambda **kwargs: returned.append(kwargs))
+
+    assert outcome["picked"]
+    assert not any(entry[0] == "output" and entry[1] in (2, 14)
+                   for entry in hardware.log)
+    transit = returned[0]["preceding"][-1]
+    assert transit.motion_io == gripper_close_events(0)
 
 
 def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
@@ -274,20 +297,22 @@ def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
         order.append(("candidate", index))
 
     def return_home(**kwargs):
-        order.append(("home", kwargs["forbid_suction"], kwargs["batch_name"]))
+        order.append(("home", kwargs["forbid_suction"], kwargs["ignore_suction"],
+                      kwargs["batch_name"]))
 
     outcome = PickExecutor(hardware, finish_home=True).run(
         plans, taught, check=check, return_home=return_home)
     assert not outcome["picked"]
     assert order == [
         ("candidate", 1), ("candidate", 2),
-        ("home", True, "candidate_2_pick_to_home")]
+        ("home", False, True, "candidate_2_pick_to_home")]
     forward_batches = [entry[2]["batch_name"] for entry in hardware.log
                        if entry[0] == "move"]
     assert forward_batches == ["candidate_1_home_to_pick",
                                "candidate_1_pick_to_retry_2_pick",
                                "candidate_2_miss_retract"]
-    assert [target.name for target in hardware.targets[2]] == ["p2_final"]
+    assert [target.name for target in hardware.targets[2]] == [
+        "p2_retract", "p2_final"]
     retry = next(entry for entry in hardware.log if entry[0] == "move"
                  and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
     assert retry[1] == ("p1_retract", "p1_final", "p2_initial",
@@ -302,22 +327,23 @@ def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
     assert retract.matrix[2, 3] == pytest.approx(plans[0][4].matrix[2, 3])
     assert [(event.percent, event.channel, event.active)
             for event in retract.motion_io] == [
-                (20, 13, False), (20, 1, True), (20, 2, False), (20, 14, True)]
+                (80, 13, False), (80, 1, True)]
     assert old_clearance.speed_percent == 100
     assert old_clearance.acceleration_percent == 80
     assert old_clearance.matrix[2, 3] == pytest.approx(plans[0][5].matrix[2, 3])
-    assert not old_clearance.motion_io
+    assert old_clearance.motion_io == (
+        gripper_neutral_events(0) + vacuum_neutral_events(0))
     assert np.allclose(retract.matrix[:2, 3], old_clearance.matrix[:2, 3])
     assert np.allclose(retract.matrix[:3, :3], old_clearance.matrix[:3, :3])
     assert np.allclose(next_approach.matrix[:2, 3], plans[1][1].matrix[:2, 3])
     assert [(event.percent, event.channel, event.active)
             for event in next_approach.motion_io] == [
-                (0, 1, False), (0, 2, False), (0, 14, True)]
+                (50, 2, False), (50, 14, True)]
     assert not next_prepick.motion_io
-    assert next_pick.motion_io == (MotionIO(0, 13, True),)
+    assert next_pick.motion_io == vacuum_suck_events(20)
     assert "p2_transit" not in retry[1]
-    assert sum(entry[:2] == ("output", 13) and entry[2] is False
-               for entry in hardware.log) == 1
+    assert not any(entry[0] == "output" and entry[1] in (1, 2, 13, 14)
+                   for entry in hardware.log)
     assert not any(entry[0] == "sensor" and entry[1] is True
                    for entry in hardware.log)
 
@@ -339,7 +365,7 @@ def test_second_candidate_success_returns_home_only_after_acquisition():
     assert returned[0]["require_suction"] is True
 
 
-def test_missed_repick_without_finger_control_changes_only_vacuum_and_exhaust():
+def test_use_grip_false_still_opens_and_neutralizes_but_never_closes():
     taught = settings(use_grip=False)
     hardware = FakeHardware([False, False])
     plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), taught, index)
@@ -350,12 +376,14 @@ def test_missed_repick_without_finger_control_changes_only_vacuum_and_exhaust():
         return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
 
     retract, old_clearance, next_approach, next_prepick, _pick = hardware.targets[1]
-    assert [event.channel for event in retract.motion_io] == [13, 1]
-    assert not old_clearance.motion_io
-    assert [event.channel for event in next_approach.motion_io] == [1]
+    assert retract.motion_io == vacuum_exhaust_events(80)
+    assert old_clearance.motion_io == (
+        gripper_neutral_events(0) + vacuum_neutral_events(0))
+    assert next_approach.motion_io == gripper_open_events(50)
     assert not next_prepick.motion_io
-    assert all(entry[1] not in (2, 14) for entry in hardware.log
-               if entry[0] == "output")
+    assert not any(event.active and event.channel == 2
+                   for batch in hardware.targets for target in batch
+                   for event in target.motion_io)
 
 
 def test_every_pick_rotation_selects_nearest_offset_from_home_independently():
@@ -386,3 +414,9 @@ def test_motion_io_rejects_noncanonical_or_empty_semantics():
     assert target.motion_io == ()
     with pytest.raises(ValueError):
         replace(target, relative_z=True, motion_io=(MotionIO(50, 13, True),))
+    with pytest.raises(ValueError, match="Opposing actuator"):
+        replace(target, motion_io=(MotionIO(20, 1, True), MotionIO(20, 13, True)))
+    with pytest.raises(ValueError, match="Opposing actuator"):
+        replace(target, motion_io=(MotionIO(20, 2, True), MotionIO(20, 14, True)))
+    with pytest.raises(ValueError, match="two states"):
+        replace(target, motion_io=(MotionIO(20, 13, False), MotionIO(20, 13, True)))

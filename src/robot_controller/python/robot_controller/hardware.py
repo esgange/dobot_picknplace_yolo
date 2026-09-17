@@ -903,10 +903,18 @@ class DobotTransport:
         return True
 
     def _monitor_motion_policy(self, snapshot, *, require_suction, forbid_suction,
-                               stop_on_suction, before_suction, planned_outputs):
+                               stop_on_suction, before_suction, planned_outputs,
+                               suction_armed=True):
         feed = snapshot.feed
         detected = bool(feed["digital_input_bits"] & 1)
         vacuum = bool(feed["digital_outputs"] & (1 << 12))
+        exhaust = bool(feed["digital_outputs"] & 1)
+        finger_close = bool(feed["digital_outputs"] & (1 << 1))
+        finger_open = bool(feed["digital_outputs"] & (1 << 13))
+        if vacuum and exhaust:
+            raise FeedbackFailure("Invalid vacuum state: DO13 SUCK and DO1 EXHAUST are both ON")
+        if finger_close and finger_open:
+            raise FeedbackFailure("Invalid gripper state: DO2 CLOSE and DO14 OPEN are both ON")
         for channel, planned in planned_outputs.items():
             actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
             if actual == planned:
@@ -923,9 +931,7 @@ class DobotTransport:
                         f"Held-item output DO{channel} changed during retract/Home")
         if forbid_suction and detected:
             raise FeedbackFailure("Late DI1 after missed pickup; candidate retry forbidden")
-        if stop_on_suction:
-            if detected and not vacuum:
-                raise FeedbackFailure("Unexpected DI1 before suction output became active")
+        if stop_on_suction and suction_armed:
             if detected and not self.suction_interrupted:
                 self.suction_interrupted = True
                 self.suction_stop_future = self.request_stop("DI1 acquired during final approach")
@@ -971,6 +977,9 @@ class DobotTransport:
                 and not initial.feed["digital_outputs"] & (1 << 12)):
             raise FeedbackFailure("Previous final approach lacks active DO13 before retry")
         suction_reset_seen = not require_suction_reset
+        suction_clear_seen = (not require_suction_reset
+                              and not bool(initial.feed["digital_input_bits"] & 1))
+        suction_armed = False
         before_sequence = initial.sequence
         self.pending_motion_outputs = {}
         self.moving = True
@@ -984,19 +993,22 @@ class DobotTransport:
             policy="admit_each_reply_in_order_then_verify_terminal_feedback")
 
         def progress(snapshot):
-            nonlocal suction_reset_seen
+            nonlocal suction_reset_seen, suction_clear_seen, suction_armed
             if require_suction_reset:
                 vacuum = bool(snapshot.feed["digital_outputs"] & (1 << 12))
                 detected = bool(snapshot.feed["digital_input_bits"] & 1)
                 if not vacuum:
                     suction_reset_seen = True
-                if detected and not suction_reset_seen:
-                    raise FeedbackFailure(
-                        "DI1 activated before missed-pick suction reset; retry stopped")
+                if suction_reset_seen and not detected:
+                    suction_clear_seen = True
+            vacuum = bool(snapshot.feed["digital_outputs"] & (1 << 12))
+            if suction_reset_seen and suction_clear_seen and vacuum:
+                suction_armed = True
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
                 stop_on_suction=stop_on_suction, before_suction=before_suction,
-                planned_outputs=self.pending_motion_outputs)
+                planned_outputs=self.pending_motion_outputs,
+                suction_armed=suction_armed)
 
         def finish_suction_interrupt():
             self.node.events.record(
@@ -1118,8 +1130,30 @@ class DobotTransport:
                 raise FeedbackFailure(
                     "Missed-pick DO13 OFF was not observed before the next pick")
             self.pending_motion_outputs = {}
-            acquired_at_settle = (self.sensor(True, settle_suction_sec, settling_sec=0)
-                                  if stop_on_suction else False)
+            if stop_on_suction and suction_armed:
+                acquired_at_settle = self.sensor(
+                    True, settle_suction_sec, settling_sec=0)
+            elif stop_on_suction:
+                # A retry is not armed until DO13 has gone OFF, DI1 has been
+                # seen clear, and DO13 has then gone ON for the new candidate.
+                # Wait the configured settling duration, but never reinterpret
+                # an old candidate's late DI1 as a new acquisition.
+                settle_started = time.monotonic()
+                sequence = self.monitor.sequence
+                while time.monotonic() - settle_started < settle_suction_sec:
+                    paused_for = self._wait_for_resume()
+                    settle_started += paused_for
+                    self.node.raise_if_cancelled()
+                    remaining = settle_suction_sec - (time.monotonic() - settle_started)
+                    if remaining <= 0:
+                        break
+                    sequence = self.monitor.wait_next(
+                        sequence, min(remaining, 1.0),
+                        cancel=self.node.cancel_requested)
+                    self._ready_snapshot()
+                acquired_at_settle = False
+            else:
+                acquired_at_settle = False
             self.node.events.record(
                 "INFO", "motion_batch_completed", batch_name,
                 batch=batch_name, terminal_target=tail.name,

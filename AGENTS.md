@@ -114,6 +114,10 @@ returns `res=0`, while retaining ordered admission, feedback and Stop gates.
 Rule 93 queues explicit Hardware Home's alignment and final Cartesian targets
 in one CP(100)-blended group and physically confirms only final Home. Pick's
 shared clearance/Home-Z/joint-Home barriers remain separate.
+Rule 94 defines mutually exclusive three-state vacuum/finger outputs and the
+current pick/retry I/O sequence. OPEN/CLOSE and SUCK/EXHAUST always turn their
+opposite output off first; a miss latches only after final-pose settling, and
+later DI1 from that missed attempt cannot become a success or block its retry.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

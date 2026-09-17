@@ -567,6 +567,29 @@ def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holdi
     assert calls.index(("check",)) > calls.index(moves[0])
 
 
+def test_final_miss_home_ignores_late_di1_without_enabling_suction_policy():
+    calls = []
+    home = SimpleNamespace(name="home")
+    hardware = SimpleNamespace(
+        home_already_reached=lambda _joints: False,
+        move_batch=lambda targets, **kwargs: calls.append((targets, kwargs)))
+    node = SimpleNamespace(
+        hardware=hardware, holding_item=False,
+        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda _holding: pytest.fail(
+            "Latched-miss return rechecked DI1"),
+        _home_plan=lambda: (home,),
+        operation_progress=lambda *_args, **_kwargs: None)
+
+    assert RobotController._execute_home(
+        node, require_suction=False, forbid_suction=False,
+        ignore_suction=True, batch_name="miss_to_home") == (home,)
+    assert calls == [((home,), {
+        "batch_name": "miss_to_home", "require_suction": False,
+        "forbid_suction": False})]
+
+
 def test_home_height_failure_prevents_joint_home_dispatch():
     calls = []
     height = SimpleNamespace(name="home_height")

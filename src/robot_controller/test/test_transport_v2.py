@@ -584,30 +584,34 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     def call_group(calls, *, progress, outputs_by_call):
         captured.extend(calls)
         assert outputs_by_call == [{13: False, 1: True},
-                                   {}, {1: False, 14: True}, {}, {13: True}]
+                                   {2: False, 14: False, 1: False, 13: False},
+                                   {2: False, 14: True}, {}, {1: False, 13: True}]
         transport.pending_motion_outputs = {13: False, 1: True}
         progress(sample(vacuum_off))
-        transport.pending_motion_outputs = {13: True, 1: False, 14: True}
+        transport.pending_motion_outputs = {
+            1: False, 2: False, 13: True, 14: True}
         progress(sample(vacuum_on))
         return (None,) * len(calls)
 
     transport.call_group = call_group
     targets = (
         Target("old_retract", np.eye(4), 100, 100, motion_io=(
-            MotionIO(20, 13, False), MotionIO(20, 1, True))),
-        Target("old_clearance", np.eye(4), 100, 100),
+            MotionIO(80, 13, False), MotionIO(80, 1, True))),
+        Target("old_clearance", np.eye(4), 100, 100, motion_io=(
+            MotionIO(0, 2, False), MotionIO(0, 14, False),
+            MotionIO(0, 1, False), MotionIO(0, 13, False))),
         Target("next_clearance", np.eye(4), 100, 100, motion_io=(
-            MotionIO(0, 1, False), MotionIO(0, 14, True))),
+            MotionIO(50, 2, False), MotionIO(50, 14, True))),
         Target("next_prepick", np.eye(4), 100, 100),
         Target("next_pick", np.eye(4), 6, 100, motion_io=(
-            MotionIO(0, 13, True),)),
+            MotionIO(20, 1, False), MotionIO(20, 13, True))),
     )
 
     assert not transport.move_batch(
         targets, batch_name="retry", stop_on_suction=True,
         require_suction_reset=True, settle_suction_sec=0.2)
     assert [name for name, _fields in captured] == [
-        "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO"]
+        "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO"]
     assert [fields["param_value"] for _name, fields in captured] == [
         ["user=0", "tool=0", "v=100", "a=100"],
         ["user=0", "tool=0", "v=100", "a=100"],
@@ -859,11 +863,41 @@ def test_held_motion_monitor_adopts_only_commanded_finger_transition():
     changed_without_command = snapshot(
         di1=True,
         outputs=(1 << (1 - 1)) | (1 << (2 - 1)) | (1 << (13 - 1)))
-    with pytest.raises(FeedbackFailure, match="Held-item output DO1 changed"):
+    with pytest.raises(FeedbackFailure, match="SUCK and DO1 EXHAUST"):
         transport._monitor_motion_policy(
             changed_without_command, require_suction=True, forbid_suction=False,
             stop_on_suction=False, before_suction=None,
             planned_outputs={2: True, 14: False})
+
+
+@pytest.mark.parametrize(
+    ("outputs", "message"),
+    [((1 << (1 - 1)) | (1 << (13 - 1)), "SUCK and DO1 EXHAUST"),
+     ((1 << (2 - 1)) | (1 << (14 - 1)), "CLOSE and DO14 OPEN")])
+def test_motion_monitor_rejects_opposing_outputs_active_together(outputs, message):
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(expected_outputs={})
+    transport.suction_interrupted = False
+
+    with pytest.raises(FeedbackFailure, match=message):
+        transport._monitor_motion_policy(
+            snapshot(outputs=outputs), require_suction=False,
+            forbid_suction=False, stop_on_suction=False,
+            before_suction=None, planned_outputs={})
+
+
+def test_late_di1_from_missed_candidate_is_ignored_until_next_suction_is_armed():
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(expected_outputs={})
+    transport.suction_interrupted = False
+    transport.request_stop = lambda _reason: pytest.fail("Late DI1 requested Stop")
+
+    transport._monitor_motion_policy(
+        snapshot(di1=True, outputs=(1 << (13 - 1))),
+        require_suction=False, forbid_suction=False, stop_on_suction=True,
+        before_suction=None, planned_outputs={}, suction_armed=False)
+
+    assert not transport.suction_interrupted
 
 
 class SensorMonitor:

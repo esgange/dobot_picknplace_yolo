@@ -113,6 +113,16 @@ current-XY rise before sending the exact taught joints. A return from Pick
 first confirms its above-item clearance. Pick runs Home,
 transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
+Finger states are OPEN (DO2 OFF then DO14 ON), CLOSE (DO14 OFF then DO2 ON),
+or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST
+(DO13 OFF then DO1 ON), or NEUTRAL (both OFF). Opposing outputs are never
+intentionally active together and such feedback aborts motion. The first pick
+group goes Home-Z item X/Y with OPEN at 50%, directly to pre-pick, then to final
+pick with SUCK at 20%. A miss latches only after final-pose `pick_settling`.
+Retry rises to the old pre-pick with EXHAUST at 80%, enters both NEUTRAL states
+at the start of the old-clearance rise, enters OPEN at 50% of lateral travel to
+the next clearance, and enters SUCK at 20% of the next final descent. A late
+DI1 from an already missed attempt cannot become success or block that retry.
 Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
 uses the detected item short-axis line plus the taught unsigned `pick_rotation`;
 the planner evaluates both clockwise and counter-clockwise offsets and both
@@ -133,30 +143,30 @@ the controller never uses InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 
-The first Home-to-pick queue
-contains transit, clearance, pre-pick and pick; only the terminal pick/stopped
-pose is checked. DI1 is evaluated throughout descent and for the taught
-`pick_settling` time after terminal arrival. On an intermediate miss, one queued
-group rises vertically through the old item's pre-pick and clearance at `v=100`
-using taught travel acceleration. At 20% of the first rise it opens enabled
-fingers, turns suction off and exhaust on. It then travels to the next item's
-clearance, turning exhaust off and reissuing finger-open at the start of that
-transfer. It descends via the next pre-pick to final pick with
-suction on at 0%; no intermediate arrival wait separates those retry motions.
-A final miss completes its release/rise to approach, clears exhaust, then uses
-the shared verified Home rule. A confirmed pickup retracts, confirms clearance,
-then uses the same Home rule while holding suction. Motion services are admitted
-in order: each response must be `res=0` before the next request is sent, with
-no extra inter-command delay. This prevents independent ROS services
+The first Home-to-pick group contains item-X/Y transit at Home Z, pre-pick and
+final pick; only the terminal pick/stopped pose is checked. OPEN occurs at 50%
+of transit and SUCK at 20% of final descent. DI1 is eligible only after SUCK and
+is evaluated through the taught `pick_settling` time after terminal arrival.
+On an intermediate miss, one group rises through the old item's pre-pick and
+clearance at `v=100`, transfers to the next clearance, and descends through the
+next pre-pick to final pick. It enters EXHAUST at 80% of the first rise,
+finger/vacuum NEUTRAL at the start of the second rise, OPEN at 50% of transfer,
+and SUCK at 20% of the new final descent. A final miss performs the same
+EXHAUST/NEUTRAL rise and uses shared Home. A confirmed pickup returns through
+pre-pick, clearance and item X/Y at Home Z, then uses shared Home while holding
+SUCK. Motion services are admitted in order: each response must be `res=0`
+before the next request is sent, with no extra inter-command delay. This
+prevents independent ROS services
 from reversing the dashboard queue, as observed in a failed Home return.
 Responses confirm queue acceptance, not physical arrival. A rejection,
 response error, or two-second group timeout invokes independent Stop containment.
 The independent Stop path is never delayed by motion admission. Planned timed DO
 changes are tracked as commanded transitions, so finger movement requested by
 MovLIO is not mistaken for an external output change while held-item integrity
-monitoring remains active. DI1 during the missed-pick suction reset is a fault,
-not a successful acquisition of the next item; a Stop or cancellation during
-group admission prevents any later group command from being sent.
+monitoring remains active. A missed attempt is latched after settling: its later
+DI1 is ignored, and the next item is armed only after DO13 OFF and DI1 clear are
+observed before the new SUCK. A Stop or cancellation during group admission
+prevents any later group command from being sent.
 
 Pick's initial and return Home arrival means every actual joint is within ±1°
 of its taught value for 300 ms with enabled, fault-free, stationary,

@@ -785,12 +785,13 @@ class RobotController(Node):
             acceleration_percent=config.profile["acceleration"]["travel_percent"])
 
     def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None,
-                      batch_name="home"):
+                      ignore_suction=False, batch_name="home"):
         self.raise_if_cancelled()
         self.wait_for_resume()
         holding = self.holding_item if require_suction is None else require_suction
         forbidden = not holding if forbid_suction is None else forbid_suction
-        self._preflight_item_state(holding)
+        if not ignore_suction:
+            self._preflight_item_state(holding)
         if preceding:
             self.operation_progress(
                 "HOME_CLEARANCE", "Finishing above-item clearance before Home",
@@ -800,7 +801,8 @@ class RobotController(Node):
                 require_suction=holding, forbid_suction=forbidden)
             self.raise_if_cancelled()
             self.wait_for_resume()
-            self._preflight_item_state(holding)
+            if not ignore_suction:
+                self._preflight_item_state(holding)
         if self.hardware.home_already_reached(self.configuration.home_joints):
             self.operation_progress(
                 "HOME", "Already within ±1° of every taught Home joint; motion skipped",
@@ -816,7 +818,8 @@ class RobotController(Node):
                 require_suction=holding, forbid_suction=forbidden)
             self.raise_if_cancelled()
             self.wait_for_resume()
-            self._preflight_item_state(holding)
+            if not ignore_suction:
+                self._preflight_item_state(holding)
         self.operation_progress("HOME", "Moving to exact taught Home joints", waypoint="home")
         self.hardware.move_batch(
             (targets[-1],), batch_name=batch_name, require_suction=holding,

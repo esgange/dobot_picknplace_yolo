@@ -3966,6 +3966,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `git diff --check` passed. No Dobot service, detector request, or camera action
   was invoked.
 
+### 2026-09-17 — Mutually exclusive pick I/O states and latched misses
+
+- Rule 94 supersedes the earlier pick-output timing in rules 57, 87 and 91.
+  The controller has three explicit finger states: OPEN is DO2 OFF then DO14
+  ON, CLOSE is DO14 OFF then DO2 ON, and NEUTRAL is both OFF. Vacuum SUCK is
+  DO1 OFF then DO13 ON, EXHAUST is DO13 OFF then DO1 ON, and NEUTRAL is both
+  OFF. Every timed or immediate transition turns the opposing output OFF before
+  turning the selected output ON. Feedback with DO1+DO13 or DO2+DO14 both ON is
+  a motion fault. `use_grip` gates CLOSE only; OPEN and NEUTRAL remain part of
+  every attempt, and DI12 is not awaited.
+- Candidate 1 queues item X/Y at Home Z with OPEN at 50%, pre-pick with no I/O,
+  and final pick with SUCK at 20%; it does not visit candidate clearance on the
+  initial descent. Suction is issued exactly once for that attempt. DI1 is
+  eligible only after that SUCK transition. DI1 during descent is contained by
+  Stop; otherwise final-pose `pick_settling` completes before success/miss is
+  decided. A low DI1 at the deadline irrevocably latches the attempt as missed.
+- A successful `grip_onpick=true` attempt CLOSEs after DI1 and Stop containment.
+  A successful `grip_onpick=false` attempt keeps OPEN through pre-pick and
+  clearance, then CLOSEs at 0% of the clearance-to-item-X/Y-at-Home-Z motion.
+  `use_grip=false` never CLOSEs. Both paths return through actual-stop,
+  pre-pick, clearance, item X/Y at Home Z and shared Home with SUCK maintained
+  and never reissued.
+- A missed retry remains one blended group: rise to the old pre-pick and enter
+  EXHAUST at 80%; start the old-clearance rise by entering finger and vacuum
+  NEUTRAL; cross to the next clearance and enter OPEN at 50%; descend through
+  next pre-pick; enter SUCK at 20% of the next final descent. The next candidate
+  is armed only after DO13 OFF and DI1 clear were observed. Any late DI1 from
+  the latched old miss is ignored and cannot become a late success, fault, or
+  retry blocker. Final exhaustion performs the same EXHAUST/NEUTRAL two-rise
+  recovery and then shared Home; later DI1 does not reclassify the result.
+- Preserve rule 92 ordered `res=0` admission, global CP(100), two-second command
+  deadline, cancellation/Stop containment, terminal target checks and held-item
+  supervision. This is source-only work and does not authorize physical motion.
+- Verification: 157 direct controller tests and 158 package-reported tests
+  pass. Coverage includes target order/timing, all six actuator states, immediate
+  and motion-timed CLOSE, universal OPEN with `use_grip=false`, late-DI miss
+  latching, opposite-output rejection, retry reset/arming and final-exhaustion
+  Home behavior. All 20 controller/test Python files pass compilation and
+  `ament_flake8`; the controller package and complete 15-package workspace
+  build pass. No Dobot service, detector request, camera action or physical
+  robot motion was issued.
+
 ### Future entry template
 
 ```text
