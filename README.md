@@ -145,11 +145,11 @@ A final miss completes its release/rise to approach, clears exhaust, then uses
 the shared verified Home rule. A confirmed pickup retracts, confirms clearance,
 then uses the same Home rule while holding suction. Motion services are admitted
 in order: each response must be `res=0` before the next request is sent, with
-at least 50 ms between adjacent sends. This prevents independent ROS services
+no extra inter-command delay. This prevents independent ROS services
 from reversing the dashboard queue, as observed in a failed Home return.
 Responses confirm queue acceptance, not physical arrival. A rejection,
 response error, or two-second group timeout invokes independent Stop containment.
-The independent Stop path is never delayed by group pacing. Planned timed DO
+The independent Stop path is never delayed by motion admission. Planned timed DO
 changes are tracked as commanded transitions, so finger movement requested by
 MovLIO is not mistaken for an external output change while held-item integrity
 monitoring remains active. DI1 during the missed-pick suction reset is a fault,

@@ -309,8 +309,8 @@ during a final descent still invokes the Stop-and-confirm path before return
 planning.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
-in target order with at least 50 ms between adjacent sends. Each must return
-`res=0` before the next is sent. This is an admission barrier, not an
+in target order. Each must return `res=0` before the next is sent, with no
+additional inter-command delay. This is an admission barrier, not an
 intermediate physical-arrival wait: it prevents separate ROS services from
 reversing their dashboard TCP queue order, as observed in a failed Home return.
 A response error, rejection, cancellation, or two-second response deadline invokes independent
@@ -318,7 +318,7 @@ Stop containment; an outstanding late response remains contained by another
 Stop. Batch start, every dispatch/response, complete group admission,
 interruption and terminal completion are recorded with the batch name.
 DI1 or cancellation during admission prevents all later targets in that group
-from being sent; the independent Stop path bypasses pacing. During a held-item return, a
+from being sent; the independent Stop path bypasses normal admission. During a held-item return, a
 timed DO2/DO14 transition requested by MovLIO is accepted only as the exact
 old-to-commanded state change after that MovLIO has been sent, and becomes the
 new expected state when observed;

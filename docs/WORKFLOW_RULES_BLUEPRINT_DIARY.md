@@ -3919,6 +3919,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and the root 15-package `colcon build` passed. No Dobot service or physical
   robot motion was invoked.
 
+### 2026-09-17 — Remove motion-group dispatch floor after accepted replies
+
+- Rule 92 supersedes rule 86's 50 ms minimum gap between motion-service sends.
+  Rule 88 already waits for each `MovL`, `MovLIO`, or `RelMovLUser` ROS response
+  with `res=0` before sending the next target in a named group. Once that
+  response and the existing cancellation, DI1, feedback, and output checks
+  pass, dispatch the next request without a separate timer wait. Keep the
+  two-second reply deadline, Stop containment, late-acknowledgement Stop,
+  CP(100), and terminal-only physical-arrival checks.
+- The 2026-09-17 15:17 local Pick log showed the first three motion responses
+  accepted before the next requests. The final-descent Dobot TCP command was
+  accepted, but the controller reported stale/unavailable feedback about one
+  second later and stopped. Removing the dispatch floor does not change the
+  one-second feedback-freshness requirement or identify which stream became
+  stale; diagnose that separately before further physical Pick commissioning.
+- Verification is software-only: 152 direct controller tests and 153
+  package-reported tests passed with zero failures/errors/skips. All 20
+  controller/test Python files passed compilation and `ament_flake8`; the
+  controller package and complete 15-package workspace built successfully,
+  and `git diff --check` passed. No physical Dobot service or camera action was
+  invoked.
+
 ### Future entry template
 
 ```text

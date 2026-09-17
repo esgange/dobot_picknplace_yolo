@@ -233,9 +233,7 @@ def test_home_height_accepts_small_getpose_jitter_but_never_descends(monkeypatch
     assert len(calls) == 1
 
 
-def test_motion_group_preserves_cross_service_dashboard_order(monkeypatch):
-    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
-
+def test_motion_group_preserves_cross_service_dashboard_order():
     class DeferredFuture:
         def __init__(self):
             self.completed = False
@@ -316,8 +314,6 @@ def test_motion_group_preserves_cross_service_dashboard_order(monkeypatch):
 
 
 def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeypatch):
-    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
-
     class DeferredFuture:
         def __init__(self):
             self.callbacks = []
@@ -393,9 +389,7 @@ def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeyp
     assert len(late_stops) == 1
 
 
-def test_motion_group_rejection_stops_before_later_dispatch(monkeypatch):
-    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
-
+def test_motion_group_rejection_stops_before_later_dispatch():
     class ImmediateFuture:
         def __init__(self, result):
             self.response = SimpleNamespace(res=result)
@@ -461,7 +455,7 @@ def test_motion_group_rejection_stops_before_later_dispatch(monkeypatch):
     assert transport.pending_group is None
 
 
-def test_motion_group_dispatches_are_separated_by_at_least_fifty_ms(monkeypatch):
+def test_motion_group_has_no_delay_after_accepted_response(monkeypatch):
     class ImmediateFuture:
         def done(self):
             return True
@@ -502,9 +496,7 @@ def test_motion_group_dispatches_are_separated_by_at_least_fifty_ms(monkeypatch)
 
     transport.call_group(tuple(("MovL", {"a": float(index)}) for index in range(3)))
 
-    assert sent_at == pytest.approx([0.0, 0.05, 0.10])
-    assert all(later - earlier >= 0.05 - 1e-12
-               for earlier, later in zip(sent_at, sent_at[1:]))
+    assert sent_at == pytest.approx([0.0, 0.0, 0.0])
 
 
 def test_suction_interrupt_during_dispatch_prevents_later_motion(monkeypatch):
@@ -542,7 +534,7 @@ def test_suction_interrupt_during_dispatch_prevents_later_motion(monkeypatch):
         hardware_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
     def observe(_snapshot):
-        if sent and clock[0] >= 0.02:
+        if sent:
             transport.suction_interrupted = True
 
     results = transport.call_group(tuple(
@@ -637,10 +629,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     assert settling == [(True, 0.2, {"settling_sec": 0})]
 
 
-def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched(
-        monkeypatch):
-    monkeypatch.setattr(hardware_module, "MIN_MOTION_DISPATCH_INTERVAL_SEC", 0.0)
-
+def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched():
     class ImmediateFuture:
         def done(self):
             return True

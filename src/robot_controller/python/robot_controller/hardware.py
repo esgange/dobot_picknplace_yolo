@@ -16,7 +16,6 @@ from .motion import pose_reached
 
 SERVICE_DISCOVERY_TIMEOUT_SEC = 5.0
 COMMAND_RESPONSE_TIMEOUT_SEC = 2.0
-MIN_MOTION_DISPATCH_INTERVAL_SEC = 0.050
 OUTPUT_FEEDBACK_TIMEOUT_SEC = 5.0
 MODE_TRANSITION_TIMEOUT_SEC = 2.0
 READY_STABLE_SEC = 0.2
@@ -330,25 +329,9 @@ class DobotTransport:
             self.pending_response = None
             group = []
             self.pending_group = group
-            last_dispatch = None
             results = []
             try:
                 for (name, fields), planned_outputs in zip(calls, outputs_by_call):
-                    if self.node.cancel_requested():
-                        raise OperationCanceled("Cancelled before motion-group dispatch")
-                    if self.suction_interrupted:
-                        break
-                    if last_dispatch is not None:
-                        earliest = last_dispatch + MIN_MOTION_DISPATCH_INTERVAL_SEC
-                        while time.monotonic() < earliest:
-                            if self.node.cancel_requested():
-                                raise OperationCanceled(
-                                    "Cancelled while spacing motion-group dispatches")
-                            snapshot = self.monitor.snapshot(require_enabled=False)
-                            if progress is not None:
-                                progress(snapshot)
-                            self.node.wait_control(min(
-                                0.01, max(0.0, earliest - time.monotonic())))
                     if self.node.cancel_requested():
                         raise OperationCanceled("Cancelled before motion-group dispatch")
                     if self.suction_interrupted:
@@ -361,7 +344,6 @@ class DobotTransport:
                         self._finish_service_audit(
                             audit, "dispatch_error", detail=str(exc), level="ERROR")
                         raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
-                    last_dispatch = time.monotonic()
                     self.pending_motion_outputs.update(planned_outputs)
                     group.append((name, future, audit))
                     future.add_done_callback(
