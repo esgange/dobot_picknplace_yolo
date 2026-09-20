@@ -386,7 +386,11 @@ limit and exact profile/station hashes. Detector/teach nodes remain read-only;
 only explicit controller Startup followed by a typed Home/Pick action can issue
 motion or I/O. No training is included. Private inference
 wheels are pinned/verified/extracted offline; exact Torch/system dependencies
-still require separate provisioning. The retired training-oriented teacher
+still require separate provisioning. The extracted native runtime is always
+materialized as ordinary files in the package install prefix, including when
+the surrounding workspace uses `colcon build --symlink-install`; this prevents
+OpenCV's loader from recursively importing a symlinked build-tree `cv2` package.
+The retired training-oriented teacher
 and separate `item_detect_yolo_debug` sources/launchers have been removed.
 See [Item Teach](src/item_perception_yolo/README.md) and
 [robot_controller](src/robot_controller/README.md) for details.
@@ -616,6 +620,9 @@ RGB frames and overlays are transient memory only, never an accumulating archive
 
 The build verifies and extracts the existing exact vendored
 `opencv-python 4.10.0.84` wheel offline into the package-private prefix.
+The extracted runtime is copied into the install prefix as ordinary files even
+for `colcon build --symlink-install`; its `cv2` loader and native binary must not
+resolve back into `build/`, which would recursively import the Python package.
 One lifetime spawned worker owns all OpenCV 4.10.0 detection/drawing/pose/solve
 operations with one thread and OpenCL disabled; the ROS/Qt parent never imports
 `cv2`. Runtime/protocol drift, native exit or timeout remains terminal with no

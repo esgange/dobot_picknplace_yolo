@@ -4008,6 +4008,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   build pass. No Dobot service, detector request, camera action or physical
   robot motion was issued.
 
+### 2026-09-17 — Make private native runtimes safe under symlink-install
+
+- Rule 95 closes the generated-layout failure previously repaired manually in
+  the schema-7 work. Item Perception and Camera Calibration must always copy
+  their extracted locked YOLO/OpenCV or OpenCV runtime into their respective
+  package install prefixes as ordinary files, even when the rest of the
+  workspace uses ament `--symlink-install`. No file or directory inside either
+  installed private runtime may be a build-tree symlink.
+- Root cause: a symlink install made each installed `cv2/__init__.py` and
+  `cv2.abi3.so` resolve into its package's `build/` runtime. OpenCV computed the
+  build directory as its loader directory but left the installed runtime first
+  on `sys.path`; its native-module re-import therefore loaded the Python `cv2`
+  package again and raised the explicit recursion error. Item Teach correctly
+  treated that native startup failure as terminal. Camera/ROS streams,
+  calibration artifacts and model files were not causal.
+- Replace each ament-intercepted `install(DIRECTORY ...)` with an install-time
+  Python copier. Each copier validates its extracted lock/OpenCV files, removes
+  only the exact package-private runtime destination, copies while dereferencing
+  source links, excludes bytecode caches, rejects any resulting symlink, and
+  revalidates the required installed files. This introduces no fallback or
+  alternate runtime.
+- Regression tests simulate the broken installed symlink layout, prove it is
+  fully replaced by independent regular files, reject broad destinations,
+  and retain extraction checksum/path-traversal tests. Verification must include
+  actual package `--symlink-install` builds, absence of symlinks in both
+  installed runtimes, and startup/use of the exact installed workers. This
+  validation is read-only with respect to cameras/robots and must not issue
+  detector, camera or Dobot service calls.
+- Verification completed 2026-09-20: both targeted `--symlink-install` builds
+  and root `colcon build` (15 packages) pass; both installed runtimes contain
+  no symlinks. All 378 Item Perception and 59 Camera Calibration pytest cases
+  pass through their package tests, including installed OpenCV worker geometry
+  round trips. The installed Item Teach worker reports ready with OpenCV 4.10.0,
+  NumPy 1.26.4, Torch 2.13.0+cu130, Ultralytics 8.4.150, one OpenCV thread and
+  OpenCL disabled. The changed Python files pass compilation and `ament_flake8`;
+  `git diff --check` passes. No physical hardware was commanded.
+
 ### Future entry template
 
 ```text

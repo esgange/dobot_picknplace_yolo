@@ -16,8 +16,25 @@ execute_process(
 if(NOT YOLO_EXTRACT_RESULT EQUAL 0)
   message(FATAL_ERROR "Required offline YOLO runtime extraction failed: ${YOLO_EXTRACT_ERROR}")
 endif()
-install(DIRECTORY "${YOLO_RUNTIME_DIR}/" DESTINATION lib/${PROJECT_NAME}/yolo_runtime
-  PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+# The OpenCV wheel loader is not symlink-safe when its package directory lives
+# in the install prefix but individual files resolve into the build tree.  In
+# that layout it prepends the build cv2 directory behind the installed runtime
+# and recursively imports the Python cv2 package instead of cv2.abi3.so.
+# Always materialize this private native runtime as real installed files, even
+# when the surrounding workspace uses ament --symlink-install.
+install(CODE
+  "execute_process(
+    COMMAND \"${Python3_EXECUTABLE}\"
+      \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/install_yolo_runtime.py\"
+      \"${YOLO_RUNTIME_DIR}\"
+      \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/yolo_runtime\"
+    RESULT_VARIABLE YOLO_INSTALL_RESULT
+    ERROR_VARIABLE YOLO_INSTALL_ERROR
+  )
+  if(NOT YOLO_INSTALL_RESULT EQUAL 0)
+    message(FATAL_ERROR
+      \"Required private YOLO runtime copy failed: \${YOLO_INSTALL_ERROR}\")
+  endif()")
 
 ament_python_install_package(
   item_perception_yolo

@@ -38,6 +38,10 @@ ros2 launch item_perception_yolo item_teach.launch.py
    or YOLO activation are needed. Cancelling the trust question resumes previews
    without loading. Successful loading restores the bin preview but leaves YOLO
    and Armed OFF until explicitly enabled. Worker failures remain terminal.
+   The locked native runtime is copied into the install prefix as ordinary
+   files even for a workspace `--symlink-install`. Its `cv2` loader and binary
+   must never be symlinks into `build/`; that layout recursively imports the
+   Python package and terminates the worker before the first overlay.
 2. Select mask or OBB from the model's available geometry outputs. Segmentation
    uses a minimum-area mask rectangle; OBB uses the model's oriented rectangle.
    If both outputs are observed, choose one explicitly. Box-only `detect` models

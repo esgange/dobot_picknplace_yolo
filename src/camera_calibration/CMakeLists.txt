@@ -66,11 +66,22 @@ install(DIRECTORY launch
   PATTERN "*.pyc" EXCLUDE
 )
 
-install(DIRECTORY "${OPENCV_RUNTIME_DIR}/"
-  DESTINATION lib/${PROJECT_NAME}/opencv_runtime
-  PATTERN "__pycache__" EXCLUDE
-  PATTERN "*.pyc" EXCLUDE
-)
+# OpenCV's binary loader recursively imports its Python package when ament
+# symlink-install puts the package in install/ but resolves its files to build/.
+# Keep this native runtime self-contained as real installed files in every mode.
+install(CODE
+  "execute_process(
+    COMMAND \"${Python3_EXECUTABLE}\"
+      \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/install_opencv_runtime.py\"
+      \"${OPENCV_RUNTIME_DIR}\"
+      \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/opencv_runtime\"
+    RESULT_VARIABLE OPENCV_INSTALL_RESULT
+    ERROR_VARIABLE OPENCV_INSTALL_ERROR
+  )
+  if(NOT OPENCV_INSTALL_RESULT EQUAL 0)
+    message(FATAL_ERROR
+      \"Required private OpenCV runtime copy failed: \${OPENCV_INSTALL_ERROR}\")
+  endif()")
 
 install(FILES README.md LICENSE NOTICE.md
   DESTINATION share/${PROJECT_NAME}
@@ -85,6 +96,11 @@ if(BUILD_TESTING)
     ENV
       "PYTHONPATH=${OPENCV_RUNTIME_DIR}:${CMAKE_CURRENT_SOURCE_DIR}/python:$ENV{PYTHONPATH}"
       "CAMERA_CALIBRATION_TEST_OPENCV_RUNTIME=${OPENCV_RUNTIME_DIR}"
+  )
+  ament_add_pytest_test(
+    test_runtime_install
+    test/test_runtime_install.py
+    TIMEOUT 30
   )
 endif()
 

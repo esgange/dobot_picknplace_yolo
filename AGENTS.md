@@ -118,6 +118,11 @@ Rule 94 defines mutually exclusive three-state vacuum/finger outputs and the
 current pick/retry I/O sequence. OPEN/CLOSE and SUCK/EXHAUST always turn their
 opposite output off first; a miss latches only after final-pose settling, and
 later DI1 from that missed attempt cannot become a success or block its retry.
+Rule 95 requires the extracted Item Perception YOLO/OpenCV runtime and Camera
+Calibration OpenCV runtime to be copied as ordinary installed files even under
+`colcon --symlink-install`. Build-tree symlinks inside either private runtime
+are forbidden because OpenCV's binary loader resolves them into a recursive
+`cv2` package import.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

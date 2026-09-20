@@ -157,6 +157,10 @@ Samples are never replayed as robot commands.
 The build verifies SHA-256
 `9ace140fc6d647fbe1c692bcb2abce768973491222c067c131d80957c595b71f` and extracts
 the vendored `opencv-python 4.10.0.84` wheel offline into the package prefix.
+The extracted runtime is always installed as ordinary copied files, including
+under `colcon build --symlink-install`. Its `cv2` loader and native binary must
+never be build-tree symlinks because that layout triggers OpenCV's guarded
+recursive package import.
 One lifetime worker created with multiprocessing `spawn` owns all OpenCV calls,
 loads only that private OpenCV exactly `4.10.0`, uses one OpenCV thread, disables
 OpenCL, and serializes every request. The ROS/Qt parent never imports `cv2`;
