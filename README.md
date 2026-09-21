@@ -105,12 +105,13 @@ from a fresh, stationary 100 Hz FeedInfo sample. Unless already within
 5 mm/1° of taught Home, it queues two Cartesian `MovL` targets in one
 CP(100)-blended group: current X/Y with taught Home Z/attitude, then full taught
 Home XYZ/attitude. Each service must return `res=0` in order, but only final
-Home is physically confirmed. The first control point can be rounded, rotate or
-descend at current XY and is not collision-checked for an arbitrary starting
-pose. Pick retains its
-separate shared Home rule: below taught Home Z it confirms an upward
-current-XY rise before sending the exact taught joints. A return from Pick
-first confirms its above-item clearance. Pick runs Home,
+Home is physically confirmed. The same fresh stationary pose is used both to
+plan the group and as its confirmed motion origin, without a duplicate origin
+acquisition. The first control point can be rounded, rotate or descend at
+current XY and is not collision-checked for an arbitrary starting pose. A
+successful held-item Pick return retains its separate shared Home rule: below
+taught Home Z it confirms an upward current-XY rise before sending the exact
+taught joints, and it first confirms its above-item clearance. Pick runs Home,
 transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
 Finger states are OPEN (DO2 OFF then DO14 ON), CLOSE (DO14 OFF then DO2 ON),
@@ -153,8 +154,10 @@ On an intermediate miss, one group rises through the old item's pre-pick and
 clearance at `v=100`, transfers to the next clearance, and descends through the
 next pre-pick to final pick. It enters EXHAUST at 80% of the first rise,
 finger/vacuum NEUTRAL at the start of the second rise, OPEN at 50% of transfer,
-and SUCK at 20% of the new final descent. A final miss performs the same
-EXHAUST/NEUTRAL rise and uses shared Home. A confirmed pickup returns through
+and SUCK at 20% of the new final descent. A final miss queues the same
+EXHAUST/NEUTRAL rise, conditional Home-Z segment and exact joint Home in one
+ordered group. Clearance and Home Z remain blended control points; only exact
+joint Home is physically confirmed. A confirmed pickup returns through
 pre-pick, clearance and item X/Y at Home Z, then uses shared Home while holding
 SUCK. Motion services are admitted in order: each response must be `res=0`
 before the next request is sent, with no extra inter-command delay. This
@@ -264,8 +267,11 @@ clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.
 Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
 applied by Startup/Recover governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
-only the terminal pick/stopped pose, return clearance, Home-height rise, and
-exact taught-joint Home are physically confirmed. Motion requests wait for
+the terminal pick/stopped pose and exact taught-joint Home are physically
+confirmed. A successful held-item return also confirms its return clearance
+and conditional Home-height rise as separate barriers. A final exhausted miss
+queues those control points through exact Home and confirms only exact Home.
+Motion requests wait for
 queue-admission responses in order but not intermediate physical arrival;
 short segments may still decelerate despite CP 100. See the
 controller README for feedback/Stop confirmation and

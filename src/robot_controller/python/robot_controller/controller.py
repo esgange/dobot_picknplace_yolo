@@ -775,10 +775,11 @@ class RobotController(Node):
         if not expected and suction:
             raise HeldUnknown("DI1 active without trusted held-item context")
 
-    def _home_plan(self):
+    def _home_plan(self, current=None):
         config = self.configuration
         config.validate_sources(self.root)
-        current = self.hardware.current_pose()
+        if current is None:
+            current = self.hardware.current_pose()
         return home_targets(
             current, config.home_matrix, config.home_joints,
             speed_percent=config.profile["speed"]["travel_percent"],
@@ -786,13 +787,26 @@ class RobotController(Node):
 
     def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None,
                       ignore_suction=False, batch_name="home",
-                      confirmed_start_pose=None):
+                      confirmed_start_pose=None, queue_through_home=False):
         self.raise_if_cancelled()
         self.wait_for_resume()
         holding = self.holding_item if require_suction is None else require_suction
         forbidden = not holding if forbid_suction is None else forbid_suction
         if not ignore_suction:
             self._preflight_item_state(holding)
+        if queue_through_home:
+            if not preceding or confirmed_start_pose is None:
+                raise CommandRejected(
+                    "Queued-through Home requires preceding targets and a confirmed origin")
+            targets = self._home_plan(preceding[-1].matrix)
+            self.operation_progress(
+                "HOME", "Queueing missed-pick recovery through exact Home",
+                waypoint=targets[-1].name)
+            self.hardware.move_batch(
+                (*preceding, *targets), batch_name=batch_name,
+                require_suction=holding, forbid_suction=forbidden,
+                confirmed_start_pose=confirmed_start_pose)
+            return targets
         if preceding:
             self.operation_progress(
                 "HOME_CLEARANCE", "Finishing above-item clearance before Home",
@@ -855,7 +869,7 @@ class RobotController(Node):
             waypoint=home.name)
         self.hardware.move_batch(
             (alignment, home), batch_name="home", require_suction=holding,
-            forbid_suction=not holding)
+            forbid_suction=not holding, confirmed_start_pose=current)
         return (alignment, home)
 
     @staticmethod

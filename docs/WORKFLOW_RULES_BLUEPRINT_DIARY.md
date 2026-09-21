@@ -4133,6 +4133,35 @@ Never use a floating “latest” version in an issue, script, or deployment not
   pass. No Dobot service, detector request, camera action or physical robot
   motion was issued.
 
+### 2026-09-21 — Queue final exhausted miss through Home
+
+- Rule 99 changes only the return after the final candidate has completed its
+  taught final-pick settling interval with DI1 low. The controller now submits
+  the actual stopped-pose rise through old pre-pick, old clearance, conditional
+  relative Home-Z rise and exact taught-joint Home as one
+  `candidate_N_pick_to_home` group. The Home-Z branch is planned from the final
+  clearance target. Each motion service still must return `res=0` before the
+  next is sent, but clearance and Home Z are not physically confirmed; only
+  exact joint Home receives terminal feedback confirmation.
+- The existing failed-attempt output sequence is unchanged: EXHAUST begins at
+  80% of the first rise, finger and vacuum enter NEUTRAL at 0% of the clearance
+  rise, and later DI1 remains ignored for the irrevocably latched miss. Global
+  CP(100), taught travel rates, target geometry, output supervision,
+  cancellation and Stop containment remain active. Non-final retry groups and
+  successful held-item returns are unchanged.
+- Explicit Hardware Home already queues Cartesian `home_align` and final Home
+  as one ordered group with only final Home physically confirmed. It now passes
+  the same fresh stationary pose used for planning as the confirmed batch
+  origin, eliminating the second motion-origin acquisition before dispatch.
+- Verification is software-only. All 159 direct Controller tests and all 160
+  package-reported tests pass with zero failures/errors/skips. Coverage verifies
+  the single final-miss group, planned-clearance input to the Home-Z decision,
+  preserved output events, final-Home-only confirmation, and one pose
+  acquisition for explicit Hardware Home. All 20 controller/test Python files
+  pass compilation and `ament_flake8`; the complete 15-package workspace build
+  and `git diff --check` pass. No Dobot service, detector request, camera action
+  or physical robot motion was issued.
+
 ### Future entry template
 
 ```text

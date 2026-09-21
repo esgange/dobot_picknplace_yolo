@@ -455,10 +455,12 @@ def test_hardware_home_queues_two_cartesian_waypoints_in_one_group(holding):
     assert all(target.joints_rad is None and not target.relative_z
                for target in moves[0][1])
     assert moves[0][2] == {"batch_name": "home", "require_suction": holding,
-                           "forbid_suction": not holding}
+                           "forbid_suction": not holding,
+                           "confirmed_start_pose": current}
     assert targets == moves[0][1]
     assert calls.index(("preflight", holding)) < calls.index(moves[0])
     assert calls.count(("preflight", holding)) == 1
+    assert calls.count(("current_pose",)) == 1
 
 
 def test_hardware_home_skips_when_cartesian_feedback_is_already_within_tolerance():
@@ -571,11 +573,16 @@ def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holdi
     assert calls.index(("check",)) > calls.index(moves[0])
 
 
-def test_final_miss_home_ignores_late_di1_without_enabling_suction_policy():
+def test_final_miss_queues_retract_clearance_and_home_as_one_group():
     calls = []
+    start = np.eye(4)
+    retract = SimpleNamespace(name="p2_retract", matrix=np.eye(4))
+    clearance = SimpleNamespace(name="p2_final", matrix=np.eye(4))
+    height = SimpleNamespace(name="home_height")
     home = SimpleNamespace(name="home")
     hardware = SimpleNamespace(
-        home_already_reached=lambda _joints: False,
+        home_already_reached=lambda _joints: pytest.fail(
+            "Final-miss group must not wait for a Home-skip sample"),
         move_batch=lambda targets, **kwargs: calls.append((targets, kwargs)))
     node = SimpleNamespace(
         hardware=hardware, holding_item=False,
@@ -583,15 +590,19 @@ def test_final_miss_home_ignores_late_di1_without_enabling_suction_policy():
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
         _preflight_item_state=lambda _holding: pytest.fail(
             "Latched-miss return rechecked DI1"),
-        _home_plan=lambda: (home,),
+        _home_plan=lambda origin: (
+            calls.append(("plan_origin", origin)) or (height, home)),
         operation_progress=lambda *_args, **_kwargs: None)
 
     assert RobotController._execute_home(
-        node, require_suction=False, forbid_suction=False,
-        ignore_suction=True, batch_name="miss_to_home") == (home,)
-    assert calls == [((home,), {
+        node, preceding=(retract, clearance), require_suction=False,
+        forbid_suction=False, ignore_suction=True,
+        confirmed_start_pose=start, queue_through_home=True,
+        batch_name="miss_to_home") == (height, home)
+    assert calls[0] == ("plan_origin", clearance.matrix)
+    assert calls[1] == ((retract, clearance, height, home), {
         "batch_name": "miss_to_home", "require_suction": False,
-        "forbid_suction": False})]
+        "forbid_suction": False, "confirmed_start_pose": start})
 
 
 def test_home_height_failure_prevents_joint_home_dispatch():

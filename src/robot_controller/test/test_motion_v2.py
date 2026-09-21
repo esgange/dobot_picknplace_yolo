@@ -298,11 +298,13 @@ def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
     plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), taught, index)
              for index in (1, 2)]
     order = []
+    returned = []
 
     def check(index):
         order.append(("candidate", index))
 
     def return_home(**kwargs):
+        returned.append(kwargs)
         order.append(("home", kwargs["forbid_suction"], kwargs["ignore_suction"],
                       kwargs["batch_name"]))
 
@@ -315,10 +317,15 @@ def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
     forward_batches = [entry[2]["batch_name"] for entry in hardware.log
                        if entry[0] == "move"]
     assert forward_batches == ["candidate_1_home_to_pick",
-                               "candidate_1_pick_to_retry_2_pick",
-                               "candidate_2_miss_retract"]
-    assert [target.name for target in hardware.targets[2]] == [
+                               "candidate_1_pick_to_retry_2_pick"]
+    final_retract, final_clearance = returned[0]["preceding"]
+    assert [final_retract.name, final_clearance.name] == [
         "p2_retract", "p2_final"]
+    assert final_retract.motion_io == vacuum_exhaust_events(80)
+    assert final_clearance.motion_io == (
+        gripper_neutral_events(0) + vacuum_neutral_events(0))
+    assert returned[0]["queue_through_home"] is True
+    assert np.allclose(returned[0]["confirmed_start_pose"], hardware.pose)
     retry = next(entry for entry in hardware.log if entry[0] == "move"
                  and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
     assert retry[1] == ("p1_retract", "p1_final", "p2_initial",

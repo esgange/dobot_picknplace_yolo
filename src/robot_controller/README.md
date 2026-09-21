@@ -219,6 +219,9 @@ motion group: `(current X, current Y, Home Z, Home Rx, Home Ry, Home Rz)`, then
 queue in order and inherit global `CP(100)`. Only the final Home target receives
 the 5 mm/1° stationary, empty-queue physical confirmation. Both use the taught
 travel `v`/`a`, no timed I/O, and preserve/monitor suction when holding.
+The same fresh stationary pose used to plan `home_align` is passed into the
+motion group as its confirmed origin; the action does not acquire a duplicate
+origin sample before dispatch.
 This action does not send `RelMovLUser` or joint-mode Home. Cartesian arrival
 does not prove the joints match the recorded Home tuple. The first segment may
 rotate the tool or descend at current XY; the controller has no collision model
@@ -234,7 +237,8 @@ Home Z, `RelMovLUser` first rises at current XY/attitude and confirms 5 mm/1°
 Cartesian arrival plus stationary/empty-queue feedback; at/above it, that rise
 is skipped. Exact taught Home joints then use joint-mode `MovL` and ±1° joint
 confirmation.
-Pick returns first confirm the above-item approach/clearance before this rule.
+Successful held-item Pick returns first confirm the above-item
+approach/clearance before this rule.
 
 Pick is permitted only from `READY` with DI1 clear:
 
@@ -318,8 +322,14 @@ it enters SUCK. Each service must return `res=0` before the next is sent, while
 only M's final target is physically checked. A late DI1 from candidate N is
 ignored throughout its latched-miss recovery; candidate M is armed only after
 DO13 OFF and a clear DI1 have been observed before its new SUCK. A final
-candidate miss performs the same old pre-pick EXHAUST and old-clearance NEUTRAL
-rise, then follows shared Home without reclassifying later DI1 as success.
+candidate miss queues its old pre-pick EXHAUST rise, old-clearance NEUTRAL rise,
+conditional relative Home-Z segment and exact joint Home as one
+`candidate_N_pick_to_home` group. The conditional segment is derived from the
+planned clearance endpoint. Each request still requires ordered `res=0`
+acceptance, but only exact joint Home is physically confirmed; clearance and
+Home Z are blended control points. Later DI1 cannot reclassify the latched miss
+as success. Successful held-item returns retain their separate clearance and
+Home-Z confirmation barriers.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
 in target order. Each must return `res=0` before the next is sent, with no
@@ -342,10 +352,12 @@ Motion requests carry only `user=0`, `tool=0`, and their taught `v`/`a` rates;
 they never carry a per-command `cp` or `r`. The global `CP(100)` established by
 Startup/Recover therefore controls all transitions. As specified by the Dobot
 protocol, smoothing can bypass exact intermediate pick coordinates and timed
-I/O can occur during a blended transition. It does not bypass the physically
-verified above-item clearance and Home-Z barrier. Serialized service responses
-may let a short pick segment decelerate despite global CP 100; queue order and
-safe Home clearance take precedence over uninterrupted blending.
+I/O can occur during a blended transition. Successful held-item returns keep
+their physically verified above-item clearance and Home-Z barriers. An
+exhausted final miss uses the documented queued-through-Home exception and
+physically verifies only exact joint Home. Serialized service responses may let
+a short pick segment decelerate despite global CP 100; queue order takes
+precedence over uninterrupted blending.
 
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Pick's conditional Home rise uses `RelMovLUser`. The controller never calls

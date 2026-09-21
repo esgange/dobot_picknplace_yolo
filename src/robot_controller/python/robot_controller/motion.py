@@ -248,16 +248,20 @@ class PickExecutor:
                             batch_name=f"candidate_{index}_pick_to_home")
                 return {"picked": True, "candidate": index, "holding_item": True}
             if index == len(plans):
-                # Complete EXHAUST -> NEUTRAL, then use the shared Home route.
+                # Complete EXHAUST -> NEUTRAL and queue the remaining Home route.
                 # DI1 was sampled through settling already; any later change is
                 # deliberately not reclassified as this candidate's success.
-                self.hardware.move_batch(
-                    upward, batch_name=f"candidate_{index}_miss_retract",
-                    confirmed_start_pose=stopped_pose)
                 if self.finish_home:
-                    return_home(require_suction=False, forbid_suction=False,
+                    return_home(preceding=tuple(upward), require_suction=False,
+                                forbid_suction=False,
                                 ignore_suction=True,
+                                confirmed_start_pose=stopped_pose,
+                                queue_through_home=True,
                                 batch_name=f"candidate_{index}_pick_to_home")
+                else:
+                    self.hardware.move_batch(
+                        upward, batch_name=f"candidate_{index}_miss_retract",
+                        confirmed_start_pose=stopped_pose)
                 break
             next_index = index + 1
             if progress is not None:
