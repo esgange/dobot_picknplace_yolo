@@ -544,6 +544,16 @@ current strict schema/hash readers. Missing, duplicate, mismatched, symlinked,
 nested, unknown-prefix or unsupported-extension entries fail startup. Hidden
 dot-prefixed atomic-write entries are ignored. `tray_teach_` is reserved for a
 future workflow and currently fails explicitly rather than being ignored.
+Each missing Item YAML, Item model or Bin YAML has a distinct error. Duplicate
+errors list the conflicting filenames. Item Detect writes the exact message as
+a bounded `FATAL` `item_detector_failed` event, logs it through ROS and exits.
+
+Deployment is manual for now; a third-party program or remote node may later
+manage the same directory contract. Finish the complete catalog before launch.
+For a replacement, stop the process, stage incomplete transfers under hidden
+dot-prefixed names, expose exactly one complete visible set, and restart. The
+runtime does not copy files, watch the directory, retry selection or switch
+catalogs while running.
 
 Launch with no arguments:
 

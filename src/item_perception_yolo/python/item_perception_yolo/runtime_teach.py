@@ -29,6 +29,16 @@ def _artifact_kind(name):
     return matches[0]
 
 
+def _require_one(paths, label):
+    if not paths:
+        raise ValueError(f"Missing required {label} in runtime_teach/")
+    if len(paths) > 1:
+        filenames = ", ".join(path.name for path in paths)
+        raise ValueError(
+            f"Multiple {label} files in runtime_teach/: {filenames}")
+    return paths[0]
+
+
 def runtime_teach_catalog(root):
     """Select exactly one deployed Item pair and Bin YAML by filename prefix."""
     directory = Path(root).resolve() / "runtime_teach"
@@ -50,14 +60,12 @@ def runtime_teach_catalog(root):
             raise ValueError(
                 f"Unsupported {kind}_ runtime file extension: {path.name}; expected {allowed}")
         artifacts[kind][path.suffix].append(path.resolve())
-    item_yamls = artifacts["item_teach"][".yaml"]
-    item_models = artifacts["item_teach"][".pt"]
-    bin_yamls = artifacts["bin_teach"][".yaml"]
-    if len(item_yamls) != 1 or len(item_models) != 1 or len(bin_yamls) != 1:
-        raise ValueError(
-            "runtime_teach/ requires exactly one item_teach_ YAML, its item_teach_ PT, "
-            "and one bin_teach_ YAML")
-    if item_yamls[0].stem != item_models[0].stem:
+    item_yaml = _require_one(
+        artifacts["item_teach"][".yaml"], "item_teach_ YAML")
+    item_model = _require_one(
+        artifacts["item_teach"][".pt"], "item_teach_ PT model")
+    bin_yaml = _require_one(
+        artifacts["bin_teach"][".yaml"], "bin_teach_ YAML")
+    if item_yaml.stem != item_model.stem:
         raise ValueError("runtime_teach/ Item Teach YAML/PT must have the same filename stem")
-    return RuntimeTeachCatalog(directory.resolve(), item_yamls[0], item_models[0],
-                               bin_yamls[0])
+    return RuntimeTeachCatalog(directory.resolve(), item_yaml, item_model, bin_yaml)

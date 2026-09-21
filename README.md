@@ -417,6 +417,13 @@ and separate `item_detect_yolo_debug` sources/launchers have been removed.
 See [Item Teach](src/item_perception_yolo/README.md) and
 [robot_controller](src/robot_controller/README.md) for details.
 
+Populate `runtime_teach/` manually, or with an external deployment program,
+before starting headless Item Detect or Robot Controller. A missing Item YAML,
+Item model or Bin YAML produces its own fatal startup error; a duplicate error
+lists every conflicting filename. There is no watcher or startup retry. Stop the
+consumer before replacing the catalog, stage incomplete transfers under hidden
+dot-prefixed names, expose exactly one complete set, and then restart it.
+
 ## Clone this workspace
 
 ```bash

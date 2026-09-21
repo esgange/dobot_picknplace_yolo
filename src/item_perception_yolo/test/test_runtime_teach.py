@@ -25,10 +25,55 @@ def test_runtime_catalog_selects_one_prefix_classified_item_pair_and_bin(tmp_pat
 
 
 @pytest.mark.parametrize(
+    ("filename", "message"),
+    [
+        ("item_teach_part.yaml",
+         "Missing required item_teach_ YAML in runtime_teach/"),
+        ("item_teach_part.pt",
+         "Missing required item_teach_ PT model in runtime_teach/"),
+        ("bin_teach_station.yaml",
+         "Missing required bin_teach_ YAML in runtime_teach/"),
+    ],
+)
+def test_runtime_catalog_reports_each_missing_artifact_kind(
+        tmp_path, filename, message):
+    directory = _catalog_files(tmp_path)
+    (directory / filename).unlink()
+
+    with pytest.raises(ValueError) as raised:
+        runtime_teach_catalog(tmp_path)
+
+    assert str(raised.value) == message
+
+
+@pytest.mark.parametrize(
+    ("filename", "message"),
+    [
+        ("item_teach_other.yaml",
+         "Multiple item_teach_ YAML files in runtime_teach/: "
+         "item_teach_other.yaml, item_teach_part.yaml"),
+        ("item_teach_other.pt",
+         "Multiple item_teach_ PT model files in runtime_teach/: "
+         "item_teach_other.pt, item_teach_part.pt"),
+        ("bin_teach_other.yaml",
+         "Multiple bin_teach_ YAML files in runtime_teach/: "
+         "bin_teach_other.yaml, bin_teach_station.yaml"),
+    ],
+)
+def test_runtime_catalog_reports_each_duplicate_artifact_kind(
+        tmp_path, filename, message):
+    directory = _catalog_files(tmp_path)
+    (directory / filename).write_bytes(b"duplicate")
+
+    with pytest.raises(ValueError) as raised:
+        runtime_teach_catalog(tmp_path)
+
+    assert str(raised.value) == message
+
+
+@pytest.mark.parametrize(
     ("change", "message"),
     [
-        (lambda directory: (directory / "item_teach_extra.yaml").write_bytes(b"x"),
-         "exactly one"),
         (lambda directory: (directory / "item_teach_part.pt").rename(
             directory / "item_teach_other.pt"), "same filename stem"),
         (lambda directory: (directory / "unknown.yaml").write_bytes(b"x"),
@@ -40,7 +85,7 @@ def test_runtime_catalog_selects_one_prefix_classified_item_pair_and_bin(tmp_pat
         (lambda directory: (directory / "partition").mkdir(), "regular files"),
     ],
 )
-def test_runtime_catalog_rejects_ambiguous_or_unsupported_entries(
+def test_runtime_catalog_rejects_mismatched_or_unsupported_entries(
         tmp_path, change, message):
     directory = _catalog_files(tmp_path)
     change(directory)

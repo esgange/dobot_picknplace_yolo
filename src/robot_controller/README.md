@@ -29,6 +29,13 @@ Teach YAML/paired `.pt` plus one Bin Teach YAML from the flat root
 by `item_teach_` and `bin_teach_` filename prefix; Item YAML/PT must have the
 same stem. It still remains `INACTIVE` until Startup:
 
+Missing Item YAML, Item model and Bin YAML inputs are reported separately.
+Duplicate errors list the conflicting filenames. Manual or external deployment
+must finish one complete visible set before launch; replacement requires stopping
+the process, replacing the catalog, and restarting it. Hidden dot-prefixed staging
+files are ignored. There is no directory watcher, retry, fallback or automatic
+copy.
+
 ```bash
 ros2 launch robot_controller robot_controller.launch.py headless:=true
 ```

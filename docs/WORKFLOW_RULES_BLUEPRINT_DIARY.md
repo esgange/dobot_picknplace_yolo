@@ -4194,6 +4194,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the copied Item YAML/model and Bin YAML by their expected prefixes. No camera,
   detector service, Dobot service or robot motion was launched.
 
+### 2026-09-21 — Make runtime catalog count failures explicit
+
+- Rule 101 makes every required runtime artifact count failure actionable. The
+  shared catalog now reports missing Item YAML, Item model and Bin YAML inputs
+  separately. A duplicate error identifies the artifact kind and lists every
+  conflicting filename in deterministic order.
+- Headless Item Detect already treated catalog selection failure as terminal. A
+  regression test now verifies that it records the exact message as bounded
+  `FATAL` `item_detector_failed`, emits the same ROS fatal log and exits before
+  calibration selection or service readiness.
+- Runtime deployment remains outside both consumers. It is manual now and may
+  later be owned by a third-party program or remote node. That producer must
+  finish one complete visible set before process start or restart; hidden
+  dot-prefixed names may stage incomplete transfers. There is no automatic copy,
+  directory watcher, selection retry, fallback or live replacement.
+- Verification is software-only. All 393 direct Item Perception tests and 394
+  package-reported tests pass; all 160 direct Controller tests and 161
+  package-reported tests pass, with zero failures/errors/skips. The three changed
+  Python/test files pass compilation and `ament_flake8`; the complete 15-package
+  workspace builds and `git diff --check` passes. No camera, detector service,
+  Dobot service or robot motion was launched.
+
 ### Future entry template
 
 ```text

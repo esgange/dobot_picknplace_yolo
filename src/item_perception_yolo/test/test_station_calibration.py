@@ -308,6 +308,32 @@ def test_headless_main_uses_runtime_catalog_and_automatic_station(
     node.close_runtime.assert_called_once()
 
 
+def test_headless_main_logs_runtime_catalog_failure_and_exits(root, monkeypatch):
+    monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
+    message = "Missing required bin_teach_ YAML in runtime_teach/"
+    runtime_selection = MagicMock(side_effect=ValueError(message))
+    monkeypatch.setattr(detector, "runtime_teach_catalog", runtime_selection)
+    station_selection = MagicMock()
+    monkeypatch.setattr(detector, "latest_station_calibration", station_selection)
+    node = MagicMock(fatal_error=None, root=root)
+    node_factory = MagicMock(return_value=node)
+    monkeypatch.setattr(detector, "ItemDetectNode", node_factory)
+    monkeypatch.setattr(detector, "MultiThreadedExecutor", MagicMock())
+    monkeypatch.setattr(detector.threading, "Thread", MagicMock())
+    monkeypatch.setattr(detector.rclpy, "init", MagicMock())
+    monkeypatch.setattr(detector.rclpy, "ok", lambda: False)
+
+    with pytest.raises(ValueError, match="Missing required bin_teach_ YAML"):
+        detector.main()
+
+    runtime_selection.assert_called_once_with(root)
+    station_selection.assert_not_called()
+    node.events.record.assert_called_once_with(
+        "FATAL", "item_detector_failed", message)
+    node.get_logger.return_value.fatal.assert_called_once_with(message)
+    node.close_runtime.assert_called_once()
+
+
 def test_headless_launch_has_no_artifact_or_arming_arguments(monkeypatch):
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     from launch.actions import DeclareLaunchArgument
