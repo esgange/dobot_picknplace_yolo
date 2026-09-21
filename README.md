@@ -139,10 +139,12 @@ Home is physically confirmed. The same fresh stationary pose is used both to
 plan the group and as its confirmed motion origin, without a duplicate origin
 acquisition. The first control point can be rounded, rotate or descend at
 current XY and is not collision-checked for an arbitrary starting pose. A
-successful held-item Pick return retains its separate shared Home rule: below
-taught Home Z it confirms an upward current-XY rise before sending the exact
-taught joints, and it first confirms its above-item clearance. Pick runs Home,
-transforms platform-relative poses, applies schema-9 vertical/rotation geometry
+successful held-item Pick return retains its separate shared Home rule: more
+than 5 mm below taught Home Z it confirms an upward current-XY rise before
+sending the exact taught joints; within 5 mm below Home Z or higher it goes
+directly to the joint target. Planning and first dispatch share one fresh
+confirmed pose. The return first confirms its above-item clearance. Pick runs
+Home, transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
 Finger states are OPEN (DO2 OFF then DO14 ON), CLOSE (DO14 OFF then DO2 ON),
 or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST

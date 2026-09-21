@@ -728,11 +728,8 @@ class RobotController(Node):
         if not expected and suction:
             raise HeldUnknown("DI1 active without trusted held-item context")
 
-    def _home_plan(self, current=None):
+    def _home_plan(self, current):
         config = self.configuration
-        config.validate_sources(self.root)
-        if current is None:
-            current = self.hardware.current_pose()
         return home_targets(
             current, config.home_matrix, config.home_joints,
             speed_percent=config.profile["speed"]["travel_percent"],
@@ -751,6 +748,7 @@ class RobotController(Node):
             if not preceding or confirmed_start_pose is None:
                 raise CommandRejected(
                     "Queued-through Home requires preceding targets and a confirmed origin")
+            self.configuration.validate_sources(self.root)
             targets = self._home_plan(preceding[-1].matrix)
             self.operation_progress(
                 "HOME", "Queueing missed-pick recovery through exact Home",
@@ -777,22 +775,27 @@ class RobotController(Node):
                 "HOME", "Already within ±1° of every taught Home joint; motion skipped",
                 waypoint="home")
             return ()
-        targets = self._home_plan()
+        self.configuration.validate_sources(self.root)
+        current = self.hardware.current_pose()
+        targets = self._home_plan(current)
         if len(targets) > 1:
             self.operation_progress(
                 "HOME_HEIGHT", "Rising vertically to verified Home Z",
                 waypoint="home_height")
             self.hardware.move_batch(
                 (targets[0],), batch_name=f"{batch_name}_height",
-                require_suction=holding, forbid_suction=forbidden)
+                require_suction=holding, forbid_suction=forbidden,
+                confirmed_start_pose=current)
             self.raise_if_cancelled()
             self.wait_for_resume()
             if not ignore_suction:
                 self._preflight_item_state(holding)
+            # The rise changed the origin; final Home acquires fresh feedback.
+            current = None
         self.operation_progress("HOME", "Moving to exact taught Home joints", waypoint="home")
         self.hardware.move_batch(
             (targets[-1],), batch_name=batch_name, require_suction=holding,
-            forbid_suction=forbidden)
+            forbid_suction=forbidden, confirmed_start_pose=current)
         return targets
 
     def _execute_cartesian_home(self):

@@ -501,18 +501,21 @@ def test_home_action_uses_cartesian_route_without_changing_pick_home():
 @pytest.mark.parametrize("holding", [False, True])
 def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holding):
     calls = []
+    clearance_pose = np.eye(4)
     clearance = SimpleNamespace(name="p1_final")
     height = SimpleNamespace(name="home_height")
     home = SimpleNamespace(name="home")
     hardware = SimpleNamespace(
         home_already_reached=lambda _joints: calls.append(("check",)) or False,
+        current_pose=lambda: calls.append(("pose",)) or clearance_pose,
         move_batch=lambda targets, **kwargs: calls.append(("move", targets, kwargs)))
     node = SimpleNamespace(
-        hardware=hardware, holding_item=holding,
-        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+        hardware=hardware, holding_item=holding, root=None,
+        configuration=SimpleNamespace(
+            home_joints=(0.1,) * 6, validate_sources=lambda _root: None),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
         _preflight_item_state=lambda holding: calls.append(("preflight", holding)),
-        _home_plan=lambda: calls.append(("plan",)) or (height, home),
+        _home_plan=lambda current: calls.append(("plan", current)) or (height, home),
         operation_progress=lambda phase, message, **fields: calls.append(
             ("progress", phase, message, fields)))
 
@@ -532,7 +535,10 @@ def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holdi
     assert all(entry[2]["require_suction"] is holding
                and entry[2]["forbid_suction"] is not holding for entry in moves)
     assert moves[0][2]["confirmed_start_pose"] is confirmed_start
-    assert all("confirmed_start_pose" not in entry[2] for entry in moves[1:])
+    assert moves[1][2]["confirmed_start_pose"] is clearance_pose
+    assert moves[2][2]["confirmed_start_pose"] is None
+    assert next(entry for entry in calls if entry[0] == "plan")[1] is clearance_pose
+    assert calls.count(("pose",)) == 1
     assert calls.index(("check",)) > calls.index(moves[0])
 
 
@@ -548,8 +554,9 @@ def test_final_miss_queues_retract_clearance_and_home_as_one_group():
             "Final-miss group must not wait for a Home-skip sample"),
         move_batch=lambda targets, **kwargs: calls.append((targets, kwargs)))
     node = SimpleNamespace(
-        hardware=hardware, holding_item=False,
-        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+        hardware=hardware, holding_item=False, root=None,
+        configuration=SimpleNamespace(
+            home_joints=(0.1,) * 6, validate_sources=lambda _root: None),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
         _preflight_item_state=lambda _holding: pytest.fail(
             "Latched-miss return rechecked DI1"),
@@ -580,12 +587,14 @@ def test_home_height_failure_prevents_joint_home_dispatch():
 
     node = SimpleNamespace(
         hardware=SimpleNamespace(
-            home_already_reached=lambda _joints: False, move_batch=move),
-        holding_item=False,
-        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+            home_already_reached=lambda _joints: False, move_batch=move,
+            current_pose=lambda: np.eye(4)),
+        holding_item=False, root=None,
+        configuration=SimpleNamespace(
+            home_joints=(0.1,) * 6, validate_sources=lambda _root: None),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
         _preflight_item_state=lambda _holding: None,
-        _home_plan=lambda: (height, home),
+        _home_plan=lambda _current: (height, home),
         operation_progress=lambda *_args, **_kwargs: None)
 
     with pytest.raises(FeedbackFailure, match="Home Z not reached"):
@@ -593,23 +602,51 @@ def test_home_height_failure_prevents_joint_home_dispatch():
     assert calls == [("home_height",)]
 
 
-def test_home_above_home_z_uses_exact_joint_target_without_extra_rise():
-    calls = []
-    home = SimpleNamespace(name="home")
+@pytest.mark.parametrize("below_home_m", [-0.1, 0.0, 0.000013, 0.005])
+@pytest.mark.parametrize("holding", [False, True])
+def test_home_near_safety_z_uses_one_pose_and_direct_joint_home(below_home_m, holding):
+    source_checks = []
+    poses = []
+    moves = []
+    preflights = []
+    home = np.eye(4)
+    home[2, 3] = 0.35
+    current = home.copy()
+    current[:3, 3] = [0.6, -0.1, home[2, 3] - below_home_m]
+
+    def current_pose():
+        assert source_checks, "Validate source files before acquiring the fresh origin"
+        assert not poses, "Planning and dispatch must share one confirmed origin"
+        poses.append(current)
+        return current
+
     node = SimpleNamespace(
+        root=None,
         hardware=SimpleNamespace(
             home_already_reached=lambda _joints: False,
-            move_batch=lambda targets, **_kwargs: calls.append(
-                tuple(target.name for target in targets))),
-        holding_item=False,
-        configuration=SimpleNamespace(home_joints=(0.1,) * 6),
+            current_pose=current_pose,
+            move_batch=lambda targets, **kwargs: moves.append((targets, kwargs))),
+        holding_item=holding,
+        configuration=SimpleNamespace(
+            home_joints=(0.1,) * 6, home_matrix=home,
+            validate_sources=lambda _root: source_checks.append(True),
+            profile={"speed": {"travel_percent": 75},
+                     "acceleration": {"travel_percent": 60}}),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
-        _preflight_item_state=lambda _holding: None,
-        _home_plan=lambda: (home,),
+        _preflight_item_state=preflights.append,
         operation_progress=lambda *_args, **_kwargs: None)
+    node._home_plan = lambda origin: RobotController._home_plan(node, origin)
 
-    assert RobotController._execute_home(node) == (home,)
-    assert calls == [("home",)]
+    targets = RobotController._execute_home(node)
+    assert [target.name for target in targets] == ["home"]
+    assert targets[0].joints_rad == node.configuration.home_joints
+    assert np.array_equal(targets[0].matrix, home)
+    assert len(poses) == len(moves) == 1
+    assert len(moves[0][0]) == 1 and moves[0][0][0] is targets[0]
+    assert moves[0][1]["confirmed_start_pose"] is current
+    assert moves[0][1]["require_suction"] is holding
+    assert moves[0][1]["forbid_suction"] is not holding
+    assert preflights == [holding]
 
 
 def test_gui_second_pause_click_stops_immediately_during_parking():

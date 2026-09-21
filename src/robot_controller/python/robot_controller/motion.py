@@ -11,6 +11,9 @@ from item_perception_yolo.pick_planning import (  # noqa: F401
     candidate_pose_in_base as candidate_pose_in_base, pick_attitude, rigid_matrix)
 
 
+CARTESIAN_POSITION_TOLERANCE_M = 0.005
+
+
 @dataclass(frozen=True)
 class MotionIO:
     percent: int
@@ -97,7 +100,7 @@ class Target:
 
 def home_targets(current, home, joints, *, speed_percent, acceleration_percent):
     final = Target("home", home.copy(), speed_percent, acceleration_percent, tuple(joints))
-    if current[2, 3] >= home[2, 3]:
+    if current[2, 3] >= home[2, 3] - CARTESIAN_POSITION_TOLERANCE_M:
         return (final,)
     height = current.copy()
     height[2, 3] = home[2, 3]

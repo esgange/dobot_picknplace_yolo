@@ -152,6 +152,9 @@ neither source context nor candidate states survive process restart.
 Rule 103 moves unheld Pick's Pause endpoint to `park_transit` above the next
 pending candidate at safety Z (max of stopped Z and taught Home Z). Continue
 opens fingers, then descends through pre-pick to final pick.
+Rule 104 skips the shared joint-Home preliminary rise when current Z is within
+5 mm below taught Home Z or higher. Planning and first dispatch reuse one fresh
+confirmed pose; larger deficits still require the unchanged-XY/attitude rise.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

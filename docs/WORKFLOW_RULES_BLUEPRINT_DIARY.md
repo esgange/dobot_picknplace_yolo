@@ -4324,6 +4324,36 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the complete 15-package root symlink build and `git diff --check` pass. No
   robot, camera or detector commands were issued; live motion remains unverified.
 
+### 2026-09-21 — Skip a near-safety-Z Home correction
+
+- Rule 104 supersedes rules 53, 88 and 99 only for the shared joint-Home
+  preliminary-height decision and origin acquisition. If the current/planned
+  origin Z is at least taught Home Z minus 5 mm, omit `home_height` and proceed
+  directly to exact taught-joint Home. More than 5 mm below still requires the
+  upward segment at unchanged X/Y/attitude. Use the existing Cartesian position
+  tolerance as the one shared constant. Shared Pick/Continue returns and queued
+  final-miss and put-back groups use the same decision.
+- Shared Home now acquires one fresh stationary advancing FeedInfo pose for
+  both planning and its first dispatch, after source validation has completed.
+  After a required rise, final Home still acquires a new motion origin. This
+  removes the duplicate pre-rise readings
+  that could disagree and trigger the relative-motion geometry guard. That
+  guard continues to reject an actual downward or X/Y/attitude-changing relative
+  rise. The reported failure did not log both origin samples, so its exact
+  failed comparison cannot be proven retrospectively; a later successful run
+  requested only a 0.0129 mm Home-height rise.
+- Successful-return clearance confirmation, exact Home confirmation, held-item
+  supervision, cancellation and Stop containment remain in force. Standalone
+  Cartesian Hardware Home and rule-103 Pause parking retain their routes.
+  No artifact, schema, runtime, configuration or vendored-source changes.
+- Verification: all 212 controller tests pass, including the exact 5 mm skip
+  boundary, just-outside rise, held/unheld direct Home, shared origin, and a
+  failed rise preventing final Home. Package results report 213 tests with zero
+  errors/failures/skips. All five changed Python/test files compile and pass
+  ament_flake8; the full 15-package root symlink build and `git diff --check`
+  pass. No physical hardware commands were issued; live motion remains
+  unverified. No new offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

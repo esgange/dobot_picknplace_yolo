@@ -11,7 +11,7 @@ from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldUnknown, OperationCanceled, StopUnconfirmed)
 from .feedback import enabled_blockers
 from .kinematics import pose_matrix, pose_values
-from .motion import pose_reached
+from .motion import CARTESIAN_POSITION_TOLERANCE_M, pose_reached
 
 
 SERVICE_DISCOVERY_TIMEOUT_SEC = 5.0
@@ -23,7 +23,6 @@ CONSISTENT_FLAG_SAMPLES = 3
 POSE_SOURCE_PROGRESS_MAX_GAP_SEC = 0.15
 MOTION_NO_PROGRESS_SEC = 3.0
 MOTION_HARD_CAP_SEC = 300.0
-CARTESIAN_POSITION_TOLERANCE_M = 0.005
 CARTESIAN_ORIENTATION_TOLERANCE_DEG = 1.0
 HOME_JOINT_TOLERANCE_RAD = math.radians(1.0)
 MOTION_SERVICES = ("MovL", "MovLIO", "RelMovLUser")

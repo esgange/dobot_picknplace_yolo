@@ -301,11 +301,16 @@ Pick's initial and return Home paths retain the shared joint-Home rule. The
 initial step skips if all six fresh actual joints are within ±1° of the taught
 tuple in one feedback sample with idle mode 5, RobotStatus enabled,
 `EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not
-running, and held-item I/O intact where applicable. Otherwise, below taught
-Home Z, `RelMovLUser` first rises at current XY/attitude and confirms 5 mm/1°
-Cartesian arrival plus stationary/empty-queue feedback; at/above it, that rise
-is skipped. Exact taught Home joints then use joint-mode `MovL` and ±1° joint
-confirmation.
+running, and held-item I/O intact where applicable. Otherwise, more than 5 mm
+below taught Home Z, `RelMovLUser` first rises at current XY/attitude and confirms
+5 mm/1° Cartesian arrival plus stationary/empty-queue feedback. Within 5 mm
+below Home Z or anywhere above it, skip that preliminary rise and send exact
+taught Home joints directly using joint-mode `MovL` and ±1° joint confirmation.
+The planner and first dispatch share one fresh confirmed FeedInfo pose, so a
+second origin reading cannot turn a planned upward correction into a rejected
+downward move. When a rise is needed, final joint Home acquires its origin after
+that rise finishes. The shared 5 mm position tolerance also governs queued
+final-miss/put-back Home planning.
 Successful held-item Pick returns first confirm the above-item
 approach/clearance before this rule.
 

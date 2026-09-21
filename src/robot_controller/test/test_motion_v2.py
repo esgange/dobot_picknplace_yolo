@@ -69,6 +69,30 @@ def test_home_rises_only_when_below_and_finishes_at_exact_joint_target():
         acceleration_percent=100)] == ["home"]
 
 
+@pytest.mark.parametrize("below_home_m, needs_rise", [
+    (-0.1, False), (0.0, False), (0.000013, False), (0.004999, False),
+    (0.005, False), (0.005001, True), (0.1, True),
+])
+def test_home_height_skip_uses_five_mm_boundary(below_home_m, needs_rise):
+    home = item_pose(z=0.35, yaw_deg=30)
+    current = item_pose(x=0.6, y=-0.1, z=home[2, 3] - below_home_m, yaw_deg=-45)
+    joints = (0.1,) * 6
+    plan = home_targets(current, home, joints, speed_percent=75,
+                        acceleration_percent=60)
+
+    assert [target.name for target in plan] == (
+        ["home_height", "home"] if needs_rise else ["home"])
+    assert np.array_equal(plan[-1].matrix, home)
+    assert plan[-1].joints_rad == joints
+    assert all((target.speed_percent, target.acceleration_percent) == (75, 60)
+               for target in plan)
+    if needs_rise:
+        expected = current.copy()
+        expected[2, 3] = home[2, 3]
+        assert np.array_equal(plan[0].matrix, expected)
+        assert plan[0].relative_z
+
+
 @pytest.mark.parametrize("current_z", [0.2, 0.8])
 def test_hardware_home_uses_current_xy_then_full_cartesian_home(current_z):
     current = item_pose(x=0.12, y=-0.18, z=current_z, yaw_deg=-45)
