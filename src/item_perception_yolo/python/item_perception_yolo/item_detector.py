@@ -43,6 +43,7 @@ from .pick_planning import Cr10Kinematics, rigid_matrix
 from .station_calibration import (
     latest_station_calibration, latest_robot_camera_calibration,
     validate_robot_camera_calibration)
+from .runtime_teach import runtime_teach_catalog
 
 
 SERVICE_NAME = "/item_detect/get_item_poses"
@@ -276,8 +277,11 @@ def validate_pair(rgb, depth, color_info, depth_info, now_ns, quality):
 
 
 class ItemDetectNode(Node):
-    def __init__(self, name="item_detect"):
+    def __init__(self, name="item_detect", *, deployment=False):
         super().__init__(name)
+        if type(deployment) is not bool:
+            raise ValueError("Item detector deployment mode must be boolean")
+        self.deployment = deployment
         self.root = workspace_root()
         self.events = PackageEventLogger(node_name=name)
         model = Path(get_package_share_directory("cra_description")) / "urdf/cr10_robot.xacro"
@@ -428,7 +432,8 @@ class ItemDetectNode(Node):
                 or robot_camera.sha256 != expected_robot_camera.sha256):
             raise ValueError(
                 "Automatically selected robot-camera calibration changed before application")
-        template = load_bin_teach(Path(bin_path))
+        template = (load_bin_teach(Path(bin_path), root=self.root, deployment=True)
+                    if getattr(self, "deployment", False) else load_bin_teach(Path(bin_path)))
         place_bin_roi(template, applied.platform)
         self.applied, self.bin_artifact, self.robot_camera = applied, template, robot_camera
         self.connect_camera(applied.camera.settings.camera_prefix)
@@ -518,7 +523,9 @@ class ItemDetectNode(Node):
         if (not self.yolo_enabled or self.native.failed or self.applied is None
                 or self.model_config is None or self.model_metadata is None):
             raise ValueError("Pose generation requires YOLO ON, loaded model and station/bin")
-        profile, digest = load_item_profile(Path(path))
+        profile, digest = (
+            load_item_profile(Path(path), root=self.root, deployment=True)
+            if getattr(self, "deployment", False) else load_item_profile(Path(path)))
         if detection_settings(settings_from_profile(profile)) != self.settings:
             raise ValueError("Save or load the exact currently applied item settings first")
         if (profile["model"]["sha256"] != self.model_config["sha256"]
@@ -964,7 +971,10 @@ class ItemDetectNode(Node):
                 raise ValueError("Request deadline reached waiting for preview")
             self._validate_sources()
             check_active()
-            _profile, digest = load_item_profile(profile_path)
+            _profile, digest = (
+                load_item_profile(profile_path, root=self.root, deployment=True)
+                if getattr(self, "deployment", False)
+                else load_item_profile(profile_path))
             if digest != profile_digest:
                 self.disarm()
                 raise ValueError("Item profile changed")
@@ -1091,19 +1101,18 @@ def main(args=None):
     if os.environ.get("ROS_LOCALHOST_ONLY") != "1":
         raise RuntimeError("ROS_LOCALHOST_ONLY=1 is required")
     rclpy.init(args=args)
-    node = ItemDetectNode()
+    node = ItemDetectNode(deployment=True)
     executor = MultiThreadedExecutor(num_threads=3)
     executor.add_node(node)
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
     try:
-        paths = {key: node.declare_parameter(key, "").value for key in
-                 ("item_teach_file", "bin_teach_file")}
-        if not all(paths.values()):
-            raise ValueError("Explicit item_teach_file and bin_teach_file paths are required")
-        if not node.declare_parameter("trusted_model", False).value:
-            raise ValueError(
-                "Set trusted_model:=true only for a trusted .pt; weights can execute code")
+        catalog = runtime_teach_catalog(node.root)
+        node.events.record(
+            "INFO", "runtime_teach_selected",
+            "Selected prefix-classified headless Item/Bin Teach artifacts",
+            item_teach=str(catalog.item_yaml), model=str(catalog.item_model),
+            bin_teach=str(catalog.bin_yaml))
         latest = latest_station_calibration()
         robot_camera = latest_robot_camera_calibration()
         node.events.record(
@@ -1112,18 +1121,17 @@ def main(args=None):
             camera=str(latest.camera.path), camera_sha256=latest.camera.sha256,
             robot_camera=str(robot_camera.path),
             robot_camera_sha256=robot_camera.sha256)
-        profile, _digest = load_item_profile(Path(paths["item_teach_file"]))
-        node.inspect_model(Path(paths["item_teach_file"]).parent / profile["model"]["filename"])
+        profile, _digest = load_item_profile(
+            catalog.item_yaml, root=node.root, deployment=True)
+        node.inspect_model(catalog.item_model, expected_sha256=profile["model"]["sha256"])
         node.apply_station(
-            latest.platform.path, paths["bin_teach_file"], expected_station=latest,
+            latest.platform.path, catalog.bin_yaml, expected_station=latest,
             expected_robot_camera=robot_camera)
         node.enable_yolo(detection_settings(settings_from_profile(profile)))
-        if not node.declare_parameter("armed", False).value:
-            raise ValueError("Headless service requires explicit armed:=true; never inferred")
         # Startup has a bounded input-readiness deadline; no retry/restart.
         node._snapshot(0, time.monotonic() +
                        node.settings["quality"]["request_timeout_sec"], wait=True)
-        node.arm(Path(paths["item_teach_file"]))
+        node.arm(catalog.item_yaml)
         while rclpy.ok() and node.fatal_error is None:
             time.sleep(0.1)
         if node.fatal_error:

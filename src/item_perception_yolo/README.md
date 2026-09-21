@@ -398,9 +398,9 @@ Item Teach has no controller-validation button or controller client. It creates
 profiles, inspects detections and exposes read-only poses when explicitly armed;
 it never selects a controller profile or sends a controller request. Configure
 `robot_controller` separately in its GUI/explicit launch parameters or headlessly
-from `runtime_teach/`. It validates its selected pair itself; default mode is
-TF-only debug and explicit real mode implements Home/pick/I/O. See its README
-for initialization and safety requirements; teaching never requests motion.
+from `runtime_teach/`. Headless Item Detect uses that same deployment catalog and
+the same current detection implementation as Item Teach. Teaching never requests
+motion.
 
 Item Save/Load records the selected artifact filename in shared strict schema-6
 UI state, alongside explicit preview prefix and applied station/bin filenames.
@@ -530,38 +530,39 @@ archive. Events remain timestamped and bounded at 1,000 package records.
 ### Headless detection and controller request
 
 Station files are selected automatically by the same strict rule as Item Teach.
-Use absolute item/bin artifact paths on the destination machine:
+Populate flat root `runtime_teach/` with exactly these ordinary files:
 
-```bash
-ros2 launch item_perception_yolo item_detect.launch.py \
-  item_teach_file:=/path/to/workspace/offline_teach/item_teach/item_teach_NAME_TIMESTAMP.yaml \
-  bin_teach_file:=/path/to/workspace/offline_teach/bin_teach/bin_teach_TIMESTAMP_IP.yaml \
-  trusted_model:=true armed:=true
+```text
+item_teach_<name>_<timestamp>.yaml
+item_teach_<name>_<timestamp>.pt
+bin_teach_<timestamp>_<source>.yaml
 ```
 
-Headless has no `platform_teach_file` argument. Startup requires explicit
-item/bin paths, trust and arming, validates the latest station pair and same
-model/settings/sources, and waits only the taught request deadline for inputs.
-It advertises the same service and executes inference only on a request. No
-independent detector algorithm or UI-state auto-application is used.
-Restart to select newly taught calibrations; it never switches station files in
-flight. Platform/Bin Teach keep their explicit calibration-selection workflows.
-Automatic flat `runtime_teach/` loading and runtime/debug modes are not yet
-implemented by this launch command.
+The Item YAML and model must have the same stem. The shared headless catalog
+classifies by `item_teach_` and `bin_teach_` filename prefixes, then applies the
+current strict schema/hash readers. Missing, duplicate, mismatched, symlinked,
+nested, unknown-prefix or unsupported-extension entries fail startup. Hidden
+dot-prefixed atomic-write entries are ignored. `tray_teach_` is reserved for a
+future workflow and currently fails explicitly rather than being ignored.
 
-After explicitly loading the same item profile in the separate controller:
+Launch with no arguments:
 
 ```bash
-ros2 service call /robot_controller/request_item_poses std_srvs/srv/Trigger '{}'
+ros2 launch item_perception_yolo item_detect.launch.py
 ```
 
-This read-only diagnostic request uses the profile's `pose_candidates` as pose count,
-logs/returns the ranked batch and **does not move the robot**. Motion/gripper
-execution belongs only to explicit controller real-mode actions; migration of
-existing legacy command clients remains pending. Shared strict item/bin readers
-accept flat `runtime_teach/` only via the controller's explicit deployment path;
-GUI teaching save/load directories, detector explicit-path workflow and artifact
-schemas remain unchanged.
+Starting this dedicated process is the explicit decision to load the trusted
+deployed `.pt` and advertise `/item_detect/get_item_poses`. It validates the
+latest station/robot-camera pair, current Item Teach model/settings and Bin Teach,
+then waits only the taught request deadline for fresh inputs. The model stays
+loaded, but inference runs only for a service request and every request acquires
+a new RGB/depth pair after arrival. It never returns a cached batch. Restart is
+required to select replacement runtime or calibration artifacts. Item Teach and
+an armed headless detector must not advertise the service simultaneously.
+
+The separate Robot Controller must load the same runtime snapshot in headless
+mode, or the matching explicit files in GUI mode. Its typed Pick action requests
+the batch; Item Detect remains read-only and cannot issue motion or I/O.
 
 ## Transform contract
 

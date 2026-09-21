@@ -4162,6 +4162,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and `git diff --check` pass. No Dobot service, detector request, camera action
   or physical robot motion was issued.
 
+### 2026-09-21 — Share the prefix-classified headless runtime catalog
+
+- Rule 100 closes the deferred Item Detect deployment gap. Headless Item Detect
+  and headless Robot Controller now use one shared selector for flat root
+  `runtime_teach/`. Selection is by canonical filename prefix, followed by the
+  existing strict readers: exactly one `item_teach_*.yaml`, its same-stem
+  `item_teach_*.pt`, and exactly one `bin_teach_*.yaml`. Missing, duplicate,
+  mismatched, symlinked, nested, unknown-prefix and unsupported-extension files
+  fail. Hidden atomic-write entries are ignored. `tray_teach_` is reserved and
+  fails explicitly until its artifact contract is designed.
+- `item_detect.launch.py` now has zero launch arguments. Starting it explicitly
+  selects the deployment catalog, validates/deserializes the one deployed model,
+  applies current Item Teach settings and automatic station/robot-camera
+  bindings, waits for fresh inputs, and advertises the read-only pose service.
+  The model remains loaded while inference stays request-driven; every request
+  still acquires a new RGB/depth pair after arrival and no cached pose is served.
+  Runtime selection is immutable until restart, and hash/source changes retain
+  the existing disarm/failure behavior.
+- The current operator artifacts were copied, not moved, into `runtime_teach/`
+  as ordinary files: schema-9 Item Teach YAML and paired model plus schema-3 Bin
+  Teach YAML. Their source/deployment SHA-256 values match. These deployment
+  files remain untracked operator artifacts and are excluded from the source
+  commit.
+- Verification is software-only. All 387 direct Item Perception tests and 388
+  package-reported tests pass; all 160 direct Controller tests and 161
+  package-reported tests pass, with zero failures/errors/skips. The seven
+  changed Python/launch/test files pass compilation and `ament_flake8`; the
+  complete 15-package workspace builds and `git diff --check` passes. The
+  installed launch reports no arguments, and the installed selector resolves
+  the copied Item YAML/model and Bin YAML by their expected prefixes. No camera,
+  detector service, Dobot service or robot motion was launched.
+
 ### Future entry template
 
 ```text

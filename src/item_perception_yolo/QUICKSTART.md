@@ -65,7 +65,16 @@ by `pose_candidates`, with the bin border. It uses production filters, works
 with Armed OFF and never commands the robot. SHORTAGE/NO_VALID_ITEMS are explicit;
 click RGB again to resume. The armed service never returns a frozen preview batch.
 See the README for headless `item_detect.launch.py`, quality limits and the
-read-only controller request. Physical pick execution remains pending.
+read-only pose service. For headless operation, copy exactly one same-stem
+`item_teach_*.yaml`/`.pt` pair and one `bin_teach_*.yaml` into flat root
+`runtime_teach/`, then run:
+
+```bash
+ros2 launch item_perception_yolo item_detect.launch.py
+```
+
+The model remains loaded and inference runs only when Robot Controller requests
+a fresh candidate batch. Item Detect never commands the robot.
 
 Platform and bin outputs require schema 3; camera calibration remains schema 7.
 Preserve existing older files and re-teach to create the new format.

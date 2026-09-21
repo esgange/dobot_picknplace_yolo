@@ -257,7 +257,7 @@ def test_selected_hash_changes_before_application_cannot_replace_binding(
 
 
 @pytest.mark.parametrize("selection_error", (False, True))
-def test_headless_main_uses_automatic_station_and_keeps_explicit_trust(
+def test_headless_main_uses_runtime_catalog_and_automatic_station(
         root, monkeypatch, selection_error):
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     _platform(root, _camera(root))
@@ -269,18 +269,22 @@ def test_headless_main_uses_automatic_station_and_keeps_explicit_trust(
     monkeypatch.setattr(detector, "latest_station_calibration", selection)
     robot_selection = MagicMock(return_value=robot_camera)
     monkeypatch.setattr(detector, "latest_robot_camera_calibration", robot_selection)
-    values = {"item_teach_file": "/selected/item.yaml", "bin_teach_file": "/selected/bin.yaml",
-              "trusted_model": True, "armed": True}
-    node = MagicMock(fatal_error=None)
+    catalog = SimpleNamespace(
+        item_yaml=root / "runtime_teach/item_teach_part.yaml",
+        item_model=root / "runtime_teach/item_teach_part.pt",
+        bin_yaml=root / "runtime_teach/bin_teach_station.yaml")
+    runtime_selection = MagicMock(return_value=catalog)
+    monkeypatch.setattr(detector, "runtime_teach_catalog", runtime_selection)
+    node = MagicMock(fatal_error=None, root=root)
     node.settings = {"quality": {"request_timeout_sec": 10}}
-    node.declare_parameter.side_effect = lambda key, _: SimpleNamespace(value=values[key])
-    monkeypatch.setattr(detector, "ItemDetectNode", MagicMock(return_value=node))
+    node_factory = MagicMock(return_value=node)
+    monkeypatch.setattr(detector, "ItemDetectNode", node_factory)
     monkeypatch.setattr(detector, "MultiThreadedExecutor", MagicMock())
     monkeypatch.setattr(detector.threading, "Thread", MagicMock())
     monkeypatch.setattr(detector.rclpy, "init", MagicMock())
     monkeypatch.setattr(detector.rclpy, "ok", lambda: False)
-    profile = {"model": {"filename": "item.pt"}}
-    monkeypatch.setattr(detector, "load_item_profile", lambda _: (profile, "c"))
+    profile = {"model": {"filename": catalog.item_model.name, "sha256": "a" * 64}}
+    monkeypatch.setattr(detector, "load_item_profile", lambda *_args, **_kwargs: (profile, "c"))
     monkeypatch.setattr(detector, "settings_from_profile", lambda _: {})
     monkeypatch.setattr(detector, "detection_settings", lambda _: {})
     if selection_error:
@@ -291,25 +295,24 @@ def test_headless_main_uses_automatic_station_and_keeps_explicit_trust(
     else:
         detector.main()
         node.apply_station.assert_called_once_with(
-            latest.platform.path, "/selected/bin.yaml", expected_station=latest,
+            latest.platform.path, catalog.bin_yaml, expected_station=latest,
             expected_robot_camera=robot_camera)
-        node.arm.assert_called_once_with(Path("/selected/item.yaml"))
+        node.inspect_model.assert_called_once_with(
+            catalog.item_model, expected_sha256="a" * 64)
+        node.arm.assert_called_once_with(catalog.item_yaml)
         node._snapshot.assert_called_once()
         selection.assert_called_once_with()
         robot_selection.assert_called_once_with()
-        declared = [call.args[0] for call in node.declare_parameter.call_args_list]
-        assert "platform_teach_file" not in declared
+    node_factory.assert_called_once_with(deployment=True)
+    runtime_selection.assert_called_once_with(root)
     node.close_runtime.assert_called_once()
 
 
-def test_headless_launch_requires_no_platform_path(monkeypatch):
+def test_headless_launch_has_no_artifact_or_arming_arguments(monkeypatch):
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     from launch.actions import DeclareLaunchArgument
     launch_path = Path(__file__).parents[1] / "launch/item_detect.launch.py"
     description = runpy.run_path(str(launch_path))["generate_launch_description"]()
     arguments = [action for action in description.entities
                  if isinstance(action, DeclareLaunchArgument)]
-    assert [argument.name for argument in arguments] == [
-        "item_teach_file", "bin_teach_file", "armed", "trusted_model"]
-    for argument in arguments[2:]:
-        assert argument.default_value[0].text == "false"
+    assert arguments == []

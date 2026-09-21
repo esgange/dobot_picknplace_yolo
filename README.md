@@ -38,6 +38,14 @@ launch starts only the controller and strictly loads the flat `runtime_teach/`
 catalog. Crucially, neither launch mode enables or moves the robot: both require
 an explicit typed `/robot_controller/startup` call.
 
+Headless `item_detect` uses the same prefix-classified deployment catalog:
+exactly one `item_teach_*.yaml` with its same-stem `item_teach_*.pt`, and one
+`bin_teach_*.yaml`. Its launch has no file, trust or arming arguments. Starting
+that dedicated read-only process loads the deployed model once, validates fresh
+camera/TF inputs and advertises the pose service; inference remains request-driven.
+`tray_teach_` is reserved for a future artifact and is rejected until that
+workflow exists.
+
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
 Pick requests one fresh hash-matched batch from the sole canonical provider:
@@ -386,10 +394,15 @@ Unsaved text-box edits are not autosaved; restart prefills the selected saved
 teach YAML and camera prefix. Station/bin selections are the narrow automatic
 read-only-preview exception; item settings, model execution and arming remain unapplied.
 
-`item_detect.launch.py` uses the same automatic station selection, with explicit
-item/bin artifact paths, `trusted_model:=true` and `armed:=true`; its
-`platform_teach_file` argument is removed. Platform/Bin Teach retain their
-explicit calibration selection. The controller requests one fresh batch directly
+`item_detect.launch.py` uses the same automatic station selection and the shared
+flat `runtime_teach/` catalog used by headless Robot Controller. Launch it with:
+
+```bash
+ros2 launch item_perception_yolo item_detect.launch.py
+```
+
+It accepts no artifact, trust, arming or platform arguments. Platform/Bin Teach
+retain their explicit calibration selection. The controller requests one fresh batch directly
 from `/item_detect/get_item_poses`, always using the taught `pose_candidates`
 limit and exact profile/station hashes. Detector/teach nodes remain read-only;
 only explicit controller Startup followed by a typed Home/Pick action can issue

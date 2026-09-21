@@ -25,7 +25,9 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Headless mode starts only the hardware controller and loads exactly one Item
 Teach YAML/paired `.pt` plus one Bin Teach YAML from the flat root
-`runtime_teach/` directory. It still remains `INACTIVE` until Startup:
+`runtime_teach/` directory. The shared detector/controller catalog selects them
+by `item_teach_` and `bin_teach_` filename prefix; Item YAML/PT must have the
+same stem. It still remains `INACTIVE` until Startup:
 
 ```bash
 ros2 launch robot_controller robot_controller.launch.py headless:=true
@@ -34,6 +36,9 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 Canonical Dobot bringup and Item Detect are separate processes. Do not run the
 maintenance `motion_debug` or `gripper_control` application alongside
 production Startup; their presence is rejected as competing command ownership.
+Launch headless Item Detect separately with no arguments; it reads the same
+immutable `runtime_teach/` selection and advertises only the read-only pose
+service.
 
 ## Typed API
 

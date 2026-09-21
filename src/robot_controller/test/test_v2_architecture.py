@@ -114,6 +114,14 @@ def test_headless_configuration_does_not_call_startup():
     assert '"INACTIVE"' in headless_block
 
 
+def test_headless_controller_uses_shared_prefix_runtime_catalog():
+    profiles = (PACKAGE / "python/robot_controller/profiles.py").read_text()
+    assert "from item_perception_yolo.runtime_teach import runtime_teach_catalog" in profiles
+    runtime = profiles.split("def runtime_selection", 1)[1]
+    assert "runtime_teach_catalog(root)" in runtime
+    assert "artifact_type" not in runtime
+
+
 def test_gui_configuration_can_reload_only_from_unheld_idle_ready():
     controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
     gui = (PACKAGE / "python/robot_controller/gui.py").read_text()

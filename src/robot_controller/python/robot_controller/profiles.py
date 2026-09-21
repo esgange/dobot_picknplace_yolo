@@ -3,12 +3,10 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
 from item_perception_yolo.bin_teach_core import (
     load_bin_teach, place_bin_roi, validate_applied_sources, bin_platform_warning)
-from item_perception_yolo.item_teach_core import (
-    _UniqueKeyLoader, file_sha256, load_item_profile)
+from item_perception_yolo.item_teach_core import file_sha256, load_item_profile
+from item_perception_yolo.runtime_teach import runtime_teach_catalog
 from item_perception_yolo.station_calibration import (
     latest_station_calibration, latest_robot_camera_calibration,
     validate_robot_camera_calibration)
@@ -50,30 +48,5 @@ def load_selection(item, bin_path, root, *, deployment=False):
 
 
 def runtime_selection(root):
-    directory = Path(root).resolve() / "runtime_teach"
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError("Required flat root runtime_teach/ directory is missing or symlinked")
-    artifacts = {"item_teach": [], "bin_teach": []}
-    for path in sorted(directory.iterdir()):
-        if path.name.startswith("."):
-            continue
-        if path.is_symlink() or not path.is_file():
-            raise ValueError("runtime_teach/ requires regular files only; no partitions/symlinks")
-        if path.suffix == ".pt":
-            continue
-        if path.suffix != ".yaml":
-            raise ValueError(f"Unsupported runtime_teach file: {path.name}")
-        try:
-            payload = yaml.load(path.read_bytes(), Loader=_UniqueKeyLoader)
-            kind = payload["artifact_type"]
-            artifacts[kind].append(path)
-        except (OSError, yaml.YAMLError, TypeError, KeyError, ValueError) as exc:
-            raise ValueError(f"Invalid/unsupported runtime teach: {path.name}: {exc}") from exc
-    if any(len(paths) != 1 for paths in artifacts.values()):
-        raise ValueError("Pick-only stage requires exactly one item and one bin in runtime_teach/")
-    selected = load_selection(artifacts["item_teach"][0], artifacts["bin_teach"][0], root,
-                              deployment=True)
-    weights = {p.name for p in directory.glob("*.pt")}
-    if weights != {selected.item["model"]["filename"]}:
-        raise ValueError("runtime_teach/ must contain exactly the selected item's paired .pt")
-    return selected
+    catalog = runtime_teach_catalog(root)
+    return load_selection(catalog.item_yaml, catalog.bin_yaml, root, deployment=True)
