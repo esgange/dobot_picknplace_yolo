@@ -237,7 +237,7 @@ def test_pause_held_preserves_outputs_and_continue_does_not_open_fingers():
     assert returned["queue_through_home"]
 
 
-@pytest.mark.parametrize("prepick", [50., 80.])
+@pytest.mark.parametrize("prepick", [20., 50., 80.])
 @pytest.mark.parametrize("dropped", [False, True])
 def test_held_return_and_paused_drop_use_original_candidate_release_and_home(prepick, dropped):
     rig = Rig(held=True, prepick=prepick)
@@ -263,7 +263,7 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     assert rig.managed.session.held_index is None
     moves = [entry for entry in rig.log if entry[0] == "move"]
     approach = next(entry for entry in moves if "return_release" in entry[1])
-    assert approach[1][0] == "park_transit"
+    assert approach[1] == ("park_transit", "return_release")
     assert ("pulse", 50) in rig.log
     pulse = rig.log.index(("pulse", 50))
     assert rig.log.index(("output", 2, False)) < pulse
@@ -274,7 +274,8 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     returned = next(entry[1] for entry in rig.log if entry[0] == "home")
     assert returned["queue_through_home"]
     retreat = returned["preceding"]
-    assert len(retreat) == (2 if prepick == 50. else 3)
+    assert len(retreat) == 2
+    assert returned["confirmed_start_pose"][2, 3] == pytest.approx(.3 + prepick / 1000)
     assert len(retreat[0].motion_io) == 4
     assert retreat[-1].name == "return_park_transit"
     assert retreat[-1].matrix[2, 3] == pytest.approx(.8)
@@ -282,7 +283,7 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     assert not retreat[-1].motion_io
 
 
-@pytest.mark.parametrize("prepick", [50., 80.])
+@pytest.mark.parametrize("prepick", [20., 50., 80.])
 @pytest.mark.parametrize("dropped", [False, True])
 @pytest.mark.parametrize("continuing", [False, True])
 def test_entire_put_back_uses_full_speed_before_resuming_normal_pick_rates(
@@ -303,6 +304,11 @@ def test_entire_put_back_uses_full_speed_before_resuming_normal_pick_rates(
     rig.hardware.on_move = lambda targets, kwargs: batches.append((targets, kwargs))
     departure = rig.managed._put_back(dropped=dropped, continue_candidates=continuing)
     assert batches[0][0][0].name == "pause_safety"
+    release_targets = next(targets for targets, kwargs in batches
+                           if kwargs["batch_name"] == "return_item_to_release")
+    assert [target.name for target in release_targets] == ["park_transit", "return_release"]
+    assert np.array_equal(release_targets[-1].matrix,
+                          rig.managed.session.attempts[0].plan[2].matrix)
     assert all((target.speed_percent, target.acceleration_percent) == (100, 80)
                for targets, _kwargs in batches for target in targets)
     assert rig.global_speed_percent == 37
@@ -478,16 +484,19 @@ def test_continue_rejected_before_parking_finishes():
         rig.managed.continue_operation()
 
 
-def test_return_geometry_rejects_drop_above_prepick_and_preserves_original_pose():
-    rig = Rig(prepick=40.)
-    with pytest.raises(ValueError, match="at least 50 mm"):
-        return_targets(rig.managed.session.attempts[0].plan)
-    rig = Rig(prepick=80.)
-    plan = rig.managed.session.attempts[0].plan
-    release, _retreat = return_targets(plan)
-    assert release.matrix[2, 3] == pytest.approx(plan[3].matrix[2, 3] + .05)
-    assert np.allclose(release.matrix[:2, 3], plan[3].matrix[:2, 3])
-    assert np.allclose(release.matrix[:3, :3], plan[3].matrix[:3, :3])
+@pytest.mark.parametrize("prepick", [0., 10., 40., 50., 80.])
+def test_return_geometry_uses_exact_taught_prepick_including_standoff(prepick):
+    settings = profile(prepick)
+    settings["motion"]["standoff_height"] = 12.
+    home = pose_matrix([400., 200., 800., 180., 0., 30.])
+    plan = pick_targets(home, matrix(x=.2, z=.3), settings, 1)
+    release, retreat = return_targets(plan)
+    assert release.matrix[2, 3] == pytest.approx(.312 + prepick / 1000)
+    assert np.array_equal(release.matrix, plan[2].matrix)
+    assert not release.motion_io
+    assert [target.name for target in retreat] == ["return_clearance", "return_park_transit"]
+    assert retreat[0].matrix[2, 3] == pytest.approx(release.matrix[2, 3] + .05)
+    assert not plan[2].motion_io and not plan[5].motion_io
     above = matrix(x=.5, z=1.0)
     assert np.array_equal(safety_target(above, matrix(z=.8), profile()).matrix, above)
 
@@ -822,18 +831,23 @@ def test_return_requested_at_paused_drop_releases_once_and_finishes_ready():
     assert sum(entry[0] == "pulse" for entry in rig.log) == 1
 
 
-@pytest.mark.parametrize("prepick", [50., 80.])
+@pytest.mark.parametrize("prepick", [20., 50., 80.])
 def test_put_back_never_sends_release_events_on_zero_distance_retreat(prepick):
     settings = profile(prepick)
     settings["motion"]["retract_height"] = 0.
     plan = pick_targets(matrix(z=.8), matrix(z=.3), settings, 1)
-    if prepick == 50.:
-        with pytest.raises(ValueError, match="clearance above the release"):
-            return_targets(plan)
-    else:
-        release, retreat = return_targets(plan)
-        assert len(retreat) == 2
-        assert retreat[0].matrix[2, 3] > release.matrix[2, 3]
-        assert {event.channel for event in retreat[0].motion_io} == {1, 2, 13, 14}
-        assert retreat[-1].name == "return_park_transit"
-        assert not retreat[-1].motion_io
+    release, retreat = return_targets(plan)
+    assert np.array_equal(release.matrix, plan[2].matrix)
+    assert len(retreat) == 1
+    assert retreat[0].name == "return_park_transit"
+    assert retreat[0].matrix[2, 3] == .8 > release.matrix[2, 3]
+    assert {event.channel for event in retreat[0].motion_io} == {1, 2, 13, 14}
+    assert all(event.percent == 0 and not event.active for event in retreat[0].motion_io)
+
+
+def test_put_back_rejects_geometry_without_any_upward_neutral_retreat():
+    settings = profile(50.)
+    settings["motion"]["retract_height"] = 0.
+    plan = pick_targets(matrix(z=.35), matrix(z=.3), settings, 1)
+    with pytest.raises(ValueError, match="clearance or safety Z above the taught pre-pick"):
+        return_targets(plan)

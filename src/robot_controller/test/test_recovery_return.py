@@ -14,8 +14,8 @@ from test_managed_control import Rig, states
 
 
 class RecoveryRig(Rig):
-    def __init__(self, *, count=2):
-        super().__init__(held=True, count=count)
+    def __init__(self, *, count=2, prepick=80.):
+        super().__init__(held=True, count=count, prepick=prepick)
         self.machine = ControllerStateMachine(initial="FAULT")
         self.operation_lock.release()
         self.startup_complete = False
@@ -48,8 +48,9 @@ class RecoveryRig(Rig):
 
 @pytest.mark.parametrize("di1_recovers", [False, True])
 @pytest.mark.parametrize("count", [1, 2])
-def test_recovery_puts_back_then_next_candidate_or_home(count, di1_recovers):
-    rig = RecoveryRig(count=count)
+@pytest.mark.parametrize("prepick", [20., 80.])
+def test_recovery_puts_back_then_next_candidate_or_home(count, di1_recovers, prepick):
+    rig = RecoveryRig(count=count, prepick=prepick)
     rig.lose_suction()
     rig.managed.observe(rig.snapshot())
     assert states(rig)[0] == "DROPPED"
@@ -73,18 +74,21 @@ def test_recovery_puts_back_then_next_candidate_or_home(count, di1_recovers):
     assert approach < pulse
     first_output = next(i for i, entry in enumerate(rig.log) if entry[0] == "output")
     assert first_output > approach
+    release = next(targets[-1] for targets, kwargs in batches
+                   if kwargs["batch_name"] == "return_item_to_release")
+    assert release.matrix[2, 3] == pytest.approx(.3 + prepick / 1000)
     if count == 2:
         next_pick = next(i for i, entry in enumerate(rig.log)
                          if entry[0] == "move" and entry[2].get("stop_on_suction"))
         assert next_pick > pulse
         assert not any(entry[0] == "home" for entry in rig.log[:next_pick])
         group = rig.log[next_pick]
-        assert group[1] == ("return_prepick", "return_clearance", "return_park_transit",
+        assert group[1] == ("return_clearance", "return_park_transit",
                             "p2_transit", "p2_initial", "p2_prepick", "p2_pick")
         assert group[2]["pick_settling_sec"] == 0.1
-        assert group[2]["confirmed_start_pose"][2, 3] == pytest.approx(0.35)
+        assert np.array_equal(group[2]["confirmed_start_pose"], release.matrix)
         targets = next(targets for targets, kwargs in batches if kwargs.get("stop_on_suction"))
-        old_exit, next_entry = targets[2:4]
+        old_exit, next_entry = targets[1:3]
         assert old_exit.matrix[2, 3] == next_entry.matrix[2, 3] == .8
         assert np.array_equal(old_exit.matrix[:2, 3], targets[0].matrix[:2, 3])
         assert not np.array_equal(old_exit.matrix[:2, 3], next_entry.matrix[:2, 3])

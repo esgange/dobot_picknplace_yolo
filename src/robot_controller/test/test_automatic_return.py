@@ -17,8 +17,8 @@ from test_managed_control import states
 from test_recovery_return import RecoveryRig
 
 
-def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract"):
-    rig = RecoveryRig(count=count)
+def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract", prepick=80.):
+    rig = RecoveryRig(count=count, prepick=prepick)
     rig.machine = ControllerStateMachine(initial="READY")
     rig.startup_complete = True
     rig.holding_item = False
@@ -56,8 +56,10 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract"):
     rig._execute_home = home
     rig.hardware.acquisitions = iter([True] * count)
     rig.lost = []
+    rig.batches = []
 
     def lose(targets, kwargs):
+        rig.batches.append((targets, kwargs))
         index = rig.managed.session.held_index
         if kwargs.get("require_suction") and index in losses and index not in rig.lost:
             rig.lost.append(index)
@@ -83,9 +85,10 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract"):
 @pytest.mark.parametrize("loss_at", ["preflight", "retract", "home"])
 @pytest.mark.parametrize("count", [1, 2])
 @pytest.mark.parametrize("di1_recovers", [False, True])
+@pytest.mark.parametrize("prepick", [20., 80.])
 def test_active_pick_puts_back_without_recovery_or_action_failure(
-        monkeypatch, count, loss_at, di1_recovers):
-    rig = action_rig(monkeypatch, count=count, loss_at=loss_at)
+        monkeypatch, count, loss_at, di1_recovers, prepick):
+    rig = action_rig(monkeypatch, count=count, loss_at=loss_at, prepick=prepick)
     confirm = rig.hardware.confirm_stop
 
     def confirmed(future, **kwargs):
@@ -110,11 +113,14 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
                    if entry[0] == "move" and "return_release" in entry[1])
     pulse = rig.log.index(("pulse", 50))
     assert stop < release < pulse
-    assert rig.log[release][1][0] == "park_transit"
+    assert rig.log[release][1] == ("park_transit", "return_release")
     assert rig.log[release][2]["preserve_outputs"]
+    release_pose = next(targets[-1].matrix for targets, kwargs in rig.batches
+                        if kwargs["batch_name"] == "return_item_to_release")
+    assert release_pose[2, 3] == pytest.approx(.3 + prepick / 1000)
     following = next(entry for entry in rig.log[pulse + 1:] if entry[0] == "move")
-    assert following[1][:3] == ("return_prepick", "return_clearance", "return_park_transit")
-    assert following[1][3:] == (("home",) if count == 1 else (
+    assert following[1][:2] == ("return_clearance", "return_park_transit")
+    assert following[1][2:] == (("home",) if count == 1 else (
         "p2_transit", "p2_initial", "p2_prepick", "p2_pick"))
     assert rig.startup_complete
     assert not rig.operation_lock.locked()
@@ -194,7 +200,7 @@ def test_pause_after_automatic_release_resumes_next_candidate_without_releasing_
     def pause(targets, kwargs):
         if kwargs.get("batch_name") == "return_item_to_candidate_2_pick" and not paused:
             paused.append(True)
-            rig.managed.session.admitted(targets[3])
+            rig.managed.session.admitted(next(t for t in targets if t.name == "p2_transit"))
             rig.managed.request("pause")
             rig.managed.checkpoint()
         lose(targets, kwargs)

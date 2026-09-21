@@ -188,6 +188,10 @@ travel acceleration, including release approach, neutral retreat and Home.
 Only a successful pick's first lift to pre-pick uses taught retract speed and
 acceleration; empty retract and the clearance rise use speed 100% with travel
 acceleration. Final pick retains taught approach rates; global SpeedFactor applies.
+Rule 113 uses the exact saved pre-pick pose for every put-back release, removing
+the fixed +50 mm offset and minimum pre-pick check. With zero retract height,
+neutralize on the upward exit transit; clearance or safety Z must still provide
+a real upward retreat. Preserve full-speed return, both transits and 50 ms exhaust.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

@@ -113,20 +113,21 @@ A trusted held item's source pose survives completion of its Pick action.
 Home. The GUI exposes it as **RETURN ITEM & STOP** while paused with an item.
 Suction loss during Pause invokes that same return automatically, even if the
 item may already have fallen; it then remains PAUSED at Home. Continue tries the
-remaining latched candidates. The return visits the original pre-pick and a
-release pose 50 mm above nominal final-pick Z, opens fingers, and issues a
+remaining latched candidates. The return releases at the original taught pre-pick
+pose (`final-pick Z + prepick_height`), opens fingers, and issues a
 controller-timed 50 ms exhaust pulse. OPEN is commanded before the pulse; these
 are separate commands, not simultaneous electrical edges. Exhaust OFF and DI1
 clear must be confirmed before retreat. The first real upward `MovLIO` segment
 neutralizes the outputs, then the route passes clearance and an explicit exit
 `park_transit` before exact joint Home. Put-back also queues its entry
-`park_transit` before descending to pre-pick/release. Pre-pick
-must be at least 50 mm above final pick, with clearance above the release pose;
-equal waypoints skip the zero-length retreat. The pulse is independent of the
+`park_transit` before descending to pre-pick/release. There is no fixed 50 mm
+release offset or minimum pre-pick height. If clearance equals pre-pick, the
+rise to exit transit carries the neutral events; clearance or safety Z must
+still provide a real upward retreat. The pulse is independent of the
 taught final-pick settling interval.
 
 The complete put-back route uses commanded speed 100% with taught travel
-acceleration: safety rise, entry transit, pre-pick, +50 mm release, neutral
+acceleration: safety rise, entry transit, taught pre-pick release, neutral
 retreat, exit transit and Home. This applies to explicit return, paused drop,
 Recovery and automatic suction-loss return. The global SpeedFactor still scales
 these movements; returning an item does not change the slider setting.
@@ -134,7 +135,7 @@ these movements; returning an item does not change the slider setting.
 During an active Pick's held retract/Home, confirmed suction loss immediately
 requests Stop and automatically starts put-back after stationary/empty-queue
 confirmation. The same Pick action stays active; no error popup or Recovery
-click is needed for this loss alone. It uses the saved source, +50 mm release,
+click is needed for this loss alone. It uses the saved source, taught pre-pick release,
 finger OPEN and confirmed 50 ms exhaust, then the next eligible saved candidate
 or exact Home when none remain. It preserves the original batch and both transit
 waypoints. Repeated losses consume candidates until one succeeds or the batch
@@ -150,7 +151,7 @@ only after a final confirmed Stop. DI1 confirms vacuum, so LOW does not prove
 that an item has physically left the fingers. Outside active Pick, or after an
 interrupted put-back, explicit Recovery with the saved source preserves outputs
 during Stop/clear/enable/settings, uses
-the same +50 mm release and confirmed 50 ms exhaust pulse, and excludes that
+the same taught pre-pick release and confirmed 50 ms exhaust pulse, and excludes that
 `DROPPED` candidate. If another saved candidate is eligible, neutral retreat,
 the old item's exit transit, and the next item's entry transit/clearance/pre-pick/pick
 form one group without visiting Home first. Both transits share safety Z.

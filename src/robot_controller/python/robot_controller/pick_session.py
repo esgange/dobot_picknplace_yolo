@@ -84,22 +84,18 @@ def approach_from_safety(current, plan):
 
 
 def return_targets(plan):
-    """Release exactly 50 mm above nominal Link6 pick, never above pre-pick."""
-    drop = plan[3].matrix.copy()
-    drop[2, 3] += 0.050
-    if plan[2].matrix[2, 3] + 1e-9 < drop[2, 3]:
-        raise ValueError("Put-back requires pre-pick at least 50 mm above final pick")
-    if plan[5].matrix[2, 3] <= drop[2, 3] + 1e-9:
-        raise ValueError("Put-back requires clearance above the release pose for upward retreat")
+    """Release at the taught pre-pick pose; neutralize on the first real rise."""
     rates = {"speed_percent": 100, "acceleration_percent": plan[0].acceleration_percent}
-    release = replace(plan[3], name="return_release", matrix=drop, motion_io=(), **rates)
+    release = replace(plan[2], name="return_release", motion_io=(), **rates)
     neutral = gripper_neutral_events(0) + vacuum_neutral_events(0)
     retreat = []
-    if plan[2].matrix[2, 3] > drop[2, 3] + 1e-9:
-        retreat.append(replace(plan[4], name="return_prepick", motion_io=neutral, **rates))
-    if not retreat or plan[5].matrix[2, 3] > plan[2].matrix[2, 3] + 1e-9:
-        retreat.append(replace(plan[5], name="return_clearance",
-                               motion_io=() if retreat else neutral, **rates))
-    retreat.append(replace(candidate_exit_transit(retreat[-1].matrix, plan),
+    if plan[5].matrix[2, 3] > release.matrix[2, 3] + 1e-9:
+        retreat.append(replace(plan[5], name="return_clearance", motion_io=(), **rates))
+    origin = retreat[-1].matrix if retreat else release.matrix
+    retreat.append(replace(candidate_exit_transit(origin, plan),
                            name="return_park_transit", **rates))
+    if retreat[0].matrix[2, 3] <= release.matrix[2, 3] + 1e-9:
+        raise ValueError("Put-back requires clearance or safety Z above the taught "
+                         "pre-pick release pose for upward retreat")
+    retreat[0] = replace(retreat[0], motion_io=neutral)
     return release, tuple(retreat)

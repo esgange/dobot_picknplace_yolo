@@ -318,10 +318,7 @@ class ManagedControl:
         current = self._rise(current, holding=not dropped, preserve_outputs=dropped,
                              full_speed=True)
         approach = approach_from_safety(current, plan)
-        if abs(release.matrix[2, 3] - plan[2].matrix[2, 3]) > 1e-9:
-            approach += (release,)
-        else:
-            approach = approach[:-1] + (release,)
+        approach = approach[:-1] + (release,)
         node.hardware.move_batch(approach, batch_name="return_item_to_release",
                                  require_suction=not dropped,
                                  preserve_outputs=dropped,

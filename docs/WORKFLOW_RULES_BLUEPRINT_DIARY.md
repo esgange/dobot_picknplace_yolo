@@ -4689,6 +4689,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   were issued; live speeds and motion remain unverified. No new offline-transfer
   milestone is claimed.
 
+### 2026-09-21 — Release returned items at the taught pre-pick height
+
+- Rule 113 supersedes rule 102's fixed final-pick-Z +50 mm put-back release and
+  minimum pre-pick-height check, including later rules that reused that release.
+  The operator requests that the controller follow the taught pre-pick height.
+  The latest controller log at 12:54:55 UTC reports the exact refusal before
+  picking: `Put-back requires pre-pick at least 50 mm above final pick`.
+- Every put-back now releases at the saved candidate's exact pre-pick matrix:
+  item base Z + taught standoff + taught prepick_height, with its original
+  X/Y/attitude. Do not impose a separate 50 mm release offset or height minimum.
+  Use the same geometry in Pick preflight, TF preview, explicit return, paused
+  drop, automatic active-Pick suction-loss return and explicit Recovery.
+  Queue entry transit then this release target, without a duplicate pre-pick
+  waypoint or an additional descent. Teach artifact schemas/files are unchanged.
+- After confirmed release and the existing native 50 ms exhaust pulse, rise to
+  taught clearance with all four outputs NEUTRAL at the start, then queue the
+  mandatory exit transit before the next candidate's entry or exact Home. When
+  retract_height is zero, clearance and release coincide: omit that zero-length
+  segment and put neutral I/O on the upward exit transit. This narrowly
+  supersedes rule 110's no-I/O exit for that case. If neither clearance nor
+  safety Z is above release, keep rejecting geometry with no real upward
+  retreat before picking. A coincident exit after a real clearance rise still
+  stays explicitly queued without I/O. No neutral events on zero-length moves.
+- Preserve rule 112's speed 100% with travel acceleration for every put-back
+  target, global SpeedFactor, both transits, CP(100), ordered acceptance,
+  terminal confirmation, output protection, exhaust/release feedback checks,
+  candidate ledger, Stop/Pause pre-emption and subsequent pick rates. No vendor,
+  runtime, schema, calibration, operator-model or teaching-file changes.
+- Verification: all 327 direct controller tests pass; package results report
+  328 tests with zero failures/errors/skips. Coverage includes heights below,
+  at and above 50 mm, exact saved pose including standoff/attitude, explicit
+  return, paused drop, automatic loss return, Recovery, next-candidate and Home
+  routes, full-speed return, both transits, zero-height clearance and refusal
+  when no upward neutral retreat exists. All five changed Python/test files
+  compile and pass ament_flake8. The full 15-package root symlink build and
+  `git diff --check` pass. No physical robot commands were issued; live motion,
+  placement and clearance remain unverified. No new offline-transfer milestone
+  is claimed.
+
 ### Future entry template
 
 ```text

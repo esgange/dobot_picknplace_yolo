@@ -209,10 +209,11 @@ can establish trusted holding; late DI1 from a latched miss cannot.
 
 Put-back retains the original held candidate pose even after successful Pick has
 already completed at Home. From confirmed Stop it rises to Home Z if necessary,
-travels to the original pre-pick, then reaches exactly nominal final-pick Z plus
-50 mm at that candidate's X/Y/attitude. Pre-pick below that drop height or
-clearance at/below it is rejected before picking; equal waypoints send no
-zero-distance segment. Holding outputs
+queues the entry transit, then releases at the exact saved pre-pick pose:
+nominal final-pick Z plus taught `motion.prepick_height`, at that candidate's
+X/Y/attitude. Rule 113 removes the fixed +50 mm release offset and its minimum
+pre-pick check. Preview and hardware use the same release geometry. No extra
+descent below pre-pick or duplicate pre-pick target is queued. Holding outputs
 are preserved until the release pose is physically confirmed. For an already
 latched drop, DI1 LOW is expected but output/fault/feedback checks continue.
 
@@ -223,13 +224,18 @@ an exactly simultaneous electrical edge. The pulse is independent of
 when it finishes before its ROS response arrives. Missing pulse evidence, exhaust
 remaining ON or DI1 remaining HIGH blocks return motion. Fingers stay OPEN during
 release; the first real upward `MovLIO` return segment commands all four outputs
-NEUTRAL at its start. The pre-pick/clearance/exit-transit/exact joint-Home
+NEUTRAL at its start. The clearance/exit-transit/exact joint-Home
 route is admitted in order and physically confirms only terminal Home.
 Put-back queues entry `park_transit` before pre-pick/release and exit
-`return_park_transit` after clearance, including at/near Home Z. The exit has no
-timed I/O and retains global CP(100). Under rule 112, every put-back target uses
+`return_park_transit` after clearance, including at/near Home Z. If taught
+retract height is zero, omit the coincident clearance and neutralize on the
+upward exit-transit segment instead. If neither clearance nor safety Z provides
+an upward retreat, reject the geometry before picking; never attach neutral
+I/O to a zero-distance move. Otherwise the exit has no timed I/O, and it remains
+queued even when coincident with clearance. All segments retain global CP(100).
+Under rule 112, every put-back target uses
 `v=100` and taught travel acceleration: initial safety rise, entry transit,
-pre-pick, +50 mm release, neutral pre-pick/clearance retreat, exit transit and
+taught pre-pick release, neutral clearance retreat, exit transit and
 exact joint Home. Put-back never inherits the slow approach/retract rates.
 This applies to explicit return, paused drop, Recovery and automatic loss return.
 If another candidate follows, its normal travel and final-pick approach rates
@@ -264,7 +270,7 @@ During active Pick, rule 111 keeps that loss inside the original action. Request
 Stop immediately, resolve any in-flight admission, confirm a stationary empty
 queue and preserved outputs, and require fresh enabled feedback and unchanged
 sources before returning to the saved item. Use the normal safety rise, entry
-transit, original pre-pick, +50 mm release, OPEN and confirmed 50 ms exhaust.
+transit, original taught pre-pick release, OPEN and confirmed 50 ms exhaust.
 Queue neutral retreat and the old exit transit before the next eligible item's
 entry/clearance/pre-pick/pick, or before exact Home if none remain. Both transits
 retain CP(100). The lost candidate stays DROPPED even if DI1 returns HIGH.
@@ -289,12 +295,12 @@ An explicit Recovery click with that retained source confirms Stop, conditional
 ClearError, Enable, settings and READY feedback while preserving all outputs.
 Only this scoped readiness step permits uncertain DI1; every output check stays
 strict and normal suction validation is restored on success or exception. Then
-it uses the existing put-back route with outputs preserved until the +50 mm
-release pose, followed by finger OPEN and the confirmed native 50 ms EXHAUST
+it uses the existing put-back route with outputs preserved until the taught
+pre-pick release pose, followed by finger OPEN and the confirmed native 50 ms EXHAUST
 pulse. Do not proceed until pulse OFF and raw DI1 LOW are confirmed.
 
 If the same retained batch has an eligible PENDING or INTERRUPTED candidate,
-queue neutral retreat through old pre-pick/clearance, the old item's exit transit,
+queue neutral retreat through old clearance, the old item's exit transit,
 then the next candidate's entry transit, clearance, pre-pick and final pick in
 one ordered group. Both transits share safety Z. No intervening
 Home or new detector request occurs; only final pick uses taught settling and
