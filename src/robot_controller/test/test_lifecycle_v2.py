@@ -552,9 +552,11 @@ def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holdi
             ("progress", phase, message, fields)))
 
     preceding = (clearance,)
+    confirmed_start = np.eye(4)
     assert RobotController._execute_home(
         node, preceding=preceding, require_suction=holding,
         forbid_suction=not holding,
+        confirmed_start_pose=confirmed_start,
         batch_name="candidate_1_pick_to_home") == (height, home)
     moves = [entry for entry in calls if entry[0] == "move"]
     assert [entry[1] for entry in moves] == [preceding, (height,), (home,)]
@@ -564,6 +566,8 @@ def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holdi
         "candidate_1_pick_to_home"]
     assert all(entry[2]["require_suction"] is holding
                and entry[2]["forbid_suction"] is not holding for entry in moves)
+    assert moves[0][2]["confirmed_start_pose"] is confirmed_start
+    assert all("confirmed_start_pose" not in entry[2] for entry in moves[1:])
     assert calls.index(("check",)) > calls.index(moves[0])
 
 

@@ -866,15 +866,20 @@ class DobotTransport:
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             raise FeedbackFailure("Invalid stationary FeedInfo tool_vector_actual") from exc
 
+    @staticmethod
+    def _valid_rigid_matrix(matrix):
+        return (isinstance(matrix, np.ndarray) and matrix.shape == (4, 4)
+                and np.issubdtype(matrix.dtype, np.number)
+                and not np.iscomplexobj(matrix) and np.all(np.isfinite(matrix))
+                and np.allclose(matrix[3], [0, 0, 0, 1], atol=1e-9, rtol=0)
+                and np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3),
+                                atol=1e-6, rtol=0)
+                and math.isclose(float(np.linalg.det(matrix[:3, :3])), 1.,
+                                 abs_tol=1e-6))
+
     def _target_values(self, target):
         matrix = target.matrix
-        if (not isinstance(matrix, np.ndarray) or matrix.shape != (4, 4)
-                or not np.issubdtype(matrix.dtype, np.number) or np.iscomplexobj(matrix)
-                or not np.all(np.isfinite(matrix))
-                or not np.allclose(matrix[3], [0, 0, 0, 1], atol=1e-9, rtol=0)
-                or not np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3),
-                                   atol=1e-6, rtol=0)
-                or not math.isclose(float(np.linalg.det(matrix[:3, :3])), 1., abs_tol=1e-6)):
+        if not self._valid_rigid_matrix(matrix):
             raise CommandRejected(f"Invalid rigid target transform for {target.name}")
         values = pose_values(matrix)
         if target.joints_rad is not None:
@@ -950,18 +955,23 @@ class DobotTransport:
 
     def move_batch(self, targets, *, batch_name="motion", require_suction=False,
                    forbid_suction=False, stop_on_suction=False,
-                   before_suction=None, settle_suction_sec=0.0,
-                   require_suction_reset=False):
+                   before_suction=None, pick_settling_sec=0.0,
+                   require_suction_reset=False, return_terminal_pose=False,
+                   confirmed_start_pose=None):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction)) > 1
-                or (type(settle_suction_sec) not in (int, float)
-                    or not math.isfinite(settle_suction_sec) or settle_suction_sec < 0)
-                or (settle_suction_sec and not stop_on_suction)
-                or (require_suction_reset and not stop_on_suction)):
+                or (type(pick_settling_sec) not in (int, float)
+                    or not math.isfinite(pick_settling_sec) or pick_settling_sec < 0)
+                or (pick_settling_sec and not stop_on_suction)
+                or (require_suction_reset and not stop_on_suction)
+                or type(return_terminal_pose) is not bool
+                or (confirmed_start_pose is not None
+                    and not self._valid_rigid_matrix(confirmed_start_pose))):
             raise CommandRejected("Invalid motion-batch suction policy or empty batch")
         batch_name = batch_name.strip()
-        start = self.current_pose()
+        start = (self.current_pose() if confirmed_start_pose is None
+                 else confirmed_start_pose.copy())
         origin = start
         prepared = []
         expected_outputs = {}
@@ -1038,7 +1048,12 @@ class DobotTransport:
                     raise FeedbackFailure(
                         f"Motion-timed DO{channel} mismatch after suction Stop")
             self.node.expected_outputs.update(expected_outputs)
-            return True
+            try:
+                stopped_pose = pose_matrix(sample.feed["tool_vector_actual"])
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise FeedbackFailure(
+                    "Invalid stopped FeedInfo tool_vector_actual") from exc
+            return ((True, stopped_pose) if return_terminal_pose else True)
 
         try:
             calls = []
@@ -1098,6 +1113,8 @@ class DobotTransport:
                 batch=batch_name, targets=queued_targets,
                 terminal_target=targets[-1].name)
             tail = targets[-1]
+            terminal_stable_sec = (pick_settling_sec if stop_on_suction
+                                   else STATIONARY_SEC)
             stable_since = None
             sequence = self.monitor.sequence
             while True:
@@ -1114,11 +1131,15 @@ class DobotTransport:
                 if np.max(np.abs(vector - last_vector)) > 0.05:
                     last_progress, last_vector = now, vector
                 reached = self._target_reached(tail, snapshot)
+                outputs_ready = (not stop_on_suction or all(
+                    bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
+                    == active for channel, active in expected_outputs.items()))
                 idle = (snapshot.sequence > before_sequence and reached
-                        and self._idle(snapshot))
+                        and self._idle(snapshot) and outputs_ready)
                 stable_since = now if idle and stable_since is None else (
                     stable_since if idle else None)
-                if stable_since is not None and now - stable_since >= STATIONARY_SEC:
+                if (stable_since is not None
+                        and now - stable_since >= terminal_stable_sec):
                     break
                 if now - last_progress >= MOTION_NO_PROGRESS_SEC:
                     raise FeedbackFailure("Motion made no measurable progress for three seconds")
@@ -1127,7 +1148,7 @@ class DobotTransport:
                 sequence = self.monitor.wait_next(
                     sequence, min(1.0, MOTION_HARD_CAP_SEC - (now - started)),
                     cancel=self.node.cancel_requested)
-            if expected_outputs:
+            if expected_outputs and not stop_on_suction:
                 self.monitor.wait(
                     lambda sample: all(
                         bool(sample.feed["digital_outputs"] & (1 << (channel - 1))) == active
@@ -1139,37 +1160,23 @@ class DobotTransport:
             if require_suction_reset and not suction_reset_seen:
                 raise FeedbackFailure(
                     "Missed-pick DO13 OFF was not observed before the next pick")
+            if stop_on_suction:
+                self.node.expected_outputs.update(expected_outputs)
             self.pending_motion_outputs = {}
-            if stop_on_suction and suction_armed:
-                acquired_at_settle = self.sensor(
-                    True, settle_suction_sec, settling_sec=0)
-            elif stop_on_suction:
-                # A retry is not armed until DO13 has gone OFF, DI1 has been
-                # seen clear, and DO13 has then gone ON for the new candidate.
-                # Wait the configured settling duration, but never reinterpret
-                # an old candidate's late DI1 as a new acquisition.
-                settle_started = time.monotonic()
-                sequence = self.monitor.sequence
-                while time.monotonic() - settle_started < settle_suction_sec:
-                    paused_for = self._wait_for_resume()
-                    settle_started += paused_for
-                    self.node.raise_if_cancelled()
-                    remaining = settle_suction_sec - (time.monotonic() - settle_started)
-                    if remaining <= 0:
-                        break
-                    sequence = self.monitor.wait_next(
-                        sequence, min(remaining, 1.0),
-                        cancel=self.node.cancel_requested)
-                    self._ready_snapshot()
-                acquired_at_settle = False
-            else:
-                acquired_at_settle = False
+            acquired_at_settle = False
             self.node.events.record(
                 "INFO", "motion_batch_completed", batch_name,
                 batch=batch_name, terminal_target=tail.name,
                 targets=[target.name for target in targets],
+                terminal_stable_sec=terminal_stable_sec,
                 suction_confirmed=acquired_at_settle)
-            return acquired_at_settle
+            try:
+                stopped_pose = pose_matrix(snapshot.feed["tool_vector_actual"])
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise FeedbackFailure(
+                    "Invalid stopped FeedInfo tool_vector_actual") from exc
+            return ((acquired_at_settle, stopped_pose)
+                    if return_terminal_pose else acquired_at_settle)
         except OperationCanceled:
             self.request_stop("motion operation cancelled")
             raise

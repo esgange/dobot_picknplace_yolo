@@ -613,7 +613,9 @@ def test_suction_interrupt_during_dispatch_prevents_later_motion(monkeypatch):
 
 
 def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypatch):
-    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+    clock = [0.0]
+    monkeypatch.setattr(
+        hardware_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     transport = object.__new__(DobotTransport)
     events = EventLog()
     transport.node = SimpleNamespace(
@@ -637,11 +639,18 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     transport._wait_for_resume = lambda: 0.0
     transport._idle = lambda _snapshot: True
     transport._target_reached = lambda _target, _snapshot: True
-    transport.monitor = SimpleNamespace(sequence=0, wait=lambda predicate, *_a, **_k: (
-        predicate(sample(vacuum_on)) or pytest.fail("Expected timed outputs")))
-    settling = []
-    transport.sensor = lambda active, timeout, **kwargs: (
-        settling.append((active, timeout, kwargs)) or False)
+
+    def wait_next(sequence, timeout, **_kwargs):
+        clock[0] += min(0.1, timeout)
+        return sequence + 1
+
+    transport.monitor = SimpleNamespace(
+        sequence=0,
+        wait=lambda predicate, *_a, **_k: (
+            predicate(sample(vacuum_on)) or pytest.fail("Expected timed outputs")),
+        wait_next=wait_next)
+    transport.sensor = lambda *_args, **_kwargs: pytest.fail(
+        "Final pick settling must not call the separate sensor wait")
     transport.moving = False
     transport.suction_interrupted = False
     transport.suction_stop_future = None
@@ -673,9 +682,13 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
             MotionIO(20, 1, False), MotionIO(20, 13, True))),
     )
 
-    assert not transport.move_batch(
+    acquired, stopped_pose = transport.move_batch(
         targets, batch_name="retry", stop_on_suction=True,
-        require_suction_reset=True, settle_suction_sec=0.2)
+        require_suction_reset=True, pick_settling_sec=0.2,
+        return_terminal_pose=True)
+    assert not acquired
+    assert np.allclose(stopped_pose, np.eye(4))
+    assert clock[0] == pytest.approx(0.2)
     assert [name for name, _fields in captured] == [
         "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO"]
     assert [fields["param_value"] for _name, fields in captured] == [
@@ -687,7 +700,9 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     assert all(not any(value.startswith(("cp=", "r="))
                        for value in fields["param_value"])
                for _name, fields in captured)
-    assert settling == [(True, 0.2, {"settling_sec": 0})]
+    completed = next(entry for entry in events.entries
+                     if entry[0][1] == "motion_batch_completed")
+    assert completed[1]["terminal_stable_sec"] == pytest.approx(0.2)
 
     def no_reset(calls, *, progress, outputs_by_call):
         progress(sample(vacuum_on))
@@ -697,8 +712,8 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     with pytest.raises(FeedbackFailure, match="DO13 OFF was not observed"):
         transport.move_batch(
             targets, batch_name="retry_without_reset", stop_on_suction=True,
-            require_suction_reset=True, settle_suction_sec=0.2)
-    assert settling == [(True, 0.2, {"settling_sec": 0})]
+            require_suction_reset=True, pick_settling_sec=0.2)
+    assert clock[0] == pytest.approx(0.4)
 
 
 def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched():

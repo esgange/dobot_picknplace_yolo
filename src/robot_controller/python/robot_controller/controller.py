@@ -785,7 +785,8 @@ class RobotController(Node):
             acceleration_percent=config.profile["acceleration"]["travel_percent"])
 
     def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None,
-                      ignore_suction=False, batch_name="home"):
+                      ignore_suction=False, batch_name="home",
+                      confirmed_start_pose=None):
         self.raise_if_cancelled()
         self.wait_for_resume()
         holding = self.holding_item if require_suction is None else require_suction
@@ -798,7 +799,8 @@ class RobotController(Node):
                 waypoint=preceding[-1].name)
             self.hardware.move_batch(
                 preceding, batch_name=f"{batch_name}_clearance",
-                require_suction=holding, forbid_suction=forbidden)
+                require_suction=holding, forbid_suction=forbidden,
+                confirmed_start_pose=confirmed_start_pose)
             self.raise_if_cancelled()
             self.wait_for_resume()
             if not ignore_suction:

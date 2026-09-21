@@ -146,7 +146,9 @@ machine, raw CLI examples, timing policy and commissioning requirements.
 The first Home-to-pick group contains item-X/Y transit at Home Z, pre-pick and
 final pick; only the terminal pick/stopped pose is checked. OPEN occurs at 50%
 of transit and SUCK at 20% of final descent. DI1 is eligible only after SUCK and
-is evaluated through the taught `pick_settling` time after terminal arrival.
+is evaluated while the final pose, queue-idle state and commanded outputs remain
+coherent for the taught `pick_settling` time. This one profile-driven interval
+replaces the fixed 300 ms final-pick gate and has no later suction wait.
 On an intermediate miss, one group rises through the old item's pre-pick and
 clearance at `v=100`, transfers to the next clearance, and descends through the
 next pre-pick to final pick. It enters EXHAUST at 80% of the first rise,
@@ -176,11 +178,13 @@ alignment target is a CP-blended control point and is not separately confirmed.
 Hardware Home skips motion when its fresh stationary
 Cartesian pose is already within that tolerance; Pick's initial shared-Home
 step instead applies the joint Home gate. Queued return-to-Home paths after a
-pick attempt are not skipped. Each motion-origin pose waits up to two seconds for
-stationary idle feedback with an advancing `controller_timer` to remain coherent
-for 300 ms; stale or frozen feedback cannot supply a motion origin. The
-controller no longer calls the Dobot `GetPose` service or subscribes to the
-slower, unstamped `ToolVectorActual` topic.
+pick attempt are not skipped. Each independently acquired motion-origin pose
+waits up to two seconds for stationary idle feedback with an advancing
+`controller_timer` to remain coherent for 300 ms; stale or frozen feedback
+cannot supply a motion origin. The final-pick confirmation sample is reused for
+its immediate retract/return, avoiding a second bottom-pose gate. The controller
+no longer calls the Dobot `GetPose` service or subscribes to the slower,
+unstamped `ToolVectorActual` topic.
 
 ## Item Teach and controller
 

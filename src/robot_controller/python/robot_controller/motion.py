@@ -195,10 +195,11 @@ class PickExecutor:
         # Home -> item XY at Home Z (OPEN at 50%), then pre-pick -> pick.
         # The initial clearance waypoint is intentionally not part of the
         # first descent.
-        acquired = self.hardware.move_batch(
+        acquired, stopped_pose = self.hardware.move_batch(
             (plans[0][0], plans[0][2], plans[0][3]),
             batch_name="candidate_1_home_to_pick",
-            stop_on_suction=True, settle_suction_sec=settling)
+            stop_on_suction=True, pick_settling_sec=settling,
+            return_terminal_pose=True)
         for index, plan in enumerate(plans, 1):
             if acquired and holding_changed is not None:
                 # Establish trusted in-memory holding context before any gripper
@@ -210,7 +211,6 @@ class PickExecutor:
                 # OPEN -> NEUTRAL -> CLOSE; never overlap DO14 and DO2.
                 self.hardware.output(14, False)
                 self.hardware.output(2, True)
-            stopped_pose = self.hardware.current_pose()
             stopped_z = stopped_pose[2, 3]
             upward = []
             for target in plan[4:]:
@@ -244,6 +244,7 @@ class PickExecutor:
                 # joint Home after confirmed acquisition.
                 return_home(preceding=tuple(upward), require_suction=acquired,
                             forbid_suction=False,
+                            confirmed_start_pose=stopped_pose,
                             batch_name=f"candidate_{index}_pick_to_home")
                 return {"picked": True, "candidate": index, "holding_item": True}
             if index == len(plans):
@@ -251,7 +252,8 @@ class PickExecutor:
                 # DI1 was sampled through settling already; any later change is
                 # deliberately not reclassified as this candidate's success.
                 self.hardware.move_batch(
-                    upward, batch_name=f"candidate_{index}_miss_retract")
+                    upward, batch_name=f"candidate_{index}_miss_retract",
+                    confirmed_start_pose=stopped_pose)
                 if self.finish_home:
                     return_home(require_suction=False, forbid_suction=False,
                                 ignore_suction=True,
@@ -269,9 +271,10 @@ class PickExecutor:
             # Timed output events travel with their owning motion.
             next_approach = replace(
                 next_plan[1], motion_io=gripper_open_events(50))
-            acquired = self.hardware.move_batch(
+            acquired, stopped_pose = self.hardware.move_batch(
                 (*upward, next_approach, next_plan[2], next_plan[3]),
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
-                settle_suction_sec=settling)
+                pick_settling_sec=settling, return_terminal_pose=True,
+                confirmed_start_pose=stopped_pose)
         return {"picked": False, "candidate": None, "holding_item": False}

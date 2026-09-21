@@ -4078,6 +4078,35 @@ Never use a floating “latest” version in an issue, script, or deployment not
   15-package workspace build and `git diff --check` pass. No robot, camera,
   detector, or Dobot service was launched.
 
+### 2026-09-21 — Use taught settling as the final-pick confirmation
+
+- Rule 97 supersedes the fixed 300 ms terminal gate plus a separate taught
+  suction wait at the final pick. The schema-9 `timing.pick_settling` value is
+  now the one interval during which the final Cartesian target, advancing
+  enabled queue-idle feedback, and complete commanded final output state must
+  remain coherent while eligible DI1 is observed. DI1 during descent or this
+  interval keeps the existing Stop-and-confirm acquisition path; low DI1 at the
+  interval deadline latches the miss.
+- The exact final feedback sample supplies the actual stopped pose. The
+  immediate success return, missed-pick retract, or candidate retry carries that
+  confirmed pose into its next motion batch, so neither stopped-pose capture nor
+  the next batch applies another 300 ms wait at the bottom. Independently
+  acquired origins and every Home, clearance, Home-height, and other non-pick
+  endpoint retain the fixed 300 ms gate.
+- The currently selected GUI teach profile already stores
+  `timing.pick_settling: 0.1`, so its new final-pick confirmation is 100 ms. No
+  operator YAML/model artifact or schema was changed. Feedback freshness,
+  suction reset/arming, late-DI1 isolation, output confirmation, Stop
+  containment and the five-second service-response deadline remain unchanged.
+- Verification was software-only. All 158 direct Controller tests and all 159
+  package-reported tests pass. The regression proves that a taught 200 ms value
+  controls the final terminal interval while the non-pick constant remains 300
+  ms, fails if the removed sensor wait is called, validates the exact returned
+  terminal pose, and checks its propagation into immediate retract/return.
+  Changed Python files pass compilation and `ament_flake8`; the complete
+  15-package workspace build and `git diff --check` pass. No Dobot service,
+  detector request, camera action or physical robot motion was issued.
+
 ### Future entry template
 
 ```text

@@ -293,9 +293,12 @@ The first `candidate_1_home_to_pick` group contains three control points: item
 X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with SUCK
 at 20%. It intentionally skips the item-clearance point on this initial descent.
 DI1 is eligible only after the candidate's SUCK transition. A DI1 acquisition
-during descent invokes Stop-and-confirm; otherwise the terminal pose is reached
-and DI1 is monitored for the profile's `pick_settling` interval. If DI1 is still
-low at the end of settling, that attempt is irrevocably missed.
+during descent invokes Stop-and-confirm. Otherwise the terminal pose must remain
+within tolerance with advancing queue-idle feedback and the commanded final
+outputs for the profile's `pick_settling` interval while DI1 is monitored. This
+is the complete final-pick confirmation interval; there is no fixed 300 ms pick
+gate before it or separate sensor wait after it. If DI1 is still low when the
+interval ends, that attempt is irrevocably missed.
 
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
 confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 0% of
@@ -354,17 +357,22 @@ commanded green axis, configured offset, selected CW/CCW side, rotation from the
 taught Home reference, and target RPY.
 
 Joint Home completion uses ±1° independently on every joint. Cartesian target
-completion uses 5 mm Euclidean translation and 1° orientation. Both require 300
-ms of coherent enabled, idle, queue-empty feedback; Home remains joint-only and
-does not additionally compare Cartesian FK with the streamed actual tool pose.
+completion uses 5 mm Euclidean translation and 1° orientation. Home, clearance
+and other non-pick endpoints require 300 ms of coherent enabled, idle,
+queue-empty feedback. A final pick instead uses its taught `pick_settling`
+duration under the same feedback gates. Home remains joint-only and does not
+additionally compare Cartesian FK with the streamed actual tool pose.
 
-Before every motion-batch origin or stopped-pose measurement, the controller
-waits up to two seconds for 300 ms of coherent idle feedback and an advancing
-FeedInfo `controller_timer` (brief duplicate publishes are allowed, but no
-source freeze longer than 150 ms). It uses `tool_vector_actual` from the same
-validated sample; it never sends a separate `GetPose` request or subscribes to
-the slower, unstamped `ToolVectorActual` topic. This absorbs the normal feedback
-transition immediately after an acknowledged DO or Stop. A timeout names every current
+Before every independently acquired motion-batch origin or stopped-pose
+measurement, the controller waits up to two seconds for 300 ms of coherent idle
+feedback and an advancing FeedInfo `controller_timer` (brief duplicate
+publishes are allowed, but no source freeze longer than 150 ms). The final-pick
+confirmation sample supplies its stopped pose and is carried directly into the
+immediate retract/return batch, so that path does not repeat a 300 ms wait at
+the bottom. The controller uses `tool_vector_actual` from the same validated
+sample; it never sends a separate `GetPose` request or subscribes to the slower,
+unstamped `ToolVectorActual` topic. This absorbs the normal feedback transition
+immediately after an acknowledged DO or Stop. A timeout names every current
 RobotStatus/FeedInfo blocker, or reports that otherwise-valid fields could not
 stay coherent for the full interval. Fresh connected RobotStatus, joints,
 FeedInfo, user/tool zero, held-item integrity, and the normal final-arrival

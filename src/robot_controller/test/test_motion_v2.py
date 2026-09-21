@@ -7,7 +7,8 @@ from item_perception_yolo.pick_planning import select_pick_attitude
 from robot_controller.hardware import (
     CARTESIAN_POSITION_TOLERANCE_M, COMMAND_RESPONSE_TIMEOUT_SEC,
     HOME_JOINT_TOLERANCE_RAD, MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
-    OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC)
+    OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC,
+    STATIONARY_SEC)
 from robot_controller.motion import (
     MotionIO, PickExecutor, Target, candidate_pose_in_base, cartesian_home_targets,
     gripper_close_events, gripper_neutral_events, gripper_open_events, home_targets,
@@ -50,6 +51,7 @@ def test_timing_and_arrival_policy_constants():
     assert READY_STABLE_SEC == 0.2
     assert MOTION_NO_PROGRESS_SEC == 3.0
     assert MOTION_HARD_CAP_SEC == 300.0
+    assert STATIONARY_SEC == 0.3
     assert CARTESIAN_POSITION_TOLERANCE_M == 0.005
     assert HOME_JOINT_TOLERANCE_RAD == pytest.approx(np.deg2rad(1.0))
 
@@ -241,10 +243,13 @@ class FakeHardware:
         self.targets.append(tuple(targets))
         names = tuple(target.name for target in targets)
         self.log.append(("move", names, kwargs))
-        return next(self.acquisitions) if kwargs.get("stop_on_suction") else False
+        acquired = next(self.acquisitions) if kwargs.get("stop_on_suction") else False
+        if kwargs.get("return_terminal_pose"):
+            return acquired, self.pose.copy()
+        return acquired
 
     def current_pose(self):
-        return self.pose.copy()
+        pytest.fail("Pick must reuse the final-pick terminal feedback pose")
 
 
 def test_success_closes_only_after_suction_and_returns_home_holding():
@@ -257,12 +262,15 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert outcome == {"picked": True, "candidate": 1, "holding_item": True}
     forward = next(entry for entry in hardware.log if entry[0] == "move")
     assert forward[2]["batch_name"] == "candidate_1_home_to_pick"
+    assert forward[2]["pick_settling_sec"] == pytest.approx(0.2)
+    assert forward[2]["return_terminal_pose"] is True
     assert forward[1] == ("p1_transit", "p1_prepick", "p1_pick")
     assert ("output", 14, False) in hardware.log
     assert ("output", 2, True) in hardware.log
     assert returned[0]["batch_name"] == "candidate_1_pick_to_home"
     assert returned[0]["require_suction"] is True
     assert returned[0]["forbid_suction"] is False
+    assert np.allclose(returned[0]["confirmed_start_pose"], hardware.pose)
     assert [target.name for target in returned[0]["preceding"]] == [
         "p1_retract", "p1_final", "p1_transit"]
 
@@ -319,7 +327,9 @@ def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
                         "p2_prepick", "p2_pick")
     assert retry[2]["stop_on_suction"] is True
     assert retry[2]["require_suction_reset"] is True
-    assert retry[2]["settle_suction_sec"] == pytest.approx(0.2)
+    assert retry[2]["pick_settling_sec"] == pytest.approx(0.2)
+    assert retry[2]["return_terminal_pose"] is True
+    assert np.allclose(retry[2]["confirmed_start_pose"], hardware.pose)
     retract, old_clearance, next_approach, next_prepick, next_pick = [
         target for target in hardware.targets[1]]
     assert retract.speed_percent == 100
