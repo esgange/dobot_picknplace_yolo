@@ -85,7 +85,7 @@ class ManagedControl:
             sample = self.node.monitor.snapshot(require_enabled=True)
             self._check_parked(sample)
             if self.drop_pending or (
-                    self.node.holding_item and not sample.feed["digital_input_bits"] & 1):
+                    self.node.holding_item and not sample.suction_present):
                 raise CommandRejected("Suction lost; item return must finish before Continue")
             self.resume.set()
 
@@ -94,7 +94,7 @@ class ManagedControl:
         with self.lock:
             if ((self.parking_held or self.kind == "pause" and (
                     not self.executing or self.node.machine.state == "PAUSED"))
-                    and self.node.holding_item and not sample.feed["digital_input_bits"] & 1):
+                    and self.node.holding_item and not sample.suction_present):
                 if not self.drop_pending:
                     self.drop_pending = True
                     self.node.hardware.request_stop("Suction lost during managed Pause rise")
@@ -137,7 +137,7 @@ class ManagedControl:
             elif not getattr(node.hardware, "late_miss_suction", False):
                 raise HeldUnknown("DI1 active without an eligible acquisition during Pause")
             # A latched failed attempt's late DI1 is never a new acquisition.
-        if node.holding_item and (not acquired or self.drop_pending):
+        if node.holding_item and (not sample.suction_present or self.drop_pending):
             self._mark_drop()
         if not node.holding_item:
             node.expected_outputs.update({channel: bool(bits & (1 << (channel - 1)))
@@ -269,7 +269,7 @@ class ManagedControl:
                     sample = node.monitor.snapshot(require_enabled=True)
                     self._check_parked(sample)
                     if self.drop_pending or (
-                            node.holding_item and not sample.feed["digital_input_bits"] & 1):
+                            node.holding_item and not sample.suction_present):
                         self.resume.clear()
                         self._confirm_interruption()
                         self._mark_drop()

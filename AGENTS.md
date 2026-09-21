@@ -162,6 +162,9 @@ Confirmed failed, dropped and returned candidates stay excluded.
 Rule 106 adds the next candidate's `park_transit` position to each blended
 non-final missed-pick retry, between old clearance and next clearance. OPEN
 occurs at 50% of travel to that transit; only the next final pick is confirmed.
+Rule 107 debounces DI1 HIGH-to-LOW for 50 ms across held-item checks, using one
+shared feedback filter. HIGH resets the timer immediately; confirmed paused
+loss stays latched. Acquisition, release/reset checks and all DO checks stay raw.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

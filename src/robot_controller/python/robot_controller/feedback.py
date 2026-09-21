@@ -11,6 +11,7 @@ from .errors import FeedbackFailure, OperationCanceled
 
 
 FEEDBACK_MAX_AGE_SEC = 1.0
+SUCTION_LOSS_DEBOUNCE_SEC = 0.050
 REQUIRED_FEED_KEYS = (
     "robot_mode", "digital_input_bits", "digital_outputs", "controller_timer",
     "isRunQueuedCmd", "RunningStatus", "ErrorStatus", "CollisionStates",
@@ -26,6 +27,33 @@ class FeedbackSnapshot:
     robot_enabled: bool
     sequence: int
     received_at: float
+    suction_present: bool
+
+
+class SuctionLossDebounce:
+    """Immediate HIGH, with LOW confirmed by advancing feedback spanning 50 ms."""
+
+    def __init__(self):
+        self.present = False
+        self.low_since = None
+        self.timer = None
+        self.advanced_at = None
+
+    def update(self, detected, controller_timer, received_at):
+        advancing = controller_timer != self.timer
+        if detected:
+            self.present = True
+            self.low_since = None
+        elif advancing and self.present:
+            if (self.low_since is None or self.advanced_at is None
+                    or received_at - self.advanced_at > FEEDBACK_MAX_AGE_SEC):
+                self.low_since = received_at
+            elif received_at >= self.low_since + SUCTION_LOSS_DEBOUNCE_SEC:
+                self.present = False
+                self.low_since = None
+        if advancing:
+            self.timer, self.advanced_at = controller_timer, received_at
+        return self.present
 
 
 class FeedbackMonitor:
@@ -41,6 +69,7 @@ class FeedbackMonitor:
         self._controller_progress_at = None
         self._flags = deque(maxlen=16)
         self._outputs = deque(maxlen=1000)
+        self._suction = SuctionLossDebounce()
 
     @property
     def sequence(self):
@@ -88,6 +117,8 @@ class FeedbackMonitor:
                 self._controller_progress_at = now
             self._sequence += 1
             self._feed = feed, now
+            self._suction.update(bool(feed["digital_input_bits"] & 1),
+                                 feed["controller_timer"], now)
             self._flags.append((self._sequence, feed["isPauseCmdFlag"],
                                 feed["ErrorStatus"], feed["CollisionStates"]))
             self._outputs.append((self._sequence, feed["controller_timer"],
@@ -103,6 +134,7 @@ class FeedbackMonitor:
         with self._condition:
             joints, status, feedback = self._joints, self._status, self._feed
             sequence, progress = self._sequence, self._controller_progress_at
+            suction_present = self._suction.present
         now = self._monotonic()
         if joints is None or status is None or feedback is None:
             raise FeedbackFailure("Canonical robot feedback is incomplete")
@@ -120,7 +152,8 @@ class FeedbackMonitor:
             blockers = enabled_blockers(feed, status_enabled, allow_paused=allow_paused)
             if blockers:
                 raise FeedbackFailure("Robot readiness blocked: " + "; ".join(blockers))
-        return FeedbackSnapshot(feed, values, connected, status_enabled, sequence, feed_received)
+        return FeedbackSnapshot(feed, values, connected, status_enabled, sequence,
+                                feed_received, suction_present)
 
     def consistent_flags(self, count=3):
         with self._condition:

@@ -474,7 +474,7 @@ class DobotTransport:
             last_snapshot = snapshot
             feed = snapshot.feed
             if self.node.holding_item:
-                if not feed["digital_input_bits"] & 1 and not allow_suction_loss:
+                if not snapshot.suction_present and not allow_suction_loss:
                     held_violation = "DI1 suction feedback was lost during Stop"
                 for channel, active in self.node.expected_outputs.items():
                     actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
@@ -547,7 +547,7 @@ class DobotTransport:
         if not holding:
             return snapshot
         feed = snapshot.feed
-        if not feed["digital_input_bits"] & 1:
+        if not snapshot.suction_present:
             raise HeldUnknown("Known held-item context lost DI1 suction feedback")
         for channel, active in outputs.items():
             actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
@@ -867,7 +867,7 @@ class DobotTransport:
                 self.node.expected_outputs[channel] = planned
         observer = getattr(self.node, "observe_managed_feedback", None)
         managed_drop = observer(snapshot) if observer is not None else False
-        if require_suction and not detected and not managed_drop:
+        if require_suction and not snapshot.suction_present and not managed_drop:
             raise FeedbackFailure("Suction lost during retract/Home")
         if require_suction:
             if not vacuum:
@@ -982,7 +982,7 @@ class DobotTransport:
                 "final containment after suction acquisition group")
             self.confirm_stop(final_stop)
             sample = self.monitor.snapshot(require_enabled=True)
-            if (not sample.feed["digital_input_bits"] & 1
+            if (not sample.suction_present
                     or not sample.feed["digital_outputs"] & (1 << 12)):
                 raise FeedbackFailure("Suction lost after acquisition Stop")
             for channel, active in expected_outputs.items():

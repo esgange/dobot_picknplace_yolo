@@ -764,6 +764,7 @@ def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched():
 def snapshot(*, di1=False, outputs=0, joints=None):
     return SimpleNamespace(
         sequence=1,
+        suction_present=di1,
         robot_enabled=True,
         joints=tuple([0.0] * 6 if joints is None else joints),
         feed={
@@ -793,6 +794,34 @@ def test_known_holding_requires_di1_and_exact_expected_outputs():
     transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: snapshot(di1=False))
     with pytest.raises(HeldUnknown, match="lost DI1"):
         transport._check_held_context(True, {13: True})
+
+
+@pytest.mark.parametrize("consumer", ["motion", "recovery"])
+def test_held_consumers_share_di1_debounce_but_outputs_fail_immediately(consumer):
+    from test_feedback_v2 import timed_monitor
+
+    monitor, _clock, emit = timed_monitor()
+    transport = object.__new__(DobotTransport)
+    transport.monitor = monitor
+    transport.node = SimpleNamespace(holding_item=True, expected_outputs={13: True})
+
+    def check(sample):
+        if consumer == "motion":
+            transport._monitor_motion_policy(
+                sample, require_suction=True, forbid_suction=False,
+                stop_on_suction=False, before_suction=None, planned_outputs={})
+        else:
+            transport._validate_held_snapshot(sample)
+
+    emit(0.0, True)
+    check(emit(0.010, False))
+    pending = emit(0.010 + 0.049999, False)
+    check(pending)
+    pending.feed["digital_outputs"] = 0
+    with pytest.raises((FeedbackFailure, HeldUnknown), match="DO13"):
+        check(pending)
+    with pytest.raises((FeedbackFailure, HeldUnknown), match="lost"):
+        check(emit(0.010 + 0.050, False))
 
 
 def test_startup_sequence_is_explicit_and_never_calls_home():
@@ -890,6 +919,22 @@ def test_stop_confirmation_detects_held_item_loss_without_changing_outputs():
     assert transport.node.expected_outputs == {13: True}
 
 
+def test_direct_stop_is_confirmed_without_waiting_for_di1_debounce():
+    from test_feedback_v2 import timed_monitor
+
+    _monitor, _clock, emit = timed_monitor()
+    emit(0.0, True)
+    pending = emit(0.010, False)
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(
+        holding_item=True, expected_outputs={13: True}, events=EventLog(),
+        wait_control=lambda _seconds: pytest.fail("Stop must not wait for debounce"))
+    transport.monitor = StopMonitor(SimpleNamespace(**vars(pending)))
+    transport.moving = True
+    transport.confirm_stop(CompletedFuture())
+    assert not transport.moving
+
+
 def test_stop_confirmation_accepts_a_latched_pause_after_queue_is_empty():
     transport = object.__new__(DobotTransport)
     transport.node = SimpleNamespace(
@@ -978,6 +1023,24 @@ def test_late_di1_from_missed_candidate_is_ignored_until_next_suction_is_armed()
         before_suction=None, planned_outputs={}, suction_armed=False)
 
     assert not transport.suction_interrupted
+
+
+def test_armed_di1_high_still_requests_stop_on_the_first_sample():
+    from test_feedback_v2 import timed_monitor
+
+    _monitor, _clock, emit = timed_monitor()
+    emit(0.0, False)
+    acquired = emit(0.001, True)
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(expected_outputs={})
+    transport.suction_interrupted = False
+    stops = []
+    transport.request_stop = stops.append
+    transport._monitor_motion_policy(
+        acquired, require_suction=False, forbid_suction=False, stop_on_suction=True,
+        before_suction=None, planned_outputs={}, suction_armed=True)
+    assert transport.suction_interrupted
+    assert stops == ["DI1 acquired during final approach"]
 
 
 class SensorMonitor:

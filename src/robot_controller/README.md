@@ -196,9 +196,11 @@ idle READY Pause remains stationary.
 
 Held Pause preserves the outputs and rises vertically at current X/Y/attitude
 to Home Z, without descending if already above it. Paused feedback, actual pose,
-DI1 and outputs remain supervised. A fresh DI1 loss during the rise requests
-Stop; loss while parked also starts the same put-back routine described below.
-Loss is latched even if DI1 rises again. Stale feedback or output faults are not
+DI1 and outputs remain supervised. DI1 LOW lasting 50 ms on advancing feedback
+during the rise requests Stop; confirmed loss while parked also starts the
+same put-back routine described below. A shorter LOW followed by HIGH cancels
+the pending loss. Confirmed loss is latched even if DI1 rises again.
+Stale feedback or output faults are not
 converted into ordinary drops. An eligible acquisition during the initial Stop
 can establish trusted holding; late DI1 from a latched miss cannot.
 
@@ -385,6 +387,24 @@ outputs for the profile's `pick_settling` interval while DI1 is monitored. This
 is the complete final-pick confirmation interval; there is no fixed 300 ms pick
 gate before it or separate sensor wait after it. If DI1 is still low when the
 interval ends, that attempt is irrevocably missed.
+
+DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.050` filter owned
+by the canonical feedback monitor. After HIGH has been seen, the first advancing
+LOW sample starts a monotonic timer. Advancing LOW feedback at least 50 ms later
+confirms loss; any HIGH resets the pending interval immediately. Re-reading a
+snapshot or publishing the same controller timer cannot complete the debounce.
+A feedback gap beyond the existing freshness limit cannot count toward it, and
+stale/invalid feedback keeps its existing failure handling.
+
+The internal snapshot's `suction_present` value is used after acquisition Stop
+and throughout held motion, motion-origin/Home checks, Stop/recovery, idle
+holding and managed Pause/Continue/put-back. Raw `digital_input_bits` and output
+history remain unchanged: first HIGH pickup detection, cold/untrusted DI1,
+missed-pick suction reset, release/exhaust confirmation and unheld checks still
+use raw DI1. DO13 loss, opposing outputs and other faults receive no new delay.
+Direct Stop is sent immediately and its stationary confirmation never waits for
+this timer. The debounce is independent of taught `pick_settling` and the 50 ms
+exhaust pulse; it introduces no teach setting, launch argument or schema change.
 
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
 confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 0% of

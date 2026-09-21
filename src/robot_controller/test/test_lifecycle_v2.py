@@ -10,7 +10,7 @@ from robot_controller_interfaces.action import GoHome
 import robot_controller.controller as controller_module
 import robot_controller.gui as gui_module
 from robot_controller.controller import RobotController
-from robot_controller.errors import FeedbackFailure
+from robot_controller.errors import FeedbackFailure, HeldUnknown
 from robot_controller.gui import ControllerWindow, GuiNode
 from robot_controller.state_machine import ControllerStateMachine
 
@@ -263,6 +263,29 @@ def test_idle_supervision_ignores_enable_pause_latch():
     )
     RobotController._supervise(node)
     assert stops == []
+
+
+def test_home_preflight_and_idle_holding_share_the_fifty_ms_suction_loss_gate():
+    from test_feedback_v2 import timed_monitor
+
+    monitor, _clock, emit = timed_monitor()
+    machine = ControllerStateMachine(initial="HOLDING")
+    node = SimpleNamespace(
+        monitor=monitor, holding_item=True, startup_complete=True,
+        operation_lock=threading.Lock(), machine=machine, expected_outputs={13: True},
+        _transition=lambda target, message: machine.transition(target, message))
+    emit(0.0, True)
+    emit(0.010, False)
+    emit(0.010 + 0.049999, False)
+    RobotController._preflight_item_state(node)
+    RobotController._supervise(node)
+    assert machine.state == "HOLDING"
+    emit(0.010 + 0.050, False)
+    with pytest.raises(HeldUnknown, match="lost DI1"):
+        RobotController._preflight_item_state(node)
+    RobotController._supervise(node)
+    assert machine.state == "FAULT"
+    assert "DI1 lost" in machine.message
 
 
 class Button:

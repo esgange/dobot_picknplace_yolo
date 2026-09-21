@@ -8,6 +8,7 @@ import pytest
 
 from robot_controller.errors import (CommandRejected, FeedbackFailure, HeldUnknown,
                                      ManagedInterruption, OperationCanceled, ReturnedToHome)
+from robot_controller.feedback import SuctionLossDebounce
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ManagedControl
 from robot_controller.motion import PickExecutor, Target, pick_targets
@@ -47,6 +48,10 @@ class Rig:
                                             in self.expected_outputs.items() if on),
                      "tool_vector_actual": pose_values(matrix()),
                      "isRunQueuedCmd": 0, "RunningStatus": 0}
+        self.clock = 0.0
+        self.feed_sequence = 0
+        self.suction = SuctionLossDebounce()
+        self.set_di1(held)
         self.operation_lock = threading.Lock()
         self.operation_lock.acquire()
         self.active_action = "pick"
@@ -69,7 +74,18 @@ class Rig:
         self.on_wait = lambda: self.managed.continue_operation()
 
     def snapshot(self, **_kwargs):
-        return SimpleNamespace(feed=self.feed.copy(), sequence=1)
+        return SimpleNamespace(feed=self.feed.copy(), sequence=self.feed_sequence,
+                               suction_present=self.suction.present)
+
+    def set_di1(self, active, elapsed=0.0):
+        self.clock += elapsed
+        self.feed_sequence += 1
+        self.feed["digital_input_bits"] = int(active)
+        self.suction.update(active, self.feed_sequence, self.clock)
+
+    def lose_suction(self):
+        self.set_di1(False)
+        self.set_di1(False, 0.050)
 
     def raise_if_cancelled(self):
         if self.cancel_event.is_set():
@@ -130,7 +146,7 @@ class FakeTransport:
 
     def exhaust_pulse(self):
         self.node.log.append(("pulse", 50))
-        self.node.feed["digital_input_bits"] = 0
+        self.node.set_di1(False)
 
     def move_batch(self, targets, **kwargs):
         targets = tuple(targets)
@@ -146,7 +162,7 @@ class FakeTransport:
         node.feed["tool_vector_actual"] = pose_values(targets[-1].matrix)
         acquired = next(self.acquisitions) if kwargs.get("stop_on_suction") else False
         if acquired:
-            node.feed["digital_input_bits"] = 1
+            node.set_di1(True)
         return (acquired, targets[-1].matrix.copy()) if kwargs.get(
             "return_terminal_pose") else acquired
 
@@ -224,7 +240,7 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
         def on_wait():
             waits[0] += 1
             if waits[0] == 1:
-                rig.feed["digital_input_bits"] = 0
+                rig.lose_suction()
             else:
                 rig.managed.continue_operation()
         rig.on_wait = on_wait
@@ -254,6 +270,40 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     assert len(retreat[0].motion_io) == 4
 
 
+@pytest.mark.parametrize("during_rise", [False, True])
+def test_brief_di1_low_during_pause_never_drops_or_releases_the_item(during_rise):
+    rig = Rig(held=True)
+
+    def bounce():
+        rig.set_di1(False)
+        assert not rig.managed.observe(rig.snapshot())
+        rig.set_di1(False, 0.049)
+        assert not rig.managed.observe(rig.snapshot())
+        assert rig.holding_item
+
+    if during_rise:
+        # The Stop/parking preflight also sees this brief LOW.
+        rig.set_di1(False)
+
+        def moving(_targets, kwargs):
+            if kwargs.get("batch_name") == "pause_safety":
+                bounce()
+                rig.set_di1(True)
+        rig.hardware.on_move = moving
+    else:
+        def paused():
+            bounce()
+            rig.managed.continue_operation()
+            rig.set_di1(True)
+        rig.on_wait = paused
+    rig.managed.request("pause")
+    rig.managed.handle()
+    assert states(rig)[0] == "HELD"
+    assert rig.holding_item
+    assert not any(entry[0] in ("pulse", "output", "home") for entry in rig.log)
+    assert not any(entry[0] == "stop" and "Suction lost" in entry[1] for entry in rig.log)
+
+
 def test_drop_during_pause_rise_stops_and_puts_back_even_if_di1_bounces_high():
     rig = Rig(held=True)
     dropped = [False]
@@ -261,9 +311,9 @@ def test_drop_during_pause_rise_stops_and_puts_back_even_if_di1_bounces_high():
     def on_move(_targets, kwargs):
         if kwargs.get("batch_name") == "pause_safety" and not dropped[0]:
             dropped[0] = True
-            rig.feed["digital_input_bits"] = 0
+            rig.lose_suction()
             rig.managed.observe(rig.snapshot())
-            rig.feed["digital_input_bits"] = 1
+            rig.set_di1(True)
             rig.managed.checkpoint()
     rig.hardware.on_move = on_move
     rig.managed.request("pause")
@@ -330,7 +380,7 @@ def test_resume_opens_fingers_then_descends_through_prepick_to_final_pick():
 def test_suction_acquired_during_pause_stop_is_retained_as_trusted_held_context():
     rig = Rig()
     rig.managed.session.set_state(1, "ACTIVE")
-    rig.feed["digital_input_bits"] = 1
+    rig.set_di1(True)
     rig.hardware.output(13, True)
     rig.hardware.acquisition_eligible = True
     rig.managed.request("pause")
@@ -342,7 +392,7 @@ def test_suction_acquired_during_pause_stop_is_retained_as_trusted_held_context(
 
 def test_untrusted_di1_blocks_managed_motion():
     rig = Rig()
-    rig.feed["digital_input_bits"] = 1
+    rig.set_di1(True)
     rig.managed.request("pause")
     with pytest.raises(HeldUnknown):
         rig.managed.handle()
@@ -504,7 +554,7 @@ def test_completed_picks_paused_drop_continues_retained_candidates_after_home():
     def on_wait():
         waits[0] += 1
         if waits[0] == 1:
-            rig.feed["digital_input_bits"] = 0
+            rig.lose_suction()
         else:
             assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
             rig.managed.continue_operation()
@@ -530,16 +580,16 @@ def test_idle_ready_pause_never_routes_to_old_pending_candidates():
     assert not any(entry[0] in ("move", "output", "pulse") for entry in rig.log)
 
 
-def test_feedback_callback_latches_short_paused_drop_even_after_di1_recovers():
+def test_feedback_callback_latches_confirmed_paused_drop_even_after_di1_recovers():
     rig = Rig(held=True)
     waits = [0]
 
     def on_wait():
         waits[0] += 1
         if waits[0] == 1:
-            rig.feed["digital_input_bits"] = 0
+            rig.lose_suction()
             assert rig.managed.observe(rig.snapshot())
-            rig.feed["digital_input_bits"] = 1
+            rig.set_di1(True)
         else:
             rig.managed.continue_operation()
     rig.on_wait = on_wait
@@ -701,7 +751,7 @@ def test_return_requested_at_paused_drop_releases_once_and_finishes_ready():
     rig = Rig(held=True)
 
     def stop_and_drop():
-        rig.feed["digital_input_bits"] = 0
+        rig.lose_suction()
         rig.managed.request("return")
     rig.on_wait = stop_and_drop
     rig.managed.request("pause")

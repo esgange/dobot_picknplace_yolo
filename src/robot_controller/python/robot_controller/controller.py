@@ -723,7 +723,7 @@ class RobotController(Node):
         snapshot = self.monitor.snapshot(require_enabled=True)
         suction = bool(snapshot.feed["digital_input_bits"] & 1)
         expected = self.holding_item if expected_holding is None else expected_holding
-        if expected and not suction:
+        if expected and not snapshot.suction_present:
             raise HeldUnknown("Trusted held-item context lost DI1")
         if not expected and suction:
             raise HeldUnknown("DI1 active without trusted held-item context")
@@ -1081,11 +1081,11 @@ class RobotController(Node):
                 self._stop_unexpected_idle_motion()
                 return
             suction = bool(feed["digital_input_bits"] & 1)
-            if self.holding_item != suction:
-                if suction:
-                    self._transition("HELD_UNKNOWN", "DI1 active without trusted context")
-                    return
+            if self.holding_item and not snapshot.suction_present:
                 raise HeldUnknown("DI1 lost while controller expected a held item")
+            if not self.holding_item and suction:
+                self._transition("HELD_UNKNOWN", "DI1 active without trusted context")
+                return
             for channel, expected in self.expected_outputs.items():
                 actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
                 if actual != expected:

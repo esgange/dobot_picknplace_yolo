@@ -89,6 +89,14 @@ feedback is checked throughout recovery and Stop confirmation. If idle
 supervision sees an unexpected running/nonempty queue, it pre-empts that motion
 with the independent Stop path before requiring recovery.
 
+Held-item DI1 loss has a fixed 50 ms falling-edge debounce. Advancing FeedInfo
+must continue reporting LOW for that interval; HIGH cancels the pending loss
+immediately. One shared filter covers held motion, Home preflight, Stop/recovery,
+idle holding and Pause. Confirmed paused loss stays latched even if DI1 rises
+again. Pickup HIGH detection, release/reset LOW checks, DO/output integrity and
+feedback-freshness checks retain their existing immediate behavior. The debounce
+adds no sleep and never delays an explicit Stop command.
+
 The Dobot `isPauseCmdFlag` bit is not a general readiness gate. Hardware evidence
 shows that `EnableRobot()` may latch it to one while mode 5 is enabled and the
 queue is empty/not running; `Continue()` is rejected in that condition. The

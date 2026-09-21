@@ -4416,6 +4416,40 @@ Never use a floating “latest” version in an issue, script, or deployment not
   commands were issued; live motion remains unverified. No new offline-transfer
   milestone is claimed.
 
+### 2026-09-21 — Debounce held-item suction loss for 50 ms
+
+- Rule 107 supersedes earlier immediate HIGH-to-LOW DI1 handling for held-item
+  integrity and post-acquisition Stop verification. Add a fixed 50 ms falling
+  interval in the shared canonical feedback monitor. HIGH is immediate and
+  resets the pending LOW interval; an advancing LOW sample starts the timer
+  and another advancing LOW sample at least 50 ms later confirms loss. The
+  timer uses monotonic receive time, with no sleeping or blocking feedback.
+  Repeated snapshot reads and duplicate controller timers cannot complete it;
+  gaps beyond the existing one-second freshness bound restart the interval.
+- Preserve raw FeedInfo and raw output/DI history. Add an internal snapshot
+  `suction_present` value consumed by held motion, Home/preflight and motion
+  origin, Stop/recovery, idle HOLDING, and managed Pause/Continue/put-back.
+  Short LOW glitches therefore cannot independently trigger any held-item loss
+  path. A confirmed paused loss retains the existing Stop/put-back latch even
+  after a later HIGH; Continue cannot cancel that confirmed return.
+- Initial LOW stays LOW. Acquisition and untrusted HIGH detection remain raw
+  and immediate, including acquisition eligibility during Pause's initial Stop.
+  Missed-pick reset/arming, release/exhaust confirmation and other unheld checks
+  still use raw DI1. DO13/other output failures, stale feedback, source checks,
+  fault handling, and direct Stop pre-emption retain their existing gates.
+  Explicit Stop and stationary confirmation do not wait for the debounce.
+  The 50 ms policy is separate from pick settling and the exhaust pulse; no
+  profile, ROS interface, runtime configuration or artifact schema changes.
+- Verification: all 227 controller tests pass. Tests cover 49.999/50 ms LOW,
+  HIGH bounce reset, immediate acquisition, raw history, duplicate/frozen/stale
+  feedback, held motion/recovery/Home/idle checks, immediate output faults,
+  Stop without a debounce wait, brief LOW during Pause parking/Continue, and
+  confirmed paused loss remaining latched after HIGH. Package results report
+  228 tests with zero errors/failures/skips. All eight changed Python/test files
+  compile and pass ament_flake8; the full 15-package root symlink build and
+  `git diff --check` pass. No physical robot commands were issued; live timing
+  and motion remain unverified. No new offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text
