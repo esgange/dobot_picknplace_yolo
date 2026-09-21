@@ -273,6 +273,7 @@ def test_home_preflight_and_idle_holding_share_the_fifty_ms_suction_loss_gate():
     node = SimpleNamespace(
         monitor=monitor, holding_item=True, startup_complete=True,
         operation_lock=threading.Lock(), machine=machine, expected_outputs={13: True},
+        managed=SimpleNamespace(note_suction_loss=lambda _sample: None),
         _transition=lambda target, message: machine.transition(target, message))
     emit(0.0, True)
     emit(0.010, False)

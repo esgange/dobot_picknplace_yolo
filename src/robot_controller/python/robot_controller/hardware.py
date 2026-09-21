@@ -466,16 +466,20 @@ class DobotTransport:
         anchor = None
         anchor_sequence = None
         held_violation = None
+        suction_lost = False
         last_snapshot = None
         planned_outputs = dict(getattr(self, "pending_motion_outputs", {}))
 
         def stationary(snapshot):
-            nonlocal anchor, anchor_sequence, held_violation, last_snapshot
+            nonlocal anchor, anchor_sequence, held_violation, last_snapshot, suction_lost
             last_snapshot = snapshot
             feed = snapshot.feed
-            if self.node.holding_item:
+            if self.node.holding_item or getattr(self, "return_recovery", False):
                 if not snapshot.suction_present and not allow_suction_loss:
-                    held_violation = "DI1 suction feedback was lost during Stop"
+                    suction_lost = True
+                    managed = getattr(self.node, "managed", None)
+                    if managed is not None:
+                        managed.note_suction_loss(snapshot)
                 for channel, active in self.node.expected_outputs.items():
                     actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
                     planned = planned_outputs.get(channel, active)
@@ -509,6 +513,11 @@ class DobotTransport:
         self.pending_motion_outputs = {}
         self.node.events.record("INFO", "stop_confirmed",
                                 "Stop acknowledged; stationary empty queue confirmed")
+        if suction_lost:
+            self.node.events.record(
+                "WARNING", "stop_suction_lost",
+                "Stop confirmed; suction is unconfirmed, outputs preserved; "
+                "explicit recovery required")
 
     def _phase(self, phase, message, waypoint=""):
         self.node.operation_progress(phase, message, waypoint=waypoint)
@@ -540,14 +549,17 @@ class DobotTransport:
 
     def _validate_held_snapshot(self, snapshot, *, known_holding=None,
                                 expected_outputs=None):
-        holding = (self.node.holding_item
-                   if known_holding is None else known_holding)
+        returning = getattr(self, "return_recovery", False)
+        holding = returning or (self.node.holding_item if known_holding is None else known_holding)
         outputs = (self.node.expected_outputs
                    if expected_outputs is None else expected_outputs)
         if not holding:
             return snapshot
         feed = snapshot.feed
-        if not snapshot.suction_present:
+        if not snapshot.suction_present and not returning:
+            managed = getattr(self.node, "managed", None)
+            if managed is not None:
+                managed.note_suction_loss(snapshot)
             raise HeldUnknown("Known held-item context lost DI1 suction feedback")
         for channel, active in outputs.items():
             actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
@@ -602,10 +614,11 @@ class DobotTransport:
     def _check_held_context(self, known_holding, expected_outputs):
         snapshot = self.monitor.snapshot(require_enabled=False)
         suction = bool(snapshot.feed["digital_input_bits"] & 1)
-        if suction and not known_holding:
+        returning = getattr(self, "return_recovery", False)
+        if suction and not known_holding and not returning:
             raise HeldUnknown(
                 "DI1 is active without trusted controller-owned pickup context; outputs preserved")
-        if known_holding:
+        if known_holding or returning:
             self._validate_held_snapshot(
                 snapshot, known_holding=True, expected_outputs=expected_outputs)
         return snapshot
@@ -714,14 +727,25 @@ class DobotTransport:
         self._reset_outputs_if_unheld()
         self._confirm_ready()
 
-    def recover(self, speed_percent):
+    def recover(self, speed_percent, *, return_item=False):
+        """Restore readiness; uncertain-item recovery preserves every output."""
+        if return_item and not self.node.managed.recovery_return_needed():
+            raise CommandRejected("Item recovery requires a retained source and confirmed loss")
+        self.return_recovery = return_item
+        try:
+            self._recover(speed_percent)
+        finally:
+            self.return_recovery = False
+
+    def _recover(self, speed_percent):
         self.wait_services(optional=("StopMoveJog",))
         strict = tuple(name for name in self.required_services if name != "StopMoveJog")
         self.node.check_all_command_owners(strict)
         self.node.check_feedback_owners()
         self.ensure_no_pending_response()
         self._phase("QUEUE_RESET", "Stopping and discarding any queued motion", "Stop")
-        self.confirm_stop(self.request_stop("explicit Recover queue reset"))
+        self.confirm_stop(self.request_stop("explicit Recover queue reset"),
+                          allow_suction_loss=self.return_recovery)
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
@@ -732,7 +756,7 @@ class DobotTransport:
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 
     def _reset_outputs_if_unheld(self):
-        if self.node.holding_item:
+        if self.node.holding_item or getattr(self, "return_recovery", False):
             return
         for channel in (1, 2, 13, 14):
             self._check_held_context(False, {})

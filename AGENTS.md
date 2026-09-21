@@ -168,6 +168,10 @@ loss stays latched. Acquisition, release/reset checks and all DO checks stay raw
 Rule 108 makes successful Pick returns use the exhausted-miss route, rates and
 single group through joint Home. Held outputs and suction monitoring remain;
 deferred finger CLOSE occurs at the end of the clearance rise.
+Rule 109 latches held suction loss with its source, confirms physical Stop
+independently of DI1, and makes explicit Recovery put back the uncertain item
+before continuing eligible saved candidates, or Home when none remain. Outputs
+remain protected; cold unknown items never receive inferred source context.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

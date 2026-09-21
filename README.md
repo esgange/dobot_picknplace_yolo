@@ -73,7 +73,10 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
 100, unheld output reset, and coherent READY confirmation. Recover performs the
-same guarded recovery without moving Home. Pause discards the current queue and
+same guarded readiness recovery. After confirmed held-item suction loss with
+a retained pick source, explicit Recovery also puts the uncertain item back and
+continues the next eligible saved candidate, or returns Home if none remain.
+Pause discards the current queue and
 parks through the operation executor. Unheld Pick parks at `park_transit`, above
 the interrupted candidate at safety Z (the higher of stopped Z and Home Z), or
 the next unattempted candidate when no interrupted approach remains.
@@ -92,7 +95,7 @@ with the independent Stop path before requiring recovery.
 Held-item DI1 loss has a fixed 50 ms falling-edge debounce. Advancing FeedInfo
 must continue reporting LOW for that interval; HIGH cancels the pending loss
 immediately. One shared filter covers held motion, Home preflight, Stop/recovery,
-idle holding and Pause. Confirmed paused loss stays latched even if DI1 rises
+idle holding and Pause. Confirmed held-item loss stays latched even if DI1 rises
 again. Pickup HIGH detection, release/reset LOW checks, DO/output integrity and
 feedback-freshness checks retain their existing immediate behavior. The debounce
 adds no sleep and never delays an explicit Stop command.
@@ -117,6 +120,17 @@ neutralizes the outputs, then the route finishes at exact joint Home. Pre-pick
 must be at least 50 mm above final pick, with clearance above the release pose;
 equal waypoints skip the zero-length retreat. The pulse is independent of the
 taught final-pick settling interval.
+Outside Pause, confirmed suction loss stops the operation and requires an
+explicit Recovery click. DI1 confirms vacuum, so LOW does not prove that an
+item has physically left the fingers. Stop can still confirm stationary/empty
+queue while reporting uncertain suction separately. With the saved source
+available, Recovery preserves outputs during Stop/clear/enable/settings, uses
+the same +50 mm release and confirmed 50 ms exhaust pulse, and excludes that
+`DROPPED` candidate. If another saved candidate is eligible, neutral retreat and
+its transit/clearance/pre-pick/pick form one group without visiting Home first.
+Otherwise the retreat finishes at Home. Loss remains latched after DI1 returns
+HIGH; missing source context, changed files or failed feedback/output/service
+checks block motion. Cold unknown items never gain a fabricated source pose.
 During parking/return, **STOP NOW**, direct Stop, cancellation and shutdown
 pre-empt immediately. Software verification does not validate physical clearance,
 actual pulse width, or successful physical placement.

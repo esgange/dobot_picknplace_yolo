@@ -188,7 +188,8 @@ class PickExecutor:
         self.finish_home = finish_home
 
     def run(self, plans, settings, *, check, return_home, remember_prepick=None,
-            progress=None, holding_changed=None, session=None):
+            progress=None, holding_changed=None, session=None,
+            departure=(), departure_pose=None):
         grip = settings["gripper"]["use_grip"]
         close_on_pick = grip and settings["gripper"]["grip_onpick"]
         if not plans:
@@ -227,11 +228,18 @@ class PickExecutor:
                     forward = (plan[2], plan[3])
                 session.resuming = False
                 session.parked_index = None
+            origin = {}
+            if departure:
+                # Put-back release has confirmed DI1 clear; neutralize during
+                # retreat, then open at the next transit and attempt its pick.
+                forward = (*departure, plan[0], plan[1], plan[2], plan[3])
+                origin["confirmed_start_pose"] = departure_pose
             acquired, stopped_pose = self.hardware.move_batch(
-                forward, batch_name=("candidate_1_home_to_pick" if start_index == 1 else
+                forward, batch_name=(f"return_item_to_candidate_{start_index}_pick" if departure
+                                     else "candidate_1_home_to_pick" if start_index == 1 else
                                      f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
-                return_terminal_pose=True)
+                return_terminal_pose=True, **origin)
         for index in range(start_index, len(plans) + 1):
             plan = plans[index - 1]
             if session is not None:

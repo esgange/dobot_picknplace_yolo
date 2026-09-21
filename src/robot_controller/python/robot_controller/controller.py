@@ -493,6 +493,7 @@ class RobotController(Node):
 
     def _recover(self, _request, response):
         acquired = False
+        returning = False
         try:
             if self.machine.state not in ("FAULT", "RECOVERY_REQUIRED"):
                 raise CommandRejected("Recover requires FAULT or RECOVERY_REQUIRED state")
@@ -501,23 +502,36 @@ class RobotController(Node):
             if self.configuration is not None:
                 self.configuration.validate_sources(self.root)
             self._transition("RECOVERING", "Explicit recovery accepted")
-            self.hardware.recover(self.global_speed_percent)
+            returning = self.managed.recovery_return_needed()
+            self.hardware.recover(self.global_speed_percent, return_item=returning)
             self.startup_complete = True
             if self.global_speed_percent is None:
                 self.global_speed_percent = 100
-            target = "HOLDING" if self.holding_item else "READY"
-            self._transition(target, "Recovery completed; robot is " + target)
+            if returning:
+                self.managed.recover_item_and_continue()
+            self.raise_if_cancelled()
+            if not returning:
+                target = "HOLDING" if self.holding_item else "READY"
+                self._transition(target, "Recovery completed; robot is " + target)
             response.success = True
         except HeldUnknown as exc:
             self.startup_complete = False
-            self._transition("HELD_UNKNOWN", str(exc))
+            if returning:
+                self._contain_queue_control_failure("Item recovery", exc)
+            elif self.managed.session is not None and self.managed.session.held_index is not None:
+                self._transition("FAULT", f"Recovery blocked; held source retained: {exc}")
+            else:
+                self._transition("HELD_UNKNOWN", str(exc))
             response.success = False
         except OperationCanceled as exc:
             response.success = False
             self._settle_lifecycle_cancellation(str(exc))
         except Exception as exc:
             response.success = False
-            if acquired and self.machine.state != "STOPPING":
+            if returning:
+                self._contain_queue_control_failure("Item recovery", exc)
+                event, level = "recovery_failed", "ERROR"
+            elif acquired and self.machine.state != "STOPPING":
                 self._transition("FAULT", f"Recovery failed: {exc}")
                 event, level = "recovery_failed", "ERROR"
             else:
@@ -639,19 +653,22 @@ class RobotController(Node):
 
     def _finish_stop_state(self):
         previous = self.state_before_stop
+        session = getattr(getattr(self, "managed", None), "session", None)
+        return_source = bool(session is not None and session.held_index is not None
+                             and session.attempts[session.held_index - 1].state == "DROPPED")
         try:
             suction = bool(self.monitor.snapshot(
                 require_enabled=False).feed["digital_input_bits"] & 1)
         except FeedbackFailure:
             suction = getattr(self, "holding_item", False) or previous == "HELD_UNKNOWN"
-        if suction and not getattr(self, "holding_item", False):
+        if suction and not getattr(self, "holding_item", False) and not return_source:
             target = "HELD_UNKNOWN"
         elif previous == "UNCONFIGURED":
             target = "UNCONFIGURED"
         elif previous == "INACTIVE":
             target = "INACTIVE"
         elif previous == "HELD_UNKNOWN":
-            target = "HELD_UNKNOWN" if suction else "RECOVERY_REQUIRED"
+            target = "HELD_UNKNOWN" if suction and not return_source else "RECOVERY_REQUIRED"
         else:
             target = "RECOVERY_REQUIRED"
         self.startup_complete = False
@@ -724,6 +741,7 @@ class RobotController(Node):
         suction = bool(snapshot.feed["digital_input_bits"] & 1)
         expected = self.holding_item if expected_holding is None else expected_holding
         if expected and not snapshot.suction_present:
+            self.managed.note_suction_loss(snapshot)
             raise HeldUnknown("Trusted held-item context lost DI1")
         if not expected and suction:
             raise HeldUnknown("DI1 active without trusted held-item context")
@@ -1082,6 +1100,7 @@ class RobotController(Node):
                 return
             suction = bool(feed["digital_input_bits"] & 1)
             if self.holding_item and not snapshot.suction_present:
+                self.managed.note_suction_loss(snapshot)
                 raise HeldUnknown("DI1 lost while controller expected a held item")
             if not self.holding_item and suction:
                 self._transition("HELD_UNKNOWN", "DI1 active without trusted context")

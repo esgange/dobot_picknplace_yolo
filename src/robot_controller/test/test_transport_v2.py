@@ -786,6 +786,7 @@ def test_cold_di1_is_held_unknown_and_preserves_output_context():
 
 def test_known_holding_requires_di1_and_exact_expected_outputs():
     transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace()
     transport.monitor = SimpleNamespace(
         snapshot=lambda **_kwargs: snapshot(di1=True, outputs=1 << 12))
     transport._check_held_context(True, {13: True})
@@ -905,7 +906,7 @@ class StopMonitor:
         return self.sample
 
 
-def test_stop_confirmation_detects_held_item_loss_without_changing_outputs():
+def test_stop_confirms_stationary_queue_despite_suction_loss_and_preserves_outputs():
     transport = object.__new__(DobotTransport)
     transport.node = SimpleNamespace(
         holding_item=True, expected_outputs={13: True}, events=EventLog(),
@@ -914,9 +915,70 @@ def test_stop_confirmation_detects_held_item_loss_without_changing_outputs():
     stopped.feed["tool_vector_actual"] = [0.0] * 6
     transport.monitor = StopMonitor(stopped)
     transport.moving = True
-    with pytest.raises(Exception, match="held-item integrity"):
-        transport.confirm_stop(CompletedFuture())
+    transport.confirm_stop(CompletedFuture())
+    assert not transport.moving
     assert transport.node.expected_outputs == {13: True}
+    assert [entry[0][1] for entry in transport.node.events.entries][-2:] == [
+        "stop_confirmed", "stop_suction_lost"]
+
+
+@pytest.mark.parametrize("failure", [None, "output", "response"])
+def test_explicit_return_recovery_keeps_outputs_and_restores_strict_suction_checks(failure):
+    transport = object.__new__(DobotTransport)
+    outputs = {1: False, 2: True, 13: True, 14: False}
+    sample = snapshot(di1=False, outputs=(1 << 12) | 2)
+    sample.feed["tool_vector_actual"] = [0.0] * 6
+    calls = []
+    transport.node = SimpleNamespace(
+        holding_item=True, expected_outputs=outputs.copy(), events=EventLog(),
+        managed=SimpleNamespace(recovery_return_needed=lambda: True,
+                                note_suction_loss=lambda _sample: None),
+        check_all_command_owners=lambda _names: None, check_feedback_owners=lambda: None,
+        cancel_requested=lambda: False, publish_status=lambda: None,
+        operation_progress=lambda *_args, **_kwargs: None)
+
+    def wait(predicate, *_args, **_kwargs):
+        for _index in range(3):
+            sample.sequence += 1
+            if predicate(sample):
+                return sample
+        pytest.fail("Recovery predicate did not accept coherent feedback")
+    transport.monitor = SimpleNamespace(
+        snapshot=lambda **_kwargs: sample, wait=wait, wait_samples=wait)
+    transport.clients = {"EnableRobot": None}
+    transport.wait_services = lambda **_kwargs: None
+    transport.ensure_no_pending_response = lambda: None
+    transport.request_stop = lambda _reason: calls.append("Stop") or CompletedFuture()
+    transport.output = lambda *_args: pytest.fail("Recovery must not reset held outputs")
+
+    def call(name, *, progress, **_fields):
+        calls.append(name)
+        if name == "EnableRobot" and failure == "output":
+            sample.feed["digital_outputs"] &= ~(1 << 12)
+        if name == "EnableRobot" and failure == "response":
+            raise CommandResponseTimeout("EnableRobot unanswered")
+        progress(sample)
+    transport.call = call
+    if failure:
+        with pytest.raises(HeldUnknown if failure == "output" else CommandResponseTimeout):
+            transport.recover(60, return_item=True)
+        assert calls == ["Stop", "EnableRobot"]
+    else:
+        transport.recover(60, return_item=True)
+        assert calls == ["Stop", "EnableRobot", "SpeedFactor", "User", "Tool", "SetTool", "CP"]
+    assert transport.node.expected_outputs == outputs
+    assert transport.return_recovery is False
+    with pytest.raises(HeldUnknown, match="lost DI1"):
+        transport._validate_held_snapshot(sample)
+
+
+def test_return_recovery_refuses_missing_trusted_source_before_commands():
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(
+        managed=SimpleNamespace(recovery_return_needed=lambda: False))
+    transport._recover = lambda _speed: pytest.fail("Recovery dispatched without a source")
+    with pytest.raises(CommandRejected, match="retained source"):
+        transport.recover(60, return_item=True)
 
 
 def test_direct_stop_is_confirmed_without_waiting_for_di1_debounce():

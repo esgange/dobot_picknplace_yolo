@@ -63,8 +63,9 @@ Services:
   success performs no robot command, returns to `INACTIVE`, and requires Startup
   again. A rejected replacement preserves the current configuration and state.
 - `/robot_controller/startup` performs the deterministic cold Startup sequence.
-- `/robot_controller/recover` stops/clears/enables/restores settings without
-  moving Home.
+- `/robot_controller/recover` restores readiness. After a confirmed held-item
+  suction loss with retained source, it also puts back the uncertain item and
+  continues eligible saved candidates, or Homes when none remain.
 - `/robot_controller/pause` accepts a managed stop-and-park request. The service
   reports acceptance; status reaches `PAUSED` only after parking completes.
 - `/robot_controller/continue` accepts replanning from confirmed `PAUSED`.
@@ -146,9 +147,11 @@ Startup validates sole canonical services and publishers, then performs:
 7. DO1/DO2/DO13/DO14 reset only when no item is held;
 8. 200 ms of coherent `READY` feedback.
 
-Recover repeats Stop/error-clear/enable/settings/readiness but never moves Home.
-It retains the last confirmed global factor. Trusted holding recovery preserves
-suction/finger outputs and verifies DI1. Cold-start DI1 remains `HELD_UNKNOWN`;
+Recover repeats Stop/error-clear/enable/settings/readiness, retaining the last
+confirmed global factor. Without confirmed suction loss, trusted holding
+recovery preserves suction/finger outputs and verifies DI1. With confirmed loss
+and a retained source, the explicit click also owns the put-back/continuation
+described below. Cold-start DI1 remains `HELD_UNKNOWN`;
 after the operator physically resolves it, another explicit Stop observes DI1
 clear and changes the state to `RECOVERY_REQUIRED`, where Recover is allowed.
 
@@ -237,6 +240,38 @@ or return cancel all further host-side commands and require recovery. The
 already-requested controller pulse can still switch EXHAUST OFF on its timer.
 Faults never automatically invoke put-back or release. The idle vendor
 `isPauseCmdFlag` remains contextual telemetry and does not enable Continue.
+
+Confirmed held-item suction loss outside Pause marks the owning candidate
+`DROPPED` while preserving its source and outputs. This records loss of vacuum
+confirmation, not proof that the physical item left the gripper. A subsequent
+HIGH does not clear the latch. Physical Stop confirmation still requires its
+accepted response and stationary empty queue; a DI1 loss is logged separately
+and does not mislabel a successful Stop or poison later Stop confirmation.
+Freshness and output-integrity failures retain their strict handling.
+
+An explicit Recovery click with that retained source confirms Stop, conditional
+ClearError, Enable, settings and READY feedback while preserving all outputs.
+Only this scoped readiness step permits uncertain DI1; every output check stays
+strict and normal suction validation is restored on success or exception. Then
+it uses the existing put-back route with outputs preserved until the +50 mm
+release pose, followed by finger OPEN and the confirmed native 50 ms EXHAUST
+pulse. Do not proceed until pulse OFF and raw DI1 LOW are confirmed.
+
+If the same retained batch has an eligible PENDING or INTERRUPTED candidate,
+queue neutral retreat through old pre-pick/clearance and that next candidate's
+transit, clearance, pre-pick and final pick in one ordered group. No intervening
+Home or new detector request occurs; only final pick uses taught settling and
+normal acquisition monitoring. FAILED, DROPPED and RETURNED stay excluded.
+The subsequent successful or exhausted return uses rule 108. With no eligible
+candidate after release, queue the retreat through Home and finish READY.
+The recovery service completes when this operation completes; status reports
+RECOVERING, RETURNING_ITEM, then PICKING when applicable, and HOLDING/READY.
+Pause/Continue remains available during the resumed Pick. Direct Stop pre-empts
+recovery, release and subsequent picking. An interrupted pre-release put-back
+retains its source for another explicit Recovery, including after DI1 bounces
+HIGH. Failed/ambiguous services, changed sources, invalid feedback or changed
+outputs prevent later commands and invoke Stop containment. No automatic retry,
+source reconstruction or process-restart restoration is permitted.
 
 The GUI SpeedFactor slider tracks the handle position and sends it once on
 release. Keyboard and groove changes are debounced for 350 ms. Controller status

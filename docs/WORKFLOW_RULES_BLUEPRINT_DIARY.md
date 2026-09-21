@@ -4486,6 +4486,63 @@ Never use a floating “latest” version in an issue, script, or deployment not
   commands were issued; live motion remains unverified. No new offline-transfer
   milestone is claimed.
 
+### 2026-09-21 — Recover an uncertain held item before continuing the batch
+
+- Evidence: at 11:37:36 UTC, candidate 2 lost suction confirmation during its
+  return. Stop request 171 returned `res=0` and stationary/empty-queue feedback
+  passed, but the same low DI1 was raised as `StopUnconfirmed`. An explicit Stop
+  then reused the cached error, and Recover at 11:39:54 failed on its own Stop
+  holding check. The operator confirmed the item was still physically held
+  while DI1 was LOW or unknown. The saved logs lack raw DI1 history, so they do
+  not establish why vacuum confirmation was lost or the original LOW duration.
+- Rule 109 supersedes earlier requirements that classify suction loss during
+  confirmed stationary Stop as unconfirmed motion containment or require HIGH
+  DI1 before any recovery of a trusted item. Confirmed held loss marks the
+  candidate DROPPED and retains the source and outputs; later HIGH cannot
+  erase it. Bounded loss events now include the raw DI/output bits, sequence
+  and controller timer. DROPPED means lost vacuum confirmation, not measured
+  physical separation from the fingers. Stop still requires accepted response,
+  fresh stationary empty queue and protected outputs; log suction loss
+  separately and allow RECOVERY_REQUIRED without caching a suction-only Stop
+  failure. No fault automatically releases or resumes the robot.
+- The operator explicitly selected put-back on Recovery, then superseded the
+  initial Home-only proposal: continue the next eligible saved candidate if
+  available, otherwise Home. Recovery requires the same in-memory trusted
+  source and validated files. Stop/conditional ClearError/Enable/settings/READY
+  preserves the expected outputs, including if an earlier put-back was stopped
+  before release. Only this scoped readiness step accepts uncertain DI1; all
+  output, ownership, feedback, acknowledgement and cancellation checks remain.
+  Restore strict suction validation on every exit. Cold untrusted DI1 or missing
+  source cannot enter this branch. Healthy held recovery keeps its old behavior.
+- Use the existing safety rise, original pre-pick and final-pick-Z +50 mm
+  release pose. Preserve outputs until release; command finger OPEN and the
+  native 50 ms exhaust pulse, verifying ON/OFF and raw DI1 LOW before retreat.
+  With a next PENDING/INTERRUPTED candidate, one ordered CP(100) group contains
+  neutral old-item retreat and that candidate's transit, clearance, pre-pick
+  and final pick. Reuse the release pose as origin, apply normal acquisition
+  and taught settling, and retain the batch without querying detection. The
+  released candidate stays DROPPED and FAILED/RETURNED candidates stay excluded.
+  Without another eligible candidate, retreat through exact Home and finish
+  READY. A later success/exhaustion retains rule 108's Home return.
+- Status uses existing RECOVERING/RETURNING_ITEM/PICKING/HOLDING/READY states;
+  the recovery service completes with the operation. Pause/Continue applies to
+  the resumed Pick; direct Stop always pre-empts without later host-side release
+  or motion. Retain a stopped pre-release put-back source even if DI1 returns
+  HIGH. Source changes, failed/ambiguous commands, invalid feedback and output
+  mismatch block later commands and use existing Stop containment. No new
+  artifact schema, interface, runtime setting, vendor change or automatic retry.
+- Verification: all 254 controller tests pass; package results report 255 tests
+  with zero failures/errors/skips. Software fixtures cover LOW/HIGH-bounce recovery,
+  release before another candidate, no intermediate Home, exhausted remaining
+  candidates, no remaining candidates, source rejection, held-output failures,
+  unanswered Enable, restoration of strict DI checks, Pause/Continue and direct
+  Stop during return/continued picking, including another explicit Recovery
+  after interrupted put-back. All eight changed Python/test files compile and
+  pass ament_flake8. The complete root symlink build passes for all 15 packages
+  and `git diff --check` passes. No physical robot commands were issued; live
+  motion, physical pulse timing and placement remain unverified. No new offline
+  transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

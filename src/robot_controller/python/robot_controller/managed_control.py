@@ -92,6 +92,7 @@ class ManagedControl:
     def observe(self, sample):
         """Latch drop without abandoning an outstanding service response."""
         with self.lock:
+            self.note_suction_loss(sample)
             if ((self.parking_held or self.kind == "pause" and (
                     not self.executing or self.node.machine.state == "PAUSED"))
                     and self.node.holding_item and not sample.suction_present):
@@ -100,6 +101,74 @@ class ManagedControl:
                     self.node.hardware.request_stop("Suction lost during managed Pause rise")
                 return True
         return False
+
+    def note_suction_loss(self, sample):
+        """Retain the source and loss even if DI1 returns before explicit recovery."""
+        with self.lock:
+            if (not self.node.holding_item or sample.suction_present
+                    or self.session is None or self.session.held_index is None):
+                return
+            attempt = self._candidate()
+            if attempt.state == "HELD":
+                self.session.set_state(self.session.held_index, "DROPPED")
+                self.node.events.record(
+                    "WARNING", "held_suction_lost",
+                    "DI1 loss confirmed; physical holding uncertain, source and outputs retained",
+                    candidate_id=attempt.identifier, sequence=sample.sequence,
+                    controller_timer=sample.feed.get("controller_timer"),
+                    digital_input_bits=sample.feed["digital_input_bits"],
+                    digital_outputs=sample.feed["digital_outputs"])
+
+    def recovery_return_needed(self):
+        self.note_suction_loss(self.node.monitor.snapshot(require_enabled=False))
+        with self.lock:
+            return bool(self.session is not None and self.session.held_index is not None
+                        and self._candidate().state == "DROPPED")
+
+    def recover_item_and_continue(self):
+        """Explicit recovery owns put-back, then the remaining retained batch."""
+        self.node.raise_if_cancelled()
+        self.executing = True
+        try:
+            self._mark_drop()
+            departure = self._put_back(dropped=True, continue_candidates=True)
+        finally:
+            self._clear_request()
+        if departure is None:
+            self.node.raise_if_cancelled()
+            self.node._transition(
+                "READY", "Item returned; no eligible candidates remain; robot Home")
+            return
+        retreat, origin = departure
+        self.session.resuming = False
+        self.node.active_action = "pick"
+        self.node._transition("PICKING", "Item released; continuing retained candidates")
+        while True:
+            try:
+                result = PickExecutor(self.node.hardware, finish_home=True).run(
+                    [attempt.plan for attempt in self.session.attempts],
+                    self.node.configuration.profile, session=self.session,
+                    check=lambda _index: self.node.configuration.validate_sources(self.node.root),
+                    return_home=self.node._execute_home,
+                    progress=self.node._candidate_progress,
+                    holding_changed=lambda value: setattr(self.node, "holding_item", value),
+                    departure=retreat, departure_pose=origin)
+                with self.lock:
+                    self.checkpoint()
+                    self.node.events.record(
+                        "INFO", "recovery_pick_completed",
+                        "Retained candidate operation completed",
+                        picked=result["picked"], candidate=result["candidate"])
+                    self.node._transition(
+                        "HOLDING" if result["picked"] else "READY",
+                        "Recovery completed; retained candidate operation finished at Home")
+                    return
+            except ManagedInterruption:
+                retreat, origin = (), None
+                try:
+                    self.handle()
+                except ReturnedToHome:
+                    return
 
     def _candidate(self):
         if self.session is None or self.session.held_index is None:
@@ -185,7 +254,7 @@ class ManagedControl:
                                          batch_name="pause_to_next_transit",
                                          confirmed_start_pose=current)
 
-    def _put_back(self, *, dropped):
+    def _put_back(self, *, dropped, continue_candidates=False):
         node = self.node
         attempt = self._candidate()
         plan = attempt.plan
@@ -212,16 +281,20 @@ class ManagedControl:
         node.hardware.output(14, True)
         node.hardware.output(1, False)
         node.hardware.exhaust_pulse()
-        node._execute_home(preceding=retreat, require_suction=False, forbid_suction=True,
-                           confirmed_start_pose=release.matrix,
-                           queue_through_home=True, batch_name="return_item_to_home")
+        continuing = continue_candidates and self.session.next_eligible is not None
+        if not continuing:
+            node._execute_home(preceding=retreat, require_suction=False, forbid_suction=True,
+                               confirmed_start_pose=release.matrix,
+                               queue_through_home=True, batch_name="return_item_to_home")
         if not dropped:
             self.session.set_state(self.session.held_index, "RETURNED")
         self.session.held_index = None
         self.session.parked_index = None
         node.events.record("INFO", "item_return_completed",
-                           "Release sequence and Home confirmed; physical placement not measured",
-                           candidate_id=attempt.identifier, dropped=dropped)
+                           "Release confirmed; physical placement not measured",
+                           candidate_id=attempt.identifier, dropped=dropped,
+                           continuing_candidates=continuing, home_confirmed=not continuing)
+        return (retreat, release.matrix) if continuing else None
 
     def _check_parked(self, sample):
         node = self.node
