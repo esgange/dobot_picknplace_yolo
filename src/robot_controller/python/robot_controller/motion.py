@@ -188,7 +188,7 @@ class PickExecutor:
             progress("CANDIDATE", "Attempting candidate 1", 1)
         check(1)
         # Never turn vacuum off first and then discover a possibly held item.
-        if not self.hardware.sensor(False, 0, settling_sec=0):
+        if not self.hardware.sensor(False, 0):
             raise ValueError("DI1 failed to clear before pickup")
         if remember_prepick is not None:
             remember_prepick(plans[0][2], settings["gripper"])

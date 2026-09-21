@@ -4107,6 +4107,32 @@ Never use a floating “latest” version in an issue, script, or deployment not
   15-package workspace build and `git diff --check` pass. No Dobot service,
   detector request, camera action or physical robot motion was issued.
 
+### 2026-09-21 — Remove timed settling from every non-pick gate
+
+- Rule 98 supersedes all earlier fixed 300 ms Robot Controller confirmation
+  durations. The final pick's schema-9 `timing.pick_settling` is now the only
+  timed motion-settling interval. Home, Home-height, clearance, retract and all
+  other non-pick endpoints complete on the first fresh enabled, fault-free,
+  queue-idle sample within the existing joint or Cartesian tolerance and with
+  required I/O intact. The initial Home skip uses the same one-sample gate.
+- Motion-origin acquisition still requires a fresh enabled idle sample and an
+  advancing FeedInfo `controller_timer`, but no dwell follows that evidence.
+  Stop and Pause still require two distinct samples with an unchanged tool pose
+  and their required queue state; their former 300 ms duration is removed.
+  Startup/Recover's 200 ms READY lifecycle coherence is separate and unchanged.
+- The active Item Teach profile remains `timing.pick_settling: 0.1`, so only
+  final pick waits for a 100 ms settling window. Artifact schemas, operator
+  files, target tolerances, feedback freshness, held-item/output checks and Stop
+  containment are unchanged.
+- Verification was software-only. All 159 direct Controller tests and all 160
+  package-reported tests pass. Coverage proves zero-duration non-pick terminal
+  completion, one-sample Home skip, untimed advancing motion-origin capture,
+  two-distinct-sample Stop/Pause confirmation and the retained taught final-pick
+  window. All 20 controller/test Python files pass compilation and
+  `ament_flake8`; the complete 15-package workspace build and `git diff --check`
+  pass. No Dobot service, detector request, camera action or physical robot
+  motion was issued.
+
 ### Future entry template
 
 ```text

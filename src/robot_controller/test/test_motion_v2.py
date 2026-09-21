@@ -7,8 +7,7 @@ from item_perception_yolo.pick_planning import select_pick_attitude
 from robot_controller.hardware import (
     CARTESIAN_POSITION_TOLERANCE_M, COMMAND_RESPONSE_TIMEOUT_SEC,
     HOME_JOINT_TOLERANCE_RAD, MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
-    OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC,
-    STATIONARY_SEC)
+    OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC)
 from robot_controller.motion import (
     MotionIO, PickExecutor, Target, candidate_pose_in_base, cartesian_home_targets,
     gripper_close_events, gripper_neutral_events, gripper_open_events, home_targets,
@@ -51,7 +50,6 @@ def test_timing_and_arrival_policy_constants():
     assert READY_STABLE_SEC == 0.2
     assert MOTION_NO_PROGRESS_SEC == 3.0
     assert MOTION_HARD_CAP_SEC == 300.0
-    assert STATIONARY_SEC == 0.3
     assert CARTESIAN_POSITION_TOLERANCE_M == 0.005
     assert HOME_JOINT_TOLERANCE_RAD == pytest.approx(np.deg2rad(1.0))
 
@@ -230,8 +228,8 @@ class FakeHardware:
         self.targets = []
         self.pose = matrix(0.3)
 
-    def sensor(self, active, timeout, *, settling_sec):
-        self.log.append(("sensor", active, timeout, settling_sec))
+    def sensor(self, active, timeout):
+        self.log.append(("sensor", active, timeout))
         if not active:
             return True
         return False

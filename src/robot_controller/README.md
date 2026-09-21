@@ -136,9 +136,10 @@ after the operator physically resolves it, another explicit Stop observes DI1
 clear and changes the state to `RECOVERY_REQUIRED`, where Recover is allowed.
 
 Native action cancellation and Stop invalidate the active command generation,
-use the independent Stop client, wait for acknowledgement and 300 ms stationary
-empty-queue feedback, and preserve every gripper output. They never Home,
-release, disable, or resume a discarded queue. The result is
+use the independent Stop client, wait for acknowledgement and two distinct
+feedback samples showing an unchanged tool pose and stationary empty queue, and
+preserve every gripper output. They never Home, release, disable, or resume a
+discarded queue. The result is
 `RECOVERY_REQUIRED`. A late motion acknowledgement causes another Stop;
 unconfirmed stopping is `FAULT`. Held-item DI1 and expected-output integrity are
 checked throughout Stop and Recover. Unexpected running/nonempty queue feedback
@@ -226,12 +227,13 @@ so the operator must verify that the complete blended path is clear.
 
 Pick's initial and return Home paths retain the shared joint-Home rule. The
 initial step skips if all six fresh actual joints are within ±1° of the taught
-tuple for 300 ms with idle mode 5, RobotStatus enabled, `EnableStatus=1`,
-fault/collision clear, user/tool zero, queue empty/not running, and held-item
-I/O intact where applicable. Otherwise, below taught Home Z, `RelMovLUser`
-first rises at current XY/attitude and confirms 5 mm/1° Cartesian arrival plus
-stationary/empty-queue feedback; at/above it, that rise is skipped. Exact
-taught Home joints then use joint-mode `MovL` and ±1° joint confirmation.
+tuple in one feedback sample with idle mode 5, RobotStatus enabled,
+`EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not
+running, and held-item I/O intact where applicable. Otherwise, below taught
+Home Z, `RelMovLUser` first rises at current XY/attitude and confirms 5 mm/1°
+Cartesian arrival plus stationary/empty-queue feedback; at/above it, that rise
+is skipped. Exact taught Home joints then use joint-mode `MovL` and ±1° joint
+confirmation.
 Pick returns first confirm the above-item approach/clearance before this rule.
 
 Pick is permitted only from `READY` with DI1 clear:
@@ -358,25 +360,26 @@ taught Home reference, and target RPY.
 
 Joint Home completion uses ±1° independently on every joint. Cartesian target
 completion uses 5 mm Euclidean translation and 1° orientation. Home, clearance
-and other non-pick endpoints require 300 ms of coherent enabled, idle,
-queue-empty feedback. A final pick instead uses its taught `pick_settling`
-duration under the same feedback gates. Home remains joint-only and does not
-additionally compare Cartesian FK with the streamed actual tool pose.
+and every other non-pick endpoint complete on the first fresh enabled,
+queue-idle feedback sample within the applicable tolerance. Only a final pick
+uses a timed settling interval: its taught `pick_settling` duration under the
+same feedback gates. Home remains joint-only and does not additionally compare
+Cartesian FK with the streamed actual tool pose.
 
 Before every independently acquired motion-batch origin or stopped-pose
-measurement, the controller waits up to two seconds for 300 ms of coherent idle
-feedback and an advancing FeedInfo `controller_timer` (brief duplicate
-publishes are allowed, but no source freeze longer than 150 ms). The final-pick
-confirmation sample supplies its stopped pose and is carried directly into the
-immediate retract/return batch, so that path does not repeat a 300 ms wait at
-the bottom. The controller uses `tool_vector_actual` from the same validated
-sample; it never sends a separate `GetPose` request or subscribes to the slower,
-unstamped `ToolVectorActual` topic. This absorbs the normal feedback transition
-immediately after an acknowledged DO or Stop. A timeout names every current
+measurement, the controller waits up to two seconds for coherent idle feedback
+and an advancing FeedInfo `controller_timer` (brief duplicate publishes are
+allowed, but no source freeze longer than 150 ms). There is no additional dwell
+duration. The final-pick confirmation sample supplies its stopped pose and is
+carried directly into the immediate retract/return batch. The controller uses
+`tool_vector_actual` from the same validated sample; it never sends a separate
+`GetPose` request or subscribes to the slower, unstamped `ToolVectorActual`
+topic. A timeout names every current
 RobotStatus/FeedInfo blocker, or reports that otherwise-valid fields could not
-stay coherent for the full interval. Fresh connected RobotStatus, joints,
+produce one coherent advancing sample. Fresh connected RobotStatus, joints,
 FeedInfo, user/tool zero, held-item integrity, and the normal final-arrival
-checks remain mandatory. A live comparison of streamed pose with
+checks remain mandatory. Startup/Recover retains its separate 200 ms READY
+lifecycle coherence. A live comparison of streamed pose with
 `GetPose(user=0,tool=0)` is a separate commissioning check, not an automatic
 fallback or an extra runtime service dependency.
 

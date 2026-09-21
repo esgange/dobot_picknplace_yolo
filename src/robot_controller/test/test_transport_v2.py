@@ -87,9 +87,7 @@ def test_normal_service_timeout_after_five_seconds_blocks_later_dispatch(monkeyp
     assert len(dispatches) == 1
 
 
-def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
-        monkeypatch):
-    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check():
     transport = object.__new__(DobotTransport)
     order = []
     sequence = iter(range(1, 20))
@@ -138,10 +136,10 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check(
     assert names == ["motion_batch_dispatch_started", "motion_queued",
                      "motion_queued", "motion_batch_queued",
                      "motion_batch_completed"]
+    assert events.entries[-1][1]["terminal_stable_sec"] == 0.0
 
 
-def test_hardware_home_waypoints_dispatch_cartesian_movl_only(monkeypatch):
-    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+def test_hardware_home_waypoints_dispatch_cartesian_movl_only():
     transport = object.__new__(DobotTransport)
     current = np.eye(4)
     current[:3, 3] = [0.1, 0.2, 0.1]
@@ -184,8 +182,7 @@ def test_hardware_home_waypoints_dispatch_cartesian_movl_only(monkeypatch):
     assert set(reached) == {"home"}
 
 
-def test_home_height_accepts_small_getpose_jitter_but_never_descends(monkeypatch):
-    monkeypatch.setattr(hardware_module, "STATIONARY_SEC", 0.0)
+def test_home_height_accepts_small_getpose_jitter_but_never_descends():
     transport = object.__new__(DobotTransport)
     origin = np.eye(4)
     origin[0, 3] = 0.0005
@@ -766,6 +763,7 @@ def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched():
 
 def snapshot(*, di1=False, outputs=0, joints=None):
     return SimpleNamespace(
+        sequence=1,
         robot_enabled=True,
         joints=tuple([0.0] * 6 if joints is None else joints),
         feed={
@@ -872,7 +870,9 @@ class StopMonitor:
         self.sample = sample
 
     def wait(self, predicate, *_args, **_kwargs):
+        assert "stable_sec" not in _kwargs
         assert not predicate(self.sample)
+        self.sample.sequence += 1
         assert predicate(self.sample)
         return self.sample
 
@@ -923,6 +923,28 @@ def test_stop_confirmation_accepts_commanded_finger_transition_during_return():
     assert transport.node.expected_outputs == {2: True, 13: True, 14: False}
     assert transport.pending_motion_outputs == {}
     assert not transport.moving
+
+
+def test_pause_confirmation_uses_two_samples_without_timed_settling():
+    paused = snapshot()
+    paused.feed["isPauseCmdFlag"] = 1
+    calls = []
+
+    class PauseMonitor:
+        def wait(self, predicate, _timeout, **kwargs):
+            assert "stable_sec" not in kwargs
+            assert not predicate(paused)
+            paused.sequence += 1
+            assert predicate(paused)
+            return paused
+
+    transport = object.__new__(DobotTransport)
+    transport.monitor = PauseMonitor()
+    transport._call_queue_control = calls.append
+    transport._validate_held_snapshot = lambda sample: sample
+
+    assert transport.pause_queue() is paused
+    assert calls == ["Pause"]
 
 
 def test_held_motion_monitor_adopts_only_commanded_finger_transition():
@@ -998,10 +1020,10 @@ def test_only_fresh_coherent_opposite_di1_becomes_a_missed_pick():
     transport = object.__new__(DobotTransport)
     transport.node = SimpleNamespace(cancel_requested=lambda: False)
     transport.monitor = SensorMonitor(fresh=True)
-    assert not transport.sensor(True, 0.2, settling_sec=0)
+    assert not transport.sensor(True, 0.2)
     transport.monitor = SensorMonitor(fresh=False)
     with pytest.raises(FeedbackFailure, match="Timed out waiting"):
-        transport.sensor(True, 0.2, settling_sec=0)
+        transport.sensor(True, 0.2)
 
 
 def test_service_audit_records_exact_send_and_terminal_response():
@@ -1033,15 +1055,8 @@ def test_service_audit_records_exact_send_and_terminal_response():
 class HomeReachedMonitor:
     def __init__(self, sample):
         self.sample = sample
-        self.wait_calls = 0
 
     def snapshot(self, **_kwargs):
-        return self.sample
-
-    def wait(self, predicate, _timeout, **kwargs):
-        self.wait_calls += 1
-        assert kwargs["stable_sec"] == pytest.approx(0.3)
-        assert predicate(self.sample)
         return self.sample
 
 
@@ -1053,16 +1068,14 @@ def home_reached_transport(sample):
     return transport
 
 
-def test_existing_home_uses_same_one_degree_stable_completion_gate():
+def test_existing_home_uses_one_fresh_one_degree_completion_sample():
     transport = home_reached_transport(
         snapshot(joints=[HOME_JOINT_TOLERANCE_RAD] * 6))
     assert transport.home_already_reached((0.0,) * 6)
-    assert transport.monitor.wait_calls == 1
 
     transport = home_reached_transport(
         snapshot(joints=[1.01 * HOME_JOINT_TOLERANCE_RAD] * 6))
     assert not transport.home_already_reached((0.0,) * 6)
-    assert transport.monitor.wait_calls == 0
 
 
 def test_existing_home_skip_requires_idle_empty_queue():
@@ -1070,7 +1083,6 @@ def test_existing_home_skip_requires_idle_empty_queue():
     sample.feed["isRunQueuedCmd"] = 1
     transport = home_reached_transport(sample)
     assert not transport.home_already_reached((0.0,) * 6)
-    assert transport.monitor.wait_calls == 0
 
 
 class CurrentPoseMonitor:
@@ -1110,13 +1122,13 @@ def current_pose_transport(sample, *, fail=False, stale=False, frozen=False):
     return transport, calls
 
 
-def test_current_pose_uses_the_stable_feed_sample_without_dashboard_service():
+def test_current_pose_uses_one_advancing_idle_sample_without_dashboard_service():
     transport, calls = current_pose_transport(snapshot())
 
     matrix = transport.current_pose()
 
     assert transport.monitor.wait_kwargs["timeout"] == pytest.approx(2.0)
-    assert transport.monitor.wait_kwargs["stable_sec"] == pytest.approx(0.3)
+    assert "stable_sec" not in transport.monitor.wait_kwargs
     assert transport.monitor.wait_kwargs["require_enabled"] is True
     assert calls == []
     assert tuple(matrix[:3, 3]) == pytest.approx((0.001, 0.002, 0.003))
@@ -1171,7 +1183,7 @@ def test_current_pose_never_reuses_stale_feed_vector():
 def test_current_pose_rejects_republished_feed_with_frozen_controller_timer():
     transport, calls = current_pose_transport(snapshot(), frozen=True)
 
-    with pytest.raises(FeedbackFailure, match="did not remain coherent for 300 ms"):
+    with pytest.raises(FeedbackFailure, match="coherent advancing sample"):
         transport.current_pose()
     assert calls == []
 
@@ -1191,7 +1203,7 @@ def test_current_pose_rejects_source_that_freezes_after_one_timer_tick(monkeypat
         raise FeedbackFailure("synthetic stationary timeout")
 
     transport.monitor.wait = wait
-    with pytest.raises(FeedbackFailure, match="did not remain coherent for 300 ms"):
+    with pytest.raises(FeedbackFailure, match="coherent advancing sample"):
         transport.current_pose()
     assert calls == []
 
@@ -1209,6 +1221,6 @@ def test_current_pose_rejects_invalid_stationary_feed_vector():
 def test_current_pose_reports_unstable_idle_without_inventing_a_blocker():
     transport, calls = current_pose_transport(snapshot(), fail=True)
 
-    with pytest.raises(FeedbackFailure, match="did not remain coherent for 300 ms"):
+    with pytest.raises(FeedbackFailure, match="coherent advancing sample"):
         transport.current_pose()
     assert calls == []

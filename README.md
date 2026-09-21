@@ -171,20 +171,19 @@ observed before the new SUCK. A Stop or cancellation during group admission
 prevents any later group command from being sent.
 
 Pick's initial and return Home arrival means every actual joint is within ±1°
-of its taught value for 300 ms with enabled, fault-free, stationary,
-empty-queue feedback. The terminal Hardware Home target uses 5 mm Euclidean
-translation and 1° orientation with the same final feedback gates; its first
-alignment target is a CP-blended control point and is not separately confirmed.
-Hardware Home skips motion when its fresh stationary
-Cartesian pose is already within that tolerance; Pick's initial shared-Home
-step instead applies the joint Home gate. Queued return-to-Home paths after a
-pick attempt are not skipped. Each independently acquired motion-origin pose
-waits up to two seconds for stationary idle feedback with an advancing
-`controller_timer` to remain coherent for 300 ms; stale or frozen feedback
-cannot supply a motion origin. The final-pick confirmation sample is reused for
-its immediate retract/return, avoiding a second bottom-pose gate. The controller
-no longer calls the Dobot `GetPose` service or subscribes to the slower,
-unstamped `ToolVectorActual` topic.
+of its taught value in one fresh enabled, fault-free, stationary, empty-queue
+feedback sample. The terminal Hardware Home target uses 5 mm Euclidean
+translation and 1° orientation with the same one-sample final feedback gates;
+its first alignment target is a CP-blended control point and is not separately
+confirmed. Hardware Home skips motion when its fresh stationary Cartesian pose
+is already within that tolerance; Pick's initial shared-Home step instead
+applies the joint Home gate. Queued return-to-Home paths after a pick attempt
+are not skipped. Each independently acquired motion-origin pose waits up to two
+seconds for stationary idle feedback with an advancing `controller_timer`, with
+no added dwell; stale or frozen feedback cannot supply a motion origin. The
+final-pick confirmation sample is reused for its immediate retract/return. The
+controller no longer calls the Dobot `GetPose` service or subscribes to the
+slower, unstamped `ToolVectorActual` topic.
 
 ## Item Teach and controller
 

@@ -20,7 +20,6 @@ OUTPUT_FEEDBACK_TIMEOUT_SEC = 5.0
 MODE_TRANSITION_TIMEOUT_SEC = 2.0
 READY_STABLE_SEC = 0.2
 CONSISTENT_FLAG_SAMPLES = 3
-STATIONARY_SEC = 0.3
 POSE_SOURCE_PROGRESS_MAX_GAP_SEC = 0.15
 MOTION_NO_PROGRESS_SEC = 3.0
 MOTION_HARD_CAP_SEC = 300.0
@@ -469,12 +468,13 @@ class DobotTransport:
                 f"Stop rejected: {None if result is None else result.res}")
         self._finish_service_audit(audit, "accepted", result=result)
         anchor = None
+        anchor_sequence = None
         held_violation = None
         last_snapshot = None
         planned_outputs = dict(getattr(self, "pending_motion_outputs", {}))
 
         def stationary(snapshot):
-            nonlocal anchor, held_violation, last_snapshot
+            nonlocal anchor, anchor_sequence, held_violation, last_snapshot
             last_snapshot = snapshot
             feed = snapshot.feed
             if self.node.holding_item:
@@ -487,13 +487,14 @@ class DobotTransport:
                         held_violation = (
                             f"DO{channel} changed during Stop; expected {int(active)}")
             pose = np.asarray(feed["tool_vector_actual"], dtype=float)
-            unmoved = anchor is not None and np.max(np.abs(pose - anchor)) <= 0.05
+            unmoved = (anchor is not None and snapshot.sequence != anchor_sequence
+                       and np.max(np.abs(pose - anchor)) <= 0.05)
             anchor = pose
+            anchor_sequence = snapshot.sequence
             return (not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
                     and feed["robot_mode"] in (4, 5, 9, 10) and unmoved)
         try:
             self.monitor.wait(stationary, MODE_TRANSITION_TIMEOUT_SEC,
-                              stable_sec=STATIONARY_SEC,
                               description="stationary, empty queue after Stop")
         except FeedbackFailure as exc:
             raise StopUnconfirmed(str(exc)) from exc
@@ -556,18 +557,21 @@ class DobotTransport:
     def pause_queue(self):
         self._call_queue_control("Pause")
         anchor = None
+        anchor_sequence = None
 
         def paused_and_stationary(snapshot):
-            nonlocal anchor
+            nonlocal anchor, anchor_sequence
             self._validate_held_snapshot(snapshot)
             pose = np.asarray(snapshot.feed["tool_vector_actual"], dtype=float)
-            unmoved = anchor is not None and np.max(np.abs(pose - anchor)) <= 0.05
+            unmoved = (anchor is not None and snapshot.sequence != anchor_sequence
+                       and np.max(np.abs(pose - anchor)) <= 0.05)
             anchor = pose
+            anchor_sequence = snapshot.sequence
             return bool(snapshot.feed["isPauseCmdFlag"]) and unmoved
 
         return self.monitor.wait(
             paused_and_stationary, MODE_TRANSITION_TIMEOUT_SEC,
-            require_enabled=True, allow_paused=True, stable_sec=STATIONARY_SEC,
+            require_enabled=True, allow_paused=True,
             description="paused and stationary queue")
 
     def continue_queue(self):
@@ -844,8 +848,8 @@ class DobotTransport:
             snapshot = self.monitor.wait(
                 advancing_stationary, MODE_TRANSITION_TIMEOUT_SEC,
                 cancel=self.node.cancel_requested, pause=self._pause_requested,
-                require_enabled=True, stable_sec=STATIONARY_SEC,
-                description="stationary READY feedback for actual tool pose")
+                require_enabled=True,
+                description="advancing idle READY feedback for actual tool pose")
         except FeedbackFailure as exc:
             try:
                 snapshot = self.monitor.snapshot(require_enabled=False)
@@ -857,7 +861,7 @@ class DobotTransport:
                 raise FeedbackFailure(
                     "Current-pose acquisition blocked: " + "; ".join(blockers)) from exc
             raise FeedbackFailure(
-                "Current-pose READY fields did not remain coherent for 300 ms") from exc
+                "Current-pose READY fields did not produce a coherent advancing sample") from exc
         # The exact FeedInfo sample that passed the stationary/user=0/tool=0
         # gate is the motion origin. Do not issue a later dashboard GetPose or
         # combine pose and readiness from different feedback instants.
@@ -908,14 +912,7 @@ class DobotTransport:
                         snapshot.joints, joints_rad)) <= HOME_JOINT_TOLERANCE_RAD)
 
         initial = self._validate_held_snapshot(self._ready_snapshot())
-        if not reached(initial):
-            return False
-        self.monitor.wait(
-            self._held_predicate(reached), MODE_TRANSITION_TIMEOUT_SEC,
-            cancel=self.node.cancel_requested, pause=self._pause_requested,
-            require_enabled=True, stable_sec=STATIONARY_SEC,
-            description="existing taught Home within one-degree joint tolerance")
-        return True
+        return reached(initial)
 
     def _monitor_motion_policy(self, snapshot, *, require_suction, forbid_suction,
                                stop_on_suction, before_suction, planned_outputs,
@@ -1114,7 +1111,7 @@ class DobotTransport:
                 terminal_target=targets[-1].name)
             tail = targets[-1]
             terminal_stable_sec = (pick_settling_sec if stop_on_suction
-                                   else STATIONARY_SEC)
+                                   else 0.0)
             stable_since = None
             sequence = self.monitor.sequence
             while True:
@@ -1201,7 +1198,7 @@ class DobotTransport:
             description=f"DO{channel} output feedback")
         self.node.expected_outputs[channel] = active
 
-    def sensor(self, active, timeout, *, settling_sec):
+    def sensor(self, active, timeout):
         self._wait_for_resume()
 
         def expected(sample):
@@ -1209,7 +1206,6 @@ class DobotTransport:
         try:
             self.monitor.wait(expected, timeout, cancel=self.node.cancel_requested,
                               pause=self._pause_requested, require_enabled=True,
-                              stable_sec=settling_sec,
                               description=f"DI1={int(active)}")
             return True
         except FeedbackFailure as exc:
