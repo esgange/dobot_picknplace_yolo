@@ -2,7 +2,7 @@
 
 import threading
 
-from .errors import (CommandRejected, FeedbackFailure, HeldUnknown,
+from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost, HeldUnknown,
                      ManagedInterruption, PausedItemDropped, ReturnedToHome)
 from .kinematics import pose_matrix
 from .motion import PickExecutor, pose_reached
@@ -103,7 +103,7 @@ class ManagedControl:
         return False
 
     def note_suction_loss(self, sample):
-        """Retain the source and loss even if DI1 returns before explicit recovery."""
+        """Retain the source and loss even if DI1 returns before put-back."""
         with self.lock:
             if (not self.node.holding_item or sample.suction_present
                     or self.session is None or self.session.held_index is None):
@@ -125,6 +125,60 @@ class ManagedControl:
             return bool(self.session is not None and self.session.held_index is not None
                         and self._candidate().state == "DROPPED")
 
+    def run_pick(self, plans, *, check, departure=(), departure_pose=None):
+        """Keep confirmed held loss inside the owning Pick and its saved batch."""
+        node = self.node
+        while True:
+            try:
+                return PickExecutor(node.hardware, finish_home=True).run(
+                    plans, node.configuration.profile, session=self.session, check=check,
+                    return_home=node._execute_home, progress=node._candidate_progress,
+                    holding_changed=lambda value: setattr(node, "holding_item", value),
+                    departure=departure, departure_pose=departure_pose)
+            except HeldSuctionLost:
+                returned = self._return_after_suction_loss()
+                if returned is None:
+                    return {"picked": False, "candidate": None, "holding_item": False}
+                departure, departure_pose = returned
+                self.session.resuming = False
+                node._transition("PICKING", "Item returned; trying next retained candidate")
+
+    def _return_after_suction_loss(self):
+        node = self.node
+        self.checkpoint()
+        attempt = self._candidate()
+        if (not node.holding_item or attempt.state not in ("HELD", "DROPPED")
+                or node.active_action != "pick"):
+            raise HeldUnknown("Automatic put-back requires the active Pick's held source")
+        future = node.hardware.request_stop("Held suction lost; discard return queue for put-back")
+        node.hardware.ensure_no_pending_response()
+        node.configuration.validate_sources(node.root)
+        node.hardware.confirm_stop(future, allow_suction_loss=True)
+        self.checkpoint()
+        sample = node.monitor.snapshot(require_enabled=True)
+        # Stop may reconcile an admitted timed transition. No unrelated output
+        # change may be adopted when automatic put-back takes ownership.
+        bits = sample.feed["digital_outputs"]
+        for channel, active in node.expected_outputs.items():
+            if bool(bits & (1 << (channel - 1))) != active:
+                raise FeedbackFailure(f"Held-item output DO{channel} changed before put-back")
+        if (bits & 1 and bits & (1 << 12)) or (bits & 2 and bits & (1 << 13)):
+            raise FeedbackFailure("Opposing outputs active before automatic put-back")
+        with self.lock:
+            self.checkpoint()
+            node._transition("RETURNING_ITEM", "Suction lost; automatically returning saved item")
+            self.executing = True
+        try:
+            node.events.record(
+                "WARNING", "automatic_item_return_started",
+                "Stop confirmed; putting back item before continuing saved batch",
+                candidate_id=attempt.identifier)
+            self._mark_drop()
+            return self._put_back(dropped=True, continue_candidates=True)
+        finally:
+            with self.lock:
+                self.executing = False
+
     def recover_item_and_continue(self):
         """Explicit recovery owns put-back, then the remaining retained batch."""
         self.node.raise_if_cancelled()
@@ -145,13 +199,9 @@ class ManagedControl:
         self.node._transition("PICKING", "Item released; continuing retained candidates")
         while True:
             try:
-                result = PickExecutor(self.node.hardware, finish_home=True).run(
+                result = self.run_pick(
                     [attempt.plan for attempt in self.session.attempts],
-                    self.node.configuration.profile, session=self.session,
                     check=lambda _index: self.node.configuration.validate_sources(self.node.root),
-                    return_home=self.node._execute_home,
-                    progress=self.node._candidate_progress,
-                    holding_changed=lambda value: setattr(self.node, "holding_item", value),
                     departure=retreat, departure_pose=origin)
                 with self.lock:
                     self.checkpoint()
@@ -401,14 +451,10 @@ class ManagedControl:
                     "PICKING", "Continuing retained candidates after item return")
                 while True:
                     try:
-                        result = PickExecutor(self.node.hardware, finish_home=True).run(
+                        result = self.run_pick(
                             [attempt.plan for attempt in self.session.attempts],
-                            self.node.configuration.profile, session=self.session,
                             check=lambda _index: self.node.configuration.validate_sources(
-                                self.node.root), return_home=self.node._execute_home,
-                            progress=self.node._candidate_progress,
-                            holding_changed=lambda value: setattr(
-                                self.node, "holding_item", value))
+                                self.node.root))
                         with self.lock:
                             self.checkpoint()
                             self.node._transition(

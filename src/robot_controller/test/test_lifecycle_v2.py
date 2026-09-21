@@ -10,7 +10,7 @@ from robot_controller_interfaces.action import GoHome
 import robot_controller.controller as controller_module
 import robot_controller.gui as gui_module
 from robot_controller.controller import RobotController
-from robot_controller.errors import FeedbackFailure, HeldUnknown
+from robot_controller.errors import FeedbackFailure, HeldSuctionLost
 from robot_controller.gui import ControllerWindow, GuiNode
 from robot_controller.state_machine import ControllerStateMachine
 
@@ -282,7 +282,7 @@ def test_home_preflight_and_idle_holding_share_the_fifty_ms_suction_loss_gate():
     RobotController._supervise(node)
     assert machine.state == "HOLDING"
     emit(0.010 + 0.050, False)
-    with pytest.raises(HeldUnknown, match="lost DI1"):
+    with pytest.raises(HeldSuctionLost, match="lost DI1"):
         RobotController._preflight_item_state(node)
     RobotController._supervise(node)
     assert machine.state == "FAULT"

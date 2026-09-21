@@ -4595,6 +4595,62 @@ Never use a floating “latest” version in an issue, script, or deployment not
   robot commands were issued; live blended motion and physical placement remain
   unverified. No new offline-transfer milestone is claimed.
 
+### 2026-09-21 — Automatically put back held suction loss during active Pick
+
+- Evidence: the latest log records held DI1 loss at 12:17:37 UTC during
+  candidate 4's `candidate_4_pick_to_home` group, with raw DI bits 2 and DO bits
+  12288. Stop physically confirmed, but the action ended RECOVERY_REQUIRED
+  with `Suction lost during retract/Home`. Explicit Recovery at 12:17:52 ran
+  the saved-source release and completed Home at 12:18:00. The operator now
+  requests that same put-back immediately, followed by the next saved candidate
+  when available, without the failure dialog or Recovery click. The log proves
+  loss of vacuum confirmation, not physical separation or its pneumatic cause.
+- Rule 111 supersedes rule 109's manual-recovery gate for confirmed held DI1
+  loss inside an active Pick, including its retract/Home and a Pick continued
+  after Pause or explicit Recovery. Keep the original action and candidate
+  batch. Request Stop, require resolved command admission, confirm stationary
+  empty queue and protected outputs, validate fresh enabled feedback and source
+  files, then automatically put back the original saved item. Do not run an
+  automatic Disable/Enable/ClearError/settings cycle. Other fault classes never
+  enter this branch, and unknown or missing source context blocks motion.
+- Use the existing safety rise, entry transit, original pre-pick and nominal
+  final pick +50 mm release, finger OPEN, native 50 ms exhaust and verified
+  exhaust OFF/raw DI1 LOW. Keep the item DROPPED even if DI1 rises again. Then
+  queue neutral retreat, old exit transit, next entry transit/clearance/pre-pick/
+  pick as one ordered CP(100) group, or exit transit and exact joint Home if no
+  eligible candidates remain. Preserve rule 110's entry/exit requirements and
+  all existing I/O timing/rates/settling. Repeated held losses consume the finite
+  batch once per candidate; no new pose request or retry of a dropped candidate.
+- Add a distinct internal held-suction-loss error, with output faults checked
+  first. While a motion response is outstanding, Stop is sent immediately but
+  that response still requires `res=0` within its original five-second deadline.
+  Latch loss even if DI1 recovers and suppress all later old-group commands.
+  Resolve the accepted response before final Stop confirmation so it cannot
+  later cancel the put-back as an abandoned motion acknowledgement. Timeout,
+  rejection, stale/invalid feedback, changed outputs/files, failed release and
+  unconfirmed Stop retain normal failure containment and explicit Recovery.
+- Normal completion reports SUCCESS/HOLDING for a later acquired candidate or
+  NO_PICK/READY after exhaustion; the existing GUI shows no Action ended dialog
+  for those outcomes. Status uses RETURNING_ITEM then PICKING or READY. Direct
+  Stop, action cancellation and shutdown remain unconditional pre-emption.
+  Pending Pause retains its original automatic put-back then PAUSED behavior;
+  idle HOLDING and standalone Hardware Home loss still require explicit Recovery.
+  Preserve the 50 ms falling debounce, immediate HIGH acquisition and strict raw
+  release checks. No schema, interface, runtime, vendor or operator-file changes.
+- Verification: all 291 controller tests pass; package results report
+  292 tests with zero failures/errors/skips. Action fixtures cover loss at held
+  preflight/retract/Home, LOW or recovered HIGH, next-candidate success, final
+  exhaustion, repeated losses through one batch, both transit waypoints, Stop
+  and Pause pre-emption (including Stop during automatic-return handover),
+  and containment of Stop/source/output/release/response
+  failures. Transport fixtures verify immediate Stop while a reply is pending,
+  accepted-response resolution without later old-group dispatch, the unchanged
+  five-second timeout, rejection, cancellation and feedback failure. All eight
+  changed Python/test files compile and pass ament_flake8. The full 15-package
+  root symlink build and `git diff --check` pass. No physical robot commands were
+  issued; live automatic put-back, blended clearance and placement remain
+  unverified. No new offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

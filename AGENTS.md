@@ -177,6 +177,12 @@ and put-back route. Queue the old item's exit before the next item's entry at
 a common safety Z, including retries and Recovery continuation; every item
 return queues its exit before Home even at/near Home Z. CP(100) may blend both
 transits, with no intermediate arrival wait. Preserve timed I/O and held checks.
+Rule 111 handles confirmed held suction loss inside an active Pick automatically:
+Stop and confirm containment, put back the saved item using the +50 mm release
+and 50 ms exhaust, then continue eligible saved candidates or Home if exhausted.
+The Pick action remains active; no Recovery click is needed for suction loss alone.
+Keep both transits, the 50 ms loss debounce, strict output/feedback/response gates,
+and direct Stop pre-emption. Paused loss still puts back and remains paused.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

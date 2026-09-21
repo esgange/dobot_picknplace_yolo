@@ -21,6 +21,10 @@ class FeedbackFailure(ControllerError):
     """Required robot feedback was missing, stale, malformed, or unsafe."""
 
 
+class HeldSuctionLost(FeedbackFailure):
+    """Confirmed held-item DI1 loss; an active Pick may put back its saved item."""
+
+
 class StopUnconfirmed(ControllerError):
     """The independent Stop path did not prove a stationary empty queue."""
 

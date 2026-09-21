@@ -73,8 +73,10 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
 100, unheld output reset, and coherent READY confirmation. Recover performs the
-same guarded readiness recovery. After confirmed held-item suction loss with
-a retained pick source, explicit Recovery also puts the uncertain item back and
+same guarded readiness recovery. During an active Pick, confirmed held-item
+suction loss automatically puts the saved item back and continues the next
+eligible candidate, or Homes when exhausted. For losses outside active Pick or
+an interrupted put-back, explicit Recovery puts the uncertain item back and
 continues the next eligible saved candidate, or returns Home if none remain.
 Pause discards the current queue and
 parks through the operation executor. Unheld Pick parks at `park_transit`, above
@@ -122,11 +124,25 @@ neutralizes the outputs, then the route passes clearance and an explicit exit
 must be at least 50 mm above final pick, with clearance above the release pose;
 equal waypoints skip the zero-length retreat. The pulse is independent of the
 taught final-pick settling interval.
-Outside Pause, confirmed suction loss stops the operation and requires an
-explicit Recovery click. DI1 confirms vacuum, so LOW does not prove that an
-item has physically left the fingers. Stop can still confirm stationary/empty
-queue while reporting uncertain suction separately. With the saved source
-available, Recovery preserves outputs during Stop/clear/enable/settings, uses
+During an active Pick's held retract/Home, confirmed suction loss immediately
+requests Stop and automatically starts put-back after stationary/empty-queue
+confirmation. The same Pick action stays active; no error popup or Recovery
+click is needed for this loss alone. It uses the saved source, +50 mm release,
+finger OPEN and confirmed 50 ms exhaust, then the next eligible saved candidate
+or exact Home when none remain. It preserves the original batch and both transit
+waypoints. Repeated losses consume candidates until one succeeds or the batch
+is exhausted, with normal SUCCESS/NO_PICK completion. No disable/enable/settings
+sequence is added. Direct Stop and cancellation still pre-empt this routine.
+
+Only confirmed held DI1 loss uses this path. A service rejection/timeout,
+unconfirmed Stop, changed source, invalid/stale feedback or output fault still
+requires recovery. If loss occurs while a motion reply is pending, Stop is sent
+immediately, that reply must still return `res=0` within its existing five-second
+deadline, and later commands in that old group are withheld. Put-back begins
+only after a final confirmed Stop. DI1 confirms vacuum, so LOW does not prove
+that an item has physically left the fingers. Outside active Pick, or after an
+interrupted put-back, explicit Recovery with the saved source preserves outputs
+during Stop/clear/enable/settings, uses
 the same +50 mm release and confirmed 50 ms exhaust pulse, and excludes that
 `DROPPED` candidate. If another saved candidate is eligible, neutral retreat,
 the old item's exit transit, and the next item's entry transit/clearance/pre-pick/pick

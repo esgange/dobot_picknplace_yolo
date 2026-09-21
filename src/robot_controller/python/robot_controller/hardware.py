@@ -8,7 +8,7 @@ import time
 import numpy as np
 
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
-                     HeldUnknown, OperationCanceled, StopUnconfirmed)
+                     HeldSuctionLost, HeldUnknown, OperationCanceled, StopUnconfirmed)
 from .feedback import enabled_blockers
 from .kinematics import pose_matrix, pose_values
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, pose_reached
@@ -356,6 +356,7 @@ class DobotTransport:
                     # joint Home command overtaking its earlier vertical rise.
                     # Require each queue-admission response before the next send.
                     deadline = audit["started"] + COMMAND_RESPONSE_TIMEOUT_SEC
+                    suction_loss = None
                     while not future.done():
                         if self.node.cancel_requested():
                             self._finish_service_audit(
@@ -366,7 +367,12 @@ class DobotTransport:
                                 f"Cancelled while awaiting {name} response")
                         snapshot = self.monitor.snapshot(require_enabled=False)
                         if progress is not None:
-                            progress(snapshot)
+                            try:
+                                progress(snapshot)
+                            except HeldSuctionLost as exc:
+                                if suction_loss is None:
+                                    self.request_stop("Held suction lost during motion admission")
+                                    suction_loss = exc
                         if time.monotonic() >= deadline:
                             self._finish_service_audit(
                                 audit, "timeout",
@@ -393,6 +399,11 @@ class DobotTransport:
                     results.append(result)
                     if admitted is not None:
                         admitted(len(results) - 1)
+                    if suction_loss is not None:
+                        # The accepted outstanding request cannot be mistaken for
+                        # a late reply that cancels the owner's put-back routine.
+                        # No subsequent command from this group may be sent.
+                        raise suction_loss
                     if progress is not None:
                         progress(self.monitor.snapshot(require_enabled=False))
                     self._wait_for_resume()
@@ -556,17 +567,17 @@ class DobotTransport:
         if not holding:
             return snapshot
         feed = snapshot.feed
-        if not snapshot.suction_present and not returning:
-            managed = getattr(self.node, "managed", None)
-            if managed is not None:
-                managed.note_suction_loss(snapshot)
-            raise HeldUnknown("Known held-item context lost DI1 suction feedback")
         for channel, active in outputs.items():
             actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
             if actual != active:
                 raise HeldUnknown(
                     f"Known held-item output DO{channel}={int(actual)}; "
                     f"expected {int(active)}")
+        if not snapshot.suction_present and not returning:
+            managed = getattr(self.node, "managed", None)
+            if managed is not None:
+                managed.note_suction_loss(snapshot)
+            raise HeldSuctionLost("Known held-item context lost DI1 suction feedback")
         return snapshot
 
     def _held_predicate(self, predicate):
@@ -891,8 +902,6 @@ class DobotTransport:
                 self.node.expected_outputs[channel] = planned
         observer = getattr(self.node, "observe_managed_feedback", None)
         managed_drop = observer(snapshot) if observer is not None else False
-        if require_suction and not snapshot.suction_present and not managed_drop:
-            raise FeedbackFailure("Suction lost during retract/Home")
         if require_suction:
             if not vacuum:
                 raise FeedbackFailure("Suction output DO13 lost during retract/Home")
@@ -901,6 +910,8 @@ class DobotTransport:
                 if actual != active:
                     raise FeedbackFailure(
                         f"Held-item output DO{channel} changed during retract/Home")
+            if not snapshot.suction_present and not managed_drop:
+                raise HeldSuctionLost("Suction lost during retract/Home")
         if forbid_suction and detected:
             raise FeedbackFailure("Late DI1 after missed pickup; candidate retry forbidden")
         if stop_on_suction and suction_armed:

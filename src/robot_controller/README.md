@@ -241,16 +241,42 @@ The source context is not restored after a process restart.
 Direct `/stop`, action cancellation, shutdown, and another Stop during parking
 or return cancel all further host-side commands and require recovery. The
 already-requested controller pulse can still switch EXHAUST OFF on its timer.
-Faults never automatically invoke put-back or release. The idle vendor
+Other faults never automatically invoke put-back or release. Confirmed held DI1
+loss during an active Pick uses the automatic routine below. The idle vendor
 `isPauseCmdFlag` remains contextual telemetry and does not enable Continue.
 
-Confirmed held-item suction loss outside Pause marks the owning candidate
+Confirmed held-item suction loss marks the owning candidate
 `DROPPED` while preserving its source and outputs. This records loss of vacuum
 confirmation, not proof that the physical item left the gripper. A subsequent
 HIGH does not clear the latch. Physical Stop confirmation still requires its
 accepted response and stationary empty queue; a DI1 loss is logged separately
 and does not mislabel a successful Stop or poison later Stop confirmation.
 Freshness and output-integrity failures retain their strict handling.
+
+During active Pick, rule 111 keeps that loss inside the original action. Request
+Stop immediately, resolve any in-flight admission, confirm a stationary empty
+queue and preserved outputs, and require fresh enabled feedback and unchanged
+sources before returning to the saved item. Use the normal safety rise, entry
+transit, original pre-pick, +50 mm release, OPEN and confirmed 50 ms exhaust.
+Queue neutral retreat and the old exit transit before the next eligible item's
+entry/clearance/pre-pick/pick, or before exact Home if none remain. Both transits
+retain CP(100). The lost candidate stays DROPPED even if DI1 returns HIGH.
+Repeated losses advance through the finite retained batch without new detection.
+The action completes normally with SUCCESS or NO_PICK, so this loss alone does
+not open the GUI's Action ended dialog and needs no Recovery click. No automatic
+disable, enable, ClearError or settings sequence is issued. This also applies
+to active picking resumed through Continue or explicit Recovery.
+
+The dedicated held-suction-loss condition cannot turn output/readiness faults,
+invalid feedback, service failures or missing source context into automatic
+motion. During a pending motion reply, request Stop immediately but still require
+that response to be accepted within its original five-second deadline; keep the
+loss latched, send no later old-group command, then confirm Stop before put-back.
+A rejected/unanswered response, unconfirmed Stop, failed release or other fault
+ends the action through normal containment and explicit Recovery. Direct Stop,
+action cancellation and shutdown always pre-empt; pending Pause retains its
+existing put-back-and-remain-paused behavior. Idle HOLDING and standalone Home
+losses continue to require explicit Recovery.
 
 An explicit Recovery click with that retained source confirms Stop, conditional
 ClearError, Enable, settings and READY feedback while preserving all outputs.

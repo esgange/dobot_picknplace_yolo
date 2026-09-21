@@ -31,13 +31,13 @@ from .candidates import (
     CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
 from .configuration import load_configuration, load_runtime_configuration
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
-                     HeldUnknown, ManagedInterruption, OperationCanceled,
+                     HeldSuctionLost, HeldUnknown, ManagedInterruption, OperationCanceled,
                      ReturnedToHome, StopUnconfirmed)
 from .feedback import FeedbackMonitor, enabled_blockers
 from .hardware import (CARTESIAN_ORIENTATION_TOLERANCE_DEG,
                        CARTESIAN_POSITION_TOLERANCE_M, DobotTransport)
 from .kinematics import Cr10Kinematics, pose_values
-from .motion import (PickExecutor, candidate_pose_in_base, cartesian_home_targets,
+from .motion import (candidate_pose_in_base, cartesian_home_targets,
                      home_targets, pick_targets, pose_reached)
 from .managed_control import ManagedControl
 from .pick_session import PickSession, return_targets
@@ -742,7 +742,7 @@ class RobotController(Node):
         expected = self.holding_item if expected_holding is None else expected_holding
         if expected and not snapshot.suction_present:
             self.managed.note_suction_loss(snapshot)
-            raise HeldUnknown("Trusted held-item context lost DI1")
+            raise HeldSuctionLost("Trusted held-item context lost DI1")
         if not expected and suction:
             raise HeldUnknown("DI1 active without trusted held-item context")
 
@@ -1005,12 +1005,7 @@ class RobotController(Node):
                         config.validate_sources(self.root)
                         result.attempted_candidates = self.managed.session.attempted_count
 
-                    outcome = PickExecutor(self.hardware, finish_home=True).run(
-                        plans, config.profile, check=check,
-                        return_home=lambda **kwargs: self._execute_home(**kwargs),
-                        progress=self._candidate_progress,
-                        holding_changed=lambda value: setattr(self, "holding_item", value),
-                        session=self.managed.session)
+                    outcome = self.managed.run_pick(plans, check=check)
                     with self.managed.lock:
                         self.wait_for_resume()
                         result.attempted_candidates = self.managed.session.attempted_count

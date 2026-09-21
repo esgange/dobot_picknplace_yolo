@@ -7,7 +7,7 @@ import pytest
 
 import robot_controller.hardware as hardware_module
 from robot_controller.errors import (CommandRejected, CommandResponseTimeout,
-                                     FeedbackFailure, HeldUnknown)
+                                     FeedbackFailure, HeldSuctionLost, HeldUnknown)
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
 from robot_controller.kinematics import pose_values
 from robot_controller.motion import MotionIO, Target, cartesian_home_targets
@@ -462,6 +462,84 @@ def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeyp
     assert len(late_stops) == 1
 
 
+@pytest.mark.parametrize("reply", ["accepted", "rejected", "timeout", "cancel", "feedback"])
+def test_suction_loss_stops_now_but_resolves_admission_before_put_back(monkeypatch, reply):
+    from robot_controller.errors import OperationCanceled
+
+    order, audits = [], []
+    clock = [0.0]
+    cancelled = [False]
+
+    class Future:
+        completed = False
+
+        def done(self):
+            return self.completed
+
+        def result(self):
+            return SimpleNamespace(res=1 if reply == "rejected" else 0)
+
+        def add_done_callback(self, callback):
+            self.callback = callback
+
+    future = Future()
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.suction_interrupted = False
+    transport.clients = {"MovL": SimpleNamespace(
+        service_is_ready=lambda: True,
+        call_async=lambda _request: order.append("send") or future)}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport.request_stop = lambda _reason: order.append("stop")
+
+    def wait(_seconds):
+        assert order[:2] == ["send", "stop"]
+        clock[0] = 5.0 if reply == "timeout" else 1.0
+        if reply == "cancel":
+            cancelled[0] = True
+        if reply in ("accepted", "rejected"):
+            order.append("reply")
+            future.completed = True
+            future.callback(future)
+
+    def progress(_sample):
+        if clock[0] == 0.0:
+            raise HeldSuctionLost("Suction lost during retract/Home")
+        if reply == "feedback":
+            raise FeedbackFailure("stale feedback")
+        # A later HIGH does not erase the earlier confirmed loss.
+
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: cancelled[0], wait_control=wait,
+        on_late_motion_ack=lambda _future: pytest.fail("Accepted reply was misclassified late"))
+
+    def begin(*_args):
+        audit = {"started": 0.0}
+        audits.append(audit)
+        return audit
+    transport._begin_service_audit = begin
+    transport._finish_service_audit = lambda audit, outcome, **_kwargs: audit.update(
+        outcome=outcome)
+    monkeypatch.setattr(hardware_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    expected = {"accepted": HeldSuctionLost, "rejected": CommandRejected,
+                "timeout": CommandResponseTimeout, "cancel": OperationCanceled,
+                "feedback": FeedbackFailure}
+    with pytest.raises(expected[reply]) as error:
+        transport.call_group((("MovL", {"a": 1.}), ("MovL", {"a": 2.})),
+                             progress=progress)
+    assert type(error.value) is expected[reply]
+    assert order.count("send") == 1
+    assert order[:2] == ["send", "stop"]
+    if reply == "accepted":
+        assert audits[0]["outcome"] == "accepted"
+        assert transport.pending_group is None
+        transport.ensure_no_pending_response()
+
+
 def test_motion_group_rejection_stops_before_later_dispatch():
     class ImmediateFuture:
         def __init__(self, result):
@@ -800,8 +878,9 @@ def test_known_holding_requires_di1_and_exact_expected_outputs():
     transport._check_held_context(True, {13: True})
     with pytest.raises(HeldUnknown, match="DO2"):
         transport._check_held_context(True, {2: True, 13: True})
-    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: snapshot(di1=False))
-    with pytest.raises(HeldUnknown, match="lost DI1"):
+    transport.monitor = SimpleNamespace(
+        snapshot=lambda **_kwargs: snapshot(di1=False, outputs=1 << 12))
+    with pytest.raises(HeldSuctionLost, match="lost DI1"):
         transport._check_held_context(True, {13: True})
 
 
@@ -976,7 +1055,8 @@ def test_explicit_return_recovery_keeps_outputs_and_restores_strict_suction_chec
         assert calls == ["Stop", "EnableRobot", "SpeedFactor", "User", "Tool", "SetTool", "CP"]
     assert transport.node.expected_outputs == outputs
     assert transport.return_recovery is False
-    with pytest.raises(HeldUnknown, match="lost DI1"):
+    with pytest.raises(HeldUnknown if failure == "output" else HeldSuctionLost,
+                       match="DO13" if failure == "output" else "lost DI1"):
         transport._validate_held_snapshot(sample)
 
 
