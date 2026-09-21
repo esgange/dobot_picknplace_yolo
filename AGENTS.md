@@ -165,6 +165,9 @@ occurs at 50% of travel to that transit; only the next final pick is confirmed.
 Rule 107 debounces DI1 HIGH-to-LOW for 50 ms across held-item checks, using one
 shared feedback filter. HIGH resets the timer immediately; confirmed paused
 loss stays latched. Acquisition, release/reset checks and all DO checks stay raw.
+Rule 108 makes successful Pick returns use the exhausted-miss route, rates and
+single group through joint Home. Held outputs and suction monitoring remain;
+deferred finger CLOSE occurs at the end of the clearance rise.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

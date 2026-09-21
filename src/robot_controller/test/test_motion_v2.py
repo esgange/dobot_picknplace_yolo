@@ -1,9 +1,11 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from item_perception_yolo.pick_planning import select_pick_attitude
+from robot_controller.controller import RobotController
 from robot_controller.hardware import (
     CARTESIAN_POSITION_TOLERANCE_M, COMMAND_RESPONSE_TIMEOUT_SEC,
     HOME_JOINT_TOLERANCE_RAD, MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
@@ -292,12 +294,13 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert returned[0]["batch_name"] == "candidate_1_pick_to_home"
     assert returned[0]["require_suction"] is True
     assert returned[0]["forbid_suction"] is False
+    assert returned[0]["queue_through_home"] is True
     assert np.allclose(returned[0]["confirmed_start_pose"], hardware.pose)
     assert [target.name for target in returned[0]["preceding"]] == [
-        "p1_retract", "p1_final", "p1_transit"]
+        "p1_retract", "p1_final"]
 
 
-def test_success_with_deferred_grip_closes_at_start_of_home_z_transit():
+def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
     taught = settings(close_on_pick=False)
     hardware = FakeHardware([True])
     plan = pick_targets(matrix(1.0), item_pose(), taught, 1)
@@ -310,8 +313,73 @@ def test_success_with_deferred_grip_closes_at_start_of_home_z_transit():
     assert outcome["picked"]
     assert not any(entry[0] == "output" and entry[1] in (2, 14)
                    for entry in hardware.log)
-    transit = returned[0]["preceding"][-1]
-    assert transit.motion_io == gripper_close_events(0)
+    retract, clearance = returned[0]["preceding"]
+    assert not retract.motion_io
+    assert clearance.motion_io == gripper_close_events(100)
+
+
+@pytest.mark.parametrize("use_grip, close_on_pick", [
+    (False, False), (True, True), (True, False)])
+@pytest.mark.parametrize("home_z, stopped_z, needs_rise", [
+    (1.0, 0.3, True), (0.454, 0.3, False), (1.0, 0.5, True)])
+def test_success_matches_exhausted_return_geometry_rates_and_group(
+        use_grip, close_on_pick, home_z, stopped_z, needs_rise):
+    taught = settings(use_grip=use_grip, close_on_pick=close_on_pick)
+    taught["speed"].update(travel_percent=80, retract_percent=6)
+    taught["acceleration"].update(travel_percent=70, retract_percent=40)
+    home = matrix(home_z)
+    plans = [pick_targets(home, item_pose(), taught, 1)]
+    returns = []
+    for acquired in (False, True):
+        hardware = FakeHardware([acquired])
+        hardware.pose = item_pose(x=0.102, y=0.198, z=stopped_z, yaw_deg=1)
+        checks = []
+        node = SimpleNamespace(
+            hardware=hardware, holding_item=acquired, root=None,
+            configuration=SimpleNamespace(
+                profile=taught, home_matrix=home, home_joints=(0.1,) * 6,
+                validate_sources=lambda _root: checks.append("sources")),
+            raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+            _preflight_item_state=lambda holding: checks.append(("holding", holding)),
+            operation_progress=lambda *_args, **_kwargs: None)
+        node._home_plan = lambda origin: RobotController._home_plan(node, origin)
+        outcome = PickExecutor(hardware, finish_home=True).run(
+            plans, taught, check=lambda _index: None,
+            return_home=lambda **kwargs: RobotController._execute_home(node, **kwargs))
+
+        assert outcome["picked"] is acquired
+        assert outcome["holding_item"] is acquired
+        assert checks == ([("holding", True)] if acquired else []) + ["sources"]
+        assert len(hardware.targets) == 2  # One approach and one complete Home return.
+        group = hardware.targets[-1]
+        assert [target.name for target in group] == (
+            ["p1_retract", "p1_final"]
+            + (["home_height"] if needs_rise else []) + ["home"])
+        assert [(target.speed_percent, target.acceleration_percent)
+                for target in group] == [(100, 70), (100, 70)] + [(80, 70)] * (
+                    len(group) - 2)
+        for target in group[:-1]:
+            assert np.array_equal(target.matrix[:2, 3], hardware.pose[:2, 3])
+            assert np.array_equal(target.matrix[:3, :3], hardware.pose[:3, :3])
+            assert target.matrix[2, 3] >= stopped_z
+        assert group[-1].joints_rad == (0.1,) * 6
+        returned = [entry for entry in hardware.log if entry[0] == "move"][-1]
+        assert returned[2]["require_suction"] is acquired
+        assert returned[2]["forbid_suction"] is False
+        assert np.array_equal(returned[2]["confirmed_start_pose"], hardware.pose)
+        if acquired:
+            assert all(event.channel in (2, 14) for target in group
+                       for event in target.motion_io)
+            assert group[1].motion_io == (
+                gripper_close_events(100) if use_grip and not close_on_pick else ())
+        else:
+            assert group[0].motion_io == vacuum_exhaust_events(80)
+            assert group[1].motion_io == (
+                gripper_neutral_events(0) + vacuum_neutral_events(0))
+        returns.append(group)
+    for missed, held in zip(*returns):
+        assert np.array_equal(missed.matrix, held.matrix)
+        assert missed.relative_z == held.relative_z
 
 
 def test_missed_suction_blends_old_rises_next_safety_transit_clearance_and_pick():

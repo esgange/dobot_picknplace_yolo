@@ -150,11 +150,11 @@ Home is physically confirmed. The same fresh stationary pose is used both to
 plan the group and as its confirmed motion origin, without a duplicate origin
 acquisition. The first control point can be rounded, rotate or descend at
 current XY and is not collision-checked for an arbitrary starting pose. A
-successful held-item Pick return retains its separate shared Home rule: more
-than 5 mm below taught Home Z it confirms an upward current-XY rise before
-sending the exact taught joints; within 5 mm below Home Z or higher it goes
-directly to the joint target. Planning and first dispatch share one fresh
-confirmed pose. The return first confirms its above-item clearance. Pick runs
+successful held-item Pick return now uses the same single queued route as an
+exhausted miss: actual stopped pose through pre-pick, clearance, conditional
+Home-Z rise and exact taught-joint Home. Skip the extra rise when planned
+clearance is within 5 mm below Home Z or higher. Only final Home is physically
+confirmed; suction and holding outputs remain supervised throughout. Pick runs
 Home, transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
 Finger states are OPEN (DO2 OFF then DO14 ON), CLOSE (DO14 OFF then DO2 ON),
@@ -300,9 +300,11 @@ receives only accepted candidates and does not reinterpret the border.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
-speed 6% and successful pick-to-prepick retract speed 6%; a missed-pick retry
-rises through the old pre-pick to clearance at 100% speed before the next
-clearance. Remaining clearance/Home moves use travel speed. Acceleration starts at 100%
+speed 6% and stored retract speed 6%. Live Pick returns after either success or
+miss override both pre-pick/clearance rises to 100% speed with taught travel
+acceleration. Subsequent Home-Z/Home moves use taught travel rates. The stored
+retract fields remain in the schema but do not set these live return rates.
+Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor
@@ -316,9 +318,10 @@ Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
 applied by Startup/Recover governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
 the terminal pick/stopped pose and exact taught-joint Home are physically
-confirmed. A successful held-item return also confirms its return clearance
-and conditional Home-height rise as separate barriers. A final exhausted miss
-queues those control points through exact Home and confirms only exact Home.
+confirmed. Successful and exhausted Pick returns queue their entire return
+through exact Home, with only exact Home physically confirmed. Successful
+returns preserve SUCK and grip behavior; exhausted returns use EXHAUST then
+NEUTRAL. Deferred finger CLOSE occurs at 100% of the successful clearance rise.
 Motion requests wait for
 queue-admission responses in order but not intermediate physical arrival;
 short segments may still decelerate despite CP 100. See the

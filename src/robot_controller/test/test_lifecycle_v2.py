@@ -522,7 +522,7 @@ def test_home_action_uses_cartesian_route_without_changing_pick_home():
 
 
 @pytest.mark.parametrize("holding", [False, True])
-def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holding):
+def test_separate_home_mode_confirms_preceding_targets_and_height(holding):
     calls = []
     clearance_pose = np.eye(4)
     clearance = SimpleNamespace(name="p1_final")
@@ -565,7 +565,8 @@ def test_pick_return_confirms_clearance_then_home_height_before_joint_home(holdi
     assert calls.index(("check",)) > calls.index(moves[0])
 
 
-def test_final_miss_queues_retract_clearance_and_home_as_one_group():
+@pytest.mark.parametrize("holding", [False, True])
+def test_pick_return_queues_retract_clearance_and_home_as_one_group(holding):
     calls = []
     start = np.eye(4)
     retract = SimpleNamespace(name="p2_retract", matrix=np.eye(4))
@@ -574,27 +575,27 @@ def test_final_miss_queues_retract_clearance_and_home_as_one_group():
     home = SimpleNamespace(name="home")
     hardware = SimpleNamespace(
         home_already_reached=lambda _joints: pytest.fail(
-            "Final-miss group must not wait for a Home-skip sample"),
+            "Queued return must not wait for a Home-skip sample"),
         move_batch=lambda targets, **kwargs: calls.append((targets, kwargs)))
     node = SimpleNamespace(
-        hardware=hardware, holding_item=False, root=None,
+        hardware=hardware, holding_item=holding, root=None,
         configuration=SimpleNamespace(
             home_joints=(0.1,) * 6, validate_sources=lambda _root: None),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
-        _preflight_item_state=lambda _holding: pytest.fail(
-            "Latched-miss return rechecked DI1"),
+        _preflight_item_state=lambda required: calls.append(("preflight", required)),
         _home_plan=lambda origin: (
             calls.append(("plan_origin", origin)) or (height, home)),
         operation_progress=lambda *_args, **_kwargs: None)
 
     assert RobotController._execute_home(
-        node, preceding=(retract, clearance), require_suction=False,
-        forbid_suction=False, ignore_suction=True,
+        node, preceding=(retract, clearance), require_suction=holding,
+        forbid_suction=False, ignore_suction=not holding,
         confirmed_start_pose=start, queue_through_home=True,
-        batch_name="miss_to_home") == (height, home)
-    assert calls[0] == ("plan_origin", clearance.matrix)
-    assert calls[1] == ((retract, clearance, height, home), {
-        "batch_name": "miss_to_home", "require_suction": False,
+        batch_name="pick_to_home") == (height, home)
+    assert calls[:-2] == ([("preflight", True)] if holding else [])
+    assert calls[-2] == ("plan_origin", clearance.matrix)
+    assert calls[-1] == ((retract, clearance, height, home), {
+        "batch_name": "pick_to_home", "require_suction": holding,
         "forbid_suction": False, "confirmed_start_pose": start})
 
 

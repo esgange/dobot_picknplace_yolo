@@ -751,7 +751,7 @@ class RobotController(Node):
             self.configuration.validate_sources(self.root)
             targets = self._home_plan(preceding[-1].matrix)
             self.operation_progress(
-                "HOME", "Queueing missed-pick recovery through exact Home",
+                "HOME", "Queueing return through exact Home",
                 waypoint=targets[-1].name)
             self.hardware.move_batch(
                 (*preceding, *targets), batch_name=batch_name,

@@ -304,7 +304,7 @@ rotate the tool or descend at current XY; the controller has no collision model
 for an arbitrary starting pose, and CP may round that alignment control point,
 so the operator must verify that the complete blended path is clear.
 
-Pick's initial and return Home paths retain the shared joint-Home rule. The
+Pick's initial Home and standalone shared Home calls use the joint-Home rule. The
 initial step skips if all six fresh actual joints are within ±1° of the taught
 tuple in one feedback sample with idle mode 5, RobotStatus enabled,
 `EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not
@@ -317,9 +317,10 @@ The planner and first dispatch share one fresh confirmed FeedInfo pose, so a
 second origin reading cannot turn a planned upward correction into a rejected
 downward move. When a rise is needed, final joint Home acquires its origin after
 that rise finishes. The shared 5 mm position tolerance also governs queued
-final-miss/put-back Home planning.
-Successful held-item Pick returns first confirm the above-item
-approach/clearance before this rule.
+successful/final-miss/put-back Home planning. Successful and exhausted Pick
+returns queue pre-pick, clearance, conditional Home Z and joint Home together,
+using the planned clearance for the height decision and the confirmed stopped
+pick pose as the group origin. Only final Home is physically confirmed.
 
 Pick is permitted only from `READY` with DI1 clear:
 
@@ -366,9 +367,10 @@ apply solely to the item pick point.
 
 The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
-uses taught travel rates, final descent uses approach rates, and successful
-pick-to-prepick uses retract rates; missed-pick rises use `v=100` with taught
-travel acceleration.
+uses taught travel rates and final descent uses approach rates. Both successful
+and missed-pick rises through pre-pick and clearance use `v=100` with taught
+travel acceleration, subject to global SpeedFactor. Stored retract rates remain
+in schema 9 but are overridden for these live Pick returns.
 
 The outputs are explicit mutually exclusive states. Finger OPEN is DO2 OFF then
 DO14 ON, CLOSE is DO14 OFF then DO2 ON, and NEUTRAL is both OFF. Vacuum SUCK is
@@ -407,10 +409,15 @@ this timer. The debounce is independent of taught `pick_settling` and the 50 ms
 exhaust pulse; it introduces no teach setting, launch argument or schema change.
 
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
-confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 0% of
-the later clearance-to-item-X/Y-at-Home-Z move. `use_grip=false` never enters
-CLOSE. The held return runs actual stopped pose to pre-pick, clearance, item X/Y
-at Home Z, then the shared Home barriers without reissuing SUCK.
+confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 100%
+of the clearance rise (DO14 OFF before DO2 ON). `use_grip=false` never enters
+CLOSE. The held return uses the exhausted-miss route and rates: actual stopped
+pose to pre-pick, clearance, conditional Home Z and exact joint Home, in one
+`candidate_N_pick_to_home` group. Both initial rises preserve stopped X/Y and
+attitude and never descend. It has no separate item transit or intermediate
+arrival wait. SUCK stays ON without reissuing it; no EXHAUST or NEUTRAL release
+events are sent. Continuous holding checks, including the 50 ms DI1 loss
+debounce, remain active through dispatch and final Home confirmation.
 
 A missed non-final candidate starts one
 `candidate_N_pick_to_retry_M_pick` CP-blended group: old final to old pre-pick,
@@ -434,8 +441,8 @@ conditional relative Home-Z segment and exact joint Home as one
 planned clearance endpoint. Each request still requires ordered `res=0`
 acceptance, but only exact joint Home is physically confirmed; clearance and
 Home Z are blended control points. Later DI1 cannot reclassify the latched miss
-as success. Successful held-item returns retain their separate clearance and
-Home-Z confirmation barriers.
+as success. Successful returns use the same geometry, rates, ordered group and
+final-Home-only confirmation, with held-item outputs and monitoring instead.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
 in target order. Each must return `res=0` before the next is sent, with no
@@ -454,14 +461,13 @@ old-to-commanded state change after that MovLIO has been sent, and becomes the
 new expected state when observed;
 uncommanded output changes, lost DI1/DO13, and wrong terminal states still fail.
 
-Motion requests carry only `user=0`, `tool=0`, and their taught `v`/`a` rates;
+Motion requests carry only `user=0`, `tool=0`, and their selected `v`/`a` rates;
 they never carry a per-command `cp` or `r`. The global `CP(100)` established by
 Startup/Recover therefore controls all transitions. As specified by the Dobot
 protocol, smoothing can bypass exact intermediate pick coordinates and timed
-I/O can occur during a blended transition. Successful held-item returns keep
-their physically verified above-item clearance and Home-Z barriers. An
-exhausted final miss uses the documented queued-through-Home exception and
-physically verifies only exact joint Home. Serialized service responses may let
+I/O can occur during a blended transition. Successful and exhausted Pick returns
+both queue through Home and physically verify only exact joint Home.
+Serialized service responses may let
 a short pick segment decelerate despite global CP 100; queue order takes
 precedence over uninterrupted blending.
 

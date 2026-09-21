@@ -252,9 +252,8 @@ class PickExecutor:
                 # Vertical recovery preserves actual stopped XY/attitude.
                 matrix = stopped_pose.copy()
                 matrix[2, 3] = max(stopped_z, target.matrix[2, 3])
-                if acquired:
-                    upward.append(replace(target, matrix=matrix, motion_io=()))
-                else:
+                events = ()
+                if not acquired:
                     # Once final-pose settling has returned False, this attempt
                     # is latched missed.  Its later DI1 changes are irrelevant.
                     if not upward:
@@ -262,24 +261,26 @@ class PickExecutor:
                     else:
                         events = (gripper_neutral_events(0)
                                   + vacuum_neutral_events(0))
-                    upward.append(replace(
-                        target, matrix=matrix, speed_percent=100,
-                        acceleration_percent=settings["acceleration"]["travel_percent"],
-                        motion_io=events))
+                elif upward and grip and not close_on_pick:
+                    # Deferred CLOSE belongs to the end of clearance now that
+                    # held and missed returns share the conditional Home rise.
+                    events = gripper_close_events(100)
+                upward.append(replace(
+                    target, matrix=matrix, speed_percent=100,
+                    acceleration_percent=settings["acceleration"]["travel_percent"],
+                    motion_io=events))
                 stopped_z = matrix[2, 3]
             if (acquired and remember_prepick is not None
                     and stopped_pose[2, 3] > plan[2].matrix[2, 3]):
                 remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
                                  settings["gripper"])
             if acquired:
-                transit_events = (gripper_close_events(0)
-                                  if grip and not close_on_pick else ())
-                upward.append(replace(plan[0], motion_io=transit_events))
-                # The shared Home planner appends its conditional rise and exact
-                # joint Home after confirmed acquisition.
+                # Use the exhausted-miss route and rates, preserving holding
+                # outputs and monitoring suction through the complete group.
                 return_home(preceding=tuple(upward), require_suction=acquired,
                             forbid_suction=False,
                             confirmed_start_pose=stopped_pose,
+                            queue_through_home=True,
                             batch_name=f"candidate_{index}_pick_to_home")
                 return {"picked": True, "candidate": index, "holding_item": True}
             if index == len(plans):

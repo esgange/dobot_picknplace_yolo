@@ -4450,6 +4450,42 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `git diff --check` pass. No physical robot commands were issued; live timing
   and motion remain unverified. No new offline-transfer milestone is claimed.
 
+### 2026-09-21 — Match successful Pick return to exhausted-attempt Home
+
+- Rule 108 supersedes rules 88, 93, 94, 99 and 104 where they retain separate
+  successful-return clearance/Home-Z barriers or taught retract rates. Use the
+  exhausted-attempt return as the motion reference for successful acquisition:
+  actual stopped pose through old pre-pick, old clearance, conditional relative
+  Home-Z rise and exact taught-joint Home in one `candidate_N_pick_to_home`
+  group. The first two rises preserve stopped X/Y/attitude, never descend, and
+  use speed 100% with taught travel acceleration. Subsequent Home-Z/Home use
+  taught travel rates. Global SpeedFactor still applies. Stored retract rates
+  and artifact schemas remain unchanged, but do not set these live return rates.
+- Derive the conditional rise from planned clearance and skip it within 5 mm
+  below Home Z or higher. Reuse the confirmed pick/stopped pose as group origin.
+  Remove the successful path's separate item-X/Y-at-Home-Z transit. Require
+  ordered `res=0` admissions, global CP(100), and only exact Home physical
+  confirmation; no intermediate arrival or settling wait is added.
+- Successful returns preserve SUCK and holding context throughout, with rule
+  107's 50 ms DI1 loss debounce and immediate output/feedback fault handling.
+  They never inherit the failed return's EXHAUST/NEUTRAL release events.
+  Immediate finger CLOSE remains after confirmed acquisition when requested;
+  deferred CLOSE moves to 100% of the clearance rise, turning DO14 OFF before
+  DO2 ON. This preserves close-after-lifting behavior without an extra waypoint,
+  including when no conditional Home-Z rise is needed. `use_grip=false` never
+  closes. Success finishes HOLDING; exhausted miss finishes READY.
+- Pause/Continue, put-back, explicit Cartesian Hardware Home, acquisition,
+  non-final retry groups, source validation, Stop and failure containment retain
+  their contracts. No vendor, runtime, artifact or interface changes.
+- Verification: 237 direct controller tests pass, including shared actual-pose
+  geometry/rates/grouping for success and exhaustion, early high acquisition,
+  the near-Home-Z skip, all grip policies and continuous suction policy on the
+  return group. Package results report 238 tests with zero failures/errors/skips.
+  All four changed Python/test files compile and pass ament_flake8; the full
+  15-package root symlink build and `git diff --check` pass. No physical robot
+  commands were issued; live motion remains unverified. No new offline-transfer
+  milestone is claimed.
+
 ### Future entry template
 
 ```text
