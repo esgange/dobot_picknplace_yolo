@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, replace
 
-from .motion import (Target, candidate_transit, gripper_neutral_events,
+from .motion import (Target, candidate_exit_transit, candidate_transit, gripper_neutral_events,
                      vacuum_neutral_events)
 
 
@@ -98,4 +98,6 @@ def return_targets(plan):
     if not retreat or plan[5].matrix[2, 3] > plan[2].matrix[2, 3] + 1e-9:
         retreat.append(replace(plan[5], name="return_clearance",
                                motion_io=() if retreat else neutral))
+    retreat.append(replace(candidate_exit_transit(retreat[-1].matrix, plan),
+                           name="return_park_transit"))
     return release, tuple(retreat)

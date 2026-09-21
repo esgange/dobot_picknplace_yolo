@@ -172,6 +172,11 @@ Rule 109 latches held suction loss with its source, confirms physical Stop
 independently of DI1, and makes explicit Recovery put back the uncertain item
 before continuing eligible saved candidates, or Home when none remain. Outputs
 remain protected; cold unknown items never receive inferred source context.
+Rule 110 requires an entry and an explicit exit `park_transit` for each pick
+and put-back route. Queue the old item's exit before the next item's entry at
+a common safety Z, including retries and Recovery continuation; every item
+return queues its exit before Home even at/near Home Z. CP(100) may blend both
+transits, with no intermediate arrival wait. Preserve timed I/O and held checks.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

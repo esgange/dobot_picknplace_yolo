@@ -87,7 +87,8 @@ def test_normal_service_timeout_after_five_seconds_blocks_later_dispatch(monkeyp
     assert len(dispatches) == 1
 
 
-def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check():
+@pytest.mark.parametrize("coincident_transits", [False, True])
+def test_move_batch_queues_both_transits_before_only_terminal_arrival_check(coincident_transits):
     transport = object.__new__(DobotTransport)
     order = []
     sequence = iter(range(1, 20))
@@ -99,11 +100,14 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check()
                   "digital_input_bits": 0, "digital_outputs": 0})
 
     first = np.eye(4)
-    first[0, 3] = 0.1
-    second = np.eye(4)
-    second[0, 3] = 0.2
-    targets = (Target("first", first, 100, 100),
-               Target("terminal", second, 100, 100))
+    first[:3, 3] = [0.1, 0., 0.8]
+    second = first.copy()
+    second[0, 3] = 0.1 if coincident_transits else 0.2
+    final = second.copy()
+    final[2, 3] = 0.3
+    targets = (Target("p1_transit_exit", first, 100, 100),
+               Target("p2_transit", second, 100, 100),
+               Target("terminal", final, 100, 100))
     events = EventLog()
     transport.node = SimpleNamespace(
         events=events, expected_outputs={}, raise_if_cancelled=lambda: None,
@@ -119,7 +123,8 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check()
         order.append(("reached", target.name)) or True)
 
     def call_group(calls, **_kwargs):
-        order.extend(("call", service, fields["param_value"])
+        order.extend(("call", service, fields["param_value"],
+                      tuple(fields[key] for key in "abc"))
                      for service, fields in calls)
         return tuple(None for _call in calls)
     transport.call_group = call_group
@@ -129,13 +134,16 @@ def test_move_batch_dispatches_every_target_before_only_terminal_arrival_check()
 
     assert transport.move_batch(targets, batch_name="forward") is False
     parameters = ["user=0", "tool=0", "v=100", "a=100"]
-    assert order == [("call", "MovL", parameters),
-                     ("call", "MovL", parameters),
+    assert order == [("call", "MovL", parameters, tuple(first[:3, 3])),
+                     ("call", "MovL", parameters, tuple(second[:3, 3])),
+                     ("call", "MovL", parameters, tuple(final[:3, 3])),
                      ("reached", "terminal")]
     names = [entry[0][1] for entry in events.entries]
     assert names == ["motion_batch_dispatch_started", "motion_queued",
-                     "motion_queued", "motion_batch_queued",
+                     "motion_queued", "motion_queued", "motion_batch_queued",
                      "motion_batch_completed"]
+    assert [entry[0][2] for entry in events.entries if entry[0][1] == "motion_queued"] == [
+        "p1_transit_exit", "p2_transit", "terminal"]
     assert events.entries[-1][1]["terminal_stable_sec"] == 0.0
 
 

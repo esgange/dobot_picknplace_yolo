@@ -228,6 +228,12 @@ def test_pause_held_preserves_outputs_and_continue_does_not_open_fingers():
         session=session, check=lambda _i: None, return_home=rig._execute_home)
     assert result["picked"]
     assert ("output", 14, True) not in rig.log
+    returned = next(entry[1] for entry in rig.log if entry[0] == "home")
+    assert [target.name for target in returned["preceding"]] == ["p1_transit_exit"]
+    assert returned["preceding"][0].matrix[2, 3] == pytest.approx(.8)
+    assert not returned["preceding"][0].motion_io
+    assert returned["require_suction"]
+    assert returned["queue_through_home"]
 
 
 @pytest.mark.parametrize("prepick", [50., 80.])
@@ -255,7 +261,8 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     assert not rig.holding_item
     assert rig.managed.session.held_index is None
     moves = [entry for entry in rig.log if entry[0] == "move"]
-    assert any("return_release" in entry[1] for entry in moves)
+    approach = next(entry for entry in moves if "return_release" in entry[1])
+    assert approach[1][0] == "park_transit"
     assert ("pulse", 50) in rig.log
     pulse = rig.log.index(("pulse", 50))
     assert rig.log.index(("output", 2, False)) < pulse
@@ -266,8 +273,12 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     returned = next(entry[1] for entry in rig.log if entry[0] == "home")
     assert returned["queue_through_home"]
     retreat = returned["preceding"]
-    assert len(retreat) == (1 if prepick == 50. else 2)
+    assert len(retreat) == (2 if prepick == 50. else 3)
     assert len(retreat[0].motion_io) == 4
+    assert retreat[-1].name == "return_park_transit"
+    assert retreat[-1].matrix[2, 3] == pytest.approx(.8)
+    assert np.array_equal(retreat[-1].matrix[:2, 3], retreat[0].matrix[:2, 3])
+    assert not retreat[-1].motion_io
 
 
 @pytest.mark.parametrize("during_rise", [False, True])
@@ -457,15 +468,17 @@ def test_queued_output_difference_at_pause_is_reconciled_before_neutralizing():
     assert not any(entry[0] == "move" and "p1_pick" in entry[1] for entry in rig.log)
 
 
-def test_pause_during_blended_retry_transit_keeps_that_candidate_for_continue():
+@pytest.mark.parametrize("pause_at_entry", [False, True])
+def test_pause_during_either_retry_transit_keeps_next_candidate_eligible(pause_at_entry):
     rig = Rig(count=2)
     session = rig.managed.session
     plans = [attempt.plan for attempt in session.attempts]
 
     def pause_on_transit(targets, kwargs):
         if kwargs.get("batch_name") == "candidate_1_pick_to_retry_2_pick":
-            assert targets[2].name == "p2_transit"
-            for target in targets[:3]:
+            assert targets[2].name == "p1_transit_exit"
+            assert targets[3].name == "p2_transit"
+            for target in targets[:4 if pause_at_entry else 3]:
                 session.admitted(target)
             rig.managed.request("pause")
             rig.managed.checkpoint()
@@ -475,9 +488,9 @@ def test_pause_during_blended_retry_transit_keeps_that_candidate_for_continue():
             plans, rig.configuration.profile, session=session,
             check=lambda _index: None, return_home=rig._execute_home)
 
-    assert states(rig) == ["FAILED", "ACTIVE"]
+    assert states(rig) == ["FAILED", "ACTIVE" if pause_at_entry else "PENDING"]
     rig.managed.handle()
-    assert states(rig) == ["FAILED", "INTERRUPTED"]
+    assert states(rig) == ["FAILED", "INTERRUPTED" if pause_at_entry else "PENDING"]
     assert session.parked_index == 2
     assert np.allclose(rig.hardware.current_pose(), plans[1][0].matrix)
     rig.hardware.on_move = lambda *_args: None
@@ -772,6 +785,8 @@ def test_put_back_never_sends_release_events_on_zero_distance_retreat(prepick):
             return_targets(plan)
     else:
         release, retreat = return_targets(plan)
-        assert len(retreat) == 1
+        assert len(retreat) == 2
         assert retreat[0].matrix[2, 3] > release.matrix[2, 3]
         assert {event.channel for event in retreat[0].motion_io} == {1, 2, 13, 14}
+        assert retreat[-1].name == "return_park_transit"
+        assert not retreat[-1].motion_io

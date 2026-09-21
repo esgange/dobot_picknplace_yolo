@@ -297,7 +297,7 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert returned[0]["queue_through_home"] is True
     assert np.allclose(returned[0]["confirmed_start_pose"], hardware.pose)
     assert [target.name for target in returned[0]["preceding"]] == [
-        "p1_retract", "p1_final"]
+        "p1_retract", "p1_final", "p1_transit_exit"]
 
 
 def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
@@ -313,17 +313,18 @@ def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
     assert outcome["picked"]
     assert not any(entry[0] == "output" and entry[1] in (2, 14)
                    for entry in hardware.log)
-    retract, clearance = returned[0]["preceding"]
+    retract, clearance, exit_transit = returned[0]["preceding"]
     assert not retract.motion_io
     assert clearance.motion_io == gripper_close_events(100)
+    assert not exit_transit.motion_io
 
 
 @pytest.mark.parametrize("use_grip, close_on_pick", [
     (False, False), (True, True), (True, False)])
-@pytest.mark.parametrize("home_z, stopped_z, needs_rise", [
-    (1.0, 0.3, True), (0.454, 0.3, False), (1.0, 0.5, True)])
+@pytest.mark.parametrize("home_z, stopped_z", [
+    (1.0, 0.3), (0.454, 0.3), (0.45, 0.3), (1.0, 0.5), (1.0, 1.1)])
 def test_success_matches_exhausted_return_geometry_rates_and_group(
-        use_grip, close_on_pick, home_z, stopped_z, needs_rise):
+        use_grip, close_on_pick, home_z, stopped_z):
     taught = settings(use_grip=use_grip, close_on_pick=close_on_pick)
     taught["speed"].update(travel_percent=80, retract_percent=6)
     taught["acceleration"].update(travel_percent=70, retract_percent=40)
@@ -352,9 +353,11 @@ def test_success_matches_exhausted_return_geometry_rates_and_group(
         assert checks == ([("holding", True)] if acquired else []) + ["sources"]
         assert len(hardware.targets) == 2  # One approach and one complete Home return.
         group = hardware.targets[-1]
-        assert [target.name for target in group] == (
-            ["p1_retract", "p1_final"]
-            + (["home_height"] if needs_rise else []) + ["home"])
+        assert [target.name for target in group] == [
+            "p1_retract", "p1_final", "p1_transit_exit", "home"]
+        assert group[-2].matrix[2, 3] == pytest.approx(max(home_z, stopped_z))
+        assert not group[-2].motion_io
+        assert not group[-2].relative_z
         assert [(target.speed_percent, target.acceleration_percent)
                 for target in group] == [(100, 70), (100, 70)] + [(80, 70)] * (
                     len(group) - 2)
@@ -382,12 +385,15 @@ def test_success_matches_exhausted_return_geometry_rates_and_group(
         assert missed.relative_z == held.relative_z
 
 
-def test_missed_suction_blends_old_rises_next_safety_transit_clearance_and_pick():
+@pytest.mark.parametrize("stopped_z", [0.3, 0.997, 1.1])
+def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_z):
     taught = settings()
     taught["acceleration"]["travel_percent"] = 80
     taught["acceleration"]["retract_percent"] = 40
     hardware = FakeHardware([False, False])
-    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), taught, index)
+    hardware.pose = item_pose(x=.102, y=.198, z=stopped_z, yaw_deg=1.)
+    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index, yaw_deg=20. * index),
+                          taught, index)
              for index in (1, 2)]
     order = []
     returned = []
@@ -410,9 +416,9 @@ def test_missed_suction_blends_old_rises_next_safety_transit_clearance_and_pick(
                        if entry[0] == "move"]
     assert forward_batches == ["candidate_1_home_to_pick",
                                "candidate_1_pick_to_retry_2_pick"]
-    final_retract, final_clearance = returned[0]["preceding"]
-    assert [final_retract.name, final_clearance.name] == [
-        "p2_retract", "p2_final"]
+    final_retract, final_clearance, final_exit = returned[0]["preceding"]
+    assert [final_retract.name, final_clearance.name, final_exit.name] == [
+        "p2_retract", "p2_final", "p2_transit_exit"]
     assert final_retract.motion_io == vacuum_exhaust_events(80)
     assert final_clearance.motion_io == (
         gripper_neutral_events(0) + vacuum_neutral_events(0))
@@ -420,30 +426,37 @@ def test_missed_suction_blends_old_rises_next_safety_transit_clearance_and_pick(
     assert np.allclose(returned[0]["confirmed_start_pose"], hardware.pose)
     retry = next(entry for entry in hardware.log if entry[0] == "move"
                  and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
-    assert retry[1] == ("p1_retract", "p1_final", "p2_transit", "p2_initial",
-                        "p2_prepick", "p2_pick")
+    assert retry[1] == ("p1_retract", "p1_final", "p1_transit_exit", "p2_transit",
+                        "p2_initial", "p2_prepick", "p2_pick")
     assert retry[2]["stop_on_suction"] is True
     assert retry[2]["require_suction_reset"] is True
     assert retry[2]["pick_settling_sec"] == pytest.approx(0.2)
     assert retry[2]["return_terminal_pose"] is True
     assert np.allclose(retry[2]["confirmed_start_pose"], hardware.pose)
-    retract, old_clearance, transit, next_approach, next_prepick, next_pick = [
-        target for target in hardware.targets[1]]
+    (retract, old_clearance, old_exit, transit, next_approach,
+     next_prepick, next_pick) = hardware.targets[1]
     assert retract.speed_percent == 100
     assert retract.acceleration_percent == 80
-    assert retract.matrix[2, 3] == pytest.approx(plans[0][4].matrix[2, 3])
+    assert retract.matrix[2, 3] == pytest.approx(max(stopped_z, plans[0][4].matrix[2, 3]))
     assert [(event.percent, event.channel, event.active)
             for event in retract.motion_io] == [
                 (80, 13, False), (80, 1, True)]
     assert old_clearance.speed_percent == 100
     assert old_clearance.acceleration_percent == 80
-    assert old_clearance.matrix[2, 3] == pytest.approx(plans[0][5].matrix[2, 3])
+    assert old_clearance.matrix[2, 3] == pytest.approx(
+        max(stopped_z, plans[0][5].matrix[2, 3]))
     assert old_clearance.motion_io == (
         gripper_neutral_events(0) + vacuum_neutral_events(0))
     assert np.allclose(retract.matrix[:2, 3], old_clearance.matrix[:2, 3])
     assert np.allclose(retract.matrix[:3, :3], old_clearance.matrix[:3, :3])
-    assert np.array_equal(transit.matrix, plans[1][0].matrix)
-    assert transit.matrix[2, 3] == pytest.approx(1.0)
+    assert np.array_equal(old_exit.matrix[:2, 3], hardware.pose[:2, 3])
+    assert np.array_equal(old_exit.matrix[:3, :3], hardware.pose[:3, :3])
+    assert old_exit.matrix[2, 3] == transit.matrix[2, 3] == max(stopped_z, 1.0)
+    assert not old_exit.motion_io
+    assert old_exit.speed_percent == transit.speed_percent
+    assert old_exit.acceleration_percent == transit.acceleration_percent
+    assert np.array_equal(transit.matrix[:2, 3], plans[1][0].matrix[:2, 3])
+    assert np.array_equal(transit.matrix[:3, :3], plans[1][0].matrix[:3, :3])
     assert transit.speed_percent == taught["speed"]["travel_percent"]
     assert transit.acceleration_percent == taught["acceleration"]["travel_percent"]
     assert np.array_equal(next_approach.matrix, plans[1][1].matrix)
@@ -486,11 +499,13 @@ def test_use_grip_false_still_opens_and_neutralizes_but_never_closes():
         plans, taught, check=lambda _index: None,
         return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
 
-    retract, old_clearance, transit, next_approach, next_prepick, _pick = hardware.targets[1]
+    (retract, old_clearance, old_exit, transit, next_approach,
+     next_prepick, _pick) = hardware.targets[1]
     assert retract.motion_io == vacuum_exhaust_events(80)
     assert old_clearance.motion_io == (
         gripper_neutral_events(0) + vacuum_neutral_events(0))
     assert transit.motion_io == gripper_open_events(50)
+    assert not old_exit.motion_io
     assert not next_approach.motion_io
     assert not next_prepick.motion_io
     assert not any(event.active and event.channel == 2

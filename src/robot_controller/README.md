@@ -223,8 +223,11 @@ an exactly simultaneous electrical edge. The pulse is independent of
 when it finishes before its ROS response arrives. Missing pulse evidence, exhaust
 remaining ON or DI1 remaining HIGH blocks return motion. Fingers stay OPEN during
 release; the first real upward `MovLIO` return segment commands all four outputs
-NEUTRAL at its start. The pre-pick/clearance/conditional Home-Z/exact joint-Home
+NEUTRAL at its start. The pre-pick/clearance/exit-transit/exact joint-Home
 route is admitted in order and physically confirms only terminal Home.
+Put-back queues entry `park_transit` before pre-pick/release and exit
+`return_park_transit` after clearance, including at/near Home Z. The exit has no
+timed I/O and uses taught travel rates with global CP(100).
 
 Explicit `/return_item` cancels the interrupted action with a CANCELED result and
 finishes READY at Home. The GUI uses **RETURN ITEM & STOP** while paused with
@@ -258,11 +261,12 @@ release pose, followed by finger OPEN and the confirmed native 50 ms EXHAUST
 pulse. Do not proceed until pulse OFF and raw DI1 LOW are confirmed.
 
 If the same retained batch has an eligible PENDING or INTERRUPTED candidate,
-queue neutral retreat through old pre-pick/clearance and that next candidate's
-transit, clearance, pre-pick and final pick in one ordered group. No intervening
+queue neutral retreat through old pre-pick/clearance, the old item's exit transit,
+then the next candidate's entry transit, clearance, pre-pick and final pick in
+one ordered group. Both transits share safety Z. No intervening
 Home or new detector request occurs; only final pick uses taught settling and
 normal acquisition monitoring. FAILED, DROPPED and RETURNED stay excluded.
-The subsequent successful or exhausted return uses rule 108. With no eligible
+The subsequent successful or exhausted return uses rules 108 and 110. With no eligible
 candidate after release, queue the retreat through Home and finish READY.
 The recovery service completes when this operation completes; status reports
 RECOVERING, RETURNING_ITEM, then PICKING when applicable, and HOLDING/READY.
@@ -351,10 +355,10 @@ taught Home joints directly using joint-mode `MovL` and ±1° joint confirmation
 The planner and first dispatch share one fresh confirmed FeedInfo pose, so a
 second origin reading cannot turn a planned upward correction into a rejected
 downward move. When a rise is needed, final joint Home acquires its origin after
-that rise finishes. The shared 5 mm position tolerance also governs queued
-successful/final-miss/put-back Home planning. Successful and exhausted Pick
-returns queue pre-pick, clearance, conditional Home Z and joint Home together,
-using the planned clearance for the height decision and the confirmed stopped
+that rise finishes. Successful/final-miss/put-back returns always queue an
+explicit Cartesian exit transit, even within 5 mm of Home Z or at an identical
+clearance position. Successful and exhausted Pick returns queue pre-pick,
+clearance, exit transit and joint Home together, using the confirmed stopped
 pick pose as the group origin. Only final Home is physically confirmed.
 
 Pick is permitted only from `READY` with DI1 clear:
@@ -447,22 +451,30 @@ On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
 confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 100%
 of the clearance rise (DO14 OFF before DO2 ON). `use_grip=false` never enters
 CLOSE. The held return uses the exhausted-miss route and rates: actual stopped
-pose to pre-pick, clearance, conditional Home Z and exact joint Home, in one
+pose to pre-pick, clearance, exit transit and exact joint Home, in one
 `candidate_N_pick_to_home` group. Both initial rises preserve stopped X/Y and
-attitude and never descend. It has no separate item transit or intermediate
-arrival wait. SUCK stays ON without reissuing it; no EXHAUST or NEUTRAL release
+attitude and never descend. Exit `pN_transit_exit` keeps that X/Y/attitude and
+uses `max(stopped Z, taught Home Z)` with taught travel rates and no I/O.
+It is always queued, including when no further rise is needed. No intermediate
+arrival wait is added. SUCK stays ON without reissuing it; no EXHAUST or NEUTRAL release
 events are sent. Continuous holding checks, including the 50 ms DI1 loss
-debounce, remain active through dispatch and final Home confirmation.
+debounce, remain active through dispatch and final Home confirmation. Held
+Continue queues an exit transit at the parked X/Y/attitude before joint Home.
 
 A missed non-final candidate starts one
 `candidate_N_pick_to_retry_M_pick` CP-blended group: old final to old pre-pick,
-old pre-pick to old clearance, transfer to M's `park_transit` position, descend
-through M's clearance and pre-pick, then reach M's final pick. That transit uses
-M's X/Y/attitude at `max(stopped Z, taught Home Z)` and the taught travel rates.
-Its command name remains `pM_transit` so admission marks the correct candidate
+old pre-pick to old clearance, N's exit `park_transit`, M's entry `park_transit`,
+then descend through M's clearance and pre-pick to M's final pick. The exit
+preserves actual stopped X/Y/attitude; the entry uses M's X/Y/attitude. Both use
+`max(stopped Z, taught Home Z)` and taught travel rates. The exit is named
+`pN_transit_exit` and has no I/O. The entry's command name remains `pM_transit`
+so admission marks the correct candidate
 ACTIVE; a Pause there retains M for Continue. The same geometry helper supplies
-Pause's `park_transit`, which neutralizes its I/O. In a normal retry, the transit
-is blended under CP(100) and can be rounded without an intermediate arrival wait.
+Pause's `park_transit`, which neutralizes its I/O. Unheld Continue reuses that
+already-confirmed entry transit. Every pick and put-back has both entry and exit
+transits queued. Both are blended under CP(100) and can be rounded without an
+intermediate arrival wait or dwell; coincident coordinates still get separate
+requests. Direct Stop can always prevent later requests from being sent.
 At 80% of the first rise the group enters EXHAUST. At 0% of the second rise it
 enters both finger and vacuum NEUTRAL. At 50% of the transfer to M's transit it
 enters OPEN; M's clearance has no I/O. At 20% of M's final descent
@@ -471,11 +483,10 @@ only M's final target is physically checked. A late DI1 from candidate N is
 ignored throughout its latched-miss recovery; candidate M is armed only after
 DO13 OFF and a clear DI1 have been observed before its new SUCK. A final
 candidate miss queues its old pre-pick EXHAUST rise, old-clearance NEUTRAL rise,
-conditional relative Home-Z segment and exact joint Home as one
-`candidate_N_pick_to_home` group. The conditional segment is derived from the
-planned clearance endpoint. Each request still requires ordered `res=0`
+explicit exit transit and exact joint Home as one
+`candidate_N_pick_to_home` group. Each request still requires ordered `res=0`
 acceptance, but only exact joint Home is physically confirmed; clearance and
-Home Z are blended control points. Later DI1 cannot reclassify the latched miss
+transits are blended control points. Later DI1 cannot reclassify the latched miss
 as success. Successful returns use the same geometry, rates, ordered group and
 final-Home-only confirmation, with held-item outputs and monitoring instead.
 
@@ -507,7 +518,8 @@ a short pick segment decelerate despite global CP 100; queue order takes
 precedence over uninterrupted blending.
 
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
-tuple. Pick's conditional Home rise uses `RelMovLUser`. The controller never calls
+tuple. Initial/shared Home's conditional rise uses `RelMovLUser`; item exit
+transits use Cartesian `MovL`. The controller never calls
 `InverseKin` or vendor `Continue`; controller Continue rebuilds the remaining route.
 Service acknowledgement is acceptance only; actual
 feedback confirms every result. A coherent miss advances to the next pending

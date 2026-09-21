@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 import threading
 
+import numpy as np
 import pytest
 
 from robot_controller.controller import RobotController
@@ -56,6 +57,8 @@ def test_recovery_puts_back_then_next_candidate_or_home(count, di1_recovers):
     if di1_recovers:
         rig.set_di1(True)
     rig.hardware.acquisitions = iter((True,))
+    batches = []
+    rig.hardware.on_move = lambda targets, kwargs: batches.append((targets, kwargs))
     result = rig.recover()
 
     assert result.success
@@ -76,14 +79,22 @@ def test_recovery_puts_back_then_next_candidate_or_home(count, di1_recovers):
         assert next_pick > pulse
         assert not any(entry[0] == "home" for entry in rig.log[:next_pick])
         group = rig.log[next_pick]
-        assert group[1] == ("return_prepick", "return_clearance", "p2_transit",
-                            "p2_initial", "p2_prepick", "p2_pick")
+        assert group[1] == ("return_prepick", "return_clearance", "return_park_transit",
+                            "p2_transit", "p2_initial", "p2_prepick", "p2_pick")
         assert group[2]["pick_settling_sec"] == 0.1
         assert group[2]["confirmed_start_pose"][2, 3] == pytest.approx(0.35)
+        targets = next(targets for targets, kwargs in batches if kwargs.get("stop_on_suction"))
+        old_exit, next_entry = targets[2:4]
+        assert old_exit.matrix[2, 3] == next_entry.matrix[2, 3] == .8
+        assert np.array_equal(old_exit.matrix[:2, 3], targets[0].matrix[:2, 3])
+        assert not np.array_equal(old_exit.matrix[:2, 3], next_entry.matrix[:2, 3])
+        assert not old_exit.motion_io
     else:
         assert not any(entry[0] == "move" and entry[2].get("stop_on_suction")
                        for entry in rig.log)
         assert any(entry[0] == "home" for entry in rig.log[pulse + 1:])
+        home = next(entry[1] for entry in rig.log if entry[0] == "home")
+        assert home["preceding"][-1].name == "return_park_transit"
     assert rig.managed.session.held_index == (None if count == 1 else 2)
     assert not rig.operation_lock.locked()
 

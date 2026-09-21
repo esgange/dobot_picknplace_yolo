@@ -4543,6 +4543,58 @@ Never use a floating “latest” version in an issue, script, or deployment not
   motion, physical pulse timing and placement remain unverified. No new offline
   transfer milestone is claimed.
 
+### 2026-09-21 — Queue both item transits for pick and put-back travel
+
+- Rule 110 supersedes rules 106, 108 and 109 where an item departure omits its
+  own transit or replaces it with an optional Home-height correction. Every
+  completed pick and intentional put-back route queues an entry `park_transit`
+  before descent and an explicit exit after upward retreat. The operator
+  explicitly permits CP blending: each position must be sent/accepted into the
+  queue, but intermediate exact arrival or dwell is not required.
+- A non-final missed pick queues old pre-pick, old clearance, old exit transit,
+  next entry transit, next clearance, next pre-pick and next final pick in one
+  ordered group. Both transits share `max(stopped Z, taught Home Z)`. The exit
+  preserves actual stopped X/Y/attitude; the next entry uses the next saved
+  candidate's X/Y/attitude. Use taught travel speed/acceleration for both
+  transits. Name the exit `pN_transit_exit` with no timed I/O; retain `pM_transit`
+  for entry so candidate admission remains tied to the new approach. A Pause
+  before new entry leaves it PENDING; after entry admission it is INTERRUPTED
+  and remains eligible for Continue.
+- Successful and exhausted pick returns queue their same stopped-pose pre-pick
+  and clearance rises, explicit exit transit and exact joint Home as one group.
+  Always queue the exit, including within 5 mm of Home Z, at the exact clearance
+  coordinates or above Home Z; no zero-distance target removal is allowed.
+  The two original rises retain speed 100% with taught travel acceleration.
+  The exit replaces the optional relative Home-height segment in these item
+  routes. Initial/shared Home's separate conditional rise and explicit Cartesian
+  Hardware Home retain their existing contracts. Held Continue queues its exit
+  at current parked X/Y/attitude before Home; unheld Continue reuses the entry
+  transit already queued and confirmed by Pause.
+- Put-back keeps entry `park_transit`, original pre-pick and +50 mm release,
+  OPEN and the confirmed native 50 ms exhaust pulse. Its neutral retreat now
+  ends at explicit `return_park_transit` before exact Home. With another
+  eligible candidate on explicit Recovery, queue that retreat/exit and the
+  next entry/clearance/pre-pick/pick together at a common transfer height.
+  Zero-length retreat with release I/O remains forbidden; an exit without I/O
+  is still queued when coincident with clearance.
+- Preserve global CP(100), ordered `res=0` admission, terminal-only completion,
+  taught final-pick settling, EXHAUST at 80% of missed pre-pick rise, NEUTRAL at
+  clearance start, OPEN at 50% of next entry and SUCK at 20% of final descent.
+  Deferred held CLOSE stays at 100% of clearance; held suction/output checks
+  stay active. No new delay or per-motion CP/r override. Stop/cancellation and
+  command/feedback failure can still abort remaining dispatch immediately.
+  No vendor, runtime, artifact schema or operator-file changes.
+- Verification: all 264 direct controller tests pass; package results report
+  265 tests with zero failures/errors/skips. Fixtures cover old exit before new
+  entry, common transfer height, preserved stopped attitude, exits at/near/above
+  Home Z, all grip policies, put-back with/without another candidate, held
+  Continue, Pause on either transit, and transport dispatch of both transits
+  even at coincident coordinates with only terminal arrival checked. All six
+  changed Python/test files compile and pass ament_flake8. The full root symlink
+  build passes for all 15 packages and `git diff --check` passes. No physical
+  robot commands were issued; live blended motion and physical placement remain
+  unverified. No new offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

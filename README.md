@@ -116,7 +116,9 @@ release pose 50 mm above nominal final-pick Z, opens fingers, and issues a
 controller-timed 50 ms exhaust pulse. OPEN is commanded before the pulse; these
 are separate commands, not simultaneous electrical edges. Exhaust OFF and DI1
 clear must be confirmed before retreat. The first real upward `MovLIO` segment
-neutralizes the outputs, then the route finishes at exact joint Home. Pre-pick
+neutralizes the outputs, then the route passes clearance and an explicit exit
+`park_transit` before exact joint Home. Put-back also queues its entry
+`park_transit` before descending to pre-pick/release. Pre-pick
 must be at least 50 mm above final pick, with clearance above the release pose;
 equal waypoints skip the zero-length retreat. The pulse is independent of the
 taught final-pick settling interval.
@@ -126,8 +128,9 @@ item has physically left the fingers. Stop can still confirm stationary/empty
 queue while reporting uncertain suction separately. With the saved source
 available, Recovery preserves outputs during Stop/clear/enable/settings, uses
 the same +50 mm release and confirmed 50 ms exhaust pulse, and excludes that
-`DROPPED` candidate. If another saved candidate is eligible, neutral retreat and
-its transit/clearance/pre-pick/pick form one group without visiting Home first.
+`DROPPED` candidate. If another saved candidate is eligible, neutral retreat,
+the old item's exit transit, and the next item's entry transit/clearance/pre-pick/pick
+form one group without visiting Home first. Both transits share safety Z.
 Otherwise the retreat finishes at Home. Loss remains latched after DI1 returns
 HIGH; missing source context, changed files or failed feedback/output/service
 checks block motion. Cold unknown items never gain a fabricated source pose.
@@ -165,9 +168,9 @@ plan the group and as its confirmed motion origin, without a duplicate origin
 acquisition. The first control point can be rounded, rotate or descend at
 current XY and is not collision-checked for an arbitrary starting pose. A
 successful held-item Pick return now uses the same single queued route as an
-exhausted miss: actual stopped pose through pre-pick, clearance, conditional
-Home-Z rise and exact taught-joint Home. Skip the extra rise when planned
-clearance is within 5 mm below Home Z or higher. Only final Home is physically
+exhausted miss: actual stopped pose through pre-pick, clearance, explicit exit
+`park_transit` and exact taught-joint Home. Always queue that exit, including
+when clearance is at or near Home Z. Only final Home is physically
 confirmed; suction and holding outputs remain supervised throughout. Pick runs
 Home, transforms platform-relative poses, applies schema-9 vertical/rotation geometry
 and timed gripper behavior, and returns Home after success or final exhaustion.
@@ -197,7 +200,8 @@ rejects a disagreement before motion. A magenta `CAM`/`CAM 180` footprint is
 shown on bin-camera RGB/depth; light blue remains pick-point-only. A confirmed
 miss advances to another candidate; Pause/Continue retries an interrupted approach.
 No-I/O moves use MovL, real timed-output
-moves use non-empty MovLIO, and Pick's conditional Home rise uses RelMovLUser.
+moves use non-empty MovLIO. The conditional rise for initial/shared Home uses
+RelMovLUser; item exit transits use Cartesian MovL.
 Continue replans the remaining operation from its confirmed parked pose;
 the controller never uses vendor Continue or InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
@@ -209,19 +213,24 @@ of transit and SUCK at 20% of final descent. DI1 is eligible only after SUCK and
 is evaluated while the final pose, queue-idle state and commanded outputs remain
 coherent for the taught `pick_settling` time. This one profile-driven interval
 replaces the fixed 300 ms final-pick gate and has no later suction wait.
-On an intermediate miss, one group rises through the old item's pre-pick and
-clearance at `v=100`, transfers to the next candidate's `park_transit` position,
-then descends through the next clearance and pre-pick to final pick. Transit
-uses the next item's X/Y/attitude at the higher of taught Home Z and stopped Z.
-It is a CP-blended control point that may be rounded, without an arrival wait.
+Every pick and put-back queues an entry and an exit `park_transit`. On an
+intermediate miss, one group rises through the old item's pre-pick and clearance
+at `v=100`, then queues the old item's exit transit followed by the next item's
+entry transit before descending through its clearance and pre-pick to final pick.
+Both transits use the higher of taught Home Z and stopped Z. The exit preserves
+actual stopped X/Y/attitude; the entry uses the next candidate's X/Y/attitude.
+Both use taught travel rates and CP(100) blending, with no intermediate arrival
+wait or dwell. Even coincident transit coordinates are sent as separate commands.
 The group enters EXHAUST at 80% of the first rise,
 finger/vacuum NEUTRAL at the start of the second rise, OPEN at 50% of transfer,
 and SUCK at 20% of the new final descent. A final miss queues the same
-EXHAUST/NEUTRAL rise, conditional Home-Z segment and exact joint Home in one
-ordered group. Clearance and Home Z remain blended control points; only exact
+EXHAUST/NEUTRAL rise, explicit exit transit and exact joint Home in one
+ordered group. Clearance and transits remain blended control points; only exact
 joint Home is physically confirmed. A confirmed pickup returns through
-pre-pick, clearance and item X/Y at Home Z, then uses shared Home while holding
-SUCK. Motion services are admitted in order: each response must be `res=0`
+pre-pick, clearance, exit transit and exact joint Home in one group while holding
+SUCK. Held Continue also queues an exit transit before Home. Unheld Continue
+reuses the entry transit already confirmed by Pause. Motion services are admitted
+in order: each response must be `res=0`
 before the next request is sent, with no extra inter-command delay. This
 prevents independent ROS services
 from reversing the dashboard queue, as observed in a failed Home return.
@@ -316,7 +325,7 @@ Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
 speed 6% and stored retract speed 6%. Live Pick returns after either success or
 miss override both pre-pick/clearance rises to 100% speed with taught travel
-acceleration. Subsequent Home-Z/Home moves use taught travel rates. The stored
+acceleration. Subsequent exit-transit/Home moves use taught travel rates. The stored
 retract fields remain in the schema but do not set these live return rates.
 Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.

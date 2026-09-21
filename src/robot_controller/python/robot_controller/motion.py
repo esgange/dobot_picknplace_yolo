@@ -178,6 +178,13 @@ def candidate_transit(current, plan):
     return replace(plan[0], matrix=matrix)
 
 
+def candidate_exit_transit(current, plan):
+    """Mandatory departure waypoint at current XY/attitude and at least Home Z."""
+    matrix = current.copy()
+    matrix[2, 3] = max(current[2, 3], plan[0].matrix[2, 3])
+    return replace(plan[0], name=f"{plan[0].name}_exit", matrix=matrix, motion_io=())
+
+
 class PickExecutor:
     """Explicit sequence behind fake or real transport; no automatic fault retry."""
 
@@ -208,7 +215,11 @@ class PickExecutor:
                 if grip:
                     self.hardware.output(14, False)
                     self.hardware.output(2, True)
-                return_home(require_suction=True, forbid_suction=False)
+                current = self.hardware.current_pose()
+                return_home(preceding=(candidate_exit_transit(current, plan),),
+                            require_suction=True, forbid_suction=False,
+                            confirmed_start_pose=current, queue_through_home=True,
+                            batch_name=f"candidate_{held}_pick_to_home")
                 session.resuming = False
                 return {"picked": True, "candidate": held, "holding_item": True}
             acquired, stopped_pose = True, self.hardware.current_pose()
@@ -232,7 +243,8 @@ class PickExecutor:
             if departure:
                 # Put-back release has confirmed DI1 clear; neutralize during
                 # retreat, then open at the next transit and attempt its pick.
-                forward = (*departure, plan[0], plan[1], plan[2], plan[3])
+                transit = candidate_transit(departure[-1].matrix, plan)
+                forward = (*departure, transit, plan[1], plan[2], plan[3])
                 origin["confirmed_start_pose"] = departure_pose
             acquired, stopped_pose = self.hardware.move_batch(
                 forward, batch_name=(f"return_item_to_candidate_{start_index}_pick" if departure
@@ -271,7 +283,7 @@ class PickExecutor:
                                   + vacuum_neutral_events(0))
                 elif upward and grip and not close_on_pick:
                     # Deferred CLOSE belongs to the end of clearance now that
-                    # held and missed returns share the conditional Home rise.
+                    # held and missed returns share the exit-transit route.
                     events = gripper_close_events(100)
                 upward.append(replace(
                     target, matrix=matrix, speed_percent=100,
@@ -282,6 +294,7 @@ class PickExecutor:
                     and stopped_pose[2, 3] > plan[2].matrix[2, 3]):
                 remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
                                  settings["gripper"])
+            upward.append(candidate_exit_transit(upward[-1].matrix, plan))
             if acquired:
                 # Use the exhausted-miss route and rates, preserving holding
                 # outputs and monitoring suction through the complete group.
@@ -314,10 +327,9 @@ class PickExecutor:
             next_plan = plans[index]
             if remember_prepick is not None:
                 remember_prepick(next_plan[2], settings["gripper"])
-            # Rise via the old pre-pick to its clearance before lateral travel.
-            # Blend through the next safety-Z transit before its clearance/pre-pick.
+            # Queue the old exit and next entry at the same safety Z before descent.
             # Timed output events travel with their owning motion.
-            next_transit = candidate_transit(stopped_pose, next_plan)
+            next_transit = candidate_transit(upward[-1].matrix, next_plan)
             acquired, stopped_pose = self.hardware.move_batch(
                 (*upward, next_transit, next_plan[1], next_plan[2], next_plan[3]),
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
