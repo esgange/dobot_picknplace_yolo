@@ -330,7 +330,8 @@ Pick is permitted only from `READY` with DI1 clear:
    line while preserving taught tool Z;
 5. attempt up to Item Teach `pose_candidates` in detector rank order;
 6. after an intermediate miss, retract to that candidate's final clearance and
-   proceed directly to the next candidate without returning Home;
+   proceed through the next candidate's safety-Z transit, clearance, pre-pick
+   and final pick without returning Home;
 7. after success, retract and return Home holding with suction on.
 
 The detector pose uses local X for the measured long axis and local Y for the
@@ -393,10 +394,16 @@ at Home Z, then the shared Home barriers without reissuing SUCK.
 
 A missed non-final candidate starts one
 `candidate_N_pick_to_retry_M_pick` CP-blended group: old final to old pre-pick,
-old pre-pick to old clearance, lateral transfer to M's clearance, descend to
-M's pre-pick, then descend to M's final pick. At 80% of the first rise it enters
-EXHAUST. At 0% of the second rise it enters both finger and vacuum NEUTRAL. At
-50% of the next-clearance transfer it enters OPEN. At 20% of M's final descent
+old pre-pick to old clearance, transfer to M's `park_transit` position, descend
+through M's clearance and pre-pick, then reach M's final pick. That transit uses
+M's X/Y/attitude at `max(stopped Z, taught Home Z)` and the taught travel rates.
+Its command name remains `pM_transit` so admission marks the correct candidate
+ACTIVE; a Pause there retains M for Continue. The same geometry helper supplies
+Pause's `park_transit`, which neutralizes its I/O. In a normal retry, the transit
+is blended under CP(100) and can be rounded without an intermediate arrival wait.
+At 80% of the first rise the group enters EXHAUST. At 0% of the second rise it
+enters both finger and vacuum NEUTRAL. At 50% of the transfer to M's transit it
+enters OPEN; M's clearance has no I/O. At 20% of M's final descent
 it enters SUCK. Each service must return `res=0` before the next is sent, while
 only M's final target is physically checked. A late DI1 from candidate N is
 ignored throughout its latched-miss recovery; candidate M is armed only after

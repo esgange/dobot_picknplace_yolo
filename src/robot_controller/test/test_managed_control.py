@@ -407,6 +407,39 @@ def test_queued_output_difference_at_pause_is_reconciled_before_neutralizing():
     assert not any(entry[0] == "move" and "p1_pick" in entry[1] for entry in rig.log)
 
 
+def test_pause_during_blended_retry_transit_keeps_that_candidate_for_continue():
+    rig = Rig(count=2)
+    session = rig.managed.session
+    plans = [attempt.plan for attempt in session.attempts]
+
+    def pause_on_transit(targets, kwargs):
+        if kwargs.get("batch_name") == "candidate_1_pick_to_retry_2_pick":
+            assert targets[2].name == "p2_transit"
+            for target in targets[:3]:
+                session.admitted(target)
+            rig.managed.request("pause")
+            rig.managed.checkpoint()
+    rig.hardware.on_move = pause_on_transit
+    with pytest.raises(ManagedInterruption):
+        PickExecutor(rig.hardware, finish_home=True).run(
+            plans, rig.configuration.profile, session=session,
+            check=lambda _index: None, return_home=rig._execute_home)
+
+    assert states(rig) == ["FAILED", "ACTIVE"]
+    rig.managed.handle()
+    assert states(rig) == ["FAILED", "INTERRUPTED"]
+    assert session.parked_index == 2
+    assert np.allclose(rig.hardware.current_pose(), plans[1][0].matrix)
+    rig.hardware.on_move = lambda *_args: None
+    rig.log.clear()
+    PickExecutor(rig.hardware, finish_home=True).run(
+        plans, rig.configuration.profile, session=session,
+        check=lambda _index: None, return_home=rig._execute_home)
+    assert next(entry[1] for entry in rig.log if entry[0] == "move") == (
+        "p2_prepick", "p2_pick")
+    assert states(rig) == ["FAILED", "FAILED"]
+
+
 def test_return_requested_from_confirmed_pause_has_no_continue_or_new_pick():
     rig = Rig(held=True)
     rig.on_wait = lambda: rig.managed.request("return")

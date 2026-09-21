@@ -159,6 +159,9 @@ Rule 105 keeps an unheld paused candidate INTERRUPTED and eligible. Pause parks
 above that same candidate at `park_transit`; Continue retries its saved approach
 before later PENDING candidates and marks it ACTIVE on command acceptance.
 Confirmed failed, dropped and returned candidates stay excluded.
+Rule 106 adds the next candidate's `park_transit` position to each blended
+non-final missed-pick retry, between old clearance and next clearance. OPEN
+occurs at 50% of travel to that transit; only the next final pick is confirmed.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

@@ -171,6 +171,13 @@ def pick_targets(home, item_in_base, settings, candidate_index, *, rotation=None
     return tuple(targets)
 
 
+def candidate_transit(current, plan):
+    """Candidate XY/attitude at Home Z or the higher current Z, with transit I/O."""
+    matrix = plan[0].matrix.copy()
+    matrix[2, 3] = max(current[2, 3], matrix[2, 3])
+    return replace(plan[0], matrix=matrix)
+
+
 class PickExecutor:
     """Explicit sequence behind fake or real transport; no automatic fault retry."""
 
@@ -299,12 +306,11 @@ class PickExecutor:
             if remember_prepick is not None:
                 remember_prepick(next_plan[2], settings["gripper"])
             # Rise via the old pre-pick to its clearance before lateral travel.
-            # Cross to the next clearance, then descend via its pre-pick.
+            # Blend through the next safety-Z transit before its clearance/pre-pick.
             # Timed output events travel with their owning motion.
-            next_approach = replace(
-                next_plan[1], motion_io=gripper_open_events(50))
+            next_transit = candidate_transit(stopped_pose, next_plan)
             acquired, stopped_pose = self.hardware.move_batch(
-                (*upward, next_approach, next_plan[2], next_plan[3]),
+                (*upward, next_transit, next_plan[1], next_plan[2], next_plan[3]),
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
                 pick_settling_sec=settling, return_terminal_pose=True,

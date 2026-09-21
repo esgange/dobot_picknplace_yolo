@@ -4384,6 +4384,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and `git diff --check` pass. No physical robot commands were issued; live
   motion remains unverified. No new offline-transfer milestone is claimed.
 
+### 2026-09-21 — Blend retry travel through the next safety-Z transit
+
+- Rule 106 supersedes rules 87, 91 and 94 only for a non-final missed-pick
+  retry's transfer route and location of its OPEN event. The single ordered
+  `candidate_N_pick_to_retry_M_pick` group now contains old pre-pick, old
+  clearance, M's `park_transit` position, M's clearance, M's pre-pick and M's
+  final pick. The added transit uses M's unchanged planned X/Y/attitude and
+  taught travel rates at `max(actual stopped Z, taught Home Z)`. Global CP(100)
+  blends the whole group; the intermediate transit can be rounded and only
+  the terminal final pick receives physical confirmation and taught settling.
+- Move OPEN at 50% onto the transfer to M's transit; its following clearance
+  target has no I/O. Preserve EXHAUST at 80% of the old pre-pick rise, both
+  NEUTRAL states at 0% of the old-clearance rise, and SUCK at 20% of final
+  descent. Keep ordered `res=0` admission, five-second response deadlines,
+  late-miss DI1 isolation, fresh suction reset, and Stop pre-emption.
+- A shared pure helper supplies the candidate transit geometry to both retry
+  execution and Pause/put-back planning. Retry retains the candidate-specific
+  `pM_transit` command name and its OPEN events, so admission marks M ACTIVE.
+  Managed parking retains the name `park_transit` with neutral I/O. Pause at
+  the new retry transit therefore parks above M and Continue retries M under
+  rule 105. First picks, held returns, final exhaustion and Home routes retain
+  their existing sequences. Operator artifacts, schemas, runtimes and vendored
+  source are unchanged.
+- Verification: all 216 controller tests pass, including the six-target retry
+  order, exact transit geometry/rates, relocated OPEN, single-group dispatch,
+  unchanged final miss/success routes, and Pause/Continue at the added transit.
+  Package results report 217 tests with zero errors/failures/skips. All four
+  changed Python/test files compile and pass ament_flake8; the complete
+  15-package root symlink build and `git diff --check` pass. No physical robot
+  commands were issued; live motion remains unverified. No new offline-transfer
+  milestone is claimed.
+
 ### Future entry template
 
 ```text

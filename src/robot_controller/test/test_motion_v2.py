@@ -314,7 +314,7 @@ def test_success_with_deferred_grip_closes_at_start_of_home_z_transit():
     assert transit.motion_io == gripper_close_events(0)
 
 
-def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
+def test_missed_suction_blends_old_rises_next_safety_transit_clearance_and_pick():
     taught = settings()
     taught["acceleration"]["travel_percent"] = 80
     taught["acceleration"]["retract_percent"] = 40
@@ -352,14 +352,14 @@ def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
     assert np.allclose(returned[0]["confirmed_start_pose"], hardware.pose)
     retry = next(entry for entry in hardware.log if entry[0] == "move"
                  and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
-    assert retry[1] == ("p1_retract", "p1_final", "p2_initial",
+    assert retry[1] == ("p1_retract", "p1_final", "p2_transit", "p2_initial",
                         "p2_prepick", "p2_pick")
     assert retry[2]["stop_on_suction"] is True
     assert retry[2]["require_suction_reset"] is True
     assert retry[2]["pick_settling_sec"] == pytest.approx(0.2)
     assert retry[2]["return_terminal_pose"] is True
     assert np.allclose(retry[2]["confirmed_start_pose"], hardware.pose)
-    retract, old_clearance, next_approach, next_prepick, next_pick = [
+    retract, old_clearance, transit, next_approach, next_prepick, next_pick = [
         target for target in hardware.targets[1]]
     assert retract.speed_percent == 100
     assert retract.acceleration_percent == 80
@@ -374,13 +374,17 @@ def test_missed_suction_queues_old_prepick_clearance_then_next_pick():
         gripper_neutral_events(0) + vacuum_neutral_events(0))
     assert np.allclose(retract.matrix[:2, 3], old_clearance.matrix[:2, 3])
     assert np.allclose(retract.matrix[:3, :3], old_clearance.matrix[:3, :3])
-    assert np.allclose(next_approach.matrix[:2, 3], plans[1][1].matrix[:2, 3])
+    assert np.array_equal(transit.matrix, plans[1][0].matrix)
+    assert transit.matrix[2, 3] == pytest.approx(1.0)
+    assert transit.speed_percent == taught["speed"]["travel_percent"]
+    assert transit.acceleration_percent == taught["acceleration"]["travel_percent"]
+    assert np.array_equal(next_approach.matrix, plans[1][1].matrix)
+    assert not next_approach.motion_io
     assert [(event.percent, event.channel, event.active)
-            for event in next_approach.motion_io] == [
+            for event in transit.motion_io] == [
                 (50, 2, False), (50, 14, True)]
     assert not next_prepick.motion_io
     assert next_pick.motion_io == vacuum_suck_events(20)
-    assert "p2_transit" not in retry[1]
     assert not any(entry[0] == "output" and entry[1] in (1, 2, 13, 14)
                    for entry in hardware.log)
     assert not any(entry[0] == "sensor" and entry[1] is True
@@ -414,11 +418,12 @@ def test_use_grip_false_still_opens_and_neutralizes_but_never_closes():
         plans, taught, check=lambda _index: None,
         return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
 
-    retract, old_clearance, next_approach, next_prepick, _pick = hardware.targets[1]
+    retract, old_clearance, transit, next_approach, next_prepick, _pick = hardware.targets[1]
     assert retract.motion_io == vacuum_exhaust_events(80)
     assert old_clearance.motion_io == (
         gripper_neutral_events(0) + vacuum_neutral_events(0))
-    assert next_approach.motion_io == gripper_open_events(50)
+    assert transit.motion_io == gripper_open_events(50)
+    assert not next_approach.motion_io
     assert not next_prepick.motion_io
     assert not any(event.active and event.channel == 2
                    for batch in hardware.targets for target in batch

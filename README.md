@@ -156,9 +156,10 @@ intentionally active together and such feedback aborts motion. The first pick
 group goes Home-Z item X/Y with OPEN at 50%, directly to pre-pick, then to final
 pick with SUCK at 20%. A miss latches only after final-pose `pick_settling`.
 Retry rises to the old pre-pick with EXHAUST at 80%, enters both NEUTRAL states
-at the start of the old-clearance rise, enters OPEN at 50% of lateral travel to
-the next clearance, and enters SUCK at 20% of the next final descent. A late
-DI1 from an already missed attempt cannot become success or block that retry.
+at the start of the old-clearance rise, enters OPEN at 50% of travel to the
+next candidate's safety-Z transit, and enters SUCK at 20% of the next final
+descent. A late DI1 from an already missed attempt cannot become success or
+block that retry.
 Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
 uses the detected item short-axis line plus the taught unsigned `pick_rotation`;
 the planner evaluates both clockwise and counter-clockwise offsets and both
@@ -187,8 +188,11 @@ is evaluated while the final pose, queue-idle state and commanded outputs remain
 coherent for the taught `pick_settling` time. This one profile-driven interval
 replaces the fixed 300 ms final-pick gate and has no later suction wait.
 On an intermediate miss, one group rises through the old item's pre-pick and
-clearance at `v=100`, transfers to the next clearance, and descends through the
-next pre-pick to final pick. It enters EXHAUST at 80% of the first rise,
+clearance at `v=100`, transfers to the next candidate's `park_transit` position,
+then descends through the next clearance and pre-pick to final pick. Transit
+uses the next item's X/Y/attitude at the higher of taught Home Z and stopped Z.
+It is a CP-blended control point that may be rounded, without an arrival wait.
+The group enters EXHAUST at 80% of the first rise,
 finger/vacuum NEUTRAL at the start of the second rise, OPEN at 50% of transfer,
 and SUCK at 20% of the new final descent. A final miss queues the same
 EXHAUST/NEUTRAL rise, conditional Home-Z segment and exact joint Home in one

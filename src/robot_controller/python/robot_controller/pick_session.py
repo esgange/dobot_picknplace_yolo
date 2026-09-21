@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass, replace
 
-from .motion import (Target, gripper_neutral_events, vacuum_neutral_events)
+from .motion import (Target, candidate_transit, gripper_neutral_events,
+                     vacuum_neutral_events)
 
 
 @dataclass
@@ -73,9 +74,7 @@ def safety_target(current, home, settings):
 
 
 def transit_from_safety(current, plan):
-    transit = plan[0].matrix.copy()
-    transit[2, 3] = max(current[2, 3], transit[2, 3])
-    return replace(plan[0], name="park_transit", matrix=transit, motion_io=())
+    return replace(candidate_transit(current, plan), name="park_transit", motion_io=())
 
 
 def approach_from_safety(current, plan):
