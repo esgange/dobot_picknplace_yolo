@@ -156,26 +156,29 @@ def states(rig):
 
 
 @pytest.mark.parametrize("stopped_z", [.3, 1.0])
-def test_pause_parks_above_next_candidate_at_safety_z_without_attempting_it(stopped_z):
+@pytest.mark.parametrize("started", [False, True])
+def test_pause_parks_above_same_candidate_at_safety_z(stopped_z, started):
     rig = Rig()
     rig.feed["tool_vector_actual"] = pose_values(matrix(z=stopped_z))
-    rig.managed.session.set_state(1, "ACTIVE")
-    expected = rig.managed.session.attempts[1].plan[0].matrix.copy()
+    if started:
+        rig.managed.session.set_state(1, "ACTIVE")
+    expected_states = ["INTERRUPTED" if started else "PENDING", "PENDING", "PENDING"]
+    expected = rig.managed.session.attempts[0].plan[0].matrix.copy()
     expected[2, 3] = max(stopped_z, rig.configuration.home_matrix[2, 3])
 
     def check_parked_before_continue():
         assert rig.machine.state == "PAUSED"
         assert np.allclose(rig.hardware.current_pose(), expected)
         assert not any(rig.expected_outputs.values())
-        assert states(rig) == ["INTERRUPTED", "PENDING", "PENDING"]
+        assert states(rig) == expected_states
         rig.managed.continue_operation()
     rig.on_wait = check_parked_before_continue
     rig.managed.request("pause")
     with pytest.raises(ManagedInterruption):
         rig.managed.checkpoint()
     rig.managed.handle()
-    assert states(rig) == ["INTERRUPTED", "PENDING", "PENDING"]
-    assert rig.managed.session.parked_index == 2
+    assert states(rig) == expected_states
+    assert rig.managed.session.parked_index == 1
     assert rig.machine.state == "PICKING"
     assert np.allclose(rig.hardware.current_pose(), expected)
     assert not any(rig.expected_outputs.values())
@@ -191,7 +194,8 @@ def test_repeated_pause_of_parked_candidate_does_not_consume_it():
         rig.managed.request("pause")
         rig.managed.handle()
     assert states(rig) == ["INTERRUPTED", "PENDING", "PENDING"]
-    assert rig.managed.session.next_pending == 2
+    assert rig.managed.session.next_eligible == 1
+    assert rig.managed.session.attempted_count == 1
 
 
 def test_pause_held_preserves_outputs_and_continue_does_not_open_fingers():
@@ -288,6 +292,7 @@ def test_direct_stop_during_putback_prevents_release_and_home():
 def test_no_remaining_candidates_pause_at_safety_then_continue_returns_home():
     rig = Rig(count=1)
     rig.managed.session.set_state(1, "ACTIVE")
+    rig.managed.session.set_state(1, "FAILED")
     rig.managed.request("pause")
     rig.managed.handle()
     assert rig.managed.session.parked_index is None
@@ -295,8 +300,9 @@ def test_no_remaining_candidates_pause_at_safety_then_continue_returns_home():
         [attempt.plan for attempt in rig.managed.session.attempts], rig.configuration.profile,
         session=rig.managed.session, check=lambda _index: None, return_home=rig._execute_home)
     assert not outcome["picked"]
-    assert states(rig) == ["INTERRUPTED"]
+    assert states(rig) == ["FAILED"]
     assert any(entry[0] == "home" for entry in rig.log)
+    assert not any(entry[0] == "move" and "p1_pick" in entry[1] for entry in rig.log)
 
 
 def test_resume_opens_fingers_then_descends_through_prepick_to_final_pick():
@@ -306,16 +312,19 @@ def test_resume_opens_fingers_then_descends_through_prepick_to_final_pick():
     rig.managed.handle()
     rig.log.clear()
     session = rig.managed.session
+    transitions = []
+    session.changed = lambda index, attempt: transitions.append((index, attempt.state))
     PickExecutor(rig.hardware, finish_home=True).run(
         [attempt.plan for attempt in session.attempts], rig.configuration.profile,
         session=session, check=lambda _index: None, return_home=rig._execute_home)
     first_motion = next(entry for entry in rig.log if entry[0] == "move")
-    assert first_motion[1] == ("p2_prepick", "p2_pick")
+    assert first_motion[1] == ("p1_prepick", "p1_pick")
     assert first_motion[2]["pick_settling_sec"] == rig.configuration.profile[
         "timing"]["pick_settling"]
     assert rig.log.index(("output", 2, False)) < rig.log.index(first_motion)
     assert rig.log.index(("output", 14, True)) < rig.log.index(first_motion)
-    assert states(rig) == ["INTERRUPTED", "FAILED"]
+    assert states(rig) == ["FAILED", "FAILED"]
+    assert transitions == [(1, "ACTIVE"), (1, "FAILED"), (2, "ACTIVE"), (2, "FAILED")]
 
 
 def test_suction_acquired_during_pause_stop_is_retained_as_trusted_held_context():
@@ -385,8 +394,17 @@ def test_queued_output_difference_at_pause_is_reconciled_before_neutralizing():
     rig.managed.request("pause")
     rig.managed.handle()
     assert states(rig) == ["FAILED", "INTERRUPTED", "PENDING"]
-    assert rig.managed.session.parked_index == 3
+    assert rig.managed.session.parked_index == 2
     assert not any(rig.expected_outputs.values())
+    rig.log.clear()
+    session = rig.managed.session
+    PickExecutor(rig.hardware, finish_home=True).run(
+        [attempt.plan for attempt in session.attempts], rig.configuration.profile,
+        session=session, check=lambda _index: None, return_home=rig._execute_home)
+    assert next(entry[1] for entry in rig.log if entry[0] == "move") == (
+        "p2_prepick", "p2_pick")
+    assert states(rig) == ["FAILED", "FAILED", "FAILED"]
+    assert not any(entry[0] == "move" and "p1_pick" in entry[1] for entry in rig.log)
 
 
 def test_return_requested_from_confirmed_pause_has_no_continue_or_new_pick():
@@ -498,11 +516,12 @@ def test_feedback_callback_latches_short_paused_drop_even_after_di1_recovers():
     assert ("pulse", 50) in rig.log
 
 
-def test_pick_action_keeps_one_pose_batch_through_pause_and_resumes_next_candidate(monkeypatch):
+@pytest.mark.parametrize("count", [1, 2])
+def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, count):
     import robot_controller.controller as controller_module
     from robot_controller.controller import RobotController
 
-    rig = Rig(count=2)
+    rig = Rig(count=count)
     rig.machine = ControllerStateMachine(initial="READY")
     rig.candidate_total = 0
     rig.cancel_requested = rig.cancel_event.is_set
@@ -522,7 +541,7 @@ def test_pick_action_keeps_one_pose_batch_through_pause_and_resumes_next_candida
                                selected_camera_platform_xy=(0., 0.))
     monkeypatch.setattr(controller_module, "select_pick_attitude", lambda *_a: attitude)
     candidates = [SimpleNamespace(identifier=f"candidate{i}", position_m=(i * .1, 0., .3),
-                                  quaternion=(0., 0., 0., 1.)) for i in range(2)]
+                                  quaternion=(0., 0., 0., 1.)) for i in range(count)]
     requests = []
     rig.candidates = SimpleNamespace(
         request=lambda *_a, **_k: requests.append("detect") or SimpleNamespace(
@@ -535,14 +554,15 @@ def test_pick_action_keeps_one_pose_batch_through_pause_and_resumes_next_candida
         else:
             initial_home(**kwargs)
     rig._execute_home = home
-    triggered = [False]
+    approaches = []
 
     def interrupt(targets, kwargs):
-        if kwargs.get("stop_on_suction") and not triggered[0]:
-            triggered[0] = True
-            rig.managed.session.admitted(targets[0])
-            rig.managed.request("pause")
-            rig.managed.checkpoint()
+        if kwargs.get("stop_on_suction"):
+            approaches.append(tuple(target.name for target in targets))
+            if len(approaches) <= 2:
+                rig.managed.session.admitted(targets[0])
+                rig.managed.request("pause")
+                rig.managed.checkpoint()
     rig.hardware.on_move = interrupt
     finished = []
     goal = SimpleNamespace(request=SimpleNamespace(save_debug_images=False),
@@ -551,9 +571,12 @@ def test_pick_action_keeps_one_pose_batch_through_pause_and_resumes_next_candida
     result = RobotController._execute_pick_action(rig, goal)
     assert requests == ["detect"]
     assert result.outcome == result.NO_PICK
-    assert result.attempted_candidates == 2
+    assert result.attempted_candidates == count
     assert finished == ["success"]
-    assert states(rig) == ["INTERRUPTED", "FAILED"]
+    assert states(rig) == ["FAILED"] * count
+    assert approaches[:3] == [("p1_transit", "p1_prepick", "p1_pick"),
+                              ("p1_prepick", "p1_pick"), ("p1_prepick", "p1_pick")]
+    assert len(approaches) == count + 2
     assert not rig.operation_lock.locked()
 
 

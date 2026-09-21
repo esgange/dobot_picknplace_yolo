@@ -174,7 +174,7 @@ class ManagedControl:
         finally:
             self.parking_held = False
         if not node.holding_item and self.session and node.active_action == "pick":
-            index = self.session.next_pending
+            index = self.session.next_eligible
             self.session.parked_index = index
             if index is not None:
                 plan = self.session.attempts[index - 1].plan

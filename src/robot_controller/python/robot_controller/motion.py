@@ -190,7 +190,7 @@ class PickExecutor:
         held = session.held_index if session else None
         if held is not None and session.attempts[held - 1].state != "HELD":
             held = None
-        start_index = held or (session.next_pending if session else 1)
+        start_index = held or (session.next_eligible if session else 1)
         if start_index is None:
             return_home(require_suction=False, forbid_suction=True)
             return {"picked": False, "candidate": None, "holding_item": False}

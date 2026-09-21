@@ -75,10 +75,13 @@ disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
 100, unheld output reset, and coherent READY confirmation. Recover performs the
 same guarded recovery without moving Home. Pause discards the current queue and
 parks through the operation executor. Unheld Pick parks at `park_transit`, above
-the next unattempted candidate at safety Z (the higher of stopped Z and Home Z).
+the interrupted candidate at safety Z (the higher of stopped Z and Home Z), or
+the next unattempted candidate when no interrupted approach remains.
 Held Pause rises at current X/Y to Home Z. Continue opens fingers and descends
 through the parked candidate's pre-pick to final pick. Candidate states are
-visible in the GUI and typed status.
+visible in the GUI and typed status. An `INTERRUPTED` candidate remains eligible:
+Continue restarts its approach using the same saved pose and marks it `ACTIVE`
+on acceptance. Confirmed failed candidates stay skipped.
 Direct Stop and native cancellation preserve all gripper outputs, discard queued
 motion, and finish in `RECOVERY_REQUIRED`; Stop never requires Pause first and
 never automatically Homes, releases, or resumes. Trusted held-item DI/output
@@ -168,8 +171,8 @@ must lie inside/on the green Bin ROI; otherwise the equivalent 180° tool-Z
 mirror is tested. If both are outside, the detector removes that pose before
 ranking so the next safe item is eligible, and the controller independently
 rejects a disagreement before motion. A magenta `CAM`/`CAM 180` footprint is
-shown on bin-camera RGB/depth; light blue remains pick-point-only. Only missed
-suction or an explicitly interrupted attempt advances to another candidate.
+shown on bin-camera RGB/depth; light blue remains pick-point-only. A confirmed
+miss advances to another candidate; Pause/Continue retries an interrupted approach.
 No-I/O moves use MovL, real timed-output
 moves use non-empty MovLIO, and Pick's conditional Home rise uses RelMovLUser.
 Continue replans the remaining operation from its confirmed parked pose;

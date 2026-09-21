@@ -155,6 +155,10 @@ opens fingers, then descends through pre-pick to final pick.
 Rule 104 skips the shared joint-Home preliminary rise when current Z is within
 5 mm below taught Home Z or higher. Planning and first dispatch reuse one fresh
 confirmed pose; larger deficits still require the unchanged-XY/attitude rise.
+Rule 105 keeps an unheld paused candidate INTERRUPTED and eligible. Pause parks
+above that same candidate at `park_transit`; Continue retries its saved approach
+before later PENDING candidates and marks it ACTIVE on command acceptance.
+Confirmed failed, dropped and returned candidates stay excluded.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

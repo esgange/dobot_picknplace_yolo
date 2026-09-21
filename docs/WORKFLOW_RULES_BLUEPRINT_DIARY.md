@@ -4354,6 +4354,36 @@ Never use a floating “latest” version in an issue, script, or deployment not
   pass. No physical hardware commands were issued; live motion remains
   unverified. No new offline-transfer milestone is claimed.
 
+### 2026-09-21 — Continue retries the interrupted candidate
+
+- Rule 105 supersedes rules 102 and 103 only where Pause consumed an active
+  candidate and parked above a later pending candidate. An unheld paused
+  approach retains the visible INTERRUPTED state and remains eligible ahead
+  of later PENDING candidates. Pause confirms Stop, neutralizes outputs, rises
+  to safety Z and parks at `park_transit` above that same candidate. If no
+  approach was interrupted, use the next PENDING candidate as before.
+- Explicit Continue opens the fingers and restarts the interrupted candidate's
+  pre-pick/final-pick approach from the parked position, using its retained
+  source pose, attitude, normal timed SUCK and full taught pick settling.
+  The first accepted approach command changes INTERRUPTED back to ACTIVE.
+  Repeated Pause can interrupt it again without consuming the candidate,
+  replacing the accepted pose batch or increasing the distinct candidate count.
+  This also applies when the interrupted candidate is the last one in the batch.
+- FAILED remains terminal after confirmed settling without suction; DROPPED
+  and RETURNED remain excluded. Held Pause/Continue, paused-drop put-back,
+  direct Stop/recovery, source checks, output/feedback supervision and rule-104
+  Home behavior remain in force. Status and teach artifact schemas, operator
+  files, pinned runtimes and vendored source are unchanged.
+- Verification: all 215 controller tests pass. Coverage includes parking above
+  the same candidate at Home Z or a higher stopped Z, repeated interruption and
+  retry including a one-candidate batch, one detector request throughout,
+  reopening fingers before descent with taught settling, advancing only after
+  a confirmed miss, and skipping earlier failed candidates. Package results
+  report 216 tests with zero errors/failures/skips. All four changed Python/test
+  files compile and pass ament_flake8; the full 15-package root symlink build
+  and `git diff --check` pass. No physical robot commands were issued; live
+  motion remains unverified. No new offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

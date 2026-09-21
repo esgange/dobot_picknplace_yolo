@@ -172,15 +172,20 @@ containment. Vendor Pause and Continue clients are removed.
 
 Each new batch initializes `PENDING` candidates. The first accepted approach
 command marks `ACTIVE`; final-pick settling without suction marks `FAILED`;
-Pause consumes only the active candidate as `INTERRUPTED`. Confirmed suction
-marks `HELD`; a paused loss marks `DROPPED`; a completed intentional held return
-marks `RETURNED`. Parking above the next candidate never marks it attempted.
+Pause marks the active candidate `INTERRUPTED` and keeps it eligible for retry.
+Continue retries that same candidate; its next accepted approach marks it
+`ACTIVE` again. Repeated Pause does not consume it or increase the distinct
+attempted-candidate count. Confirmed suction marks `HELD`; a paused loss marks
+`DROPPED`; a completed intentional held return marks `RETURNED`. FAILED, DROPPED
+and RETURNED candidates remain ineligible.
+Parking never marks a candidate attempted or changes an interrupted state.
 The ledger and source plans are in memory, never written into teach artifacts.
 
 Without an item, active Pick Pause neutralizes all four canonical outputs,
 rises vertically at measured X/Y/attitude to at least taught Home Z, then crosses
-at that height to `park_transit` above the next pending candidate. This pause
-endpoint has that candidate's X/Y and planned pick orientation, with Z equal to
+at that height to `park_transit` above the interrupted candidate, or the next
+pending candidate if no interrupted approach remains. This pause endpoint has
+that candidate's X/Y and planned pick orientation, with Z equal to
 the higher of stopped Z and Home Z. Both the safety rise and final transit are
 confirmed; no descent or fixed settling dwell is added while parking. With no
 remaining candidate it parks at safety height. Continue commands finger CLOSE
@@ -437,9 +442,9 @@ No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Pick's conditional Home rise uses `RelMovLUser`. The controller never calls
 `InverseKin` or vendor `Continue`; controller Continue rebuilds the remaining route.
 Service acknowledgement is acceptance only; actual
-feedback confirms every result. A coherent miss or managed interruption advances
-to the next pending candidate. All command, feedback, state, cancellation, and
-result events
+feedback confirms every result. A coherent miss advances to the next pending
+candidate; Continue retries an approach interrupted by Pause. All command,
+feedback, state, cancellation, and result events
 are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.
 Each candidate plan also records its source quaternion, transformed short axis,
 commanded green axis, configured offset, selected CW/CCW side, rotation from the

@@ -28,7 +28,7 @@ class PickSession:
             "PENDING": {"ACTIVE"},
             "ACTIVE": {"FAILED", "INTERRUPTED", "HELD"},
             "HELD": {"DROPPED", "RETURNED"},
-            "FAILED": set(), "INTERRUPTED": set(),
+            "FAILED": set(), "INTERRUPTED": {"ACTIVE"},
             "DROPPED": set(), "RETURNED": set(),
         }
         if state == attempt.state:
@@ -44,7 +44,7 @@ class PickSession:
     def admitted(self, target):
         for index, attempt in enumerate(self.attempts, 1):
             if target.name in {point.name for point in attempt.plan[:4]}:
-                if attempt.state == "PENDING":
+                if attempt.state in ("PENDING", "INTERRUPTED"):
                     self.set_state(index, "ACTIVE")
                 return
 
@@ -54,9 +54,10 @@ class PickSession:
                 self.set_state(index, "INTERRUPTED")
 
     @property
-    def next_pending(self):
+    def next_eligible(self):
+        """An interrupted approach stays eligible ahead of later pending candidates."""
         return next((index for index, attempt in enumerate(self.attempts, 1)
-                     if attempt.state == "PENDING"), None)
+                     if attempt.state in ("PENDING", "INTERRUPTED")), None)
 
     @property
     def attempted_count(self):
