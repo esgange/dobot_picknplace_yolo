@@ -653,7 +653,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     transport.suction_stop_future = None
     captured = []
 
-    def call_group(calls, *, progress, outputs_by_call):
+    def call_group(calls, *, progress, outputs_by_call, admitted):
         captured.extend(calls)
         assert outputs_by_call == [{13: False, 1: True},
                                    {2: False, 14: False, 1: False, 13: False},
@@ -701,7 +701,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
                      if entry[0][1] == "motion_batch_completed")
     assert completed[1]["terminal_stable_sec"] == pytest.approx(0.2)
 
-    def no_reset(calls, *, progress, outputs_by_call):
+    def no_reset(calls, *, progress, outputs_by_call, admitted):
         progress(sample(vacuum_on))
         return (None,) * len(calls)
 
@@ -805,7 +805,6 @@ def test_startup_sequence_is_explicit_and_never_calls_home():
         operation_progress=lambda phase, message, **fields: order.append(
             ("phase", phase, message, fields)))
     transport.clients = {"EnableRobot": object()}
-    transport.queue_clients = {"Pause": object(), "Continue": object()}
     transport.monitor = SimpleNamespace(
         snapshot=lambda **_kwargs: snapshot(),
         wait_samples=lambda *_args, **_kwargs: order.append(("wait_samples",)))
@@ -923,28 +922,6 @@ def test_stop_confirmation_accepts_commanded_finger_transition_during_return():
     assert transport.node.expected_outputs == {2: True, 13: True, 14: False}
     assert transport.pending_motion_outputs == {}
     assert not transport.moving
-
-
-def test_pause_confirmation_uses_two_samples_without_timed_settling():
-    paused = snapshot()
-    paused.feed["isPauseCmdFlag"] = 1
-    calls = []
-
-    class PauseMonitor:
-        def wait(self, predicate, _timeout, **kwargs):
-            assert "stable_sec" not in kwargs
-            assert not predicate(paused)
-            paused.sequence += 1
-            assert predicate(paused)
-            return paused
-
-    transport = object.__new__(DobotTransport)
-    transport.monitor = PauseMonitor()
-    transport._call_queue_control = calls.append
-    transport._validate_held_snapshot = lambda sample: sample
-
-    assert transport.pause_queue() is paused
-    assert calls == ["Pause"]
 
 
 def test_held_motion_monitor_adopts_only_commanded_finger_transition():
@@ -1224,3 +1201,147 @@ def test_current_pose_reports_unstable_idle_without_inventing_a_blocker():
     with pytest.raises(FeedbackFailure, match="coherent advancing sample"):
         transport.current_pose()
     assert calls == []
+
+
+def test_managed_pause_during_admission_waits_for_reply_and_never_sends_next_motion():
+    from robot_controller.errors import ManagedInterruption
+    pending_pause = threading.Event()
+    answered = threading.Event()
+    calls = []
+    admitted = []
+
+    class Future:
+        def done(self):
+            return answered.is_set()
+
+        def result(self):
+            assert answered.is_set()
+            return SimpleNamespace(res=0)
+
+        def add_done_callback(self, _callback):
+            pass
+
+    def send(_request):
+        calls.append("motion")
+        pending_pause.set()
+        return Future()
+
+    def checkpoint():
+        if pending_pause.is_set():
+            assert answered.is_set(), "Owner must resolve admission before handing over"
+            raise ManagedInterruption("pause")
+
+    transport = object.__new__(DobotTransport)
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: False, wait_for_resume=checkpoint,
+        wait_control=lambda _seconds: answered.set())
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: SimpleNamespace())
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.suction_interrupted = False
+    transport.clients = {"MovL": SimpleNamespace(service_is_ready=lambda: True, call_async=send)}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+    transport._begin_service_audit = lambda *_a: {"started": hardware_module.time.monotonic()}
+    transport._finish_service_audit = lambda audit, outcome, **_k: audit.update(outcome=outcome)
+    transport.request_stop = lambda _reason: calls.append("stop")
+
+    with pytest.raises(ManagedInterruption):
+        transport.call_group((("MovL", {}), ("MovL", {})), admitted=admitted.append)
+
+    assert calls == ["motion", "stop"]
+    assert admitted == [0]
+    assert transport.pending_group is None
+
+
+def test_controller_timed_exhaust_pulse_retains_feedback_while_reply_is_pending():
+    from test_feedback_v2 import feed, primed_monitor
+    monitor = primed_monitor()
+    open_bit = 1 << 13
+    monitor.update_feed(feed(controller_timer=2, digital_outputs=open_bit))
+    transport = object.__new__(DobotTransport)
+    transport.monitor = monitor
+    transport.node = SimpleNamespace(expected_outputs={}, cancel_requested=lambda: False)
+    transport._ready_snapshot = lambda: monitor.snapshot(require_enabled=True)
+    requests = []
+
+    def call(name, **fields):
+        requests.append((name, fields))
+        # Entire physical pulse occurs before the service response is delivered.
+        monitor.update_feed(feed(controller_timer=10, digital_outputs=open_bit | 1))
+        monitor.update_feed(feed(controller_timer=60, digital_outputs=open_bit))
+        return SimpleNamespace(res=0)
+    transport.call = call
+    transport.exhaust_pulse()
+    assert requests == [("DO", {"index": 1, "status": 1, "time": 50})]
+    assert transport.node.expected_outputs == {1: False, 2: False, 13: False, 14: True}
+
+
+def test_exhaust_pulse_never_accepts_missing_on_evidence_or_stuck_di1():
+    from test_feedback_v2 import feed, primed_monitor
+    monitor = primed_monitor()
+    open_bit = 1 << 13
+    monitor.update_feed(feed(controller_timer=2, digital_outputs=open_bit))
+    transport = object.__new__(DobotTransport)
+    transport.monitor = monitor
+    transport.node = SimpleNamespace(expected_outputs={}, cancel_requested=lambda: False)
+    transport._ready_snapshot = lambda: monitor.snapshot(require_enabled=True)
+    transport.call = lambda *_a, **_k: SimpleNamespace(res=0)
+
+    def assert_blocked(predicate, *_args, **_kwargs):
+        assert not predicate(monitor.snapshot())
+        monitor.update_feed(feed(controller_timer=10, digital_outputs=open_bit | 1))
+        monitor.update_feed(feed(controller_timer=60, digital_outputs=open_bit,
+                                 digital_input_bits=1))
+        assert not predicate(monitor.snapshot())
+        raise FeedbackFailure("Release unconfirmed")
+    monitor.wait = assert_blocked
+    with pytest.raises(FeedbackFailure, match="Release unconfirmed"):
+        transport.exhaust_pulse()
+    assert transport.node.expected_outputs == {}
+
+
+def test_pause_unwinds_output_feedback_wait_and_preserves_commanded_transition():
+    from robot_controller.controller import RobotController
+    from robot_controller.errors import ManagedInterruption
+    from robot_controller.managed_control import ManagedControl
+    from test_feedback_v2 import feed, primed_monitor
+
+    monitor = primed_monitor()
+    monitor.update_feed(feed(controller_timer=2, digital_outputs=(1 << 12) | (1 << 13),
+                             digital_input_bits=1))
+    node = SimpleNamespace(
+        raise_if_cancelled=lambda: None, cancel_requested=lambda: False,
+        expected_outputs={2: False, 13: True, 14: True}, holding_item=True,
+        events=EventLog(), check_command_owner=lambda _name: None)
+    node.managed = ManagedControl(node)
+    node.wait_for_resume = node.managed.checkpoint
+    node.pause_requested = lambda: RobotController.pause_requested(node)
+    transport = object.__new__(DobotTransport)
+    transport.node, transport.monitor = node, monitor
+    transport.pending_response = None
+    transport.pending_motion_outputs = {}
+    transport.response_lock = threading.RLock()
+    transport.types = {"DO": SimpleNamespace(Request=lambda **fields: fields)}
+    transport._begin_service_audit = lambda *_args: {}
+    transport._finish_service_audit = lambda *_args, **_kwargs: None
+    transport._ready_snapshot = lambda: monitor.snapshot()
+
+    class Reply(CompletedFuture):
+        def add_done_callback(self, callback):
+            callback(self)
+
+    def send(_request):
+        monitor.update_feed(feed(controller_timer=3, digital_outputs=1 << 12,
+                                 digital_input_bits=1))
+        node.managed.kind = "pause"
+        return Reply()
+    transport.clients = {"DO": SimpleNamespace(service_is_ready=lambda: True, call_async=send)}
+    with pytest.raises(ManagedInterruption):
+        transport.output(14, False)
+    assert transport.pending_motion_outputs == {14: False}
+    assert node.expected_outputs[14]  # Feedback confirmation was interrupted.
+    transport.monitor = StopMonitor(snapshot(di1=True, outputs=1 << 12))
+    transport.confirm_stop(CompletedFuture(), allow_suction_loss=True)
+    assert not node.expected_outputs[14]

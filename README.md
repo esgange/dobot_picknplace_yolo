@@ -73,8 +73,11 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
 100, unheld output reset, and coherent READY confirmation. Recover performs the
-same guarded recovery without moving Home. Pause preserves the current queue and
-active Home/Pick generation; Continue resumes only that confirmed paused state.
+same guarded recovery without moving Home. Pause discards the current queue and
+parks through the operation executor. Unheld Pick parks at the next unattempted
+candidate's pre-pick via Home Z; held Pause rises at current X/Y to Home Z.
+Continue rebuilds the remaining route from the stopped pose and opens fingers
+before a new pick. Candidate states are visible in the GUI and typed status.
 Direct Stop and native cancellation preserve all gripper outputs, discard queued
 motion, and finish in `RECOVERY_REQUIRED`; Stop never requires Pause first and
 never automatically Homes, releases, or resumes. Trusted held-item DI/output
@@ -85,8 +88,26 @@ with the independent Stop path before requiring recovery.
 The Dobot `isPauseCmdFlag` bit is not a general readiness gate. Hardware evidence
 shows that `EnableRobot()` may latch it to one while mode 5 is enabled and the
 queue is empty/not running; `Continue()` is rejected in that condition. The
-controller recognizes resumable Pause only from its own confirmed Pause request
-and retained operation context.
+controller enters PAUSED only after its own managed parking completes. Neither
+Pause nor Continue calls the vendor queue Pause/Continue services.
+
+A trusted held item's source pose survives completion of its Pick action.
+`/robot_controller/return_item` requests a controlled put-back and ends READY at
+Home. The GUI exposes it as **RETURN ITEM & STOP** while paused with an item.
+Suction loss during Pause invokes that same return automatically, even if the
+item may already have fallen; it then remains PAUSED at Home. Continue tries the
+remaining latched candidates. The return visits the original pre-pick and a
+release pose 50 mm above nominal final-pick Z, opens fingers, and issues a
+controller-timed 50 ms exhaust pulse. OPEN is commanded before the pulse; these
+are separate commands, not simultaneous electrical edges. Exhaust OFF and DI1
+clear must be confirmed before retreat. The first real upward `MovLIO` segment
+neutralizes the outputs, then the route finishes at exact joint Home. Pre-pick
+must be at least 50 mm above final pick, with clearance above the release pose;
+equal waypoints skip the zero-length retreat. The pulse is independent of the
+taught final-pick settling interval.
+During parking/return, **STOP NOW**, direct Stop, cancellation and shutdown
+pre-empt immediately. Software verification does not validate physical clearance,
+actual pulse width, or successful physical placement.
 
 The vendored `RobotStatus.is_enable` field is also not a separate enable latch:
 the bridge calculates it as `robot_mode == 5` on its slower status publisher.
@@ -145,10 +166,11 @@ mirror is tested. If both are outside, the detector removes that pose before
 ranking so the next safe item is eligible, and the controller independently
 rejects a disagreement before motion. A magenta `CAM`/`CAM 180` footprint is
 shown on bin-camera RGB/depth; light blue remains pick-point-only. Only missed
-suction advances to another candidate. No-I/O moves use MovL, real timed-output
+suction or an explicitly interrupted attempt advances to another candidate.
+No-I/O moves use MovL, real timed-output
 moves use non-empty MovLIO, and Pick's conditional Home rise uses RelMovLUser.
-Continue is used only by the explicit paused-queue service;
-the controller never uses InverseKin. See the
+Continue replans the remaining operation from its confirmed parked pose;
+the controller never uses vendor Continue or InverseKin. See the
 [controller README](src/robot_controller/README.md) for its typed APIs, state
 machine, raw CLI examples, timing policy and commissioning requirements.
 

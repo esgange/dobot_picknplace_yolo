@@ -7,7 +7,7 @@ import threading
 STATES = (
     "UNCONFIGURED", "INACTIVE", "STARTING", "READY", "HOMING", "PICKING",
     "HOLDING", "PAUSED", "STOPPING", "RECOVERY_REQUIRED", "RECOVERING",
-    "HELD_UNKNOWN", "FAULT",
+    "HELD_UNKNOWN", "FAULT", "PAUSING", "RETURNING_ITEM",
 )
 
 
@@ -32,6 +32,13 @@ _TRANSITIONS = {
     "HELD_UNKNOWN": {"STOPPING", "RECOVERY_REQUIRED", "FAULT"},
     "FAULT": {"RECOVERING", "STOPPING"},
 }
+
+# Managed parking owns the operation executor until Continue or a direct Stop.
+for _state in ("READY", "HOLDING", "HOMING", "PICKING", "PAUSED"):
+    _TRANSITIONS[_state].add("PAUSING")
+_TRANSITIONS["PAUSING"] = {"PAUSED", "RETURNING_ITEM", "STOPPING", "FAULT"}
+_TRANSITIONS["PAUSED"].add("RETURNING_ITEM")
+_TRANSITIONS["RETURNING_ITEM"] = {"PAUSED", "READY", "STOPPING", "FAULT"}
 
 
 @dataclass(frozen=True)

@@ -31,3 +31,15 @@ class HeldUnknown(ControllerError):
 
 class NoPick(ControllerError):
     """All valid candidates were attempted without confirmed suction."""
+
+
+class ManagedInterruption(ControllerError):
+    """Transfer the operation executor to the requested Pause/return routine."""
+
+
+class PausedItemDropped(ControllerError):
+    """Fresh DI1 lost during managed parking; retain the item's return context."""
+
+
+class ReturnedToHome(ControllerError):
+    """An explicit controlled return finished and ended the original action."""

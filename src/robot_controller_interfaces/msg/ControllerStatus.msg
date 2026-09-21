@@ -13,3 +13,6 @@ uint32 candidate_total
 int16 global_speed_percent
 bool startup_complete
 bool feedback_fresh
+string[] candidate_ids
+string[] candidate_states
+bool can_return_item

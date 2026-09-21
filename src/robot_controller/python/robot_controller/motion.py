@@ -178,29 +178,54 @@ class PickExecutor:
         self.finish_home = finish_home
 
     def run(self, plans, settings, *, check, return_home, remember_prepick=None,
-            progress=None, holding_changed=None):
+            progress=None, holding_changed=None, session=None):
         grip = settings["gripper"]["use_grip"]
         close_on_pick = grip and settings["gripper"]["grip_onpick"]
         if not plans:
             return {"picked": False, "candidate": None, "holding_item": False}
         settling = settings["timing"]["pick_settling"]
-        if progress is not None:
-            progress("CANDIDATE", "Attempting candidate 1", 1)
-        check(1)
-        # Never turn vacuum off first and then discover a possibly held item.
-        if not self.hardware.sensor(False, 0):
-            raise ValueError("DI1 failed to clear before pickup")
-        if remember_prepick is not None:
-            remember_prepick(plans[0][2], settings["gripper"])
-        # Home -> item XY at Home Z (OPEN at 50%), then pre-pick -> pick.
-        # The initial clearance waypoint is intentionally not part of the
-        # first descent.
-        acquired, stopped_pose = self.hardware.move_batch(
-            (plans[0][0], plans[0][2], plans[0][3]),
-            batch_name="candidate_1_home_to_pick",
-            stop_on_suction=True, pick_settling_sec=settling,
-            return_terminal_pose=True)
-        for index, plan in enumerate(plans, 1):
+        held = session.held_index if session else None
+        if held is not None and session.attempts[held - 1].state != "HELD":
+            held = None
+        start_index = held or (session.next_pending if session else 1)
+        if start_index is None:
+            return_home(require_suction=False, forbid_suction=True)
+            return {"picked": False, "candidate": None, "holding_item": False}
+        plan = plans[start_index - 1]
+        if held is not None:
+            if session.resuming:
+                if grip:
+                    self.hardware.output(14, False)
+                    self.hardware.output(2, True)
+                return_home(require_suction=True, forbid_suction=False)
+                session.resuming = False
+                return {"picked": True, "candidate": held, "holding_item": True}
+            acquired, stopped_pose = True, self.hardware.current_pose()
+        else:
+            if progress is not None:
+                progress("CANDIDATE", f"Attempting candidate {start_index}", start_index)
+            check(start_index)
+            if not self.hardware.sensor(False, 0):
+                raise ValueError("DI1 failed to clear before pickup")
+            if remember_prepick is not None:
+                remember_prepick(plan[2], settings["gripper"])
+            forward = (plan[0], plan[2], plan[3])
+            if session is not None and session.resuming:
+                self.hardware.output(2, False)
+                self.hardware.output(14, True)
+                if session.parked_index == start_index:
+                    forward = (plan[3],)
+                session.resuming = False
+                session.parked_index = None
+            acquired, stopped_pose = self.hardware.move_batch(
+                forward, batch_name=("candidate_1_home_to_pick" if start_index == 1 else
+                                     f"candidate_{start_index}_home_to_pick"),
+                stop_on_suction=True, pick_settling_sec=settling,
+                return_terminal_pose=True)
+        for index in range(start_index, len(plans) + 1):
+            plan = plans[index - 1]
+            if session is not None:
+                session.set_state(index, "HELD" if acquired else "FAILED")
             if acquired and holding_changed is not None:
                 # Establish trusted in-memory holding context before any gripper
                 # output or return motion can fail.

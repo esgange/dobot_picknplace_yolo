@@ -142,6 +142,13 @@ after the deployed sources and fresh inputs validate.
 Rule 101 gives each missing or duplicate runtime Item YAML, Item model and Bin
 YAML its own fatal startup error, with duplicate filenames listed; deployment
 must finish before process start and remains manual or externally managed.
+Rule 102 replaces retained-queue Pause/Continue with Stop, candidate-ledger
+parking and replanning. Unheld Pick parks at the next pending pre-pick; held
+Pause rises vertically to Home Z. A paused drop still returns to the original
+pick's +50 mm release pose, pulses exhaust for 50 ms, retreats neutral and Homes,
+then remains paused. Explicit return ends READY; direct Stop always pre-empts.
+Pre-pick must be at least 50 mm above pick and clearance above the release pose;
+neither source context nor candidate states survive process restart.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

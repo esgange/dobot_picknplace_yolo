@@ -65,9 +65,11 @@ Services:
 - `/robot_controller/startup` performs the deterministic cold Startup sequence.
 - `/robot_controller/recover` stops/clears/enables/restores settings without
   moving Home.
-- `/robot_controller/pause` pauses and confirms the current Dobot queue without
-  canceling the active Home/Pick action.
-- `/robot_controller/continue` resumes only a confirmed `PAUSED` queue.
+- `/robot_controller/pause` accepts a managed stop-and-park request. The service
+  reports acceptance; status reaches `PAUSED` only after parking completes.
+- `/robot_controller/continue` accepts replanning from confirmed `PAUSED`.
+- `/robot_controller/return_item` accepts controlled return of a trusted held
+  candidate to its source. Observe `RETURNING_ITEM` and then `READY` in status.
 - `/robot_controller/stop` pre-empts and confirms Stop while preserving outputs.
   It is always direct and never requires a preceding Pause.
 - `/robot_controller/set_global_speed` accepts an integer 1–100 only while
@@ -78,6 +80,8 @@ Services:
 `robot_controller_interfaces/msg/ControllerStatus`, reliable/transient-local
 QoS. It reports state, phase, waypoint, candidate index, configuration ID,
 holding context, Startup completion, global factor, and feedback freshness.
+`candidate_ids` and `candidate_states` are parallel ordered arrays for the retained
+batch; `can_return_item` identifies trusted held source context.
 The removed Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image endpoints
 have no compatibility wrappers.
 
@@ -113,7 +117,8 @@ ros2 service call /robot_controller/set_global_speed \
 ## State and safety contract
 
 The states are `UNCONFIGURED`, `INACTIVE`, `STARTING`, `READY`, `HOMING`,
-`PICKING`, `HOLDING`, `PAUSED`, `STOPPING`, `RECOVERY_REQUIRED`, `RECOVERING`,
+`PICKING`, `HOLDING`, `PAUSING`, `PAUSED`, `RETURNING_ITEM`, `STOPPING`,
+`RECOVERY_REQUIRED`, `RECOVERING`,
 `HELD_UNKNOWN`, and `FAULT`. One immutable configuration snapshot and one
 operation generation exist at a time. Action configuration IDs prevent a stale
 GUI or supervisor from executing a replaced profile.
@@ -158,38 +163,88 @@ checked throughout Stop and Recover. Unexpected running/nonempty queue feedback
 while otherwise idle is immediately routed through the same Stop confirmation
 path rather than merely changing the state label.
 
-Pause is different from Stop. From `READY`, `HOLDING`, `HOMING`, or `PICKING`,
-it waits for the canonical Pause response plus pause-flagged, stationary
-feedback, enters `PAUSED`, and retains the queued path and active action context.
-No later host-side waypoint or I/O command is dispatched while paused. Continue
-is accepted only from that confirmed state; it waits for the canonical response
-and three fresh cleared-pause samples before restoring the suspended state.
-Feedback, held suction, and expected outputs remain supervised. An ambiguous
-Pause/Continue is contained by direct Stop. Intentional pause duration is not
-charged to sensor, no-progress, arrival, or hard-motion deadlines.
+Managed Pause uses the current operation executor. It immediately requests
+independent Stop, blocks later dispatch, resolves any already-admitted command
+reply, then confirms a final stationary empty-queue Stop before repositioning.
+The old queue and its unexecuted output events are discarded. Unanswered/rejected
+admission prevents all parking/return commands; late responses retain Stop
+containment. Vendor Pause and Continue clients are removed.
 
-`isPauseCmdFlag` is contextual telemetry rather than a global command gate.
-Live evidence showed `EnableRobot()` latching it to one with an idle empty queue,
-and a raw `Continue()` returned `-1`. Only a controller-issued, acknowledged
-Pause with retained operation context enters `PAUSED`; an idle latch never does.
+Each new batch initializes `PENDING` candidates. The first accepted approach
+command marks `ACTIVE`; final-pick settling without suction marks `FAILED`;
+Pause consumes only the active candidate as `INTERRUPTED`. Confirmed suction
+marks `HELD`; a paused loss marks `DROPPED`; a completed intentional held return
+marks `RETURNED`. Parking at a next pre-pick never marks that candidate attempted.
+The ledger and source plans are in memory, never written into teach artifacts.
+
+Without an item, active Pick Pause neutralizes all four canonical outputs,
+rises vertically at measured X/Y/attitude to at least taught Home Z, then crosses
+at that height and descends to the next pending pre-pick. Only the safety rise
+and final pre-pick are confirmed; no fixed settling dwell is added. With no
+remaining candidate it parks at safety height. Continue commands finger CLOSE
+OFF then OPEN ON, confirms the outputs and resumes the parked candidate's final
+approach with the existing timed SUCK and taught settling. A retained candidate
+batch is never replaced during Continue. Standalone Home replans its Home goal;
+idle READY Pause remains stationary.
+
+Held Pause preserves the outputs and rises vertically at current X/Y/attitude
+to Home Z, without descending if already above it. Paused feedback, actual pose,
+DI1 and outputs remain supervised. A fresh DI1 loss during the rise requests
+Stop; loss while parked also starts the same put-back routine described below.
+Loss is latched even if DI1 rises again. Stale feedback or output faults are not
+converted into ordinary drops. An eligible acquisition during the initial Stop
+can establish trusted holding; late DI1 from a latched miss cannot.
+
+Put-back retains the original held candidate pose even after successful Pick has
+already completed at Home. From confirmed Stop it rises to Home Z if necessary,
+travels to the original pre-pick, then reaches exactly nominal final-pick Z plus
+50 mm at that candidate's X/Y/attitude. Pre-pick below that drop height or
+clearance at/below it is rejected before picking; equal waypoints send no
+zero-distance segment. Holding outputs
+are preserved until the release pose is physically confirmed. For an already
+latched drop, DI1 LOW is expected but output/fault/feedback checks continue.
+
+Release commands CLOSE OFF, SUCK OFF, OPEN ON, then `DO(1,1,50)`: the robot
+controller ends EXHAUST after 50 ms. OPEN is established before EXHAUST, not at
+an exactly simultaneous electrical edge. The pulse is independent of
+`timing.pick_settling`. A bounded feedback history records the pulse ON/OFF even
+when it finishes before its ROS response arrives. Missing pulse evidence, exhaust
+remaining ON or DI1 remaining HIGH blocks return motion. Fingers stay OPEN during
+release; the first real upward `MovLIO` return segment commands all four outputs
+NEUTRAL at its start. The pre-pick/clearance/conditional Home-Z/exact joint-Home
+route is admitted in order and physically confirms only terminal Home.
+
+Explicit `/return_item` cancels the interrupted action with a CANCELED result and
+finishes READY at Home. The GUI uses **RETURN ITEM & STOP** while paused with
+trusted holding. A paused drop runs that same release/return route automatically
+and stays PAUSED at Home. Continue then attempts remaining candidates (including
+from the retained batch of a completed Pick), or finishes without a pick if none
+remain. A dropped candidate stays `DROPPED`; completing the motions is not proof
+that the physical item was placed back. A new Pick replaces the old unheld batch.
+The source context is not restored after a process restart.
+
+Direct `/stop`, action cancellation, shutdown, and another Stop during parking
+or return cancel all further host-side commands and require recovery. The
+already-requested controller pulse can still switch EXHAUST OFF on its timer.
+Faults never automatically invoke put-back or release. The idle vendor
+`isPauseCmdFlag` remains contextual telemetry and does not enable Continue.
 
 The GUI SpeedFactor slider tracks the handle position and sends it once on
 release. Keyboard and groove changes are debounced for 350 ms. Controller status
 cannot overwrite an active or pending edit, and unchanged selections do not send
 another SpeedFactor request.
 
-The GUI presents these services as two dynamic controls. `START` calls Startup
-from `INACTIVE` and becomes `CONTINUE` in `PAUSED`. The amber `PAUSE` control
-immediately becomes red `STOP` on its first click. A rapid second click records
-a Stop request locally, waits for the Pause response, and then calls direct
-Stop—never overlapping the two vendor requests. External nodes do not use this
-two-click policy and may call `/robot_controller/stop` immediately in any state.
+The GUI presents START/CONTINUE and PAUSE/STOP dynamically. Continue is enabled
+only once parking completes. During `PAUSING` or `RETURNING_ITEM`, **STOP NOW**
+pre-empts without waiting for the managed request's response. While paused and
+holding, **RETURN ITEM & STOP** requests put-back without first canceling its
+owning Pick action. External clients can always call direct `/stop`.
 
 Feedback is condition-driven from the approximately 100 Hz FeedInfo stream.
 Policies are: five seconds for service discovery and each Dobot
-service response (including Stop and Pause/Continue), five seconds for output
+service response (including Stop), five seconds for output
 feedback, one-second feedback age, two-second expected mode changes, three
-consistent pause/error samples, three-second no-progress watchdog, and a
+consistent error/collision samples, three-second no-progress watchdog, and a
 300-second physical-motion cap. Home
 arrival is within one degree on every taught joint; Cartesian arrival is within
 5 mm and one degree, plus enabled, queue-idle and stationary confirmation.
@@ -206,9 +261,9 @@ Every actual canonical Dobot call has paired audit output in the ROS console and
 rejected, timed-out, canceled, errored or late-response record contains a
 process-local request ID, exact endpoint/request fields, ROS response `res`,
 available `robot_return`, and elapsed milliseconds. This covers Startup/Recover
-settings, DO, all three motion services, Pause, Continue, and the
-independent Stop channel. A successful response is still only command acceptance;
-fresh robot feedback remains required for completion.
+settings, DO, all three motion services, and the independent Stop channel. A
+successful response is still only command acceptance; fresh robot feedback
+remains required for completion.
 
 The authority publishes the same timestamped human-readable state, phase and
 Dobot audit lines on reliable transient-local
@@ -373,10 +428,11 @@ precedence over uninterrupted blending.
 
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Pick's conditional Home rise uses `RelMovLUser`. The controller never calls
-`InverseKin`; `Continue` is reserved solely for explicit resume from `PAUSED`.
+`InverseKin` or vendor `Continue`; controller Continue rebuilds the remaining route.
 Service acknowledgement is acceptance only; actual
-feedback confirms every result. Only coherent missed suction advances to the
-next candidate. All command, feedback, state, cancellation, and result events
+feedback confirms every result. A coherent miss or managed interruption advances
+to the next pending candidate. All command, feedback, state, cancellation, and
+result events
 are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.
 Each candidate plan also records its source quaternion, transformed short axis,
 commanded green axis, configured offset, selected CW/CCW side, rotation from the

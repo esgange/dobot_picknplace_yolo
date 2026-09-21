@@ -63,11 +63,12 @@ def test_legacy_public_commands_are_absent_and_preview_has_no_dobot_transport():
     assert "dobot_bringup_ros2/srv" not in gui
 
 
-def test_runtime_uses_typed_continue_but_never_inverse_kin_or_empty_movlio():
+def test_runtime_continue_replans_without_vendor_queue_resume_or_empty_movlio():
     runtime = "\n".join(
         path.read_text() for path in (PACKAGE / "python/robot_controller").glob("*.py"))
     assert "InverseKin" not in runtime
-    assert 'self._call_queue_control("Continue")' in runtime
+    assert "_call_queue_control" not in runtime
+    assert "self.managed.continue_operation()" in runtime
     assert 'service = "MovLIO" if events else "MovL"' in runtime
     assert 'fields["mdis"] = events' in runtime
 
@@ -92,7 +93,7 @@ def test_pause_continue_are_controller_services_and_stop_remains_direct():
     assert '"/robot_controller/continue"' in controller
     assert '"/robot_controller/stop"' in controller
     assert 'self._command("stop")' in gui
-    assert 'self.stop_after_pause = True' in gui
+    assert 'self._command("return_item")' in gui
 
 
 def test_idle_pause_latch_is_not_a_startup_or_ready_gate():
@@ -151,7 +152,7 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
 def test_pick_uses_named_forward_and_return_queue_batches():
     motion = (PACKAGE / "python/robot_controller/motion.py").read_text()
     hardware = (PACKAGE / "python/robot_controller/hardware.py").read_text()
-    assert 'batch_name="candidate_1_home_to_pick"' in motion
+    assert '"candidate_1_home_to_pick"' in motion
     assert 'batch_name=f"candidate_{index}_pick_to_home"' in motion
     assert 'batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick"' in motion
     assert "admit_each_reply_in_order_then_verify_terminal_feedback" in hardware

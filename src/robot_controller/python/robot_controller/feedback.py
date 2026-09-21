@@ -40,6 +40,7 @@ class FeedbackMonitor:
         self._controller_timer = None
         self._controller_progress_at = None
         self._flags = deque(maxlen=16)
+        self._outputs = deque(maxlen=1000)
 
     @property
     def sequence(self):
@@ -89,7 +90,14 @@ class FeedbackMonitor:
             self._feed = feed, now
             self._flags.append((self._sequence, feed["isPauseCmdFlag"],
                                 feed["ErrorStatus"], feed["CollisionStates"]))
+            self._outputs.append((self._sequence, feed["controller_timer"],
+                                  feed["digital_outputs"], feed["digital_input_bits"]))
             self._condition.notify_all()
+
+    def output_history(self, after_sequence):
+        """Bounded feedback evidence, including pulses shorter than a service reply."""
+        with self._condition:
+            return tuple(sample for sample in self._outputs if sample[0] > after_sequence)
 
     def snapshot(self, *, require_enabled=False, allow_paused=False):
         with self._condition:

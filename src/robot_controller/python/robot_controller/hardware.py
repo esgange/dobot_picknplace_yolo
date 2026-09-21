@@ -34,8 +34,8 @@ class DobotTransport:
     """Serialized normal commands plus an independent pre-emptive Stop path."""
 
     def __init__(self, node, monitor):
-        from dobot_msgs_v4.srv import (CP, ClearError, Continue, DO, DisableRobot,
-                                       EnableRobot, MovL, MovLIO, Pause,
+        from dobot_msgs_v4.srv import (CP, ClearError, DO, DisableRobot,
+                                       EnableRobot, MovL, MovLIO,
                                        RelMovLUser, SetTool, SpeedFactor, Stop,
                                        StopMoveJog, Tool, User)
         self.node = node
@@ -46,11 +46,6 @@ class DobotTransport:
         self.clients = {
             name: node.create_client(kind, f"/dobot_bringup_ros2/srv/{name}")
             for name, kind in self.types.items()
-        }
-        self.queue_types = {kind.__name__: kind for kind in (Pause, Continue)}
-        self.queue_clients = {
-            name: node.create_client(kind, f"/dobot_bringup_ros2/srv/{name}")
-            for name, kind in self.queue_types.items()
         }
         self.stop_type = Stop
         self.stop_client = node.create_client(Stop, "/dobot_bringup_ros2/srv/Stop")
@@ -70,25 +65,19 @@ class DobotTransport:
 
     @property
     def required_services(self):
-        return tuple(self.clients) + tuple(self.queue_clients) + ("Stop",)
+        return tuple(self.clients) + ("Stop",)
 
     def close(self):
         for client in self.clients.values():
             self.node.destroy_client(client)
-        for client in self.queue_clients.values():
-            self.node.destroy_client(client)
         self.node.destroy_client(self.stop_client)
         self.clients.clear()
-        self.queue_clients.clear()
 
     def wait_services(self, *, optional=()):
         deadline = time.monotonic() + SERVICE_DISCOVERY_TIMEOUT_SEC
         while True:
             missing = [name for name, client in self.clients.items()
                        if name not in optional and not client.service_is_ready()]
-            missing.extend(
-                name for name, client in self.queue_clients.items()
-                if name not in optional and not client.service_is_ready())
             if not self.stop_client.service_is_ready():
                 missing.append("Stop")
             if not missing:
@@ -238,6 +227,8 @@ class DobotTransport:
                     self.pending_group = None
 
     def call(self, name, *, check_cancel=True, progress=None, **fields):
+        if check_cancel:
+            self._wait_for_resume()
         with self.response_lock:
             group = getattr(self, "pending_group", None)
             if group is not None and any(not item[1].done() for item in group):
@@ -265,6 +256,8 @@ class DobotTransport:
                     audit, "dispatch_error", detail=str(exc), level="ERROR")
                 raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
             self.pending_response = (name, future, audit)
+            if name == "DO" and fields.get("time", 0) == 0:
+                self.pending_motion_outputs[fields["index"]] = bool(fields["status"])
             future.add_done_callback(
                 lambda done, service=name, record=audit: self._pending_completed(
                     service, done, record))
@@ -306,7 +299,7 @@ class DobotTransport:
             progress(self.monitor.snapshot(require_enabled=False))
         return result
 
-    def call_group(self, calls, *, progress=None, outputs_by_call=None):
+    def call_group(self, calls, *, progress=None, outputs_by_call=None, admitted=None):
         """Admit motion in dashboard order, without intermediate arrival waits."""
         calls = tuple((name, dict(fields)) for name, fields in calls)
         if not calls or any(name not in MOTION_SERVICES for name, _fields in calls):
@@ -341,6 +334,7 @@ class DobotTransport:
             results = []
             try:
                 for (name, fields), planned_outputs in zip(calls, outputs_by_call):
+                    self._wait_for_resume()
                     if self.node.cancel_requested():
                         raise OperationCanceled("Cancelled before motion-group dispatch")
                     if self.suction_interrupted:
@@ -398,8 +392,11 @@ class DobotTransport:
                             f"{name} failed: {None if result is None else result.res}")
                     self._finish_service_audit(audit, "accepted", result=result)
                     results.append(result)
+                    if admitted is not None:
+                        admitted(len(results) - 1)
                     if progress is not None:
                         progress(self.monitor.snapshot(require_enabled=False))
+                    self._wait_for_resume()
             except Exception:
                 for _name, _future, audit in group:
                     if "outcome" not in audit:
@@ -437,7 +434,7 @@ class DobotTransport:
             self.node.events.record("WARNING", "stop_requested", reason)
             return future
 
-    def confirm_stop(self, future=None):
+    def confirm_stop(self, future=None, *, allow_suction_loss=False):
         future = future or self.stop_future
         if future is None:
             raise StopUnconfirmed("No Stop request exists to confirm")
@@ -478,7 +475,7 @@ class DobotTransport:
             last_snapshot = snapshot
             feed = snapshot.feed
             if self.node.holding_item:
-                if not feed["digital_input_bits"] & 1:
+                if not feed["digital_input_bits"] & 1 and not allow_suction_loss:
                     held_violation = "DI1 suction feedback was lost during Stop"
                 for channel, active in self.node.expected_outputs.items():
                     actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
@@ -514,73 +511,6 @@ class DobotTransport:
         self.node.events.record("INFO", "stop_confirmed",
                                 "Stop acknowledged; stationary empty queue confirmed")
 
-    def _call_queue_control(self, name):
-        self.node.check_command_owner(name)
-        self.monitor.snapshot(require_enabled=False)
-        client = self.queue_clients[name]
-        if not client.service_is_ready():
-            raise CommandRejected(f"Required canonical {name} service unavailable")
-        audit = self._begin_service_audit(name, {})
-        try:
-            future = client.call_async(self.queue_types[name].Request())
-        except Exception as exc:
-            self._finish_service_audit(
-                audit, "dispatch_error", detail=str(exc), level="ERROR")
-            raise CommandRejected(f"{name} dispatch failed: {exc}") from exc
-        future.add_done_callback(
-            lambda done, record=audit: self._late_service_completed(done, record))
-        deadline = time.monotonic() + COMMAND_RESPONSE_TIMEOUT_SEC
-        try:
-            while not future.done():
-                self.monitor.snapshot(require_enabled=False)
-                if time.monotonic() >= deadline:
-                    self._finish_service_audit(
-                        audit, "timeout", detail="queue state is ambiguous", level="ERROR")
-                    raise CommandResponseTimeout(
-                        f"{name} response timeout; queue state is ambiguous")
-                self.node.wait_control(0.02)
-            result = future.result()
-        except CommandResponseTimeout:
-            raise
-        except Exception as exc:
-            self._finish_service_audit(
-                audit, "wait_aborted", detail=str(exc), level="ERROR")
-            raise CommandRejected(f"{name} service wait failed: {exc}") from exc
-        if result is None or result.res != 0:
-            self._finish_service_audit(
-                audit, "rejected", result=result,
-                detail="canonical service returned nonzero/empty result", level="ERROR")
-            raise CommandRejected(
-                f"{name} failed: {None if result is None else result.res}")
-        self._finish_service_audit(audit, "accepted", result=result)
-
-    def pause_queue(self):
-        self._call_queue_control("Pause")
-        anchor = None
-        anchor_sequence = None
-
-        def paused_and_stationary(snapshot):
-            nonlocal anchor, anchor_sequence
-            self._validate_held_snapshot(snapshot)
-            pose = np.asarray(snapshot.feed["tool_vector_actual"], dtype=float)
-            unmoved = (anchor is not None and snapshot.sequence != anchor_sequence
-                       and np.max(np.abs(pose - anchor)) <= 0.05)
-            anchor = pose
-            anchor_sequence = snapshot.sequence
-            return bool(snapshot.feed["isPauseCmdFlag"]) and unmoved
-
-        return self.monitor.wait(
-            paused_and_stationary, MODE_TRANSITION_TIMEOUT_SEC,
-            require_enabled=True, allow_paused=True,
-            description="paused and stationary queue")
-
-    def continue_queue(self):
-        self._call_queue_control("Continue")
-        return self.monitor.wait_samples(
-            self._held_predicate(lambda sample: not sample.feed["isPauseCmdFlag"]),
-            CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
-            require_enabled=True, description="continued queue")
-
     def _phase(self, phase, message, waypoint=""):
         self.node.operation_progress(phase, message, waypoint=waypoint)
 
@@ -599,7 +529,12 @@ class DobotTransport:
         while True:
             self._wait_for_resume()
             try:
-                return self.monitor.snapshot(require_enabled=True)
+                snapshot = self.monitor.snapshot(require_enabled=True)
+                observer = getattr(self.node, "observe_managed_feedback", None)
+                if observer is not None:
+                    observer(snapshot)
+                self._wait_for_resume()
+                return snapshot
             except FeedbackFailure:
                 if not self._pause_requested():
                     raise
@@ -931,7 +866,9 @@ class DobotTransport:
             actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
             if actual == planned:
                 self.node.expected_outputs[channel] = planned
-        if require_suction and not detected:
+        observer = getattr(self.node, "observe_managed_feedback", None)
+        managed_drop = observer(snapshot) if observer is not None else False
+        if require_suction and not detected and not managed_drop:
             raise FeedbackFailure("Suction lost during retract/Home")
         if require_suction:
             if not vacuum:
@@ -954,7 +891,7 @@ class DobotTransport:
                    forbid_suction=False, stop_on_suction=False,
                    before_suction=None, pick_settling_sec=0.0,
                    require_suction_reset=False, return_terminal_pose=False,
-                   confirmed_start_pose=None):
+                   confirmed_start_pose=None, preserve_outputs=False):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction)) > 1
@@ -989,7 +926,10 @@ class DobotTransport:
             origin = target.matrix
         self.suction_interrupted = False
         self.suction_stop_future = None
+        self.acquisition_eligible = False
+        self.late_miss_suction = require_suction_reset
         initial = self._ready_snapshot()
+        fixed_outputs = dict(self.node.expected_outputs) if preserve_outputs else {}
         if (require_suction_reset
                 and not initial.feed["digital_outputs"] & (1 << 12)):
             raise FeedbackFailure("Previous final approach lacks active DO13 before retry")
@@ -1011,6 +951,10 @@ class DobotTransport:
 
         def progress(snapshot):
             nonlocal suction_reset_seen, suction_clear_seen, suction_armed
+            for channel, active in fixed_outputs.items():
+                actual = bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
+                if actual != active:
+                    raise FeedbackFailure(f"Return output DO{channel} changed before release")
             if require_suction_reset:
                 vacuum = bool(snapshot.feed["digital_outputs"] & (1 << 12))
                 detected = bool(snapshot.feed["digital_input_bits"] & 1)
@@ -1021,6 +965,9 @@ class DobotTransport:
             vacuum = bool(snapshot.feed["digital_outputs"] & (1 << 12))
             if suction_reset_seen and suction_clear_seen and vacuum:
                 suction_armed = True
+            self.acquisition_eligible = stop_on_suction and suction_armed
+            if self.acquisition_eligible:
+                self.late_miss_suction = False
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
                 stop_on_suction=stop_on_suction, before_suction=before_suction,
@@ -1088,7 +1035,8 @@ class DobotTransport:
                 "MOTION", f"Dispatching {batch_name} as one command group",
                 waypoint=targets[-1].name)
             replies = self.call_group(
-                calls, progress=progress, outputs_by_call=outputs_by_call)
+                calls, progress=progress, outputs_by_call=outputs_by_call,
+                admitted=lambda index: self._target_admitted(targets[index]))
             queued_targets.extend(
                 target.name for target, _events in target_records[0:len(replies)])
             expected_outputs = {}
@@ -1159,6 +1107,8 @@ class DobotTransport:
                     "Missed-pick DO13 OFF was not observed before the next pick")
             if stop_on_suction:
                 self.node.expected_outputs.update(expected_outputs)
+                self.acquisition_eligible = False
+                self.late_miss_suction = True
             self.pending_motion_outputs = {}
             acquired_at_settle = False
             self.node.events.record(
@@ -1183,6 +1133,37 @@ class DobotTransport:
     def move(self, target, *, require_suction=False):
         return self.move_batch((target,), require_suction=require_suction)
 
+    def _target_admitted(self, target):
+        callback = getattr(self.node, "motion_admitted", None)
+        if callback is not None:
+            callback(target)
+
+    def exhaust_pulse(self):
+        """Controller-timed 50 ms pulse, with ON/OFF evidence retained during reply."""
+        initial = self._ready_snapshot()
+        bits = initial.feed["digital_outputs"]
+        if bits & ((1 << 12) | (1 << 1) | 1) or not bits & (1 << 13):
+            raise FeedbackFailure("Release pulse requires suction/CLOSE/exhaust OFF and OPEN ON")
+        self.call("DO", index=1, status=1, time=50)
+
+        def completed(sample):
+            history = self.monitor.output_history(initial.sequence)
+            on = next((entry for entry in history if entry[2] & 1), None)
+            if on is None:
+                return False
+            off = next((entry for entry in history
+                        if entry[0] > on[0] and not entry[2] & 1), None)
+            if off is None:
+                return False
+            return (sample.sequence >= off[0] and not sample.feed["digital_input_bits"] & 1
+                    and sample.feed["digital_outputs"] & ((1 << 13) | (1 << 12) | 3)
+                    == (1 << 13))
+
+        self.monitor.wait(completed, OUTPUT_FEEDBACK_TIMEOUT_SEC,
+                          cancel=self.node.cancel_requested, require_enabled=True,
+                          description="50 ms exhaust pulse ON/OFF and released DI1")
+        self.node.expected_outputs.update({1: False, 2: False, 13: False, 14: True})
+
     def output(self, channel, active, *, require_clear=False):
         snapshot = self._ready_snapshot()
         if require_clear and snapshot.feed["digital_input_bits"] & 1:
@@ -1197,6 +1178,7 @@ class DobotTransport:
             pause=self._pause_requested, require_enabled=True,
             description=f"DO{channel} output feedback")
         self.node.expected_outputs[channel] = active
+        self.pending_motion_outputs.pop(channel, None)
 
     def sensor(self, active, timeout):
         self._wait_for_resume()

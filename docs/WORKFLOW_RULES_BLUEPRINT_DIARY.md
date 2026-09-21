@@ -4216,6 +4216,90 @@ Never use a floating “latest” version in an issue, script, or deployment not
   workspace builds and `git diff --check` passes. No camera, detector service,
   Dobot service or robot motion was launched.
 
+### 2026-09-21 — Managed Pause parking and held-item put-back
+
+- Rule 102 supersedes rules 65/66's retained vendor queue and paused-queue
+  integrity policy. Controller Pause immediately requests independent Stop,
+  resolves any admitted command response, then confirms another Stop with fresh
+  stationary, empty-queue feedback. One operation owner performs parking and
+  return; unanswered/rejected admissions prohibit all later normal commands.
+  Vendor Pause/Continue clients are removed. The five-second service deadlines,
+  canonical feedback/ownership/source checks and explicit recovery remain.
+- Each accepted batch starts an in-memory ledger of PENDING candidates (the
+  requested null/unattempted state). An accepted candidate approach marks ACTIVE;
+  settling without suction marks FAILED, Pause marks an active attempt
+  INTERRUPTED, confirmed suction marks HELD, paused loss marks DROPPED, and
+  successful controlled held return marks RETURNED. Parking does not consume a
+  pending candidate. Resume skips completed/interrupted attempts and retains the
+  same batch without another detector request. Status publishes candidate IDs
+  and states as parallel arrays and the GUI displays their order/states.
+- Unheld Pick Pause neutralizes CLOSE/OPEN/SUCK/EXHAUST, physically confirms an
+  upward-only rise at actual X/Y/attitude to at least Home Z, then crosses at
+  that height and parks at the next pending pre-pick. With none left, it parks
+  at safety height; Continue finishes Home with no pick. Continue establishes
+  CLOSE OFF then OPEN ON before the next final approach and its normal SUCK
+  event/taught settling. Idle READY Pause stays stationary. Paused standalone
+  Home replans Home. No fixed non-pick dwell is introduced.
+- Held Pause preserves outputs and rises vertically at actual X/Y/attitude to
+  Home Z without descending if already above it. Fresh DI1 loss during parking
+  or PAUSED is latched, stops any motion and runs put-back, even if DI1 bounces
+  HIGH again or the item may already have fallen. Outputs stay preserved until
+  the release pose. A dropped candidate remains DROPPED: completing this motion
+  is not proof of physical placement. Stale/malformed feedback, unexpected
+  output changes or another fault require Stop/recovery, never automatic
+  release. Eligible suction acquired during the initial Stop establishes HELD;
+  a latched failed attempt's late DI1 cannot become success.
+- The trusted held candidate's original plan survives successful Pick at Home.
+  Put-back rises to safety if needed, crosses to the original pre-pick, then
+  reaches the same X/Y/attitude at nominal Link6 final-pick Z plus exactly 50 mm.
+  Pre-pick below this release height or clearance at/below it is rejected before
+  candidate motion and in preview. Equal waypoints omit zero-length motion, so
+  neutral events always belong to a real upward retreat segment. Preview adds
+  the put-back release frame. Artifact schemas/settings are unchanged.
+- At confirmed release pose, command CLOSE OFF, SUCK OFF, OPEN ON, EXHAUST OFF,
+  then native `DO(1,1,50)`. The vendored V4 manual's DO time argument is in
+  milliseconds and automatically inverts that output on expiry; there is no
+  Python sleep or runtime timing fallback. OPEN is established before EXHAUST
+  and remains ON during it; separate commands do not promise simultaneous
+  electrical edges. A bounded 1,000-sample output history retains pulse ON/OFF
+  evidence even when it precedes the service reply. Pulse ON then OFF, neutral
+  vacuum/CLOSE, OPEN ON, and DI1 LOW must be confirmed before retreat. The first
+  real upward MovLIO segment commands all four outputs NEUTRAL at its start;
+  pre-pick/clearance/conditional Home-Z/exact joint Home are one ordered group
+  with only terminal Home physically confirmed. This is a distinct 50 ms
+  release pulse; final-pick settling still comes only from the teach file.
+- `/robot_controller/return_item` uses the existing typed Command service and
+  reports request acceptance. Status reports PAUSING/RETURNING_ITEM and final
+  READY; an interrupted native action returns CANCELED. The GUI exposes RETURN
+  ITEM & STOP while paused with trusted holding, without canceling that action
+  first. A paused drop uses the same return, then remains PAUSED at Home;
+  Continue attempts remaining retained candidates even when the original Pick
+  action had already completed. The next explicit new Pick replaces the old
+  unheld ledger; process restart never restores holding/source context.
+- Direct `/stop`, native cancellation, shutdown, or another Stop during parking
+  or return pre-empts immediately, issues no later release/motion and requires
+  recovery. An already-admitted timed exhaust pulse may still turn OFF on its
+  robot timer. Continue is unavailable until parking is confirmed. The GUI keeps
+  immediate Stop available while Pause/return acceptance or status is pending.
+  Action completion and Continue handoffs are serialized with managed requests
+  so a request at an executor boundary is neither lost nor given two owners.
+- The typed status gained candidate_ids, candidate_states and can_return_item;
+  rebuild the interface package and restart clients with the updated definition.
+  Operator artifacts, private runtimes, vendored source and runtime deployment
+  selection are untouched. No new offline-transfer milestone is claimed.
+- Verification is software-only: all 197 direct controller tests pass and
+  package results report 198 tests with zero errors/failures/skips. Coverage
+  includes discarded-queue DO13/DO14 reconciliation, acquisition during Stop,
+  paused drops and DI1 bounce, pulse feedback before its reply, unresolved
+  admissions/source changes, immediate Stop during return, retained batches
+  after completed Pick, and Pause/Continue/action-completion races. All 23
+  controller Python/test files compile and pass ament_flake8. The full root
+  symlink build succeeds for all 15 packages; installed managed-control modules
+  and updated typed status fields load successfully. `git diff --check` passes.
+  No real robot, camera or live detector commands were issued. Live GUI
+  operation, clearance, physical pulse duration and item placement remain
+  unverified.
+
 ### Future entry template
 
 ```text

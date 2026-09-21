@@ -1,6 +1,7 @@
 """TF-only Home/Pick planner; this process never creates a Dobot command client."""
 
 import os
+from dataclasses import replace
 from pathlib import Path
 import threading
 
@@ -22,6 +23,7 @@ from .configuration import load_configuration
 from .controller import PackageEventLogger
 from .kinematics import Cr10Kinematics
 from .motion import Target, candidate_pose_in_base, pick_targets
+from .pick_session import return_targets
 
 
 class RobotControllerPreview(rclpy.node.Node):
@@ -110,6 +112,8 @@ class RobotControllerPreview(rclpy.node.Node):
                         config.home_matrix, item_pose, config.profile, index,
                         rotation=attitude.rotation)
                     targets.extend(plan)
+                    release, _retreat = return_targets(plan)
+                    targets.append(replace(release, name=f"p{index}_put_back_release"))
                     if index == len(batch.candidates):
                         targets.append(Target(
                             f"p{index}_return_home", config.home_matrix.copy(),

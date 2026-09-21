@@ -45,6 +45,7 @@ class GuiNode(rclpy.node.Node):
             "pause": self.create_client(Command, "/robot_controller/pause"),
             "continue": self.create_client(Command, "/robot_controller/continue"),
             "stop": self.create_client(Command, "/robot_controller/stop"),
+            "return_item": self.create_client(Command, "/robot_controller/return_item"),
             "speed": self.create_client(
                 SetGlobalSpeed, "/robot_controller/set_global_speed"),
             "preview": self.create_client(Preview, "/robot_controller/preview"),
@@ -79,7 +80,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.feedback_message = ""
         self.saved_selection = None
         self.pause_requested_locally = False
-        self.stop_after_pause = False
+        self.return_requested_locally = False
         self.speed_pending_percent = None
         self.speed_syncing = False
         self.setWindowTitle("Robot Controller v2")
@@ -266,9 +267,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
         state = self.node.status
         current = state.state if state is not None else "UNREACHABLE"
         pausable = current in ("READY", "HOLDING", "HOMING", "PICKING")
-        if self.pause_requested_locally or "pause" in self.pending:
-            self.stop_after_pause = True
-            self.stop.setText("STOP QUEUED")
+        if (self.pause_requested_locally or self.return_requested_locally
+                or "pause" in self.pending or "return_item" in self.pending
+                or current in ("PAUSING", "RETURNING_ITEM")):
+            self._immediate_stop()
+        elif current == "PAUSED" and getattr(state, "can_return_item", False):
+            self.return_requested_locally = True
+            if not self._command("return_item"):
+                self.return_requested_locally = False
         elif pausable:
             self.pause_requested_locally = True
             if not self._command("pause"):
@@ -349,8 +355,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
             if not future.done():
                 continue
             del self.pending[name]
+            accepted = False
             try:
                 result = future.result()
+                accepted = result is not None and result.success
                 if result is None or not result.success:
                     message = "No response" if result is None else result.message
                     if name == "speed":
@@ -373,11 +381,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     self.speed_pending_percent = None
                 QtWidgets.QMessageBox.warning(self, f"{name} failed", str(exc))
             finally:
-                if name == "pause":
+                if name == "pause" and not accepted:
                     self.pause_requested_locally = False
-                    if self.stop_after_pause:
-                        self.stop_after_pause = False
-                        self._immediate_stop()
+                if name == "return_item" and not accepted:
+                    self.return_requested_locally = False
         if self.pending_goal is not None and self.pending_goal.done():
             try:
                 handle = self.pending_goal.result()
@@ -410,6 +417,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         reachable = state is not None
         active = bool(state and state.operation_active)
         current = state.state if state else "UNREACHABLE"
+        if current not in ("READY", "HOLDING", "HOMING", "PICKING"):
+            self.pause_requested_locally = False
+        if current != "PAUSED":
+            self.return_requested_locally = False
         configured = bool(state and state.configured)
         self.configure.setText(
             "Reload Teach Configuration" if configured else "Load Teach Configuration")
@@ -422,12 +433,18 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.startup.setEnabled(
             reachable and ((current == "INACTIVE" and not active)
                            or (current == "PAUSED" and "continue" not in self.pending
-                               and "stop" not in self.pending)))
+                               and "stop" not in self.pending
+                               and "return_item" not in self.pending
+                               and not self.return_requested_locally)))
         self.recover.setEnabled(reachable and current in ("FAULT", "RECOVERY_REQUIRED")
                                 and not active)
         pausable = current in ("READY", "HOLDING", "HOMING", "PICKING")
-        if self.stop_after_pause:
-            self.stop.setText("STOP QUEUED")
+        if self.return_requested_locally or "return_item" in self.pending:
+            self.stop.setText("STOP NOW")
+        elif current == "PAUSED" and getattr(state, "can_return_item", False):
+            self.stop.setText("RETURN ITEM & STOP")
+        elif current in ("PAUSING", "RETURNING_ITEM"):
+            self.stop.setText("STOP NOW")
         elif paused:
             self.stop.setText("STOP")
         elif pausable:
@@ -441,7 +458,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         else:
             self.stop.setStyleSheet(
                 "background:#b51f24;color:white;font-weight:800;font-size:18px")
-            self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
+            service = "return_item" if self.stop.text() == "RETURN ITEM & STOP" else "stop"
+            self.stop.setEnabled(self.node.service_clients[service].service_is_ready()
+                                 and (service != "return_item" or service not in self.pending))
         self.hardware_home.setEnabled(reachable and current in ("READY", "HOLDING")
                                       and not active)
         self.hardware_pick.setEnabled(reachable and current == "READY" and not active)
@@ -471,6 +490,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
                               if state.global_speed_percent >= 1 else "unknown")
             self.speed_label.setText(f"Global SpeedFactor: {speed_text}")
             progress = f"\n{self.feedback_message}" if self.feedback_message else ""
+            candidate_states = getattr(state, "candidate_states", ())
+            if candidate_states:
+                progress += "\nCandidates: " + ", ".join(
+                    f"{index}: {value}" for index, value in enumerate(candidate_states, 1))
             self.status.setText(
                 f"{state.state} · {state.message}\n"
                 f"Configuration: {state.configuration_id[:16] or 'none'} · "

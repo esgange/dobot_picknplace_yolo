@@ -222,55 +222,17 @@ class EventLog:
         pass
 
 
-class PauseHardware:
-    def __init__(self, sample):
-        self.sample = sample
-        self.calls = []
-
-    def pause_queue(self):
-        self.calls.append("Pause")
-        return self.sample
-
-    def continue_queue(self):
-        self.calls.append("Continue")
-        return self.sample
-
-
-def pause_node(state="PICKING"):
-    machine = ControllerStateMachine(initial=state)
-    sample = SimpleNamespace(robot_enabled=True, feed={
-        "robot_mode": 10, "EnableStatus": 1, "ErrorStatus": 0,
-        "CollisionStates": 0, "isPauseCmdFlag": 1,
-        "digital_input_bits": 0, "digital_outputs": 0,
-        "userCoordinate": 0, "toolCoordinate": 0,
-    })
+def test_pause_and_continue_delegate_to_managed_operation_without_vendor_queue_resume():
+    calls = []
     node = SimpleNamespace(
-        startup_complete=True, machine=machine, operation_lock=threading.Lock(),
-        active_action="pick" if state == "PICKING" else "",
-        phase="MOTION", waypoint="p1_pick", pause_guard=threading.Lock(),
-        pause_event=threading.Event(), continue_event=threading.Event(),
-        paused_context=None,
-        hardware=PauseHardware(sample), monitor=SimpleNamespace(
-            snapshot=lambda **_kwargs: sample), holding_item=False,
-        expected_outputs={}, events=EventLog())
-    node._transition = lambda target, message: machine.transition(target, message)
-    node.raise_if_cancelled = lambda: None
-    node._validate_pause_integrity = lambda value, **_kwargs: value
-    node._contain_queue_control_failure = lambda *_args: None
-    return node
-
-
-def test_pause_preserves_action_context_and_continue_restores_it():
-    node = pause_node()
+        machine=SimpleNamespace(state="PAUSED"), events=EventLog(),
+        managed=SimpleNamespace(continue_operation=lambda: calls.append("continue")),
+        _managed_request=lambda kind, response: calls.append(kind) or response)
     response = SimpleNamespace(success=False, message="", state="")
     RobotController._pause(node, None, response)
-    assert response.success and response.state == "PAUSED"
-    assert node.pause_event.is_set()
-    assert node.paused_context["state"] == "PICKING"
     RobotController._continue(node, None, response)
-    assert response.success and response.state == "PICKING"
-    assert not node.pause_event.is_set()
-    assert node.hardware.calls == ["Pause", "Continue"]
+    assert response.success
+    assert calls == ["pause", "continue"]
 
 
 def test_stop_after_pause_is_direct_and_enters_recovery():
@@ -523,6 +485,7 @@ def test_home_action_uses_cartesian_route_without_changing_pick_home():
         _transition=transition,
         _execute_cartesian_home=lambda: calls.append(("cartesian_home",)),
         _execute_home=lambda: pytest.fail("Pick's shared Home was called"),
+        managed=SimpleNamespace(lock=threading.RLock()),
         wait_for_resume=lambda: None,
         events=SimpleNamespace(record=lambda *_args, **_kwargs: None),
         _end_operation=lambda: calls.append(("end",)))
@@ -649,25 +612,23 @@ def test_home_above_home_z_uses_exact_joint_target_without_extra_rise():
     assert calls == [("home",)]
 
 
-def test_gui_second_pause_click_queues_stop_without_overlapping_pause():
+def test_gui_second_pause_click_stops_immediately_during_parking():
     commands = []
     window = SimpleNamespace(
         node=SimpleNamespace(status=SimpleNamespace(state="PICKING")), pending={},
-        pause_requested_locally=False, stop_after_pause=False, stop=Button(),
+        pause_requested_locally=False, return_requested_locally=False, stop=Button(),
         _command=lambda name: commands.append(name) or True,
         _immediate_stop=lambda: commands.append("stop"))
     ControllerWindow._pause_or_stop(window)
     ControllerWindow._pause_or_stop(window)
-    assert commands == ["pause"]
-    assert window.stop_after_pause
-    assert window.stop.text == "STOP QUEUED"
+    assert commands == ["pause", "stop"]
 
 
 def test_gui_nonpausable_state_calls_stop_directly_and_paused_start_continues():
     commands = []
     window = SimpleNamespace(
         node=SimpleNamespace(status=SimpleNamespace(state="FAULT")), pending={},
-        pause_requested_locally=False, stop_after_pause=False, stop=Button(),
+        pause_requested_locally=False, return_requested_locally=False, stop=Button(),
         _command=lambda name: commands.append(name) or True,
         _immediate_stop=lambda: commands.append("stop"))
     ControllerWindow._pause_or_stop(window)
@@ -676,7 +637,7 @@ def test_gui_nonpausable_state_calls_stop_directly_and_paused_start_continues():
     assert commands == ["stop", "continue"]
 
 
-def test_gui_queued_stop_dispatches_only_after_pause_response():
+def test_gui_pause_acceptance_does_not_dispatch_another_stop():
     class Future:
         @staticmethod
         def done():
@@ -689,12 +650,11 @@ def test_gui_queued_stop_dispatches_only_after_pause_response():
     calls = []
     window = SimpleNamespace(
         pending={"pause": Future()}, pending_goal=None, result_future=None,
-        pause_requested_locally=True, stop_after_pause=True,
+        pause_requested_locally=True, return_requested_locally=False,
         _immediate_stop=lambda: calls.append("stop"))
     ControllerWindow._collect(window)
-    assert calls == ["stop"]
-    assert not window.pause_requested_locally
-    assert not window.stop_after_pause
+    assert calls == []
+    assert window.pause_requested_locally
 
 
 def test_successful_gui_reload_saves_selection_and_clears_preview(monkeypatch, tmp_path):
@@ -724,3 +684,28 @@ def test_successful_gui_reload_saves_selection_and_clears_preview(monkeypatch, t
         tmp_path / "logs/robot_controller/last_session.json",
         "item.yaml", "bin.yaml")]
     assert cleared == [True]
+
+
+def test_gui_held_pause_stop_requests_return_without_canceling_active_pick():
+    calls = []
+    window = SimpleNamespace(
+        node=SimpleNamespace(status=SimpleNamespace(state="PAUSED", can_return_item=True)),
+        pending={}, pause_requested_locally=False, return_requested_locally=False,
+        _command=lambda name: calls.append(name) or True,
+        _immediate_stop=lambda: calls.append("stop"))
+    ControllerWindow._pause_or_stop(window)
+    assert calls == ["return_item"]
+    ControllerWindow._pause_or_stop(window)
+    assert calls == ["return_item", "stop"]
+
+
+@pytest.mark.parametrize("state", ["PAUSING", "RETURNING_ITEM"])
+def test_gui_stop_preempts_managed_motion_immediately(state):
+    calls = []
+    window = SimpleNamespace(
+        node=SimpleNamespace(status=SimpleNamespace(state=state)),
+        pending={}, pause_requested_locally=False, return_requested_locally=False,
+        _command=lambda _name: pytest.fail("Cannot Pause a managed movement"),
+        _immediate_stop=lambda: calls.append("stop"))
+    ControllerWindow._pause_or_stop(window)
+    assert calls == ["stop"]

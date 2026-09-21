@@ -31,13 +31,16 @@ from .candidates import (
     CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
 from .configuration import load_configuration, load_runtime_configuration
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
-                     HeldUnknown, OperationCanceled, StopUnconfirmed)
+                     HeldUnknown, ManagedInterruption, OperationCanceled,
+                     ReturnedToHome, StopUnconfirmed)
 from .feedback import FeedbackMonitor, enabled_blockers
 from .hardware import (CARTESIAN_ORIENTATION_TOLERANCE_DEG,
                        CARTESIAN_POSITION_TOLERANCE_M, DobotTransport)
 from .kinematics import Cr10Kinematics, pose_values
 from .motion import (PickExecutor, candidate_pose_in_base, cartesian_home_targets,
                      home_targets, pick_targets, pose_reached)
+from .managed_control import ManagedControl
+from .pick_session import PickSession, return_targets
 from .state_machine import ControllerStateMachine
 
 
@@ -113,10 +116,8 @@ class RobotController(Node):
         self.state_before_stop = None
         self.late_stop_thread = None
         self.supervision_stop_thread = None
-        self.pause_guard = threading.Lock()
         self.pause_event = threading.Event()
-        self.continue_event = threading.Event()
-        self.paused_context = None
+        self.managed = ManagedControl(self)
 
         self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
@@ -151,6 +152,9 @@ class RobotController(Node):
             callback_group=self.control_group)
         self.continue_service = self.create_service(
             Command, "/robot_controller/continue", self._continue,
+            callback_group=self.control_group)
+        self.return_service = self.create_service(
+            Command, "/robot_controller/return_item", self._return_item,
             callback_group=self.control_group)
         self.configure_service = self.create_service(
             Configure, "/robot_controller/configure", self._configure,
@@ -198,8 +202,14 @@ class RobotController(Node):
     def _on_feed(self, message):
         try:
             self.monitor.update_feed(message.data)
+            if self.managed.kind == "pause":
+                self.managed.observe(self.monitor.snapshot(require_enabled=False))
         except FeedbackFailure as exc:
             self.events.record("WARNING", "invalid_feed_feedback", str(exc))
+        except (StopUnconfirmed, CommandRejected) as exc:
+            self.cancel_event.set()
+            self.startup_complete = False
+            self._transition("FAULT", f"Paused-drop Stop dispatch failed: {exc}")
 
     def _sole_publisher(self, topic):
         endpoints = self.get_publishers_info_by_topic(topic)
@@ -314,6 +324,12 @@ class RobotController(Node):
             self.active_action, self.phase, self.waypoint)
         status.candidate_index, status.candidate_total = (
             self.candidate_index, self.candidate_total)
+        session = self.managed.session
+        if session is not None:
+            status.candidate_ids = [attempt.identifier for attempt in session.attempts]
+            status.candidate_states = [attempt.state for attempt in session.attempts]
+        status.can_return_item = bool(self.holding_item and session is not None
+                                      and session.held_index is not None)
         status.global_speed_percent = (
             self.global_speed_percent if self.global_speed_percent is not None else -1)
         status.startup_complete = self.startup_complete
@@ -344,11 +360,20 @@ class RobotController(Node):
         self.candidate_index = self.candidate_total = 0
 
     def _end_operation(self):
-        self.active_goal = None
-        self.active_action = self.phase = self.waypoint = ""
-        self.candidate_index = self.candidate_total = 0
-        self.operation_lock.release()
-        self.publish_status()
+        with self.managed.lock:
+            self.active_goal = None
+            if (self.managed.kind is not None and not self.managed.executing
+                    and self.active_action in ("home", "pick") and not self.cancel_requested()):
+                # A request can arrive after the action result is committed but
+                # before this finally block. Transfer the still-held operation
+                # lock to its parking owner rather than abandoning the request.
+                self.active_action = "pause"
+                self.managed.start_idle_worker()
+            else:
+                self.active_action = self.phase = self.waypoint = ""
+                self.candidate_index = self.candidate_total = 0
+                self.operation_lock.release()
+            self.publish_status()
 
     def cancel_requested(self):
         return (self.cancel_event.is_set() or self.shutdown_event.is_set()
@@ -362,36 +387,27 @@ class RobotController(Node):
         self.shutdown_event.wait(seconds)
 
     def pause_requested(self):
-        return self.pause_event.is_set()
-
-    def _validate_pause_integrity(self, snapshot, *, require_flag):
-        blockers = enabled_blockers(
-            snapshot.feed, snapshot.robot_enabled, allow_paused=True)
-        if require_flag and not snapshot.feed["isPauseCmdFlag"]:
-            blockers.append("isPauseCmdFlag=0 while controller state is PAUSED")
-        suction = bool(snapshot.feed["digital_input_bits"] & 1)
-        if self.holding_item != suction:
-            blockers.append(
-                "DI1 lost for held item" if self.holding_item
-                else "DI1 active without trusted holding context")
-        for channel, expected in self.expected_outputs.items():
-            actual = bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
-            if actual != expected:
-                blockers.append(
-                    f"DO{channel}={int(actual)} while expected {int(expected)}")
-        if blockers:
-            raise FeedbackFailure("Paused-queue integrity failed: " + "; ".join(blockers))
-        return snapshot
+        # Feedback waits must unwind to the single owner, never wait inside a
+        # retained-queue pause loop while that same owner needs to reposition.
+        self.managed.checkpoint()
+        return False
 
     def wait_for_resume(self):
-        while self.pause_event.is_set():
-            self.raise_if_cancelled()
-            snapshot = self.monitor.snapshot(require_enabled=False)
-            self._validate_pause_integrity(
-                snapshot,
-                require_flag=(self.machine.state == "PAUSED"
-                              and not self.continue_event.is_set()))
-            self.wait_control(0.05)
+        self.managed.checkpoint()
+
+    def observe_managed_feedback(self, sample):
+        return self.managed.observe(sample)
+
+    def motion_admitted(self, target):
+        if self.managed.session is not None and not self.managed.executing:
+            self.managed.session.admitted(target)
+
+    def _attempt_changed(self, index, attempt):
+        self.events.record("INFO", "candidate_state", attempt.state,
+                           candidate_index=index, candidate_id=attempt.identifier)
+        self.publish_operator_log(
+            "INFO", f"Candidate {index} ({attempt.identifier}): {attempt.state}")
+        self.publish_status()
 
     # ---------- configuration and lifecycle services ----------
 
@@ -556,10 +572,6 @@ class RobotController(Node):
         event = getattr(instance, "pause_event", None)
         if event is not None:
             event.clear()
-        continuing = getattr(instance, "continue_event", None)
-        if continuing is not None:
-            continuing.clear()
-        instance.paused_context = None
 
     def _contain_queue_control_failure(self, operation, error):
         try:
@@ -572,91 +584,32 @@ class RobotController(Node):
                 self._transition(
                     "FAULT", f"{operation} failed and Stop was unconfirmed: {stop_exc}")
 
-    def _pause(self, _request, response):
-        guarded = self.pause_guard.acquire(blocking=False)
-        dispatched = False
-        failure = ""
+    def _managed_request(self, kind, response):
         try:
-            if not guarded:
-                raise CommandRejected("Another Pause/Continue request is active")
-            if (not self.startup_complete
-                    or self.machine.state not in ("READY", "HOLDING", "HOMING", "PICKING")):
-                raise CommandRejected(
-                    "Pause requires a started READY/HOLDING/Home/Pick controller")
-            if (self.operation_lock.locked()
-                    and self.active_action not in ("home", "pick")):
-                raise CommandRejected("Pause cannot interrupt a lifecycle/settings operation")
-            if self.pause_event.is_set():
-                raise CommandRejected("Controller Pause is already pending or confirmed")
-            self.paused_context = {
-                "state": self.machine.state,
-                "message": self.machine.message,
-                "phase": self.phase,
-                "waypoint": self.waypoint,
-            }
-            self.pause_event.set()
-            dispatched = True
-            self.hardware.pause_queue()
-            self.raise_if_cancelled()
-            previous = self.paused_context["state"]
-            self.phase = "PAUSED"
-            self._transition("PAUSED", f"Pause confirmed; suspended {previous}")
-            self.events.record(
-                "INFO", "pause_confirmed", self.machine.message,
-                suspended_state=previous, operation=self.active_action)
+            self.managed.request(kind)
             response.success = True
+            response.message = "Request accepted; observe controller status for completion"
         except Exception as exc:
             response.success = False
-            failure = str(exc)
-            if dispatched:
-                self._contain_queue_control_failure("Pause", exc)
-            else:
-                self.events.record("WARNING", "pause_rejected", str(exc))
-        finally:
-            if guarded:
-                self.pause_guard.release()
-        response.message = self.machine.message if response.success else failure
+            response.message = str(exc)
+            self.events.record("WARNING", "managed_request_rejected", str(exc))
         response.state = self.machine.state
         return response
 
+    def _pause(self, _request, response):
+        return self._managed_request("pause", response)
+
+    def _return_item(self, _request, response):
+        return self._managed_request("return", response)
+
     def _continue(self, _request, response):
-        guarded = self.pause_guard.acquire(blocking=False)
-        dispatched = False
-        failure = ""
         try:
-            if not guarded:
-                raise CommandRejected("Another Pause/Continue request is active")
-            if (self.machine.state != "PAUSED" or not self.pause_event.is_set()
-                    or self.paused_context is None):
-                raise CommandRejected("Continue requires a confirmed PAUSED controller")
-            self._validate_pause_integrity(
-                self.monitor.snapshot(require_enabled=False), require_flag=True)
-            self.continue_event.set()
-            dispatched = True
-            resumed = self.hardware.continue_queue()
-            self._validate_pause_integrity(resumed, require_flag=False)
-            self.raise_if_cancelled()
-            context = self.paused_context
-            restored = context["state"]
-            self.phase, self.waypoint = context["phase"], context["waypoint"]
-            self._transition(restored, f"Continue confirmed; resumed {restored}")
-            RobotController._clear_pause_context(self)
-            self.events.record(
-                "INFO", "continue_confirmed", self.machine.message,
-                resumed_state=restored, operation=self.active_action)
+            self.managed.continue_operation()
             response.success = True
+            response.message = "Continue accepted"
         except Exception as exc:
             response.success = False
-            failure = str(exc)
-            if dispatched:
-                self._contain_queue_control_failure("Continue", exc)
-            else:
-                self.events.record("WARNING", "continue_rejected", str(exc))
-        finally:
-            self.continue_event.clear()
-            if guarded:
-                self.pause_guard.release()
-        response.message = self.machine.message if response.success else failure
+            response.message = str(exc)
         response.state = self.machine.state
         return response
 
@@ -881,6 +834,9 @@ class RobotController(Node):
         return result.CONTROLLER_FAULT
 
     def _action_failure(self, goal, result, exc, outcome):
+        session = getattr(getattr(self, "managed", None), "session", None)
+        if session is not None and hasattr(result, "attempted_candidates"):
+            result.attempted_candidates = session.attempted_count
         message = str(exc)
         cancelled = isinstance(exc, OperationCanceled) or self.cancel_event.is_set()
         try:
@@ -911,17 +867,30 @@ class RobotController(Node):
         result = GoHome.Result()
         try:
             self.configuration.validate_sources(self.root)
-            self._transition("HOMING", "Home action started")
-            self._execute_cartesian_home()
-            self.wait_for_resume()
-            state = "HOLDING" if self.holding_item else "READY"
-            self._transition(state, "Home completed at taught Cartesian pose")
-            result.outcome = result.SUCCESS
-            result.message = self.machine.message
-            result.final_state = state
-            goal.succeed()
-            self.events.record("INFO", "action_result", result.message,
-                               operation="home", outcome=int(result.outcome), state=state)
+            while True:
+                try:
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        self._transition("HOMING", "Home action started")
+                    self._execute_cartesian_home()
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        state = "HOLDING" if self.holding_item else "READY"
+                        self._transition(state, "Home completed at taught Cartesian pose")
+                        result.outcome = result.SUCCESS
+                        result.message = self.machine.message
+                        result.final_state = state
+                        goal.succeed()
+                    self.events.record("INFO", "action_result", result.message,
+                                       operation="home", outcome=int(result.outcome), state=state)
+                    return result
+                except ManagedInterruption:
+                    self.managed.handle()
+        except ReturnedToHome as exc:
+            result.outcome = result.CANCELED
+            result.message = str(exc)
+            result.final_state = self.machine.state
+            goal.abort()
             return result
         except Exception as exc:
             return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
@@ -940,85 +909,117 @@ class RobotController(Node):
         try:
             config = self.configuration
             config.validate_sources(self.root)
-            self._transition("PICKING", "Pick action started")
-            self._execute_home()
-            self.operation_progress("DETECT", "Requesting one fresh candidate batch")
-            batch = self.candidates.request(
-                config, save_debug_images=goal.request.save_debug_images,
-                cancel=self.cancel_requested)
-            self.candidate_total = len(batch.candidates)
-            self.operation_progress(
-                "PLAN", f"Validated {self.candidate_total} fresh candidates",
-                candidate_total=self.candidate_total)
-            if not batch.candidates:
-                self._transition("READY", "No valid pick candidates; robot remains Home")
-                result.outcome = result.NO_PICK
-                result.message = self.machine.message
-                result.final_state = "READY"
-                goal.succeed()
-                return result
-            plans = []
-            for index, candidate in enumerate(batch.candidates, 1):
-                item_pose = candidate_pose_in_base(
-                    config.selection.station.platform.base_from_platform,
-                    candidate.position_m, candidate.quaternion)
-                attitude = select_pick_attitude(
-                    config.home_matrix, item_pose, config.profile["pick_rotation"],
-                    config.profile["motion"]["standoff_height"],
-                    config.selection.station.platform.base_from_platform,
-                    config.selection.robot_camera.reference_from_camera_link,
-                    [[point.x_m, point.y_m] for point in config.selection.bin.points])
-                if not attitude.accepted:
-                    raise FeedbackFailure(
-                        "Detector returned a candidate whose normal and 180-degree "
-                        "robot-camera attitudes are outside the Bin ROI")
-                plan = pick_targets(
-                    config.home_matrix, item_pose, config.profile, index,
-                    rotation=attitude.rotation)
-                plans.append(plan)
-                self.events.record(
-                    "INFO", "pick_orientation_planned",
-                    "Applied the nearest legal offset from the item short-axis line",
-                    candidate_id=candidate.identifier, candidate_index=index,
-                    candidate_quaternion_xyzw=list(candidate.quaternion),
-                    item_short_axis_base=item_pose[:3, 1].tolist(),
-                    target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
-                    configured_pick_rotation_deg=config.profile["pick_rotation"],
-                    selected_offset_direction=attitude.offset_direction,
-                    rotation_from_home_deg=attitude.rotation_from_home_deg,
-                    robot_camera_mirrored=attitude.mirrored,
-                    robot_camera_platform_xy=list(attitude.selected_camera_platform_xy),
-                    robot_camera_sha256=config.selection.robot_camera.sha256,
-                    target_rpy_deg=pose_values(plan[0].matrix)[3:])
+            batch = None
+            self.managed.session = None
+            while True:
+                try:
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        self._transition("PICKING", "Pick action started")
+                    if self.managed.session is None:
+                        if batch is None:
+                            self._execute_home()
+                            self.operation_progress(
+                                "DETECT", "Requesting one fresh candidate batch")
+                            batch = self.candidates.request(
+                                config, save_debug_images=goal.request.save_debug_images,
+                                cancel=self.cancel_requested)
+                        self.candidate_total = len(batch.candidates)
+                        self.operation_progress(
+                            "PLAN", f"Validated {self.candidate_total} fresh candidates",
+                            candidate_total=self.candidate_total)
+                        if not batch.candidates:
+                            with self.managed.lock:
+                                self.wait_for_resume()
+                                self._transition(
+                                    "READY", "No valid pick candidates; robot remains Home")
+                                result.outcome = result.NO_PICK
+                                result.message = self.machine.message
+                                result.final_state = "READY"
+                                goal.succeed()
+                            return result
+                        plans = []
+                        for index, candidate in enumerate(batch.candidates, 1):
+                            item_pose = candidate_pose_in_base(
+                                config.selection.station.platform.base_from_platform,
+                                candidate.position_m, candidate.quaternion)
+                            attitude = select_pick_attitude(
+                                config.home_matrix, item_pose, config.profile["pick_rotation"],
+                                config.profile["motion"]["standoff_height"],
+                                config.selection.station.platform.base_from_platform,
+                                config.selection.robot_camera.reference_from_camera_link,
+                                [[point.x_m, point.y_m] for point in config.selection.bin.points])
+                            if not attitude.accepted:
+                                raise FeedbackFailure(
+                                    "Detector returned a candidate whose normal and 180-degree "
+                                    "robot-camera attitudes are outside the Bin ROI")
+                            plan = pick_targets(
+                                config.home_matrix, item_pose, config.profile, index,
+                                rotation=attitude.rotation)
+                            plans.append(plan)
+                            self.events.record(
+                                "INFO", "pick_orientation_planned",
+                                "Applied the nearest legal offset from the item short-axis line",
+                                candidate_id=candidate.identifier, candidate_index=index,
+                                candidate_quaternion_xyzw=list(candidate.quaternion),
+                                item_short_axis_base=item_pose[:3, 1].tolist(),
+                                target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
+                                configured_pick_rotation_deg=config.profile["pick_rotation"],
+                                selected_offset_direction=attitude.offset_direction,
+                                rotation_from_home_deg=attitude.rotation_from_home_deg,
+                                robot_camera_mirrored=attitude.mirrored,
+                                robot_camera_platform_xy=list(
+                                    attitude.selected_camera_platform_xy),
+                                robot_camera_sha256=config.selection.robot_camera.sha256,
+                                target_rpy_deg=pose_values(plan[0].matrix)[3:])
 
-            def check(index):
-                self.raise_if_cancelled()
-                config.validate_sources(self.root)
-                result.attempted_candidates = index
+                        self.managed.session = PickSession(
+                            [candidate.identifier for candidate in batch.candidates], plans,
+                            self._attempt_changed)
+                        for plan in plans:
+                            return_targets(plan)
 
-            outcome = PickExecutor(self.hardware, finish_home=True).run(
-                plans, config.profile, check=check,
-                return_home=lambda **kwargs: self._execute_home(**kwargs),
-                progress=self._candidate_progress,
-                holding_changed=lambda value: setattr(self, "holding_item", value))
-            self.wait_for_resume()
-            self.holding_item = outcome["holding_item"]
-            if outcome["picked"]:
-                candidate = batch.candidates[outcome["candidate"] - 1]
-                result.selected_candidate_id = candidate.identifier
-                self._transition("HOLDING", "Pick completed; item held at Home")
-                result.outcome = result.SUCCESS
-            else:
-                self._transition("READY", "Candidate batch exhausted; no item picked")
-                result.outcome = result.NO_PICK
-            result.message = self.machine.message
+                    def check(index):
+                        self.raise_if_cancelled()
+                        config.validate_sources(self.root)
+                        result.attempted_candidates = self.managed.session.attempted_count
+
+                    outcome = PickExecutor(self.hardware, finish_home=True).run(
+                        plans, config.profile, check=check,
+                        return_home=lambda **kwargs: self._execute_home(**kwargs),
+                        progress=self._candidate_progress,
+                        holding_changed=lambda value: setattr(self, "holding_item", value),
+                        session=self.managed.session)
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        result.attempted_candidates = self.managed.session.attempted_count
+                        self.holding_item = outcome["holding_item"]
+                        if outcome["picked"]:
+                            candidate = batch.candidates[outcome["candidate"] - 1]
+                            result.selected_candidate_id = candidate.identifier
+                            self._transition("HOLDING", "Pick completed; item held at Home")
+                            result.outcome = result.SUCCESS
+                        else:
+                            self._transition("READY", "Candidate batch exhausted; no item picked")
+                            result.outcome = result.NO_PICK
+                        result.message = self.machine.message
+                        result.final_state = self.machine.state
+                        goal.succeed()
+                    self.events.record(
+                        "INFO", "action_result", result.message, operation="pick",
+                        outcome=int(result.outcome), attempted=result.attempted_candidates,
+                        selected_candidate_id=result.selected_candidate_id,
+                        state=result.final_state, debug_capture=batch.debug_message)
+                    return result
+                except ManagedInterruption:
+                    self.managed.handle()
+        except ReturnedToHome as exc:
+            result.outcome = result.CANCELED
+            result.message = str(exc)
             result.final_state = self.machine.state
-            goal.succeed()
-            self.events.record(
-                "INFO", "action_result", result.message, operation="pick",
-                outcome=int(result.outcome), attempted=result.attempted_candidates,
-                selected_candidate_id=result.selected_candidate_id,
-                state=result.final_state, debug_capture=batch.debug_message)
+            if self.managed.session is not None:
+                result.attempted_candidates = self.managed.session.attempted_count
+            goal.abort()
             return result
         except Exception as exc:
             return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
@@ -1054,15 +1055,6 @@ class RobotController(Node):
 
     def _supervise(self):
         if not self.startup_complete:
-            return
-        if self.machine.state == "PAUSED":
-            try:
-                self._validate_pause_integrity(
-                    self.monitor.snapshot(require_enabled=False),
-                    require_flag=not self.continue_event.is_set())
-            except Exception as exc:
-                self._stop_unexpected_idle_motion(
-                    f"Paused-queue supervision requires Stop: {exc}")
             return
         if (self.operation_lock.locked()
                 or self.machine.state not in ("READY", "HOLDING")):
@@ -1120,6 +1112,8 @@ class RobotController(Node):
             self.late_stop_thread.join(timeout=2.0)
         if self.supervision_stop_thread is not None:
             self.supervision_stop_thread.join(timeout=2.0)
+        if self.managed.thread is not None:
+            self.managed.thread.join(timeout=2.0)
         self.candidates.close()
         self.hardware.close()
 
