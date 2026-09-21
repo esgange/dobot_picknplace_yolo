@@ -4300,6 +4300,30 @@ Never use a floating “latest” version in an issue, script, or deployment not
   operation, clearance, physical pulse duration and item placement remain
   unverified.
 
+### 2026-09-21 — Pause above the next item at safety Z
+
+- Rule 103 supersedes rule 102 only for the unheld Pick parking endpoint and
+  its corresponding Continue route. After Stop and output neutralization,
+  confirm the vertical safety rise, cross to the next pending candidate's X/Y
+  and planned pick orientation, and finish PAUSED at `park_transit`. Its Z is
+  `max(stopped Z, taught Home Z)`. Do not descend to pre-pick during parking.
+- Continue establishes finger CLOSE OFF then OPEN ON and queues that same
+  candidate's pre-pick followed by final pick, retaining the normal timed SUCK
+  event and taught final-pick settling. Parking does not consume the candidate;
+  repeated Pause keeps it pending. Held Pause, exhausted-batch parking and
+  put-back through the original pre-pick and release pose retain rule 102 behavior.
+- The shared geometry now has a helper that returns one transit target, also
+  reused by put-back's approach. Operator status names the parking phase
+  PAUSE_TRANSIT and its batch pause_to_next_transit. Artifact schemas, pinned
+  runtimes and vendored code are unchanged.
+- Verification is software-only: all 198 direct controller tests pass and
+  package results report 199 tests with zero errors/failures/skips. Tests cover
+  parking at Home Z or the higher stopped Z with neutral outputs, preserving
+  pending candidates, and opening fingers before the resumed pre-pick/final
+  descent. All four changed Python/test files compile and pass ament_flake8;
+  the complete 15-package root symlink build and `git diff --check` pass. No
+  robot, camera or detector commands were issued; live motion remains unverified.
+
 ### Future entry template
 
 ```text

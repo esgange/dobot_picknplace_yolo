@@ -149,6 +149,9 @@ pick's +50 mm release pose, pulses exhaust for 50 ms, retreats neutral and Homes
 then remains paused. Explicit return ends READY; direct Stop always pre-empts.
 Pre-pick must be at least 50 mm above pick and clearance above the release pose;
 neither source context nor candidate states survive process restart.
+Rule 103 moves unheld Pick's Pause endpoint to `park_transit` above the next
+pending candidate at safety Z (max of stopped Z and taught Home Z). Continue
+opens fingers, then descends through pre-pick to final pick.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

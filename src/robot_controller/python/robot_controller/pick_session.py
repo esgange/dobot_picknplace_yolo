@@ -71,10 +71,14 @@ def safety_target(current, home, settings):
                   settings["acceleration"]["travel_percent"])
 
 
-def approach_from_safety(current, plan):
+def transit_from_safety(current, plan):
     transit = plan[0].matrix.copy()
     transit[2, 3] = max(current[2, 3], transit[2, 3])
-    return (replace(plan[0], name="park_transit", matrix=transit, motion_io=()),
+    return replace(plan[0], name="park_transit", matrix=transit, motion_io=())
+
+
+def approach_from_safety(current, plan):
+    return (transit_from_safety(current, plan),
             replace(plan[2], name="park_prepick", motion_io=()))
 
 

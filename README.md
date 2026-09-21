@@ -74,10 +74,11 @@ Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
 100, unheld output reset, and coherent READY confirmation. Recover performs the
 same guarded recovery without moving Home. Pause discards the current queue and
-parks through the operation executor. Unheld Pick parks at the next unattempted
-candidate's pre-pick via Home Z; held Pause rises at current X/Y to Home Z.
-Continue rebuilds the remaining route from the stopped pose and opens fingers
-before a new pick. Candidate states are visible in the GUI and typed status.
+parks through the operation executor. Unheld Pick parks at `park_transit`, above
+the next unattempted candidate at safety Z (the higher of stopped Z and Home Z).
+Held Pause rises at current X/Y to Home Z. Continue opens fingers and descends
+through the parked candidate's pre-pick to final pick. Candidate states are
+visible in the GUI and typed status.
 Direct Stop and native cancellation preserve all gripper outputs, discard queued
 motion, and finish in `RECOVERY_REQUIRED`; Stop never requires Pause first and
 never automatically Homes, releases, or resumes. Trusted held-item DI/output

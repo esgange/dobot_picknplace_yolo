@@ -174,16 +174,18 @@ Each new batch initializes `PENDING` candidates. The first accepted approach
 command marks `ACTIVE`; final-pick settling without suction marks `FAILED`;
 Pause consumes only the active candidate as `INTERRUPTED`. Confirmed suction
 marks `HELD`; a paused loss marks `DROPPED`; a completed intentional held return
-marks `RETURNED`. Parking at a next pre-pick never marks that candidate attempted.
+marks `RETURNED`. Parking above the next candidate never marks it attempted.
 The ledger and source plans are in memory, never written into teach artifacts.
 
 Without an item, active Pick Pause neutralizes all four canonical outputs,
 rises vertically at measured X/Y/attitude to at least taught Home Z, then crosses
-at that height and descends to the next pending pre-pick. Only the safety rise
-and final pre-pick are confirmed; no fixed settling dwell is added. With no
+at that height to `park_transit` above the next pending candidate. This pause
+endpoint has that candidate's X/Y and planned pick orientation, with Z equal to
+the higher of stopped Z and Home Z. Both the safety rise and final transit are
+confirmed; no descent or fixed settling dwell is added while parking. With no
 remaining candidate it parks at safety height. Continue commands finger CLOSE
-OFF then OPEN ON, confirms the outputs and resumes the parked candidate's final
-approach with the existing timed SUCK and taught settling. A retained candidate
+OFF then OPEN ON, confirms the outputs, then queues pre-pick followed by final
+pick with the existing timed SUCK and taught settling. A retained candidate
 batch is never replaced during Continue. Standalone Home replans its Home goal;
 idle READY Pause remains stationary.
 

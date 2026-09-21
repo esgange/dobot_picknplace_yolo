@@ -6,7 +6,8 @@ from .errors import (CommandRejected, FeedbackFailure, HeldUnknown,
                      ManagedInterruption, PausedItemDropped, ReturnedToHome)
 from .kinematics import pose_matrix
 from .motion import PickExecutor, pose_reached
-from .pick_session import approach_from_safety, return_targets, safety_target
+from .pick_session import (approach_from_safety, return_targets, safety_target,
+                           transit_from_safety)
 
 
 class ManagedControl:
@@ -177,10 +178,11 @@ class ManagedControl:
             self.session.parked_index = index
             if index is not None:
                 plan = self.session.attempts[index - 1].plan
-                node.operation_progress("PAUSE_PREPICK", f"Parking at candidate {index} pre-pick",
+                node.operation_progress("PAUSE_TRANSIT",
+                                        f"Parking above candidate {index} at safety Z",
                                         candidate_index=index)
-                node.hardware.move_batch(approach_from_safety(current, plan),
-                                         batch_name="pause_to_next_prepick",
+                node.hardware.move_batch((transit_from_safety(current, plan),),
+                                         batch_name="pause_to_next_transit",
                                          confirmed_start_pose=current)
 
     def _put_back(self, *, dropped):

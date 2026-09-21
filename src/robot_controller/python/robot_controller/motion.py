@@ -214,7 +214,7 @@ class PickExecutor:
                 self.hardware.output(2, False)
                 self.hardware.output(14, True)
                 if session.parked_index == start_index:
-                    forward = (plan[3],)
+                    forward = (plan[2], plan[3])
                 session.resuming = False
                 session.parked_index = None
             acquired, stopped_pose = self.hardware.move_batch(

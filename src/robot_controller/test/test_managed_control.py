@@ -155,9 +155,21 @@ def states(rig):
     return [attempt.state for attempt in rig.managed.session.attempts]
 
 
-def test_pause_consumes_only_active_candidate_and_parks_next_without_attempting_it():
+@pytest.mark.parametrize("stopped_z", [.3, 1.0])
+def test_pause_parks_above_next_candidate_at_safety_z_without_attempting_it(stopped_z):
     rig = Rig()
+    rig.feed["tool_vector_actual"] = pose_values(matrix(z=stopped_z))
     rig.managed.session.set_state(1, "ACTIVE")
+    expected = rig.managed.session.attempts[1].plan[0].matrix.copy()
+    expected[2, 3] = max(stopped_z, rig.configuration.home_matrix[2, 3])
+
+    def check_parked_before_continue():
+        assert rig.machine.state == "PAUSED"
+        assert np.allclose(rig.hardware.current_pose(), expected)
+        assert not any(rig.expected_outputs.values())
+        assert states(rig) == ["INTERRUPTED", "PENDING", "PENDING"]
+        rig.managed.continue_operation()
+    rig.on_wait = check_parked_before_continue
     rig.managed.request("pause")
     with pytest.raises(ManagedInterruption):
         rig.managed.checkpoint()
@@ -165,10 +177,11 @@ def test_pause_consumes_only_active_candidate_and_parks_next_without_attempting_
     assert states(rig) == ["INTERRUPTED", "PENDING", "PENDING"]
     assert rig.managed.session.parked_index == 2
     assert rig.machine.state == "PICKING"
-    assert np.allclose(rig.hardware.current_pose(), rig.managed.session.attempts[1].plan[2].matrix)
+    assert np.allclose(rig.hardware.current_pose(), expected)
     assert not any(rig.expected_outputs.values())
-    assert [entry[1] for entry in rig.log if entry[0] == "move"] == [
-        ("pause_safety",), ("park_transit", "park_prepick")]
+    expected_moves = [("pause_safety",)] if stopped_z < expected[2, 3] else []
+    assert [entry[1] for entry in rig.log if entry[0] == "move"] == (
+        expected_moves + [("park_transit",)])
 
 
 def test_repeated_pause_of_parked_candidate_does_not_consume_it():
@@ -286,7 +299,7 @@ def test_no_remaining_candidates_pause_at_safety_then_continue_returns_home():
     assert any(entry[0] == "home" for entry in rig.log)
 
 
-def test_resume_opens_fingers_and_only_sends_parked_candidates_final_approach():
+def test_resume_opens_fingers_then_descends_through_prepick_to_final_pick():
     rig = Rig(count=2)
     rig.managed.session.set_state(1, "ACTIVE")
     rig.managed.request("pause")
@@ -297,7 +310,9 @@ def test_resume_opens_fingers_and_only_sends_parked_candidates_final_approach():
         [attempt.plan for attempt in session.attempts], rig.configuration.profile,
         session=session, check=lambda _index: None, return_home=rig._execute_home)
     first_motion = next(entry for entry in rig.log if entry[0] == "move")
-    assert first_motion[1] == ("p2_pick",)
+    assert first_motion[1] == ("p2_prepick", "p2_pick")
+    assert first_motion[2]["pick_settling_sec"] == rig.configuration.profile[
+        "timing"]["pick_settling"]
     assert rig.log.index(("output", 2, False)) < rig.log.index(first_motion)
     assert rig.log.index(("output", 14, True)) < rig.log.index(first_motion)
     assert states(rig) == ["INTERRUPTED", "FAILED"]
