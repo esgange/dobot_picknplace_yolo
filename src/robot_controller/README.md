@@ -227,7 +227,14 @@ NEUTRAL at its start. The pre-pick/clearance/exit-transit/exact joint-Home
 route is admitted in order and physically confirms only terminal Home.
 Put-back queues entry `park_transit` before pre-pick/release and exit
 `return_park_transit` after clearance, including at/near Home Z. The exit has no
-timed I/O and uses taught travel rates with global CP(100).
+timed I/O and retains global CP(100). Under rule 112, every put-back target uses
+`v=100` and taught travel acceleration: initial safety rise, entry transit,
+pre-pick, +50 mm release, neutral pre-pick/clearance retreat, exit transit and
+exact joint Home. Put-back never inherits the slow approach/retract rates.
+This applies to explicit return, paused drop, Recovery and automatic loss return.
+If another candidate follows, its normal travel and final-pick approach rates
+resume after the old item's exit transit. Global SpeedFactor still applies
+and is never automatically raised by a put-back.
 
 Explicit `/return_item` cancels the interrupted action with a CANCELED result and
 finishes READY at Home. The GUI uses **RETURN ITEM & STOP** while paused with
@@ -432,10 +439,12 @@ apply solely to the item pick point.
 
 The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
-uses taught travel rates and final descent uses approach rates. Both successful
-and missed-pick rises through pre-pick and clearance use `v=100` with taught
-travel acceleration, subject to global SpeedFactor. Stored retract rates remain
-in schema 9 but are overridden for these live Pick returns.
+uses taught travel rates and final descent uses approach rates. A successful
+pick's first rise to pre-pick uses taught retract speed/acceleration. A missed
+pick's same rise uses `v=100` and taught travel acceleration. The next clearance
+rise uses `v=100` with taught travel acceleration for both outcomes. All rates
+remain subject to global SpeedFactor. Put-back uses `v=100` and travel
+acceleration throughout, including release descent and empty retreat.
 
 The outputs are explicit mutually exclusive states. Finger OPEN is DO2 OFF then
 DO14 ON, CLOSE is DO14 OFF then DO2 ON, and NEUTRAL is both OFF. Vacuum SUCK is
@@ -476,10 +485,12 @@ exhaust pulse; it introduces no teach setting, launch argument or schema change.
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
 confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 100%
 of the clearance rise (DO14 OFF before DO2 ON). `use_grip=false` never enters
-CLOSE. The held return uses the exhausted-miss route and rates: actual stopped
+CLOSE. The held return uses the exhausted-miss route: actual stopped
 pose to pre-pick, clearance, exit transit and exact joint Home, in one
 `candidate_N_pick_to_home` group. Both initial rises preserve stopped X/Y and
-attitude and never descend. Exit `pN_transit_exit` keeps that X/Y/attitude and
+attitude and never descend. The first held lift uses taught retract rates;
+the clearance rise uses `v=100` with taught travel acceleration.
+Exit `pN_transit_exit` keeps that X/Y/attitude and
 uses `max(stopped Z, taught Home Z)` with taught travel rates and no I/O.
 It is always queued, including when no further rise is needed. No intermediate
 arrival wait is added. SUCK stays ON without reissuing it; no EXHAUST or NEUTRAL release
@@ -513,8 +524,9 @@ explicit exit transit and exact joint Home as one
 `candidate_N_pick_to_home` group. Each request still requires ordered `res=0`
 acceptance, but only exact joint Home is physically confirmed; clearance and
 transits are blended control points. Later DI1 cannot reclassify the latched miss
-as success. Successful returns use the same geometry, rates, ordered group and
-final-Home-only confirmation, with held-item outputs and monitoring instead.
+as success. Successful returns use the same geometry, ordered group and
+final-Home-only confirmation, with taught retract rates on the first lift and
+held-item outputs and monitoring throughout.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
 in target order. Each must return `res=0` before the next is sent, with no

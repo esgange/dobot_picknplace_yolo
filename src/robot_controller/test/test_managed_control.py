@@ -8,6 +8,7 @@ import pytest
 
 from robot_controller.errors import (CommandRejected, FeedbackFailure, HeldUnknown,
                                      ManagedInterruption, OperationCanceled, ReturnedToHome)
+from robot_controller.controller import RobotController
 from robot_controller.feedback import SuctionLossDebounce
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ManagedControl
@@ -279,6 +280,52 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     assert retreat[-1].matrix[2, 3] == pytest.approx(.8)
     assert np.array_equal(retreat[-1].matrix[:2, 3], retreat[0].matrix[:2, 3])
     assert not retreat[-1].motion_io
+
+
+@pytest.mark.parametrize("prepick", [50., 80.])
+@pytest.mark.parametrize("dropped", [False, True])
+@pytest.mark.parametrize("continuing", [False, True])
+def test_entire_put_back_uses_full_speed_before_resuming_normal_pick_rates(
+        prepick, dropped, continuing):
+    rig = Rig(held=True, prepick=prepick, count=2 if continuing else 1)
+    rig.global_speed_percent = 37
+    rig.configuration.home_joints = (0.1,) * 6
+    rig._home_plan = lambda origin: RobotController._home_plan(rig, origin)
+    rig._execute_home = lambda **kwargs: RobotController._execute_home(rig, **kwargs)
+    rig._preflight_item_state = lambda held: RobotController._preflight_item_state(rig, held)
+    rig.wait_for_resume = rig.managed.checkpoint
+    rig._candidate_progress = lambda *_args: rig.managed.checkpoint()
+    rig.managed.executing = True
+    if dropped:
+        rig.lose_suction()
+        rig.managed._mark_drop()
+    batches = []
+    rig.hardware.on_move = lambda targets, kwargs: batches.append((targets, kwargs))
+    departure = rig.managed._put_back(dropped=dropped, continue_candidates=continuing)
+    assert batches[0][0][0].name == "pause_safety"
+    assert all((target.speed_percent, target.acceleration_percent) == (100, 80)
+               for targets, _kwargs in batches for target in targets)
+    assert rig.global_speed_percent == 37
+    assert ("pulse", 50) in rig.log
+    if continuing:
+        retreat, origin = departure
+        assert all((target.speed_percent, target.acceleration_percent) == (100, 80)
+                   for target in retreat)
+        rig.managed.executing = False
+        rig._transition("PICKING", "Continue after put-back")
+        rig.managed.run_pick(
+            [attempt.plan for attempt in rig.managed.session.attempts],
+            check=lambda _index: None, departure=retreat, departure_pose=origin)
+        group = next(targets for targets, kwargs in batches if kwargs.get("stop_on_suction"))
+        assert group[len(retreat)].name == "p2_transit"
+        assert all(target.speed_percent == 100 for target in group[:len(retreat)])
+        assert [target.speed_percent for target in group[len(retreat):]] == [80, 80, 80, 6]
+        assert group[-1].acceleration_percent == 50
+    else:
+        assert departure is None
+        assert batches[-1][0][-1].name == "home"
+        assert batches[-1][0][-1].joints_rad == (0.1,) * 6
+    assert rig.global_speed_percent == 37
 
 
 @pytest.mark.parametrize("during_rise", [False, True])

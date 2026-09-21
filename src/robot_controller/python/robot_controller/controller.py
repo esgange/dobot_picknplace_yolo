@@ -1,5 +1,6 @@
 """Robot Controller v2: explicit Startup, deterministic Home/Pick, native cancellation."""
 
+from dataclasses import replace
 import fcntl
 import json
 import os
@@ -755,9 +756,11 @@ class RobotController(Node):
 
     def _execute_home(self, *, preceding=(), require_suction=None, forbid_suction=None,
                       ignore_suction=False, batch_name="home",
-                      confirmed_start_pose=None, queue_through_home=False):
+                      confirmed_start_pose=None, queue_through_home=False, full_speed=False):
         self.raise_if_cancelled()
         self.wait_for_resume()
+        if full_speed and not queue_through_home:
+            raise CommandRejected("Full-speed Home override requires a queued return")
         holding = self.holding_item if require_suction is None else require_suction
         forbidden = not holding if forbid_suction is None else forbid_suction
         if not ignore_suction:
@@ -768,6 +771,8 @@ class RobotController(Node):
                     "Queued-through Home requires preceding targets and a confirmed origin")
             self.configuration.validate_sources(self.root)
             targets = self._home_plan(preceding[-1].matrix)
+            if full_speed:
+                targets = tuple(replace(target, speed_percent=100) for target in targets)
             self.operation_progress(
                 "HOME", "Queueing return through exact Home",
                 waypoint=targets[-1].name)

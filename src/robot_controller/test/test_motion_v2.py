@@ -323,7 +323,7 @@ def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
     (False, False), (True, True), (True, False)])
 @pytest.mark.parametrize("home_z, stopped_z", [
     (1.0, 0.3), (0.454, 0.3), (0.45, 0.3), (1.0, 0.5), (1.0, 1.1)])
-def test_success_matches_exhausted_return_geometry_rates_and_group(
+def test_success_matches_exhausted_route_but_uses_taught_held_retract_rates(
         use_grip, close_on_pick, home_z, stopped_z):
     taught = settings(use_grip=use_grip, close_on_pick=close_on_pick)
     taught["speed"].update(travel_percent=80, retract_percent=6)
@@ -358,8 +358,9 @@ def test_success_matches_exhausted_return_geometry_rates_and_group(
         assert group[-2].matrix[2, 3] == pytest.approx(max(home_z, stopped_z))
         assert not group[-2].motion_io
         assert not group[-2].relative_z
+        first_rates = (6, 40) if acquired else (100, 70)
         assert [(target.speed_percent, target.acceleration_percent)
-                for target in group] == [(100, 70), (100, 70)] + [(80, 70)] * (
+                for target in group] == [first_rates, (100, 70)] + [(80, 70)] * (
                     len(group) - 2)
         for target in group[:-1]:
             assert np.array_equal(target.matrix[:2, 3], hardware.pose[:2, 3])

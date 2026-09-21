@@ -124,6 +124,13 @@ neutralizes the outputs, then the route passes clearance and an explicit exit
 must be at least 50 mm above final pick, with clearance above the release pose;
 equal waypoints skip the zero-length retreat. The pulse is independent of the
 taught final-pick settling interval.
+
+The complete put-back route uses commanded speed 100% with taught travel
+acceleration: safety rise, entry transit, pre-pick, +50 mm release, neutral
+retreat, exit transit and Home. This applies to explicit return, paused drop,
+Recovery and automatic suction-loss return. The global SpeedFactor still scales
+these movements; returning an item does not change the slider setting.
+
 During an active Pick's held retract/Home, confirmed suction loss immediately
 requests Stop and automatically starts put-back after stationary/empty-queue
 confirmation. The same Pick action stays active; no error popup or Recovery
@@ -339,10 +346,13 @@ receives only accepted candidates and does not reinterpret the border.
 
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
-speed 6% and stored retract speed 6%. Live Pick returns after either success or
-miss override both pre-pick/clearance rises to 100% speed with taught travel
-acceleration. Subsequent exit-transit/Home moves use taught travel rates. The stored
-retract fields remain in the schema but do not set these live return rates.
+speed 6% and retract speed 6%. Final pick uses taught approach rates. After a
+successful pickup, the first lift from final pick to pre-pick uses taught retract
+speed and acceleration. Without a picked item, that retract uses speed 100% and
+taught travel acceleration. The following clearance rise also uses speed 100%
+and travel acceleration in both cases. Subsequent normal pick exit-transit/Home
+moves use taught travel rates. Every put-back motion, including its release
+approach, empty retreat and Home, uses speed 100% with taught travel acceleration.
 Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height

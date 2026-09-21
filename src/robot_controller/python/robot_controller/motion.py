@@ -285,9 +285,12 @@ class PickExecutor:
                     # Deferred CLOSE belongs to the end of clearance now that
                     # held and missed returns share the exit-transit route.
                     events = gripper_close_events(100)
+                held_retract = acquired and not upward
                 upward.append(replace(
-                    target, matrix=matrix, speed_percent=100,
-                    acceleration_percent=settings["acceleration"]["travel_percent"],
+                    target, matrix=matrix,
+                    speed_percent=target.speed_percent if held_retract else 100,
+                    acceleration_percent=(target.acceleration_percent if held_retract else
+                                          settings["acceleration"]["travel_percent"]),
                     motion_io=events))
                 stopped_z = matrix[2, 3]
             if (acquired and remember_prepick is not None
@@ -296,7 +299,7 @@ class PickExecutor:
                                  settings["gripper"])
             upward.append(candidate_exit_transit(upward[-1].matrix, plan))
             if acquired:
-                # Use the exhausted-miss route and rates, preserving holding
+                # Use the exhausted-miss route with taught held-retract rates, preserving holding
                 # outputs and monitoring suction through the complete group.
                 return_home(preceding=tuple(upward), require_suction=acquired,
                             forbid_suction=False,

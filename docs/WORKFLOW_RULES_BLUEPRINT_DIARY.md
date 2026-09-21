@@ -4651,6 +4651,44 @@ Never use a floating “latest” version in an issue, script, or deployment not
   issued; live automatic put-back, blended clearance and placement remain
   unverified. No new offline-transfer milestone is claimed.
 
+### 2026-09-21 — Full-speed put-back and taught retract only after successful pick
+
+- Rule 112 supersedes rules 108, 110 and 111 only for the rates described here.
+  The operator requests full speed when returning an item, with slow rates
+  reserved for final picking and retract after actual pickup. Put-back had
+  inherited approach speed/acceleration at its release target and retract
+  speed/acceleration on its first upward neutral segment, causing slow travel.
+- Every put-back movement now uses commanded `v=100` with taught travel
+  acceleration: conditional safety rise, entry transit, pre-pick, nominal pick
+  +50 mm release, neutral pre-pick/clearance retreat, exit transit and exact
+  joint Home. Use the same policy for explicit return, paused drop, Recovery
+  and automatic held-loss return. A scoped queued-Home speed override covers
+  put-back's Home endpoint without changing ordinary Home settings. The global
+  SpeedFactor remains in effect and is never changed by this routine.
+- For normal Pick, final descent retains taught approach speed/acceleration.
+  Once pickup is confirmed, the first stopped-pose lift to pre-pick uses taught
+  retract speed/acceleration again. The same first lift after a miss stays at
+  speed 100% with taught travel acceleration. The subsequent clearance rise
+  stays at speed 100% with taught travel acceleration for both outcomes.
+  Normal transit/Home targets retain taught travel rates. If put-back continues
+  to another candidate, full-speed neutral departure ends at the old exit
+  transit, then the next candidate uses its normal travel and slow pick rates.
+- Preserve both queued transits, actual stopped-pose geometry, CP(100), ordered
+  admission, taught final-pick settling, 50 ms held-loss debounce, 50 ms native
+  exhaust pulse, neutral retreat I/O, acquisition and output supervision, and
+  direct Stop/Pause behavior. No artifact/schema, vendor, runtime version,
+  operator-file or global-speed-setting changes.
+- Verification: all 299 direct controller tests pass; package results report
+  300 tests with zero failures/errors/skips. Tests cover the complete put-back
+  through the real shared Home planner, intact/dropped holding, 50/80 mm
+  pre-pick heights, next-candidate continuation, unchanged global SpeedFactor,
+  slow final approach and successful held retract, fast empty retract, and
+  preserved geometry/I/O across all grip policies. All six changed Python/test
+  files compile and pass ament_flake8. The full root symlink build passes for
+  all 15 packages and `git diff --check` passes. No physical robot commands
+  were issued; live speeds and motion remain unverified. No new offline-transfer
+  milestone is claimed.
+
 ### Future entry template
 
 ```text

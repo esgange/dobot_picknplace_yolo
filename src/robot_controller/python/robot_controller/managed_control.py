@@ -1,5 +1,6 @@
 """Single-owner Pause parking, Continue replanning and intentional item return."""
 
+from dataclasses import replace
 import threading
 
 from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost, HeldUnknown,
@@ -264,10 +265,12 @@ class ManagedControl:
         node.hardware.acquisition_eligible = False
         return pose_matrix(sample.feed["tool_vector_actual"])
 
-    def _rise(self, current, *, holding, preserve_outputs=False):
+    def _rise(self, current, *, holding, preserve_outputs=False, full_speed=False):
         node = self.node
         target = safety_target(current, node.configuration.home_matrix,
                                node.configuration.profile)
+        if full_speed:
+            target = replace(target, speed_percent=100)
         if target.matrix[2, 3] > current[2, 3] + 1e-9:
             node.operation_progress("PAUSE_SAFETY", "Rising vertically to Home Z")
             node.hardware.move_batch((target,), batch_name="pause_safety",
@@ -312,7 +315,8 @@ class ManagedControl:
         node._transition("RETURNING_ITEM", "Returning last held candidate to its release pose")
         node.configuration.validate_sources(node.root)
         current = node.hardware.current_pose()
-        current = self._rise(current, holding=not dropped, preserve_outputs=dropped)
+        current = self._rise(current, holding=not dropped, preserve_outputs=dropped,
+                             full_speed=True)
         approach = approach_from_safety(current, plan)
         if abs(release.matrix[2, 3] - plan[2].matrix[2, 3]) > 1e-9:
             approach += (release,)
@@ -335,7 +339,8 @@ class ManagedControl:
         if not continuing:
             node._execute_home(preceding=retreat, require_suction=False, forbid_suction=True,
                                confirmed_start_pose=release.matrix,
-                               queue_through_home=True, batch_name="return_item_to_home")
+                               queue_through_home=True, full_speed=True,
+                               batch_name="return_item_to_home")
         if not dropped:
             self.session.set_state(self.session.held_index, "RETURNED")
         self.session.held_index = None

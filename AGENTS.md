@@ -183,6 +183,11 @@ and 50 ms exhaust, then continue eligible saved candidates or Home if exhausted.
 The Pick action remains active; no Recovery click is needed for suction loss alone.
 Keep both transits, the 50 ms loss debounce, strict output/feedback/response gates,
 and direct Stop pre-emption. Paused loss still puts back and remains paused.
+Rule 112 makes the complete item put-back route use speed 100% with taught
+travel acceleration, including release approach, neutral retreat and Home.
+Only a successful pick's first lift to pre-pick uses taught retract speed and
+acceleration; empty retract and the clearance rise use speed 100% with travel
+acceleration. Final pick retains taught approach rates; global SpeedFactor applies.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
