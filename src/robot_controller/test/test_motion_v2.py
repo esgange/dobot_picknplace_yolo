@@ -46,7 +46,7 @@ def settings(*, use_grip=True, close_on_pick=True):
 
 def test_timing_and_arrival_policy_constants():
     assert SERVICE_DISCOVERY_TIMEOUT_SEC == OUTPUT_FEEDBACK_TIMEOUT_SEC == 5.0
-    assert COMMAND_RESPONSE_TIMEOUT_SEC == 2.0
+    assert COMMAND_RESPONSE_TIMEOUT_SEC == 5.0
     assert READY_STABLE_SEC == 0.2
     assert MOTION_NO_PROGRESS_SEC == 3.0
     assert MOTION_HARD_CAP_SEC == 300.0

@@ -173,7 +173,7 @@ Stop—never overlapping the two vendor requests. External nodes do not use this
 two-click policy and may call `/robot_controller/stop` immediately in any state.
 
 Feedback is condition-driven from the approximately 100 Hz FeedInfo stream.
-Policies are: five seconds for service discovery, two seconds for each Dobot
+Policies are: five seconds for service discovery and each Dobot
 service response (including Stop and Pause/Continue), five seconds for output
 feedback, one-second feedback age, two-second expected mode changes, three
 consistent pause/error samples, three-second no-progress watchdog, and a
@@ -321,7 +321,7 @@ in target order. Each must return `res=0` before the next is sent, with no
 additional inter-command delay. This is an admission barrier, not an
 intermediate physical-arrival wait: it prevents separate ROS services from
 reversing their dashboard TCP queue order, as observed in a failed Home return.
-A response error, rejection, cancellation, or two-second response deadline invokes independent
+A response error, rejection, cancellation, or five-second response deadline invokes independent
 Stop containment; an outstanding late response remains contained by another
 Stop. Batch start, every dispatch/response, complete group admission,
 interruption and terminal completion are recorded with the batch name.

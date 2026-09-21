@@ -47,7 +47,7 @@ def test_service_console_levels_use_distinct_rclpy_call_sites():
     assert set(seen.values()) == {"INFO", "WARNING", "ERROR"}
 
 
-def test_normal_service_timeout_after_two_seconds_blocks_later_dispatch(monkeypatch):
+def test_normal_service_timeout_after_five_seconds_blocks_later_dispatch(monkeypatch):
     class PendingFuture:
         def done(self):
             return False
@@ -73,14 +73,14 @@ def test_normal_service_timeout_after_two_seconds_blocks_later_dispatch(monkeypa
     transport._begin_service_audit = lambda name, fields: {"name": name}
     transport._finish_service_audit = lambda _audit, outcome, **fields: outcomes.append(
         (outcome, fields))
-    ticks = iter((10.0, 10.5, 11.5, 12.0))
+    ticks = iter((10.0, 10.5, 14.5, 15.0))
     monkeypatch.setattr(hardware_module, "time",
                         SimpleNamespace(monotonic=lambda: next(ticks)))
 
     with pytest.raises(CommandResponseTimeout, match="MovL response timeout"):
         transport.call("MovL", mode=False)
     assert len(dispatches) == 1
-    assert outcomes == [("timeout", {"detail": "no response within 2 seconds",
+    assert outcomes == [("timeout", {"detail": "no response within 5 seconds",
                                      "level": "ERROR"})]
     with pytest.raises(CommandResponseTimeout, match="still awaiting MovL response"):
         transport.call("MovL", mode=False)
@@ -315,6 +315,72 @@ def test_motion_group_preserves_cross_service_dashboard_order():
     assert transport.pending_group is None
 
 
+def test_motion_group_completion_callbacks_do_not_wait_for_group_lock():
+    class ThreadedFuture:
+        def __init__(self):
+            self.completed = False
+            self.callbacks = []
+            self.callback_done = threading.Event()
+
+        def done(self):
+            return self.completed
+
+        def result(self):
+            return SimpleNamespace(res=0)
+
+        def add_done_callback(self, callback):
+            self.callbacks.append(callback)
+
+        def complete(self):
+            self.completed = True
+
+            def run_callbacks():
+                for callback in self.callbacks:
+                    callback(self)
+                self.callback_done.set()
+
+            threading.Thread(target=run_callbacks, daemon=True).start()
+
+    futures = []
+
+    def dispatch(_request):
+        assert all(future.callback_done.is_set() for future in futures)
+        future = ThreadedFuture()
+        futures.append(future)
+        return future
+
+    transport = object.__new__(DobotTransport)
+    transport.response_lock = threading.RLock()
+    transport.pending_response = None
+    transport.pending_group = None
+    transport.clients = {
+        "MovL": SimpleNamespace(service_is_ready=lambda: True, call_async=dispatch)}
+    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+
+    def wait_control(_seconds):
+        future = futures[-1]
+        if not future.done():
+            future.complete()
+            assert future.callback_done.wait(0.5)
+
+    transport.node = SimpleNamespace(
+        check_all_command_owners=lambda _names: None,
+        cancel_requested=lambda: False, wait_control=wait_control)
+    transport.monitor = SimpleNamespace(snapshot=lambda **_kwargs: None)
+    transport.suction_interrupted = False
+    transport.request_stop = lambda _reason: pytest.fail("Stop was not expected")
+    transport._begin_service_audit = lambda name, fields: {
+        "name": name, "fields": fields, "started": hardware_module.time.monotonic()}
+    transport._finish_service_audit = lambda audit, outcome, **_fields: audit.update(
+        outcome=outcome)
+
+    results = transport.call_group(tuple(
+        ("MovL", {"a": float(index)}) for index in range(5)))
+
+    assert len(results) == 5
+    assert all(future.callback_done.is_set() for future in futures)
+
+
 def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeypatch):
     class DeferredFuture:
         def __init__(self):
@@ -374,7 +440,7 @@ def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeyp
     transport._begin_service_audit = begin
     transport._finish_service_audit = finish
     monkeypatch.setattr(
-        hardware_module, "time", SimpleNamespace(monotonic=lambda: 3.0))
+        hardware_module, "time", SimpleNamespace(monotonic=lambda: 6.0))
 
     with pytest.raises(CommandResponseTimeout, match="MovL response timeout"):
         transport.call_group((

@@ -159,7 +159,7 @@ before the next request is sent, with no extra inter-command delay. This
 prevents independent ROS services
 from reversing the dashboard queue, as observed in a failed Home return.
 Responses confirm queue acceptance, not physical arrival. A rejection,
-response error, or two-second group timeout invokes independent Stop containment.
+response error, or five-second group timeout invokes independent Stop containment.
 The independent Stop path is never delayed by motion admission. Planned timed DO
 changes are tracked as commanded transitions, so finger movement requested by
 MovLIO is not mistaken for an external output change while held-item integrity

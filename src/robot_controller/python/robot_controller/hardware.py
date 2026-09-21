@@ -15,7 +15,7 @@ from .motion import pose_reached
 
 
 SERVICE_DISCOVERY_TIMEOUT_SEC = 5.0
-COMMAND_RESPONSE_TIMEOUT_SEC = 2.0
+COMMAND_RESPONSE_TIMEOUT_SEC = 5.0
 OUTPUT_FEEDBACK_TIMEOUT_SEC = 5.0
 MODE_TRANSITION_TIMEOUT_SEC = 2.0
 READY_STABLE_SEC = 0.2
@@ -175,6 +175,16 @@ class DobotTransport:
                     and self.pending_response[0] == name
                     and self.pending_response[1] is future):
                 self.pending_response = None
+        self._completed_response(name, future, audit)
+
+    def _group_completed(self, name, future, audit):
+        # call_group deliberately retains response_lock until the complete
+        # ordered group is admitted. A group completion callback must not wait
+        # for that lock: doing so can occupy every executor worker and prevent
+        # later service responses and feedback subscriptions from running.
+        self._completed_response(name, future, audit)
+
+    def _completed_response(self, name, future, audit):
         late_response = audit.get("outcome") in LATE_RESPONSE_OUTCOMES
         if late_response:
             try:
@@ -347,7 +357,7 @@ class DobotTransport:
                     self.pending_motion_outputs.update(planned_outputs)
                     group.append((name, future, audit))
                     future.add_done_callback(
-                        lambda done, service=name, record=audit: self._pending_completed(
+                        lambda done, service=name, record=audit: self._group_completed(
                             service, done, record))
                     # ROS services have independent callbacks. Dispatch order is
                     # not dashboard TCP order: actual hardware logs showed a

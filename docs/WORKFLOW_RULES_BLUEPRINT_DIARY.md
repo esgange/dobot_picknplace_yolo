@@ -4045,6 +4045,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   OpenCL disabled. The changed Python files pass compilation and `ament_flake8`;
   `git diff --check` passes. No physical hardware was commanded.
 
+### 2026-09-21 — Five-second service replies without callback starvation
+
+- Rule 96 supersedes rules 84 and 92 only where they require a two-second
+  Dobot service-response deadline. Every serialized normal/settings/I/O call,
+  ordered motion-group admission, independent Stop, and Pause/Continue call now
+  waits at most five seconds for its exact ROS response and still requires
+  `res=0`. Service discovery and output-feedback confirmation remain five
+  seconds; one-second canonical feedback freshness, mode transitions, physical
+  motion watchdogs, response ordering, and Stop/late-acknowledgement containment
+  are unchanged.
+- The 2026-09-21 candidate-1-to-candidate-2 retry exposed a controller-local
+  executor starvation rather than a slow Dobot acceptance. The controller held
+  its motion-group `response_lock` while each completed future callback tried to
+  acquire that same lock. With one action thread and three completed callbacks,
+  all four executor workers were occupied after the third accepted request, so
+  the fourth response and canonical feedback callbacks could not run. Bringup
+  recorded the fourth `MovL` accepted as queue ID 14 in about 9 ms; the
+  controller processed its ROS future roughly 0.93 seconds later, immediately
+  after the one-second feedback-freshness failure unwound the group lock.
+- Motion-group completions now use lock-free group bookkeeping while normal
+  single-response completion retains its protected pending-response cleanup.
+  This does not parallelize motion dispatch: each `MovL`, `MovLIO`, or
+  `RelMovLUser` response must still return `res=0` before the next request is
+  sent. Late responses still invoke the independent Stop path.
+- Verification is software-only. A threaded five-request regression exercises
+  completion callbacks from separate executor-like threads and requires each
+  callback to finish before the next dispatch; it reproduces the old worker
+  exhaustion contract without ROS or hardware. All 158 direct Controller tests
+  and all 158 package-reported tests pass with zero failures/errors/skips. The
+  changed Python files pass compilation and `ament_flake8`; the complete
+  15-package workspace build and `git diff --check` pass. No robot, camera,
+  detector, or Dobot service was launched.
+
 ### Future entry template
 
 ```text
