@@ -308,6 +308,18 @@ feedback, DI1 LOW and legal unchanged outputs before CP or saved-joint motion.
 Report exact remaining blockers after five seconds. Keep Stop pre-emption,
 feedback/output monitoring, no error resets and no setup retries mid-replay.
 
+Rule 130 replaces calibration rule 129's EnableRobot/StopDrag pair with Motion
+Debug's ordered startup on confirmed automatic Start: best-effort StopMoveJog,
+best-effort DisableRobot/disabled confirmation, strict EnableRobot/enabled
+confirmation, SpeedFactor 50%, Tool 0, Tool 1 TCP zero and CP 100%. Only those
+first two commands may warn and continue on absence, rejection, exception or
+timeout; missing Disabled confirmation also warns. All later steps are strict,
+with five-second response/confirmation bounds and no automatic setup retry.
+Keep fresh feedback, ownership, direct Stop and final stationary safe-state
+confirmation before MovJ. Abandoned optional replies cannot block progression,
+but late accepted setup commands require Stop containment. No launch-time
+initialization, StopDrag, error/output reset or controller dependency is added.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

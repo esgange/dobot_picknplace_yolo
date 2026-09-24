@@ -11,7 +11,8 @@ from xml.etree import ElementTree
 
 from ament_index_python.packages import get_package_share_directory
 from dobot_msgs_v4.msg import RobotStatus
-from dobot_msgs_v4.srv import CP, EnableRobot, MovJ, Stop, StopDrag
+from dobot_msgs_v4.srv import (
+    CP, DisableRobot, EnableRobot, MovJ, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
 import numpy as np
 from rclpy.callback_groups import ReentrantCallbackGroup
 from std_msgs.msg import String
@@ -28,10 +29,20 @@ FEEDBACK_MAX_AGE = 1.0
 MOTION_TIMEOUT = 300.0
 MOTION_PROGRESS_TIMEOUT = 3.0
 RATE_PERCENT = 20
+BEST_EFFORT_SETUP = frozenset(("StopMoveJog", "DisableRobot"))
+SETUP_COMMANDS = BEST_EFFORT_SETUP | {"EnableRobot", "SpeedFactor", "Tool", "SetTool", "CP"}
 
 
 class ReplayStopped(RuntimeError):
     pass
+
+
+class CommandFailure(RuntimeError):
+    """A service absence, dispatch error, rejection or response timeout."""
+
+
+class ReadinessTimeout(RuntimeError):
+    """Live feedback did not confirm the requested startup state in time."""
 
 
 class MotionArrivalTimeout(RuntimeError):
@@ -107,7 +118,7 @@ def joints_at_target(sample, joints):
 
 
 def readiness_problem(sample):
-    """Explain final motion gates after the two best-effort setup commands."""
+    """Explain final motion gates after the Motion Debug initialization sequence."""
     feed = sample.feed
     expected = {"robot_mode": 5, "EnableStatus": 1, "RunningStatus": 0,
                 "isRunQueuedCmd": 0, "ErrorStatus": 0, "CollisionStates": 0,
@@ -164,7 +175,8 @@ class MaintenanceRobot:
         self.last_owner_check = 0.
         self.clients = {kind.__name__: node.create_client(
             kind, SERVICE_PREFIX + kind.__name__, callback_group=self.group)
-            for kind in (CP, MovJ, Stop, StopDrag, EnableRobot)}
+            for kind in (CP, MovJ, Stop, StopMoveJog, DisableRobot, EnableRobot,
+                         SpeedFactor, Tool, SetTool)}
         node.create_subscription(String, FEED_TOPIC, self._on_feed, 10,
                                  callback_group=self.group)
         node.create_subscription(RobotStatus, STATUS_TOPIC, self._on_status, 10,
@@ -256,8 +268,17 @@ class MaintenanceRobot:
             names = self.node.get_service_names_and_types_by_node(node, namespace)
             if SERVICE_PREFIX + name in (service for service, _types in names):
                 providers.append((node, namespace))
-        if providers != [(self.bringup, "/")] or not self.clients[name].service_is_ready():
-            raise RuntimeError(f"Canonical Dobot {name} service unavailable or ambiguous")
+        if providers and providers != [(self.bringup, "/")]:
+            raise RuntimeError(f"Dobot {name} service has ambiguous/noncanonical ownership")
+        if not providers or not self.clients[name].service_is_ready():
+            raise CommandFailure(f"Canonical Dobot {name} service unavailable")
+
+    def _unanswered_command(self):
+        # Only timed-out best-effort preconditioning may be left unanswered.
+        # Keep its callback: a late accepted stop/disable still contains the run.
+        return any(not record["future"].done()
+                   and not (record.get("best_effort") and record.get("abandoned"))
+                   for record in self.pending)
 
     def prepare(self, samples):
         with self.condition:
@@ -265,7 +286,8 @@ class MaintenanceRobot:
         self.bringup = configured_bringup(workspace_root())
         self.check_owners()
         for name in self.clients:
-            self._service_owner(name)
+            if name not in BEST_EFFORT_SETUP:
+                self._service_owner(name)
         limits = Cr10JointLimits(Path(get_package_share_directory("cra_description"))
                                  / "urdf/cr10_robot.xacro")
         if not 5 <= len(samples) <= 1000:
@@ -274,7 +296,7 @@ class MaintenanceRobot:
         with self.condition:
             if self.stop_attempt is not previous_stop:
                 raise ReplayStopped("Stop interrupted automatic capture preparation")
-            if any(not record["future"].done() for record in self.pending):
+            if self._unanswered_command():
                 raise RuntimeError("A previous Dobot response is still unanswered")
             if self.stop_attempt is not None and not self.stop_attempt.get("confirmed"):
                 raise RuntimeError("Stop is unconfirmed; use Stop again before restarting")
@@ -304,10 +326,27 @@ class MaintenanceRobot:
             raise RuntimeError("Fresh canonical /joint_states are required for robot readiness")
 
     def ensure_ready(self, progress):
+        progress("Startup: StopMoveJog (best effort).")
+        self._optional_setup("StopMoveJog", StopMoveJog.Request())
+        progress("Startup: DisableRobot (best effort).")
+        if self._optional_setup("DisableRobot", DisableRobot.Request()):
+            progress("Waiting for disabled robot feedback (best effort).")
+            try:
+                self._wait_mode(4)
+            except ReadinessTimeout as exc:
+                self._setup_warning(str(exc))
         progress("Sending EnableRobot for automatic calibration.")
         self.command("EnableRobot", EnableRobot.Request())
-        progress("Sending StopDrag for automatic calibration.")
-        self.command("StopDrag", StopDrag.Request())
+        progress("Waiting for enabled robot feedback.")
+        self._wait_mode(5)
+        for name, request, description in (
+                ("SpeedFactor", SpeedFactor.Request(ratio=50), "SpeedFactor 50%"),
+                ("Tool", Tool.Request(index=0), "Tool 0"),
+                ("SetTool", SetTool.Request(index=1, value="{0.000,0.000,0.000,0.000,0.000,0.000}"),
+                 "Tool 1 TCP zero"),
+                ("CP", CP.Request(r=100), "CP 100%")):
+            progress(f"Startup: setting {description}.")
+            self.command(name, request)
         progress("Waiting for enabled, stationary, idle robot feedback.")
         self._wait_startup_state()
         with self.condition:
@@ -316,9 +355,33 @@ class MaintenanceRobot:
                 raise RuntimeError(f"Robot readiness changed before motion: {problem}")
             self.preparing = False
         self.node._event_logger.record(
-            "INFO", "replay_robot_ready", "Enabled stationary idle robot confirmed")
+            "INFO", "replay_robot_ready",
+            "Enabled stationary idle robot confirmed; SpeedFactor 50%, Tool 0, Tool 1 TCP zero, "
+            "CP 100%")
 
-    def _wait_startup_state(self):
+    def _setup_warning(self, reason):
+        self.node._event_logger.record("WARNING", "replay_setup_warning", reason)
+
+    def _optional_setup(self, name, request):
+        try:
+            self.command(name, request)
+            return True
+        except CommandFailure as exc:
+            self._setup_warning(f"{exc}; continuing best-effort startup")
+            return False
+
+    def _wait_mode(self, mode):
+        def problem(sample):
+            enabled = mode == 5
+            if (sample.feed["robot_mode"] != mode or sample.feed["EnableStatus"] != int(enabled)
+                    or sample.status_enabled != enabled):
+                return (f"requires mode {mode}; robot_mode={sample.feed['robot_mode']}, "
+                        f"EnableStatus={sample.feed['EnableStatus']}, "
+                        f"RobotStatus enabled={sample.status_enabled}")
+            return ""
+        self._wait_startup_state(problem, require_stationary=False)
+
+    def _wait_startup_state(self, problem=readiness_problem, *, require_stationary=True):
         # Confirmation must advance beyond feedback observed after the reply;
         # service acceptance alone never authorizes a motion command.
         accepted = self.guard()
@@ -328,13 +391,14 @@ class MaintenanceRobot:
             sample = self.guard()
             valid = (sample.sequence > accepted.sequence
                      and sample.feed["controller_timer"] > accepted.feed["controller_timer"]
-                     and not readiness_problem(sample))
-            if valid and stationary(previous, sample):
+                     and not problem(sample))
+            if valid and (not require_stationary or stationary(previous, sample)):
                 return sample
             previous = sample if valid else None
             if time.monotonic() >= deadline:
-                reason = readiness_problem(sample) or "stationary feedback not confirmed"
-                raise RuntimeError(f"Robot not ready after EnableRobot/StopDrag: {reason}")
+                reason = problem(sample) or "stationary feedback not confirmed"
+                raise ReadinessTimeout(
+                    f"Startup feedback not confirmed within five seconds: {reason}")
             self.cancel.wait(.01)
 
     def guard(self):
@@ -363,7 +427,7 @@ class MaintenanceRobot:
             if self.operator_cancel.is_set():
                 raise ReplayStopped("Operator stopped automatic capture")
             if (self.stop_attempt is not attempt or not attempt.get("confirmed")
-                    or any(not record["future"].done() for record in self.pending)):
+                    or self._unanswered_command()):
                 raise RuntimeError(
                     "Retry requires the same confirmed Stop and all command replies")
             sample = self._state_guard()
@@ -395,29 +459,33 @@ class MaintenanceRobot:
             record["contained"] = True
             try:
                 result = record["future"].result()
-                if (record["name"] in ("MovJ", "EnableRobot", "StopDrag")
+                if (record["name"] in SETUP_COMMANDS | {"MovJ"}
                         and result is not None and result.res == 0):
                     self.node._event_logger.record(
                         "WARNING", "replay_late_command_acceptance",
                         f"Stopping late {record['name']} acceptance")
                     self.request_stop(fresh=True)
             except Exception as exc:
-                self.node._event_logger.record("ERROR", "replay_late_reply_failed", str(exc))
+                level = "WARNING" if record.get("best_effort") else "ERROR"
+                self.node._event_logger.record(level, "replay_late_reply_failed", str(exc))
 
     def command(self, name, request):
         self._service_owner(name)
         with self.condition:
             self.guard()
-            setup_command = name in ("EnableRobot", "StopDrag")
+            setup_command = name in SETUP_COMMANDS
             if self.preparing:
                 if not setup_command:
                     raise RuntimeError(f"{name} is not allowed in the current readiness state")
-            elif setup_command:
+            elif setup_command and name != "CP":
                 raise RuntimeError("Robot readiness setup requires a new explicit Start")
-            if any(not record["future"].done() for record in self.pending):
+            if self._unanswered_command():
                 raise RuntimeError("Previous Dobot response remains unanswered")
-            future = self.clients[name].call_async(request)
-            record = {"future": future, "name": name}
+            try:
+                future = self.clients[name].call_async(request)
+            except Exception as exc:
+                raise CommandFailure(f"{name} dispatch failed: {exc}") from exc
+            record = {"future": future, "name": name, "best_effort": name in BEST_EFFORT_SETUP}
             self.pending.append(record)
             future.add_done_callback(lambda _done: self._late_reply(record))
         self.node._event_logger.record("INFO", "replay_command_sent", name)
@@ -426,17 +494,15 @@ class MaintenanceRobot:
             while not future.done():
                 self.guard()
                 if time.monotonic() >= deadline:
-                    raise RuntimeError(f"{name} response timed out after five seconds")
+                    raise CommandFailure(f"{name} response timed out after five seconds")
                 self.cancel.wait(.01)
             self.guard()
-            result = future.result()
-            if result is None or (result.res != 0 and not setup_command):
-                raise RuntimeError(f"{name} rejected: {None if result is None else result.res}")
-            if result.res != 0:
-                self.node._event_logger.record(
-                    "WARNING", "replay_setup_rejected",
-                    f"{name} returned {result.res}; continuing setup, then checking robot feedback")
-                return result
+            try:
+                result = future.result()
+            except Exception as exc:
+                raise CommandFailure(f"{name} response failed: {exc}") from exc
+            if result is None or result.res != 0:
+                raise CommandFailure(f"{name} rejected: {None if result is None else result.res}")
             self.node._event_logger.record("INFO", "replay_command_accepted", name)
             return result
         except Exception:

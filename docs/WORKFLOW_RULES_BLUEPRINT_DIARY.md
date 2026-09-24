@@ -5425,6 +5425,59 @@ Never use a floating “latest” version in an issue, script, or deployment not
   ament_flake8 and diff checks pass. Hardware readiness remains untested;
   restart the calibration GUI to load this change.
 
+### 2026-09-24 — Automatic calibration adopts Motion Debug initialization
+
+- Rule 130 supersedes rule 129's EnableRobot/StopDrag setup. Study the current
+  Motion Debug implementation and documented rule 12, then use its exact startup
+  request order, values and best-effort policy for confirmed automatic Start:
+  StopMoveJog; DisableRobot and disabled confirmation; EnableRobot and enabled
+  confirmation; SpeedFactor 50%; Tool 0; SetTool index 1 with six zero TCP values;
+  CP 100%. Remove calibration's StopDrag client and duplicate post-startup CP.
+  Motion Debug itself and the production controller remain unchanged.
+- Only StopMoveJog and DisableRobot are best effort. Their unavailable services,
+  dispatch/response exceptions, rejected/empty responses or five-second timeouts
+  warn and advance without retries. After successful DisableRobot, wait at most
+  five seconds for advancing mode 4/EnableStatus 0/disabled RobotStatus; missing
+  confirmation also warns. EnableRobot and all settings require res=0 within
+  five seconds. Advancing mode 5/EnableStatus 1/enabled RobotStatus confirmation
+  is mandatory before sending settings. Any strict failure stops the run and
+  prevents every later startup step or motion.
+- Preserve calibration's explicit Start lifecycle, fresh canonical robot/joint
+  feedback, sole publishers/services and exclusion of competing command tools.
+  Do not copy Motion Debug's automatic launch-time startup/waiting GUI lifecycle
+  or introduce its initial mode restriction; the disable/enable sequence may
+  begin with fresh drag-mode feedback as requested for this maintenance workflow.
+  After settings, confirm two advancing stationary safe samples with an empty
+  queue, no errors/collision, user/tool zero, DI1 LOW and legal unchanged outputs
+  before MovJ. Activating Tool 0 therefore precedes the final tool-zero check.
+  Report specific final blockers. Never change outputs or clear errors.
+- Optional timed-out requests remain tracked but are the narrow exception to
+  unanswered-request admission blocking. Preserve callbacks and independently
+  Stop on any late accepted abandoned startup request, including optional stop
+  or disable; old replies cannot advance startup. Ambiguous/noncanonical service
+  ownership, stale/malformed feedback, output changes, native failures and
+  operator Stop remain terminal throughout optional steps. No initialization
+  repeats mid-replay, after sample retry or without another explicit Start.
+- Saved-joint commands retain v=20/a=20, now explicitly scaled by the initialized
+  global SpeedFactor 50%, as when Motion Debug was previously used to enable
+  the robot. Keep the existing one-second capture hold, three-attempt recovery,
+  private worker and two ROS executor threads. Update Start confirmation, AGENTS
+  and root/package READMEs. No vendor/controller/FSM, configuration, artifact
+  schema or operator-artifact changes; no new offline-transfer milestone.
+- Validation: camera_calibration symlink build and all 232 package tests pass
+  (55 core, 173 automatic/maintenance, four private-runtime installation), with
+  zero errors, failures or skips. Isolated domain-232 fake-Dobot tests verify the
+  complete ordered startup followed by replay from enabled, disabled and drag
+  states, optional rejections, camera/settling recovery and Stop during solving.
+  Regressions cover optional absence/rejection/exception/timeout and missing
+  Disabled confirmation, strict rejection/exception/timeout/empty responses at
+  every mandatory step, enabled confirmation before settings, exact request
+  values, Tool 0 correction, final blockers, Stop pre-emption at each step and
+  late accepted optional-command containment before settings or after readiness.
+  ament_flake8 and diff checks pass. No physical robot commands or hardware
+  process launches/restarts were used. Hardware initialization remains untested;
+  restart the calibration GUI to load this change.
+
 ### Future entry template
 
 ```text

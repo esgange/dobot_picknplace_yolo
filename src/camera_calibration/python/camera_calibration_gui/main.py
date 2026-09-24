@@ -1624,12 +1624,13 @@ class CalibrationWindow(QtWidgets.QWidget):
         if QtWidgets.QMessageBox.question(
             self, "Start automatic robot capture",
             f"Move through {len(recipe.samples)} saved joint positions in order at "
-            "20% speed and acceleration (global speed also applies)?\n\n"
+            "20% speed and acceleration (startup sets global speed to 50%)?\n\n"
             "Confirm the starting position and all connecting joint-motion paths are clear. "
             "Close robot_controller, Motion Debug and Gripper Diagnostics first. "
             "Release the robot after hand guiding. With fresh joint/robot feedback, calibration "
-            "will send EnableRobot then StopDrag once each, even when already enabled or "
-            "not dragging. Rejection replies are logged; feedback must confirm stationary "
+            "runs Motion Debug startup: StopMoveJog and DisableRobot (best effort), then "
+            "EnableRobot and enabled confirmation, SpeedFactor 50%, Tool 0, Tool 1 TCP zero "
+            "and CP 100%. Enable and settings must succeed. Feedback must confirm stationary "
             "enabled/idle, no faults, an empty queue, user/tool 0 and DI1 LOW before motion. "
             "Gripper outputs stay unchanged. Current samples will be replaced by fresh captures. "
             "Each position gets three automatic attempts, with a one-second stationary hold "

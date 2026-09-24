@@ -4,8 +4,6 @@ import threading
 import time
 import uuid
 
-from dobot_msgs_v4.srv import CP
-
 from .maintenance_robot import (
     MaintenanceRobot, MotionArrivalTimeout, ReplayStopped, StationarityLost)
 
@@ -245,7 +243,6 @@ class AutomaticCapture:
     def _run(self, targets):
         try:
             self.robot.ensure_ready(lambda message: setattr(self, "message", message))
-            self.robot.command("CP", CP.Request(r=100))
             for index, joints in enumerate(targets, 1):
                 origin = self.robot.guard()
                 anchor = None

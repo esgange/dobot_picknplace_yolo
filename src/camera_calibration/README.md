@@ -18,7 +18,7 @@ Calibration needs actual `/joint_states`, fresh `base_link <- Link6`, and
 the camera's color image, color CameraInfo, and internal camera TF.
 It never launches cameras, bringup, RViz or the controller. Manual capture is
 read-only. Explicit automatic capture is an attended maintenance exception, like Motion
-Debug and Gripper Diagnostics: it sends guarded StopDrag/EnableRobot/CP/MovJ/Stop
+Debug and Gripper Diagnostics: it sends guarded startup, MovJ and Stop
 requests directly to canonical Dobot bringup. It has no Robot Controller dependency.
 Depth is neither subscribed to nor required. Camera-launcher settings and
 supervision remain independent and unchanged.
@@ -168,12 +168,11 @@ Loading alone never moves the robot.
    setup commands. Launch and loading perform no enable or motion.
 3. Click **Start Automatic Capture** and confirm that the starting position and
    all connecting joint paths are clear; release the robot after hand guiding.
-   Calibration sends EnableRobot then StopDrag once each, regardless of initial
-   mode. It logs rejection replies as warnings and checks actual readiness before
-   moving. Replay uses exact saved joint targets
-   with MovJ at 20% speed/acceleration; the existing global speed factor also
-   applies. Calibration then sets global CP(100), preserves all outputs, and
-   never disables the robot or resets the gripper during replay.
+   Calibration runs the Motion Debug initialization sequence below and confirms
+   readiness before moving. Replay uses exact saved joint targets with MovJ at
+   20% speed/acceleration, scaled by the startup global SpeedFactor of 50%.
+   Initialization sets CP(100) and preserves all outputs. The disable/enable
+   cycle occurs only at startup; gripper outputs are never reset.
 4. After validating startup inputs and all CR10 target limits, Start clears
    working observations and the solution. Each position waits for valid camera
    input before moving. The saved joints and completed queue are physically
@@ -206,26 +205,43 @@ fresh within 1 second, with an advancing controller timer. Stationarity,
 enabled/idle state, DI1 LOW and unchanged outputs remain monitored during
 capture and solving; only a successful capture permits the next move.
 
-Robot readiness setup occurs only after confirmed Start, before CP or any MovJ.
-Always send `EnableRobot` first and wait for its reply, then send `StopDrag` once
-and wait for its reply, including when already enabled or not dragging. These
-two commands alone accept nonzero `res` as a logged warning; an empty, failed or
-unanswered response remains terminal. Each response has a five-second deadline.
-There is no initial mode/state gate or intermediate feedback wait between them.
-After both replies, allow five seconds for advancing fresh feedback; two distinct
-samples must show stationary TCP/joints, mode 5, EnableStatus 1, enabled
-RobotStatus, an empty queue, no error/collision, user/tool zero, DI1 LOW and no
+Robot readiness setup occurs only after confirmed Start, before any MovJ. It
+uses the same requests, order, values and best-effort policy as Motion Debug:
+
+1. `StopMoveJog` (best effort).
+2. `DisableRobot` (best effort). After success, wait up to five seconds for
+   advancing mode 4/disabled feedback; missing confirmation is a warning.
+3. `EnableRobot` (strict), followed by advancing mode 5/enabled confirmation.
+4. `SpeedFactor(ratio=50)`.
+5. `Tool(index=0)`.
+6. `SetTool(index=1, value="{0.000,0.000,0.000,0.000,0.000,0.000}")`.
+7. `CP(r=100)`.
+
+Each response/confirmation has a five-second deadline. Only StopMoveJog and
+DisableRobot continue on missing services, rejection, empty/failed responses,
+dispatch exceptions or timeouts, recording WARNING. Every other command requires
+`res=0`; enable confirmation is strict and precedes all settings. Never retry
+setup automatically or send StopDrag. Fresh canonical feedback is the initial
+admission requirement, including when starting from drag mode; startup must
+confirm enabled mode before any settings or replay.
+
+After CP, allow five seconds for final advancing feedback; two distinct samples
+must show stationary TCP/joints, mode 5, EnableStatus 1, enabled RobotStatus,
+an empty queue, no error/collision, user/tool zero, DI1 LOW and no
 opposing gripper outputs HIGH together. Report each remaining failed condition
-explicitly. Only confirmed readiness allows CP(100) or motion, whose responses
-remain strictly `res=0`. The existing validated `/joint_states` must remain at most
-one second old throughout setup. Readiness work runs in the operation thread,
+explicitly. Only confirmed readiness allows motion. The existing validated
+`/joint_states` must remain at most one second old throughout setup.
+Readiness work runs in the operation thread,
 so the GUI and independent Stop remain available.
 Fresh robot feedback, sole command ownership, unchanged outputs and independent
-Stop remain monitored throughout both commands and confirmation. Setup failure
+Stop remain monitored throughout initialization and confirmation. Strict setup failure
 is terminal for that run and requests physical Stop confirmation;
 it never uses the three-attempt observation retry or clears robot errors. A late
-accepted abandoned StopDrag/EnableRobot command triggers another containment
-Stop. Once replay begins, disabled/drag feedback aborts instead of automatically
+accepted abandoned startup command triggers another containment Stop. Timed-out
+best-effort requests remain tracked for that containment but do not block later
+startup steps or replay solely because their responses are missing. Ambiguous
+service ownership and lost feedback remain terminal even during optional steps.
+Once replay begins, disabled/drag feedback aborts instead of automatically
 enabling or exiting drag again. Another explicit Start is required. Completion
 leaves the robot enabled at its final position.
 

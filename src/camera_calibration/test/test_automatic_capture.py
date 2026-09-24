@@ -10,7 +10,8 @@ import time
 import numpy as np
 import pytest
 from dobot_msgs_v4.msg import RobotStatus
-from dobot_msgs_v4.srv import CP, EnableRobot, MovJ, Stop, StopDrag
+from dobot_msgs_v4.srv import (
+    CP, DisableRobot, EnableRobot, MovJ, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
 from rclpy.clock import ClockType
 from rclpy.task import Future
 from rclpy.time import Time
@@ -23,6 +24,9 @@ from camera_calibration_gui.calibration_core import JOINT_NAMES, output_path_for
 from camera_calibration_gui.main import CalibrationNode, CalibrationWindow, TransformStamped
 from camera_calibration_gui.maintenance_robot import (
     Cr10JointLimits, MaintenanceRobot, RobotSample, idle, joints_at_target, stationary)
+
+SETUP_KINDS = (StopMoveJog, DisableRobot, EnableRobot, SpeedFactor, Tool, SetTool, CP)
+SETUP_SEQUENCE = [kind.__name__ for kind in SETUP_KINDS]
 
 
 def ros_time(seconds):
@@ -336,7 +340,7 @@ def test_motion_cannot_finish_on_old_queue_id_or_unchanged_feedback(robot, monke
 
 
 @pytest.mark.parametrize("scenario", ["normal", "stop_during_solve", "camera_gap", "disabled",
-                                      "drag_rejected_enable", "drag_enabled", "settling"])
+                                      "optional_rejected", "drag", "settling"])
 def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, scenario):
     """Isolated fake Dobot services: no controller, camera hardware or robot connection."""
     import rclpy
@@ -400,7 +404,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
             self.data = feedback()
             if scenario == "disabled":
                 self.data.update(robot_mode=4, EnableStatus=0)
-            elif scenario.startswith("drag_"):
+            elif scenario == "drag":
                 self.data.update(robot_mode=6)
             self.startup_commands = []
             self.cp = []
@@ -413,33 +417,57 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
             self.status_pub = self.create_publisher(RobotStatus, robot_module.STATUS_TOPIC, 10)
             self.joint_pub = self.create_publisher(JointState, "/joint_states", 10)
             for kind, callback in ((CP, self.cp_command), (MovJ, self.move), (Stop, self.stop),
-                                   (StopDrag, self.stop_drag), (EnableRobot, self.enable)):
+                                   (StopMoveJog, self.stop_jog), (DisableRobot, self.disable),
+                                   (EnableRobot, self.enable), (SpeedFactor, self.speed),
+                                   (Tool, self.tool), (SetTool, self.set_tool)):
                 self.create_service(kind, robot_module.SERVICE_PREFIX + kind.__name__, callback,
                                     callback_group=self.group)
             self.create_timer(.02, self.publish, callback_group=self.group)
 
         def cp_command(self, request, response):
             assert self.data["robot_mode"] == 5 and self.data["EnableStatus"] == 1
+            self.startup_commands.append("CP")
             self.cp.append(request.r)
             response.res = 0
             return response
 
-        def stop_drag(self, _request, response):
+        def stop_jog(self, _request, response):
+            self.startup_commands.append("StopMoveJog")
+            response.res = -1 if scenario == "optional_rejected" else 0
+            return response
+
+        def disable(self, _request, response):
             with self.lock:
-                self.startup_commands.append("StopDrag")
-                response.res = 0 if self.data["robot_mode"] == 6 else -1
+                self.startup_commands.append("DisableRobot")
+                response.res = -1 if scenario == "optional_rejected" else 0
                 if response.res == 0:
-                    self.data.update(robot_mode=5, EnableStatus=1)
+                    self.data.update(robot_mode=4, EnableStatus=0)
             return response
 
         def enable(self, _request, response):
             with self.lock:
                 self.startup_commands.append("EnableRobot")
-                response.res = 0 if self.data["robot_mode"] == 4 else -1
-                if scenario == "drag_enabled":
-                    response.res = 0
-                if self.data["robot_mode"] == 4:
-                    self.data.update(robot_mode=5, EnableStatus=1)
+                response.res = 0
+                self.data.update(robot_mode=5, EnableStatus=1)
+            return response
+
+        def speed(self, request, response):
+            assert self.data["robot_mode"] == 5 and request.ratio == 50
+            self.startup_commands.append("SpeedFactor")
+            response.res = 0
+            return response
+
+        def tool(self, request, response):
+            assert request.index == 0
+            self.startup_commands.append("Tool")
+            self.data["toolCoordinate"] = 0
+            response.res = 0
+            return response
+
+        def set_tool(self, request, response):
+            assert request.index == 1 and request.value == "{0.000,0.000,0.000,0.000,0.000,0.000}"
+            self.startup_commands.append("SetTool")
+            response.res = 0
             return response
 
         def move(self, request, response):
@@ -519,7 +547,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
                               else list(range(5 if stop_during_solve else 6)))
         assert len(dobot.moves) == len(expected_positions)
         assert dobot.cp == [100]
-        assert dobot.startup_commands == ["EnableRobot", "StopDrag"]
+        assert dobot.startup_commands == SETUP_SEQUENCE
         for index, request in zip(expected_positions, dobot.moves):
             assert request.mode and request.a == pytest.approx(np.rad2deg(index * .01))
         if stop_during_solve:
@@ -885,9 +913,9 @@ def test_transient_camera_gap_recovers_within_same_attempt(node, monkeypatch):
     node.automatic.robot.move.assert_not_called()
 
 
-def readiness_rig(robot, monkeypatch, mode, drag_exit=5):
+def readiness_rig(robot, monkeypatch, mode):
     """Advance real guarded readiness through fake replies and canonical feedback."""
-    rig = SimpleNamespace(now=time.monotonic(), calls=[], behavior={}, futures={},
+    rig = SimpleNamespace(now=time.monotonic(), calls=[], behavior={}, futures={}, requests={},
                           data=feedback(robot_mode=mode, EnableStatus=int(mode != 4)))
     monkeypatch.setattr(robot_module, "time", SimpleNamespace(monotonic=lambda: rig.now))
     monkeypatch.setattr(robot_module, "configured_bringup", lambda _root: "dobot")
@@ -901,23 +929,38 @@ def readiness_rig(robot, monkeypatch, mode, drag_exit=5):
         rig.now += .1
         publish()
 
-    def send(name, kind, _request):
+    def send(name, kind, request):
         rig.calls.append(name)
+        rig.requests[name] = request
         future = Future()
         rig.futures[name] = future
         behavior = rig.behavior.get(name, "success")
+        if behavior == "dispatch_error":
+            raise RuntimeError("Dispatch failed")
         if behavior == "unanswered":
             return future
-        future.set_result(None if behavior == "empty" else
-                          kind.Response(res=-1 if behavior == "rejected" else 0))
+        if behavior == "response_error":
+            future.set_exception(RuntimeError("Response failed"))
+        else:
+            future.set_result(None if behavior == "empty" else
+                              kind.Response(res=-1 if behavior == "rejected" else 0))
         if behavior == "success":
-            current = rig.data["robot_mode"]
-            target_mode = (drag_exit if name == "StopDrag" and current == 6 else
-                           5 if name == "EnableRobot" and current == 4 else current)
-            rig.data.update(robot_mode=target_mode, EnableStatus=int(target_mode != 4))
+            if name in ("DisableRobot", "EnableRobot"):
+                enabled = name == "EnableRobot"
+                rig.data.update(robot_mode=5 if enabled else 4, EnableStatus=int(enabled))
+            elif name == "Tool":
+                rig.data["toolCoordinate"] = request.index
         return future
 
-    for name, kind in (("StopDrag", StopDrag), ("EnableRobot", EnableRobot)):
+    def service_owner(name):
+        if rig.behavior.get(name) == "missing":
+            raise robot_module.CommandFailure(f"{name} service unavailable")
+        if rig.behavior.get(name) == "ambiguous":
+            raise RuntimeError(f"{name} ownership ambiguous")
+
+    robot._service_owner = service_owner
+    for kind in SETUP_KINDS:
+        name = kind.__name__
         robot.clients[name].call_async.side_effect = (
             lambda request, name=name, kind=kind: send(name, kind, request))
     monkeypatch.setattr(robot.cancel, "wait", advance)
@@ -927,28 +970,30 @@ def readiness_rig(robot, monkeypatch, mode, drag_exit=5):
     return rig
 
 
-@pytest.mark.parametrize("mode,rejected", [
-    (5, ()), (4, ()), (6, ()), (5, ("EnableRobot", "StopDrag")),
-    (4, ("StopDrag",)), (6, ("EnableRobot",))])
+@pytest.mark.parametrize("mode", [4, 5, 6, 11])
 def test_robot_prepares_itself_once_and_requires_advancing_idle_feedback(
-        robot, monkeypatch, mode, rejected):
+        robot, monkeypatch, mode):
     rig = readiness_rig(robot, monkeypatch, mode)
-    rig.behavior.update({name: "rejected" for name in rejected})
+    rig.data["toolCoordinate"] = 1  # Tool 0 is applied before the final motion gate.
+    rig.publish()
     targets = robot.prepare(rig.samples)
     assert not rig.calls  # Preflight and construction themselves never command hardware.
     assert targets == [(0.,) * 6] * 5
     with pytest.raises(RuntimeError, match="readiness state"):
-        robot.command("CP", CP.Request(r=100))
+        robot.command("MovJ", MovJ.Request())
     initial_sequence = robot.sequence
     robot.ensure_ready(MagicMock())
-    assert rig.calls == ["EnableRobot", "StopDrag"] and idle(robot.guard())
+    assert rig.calls == SETUP_SEQUENCE and idle(robot.guard())
     assert robot.sequence >= initial_sequence + 2
     assert not robot.preparing
-    warnings = [call.args[2] for call in robot.node._event_logger.record.call_args_list
-                if call.args[1] == "replay_setup_rejected"]
-    assert len(warnings) == len(rejected)
-    assert all(any(name in message for message in warnings) for name in rejected)
-    for name, kind in (("EnableRobot", EnableRobot), ("StopDrag", StopDrag)):
+    assert rig.requests["SpeedFactor"].ratio == 50
+    assert rig.requests["Tool"].index == 0
+    assert rig.requests["SetTool"].index == 1
+    assert rig.requests["SetTool"].value == "{0.000,0.000,0.000,0.000,0.000,0.000}"
+    assert rig.requests["CP"].r == 100
+    assert "StopDrag" not in robot.clients
+    for kind in SETUP_KINDS[:-1]:
+        name = kind.__name__
         with pytest.raises(RuntimeError, match="explicit Start"):
             robot.command(name, kind.Request())
     robot.clients["MovJ"].call_async.assert_not_called()
@@ -989,14 +1034,56 @@ def test_setup_requires_live_robot_topics_before_any_command(robot, monkeypatch,
     assert not rig.calls
 
 
-def test_drag_exit_to_disabled_fails_without_a_second_enable(robot, monkeypatch):
-    rig = readiness_rig(robot, monkeypatch, 6, drag_exit=4)
+@pytest.mark.parametrize("name", ["StopMoveJog", "DisableRobot"])
+@pytest.mark.parametrize("behavior", ["missing", "rejected", "unanswered", "empty",
+                                      "dispatch_error", "response_error", "no_transition"])
+def test_only_optional_preconditioning_failure_continues(robot, monkeypatch, name, behavior):
+    rig = readiness_rig(robot, monkeypatch, 5)
+    rig.behavior[name] = behavior
     robot.prepare(rig.samples)
-    with pytest.raises(RuntimeError, match="robot_mode=4.*EnableStatus=0"):
+    robot.ensure_ready(MagicMock())
+    expected = [step for step in SETUP_SEQUENCE if not (step == name and behavior == "missing")]
+    assert rig.calls == expected and idle(robot.guard())
+    warnings = [call.args[2] for call in robot.node._event_logger.record.call_args_list
+                if call.args[1] == "replay_setup_warning"]
+    if behavior != "no_transition" or name == "DisableRobot":
+        assert warnings
+    if behavior == "unanswered":
+        assert not robot._unanswered_command()
+        robot.request_stop = MagicMock()
+        kind = StopMoveJog if name == "StopMoveJog" else DisableRobot
+        rig.futures[name].set_result(kind.Response(res=0))
+        robot.request_stop.assert_called_once_with(fresh=True)
+
+
+@pytest.mark.parametrize("name", ["StopMoveJog", "DisableRobot"])
+def test_late_optional_acceptance_stops_startup_before_settings(robot, monkeypatch, name):
+    rig = readiness_rig(robot, monkeypatch, 5)
+    rig.behavior[name] = "unanswered"
+    robot.prepare(rig.samples)
+    robot.request_stop = MagicMock(side_effect=lambda **_kw: robot.cancel.set())
+
+    def advance(_duration):
+        rig.advance(.1)
+        if rig.calls[-1] == "EnableRobot":
+            kind = StopMoveJog if name == "StopMoveJog" else DisableRobot
+            rig.futures[name].set_result(kind.Response(res=0))
+
+    monkeypatch.setattr(robot.cancel, "wait", advance)
+    with pytest.raises(robot_module.ReplayStopped):
         robot.ensure_ready(MagicMock())
-    assert rig.calls == ["EnableRobot", "StopDrag"]
-    robot.clients["CP"].call_async.assert_not_called()
-    robot.clients["MovJ"].call_async.assert_not_called()
+    assert rig.calls == SETUP_SEQUENCE[:3]
+    robot.request_stop.assert_called_once_with(fresh=True)
+
+
+@pytest.mark.parametrize("name", ["StopMoveJog", "DisableRobot"])
+def test_optional_service_ambiguity_remains_terminal(robot, monkeypatch, name):
+    rig = readiness_rig(robot, monkeypatch, 5)
+    rig.behavior[name] = "ambiguous"
+    robot.prepare(rig.samples)
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        robot.ensure_ready(MagicMock())
+    assert rig.calls == SETUP_SEQUENCE[:SETUP_SEQUENCE.index(name)]
 
 
 @pytest.mark.parametrize("changes,reason", [
@@ -1006,51 +1093,74 @@ def test_drag_exit_to_disabled_fails_without_a_second_enable(robot, monkeypatch)
     ({"isRunQueuedCmd": 1}, "isRunQueuedCmd=1"), ({"userCoordinate": 1}, "userCoordinate=1"),
     ({"toolCoordinate": 1}, "toolCoordinate=1"), ({"digital_input_bits": 1}, "DI1 is HIGH"),
     ({"digital_outputs": 4097}, "DO1/DO13"), ({"digital_outputs": 8194}, "DO2/DO14")])
-def test_readiness_checks_state_after_both_commands_and_reports_specific_blocker(
+def test_final_readiness_reports_specific_blocker_after_settings(
         node, robot, monkeypatch, changes, reason):
     rig = readiness_rig(robot, monkeypatch, 5)
-    rig.behavior.update(EnableRobot="rejected", StopDrag="rejected")
-    rig.data.update(changes)
-    rig.publish()
+    if "digital_outputs" in changes:
+        rig.data.update(changes)  # Legal/unchanged outputs are separate gates.
+        rig.publish()
+    original = robot.clients["CP"].call_async.side_effect
+
+    def cp(request):
+        future = original(request)
+        rig.data.update(changes)
+        rig.publish()
+        return future
+
+    robot.clients["CP"].call_async.side_effect = cp
     targets = robot.prepare(rig.samples)
-    assert not rig.calls
     robot.request_stop = MagicMock()
     robot.wait_stop = MagicMock()
     node.automatic.robot = robot
     node.automatic._run(targets)
     assert reason in node.automatic.message
-    assert rig.calls == ["EnableRobot", "StopDrag"] and not node.automatic.complete
+    assert rig.calls == SETUP_SEQUENCE and not node.automatic.complete
     robot.request_stop.assert_called_once()
-    robot.clients["CP"].call_async.assert_not_called()
     robot.clients["MovJ"].call_async.assert_not_called()
 
 
-@pytest.mark.parametrize("name,mode", [("EnableRobot", 4), ("StopDrag", 6)])
-@pytest.mark.parametrize("behavior", ["rejected", "unanswered", "no_transition", "empty"])
-def test_failed_readiness_stops_without_retry_settings_or_motion(
-        node, robot, monkeypatch, name, mode, behavior):
-    rig = readiness_rig(robot, monkeypatch, mode)
+@pytest.mark.parametrize("name", SETUP_SEQUENCE[2:])
+@pytest.mark.parametrize("behavior", ["rejected", "unanswered", "empty", "dispatch_error",
+                                      "response_error"])
+def test_strict_startup_failure_stops_without_later_settings_or_motion(
+        node, robot, monkeypatch, name, behavior):
+    rig = readiness_rig(robot, monkeypatch, 4)
     rig.behavior[name] = behavior
     targets = robot.prepare(rig.samples)
     robot.request_stop = MagicMock()
     robot.wait_stop = MagicMock()
     node.automatic.robot = robot
     node.automatic._run(targets)
-    expected = (["EnableRobot"] if name == "EnableRobot" and behavior in ("unanswered", "empty")
-                else ["EnableRobot", "StopDrag"])
-    assert rig.calls == expected
+    assert rig.calls == SETUP_SEQUENCE[:SETUP_SEQUENCE.index(name) + 1]
     assert not node.automatic.complete and not node.automatic.active
     assert "Stop confirmed" in node.automatic.message
     robot.request_stop.assert_called_once()
-    robot.clients["CP"].call_async.assert_not_called()
     robot.clients["MovJ"].call_async.assert_not_called()
 
 
-@pytest.mark.parametrize("name,mode", [("EnableRobot", 4), ("StopDrag", 6)])
-@pytest.mark.parametrize("when", ["response", "confirmation"])
-def test_operator_stop_preempts_readiness_and_late_acceptance_is_contained(
-        node, robot, monkeypatch, name, mode, when):
-    rig = readiness_rig(robot, monkeypatch, mode)
+@pytest.mark.parametrize("name", SETUP_SEQUENCE[2:])
+def test_strict_service_absence_blocks_preflight(robot, monkeypatch, name):
+    rig = readiness_rig(robot, monkeypatch, 4)
+    rig.behavior[name] = "missing"
+    with pytest.raises(RuntimeError, match="unavailable"):
+        robot.prepare(rig.samples)
+    assert not rig.calls
+
+
+def test_enable_requires_mode_confirmation_before_any_settings(robot, monkeypatch):
+    rig = readiness_rig(robot, monkeypatch, 4)
+    rig.behavior["EnableRobot"] = "no_transition"
+    robot.prepare(rig.samples)
+    with pytest.raises(robot_module.ReadinessTimeout, match="requires mode 5"):
+        robot.ensure_ready(MagicMock())
+    assert rig.calls == SETUP_SEQUENCE[:3]
+
+
+@pytest.mark.parametrize("name,when", [(name, "response") for name in SETUP_SEQUENCE] +
+                         [("DisableRobot", "confirmation"), ("EnableRobot", "confirmation")])
+def test_operator_stop_preempts_each_startup_step_and_contains_late_acceptance(
+        node, robot, monkeypatch, name, when):
+    rig = readiness_rig(robot, monkeypatch, 4)
     if when == "response":
         rig.behavior[name] = "unanswered"
     targets = robot.prepare(rig.samples)
@@ -1059,18 +1169,17 @@ def test_operator_stop_preempts_readiness_and_late_acceptance_is_contained(
 
     def stop(_duration):
         rig.advance(.1)
-        robot.operator_cancel.set()
+        if rig.calls[-1] == name:
+            robot.operator_cancel.set()
 
     monkeypatch.setattr(robot.cancel, "wait", stop)
     node.automatic.robot = robot
     node.automatic._run(targets)
-    expected = (["EnableRobot"] if name == "EnableRobot" and when == "response"
-                else ["EnableRobot", "StopDrag"])
-    assert rig.calls == expected and not node.automatic.complete
-    robot.clients["CP"].call_async.assert_not_called()
+    assert rig.calls == SETUP_SEQUENCE[:SETUP_SEQUENCE.index(name) + 1]
+    assert not node.automatic.complete
     robot.clients["MovJ"].call_async.assert_not_called()
     if when == "response":
-        kind = EnableRobot if name == "EnableRobot" else StopDrag
+        kind = SETUP_KINDS[SETUP_SEQUENCE.index(name)]
         rig.futures[name].set_result(kind.Response(res=0))
         assert robot.request_stop.call_count == 2
         assert robot.request_stop.call_args.kwargs == {"fresh": True}
@@ -1101,7 +1210,7 @@ def test_readiness_keeps_feedback_output_and_final_fault_guards(robot, monkeypat
     monkeypatch.setattr(robot.cancel, "wait", fail)
     with pytest.raises(RuntimeError):
         robot.ensure_ready(MagicMock())
-    assert rig.calls == ["EnableRobot", "StopDrag"]
+    assert rig.calls == (SETUP_SEQUENCE if failure == "fault" else SETUP_SEQUENCE[:2])
 
 
 def test_stop_during_preflight_cannot_be_erased(robot, monkeypatch):
@@ -1115,7 +1224,7 @@ def test_stop_during_preflight_cannot_be_erased(robot, monkeypatch):
     assert not rig.calls
 
 
-def test_start_confirmation_explains_enable_and_drag_and_cancel_is_read_only(node, monkeypatch):
+def test_start_confirmation_explains_initialization_and_cancel_is_read_only(node, monkeypatch):
     from camera_calibration_gui.main import QtWidgets
 
     window = SimpleNamespace(_node=node, _log=MagicMock())
@@ -1125,8 +1234,9 @@ def test_start_confirmation_explains_enable_and_drag_and_cancel_is_read_only(nod
     CalibrationWindow._start_automatic(window)
     node.automatic.start.assert_not_called()
     prompt = question.call_args.args[2]
-    assert "EnableRobot then StopDrag once each" in prompt
-    assert "Rejection replies are logged" in prompt
+    assert "StopMoveJog and DisableRobot (best effort)" in prompt
+    assert "SpeedFactor 50%, Tool 0, Tool 1 TCP zero" in prompt
+    assert "Enable and settings must succeed" in prompt
     assert question.call_args.args[-1] == QtWidgets.QMessageBox.No
     question.return_value = QtWidgets.QMessageBox.Yes
     CalibrationWindow._start_automatic(window)
@@ -1144,7 +1254,7 @@ def test_readiness_never_reenables_or_exits_drag_mid_replay(robot, monkeypatch, 
     rig.publish()
     with pytest.raises(RuntimeError, match="state or I/O changed"):
         robot.guard()
-    assert rig.calls == ["EnableRobot", "StopDrag"]
+    assert rig.calls == SETUP_SEQUENCE
 
 
 @pytest.mark.parametrize("changes", [
