@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 
 from ament_index_python.packages import get_package_share_directory
 from dobot_msgs_v4.msg import RobotStatus
-from dobot_msgs_v4.srv import CP, MovJ, Stop
+from dobot_msgs_v4.srv import CP, EnableRobot, MovJ, Stop, StopDrag
 import numpy as np
 from rclpy.callback_groups import ReentrantCallbackGroup
 from std_msgs.msg import String
@@ -23,6 +23,7 @@ FEED_TOPIC = "/dobot_bringup_ros2/msg/FeedInfo"
 STATUS_TOPIC = "/dobot_msgs_v4/msg/RobotStatus"
 SERVICE_PREFIX = "/dobot_bringup_ros2/srv/"
 RESPONSE_TIMEOUT = 5.0
+READINESS_TIMEOUT = 5.0
 FEEDBACK_MAX_AGE = 1.0
 MOTION_TIMEOUT = 300.0
 MOTION_PROGRESS_TIMEOUT = 3.0
@@ -101,6 +102,13 @@ def joints_at_target(sample, joints):
     return np.max(np.abs(sample.joints - joints)) <= math.radians(1.)
 
 
+def startup_state_valid(feed, modes):
+    return (feed["robot_mode"] in modes and feed["EnableStatus"] in (0, 1)
+            and not feed["RunningStatus"] and not feed["isRunQueuedCmd"]
+            and not feed["ErrorStatus"] and not feed["CollisionStates"]
+            and feed["userCoordinate"] == 0 and feed["toolCoordinate"] == 0)
+
+
 def configured_bringup(root):
     values = {}
     for number, raw in enumerate((root / ".env").read_text().splitlines(), 1):
@@ -135,11 +143,12 @@ class MaintenanceRobot:
         self.stop_attempt = None
         self.output_bits = None
         self.watching = False
+        self.startup_modes = ()
         self.feedback_failure = None
         self.last_owner_check = 0.
         self.clients = {kind.__name__: node.create_client(
             kind, SERVICE_PREFIX + kind.__name__, callback_group=self.group)
-            for kind in (CP, MovJ, Stop)}
+            for kind in (CP, MovJ, Stop, StopDrag, EnableRobot)}
         node.create_subscription(String, FEED_TOPIC, self._on_feed, 10,
                                  callback_group=self.group)
         node.create_subscription(RobotStatus, STATUS_TOPIC, self._on_status, 10,
@@ -179,7 +188,10 @@ class MaintenanceRobot:
                 if (self.feed is not None
                         and data["controller_timer"] < self.feed[0]["controller_timer"]):
                     self.feedback_failure = "Robot controller timer restarted during capture"
-                if (data["EnableStatus"] != 1 or data["robot_mode"] not in (5, 7, 8)
+                mode_invalid = (not startup_state_valid(data, self.startup_modes)
+                                if self.startup_modes else
+                                data["EnableStatus"] != 1 or data["robot_mode"] not in (5, 7, 8))
+                if (mode_invalid
                         or data["ErrorStatus"] or data["CollisionStates"]
                         or data["userCoordinate"] != 0 or data["toolCoordinate"] != 0
                         or data["digital_input_bits"] & 1
@@ -233,6 +245,8 @@ class MaintenanceRobot:
             raise RuntimeError(f"Canonical Dobot {name} service unavailable or ambiguous")
 
     def prepare(self, samples):
+        with self.condition:
+            previous_stop = self.stop_attempt
         self.bringup = configured_bringup(workspace_root())
         self.check_owners()
         for name in self.clients:
@@ -243,13 +257,19 @@ class MaintenanceRobot:
             raise ValueError("Automatic capture requires 5 through 1000 saved positions")
         targets = [limits.validate(s.joint_positions_rad) for s in samples]
         with self.condition:
+            if self.stop_attempt is not previous_stop:
+                raise ReplayStopped("Stop interrupted automatic capture preparation")
             if any(not record["future"].done() for record in self.pending):
                 raise RuntimeError("A previous Dobot response is still unanswered")
             if self.stop_attempt is not None and not self.stop_attempt.get("confirmed"):
                 raise RuntimeError("Stop is unconfirmed; use Stop again before restarting")
-            sample = self.snapshot()
-            if not idle(sample) or sample.feed["digital_input_bits"] & 1:
-                raise RuntimeError("Automatic capture requires an enabled idle robot and DI1 LOW")
+            sample = self.snapshot(enabled=False)
+            self._require_joint_stream()
+            if (not startup_state_valid(sample.feed, (4, 5, 6))
+                    or sample.feed["digital_input_bits"] & 1):
+                raise RuntimeError(
+                    "Automatic capture requires fault-free disabled, idle or drag mode, "
+                    "an empty queue, user/tool zero and DI1 LOW")
             self.output_bits = sample.feed["digital_outputs"]
             for first, second in ((1, 13), (2, 14)):
                 if (self.output_bits & (1 << (first - 1))
@@ -260,8 +280,68 @@ class MaintenanceRobot:
             self.pending.clear()
             self.stop_attempt = None
             self.feedback_failure = None
+            self.startup_modes = (4, 5, 6)
             self.watching = True
         return targets
+
+    def _require_joint_stream(self):
+        # These are immutable values from the existing validated callback. Do
+        # not take the node lock under the robot condition (Stop uses the reverse
+        # order). Either missing value or an old/future stamp rejects readiness.
+        positions = self.node._latest_joint_positions
+        stamp = self.node._latest_joint_state_stamp
+        if (positions is None or stamp is None or len(positions) != 6
+                or any(not math.isfinite(value) for value in positions)
+                or stamp.nanoseconds <= 0
+                or not 0 <= (self.node.get_clock().now().nanoseconds
+                             - stamp.nanoseconds) / 1e9 <= FEEDBACK_MAX_AGE):
+            raise RuntimeError("Fresh canonical /joint_states are required for robot readiness")
+
+    def ensure_ready(self, progress):
+        sample = self.guard()
+        if sample.feed["robot_mode"] == 6:
+            progress("Exiting robot drag mode.")
+            self.command("StopDrag", StopDrag.Request())
+            self._wait_startup_state(
+                lambda current: current.feed["robot_mode"] in (4, 5), "exit drag mode")
+        with self.condition:
+            self.startup_modes = (4, 5)
+            sample = self.guard()
+        if sample.feed["robot_mode"] == 4:
+            progress("Enabling robot for automatic calibration.")
+            self.command("EnableRobot", EnableRobot.Request())
+        progress("Waiting for enabled, stationary, idle robot feedback.")
+        self._wait_startup_state(
+            lambda current: idle(current) and current.feed["EnableStatus"] == 1,
+            "confirm enabled idle robot")
+        with self.condition:
+            sample = self.guard()
+            if not idle(sample) or sample.feed["EnableStatus"] != 1:
+                raise RuntimeError("Robot left enabled idle state during readiness confirmation")
+            self.startup_modes = ()
+        self.node._event_logger.record(
+            "INFO", "replay_robot_ready", "Enabled stationary idle robot confirmed")
+
+    def _wait_startup_state(self, predicate, description):
+        # Confirmation must advance beyond feedback observed after the reply;
+        # service acceptance alone never authorizes a motion command.
+        accepted = self.guard()
+        previous = None
+        deadline = time.monotonic() + READINESS_TIMEOUT
+        while True:
+            sample = self.guard()
+            valid = (sample.sequence > accepted.sequence
+                     and sample.feed["controller_timer"] > accepted.feed["controller_timer"]
+                     and predicate(sample))
+            if valid and stationary(previous, sample):
+                return sample
+            previous = sample if valid else None
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Could not {description} within five seconds "
+                    f"(mode={sample.feed['robot_mode']}, "
+                    f"enabled={sample.feed['EnableStatus']})")
+            self.cancel.wait(.01)
 
     def guard(self):
         if self.cancel.is_set() or self.operator_cancel.is_set():
@@ -275,7 +355,11 @@ class MaintenanceRobot:
             raise RuntimeError(self.node._fatal_error)
         if time.monotonic() - self.last_owner_check >= .1:
             self.check_owners()
-        sample = self.snapshot()
+        sample = self.snapshot(enabled=not self.startup_modes)
+        if self.startup_modes:
+            self._require_joint_stream()
+            if not startup_state_valid(sample.feed, self.startup_modes):
+                raise RuntimeError("Robot state is unsafe for calibration readiness setup")
         if sample.feed["digital_input_bits"] & 1:
             raise RuntimeError("DI1 became HIGH during automatic capture")
         if sample.feed["digital_outputs"] != self.output_bits:
@@ -310,6 +394,7 @@ class MaintenanceRobot:
     def end(self):
         with self.condition:
             self.watching = False
+            self.startup_modes = ()
 
     def _late_reply(self, record):
         with self.condition:
@@ -318,10 +403,11 @@ class MaintenanceRobot:
             record["contained"] = True
             try:
                 result = record["future"].result()
-                if record["name"] == "MovJ" and result is not None and result.res == 0:
+                if (record["name"] in ("MovJ", "EnableRobot", "StopDrag")
+                        and result is not None and result.res == 0):
                     self.node._event_logger.record(
-                        "WARNING", "replay_late_motion_acceptance",
-                        "Stopping late MovJ acceptance")
+                        "WARNING", "replay_late_command_acceptance",
+                        f"Stopping late {record['name']} acceptance")
                     self.request_stop(fresh=True)
             except Exception as exc:
                 self.node._event_logger.record("ERROR", "replay_late_reply_failed", str(exc))
@@ -329,7 +415,13 @@ class MaintenanceRobot:
     def command(self, name, request):
         self._service_owner(name)
         with self.condition:
-            self.guard()
+            sample = self.guard()
+            if self.startup_modes:
+                required_mode = {"StopDrag": 6, "EnableRobot": 4}.get(name)
+                if sample.feed["robot_mode"] != required_mode:
+                    raise RuntimeError(f"{name} is not allowed in the current readiness state")
+            elif name in ("StopDrag", "EnableRobot"):
+                raise RuntimeError("Robot readiness setup requires a new explicit Start")
             if any(not record["future"].done() for record in self.pending):
                 raise RuntimeError("Previous Dobot response remains unanswered")
             future = self.clients[name].call_async(request)

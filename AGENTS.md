@@ -280,6 +280,16 @@ interrupted move. Continue appears only after three failures at that position.
 Track validated RGB input before detection with a depth-one image subscription;
 keep strict observation age, fatal worker handling and all robot safety gates.
 
+Rule 127 lets confirmed Start Automatic Capture prepare the robot directly:
+with fresh canonical joints/FeedInfo/RobotStatus, no competing command client,
+fault-free user/tool zero, DI1 LOW and an empty queue, call StopDrag once if in
+drag mode, then EnableRobot once if disabled. Require accepted responses and
+advancing stationary enabled/idle feedback before CP or saved-joint motion.
+Bound each response and feedback confirmation to five seconds; setup failure
+ends the run through independent Stop, without retries or error/output resets.
+Launch, loading and manual capture remain read-only. Never automatically
+re-enable or leave drag again during an existing replay; a new Start is needed.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -5282,6 +5282,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   movement and retain Stop responsiveness during slow solving. Python compilation,
   ament_flake8 and diff checks pass. Physical replay remains untested.
 
+### 2026-09-24 — Calibration prepares disabled and drag-mode robots directly
+
+- Rule 127 supersedes automatic calibration's already-enabled prerequisite and
+  no-enable restriction only for explicitly confirmed Start Automatic Capture.
+  Close competing command applications as before; calibration no longer needs
+  Motion Debug to enable the robot first. Launch, settings, Load Calibration
+  and manual capture remain read-only and never trigger robot preparation.
+- Validate every saved joint target, sole canonical publishers/services, fresh
+  validated `/joint_states`, advancing FeedInfo and connected RobotStatus before
+  setup. Admit only disabled (4), idle (5) or drag (6) with an empty queue, no
+  error/collision, user/tool zero, DI1 LOW and legal unchanged outputs.
+  Call StopDrag once when in mode 6. Confirm stationary non-drag feedback,
+  then call EnableRobot once only if still disabled. An already enabled idle
+  robot receives neither command. The existing direct bringup services need
+  no controller, vendor change, new interface or configuration.
+- Require each response with res=0 within five seconds. Each subsequent feedback
+  confirmation also has five seconds and requires two distinct stationary
+  samples advancing beyond the post-response sample. Final confirmation needs
+  mode 5, EnableStatus 1, enabled RobotStatus, unchanged outputs and an empty
+  queue before CP(100) or MovJ. Keep the canonical joint stream fresh throughout
+  readiness. Update the existing Start confirmation and progress messages.
+- Keep readiness commands on the operation thread with the same two ROS
+  executor threads. Direct Stop remains independent and cancellation prevents
+  later setup/motion commands. A Stop issued during initial preflight cannot
+  be cleared by its completion. Startup-only expected mode changes are allowed
+  without weakening latched error, collision, I/O or feedback checks. Once ready,
+  a return to disabled/drag ends the run; never re-enable automatically mid-replay.
+- Rejected/unanswered commands, invalid/stale feedback, failed confirmation or
+  cancellation end the run through independent Stop confirmation. Do not retry
+  setup automatically, ClearError, DisableRobot or change gripper outputs.
+  Late accepted abandoned StopDrag/EnableRobot requests receive another Stop,
+  just like late MovJ. The three-attempt sample/camera workflow is unchanged.
+- Update AGENTS and root/package READMEs. No Robot Controller behavior/interface
+  or FSM changes, runtime/schema changes, operator-artifact edits or new offline
+  transfer milestone. No real robot command or launch is part of verification.
+- Validation: camera_calibration symlink build and all 166 package tests pass
+  (55 core, 107 automatic/maintenance, four private-runtime installation), with
+  zero errors, failures or skips. Isolated domain-232 fake-Dobot ROS tests cover
+  disabled-to-enabled, drag-to-idle and drag-to-disabled-to-enabled full replay,
+  plus existing camera-gap retry and responsive Stop during slow solving.
+  Readiness regressions cover fresh canonical joints, guarded modes/I/O,
+  accepted-but-unconfirmed replies, rejection/timeout without retries or later
+  motion, Stop during response/confirmation/preflight, late-acceptance containment,
+  latched transient faults/disconnection, no mid-replay enable/drag recovery and
+  the explicit Start confirmation. Python compilation, ament_flake8 and diff
+  checks pass. Live robot readiness and replay remain untested.
+
 ### Future entry template
 
 ```text

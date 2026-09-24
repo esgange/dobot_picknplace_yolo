@@ -74,7 +74,7 @@ class AutomaticCapture:
             self.run_id = uuid.uuid4().hex
             self.complete = self.stopping = False
             self.captured = 0
-            self.message = "Starting direct maintenance replay at 20% joint speed/acceleration."
+            self.message = "Preparing robot for direct maintenance calibration."
             self.node.reset_samples(_automatic=True)
             self.started = True
             self.thread = threading.Thread(target=self._run, args=(targets,), daemon=True)
@@ -187,6 +187,7 @@ class AutomaticCapture:
 
     def _run(self, targets):
         try:
+            self.robot.ensure_ready(lambda message: setattr(self, "message", message))
             self.robot.command("CP", CP.Request(r=100))
             for index, joints in enumerate(targets, 1):
                 origin = self.robot.guard()

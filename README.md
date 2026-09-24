@@ -791,9 +791,12 @@ The robot stays at the final position on completion. The separate
 **Save as New Calibration** button opens an editable filename dialog with the
 existing timestamped naming rule as its default. It saves inside `calibration/`
 and never overwrites the source or another file. Replay is an attended maintenance
-exception: close Robot Controller and other command tools first. It requires an
-already enabled/idle robot, user/tool zero and DI1 LOW. It uses 20% joint speed
-and acceleration, preserves gripper outputs, and offers direct Stop throughout.
+exception: close Robot Controller and other command tools first. Confirmed Start
+uses fresh canonical joint/robot feedback to exit drag mode if active and enable
+the robot if disabled, then confirms stationary enabled/idle feedback. It requires
+an empty queue, fault-free user/tool zero and DI1 LOW. Setup commands each run
+once, with bounded response/feedback checks and direct Stop on failure. It uses
+20% joint speed and acceleration, preserves gripper outputs, and offers direct Stop throughout.
 Loading and launch never move or enable the robot. See the
 [calibration package workflow](src/camera_calibration/README.md#automatic-recalibration-from-a-loaded-file)
 for capture gates and prerequisites.

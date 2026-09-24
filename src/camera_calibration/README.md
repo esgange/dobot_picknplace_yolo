@@ -18,8 +18,8 @@ Calibration needs actual `/joint_states`, fresh `base_link <- Link6`, and
 the camera's color image, color CameraInfo, and internal camera TF.
 It never launches cameras, bringup, RViz or the controller. Manual capture is
 read-only. Explicit automatic capture is an attended maintenance exception, like Motion
-Debug and Gripper Diagnostics: it sends guarded CP/MovJ/Stop requests directly
-to canonical Dobot bringup. It has no Robot Controller dependency.
+Debug and Gripper Diagnostics: it sends guarded StopDrag/EnableRobot/CP/MovJ/Stop
+requests directly to canonical Dobot bringup. It has no Robot Controller dependency.
 Depth is neither subscribed to nor required. Camera-launcher settings and
 supervision remain independent and unchanged.
 
@@ -163,14 +163,18 @@ Loading alone never moves the robot.
    before replay; calibration must be the only command application. No Item/Bin
    Teach files or controller process are required.
 2. Load a valid schema-7 calibration. Its settings and ordered joint positions
-   become the replay recipe. Prepare an already enabled, idle robot with user
-   and tool zero and DI1 LOW. Launch and loading perform no enable or motion.
+   become the replay recipe. Bringup must provide fresh canonical joints,
+   FeedInfo and RobotStatus, with no robot fault, an empty queue, user/tool zero
+   and DI1 LOW. Disabled, idle or drag mode can enter setup. Launch and loading
+   perform no enable or motion.
 3. Click **Start Automatic Capture** and confirm that the starting position and
-   all connecting joint paths are clear. Replay uses exact saved joint targets
+   all connecting joint paths are clear; release the robot after hand guiding.
+   Calibration exits drag mode if active, enables the robot if disabled and
+   confirms stationary enabled/idle feedback. Replay uses exact saved joint targets
    with MovJ at 20% speed/acceleration; the existing global speed factor also
-   applies. Calibration sets global CP(100), preserves all outputs, and never
-   enables/disables the robot or resets the gripper during replay.
-4. After validating robot readiness and all CR10 target limits, Start clears
+   applies. Calibration then sets global CP(100), preserves all outputs, and
+   never disables the robot or resets the gripper during replay.
+4. After validating startup inputs and all CR10 target limits, Start clears
    working observations and the solution. Each position waits for valid camera
    input before moving. The saved joints and completed queue are physically
    confirmed, then held stationary for one full second before collecting a fresh
@@ -201,6 +205,22 @@ old and joints/TF at most 1 second old. FeedInfo and RobotStatus must remain
 fresh within 1 second, with an advancing controller timer. Stationarity,
 enabled/idle state, DI1 LOW and unchanged outputs remain monitored during
 capture and solving; only a successful capture permits the next move.
+
+Robot readiness setup occurs only after confirmed Start, before CP or any MovJ.
+Use `StopDrag` once for mode 6; after confirming drag exit, use `EnableRobot`
+once only if mode 4 remains. An already enabled/idle robot needs neither command.
+Every command requires `res=0` within five seconds, followed by advancing fresh
+feedback within five seconds; two distinct samples must show stationary TCP and
+joints, and final feedback must show mode 5, EnableStatus 1, enabled RobotStatus
+and an empty queue. The existing validated `/joint_states` must remain at most
+one second old throughout setup. Readiness work runs in the operation thread,
+so the GUI and independent Stop remain available.
+Setup failure is terminal for that run and requests physical Stop confirmation;
+it never uses the three-attempt observation retry or clears robot errors. A late
+accepted abandoned StopDrag/EnableRobot command triggers another containment
+Stop. Once replay begins, disabled/drag feedback aborts instead of automatically
+enabling or exiting drag again. Another explicit Start is required. Completion
+leaves the robot enabled at its final position.
 
 Dobot responses have a five-second deadline. Motion is bounded to 300 seconds,
 with a three-second no-progress limit. Fresh-sample waiting is bounded to ten
