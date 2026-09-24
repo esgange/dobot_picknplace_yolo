@@ -5178,6 +5178,54 @@ Never use a floating “latest” version in an issue, script, or deployment not
   installs or new offline-transfer milestone. Live replay paths require attended
   hardware validation.
 
+### 2026-09-24 — Three calibration attempts and one-second capture stability
+
+- Rule 125 supersedes calibration rules 123/124's no-dwell/no-retry policy.
+  Every automatic sample attempt requires a full one-second stationary and
+  idle hold at its verified target, with advancing canonical feedback, unchanged
+  TCP/joints within existing limits, DI1 LOW and preserved outputs. Only RGB,
+  joints and TF newer than the end of that hold can become the fresh sample.
+  Keep strict age/diversity/solver/leave-one-out gates and the schema-7 writer.
+- Apply the user's correction: attempts one through three run automatically;
+  show Continue/Stop only after all three attempts at a position are exhausted.
+  Continue explicitly starts another three-attempt batch at the same position,
+  retaining every earlier accepted sample. Start the next position only after
+  successful capture. Never silently skip a position or save an incomplete run.
+- Retry a ten-second observation timeout without another motion command. Each
+  retry repeats the full stationary hold and new timestamp boundary. The
+  nonmodal prompt names the failed position/reason, suggests checking camera/
+  ChArUco visibility, and keeps live view, robot monitoring and direct Stop
+  available. Stop or closing the prompt ends the run. Run/prompt tokens prevent
+  old dialog responses from continuing a later attempt; cancellation wins races.
+- The observed runtime log had four accepted samples followed by an arrival
+  timeout at position five; it did not report a board-detection timeout. Add
+  distinct motion-arrival diagnostics: returned/observed queue ID, idle state,
+  maximum joint error and TCP mm/degrees. Track joint movement as progress too.
+  An arrival timeout consumes an attempt. Before repeating the same target,
+  require its confirmed physical Stop, every command response, fresh enabled
+  idle fault-free feedback, unchanged outputs and DI1 LOW. Retain the exact
+  confirmed Stop identity while waiting; an operator Stop/new attempt or any
+  latched fault prevents retry. Three failed arrivals produce the same bounded
+  batch prompt, explicitly stating that Continue may move the robot again.
+- Keep rejected/unanswered commands, stale/malformed/faulted feedback, output
+  changes, native runtime failures, unconfirmed Stop and a failed solve after
+  sample acceptance terminal. No automatic enable/reset, artifact rollback,
+  duplicate accepted sample, fallback runtime or controller integration.
+  Unchanged two-thread ROS executor and private OpenCV worker remain in use.
+- Update the calibration/root READMEs and AGENTS. Robot Controller behavior,
+  interface package and FSM source/exports are unchanged.
+- Validation: camera_calibration symlink build passes, plus all 115 package tests
+  (55 core, 56 automatic/maintenance, four private-runtime installation). Tests
+  cover two silent retries then a prompt, no fourth attempt without Continue,
+  retaining accepted samples, no repeated move for capture retries, confirmed
+  Stop before arrival retries, cancellation/old-Stop/unanswered/fault guards,
+  one full second plus advancing feedback, moved-robot refusal, and nonmodal
+  Continue/Stop/close handling. Isolated fake-Dobot ROS tests retain two camera
+  executor threads and responsive Stop during a slow solve. Offscreen dialog
+  inspection confirms complete readable text and both buttons. Python lint and
+  diff checks pass. No real hardware commands or launches; operator artifacts
+  remain untouched and no offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

@@ -259,6 +259,17 @@ inside calibration/, defaulting to the existing mode/timestamp rule. Never overw
 existing files; cancellation changes nothing. Custom names are for explicit loading;
 strict automatic station discovery retains its canonical filename contract.
 
+Rule 125 supersedes calibration rules 123/124's immediate capture and no-retry
+policy: every capture attempt requires a one-second stationary/idle hold and
+post-hold RGB/joints/TF. Retry an unavailable observation automatically up to
+three attempts per position; only after three failures show Continue/Stop.
+Continue explicitly starts another three-attempt batch at that position and
+preserves prior samples. Capture retries do not move again. Arrival-timeout
+retries require confirmed Stop, all replies and fresh unchanged safe robot
+state; prompts distinguish robot arrival from camera visibility. Faults,
+unanswered/rejected commands, unconfirmed Stop and solver/runtime failures
+remain terminal. Operator Stop always pre-empts and cannot be cleared by retry.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

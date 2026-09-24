@@ -1319,6 +1319,7 @@ class CalibrationWindow(QtWidgets.QWidget):
         self._configuration_applied = False
         self._sample_table_signature = None
         self._fatal_shutdown_requested = False
+        self._retry_dialog = None
         self.setWindowTitle("DOBOT Camera Calibration - ChArUco")
         self.resize(1800, 980)
         self._build_ui()
@@ -1618,6 +1619,9 @@ class CalibrationWindow(QtWidgets.QWidget):
             "Close robot_controller, Motion Debug and Gripper Diagnostics first. "
             "The robot must already be enabled and idle, with user/tool 0 and DI1 LOW. "
             "Gripper outputs stay unchanged. Current samples will be replaced by fresh captures. "
+            "Each position gets three automatic attempts, with a one-second stationary hold "
+            "before every capture. Only three failed attempts prompt Continue or Stop. "
+            "A movement-timeout retry requires confirmed Stop and fresh robot checks. "
             "The robot will remain at the final position. The source file stays unchanged.",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No,
@@ -1849,9 +1853,54 @@ class CalibrationWindow(QtWidgets.QWidget):
         label.setText("")
         label.setPixmap(pixmap)
 
+    def _refresh_retry_prompt(self) -> None:
+        automatic = self._node.automatic
+        prompt = getattr(automatic, "retry_prompt", None)
+        if prompt is not None and prompt["event"].is_set():
+            prompt = None
+        token = None if prompt is None else prompt["token"]
+        if self._retry_dialog is not None and self._retry_dialog[0] != token:
+            dialog = self._retry_dialog[1]
+            self._retry_dialog = None
+            dialog.blockSignals(True)
+            dialog.close()
+            dialog.deleteLater()
+        if prompt is None or self._retry_dialog is not None:
+            return
+        detail = (
+            "Robot Stop is confirmed. Check the robot and the path to this position. "
+            "Continue may command movement again."
+            if prompt["phase"] == "motion" else
+            "Check whether the camera view or ChArUco board is obstructed. "
+            "The robot remains at this position for another capture attempt.")
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setWindowTitle("Calibration: three attempts exhausted")
+        dialog.setIcon(QtWidgets.QMessageBox.Warning)
+        dialog.setText(
+            f"Position {prompt['index']}: all three attempts failed.\n\n"
+            f"{prompt['reason']}\n\n{detail}\n\n"
+            "Continue starts another three attempts here, with a one-second stationary "
+            "hold before each capture. Earlier samples are kept. Stop ends the run.")
+        dialog.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        dialog.button(QtWidgets.QMessageBox.Yes).setText("Continue")
+        dialog.button(QtWidgets.QMessageBox.No).setText("Stop")
+        dialog.setDefaultButton(QtWidgets.QMessageBox.No)
+        dialog.setEscapeButton(QtWidgets.QMessageBox.No)
+        dialog.setWindowModality(QtCore.Qt.NonModal)
+        self._retry_dialog = token, dialog
+        dialog.finished.connect(lambda result: self._answer_retry_prompt(token, result))
+        dialog.show()
+
+    def _answer_retry_prompt(self, token, result) -> None:
+        if self._retry_dialog is not None and self._retry_dialog[0] == token:
+            self._retry_dialog[1].deleteLater()
+            self._retry_dialog = None
+        self._node.automatic.respond_retry(token, result == QtWidgets.QMessageBox.Yes)
+
     def _refresh(self) -> None:
         snapshot = self._node.status_snapshot()
         self.automatic_label.setText(self._node.automatic.message)
+        self._refresh_retry_prompt()
         fatal_error = snapshot.get("fatal_error")
         if fatal_error is not None:
             if not self._fatal_shutdown_requested:

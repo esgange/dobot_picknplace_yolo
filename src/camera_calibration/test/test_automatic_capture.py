@@ -133,7 +133,7 @@ def test_gui_blocks_edits_and_partial_save_but_keeps_stop_available(node):
 
 
 def pending_capture(node):
-    request = dict(event=threading.Event(), success=False, message="", index=1,
+    request = dict(event=threading.Event(), success=False, message="", index=1, attempt=1,
                    not_before=ros_time(9.8).nanoseconds, joints=(0.,) * 6,
                    deadline=time.monotonic() + 10., last_stamp=None,
                    run_id=node.automatic.run_id)
@@ -450,13 +450,13 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, st
         success, message = camera.automatic.start()
         assert success, message
         if stop_during_solve:
-            assert camera.solving.wait(4.), camera.automatic.message
+            assert camera.solving.wait(10.), camera.automatic.message
             before = camera.automatic.robot.sequence
             camera.automatic.stop()
             time.sleep(.1)
             assert dobot.stops >= 1
             assert camera.automatic.robot.sequence > before
-        deadline = time.monotonic() + 5.
+        deadline = time.monotonic() + 15.
         while camera.automatic.active and time.monotonic() < deadline:
             time.sleep(.01)
         assert not camera.automatic.active, camera.automatic.message
@@ -533,3 +533,193 @@ def test_late_stop_keeps_gui_stop_available_after_operation_thread_exits(node):
     node.automatic.robot.stop_attempt["confirmed"] = True
     node.automatic._tick()
     assert not node.automatic.stopping
+
+
+@pytest.mark.parametrize("continue_batch", [True, False])
+def test_only_three_failed_captures_prompt_and_continue_preserves_samples(node, continue_batch):
+    automatic = node.automatic
+    automatic.robot.operator_cancel = threading.Event()
+    calls = []
+
+    def guard(*_args):
+        if automatic.robot.operator_cancel.is_set():
+            raise robot_module.ReplayStopped("Operator stopped")
+
+    automatic.robot.guard.side_effect = guard
+    automatic.robot.hold.side_effect = guard
+
+    def capture(index, attempt, *_args):
+        calls.append((index, attempt))
+        if index == 2 and calls.count((2, 1)) < 2:
+            assert automatic.retry_prompt is None
+            return dict(success=False, retryable=True, message="Board obscured")
+        node._calibration_samples.append(index)
+        automatic.captured += 1
+        return dict(success=True)
+
+    automatic._stable_capture = capture
+    worker = threading.Thread(target=automatic._run, args=([((0.,) * 6, np.eye(4))] * 5,))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2.
+        while automatic.retry_prompt is None and worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(.005)
+        assert automatic.retry_prompt is not None, automatic.message
+        assert calls == [(1, 1), (2, 1), (2, 2), (2, 3)]
+        assert node._calibration_samples == [1]
+        assert automatic.robot.move.call_count == 2
+        time.sleep(.04)
+        assert len(calls) == 4  # No fourth attempt without explicit Continue.
+        token = automatic.retry_prompt["token"]
+        automatic.respond_retry("stale prompt", True)
+        assert not automatic.retry_prompt["event"].is_set()
+        automatic.respond_retry(token, continue_batch)
+        worker.join(timeout=2.)
+        assert not worker.is_alive()
+        assert automatic.complete is continue_batch, automatic.message
+        assert automatic.robot.move.call_count == (5 if continue_batch else 2)
+        assert node._calibration_samples == ([1, 2, 3, 4, 5] if continue_batch else [1])
+        if continue_batch:
+            assert calls[4] == (2, 1)
+    finally:
+        automatic.stop()
+        worker.join(timeout=2.)
+
+
+def test_three_motion_timeouts_each_confirm_stop_before_retry_or_prompt(node):
+    automatic = node.automatic
+    attempts = []
+
+    def move(*_args, **_kwargs):
+        attempts.append("move")
+        if len(attempts) <= 3:
+            raise robot_module.MotionArrivalTimeout("Wrong endpoint")
+        return object()
+
+    automatic.robot.move.side_effect = move
+    automatic.robot.stop_attempt = dict(confirmed=True)
+
+    def capture(*_args):
+        automatic.captured += 1
+        return dict(success=True)
+
+    automatic._stable_capture = capture
+    worker = threading.Thread(target=automatic._run, args=([((0.,) * 6, np.eye(4))],))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2.
+        while automatic.retry_prompt is None and worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(.005)
+        assert automatic.retry_prompt is not None, automatic.message
+        assert automatic.retry_prompt["phase"] == "motion"
+        assert len(attempts) == 3
+        assert automatic.robot.wait_stop.call_count == 3
+        assert automatic.robot.resume_after_stop.call_count == 2
+        automatic.respond_retry(automatic.retry_prompt["token"], True)
+        worker.join(timeout=2.)
+        assert not worker.is_alive() and automatic.complete, automatic.message
+        assert len(attempts) == 4
+        assert automatic.robot.resume_after_stop.call_count == 3
+    finally:
+        automatic.stop()
+        worker.join(timeout=2.)
+
+
+def test_stability_requires_full_second_and_advancing_feedback(node, monkeypatch):
+    clock = SimpleNamespace(now=0.)
+    monkeypatch.setattr(automatic_module, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    calls = []
+    anchor = RobotSample(1, feedback(), True)
+
+    def hold(*_args):
+        calls.append(clock.now)
+        # At exactly one second, repeat an old sample; it cannot finish the hold.
+        if clock.now == 1.:
+            return anchor
+        return RobotSample(len(calls) + 1, feedback(controller_timer=len(calls) + 1), True)
+
+    node.automatic.robot.hold.side_effect = hold
+    node.automatic.robot.cancel.wait.side_effect = (
+        lambda _dt: setattr(clock, "now", clock.now + .25))
+    node.automatic._wait_stable(anchor, (0.,) * 6, np.eye(4))
+    assert clock.now == 1.25 and calls[0] == 0.
+    assert len(calls) == 6
+    assert node.automatic.pending is None
+
+
+def test_movement_during_stability_aborts_without_a_capture(node):
+    node.automatic.robot.hold.side_effect = RuntimeError("Robot moved")
+    with pytest.raises(RuntimeError, match="Robot moved"):
+        node.automatic._stable_capture(1, 1, object(), (0.,) * 6, np.eye(4))
+    assert node.automatic.pending is None and not node._calibration_samples
+
+
+@pytest.mark.parametrize("blocker", ["operator_stop", "new_stop", "unanswered", "fault"])
+def test_motion_retry_cannot_clear_stop_or_fault_guards(robot, blocker):
+    attempt = dict(confirmed=True)
+    robot.stop_attempt = attempt
+    robot.cancel.set()
+    if blocker == "operator_stop":
+        robot.operator_cancel.set()
+    elif blocker == "new_stop":
+        robot.stop_attempt = dict(confirmed=True)
+    elif blocker == "unanswered":
+        robot.pending.append(dict(future=Future()))
+    else:
+        robot.feedback_failure = "Robot fault"
+    with pytest.raises(RuntimeError):
+        robot.resume_after_stop(attempt)
+    assert robot.cancel.is_set()
+
+
+def test_confirmed_motion_retry_resumes_without_resetting_outputs(robot):
+    attempt = dict(confirmed=True)
+    robot.stop_attempt = attempt
+    robot.cancel.set()
+    robot.resume_after_stop(attempt)
+    assert not robot.cancel.is_set() and robot.stop_attempt is None
+    assert robot.output_bits == 0
+    for client in robot.clients.values():
+        client.call_async.assert_not_called()
+
+
+def test_arrival_timeout_reports_which_robot_gates_failed(robot, monkeypatch):
+    monkeypatch.setattr(robot_module, "MOTION_PROGRESS_TIMEOUT", 0.)
+    robot.command = MagicMock(return_value=MovJ.Response(res=0, robot_return="{7}"))
+    with pytest.raises(robot_module.MotionArrivalTimeout, match="queue ID 0/7.*joint error.*TCP"):
+        robot.move((0.,) * 6, np.eye(4), monitor=lambda: None)
+
+
+@pytest.mark.parametrize("answer", ["continue", "stop", "close"])
+def test_retry_prompt_is_nonmodal_and_close_means_stop(node, answer):
+    from camera_calibration_gui.main import QtCore, QtWidgets
+
+    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    node.load_last_session = lambda: None
+    window = CalibrationWindow(node)
+    window._timer.stop()
+    prompt = dict(token="retry", event=threading.Event(), accepted=False, index=2, attempt=3,
+                  phase="capture", reason="Board obscured")
+    node.automatic.retry_prompt = prompt
+    try:
+        window._refresh_retry_prompt()
+        dialog = window._retry_dialog[1]
+        assert dialog.windowModality() == QtCore.Qt.NonModal
+        assert "all three attempts failed" in dialog.text()
+        if answer == "close":
+            dialog.close()
+        else:
+            dialog.button(QtWidgets.QMessageBox.Yes if answer == "continue"
+                          else QtWidgets.QMessageBox.No).click()
+        application.processEvents()
+        assert prompt["event"].is_set()
+        assert prompt["accepted"] is (answer == "continue")
+        window._refresh_retry_prompt()
+        assert window._retry_dialog is None
+        if answer != "continue":
+            node.automatic.robot.request_stop.assert_called_once_with(fresh=True)
+    finally:
+        node.automatic.retry_prompt = None
+        window._refresh_retry_prompt()
+        window.close()
+        application.processEvents()

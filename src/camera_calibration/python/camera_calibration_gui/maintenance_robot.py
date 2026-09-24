@@ -33,6 +33,10 @@ class ReplayStopped(RuntimeError):
     pass
 
 
+class MotionArrivalTimeout(RuntimeError):
+    """A replied-to move needs confirmed Stop before its target may be retried."""
+
+
 def rpy_rotation(angles):
     roll, pitch, yaw = angles
     cr, sr = math.cos(roll), math.sin(roll)
@@ -142,6 +146,7 @@ class MaintenanceRobot:
         self.group = ReentrantCallbackGroup()
         self.condition = threading.Condition(threading.RLock())
         self.cancel = threading.Event()
+        self.operator_cancel = threading.Event()
         self.feed = self.status = None
         self.sequence = 0
         self.progress_time = None
@@ -272,6 +277,7 @@ class MaintenanceRobot:
                         and self.output_bits & (1 << (second - 1))):
                     raise RuntimeError("Opposing gripper outputs must not both be HIGH")
             self.cancel.clear()
+            self.operator_cancel.clear()
             self.pending.clear()
             self.stop_attempt = None
             self.feedback_failure = None
@@ -279,8 +285,11 @@ class MaintenanceRobot:
         return targets
 
     def guard(self):
-        if self.cancel.is_set():
+        if self.cancel.is_set() or self.operator_cancel.is_set():
             raise ReplayStopped("Automatic capture stopped")
+        return self._state_guard()
+
+    def _state_guard(self):
         if self.feedback_failure is not None:
             raise RuntimeError(self.feedback_failure)
         if self.node._fatal_error is not None:
@@ -293,6 +302,31 @@ class MaintenanceRobot:
         if sample.feed["digital_outputs"] != self.output_bits:
             raise RuntimeError("Digital outputs changed during automatic capture")
         return sample
+
+    def stopped_retry_snapshot(self, attempt):
+        with self.condition:
+            if self.operator_cancel.is_set():
+                raise ReplayStopped("Operator stopped automatic capture")
+            if (self.stop_attempt is not attempt or not attempt.get("confirmed")
+                    or any(not record["future"].done() for record in self.pending)):
+                raise RuntimeError(
+                    "Retry requires the same confirmed Stop and all command replies")
+            sample = self._state_guard()
+            if not idle(sample):
+                raise RuntimeError("Retry requires a fresh enabled idle robot")
+            return sample
+
+    def hold_stopped(self, anchor, attempt):
+        sample = self.stopped_retry_snapshot(attempt)
+        if (np.max(np.abs(sample.tcp - anchor.tcp)) > .05
+                or np.max(np.abs(sample.joints - anchor.joints)) > math.radians(.05)):
+            raise RuntimeError("Robot moved while waiting for Continue")
+
+    def resume_after_stop(self, attempt):
+        with self.condition:
+            self.stopped_retry_snapshot(attempt)
+            self.cancel.clear()
+            self.stop_attempt = None
 
     def end(self):
         with self.condition:
@@ -360,12 +394,15 @@ class MaintenanceRobot:
         previous = None
         deadline = time.monotonic() + MOTION_TIMEOUT
         progress_at, progress_tcp = time.monotonic(), initial.tcp
+        progress_joints = initial.joints
         while True:
             sample = self.guard()
             monitor()
             now = time.monotonic()
-            if np.max(np.abs(sample.tcp - progress_tcp)) > .05:
+            if (np.max(np.abs(sample.tcp - progress_tcp)) > .05
+                    or np.max(np.abs(sample.joints - progress_joints)) > math.radians(.05)):
                 progress_at, progress_tcp = now, sample.tcp
+                progress_joints = sample.joints
             endpoint = (sample.sequence > accepted.sequence
                         and sample.feed["controller_timer"] > accepted.feed["controller_timer"]
                         and sample.feed["currentCommandId"] == command_id
@@ -374,8 +411,19 @@ class MaintenanceRobot:
                 return sample
             previous = sample if endpoint else None
             if now >= deadline or now - progress_at >= MOTION_PROGRESS_TIMEOUT:
-                raise RuntimeError(
-                    "Calibration motion timed out or made no progress for 3 seconds")
+                joint_error = float(np.max(np.abs(np.rad2deg(sample.joints - joints))))
+                position_error = float(np.linalg.norm(sample.tcp[:3] - matrix[:3, 3] * 1000.))
+                angle_error = rotation_angle_deg(
+                    rpy_rotation(np.deg2rad(sample.tcp[3:])) @ matrix[:3, :3].T)
+                reason = ("motion deadline expired" if now >= deadline
+                          else "no motion progress for 3 seconds")
+                message = (
+                    f"Robot arrival not confirmed: {reason}; "
+                    f"queue ID {sample.feed['currentCommandId']}/{command_id}, "
+                    f"idle={bool(idle(sample))}, joint error={joint_error:.3f} deg, "
+                    f"TCP error={position_error:.3f} mm/{angle_error:.3f} deg")
+                self.node._event_logger.record("WARNING", "replay_arrival_timeout", message)
+                raise MotionArrivalTimeout(message)
             self.cancel.wait(.01)
 
     def hold(self, anchor, joints, matrix):
@@ -384,6 +432,7 @@ class MaintenanceRobot:
                 or np.max(np.abs(sample.tcp - anchor.tcp)) > .05
                 or np.max(np.abs(sample.joints - anchor.joints)) > math.radians(.05)):
             raise RuntimeError("Robot moved while collecting the calibration sample")
+        return sample
 
     def request_stop(self, *, fresh=False):
         self.cancel.set()

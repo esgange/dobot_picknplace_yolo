@@ -171,8 +171,10 @@ Loading alone never moves the robot.
    enables/disables the robot or resets the gripper during replay.
 4. After validating robot/camera readiness and all CR10 target limits, Start
    clears working observations and the solution. Each position is physically
-   confirmed before collecting one new sample; old observations are not reused.
-   Progress shows the position and phase. The robot stays at the final position.
+   confirmed, then held stationary for one full second before collecting a fresh
+   sample. Each position gets three automatic attempts before a Continue/Stop
+   prompt. Continue starts another three attempts at that position, preserving
+   all earlier samples. Progress shows the position, attempt and phase. The robot stays at the final position.
 5. Review diagnostics, then click **Save as New Calibration**. Edit the filename
    in the dialog or accept the default
    `<mode>_calibration_<YYYYMMDDTHHMMSS_microsecondsZ>.yaml`. Saves stay in root
@@ -187,8 +189,9 @@ Arrival requires advancing canonical FeedInfo after command acceptance, the
 returned MovJ queue ID, idle/empty queue and RobotStatus's enabled-idle flag,
 actual joints within 1 degree and TCP within 5 mm/1 degree of canonical CR10 FK.
 Two distinct advancing samples must show TCP unchanged within 0.05 mm/degrees
-and joints within 0.05 degree. There is no fixed settling dwell. RGB, joints
-and robot TF must all be newer than arrival; RGB remains at most 0.5 seconds
+and joints within 0.05 degree. Before **every capture attempt**, require a full
+one-second stationary/idle hold with advancing feedback and these same limits.
+RGB, joints and robot TF must all be newer than the end of that hold; RGB remains at most 0.5 seconds
 old and joints/TF at most 1 second old. FeedInfo and RobotStatus must remain
 fresh within 1 second, with an advancing controller timer. Stationarity,
 enabled/idle state, DI1 LOW and unchanged outputs remain monitored during
@@ -198,12 +201,29 @@ Dobot responses have a five-second deadline. Motion is bounded to 300 seconds,
 with a three-second no-progress limit. Fresh-sample waiting is bounded to ten
 seconds, with up to twenty additional seconds for processing; after solving,
 allow up to two seconds for the next valid RGB callback before moving again.
+A missing/rejected board observation after ten seconds retries capture at the
+same pose. The next attempt starts with a new one-second hold and fresh image/
+joints/TF; it does not move again or reuse earlier observations. After three
+failed attempts, a nonmodal **Continue / Stop** prompt lets the operator inspect
+the camera view. Continue starts a new three-attempt batch here; Stop or closing
+the prompt ends the run. The main Stop button and robot monitoring stay active.
+
+A robot-arrival timeout is reported separately with observed/expected queue ID,
+idle state, joint error and TCP translation/rotation error. It consumes an
+attempt and requires confirmed physical Stop, all replies received, unchanged
+outputs and fresh fault-free enabled/idle feedback before retrying the same
+move. After three such failures, the prompt explains that Continue may move
+the robot again. No skipped positions or automatic Home return is introduced.
+An explicit operator Stop, new Stop attempt or latched feedback fault cannot
+be cleared by retry. Joint changes also count as motion progress.
+
 Malformed/stale feedback, changed outputs, a competing command application,
-camera failure, rejected/timed-out commands, or Stop end the run through direct
+native camera failure, rejected/unanswered commands, failed solving, or Stop
+end the run through direct
 Dobot Stop and physical confirmation. Stop acknowledgement alone is insufficient:
 fresh advancing feedback must show a stationary robot and empty queue. A late
-accepted abandoned MovJ triggers another containment Stop. No position is
-skipped and no automatic replay retry or Home return occurs.
+accepted abandoned MovJ triggers another containment Stop. These failures do
+not enter the observation/arrival retry workflow.
 
 **Stop Automatic Capture** stays available while moving, sampling or stopping.
 An unconfirmed Stop blocks editing and another run; another explicit Stop makes

@@ -780,7 +780,10 @@ five-sample/angular rules, and recomputes using live internal camera TF.
 Existing schema 1–6 files are preserved but rejected without conversion.
 After loading, **Start Automatic Capture** reuses the ordered joint positions
 directly through canonical Dobot bringup, collects fresh samples after each confirmed
-stationary arrival, and leaves the robot at the final position. The separate
+stationary arrival and a one-second hold before each capture attempt. A position
+gets three automatic attempts; only after all three fail does Continue/Stop appear.
+Continue tries another three at the same position and keeps earlier samples.
+The robot stays at the final position on completion. The separate
 **Save as New Calibration** button opens an editable filename dialog with the
 existing timestamped naming rule as its default. It saves inside `calibration/`
 and never overwrites the source or another file. Replay is an attended maintenance
