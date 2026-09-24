@@ -336,7 +336,7 @@ def test_motion_cannot_finish_on_old_queue_id_or_unchanged_feedback(robot, monke
 
 
 @pytest.mark.parametrize("scenario", ["normal", "stop_during_solve", "camera_gap",
-                                      "disabled", "drag_disabled", "drag_enabled"])
+                                      "disabled", "drag_disabled", "drag_enabled", "settling"])
 def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, scenario):
     """Isolated fake Dobot services: no controller, camera hardware or robot connection."""
     import rclpy
@@ -360,6 +360,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
             self._event_logger = MagicMock()
             self._fatal_error = None
             self._calibration_samples = []
+            self._solution = self._diagnostics = self._latest_overlay = None
             self._camera_matrix = np.eye(3)
             self._latest_pose_stamp = self._latest_valid_rgb_stamp = None
             self._latest_joint_positions = self._latest_joint_state_stamp = None
@@ -406,6 +407,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
             self.moves = []
             self.stops = 0
             self.moving_until = 0.
+            self.settle_at = 0.
             self.lock = threading.Lock()
             self.feed_pub = self.create_publisher(String, robot_module.FEED_TOPIC, 10)
             self.status_pub = self.create_publisher(RobotStatus, robot_module.STATUS_TOPIC, 10)
@@ -451,6 +453,8 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
                     camera.gap_until = time.monotonic() + .9
                     self.moving_until = time.monotonic() + 1.5
                     self.data.update(robot_mode=7, RunningStatus=1, isRunQueuedCmd=1)
+                if scenario == "settling" and len(self.moves) == 2:
+                    self.settle_at = time.monotonic() + .2
                 response.res = 0
                 response.robot_return = "{" + str(len(self.moves)) + "}"
             return response
@@ -465,6 +469,9 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
 
         def publish(self):
             with self.lock:
+                if self.settle_at and time.monotonic() >= self.settle_at:
+                    self.data["tool_vector_actual"][0] += .06
+                    self.settle_at = 0.
                 if self.moving_until and time.monotonic() >= self.moving_until:
                     self.data.update(robot_mode=5, RunningStatus=0, isRunQueuedCmd=0)
                     self.moving_until = 0.
@@ -507,7 +514,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
             time.sleep(.01)
         assert not camera.automatic.active, camera.automatic.message
         assert camera.automatic.complete is not stop_during_solve, camera.automatic.message
-        expected_positions = ([0, 1, 1, 2, 3, 4, 5] if scenario == "camera_gap"
+        expected_positions = ([0, 1, 1, 2, 3, 4, 5] if scenario in ("camera_gap", "settling")
                               else list(range(5 if stop_during_solve else 6)))
         assert len(dobot.moves) == len(expected_positions)
         assert dobot.cp == [100]
@@ -520,7 +527,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
             assert camera.automatic.robot.stop_attempt["confirmed"]
         else:
             assert len(camera._calibration_samples) == 6
-            assert dobot.stops == (1 if scenario == "camera_gap" else 0)
+            assert dobot.stops == (1 if scenario in ("camera_gap", "settling") else 0)
     finally:
         camera.automatic.close()
         for executor in executors:
@@ -1083,3 +1090,154 @@ def test_readiness_never_reenables_or_exits_drag_mid_replay(robot, monkeypatch, 
     with pytest.raises(RuntimeError, match="state or I/O changed"):
         robot.guard()
     assert not rig.calls
+
+
+@pytest.mark.parametrize("changes", [
+    {"tool_vector_actual": [.06, 0., 0., 0., 0., 0.]},
+    {"q_actual": [.06, 0., 0., 0., 0., 0.]}, {"RunningStatus": 1}])
+def test_hold_loss_is_recoverable_only_with_valid_safe_feedback(robot, changes):
+    anchor = robot.guard()
+    robot._on_feed(String(data=json.dumps(feedback(controller_timer=2, **changes))))
+    with pytest.raises(robot_module.StationarityLost, match="idle=.*TCP change=.*joint change="):
+        robot.hold_idle(anchor)
+    robot._on_feed(String(data=json.dumps(feedback(controller_timer=3, ErrorStatus=1, **changes))))
+    with pytest.raises(RuntimeError) as caught:
+        robot.hold_idle(anchor)
+    assert not isinstance(caught.value, robot_module.StationarityLost)
+
+
+@pytest.mark.parametrize("phase", ["camera_wait", "stability", "capture_prompt"])
+def test_stationarity_retries_same_position_and_only_prompts_after_three(node, phase):
+    automatic = node.automatic
+    movements, captures = [], []
+    automatic.robot.move.side_effect = lambda joints, **_kw: movements.append(joints) or object()
+
+    def capture(index, attempt, *_args):
+        captures.append((index, attempt))
+        if index == 2 and phase != "camera_wait" and len(captures) <= 4:
+            if phase == "capture_prompt":
+                return dict(success=False, retryable=True, message="Board hidden")
+            raise robot_module.StationarityLost("Robot settled after arrival")
+        node._calibration_samples.append(index)
+        automatic.captured += 1
+        return dict(success=True)
+
+    def hold(*_args):
+        if phase == "camera_wait" and node._calibration_samples == [1] and len(movements) < 2:
+            if automatic.robot.wait_stop.call_count < 3:
+                raise robot_module.StationarityLost("Robot settled before move")
+        if phase == "capture_prompt" and 2 <= len(captures) <= 4:
+            raise robot_module.StationarityLost("Robot settled during capture retry")
+
+    automatic.robot.hold_idle.side_effect = hold if phase == "camera_wait" else None
+    automatic.robot.hold.side_effect = hold
+    automatic._stable_capture = capture
+    targets = [(0.,) * 6, (.1,) * 6]
+    worker = threading.Thread(target=automatic._run, args=(targets,))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2.
+        while automatic.retry_prompt is None and worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(.005)
+        assert automatic.retry_prompt is not None, automatic.message
+        assert automatic.retry_prompt["phase"] == "stability"
+        assert automatic.retry_prompt["attempt"] == 3
+        assert automatic.robot.wait_stop.call_count == 3
+        assert node._calibration_samples == [1] and automatic.captured == 1
+        move_count = len(movements)
+        time.sleep(.04)
+        assert len(movements) == move_count
+        automatic.respond_retry(automatic.retry_prompt["token"], True)
+        worker.join(timeout=2.)
+        assert not worker.is_alive() and automatic.complete, automatic.message
+        assert node._calibration_samples == [1, 2]
+        assert movements[0] == targets[0] and all(j == targets[1] for j in movements[1:])
+    finally:
+        automatic.stop()
+        worker.join(timeout=2.)
+
+
+@pytest.mark.parametrize("outcome", ["recover", "solver_failure", "operator_stop"])
+def test_interrupted_solve_is_drained_before_recapture_and_preserves_earlier_samples(node, outcome):
+    automatic = node.automatic
+    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    automatic.robot.operator_cancel = threading.Event()
+    automatic.robot.request_stop.side_effect = lambda **_kw: stopped.set()
+    automatic._wait_stable = MagicMock()
+    calls = []
+
+    def hold(*_args):
+        if automatic.robot.operator_cancel.is_set():
+            raise robot_module.ReplayStopped("Operator stopped")
+        if entered.is_set() and not stopped.is_set():
+            raise robot_module.StationarityLost("Movement during solve")
+
+    automatic.robot.guard.side_effect = hold
+    automatic.robot.hold.side_effect = hold
+    automatic.robot.hold_idle.side_effect = hold
+    automatic.robot.hold_stopped.side_effect = hold
+    automatic.robot.stopped_retry_snapshot.side_effect = hold
+    automatic.robot.resume_after_stop.side_effect = hold
+
+    def capture(**_kwargs):
+        number = len(calls) + 1
+        calls.append(number)
+        node._calibration_samples.append(f"C{number}")
+        node._next_calibration_sample_number += 1
+        if number == 2:
+            entered.set()
+            assert release.wait(2.)
+        node._solution, node._diagnostics = f"solution{number}", f"diagnostics{number}"
+        return (False, "Solver failed") if number == 2 and outcome == "solver_failure" else (
+            True, "Captured")
+
+    node.capture_sample = capture
+    worker = threading.Thread(target=automatic._run, args=([(0.,) * 6, (.1,) * 6],))
+
+    def tick():
+        while automatic.active:
+            automatic._tick()
+            time.sleep(.005)
+
+    callback = threading.Thread(target=tick)
+    worker.start()
+    callback.start()
+    try:
+        assert entered.wait(2.) and stopped.wait(2.)
+        assert automatic.robot.move.call_count == 2
+        assert automatic.capture_checkpoint is not None and automatic.capturing
+        time.sleep(.04)
+        assert automatic.robot.move.call_count == 2  # No motion during the outstanding solve.
+        if outcome == "operator_stop":
+            automatic.stop()
+        release.set()
+        worker.join(timeout=2.)
+        callback.join(timeout=2.)
+        assert not worker.is_alive() and not callback.is_alive(), automatic.message
+        recovered = outcome == "recover"
+        assert automatic.complete is recovered, automatic.message
+        assert node._calibration_samples == (["C1", "C3"] if recovered else ["C1"])
+        assert automatic.captured == (2 if recovered else 1)
+        assert node._next_calibration_sample_number == (4 if recovered else 3)
+        assert node._solution == ("solution3" if recovered else "solution1")
+        assert node._diagnostics == ("diagnostics3" if recovered else "diagnostics1")
+        assert automatic.robot.move.call_count == (3 if recovered else 2)
+        assert automatic._wait_stable.call_count == (3 if recovered else 2)
+        assert automatic.capture_checkpoint is None
+        if outcome == "solver_failure":
+            assert "Solver failed" in automatic.message
+    finally:
+        release.set()
+        automatic.stop()
+        worker.join(timeout=2.)
+        callback.join(timeout=2.)
+
+
+def test_unconfirmed_capture_solution_never_broadcasts_tf(node):
+    node._tf_broadcaster = MagicMock()
+    node.automatic.capture_checkpoint = {"invalidated": False}
+    node._publish_solution_preview("base_link", "bin_camera_link", np.eye(4))
+    node._tf_broadcaster.sendTransform.assert_not_called()
+    node.automatic.capture_checkpoint = None
+    node._publish_solution_preview("base_link", "bin_camera_link", np.eye(4))
+    node._tf_broadcaster.sendTransform.assert_called_once()

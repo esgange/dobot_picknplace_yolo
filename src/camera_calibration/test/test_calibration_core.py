@@ -1488,6 +1488,7 @@ def test_calibrated_pose_overlay_reports_reference_pose_and_quality():
 
 def test_only_calculated_camera_tf_is_broadcast_for_rviz():
     node = calibration_main.CalibrationNode.__new__(calibration_main.CalibrationNode)
+    node._lock = threading.RLock()
     node.get_clock = MagicMock()
     node.get_clock.return_value.now.return_value = calibration_main.Time(seconds=10.0)
     node._tf_broadcaster = MagicMock()

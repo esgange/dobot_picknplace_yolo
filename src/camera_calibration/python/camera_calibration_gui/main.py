@@ -629,6 +629,9 @@ class CalibrationNode(Node):
             camera_info_size = self._camera_info_size
             solution = None if self._solution is None else self._solution.copy()
             diagnostics = self._diagnostics
+            automatic = getattr(self, "automatic", None)
+            if automatic is not None and automatic.capture_checkpoint is not None:
+                solution = diagnostics = None
             reference_frame = self._reference_frame
             fatal_error = self._fatal_error
         if settings is None or fatal_error is not None:
@@ -1214,6 +1217,10 @@ class CalibrationNode(Node):
         camera_link_frame: str,
         reference_from_camera_link: np.ndarray,
     ) -> None:
+        with self._lock:
+            automatic = getattr(self, "automatic", None)
+            if automatic is not None and automatic.capture_checkpoint is not None:
+                return
         transform = TransformStamped()
         transform.header.stamp = self.get_clock().now().to_msg()
         transform.header.frame_id = reference_frame
@@ -1233,8 +1240,9 @@ class CalibrationNode(Node):
             settings = self._settings
             solution = None if self._solution is None else self._solution.copy()
             reference_frame = self._reference_frame
-        if settings is not None and solution is not None:
-            self._publish_solution_preview(reference_frame, settings.camera_link_frame, solution)
+            if settings is not None and solution is not None:
+                self._publish_solution_preview(
+                    reference_frame, settings.camera_link_frame, solution)
 
     def save(self, filename=None, *, created_at=None) -> tuple[bool, str]:
         automatic = getattr(self, "automatic", None)
@@ -1625,7 +1633,7 @@ class CalibrationWindow(QtWidgets.QWidget):
             "Gripper outputs stay unchanged. Current samples will be replaced by fresh captures. "
             "Each position gets three automatic attempts, with a one-second stationary hold "
             "before every capture. Only three failed attempts prompt Continue or Stop. "
-            "A movement-timeout retry requires confirmed Stop and fresh robot checks. "
+            "Movement or arrival-timeout recovery requires confirmed Stop and fresh robot checks. "
             "The robot will remain at the final position. The source file stays unchanged.",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No,
@@ -1871,7 +1879,11 @@ class CalibrationWindow(QtWidgets.QWidget):
             dialog.deleteLater()
         if prompt is None or self._retry_dialog is not None:
             return
-        if prompt["phase"] == "motion":
+        if prompt["phase"] == "stability":
+            detail = ("Robot Stop is confirmed. Check that the robot can remain stationary. "
+                      "Continue returns to the same saved joints and repeats the one-second "
+                      "hold before taking a fresh sample.")
+        elif prompt["phase"] == "motion":
             detail = ("Robot Stop is confirmed. Check the robot and the path to this position. "
                       "Continue may command movement again.")
         elif prompt["phase"] == "camera":

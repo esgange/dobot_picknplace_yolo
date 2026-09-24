@@ -5329,6 +5329,58 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the explicit Start confirmation. Python compilation, ament_flake8 and diff
   checks pass. Live robot readiness and replay remain untested.
 
+### 2026-09-24 — Recover lost calibration hold and recapture the same position
+
+- Rule 128 supersedes terminal handling of calibration stationarity loss only.
+  The reported run retained 17 successful captures, then stopped with the generic
+  hold-loss error. Its position-16 camera gap had already recovered correctly.
+  Historical hold-loss logs did not record TCP/joint deltas or idle state, so
+  neither normal settling nor the actual movement size can be established.
+- Add a specific recoverable StationarityLost condition after existing fresh,
+  enabled, fault-free, unchanged-I/O and command-ownership checks pass. Keep the
+  existing component-wise 0.05 mm/degrees TCP and 0.05-degree joint hold limits,
+  and log observed deltas and idle state when they fail. No nominal TCP arrival
+  check returns. Disabled/drag, stale/faulted feedback, changed outputs and
+  competing applications remain terminal.
+- Apply the same three-attempt budget to lost hold before motion, during the
+  one-second settling interval, capture/solve and capture-retry prompting.
+  Independently request and physically confirm Stop, require all command replies
+  and the same confirmed Stop identity with fresh safe stopped feedback, then
+  revisit the same saved joints and repeat the full hold and fresh capture.
+  Only three failed attempts prompt Continue/Stop. Continue starts another three
+  at the same position; operator Stop always pre-empts. Preserve earlier samples.
+- Treat the current automatic sample and computed result as unconfirmed until
+  its final stationary check. Keep an in-memory checkpoint of prior accepted
+  samples/count/solution/diagnostics. Invalidate its pending request on recovery,
+  monitor the stopped robot while waiting at most twenty seconds for the existing
+  serialized callback/solve to finish, and then discard only that interrupted
+  attempt's data. Never overlap a new movement/capture with the old callback or
+  reuse sample IDs. Late callbacks after terminal failure also discard their
+  invalidated attempt. Operator artifacts and earlier accepted samples are never
+  removed; this is the narrow exception to historical no-rollback wording for
+  unconfirmed in-flight data, not a calibration-file or accepted-sample rollback.
+- Suppress unconfirmed solution TF and solved image overlays. Restore the prior
+  accepted preview after discard, unless a native fatal error forbids any TF.
+  Failed solves/native workers remain terminal, including when hold loss occurs
+  during the same solve. Preserve the two ROS executor threads, private worker,
+  source recipe, freshness/diversity gates, no partial saves and startup-only
+  enable/drag preparation. No robot-controller/interface/FSM, vendor, runtime,
+  configuration or artifact-schema changes.
+- Update AGENTS and root/package READMEs. No physical robot commands, launches,
+  operator-artifact edits or new offline-transfer milestone during verification.
+- Validation: camera_calibration symlink build and all 177 package tests pass
+  (55 core, 118 automatic/maintenance, four private-runtime installation), with
+  zero errors, failures or skips. Isolated fake-Dobot ROS replay injects a
+  0.06 mm settling movement and verifies Stop, repeated saved joints and all
+  six completed captures. Threaded regressions cover interruption during solve,
+  no move before callback completion, preserved earlier samples/solution,
+  non-reused IDs, terminal solver failure and operator Stop. Other cases verify
+  three failures before prompting in camera-wait/hold/capture-retry phases,
+  unchanged safety guards and suppressed unconfirmed TF. Update the existing
+  TF test fixture for the node's publication lock; the core suite then passes.
+  Python compilation, ament_flake8 and diff checks pass. Hardware recovery
+  remains untested; restart the calibration GUI to load this change.
+
 ### Future entry template
 
 ```text

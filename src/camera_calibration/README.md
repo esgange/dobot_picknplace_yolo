@@ -250,6 +250,25 @@ the robot again. No skipped positions or automatic Home return is introduced.
 An explicit operator Stop, new Stop attempt or latched feedback fault cannot
 be cleared by retry. Joint changes also count as motion progress.
 
+If valid robot feedback loses the stationary/idle hold while waiting for camera
+data, settling, capturing or awaiting a capture retry, consume an attempt and
+confirm physical Stop. Once all replies and fresh safe stopped feedback are
+confirmed, revisit the same saved joint pose and repeat the full one-second
+hold before taking a new sample. Keep the existing 0.05 mm/degrees and 0.05-degree
+joint stability limits; the warning logs maximum live TCP/joint changes and idle
+state. This is not a comparison against nominal or saved TCP coordinates.
+After three failures the Continue/Stop prompt explains that recovery will move
+to the same saved joints again. Continue starts the next three-attempt batch.
+
+An automatic capture remains unconfirmed until the final stationary check after
+processing. During recovery, cancel that attempt's request and wait up to twenty
+seconds for its existing callback/solve to finish while monitoring the confirmed
+stopped robot. Discard only that unconfirmed attempt's data and restore the prior
+accepted samples, count and solution; never reuse its sample ID. No next movement
+or capture is allowed while the old callback is running. Suppress TF and solved
+overlays from an unconfirmed attempt, and log discarded attempts. A failed solve
+or native worker remains terminal even if movement also interrupted the attempt.
+
 Malformed/stale feedback, changed outputs, a competing command application,
 native camera failure, rejected/unanswered commands, failed solving, or Stop
 end the run through direct

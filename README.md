@@ -787,6 +787,9 @@ gets three automatic attempts; only after all three fail does Continue/Stop appe
 Continue tries another three at the same position and keeps earlier samples.
 Temporary RGB/CameraInfo unavailability uses the same retry workflow, with
 confirmed Stop before retrying a move interrupted by lost camera readiness.
+Loss of stationary hold also confirms Stop and retries the same saved joints,
+with a new one-second hold and fresh capture. Only the interrupted attempt's
+unconfirmed data is discarded; earlier accepted samples remain.
 The robot stays at the final position on completion. The separate
 **Save as New Calibration** button opens an editable filename dialog with the
 existing timestamped naming rule as its default. It saves inside `calibration/`

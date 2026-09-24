@@ -6,7 +6,8 @@ import uuid
 
 from dobot_msgs_v4.srv import CP
 
-from .maintenance_robot import MaintenanceRobot, MotionArrivalTimeout, ReplayStopped
+from .maintenance_robot import (
+    MaintenanceRobot, MotionArrivalTimeout, ReplayStopped, StationarityLost)
 
 
 CAPTURE_STABILITY_SEC = 1.0
@@ -25,6 +26,7 @@ class AutomaticCapture:
         self.active = self.capturing = self.complete = self.started = self.stopping = False
         self.run_id = ""
         self.pending = self.thread = self.retry_prompt = None
+        self.capture_checkpoint = None
         self.captured = 0
         self.message = "Load a calibration to reuse its robot positions."
         # RGB/joints and capture remain serialized. Dobot feedback and Stop use
@@ -108,13 +110,21 @@ class AutomaticCapture:
                 deadline=time.monotonic() + 10., last_stamp=None, run_id=self.run_id,
                 retryable=False)
             self.pending = request
+            self.capture_checkpoint = dict(
+                samples=list(self.node._calibration_samples), captured=self.captured,
+                solution=self.node._solution, diagnostics=self.node._diagnostics,
+                request=request, invalidated=False)
             self.message = f"{prefix}: waiting for a fresh sample."
         while not request["event"].wait(.01):
             self.robot.hold(anchor, joints)
             # Solving blocks serial RGB callbacks, but never robot monitoring.
             if time.monotonic() > request["deadline"] + 20.:
                 raise RuntimeError("Automatic sample processing timed out")
-        self.robot.hold(anchor, joints)
+        with self.node._lock:
+            if not request["success"] and not request["retryable"]:
+                raise RuntimeError(request["message"])
+            self.robot.hold(anchor, joints)
+            self.capture_checkpoint = None
         return request
 
     def _wait_stable(self, anchor, joints):
@@ -174,10 +184,15 @@ class AutomaticCapture:
 
     def _retry_stopped(self, index, attempt, reason, phase):
         self.stopping = True
+        self.message = (f"Position {index}, attempt {attempt}/{MAX_POSITION_ATTEMPTS}: "
+                        f"{reason}. Confirming Stop before retry.")
         self.robot.request_stop()
+        self._invalidate_capture()
         self.robot.wait_stop()
         stopped_attempt = self.robot.stop_attempt
         origin = self.robot.stopped_retry_snapshot(stopped_attempt)
+        self._discard_interrupted_capture(
+            lambda: self.robot.hold_stopped(origin, stopped_attempt))
         self.stopping = False
         attempt = self._retry_or_prompt(
             index, attempt, reason, phase,
@@ -185,48 +200,68 @@ class AutomaticCapture:
         self.robot.resume_after_stop(stopped_attempt)
         return attempt, origin
 
+    def _invalidate_capture(self):
+        with self.node._lock:
+            if self.capture_checkpoint is not None:
+                self.capture_checkpoint["invalidated"] = True
+            self._finish_pending(False, "Capture interrupted; waiting for robot recovery")
+
+    def _restore_checkpoint_locked(self):
+        checkpoint = self.capture_checkpoint
+        if checkpoint is None:
+            return
+        discarded = self.node._calibration_samples[len(checkpoint["samples"]):]
+        self.node._calibration_samples = checkpoint["samples"]
+        self.captured = checkpoint["captured"]
+        self.node._solution = checkpoint["solution"] if not self.node._fatal_error else None
+        self.node._diagnostics = checkpoint["diagnostics"] if not self.node._fatal_error else None
+        self.node._latest_overlay = None
+        self.capture_checkpoint = None
+        self.node._event_logger.record(
+            "WARNING", "automatic_capture_discarded", "Discarded interrupted capture attempt",
+            position=checkpoint["request"]["index"], attempt=checkpoint["request"]["attempt"],
+            discarded_count=len(discarded))
+        # IDs remain monotonic: an interrupted sample's C# is never reused.
+
+    def _discard_interrupted_capture(self, monitor, *, check_failure=True):
+        with self.node._lock:
+            checkpoint = self.capture_checkpoint
+        if checkpoint is None:
+            return
+        deadline = time.monotonic() + 20.
+        while True:
+            monitor()
+            with self.node._lock:
+                if not self.capturing:
+                    self._restore_checkpoint_locked()
+                    if check_failure and checkpoint["request"].get("terminal_failure"):
+                        raise RuntimeError(checkpoint["request"]["terminal_failure"])
+                    return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "Interrupted capture processing did not finish within 20 seconds")
+            time.sleep(.01)
+
     def _run(self, targets):
         try:
             self.robot.ensure_ready(lambda message: setattr(self, "message", message))
             self.robot.command("CP", CP.Request(r=100))
             for index, joints in enumerate(targets, 1):
                 origin = self.robot.guard()
+                anchor = None
                 needs_move = True
                 attempt = 1
                 while True:
-                    moving = False
                     try:
-                        if needs_move:
-                            self.message = (f"Position {index}/{len(targets)}, "
-                                            f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}: "
-                                            "waiting for camera readiness.")
-                            self._wait_camera(lambda: self.robot.hold_idle(origin))
-                            self.message = (f"Position {index}/{len(targets)}, "
-                                            f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}: moving.")
-                            moving = True
-                            anchor = self.robot.move(joints, monitor=self._require_camera)
-                            needs_move = False
-                    except CameraNotReady as exc:
-                        if moving:
-                            attempt, origin = self._retry_stopped(
-                                index, attempt, str(exc), "camera")
-                        else:
-                            attempt = self._retry_or_prompt(
-                                index, attempt, str(exc), "camera",
-                                lambda: self.robot.hold_idle(origin))
-                        continue
-                    except MotionArrivalTimeout as exc:
+                        attempt, origin, anchor, needs_move, result = self._position_attempt(
+                            targets, index, joints, attempt, origin, needs_move,
+                            anchor)
+                        if result is not None and result["success"]:
+                            break
+                    except StationarityLost as exc:
                         attempt, origin = self._retry_stopped(
-                            index, attempt, str(exc), "motion")
-                        continue
-                    result = self._stable_capture(index, attempt, anchor, joints)
-                    if result["success"]:
-                        break
-                    if not result["retryable"]:
-                        raise RuntimeError(result["message"])
-                    attempt = self._retry_or_prompt(
-                        index, attempt, result["message"], "capture",
-                        lambda: self.robot.hold(anchor, joints))
+                            index, attempt, str(exc), "stability")
+                        needs_move = True
             with self.node._lock:
                 self.robot.guard()
                 self.complete = self.captured == len(targets)
@@ -238,6 +273,7 @@ class AutomaticCapture:
             self.complete = False
             self.stopping = True
             self.robot.request_stop()
+            self._invalidate_capture()
             self.message = f"{exc}. Waiting for physical Stop confirmation."
             try:
                 self.robot.wait_stop()
@@ -245,6 +281,10 @@ class AutomaticCapture:
                 self.message = f"Automatic capture ended: {exc}. Robot Stop confirmed."
             except Exception as stop_error:
                 self.message = f"{exc}. STOP UNCONFIRMED: {stop_error}. Use Stop again."
+            try:
+                self._discard_interrupted_capture(lambda: None, check_failure=False)
+            except Exception as cleanup_error:
+                self.message += f" Capture cleanup failed: {cleanup_error}."
         finally:
             self.robot.end()
             with self.node._lock:
@@ -254,6 +294,42 @@ class AutomaticCapture:
                 self.node._event_logger.record(
                     "INFO" if self.complete else "WARNING", "automatic_capture_finished",
                     self.message, run_id=self.run_id, captured=self.captured)
+
+    def _position_attempt(self, targets, index, joints, attempt, origin, needs_move, anchor):
+        moving = False
+        try:
+            if needs_move:
+                self.message = (f"Position {index}/{len(targets)}, "
+                                f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}: "
+                                "waiting for camera readiness.")
+                self._wait_camera(lambda: self.robot.hold_idle(origin))
+                self.message = (f"Position {index}/{len(targets)}, "
+                                f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}: moving.")
+                moving = True
+                anchor = self.robot.move(joints, monitor=self._require_camera)
+                needs_move = False
+        except CameraNotReady as exc:
+            if moving:
+                attempt, origin = self._retry_stopped(
+                    index, attempt, str(exc), "camera")
+            else:
+                attempt = self._retry_or_prompt(
+                    index, attempt, str(exc), "camera",
+                    lambda: self.robot.hold_idle(origin))
+            return attempt, origin, anchor, needs_move, None
+        except MotionArrivalTimeout as exc:
+            attempt, origin = self._retry_stopped(
+                index, attempt, str(exc), "motion")
+            return attempt, origin, anchor, needs_move, None
+        result = self._stable_capture(index, attempt, anchor, joints)
+        if result["success"]:
+            return attempt, origin, anchor, needs_move, result
+        if not result["retryable"]:
+            raise RuntimeError(result["message"])
+        attempt = self._retry_or_prompt(
+            index, attempt, result["message"], "capture",
+            lambda: self.robot.hold(anchor, joints))
+        return attempt, origin, anchor, needs_move, result
 
     def _finish_pending(self, success, message, *, retryable=False):
         pending, self.pending = self.pending, None
@@ -301,6 +377,12 @@ class AutomaticCapture:
         finally:
             with self.node._lock:
                 self.capturing = False
+                if (not success and (len(self.node._calibration_samples) != before
+                                     or self.node._fatal_error)):
+                    pending["terminal_failure"] = message
+                if (self.capture_checkpoint is not None
+                        and self.capture_checkpoint["invalidated"] and not self.active):
+                    self._restore_checkpoint_locked()
         with self.node._lock:
             if self.pending is not pending or self.stopping:
                 return

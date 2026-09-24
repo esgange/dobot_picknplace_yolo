@@ -38,6 +38,10 @@ class MotionArrivalTimeout(RuntimeError):
     """A replied-to move needs confirmed Stop before its target may be retried."""
 
 
+class StationarityLost(RuntimeError):
+    """Valid robot feedback lost its hold; Stop must precede recapture."""
+
+
 class Cr10JointLimits:
     """Validate saved joints against the canonical CR10 joint limits."""
 
@@ -495,15 +499,22 @@ class MaintenanceRobot:
 
     def hold_idle(self, anchor):
         sample = self.guard()
-        if (not idle(sample) or np.max(np.abs(sample.tcp - anchor.tcp)) > .05
-                or np.max(np.abs(sample.joints - anchor.joints)) > math.radians(.05)):
-            raise RuntimeError("Robot moved while waiting for calibration data")
+        translation = float(np.max(np.abs(sample.tcp[:3] - anchor.tcp[:3])))
+        rotation = float(np.max(np.abs(sample.tcp[3:] - anchor.tcp[3:])))
+        joints = float(np.max(np.abs(np.rad2deg(sample.joints - anchor.joints))))
+        if not idle(sample) or max(translation, rotation, joints) > .05:
+            message = ("Robot moved while waiting for calibration data: "
+                       f"idle={bool(idle(sample))}, maximum TCP change={translation:.4f} mm/"
+                       f"{rotation:.4f} deg, joint change={joints:.4f} deg")
+            self.node._event_logger.record("WARNING", "replay_stationarity_lost", message)
+            raise StationarityLost(message)
         return sample
 
     def hold(self, anchor, joints):
         sample = self.hold_idle(anchor)
         if not joints_at_target(sample, joints):
-            raise RuntimeError("Robot left the saved joint position while collecting the sample")
+            raise StationarityLost(
+                "Robot left the saved joint position while collecting the sample")
         return sample
 
     def request_stop(self, *, fresh=False):

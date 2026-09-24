@@ -290,6 +290,15 @@ ends the run through independent Stop, without retries or error/output resets.
 Launch, loading and manual capture remain read-only. Never automatically
 re-enable or leave drag again during an existing replay; a new Start is needed.
 
+Rule 128 makes calibration hold loss recoverable within the current position's
+three-attempt budget. Preserve strict feedback/I/O/ownership gates, confirm Stop
+and all replies, discard only that attempt's unconfirmed sample/solution after
+its callback finishes, then revisit the same saved joints and repeat the full
+one-second hold before fresh capture. Preserve earlier samples and never reuse
+sample IDs. Suppress unconfirmed solution TF/overlays. Three failures prompt
+Continue/Stop; Stop, robot faults, solver/runtime failures and unconfirmed Stop
+remain terminal. Log actual TCP/joint changes and idle state on hold loss.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
