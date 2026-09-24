@@ -8,6 +8,7 @@ import pytest
 
 from robot_controller.controller import RobotController
 from robot_controller.errors import FeedbackFailure, ManagedInterruption, OperationCanceled
+from robot_controller.hardware import DobotTransport
 from robot_controller.state_machine import ControllerStateMachine
 
 from test_managed_control import Rig, states
@@ -200,3 +201,63 @@ def test_no_loss_keeps_existing_held_recovery_and_does_not_put_back():
     assert result.success and result.state == "HOLDING"
     assert ("recover", 60, {"return_item": False}) in rig.log
     assert not any(entry[0] in ("move", "output", "pulse") for entry in rig.log)
+
+
+def unknown_recovery_rig():
+    rig = RecoveryRig()
+    rig.machine = ControllerStateMachine(initial="HELD_UNKNOWN")
+    rig.holding_item = False
+    rig.managed.session = None
+    # Exercise the real controller/transport recovery gates with command stages
+    # recorded in place of a robot. No ROS clients or hardware calls are created.
+    transport = object.__new__(DobotTransport)
+    transport.node, transport.monitor = rig, rig.monitor
+    transport.clients = {}
+    transport.wait_services = lambda **_kwargs: None
+    transport.ensure_no_pending_response = lambda: None
+    transport.request_stop = rig.hardware.request_stop
+    transport.confirm_stop = rig.hardware.confirm_stop
+    transport._phase = lambda *_args: None
+    transport._clear_errors_if_needed = lambda: rig.log.append(("clear_error",))
+    transport._call_startup = lambda name: rig.log.append((name,))
+    transport._wait_enabled = lambda: None
+    transport._apply_settings = lambda speed: rig.log.append(("settings", speed))
+    transport._reset_outputs_if_unheld = lambda: rig.log.append(("reset_outputs",))
+    transport._confirm_ready = lambda: None
+    rig.check_all_command_owners = lambda _names: None
+    rig.check_feedback_owners = lambda: None
+    rig.hardware = transport
+    return rig
+
+
+def test_unknown_suction_can_retry_recover_after_clear_without_an_extra_stop_click():
+    rig = unknown_recovery_rig()
+    outputs = rig.expected_outputs.copy()
+    for _ in range(2):
+        result = rig.recover()
+        assert not result.success and result.state == "HELD_UNKNOWN"
+        assert "clear any item" in result.message and "obstruction" in result.message
+        assert "DI1 shows LOW" in result.message and "Recover again" in result.message
+        assert not rig.operation_lock.locked()
+    assert not any(entry[0] in ("EnableRobot", "reset_outputs", "move", "pulse")
+                   for entry in rig.log)
+    assert rig.expected_outputs == outputs
+    rig.set_di1(False)
+    result = rig.recover()
+    assert result.success and result.state == "READY"
+    assert ("EnableRobot",) in rig.log and ("reset_outputs",) in rig.log
+    assert sum(entry[0] == "stop" for entry in rig.log) == 3
+    assert not any(entry[0] in ("move", "pulse") for entry in rig.log)
+
+
+def test_unknown_suction_recovery_cannot_treat_stale_input_as_clear():
+    rig = unknown_recovery_rig()
+
+    def stale(**_kwargs):
+        raise FeedbackFailure("Canonical feedback is stale")
+    rig.monitor.snapshot = stale
+    result = rig.recover()
+    assert not result.success and result.state == "FAULT"
+    assert "stale" in result.message
+    assert not any(entry[0] in ("EnableRobot", "reset_outputs", "move", "pulse")
+                   for entry in rig.log)

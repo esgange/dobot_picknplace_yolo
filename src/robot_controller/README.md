@@ -65,7 +65,9 @@ Services:
 - `/robot_controller/startup` performs the deterministic cold Startup sequence.
 - `/robot_controller/recover` restores readiness. After a confirmed held-item
   suction loss with retained source, it also puts back the uncertain item and
-  continues eligible saved candidates, or Homes when none remain.
+  continues eligible saved candidates, or Homes when none remain. It accepts
+  `FAULT`, `RECOVERY_REQUIRED` and `HELD_UNKNOWN`; unknown DI1 HIGH still blocks
+  enable and output reset, with item-clearing/obstruction instructions.
 - `/robot_controller/pause` accepts a managed stop-and-park request. The service
   reports acceptance; status reaches `PAUSED` only after parking completes.
 - `/robot_controller/continue` accepts replanning from confirmed `PAUSED`.
@@ -158,9 +160,17 @@ Recover repeats Stop/error-clear/enable/settings/readiness, retaining the last
 confirmed global factor. Without confirmed suction loss, trusted holding
 recovery preserves suction/finger outputs and verifies DI1. With confirmed loss
 and a retained source, the explicit click also owns the put-back/continuation
-described below. Cold-start DI1 remains `HELD_UNKNOWN`;
-after the operator physically resolves it, another explicit Stop observes DI1
-clear and changes the state to `RECOVERY_REQUIRED`, where Recover is allowed.
+described below. Cold-start DI1 remains `HELD_UNKNOWN`. The response instructs
+the operator to keep the robot stopped, safely secure/clear the item or check
+the suction sensor for obstruction. Recover stays available in this state and
+rechecks fresh raw DI1 after its strict Stop. HIGH preserves outputs and blocks
+enable/reset; LOW allows normal recovery without another separate Stop click.
+Missing/stale feedback still fails. Close Gripper Diagnostics or other competing
+maintenance applications before recovery; command ownership remains exclusive.
+Successful recovery to `HOLDING` displays a one-time instruction: click **PAUSE**,
+wait for **RETURN ITEM & STOP**, then click that button to put the item back.
+The instruction sends no motion or I/O commands. A trusted source with confirmed
+loss keeps the existing put-back/next-candidate path, even if DI1 rises again.
 
 Native action cancellation and Stop invalidate the active command generation,
 use the independent Stop client, wait for acknowledgement and two distinct
@@ -329,10 +339,13 @@ cannot overwrite an active or pending edit, and unchanged selections do not send
 another SpeedFactor request.
 
 The GUI presents START/CONTINUE and PAUSE/STOP dynamically. Continue is enabled
-only once parking completes. During `PAUSING` or `RETURNING_ITEM`, **STOP NOW**
+only once parking completes. Immediately after requesting Pause/return and
+during `PAUSING` or `RETURNING_ITEM`, **STOP NOW**
 pre-empts without waiting for the managed request's response. While paused and
 holding, **RETURN ITEM & STOP** requests put-back without first canceling its
-owning Pick action. External clients can always call direct `/stop`.
+owning Pick action. A pending Pause response takes priority over a newly arrived
+`PAUSED` status, so the label always matches the direct-Stop click handler.
+External clients can always call direct `/stop`.
 
 The top row places Robot status and Gripper status side by side. Robot status
 shows only the controller state (READY, PICKING, HOLDING, PAUSED, etc.). Hover

@@ -8,7 +8,8 @@ import time
 import numpy as np
 
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
-                     HeldSuctionLost, HeldUnknown, OperationCanceled, StopUnconfirmed)
+                     HeldSuctionLost, HeldUnknown, OperationCanceled, StopUnconfirmed,
+                     UNKNOWN_ITEM_GUIDANCE)
 from .feedback import enabled_blockers
 from .kinematics import pose_matrix, pose_values
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, pose_reached
@@ -627,8 +628,7 @@ class DobotTransport:
         suction = bool(snapshot.feed["digital_input_bits"] & 1)
         returning = getattr(self, "return_recovery", False)
         if suction and not known_holding and not returning:
-            raise HeldUnknown(
-                "DI1 is active without trusted controller-owned pickup context; outputs preserved")
+            raise HeldUnknown(UNKNOWN_ITEM_GUIDANCE)
         if known_holding or returning:
             self._validate_held_snapshot(
                 snapshot, known_holding=True, expected_outputs=expected_outputs)

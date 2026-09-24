@@ -33,7 +33,7 @@ from .candidates import (
 from .configuration import load_configuration, load_runtime_configuration
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldSuctionLost, HeldUnknown, ManagedInterruption, OperationCanceled,
-                     ReturnedToHome, StopUnconfirmed)
+                     ReturnedToHome, StopUnconfirmed, UNKNOWN_ITEM_GUIDANCE)
 from .feedback import FeedbackMonitor, enabled_blockers
 from .hardware import (CARTESIAN_ORIENTATION_TOLERANCE_DEG,
                        CARTESIAN_POSITION_TOLERANCE_M, DobotTransport)
@@ -244,7 +244,8 @@ class RobotController(Node):
         running = sorted(name for name, _namespace in nodes if name in forbidden)
         if running:
             raise CommandRejected(
-                "Competing maintenance application must be stopped: " + ", ".join(running))
+                "Competing maintenance application must be stopped: " + ", ".join(running)
+                + ". Close that application, then click Recover again.")
         absolute = f"/dobot_bringup_ros2/srv/{service}"
         expected = (self.bringup_node[1:], "/")
         providers = self._service_providers(absolute)
@@ -503,8 +504,9 @@ class RobotController(Node):
         acquired = False
         returning = False
         try:
-            if self.machine.state not in ("FAULT", "RECOVERY_REQUIRED"):
-                raise CommandRejected("Recover requires FAULT or RECOVERY_REQUIRED state")
+            if self.machine.state not in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN"):
+                raise CommandRejected(
+                    "Recover requires FAULT, RECOVERY_REQUIRED or HELD_UNKNOWN state")
             self._begin_operation("recover")
             acquired = True
             if self.configuration is not None:
@@ -683,6 +685,8 @@ class RobotController(Node):
         RobotController._clear_pause_context(self)
         message = ("Stop confirmed; explicit recovery is required"
                    if target == "RECOVERY_REQUIRED" else "Stop confirmed")
+        if target == "HELD_UNKNOWN":
+            message += "; click Recover for item-clearance instructions and a fresh DI1 check"
         self._transition(target, message)
 
     def _stop(self, _request, response):
@@ -1110,7 +1114,7 @@ class RobotController(Node):
                 self.managed.note_suction_loss(snapshot)
                 raise HeldUnknown("DI1 lost while controller expected a held item")
             if not self.holding_item and suction:
-                self._transition("HELD_UNKNOWN", "DI1 active without trusted context")
+                self._transition("HELD_UNKNOWN", UNKNOWN_ITEM_GUIDANCE)
                 return
             for channel, expected in self.expected_outputs.items():
                 actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))

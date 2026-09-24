@@ -1,6 +1,13 @@
 """Typed controller failures used to produce deterministic action results."""
 
 
+UNKNOWN_ITEM_GUIDANCE = (
+    "DI1 suction is HIGH without trusted controller-owned pickup context; outputs preserved. "
+    "Keep the robot stopped. Safely secure and clear any item from the gripper, "
+    "or check the suction sensor for an obstruction. Once DI1 shows LOW, "
+    "close Gripper Diagnostics and click Recover again.")
+
+
 class ControllerError(RuntimeError):
     """Base class for an operation that cannot complete safely."""
 

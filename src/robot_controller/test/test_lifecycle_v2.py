@@ -752,7 +752,7 @@ def test_gui_held_pause_stop_requests_return_without_canceling_active_pick():
     calls = []
     window = SimpleNamespace(
         node=SimpleNamespace(status=SimpleNamespace(state="PAUSED", can_return_item=True)),
-        pending={}, pause_requested_locally=False, return_requested_locally=False,
+        pending={}, pause_requested_locally=False, return_requested_locally=False, stop=Button(),
         _command=lambda name: calls.append(name) or True,
         _immediate_stop=lambda: calls.append("stop"))
     ControllerWindow._pause_or_stop(window)

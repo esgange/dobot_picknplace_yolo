@@ -104,6 +104,17 @@ feedback is checked throughout recovery and Stop confirmation. If idle
 supervision sees an unexpected running/nonempty queue, it pre-empts that motion
 with the independent Stop path before requiring recovery.
 
+After Stop with a trusted held item and no confirmed suction loss, Recover
+restores `HOLDING` and preserves the grip. The GUI then explains the return
+path: **PAUSE**, wait for **RETURN ITEM & STOP**, then click it. **STOP NOW**
+appears immediately while Pause/return is pending and always pre-empts without
+put-back. Unknown suction instead produces an instruction to keep the robot
+stopped, safely secure/clear the item or check the suction sensor for obstruction.
+Recover remains available in `HELD_UNKNOWN`; after fresh DI1 LOW, click it again
+without an extra Stop click. HIGH or unavailable feedback never permits an
+unheld output reset. Close competing maintenance applications such as Gripper
+Diagnostics before controller recovery.
+
 Held-item DI1 loss has a fixed 50 ms falling-edge debounce. Advancing FeedInfo
 must continue reporting LOW for that interval; HIGH cancels the pending loss
 immediately. One shared filter covers held motion, Home preflight, Stop/recovery,

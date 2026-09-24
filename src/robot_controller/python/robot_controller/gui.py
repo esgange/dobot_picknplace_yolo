@@ -386,10 +386,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self._immediate_stop()
         elif current == "PAUSED" and getattr(state, "can_return_item", False):
             self.return_requested_locally = True
+            self.stop.setText("STOP NOW")
             if not self._command("return_item"):
                 self.return_requested_locally = False
         elif pausable:
             self.pause_requested_locally = True
+            self.stop.setText("STOP NOW")
             if not self._command("pause"):
                 self.pause_requested_locally = False
         else:
@@ -489,6 +491,17 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     self._sync_speed_slider(result.confirmed_percent)
                     self.speed_label.setText(
                         f"Global SpeedFactor: {result.confirmed_percent}% confirmed")
+                elif name == "recover" and result.state == "HOLDING":
+                    QtWidgets.QMessageBox.information(
+                        self, "Recovered — item still held",
+                        "Recovery completed in HOLDING and preserved the gripper outputs.\n\n"
+                        "To put the item back: click PAUSE, wait until RETURN ITEM & STOP "
+                        "appears, then click it. Clicking STOP NOW during parking stops "
+                        "immediately and requires Recovery again.\n\n"
+                        "If the gripper should be empty, stop the robot and check for "
+                        "an item or suction-sensor obstruction. A confirmed DI1 loss "
+                        "with a saved pick location makes the next Recovery put the item "
+                        "back and continue remaining candidates, or Home if exhausted.")
             except Exception as exc:
                 if name == "speed":
                     self.speed_pending_percent = None
@@ -550,10 +563,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
                                and "stop" not in self.pending
                                and "return_item" not in self.pending
                                and not self.return_requested_locally)))
-        self.recover.setEnabled(reachable and current in ("FAULT", "RECOVERY_REQUIRED")
-                                and not active)
+        self.recover.setEnabled(
+            reachable and current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN")
+            and not active and "recover" not in self.pending)
         pausable = current in ("READY", "HOLDING", "HOMING", "PICKING")
-        if self.return_requested_locally or "return_item" in self.pending:
+        if pause_pending or self.return_requested_locally or "return_item" in self.pending:
             self.stop.setText("STOP NOW")
         elif current == "PAUSED" and getattr(state, "can_return_item", False):
             self.stop.setText("RETURN ITEM & STOP")

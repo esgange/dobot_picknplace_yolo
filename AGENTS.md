@@ -204,6 +204,11 @@ Rule 116 simplifies that header to side-by-side robot-state and two-input LED
 panels (DI1 suction, DI12 finger open), with compact teach loading on the right.
 LEDs show HIGH/LOW/UNKNOWN; detailed messages remain in tooltips. Collapse the
 command log by default while retaining its full bounded stream and Copy Log.
+Rule 117 allows explicit Recover from HELD_UNKNOWN: unknown HIGH suction still
+blocks enable/output reset and prompts item clearing or obstruction checks;
+retry after fresh DI1 LOW requires no extra Stop click. Successful held recovery
+explains Pause/Return Item. Pending managed requests immediately show STOP NOW,
+matching their direct-Stop click behavior even when PAUSED status arrives first.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

@@ -4897,6 +4897,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   ROS node, robot or camera was launched or commanded; live feedback/desktop
   operation remain unverified. No new offline-transfer milestone is claimed.
 
+### 2026-09-24 — Explain held Stop recovery and permit unknown-item recheck
+
+- Rule 117 addresses the operator's Stop/Return Item confusion and missing
+  recovery instructions. Logs show direct Stop during held PAUSING, successful
+  recoveries back to HOLDING, and separate recovery failures caused by the
+  competing `gripper_control_gui`. A later managed pause also failed its strict
+  parked-motion check; this change does not weaken that check or claim to fix
+  its cause.
+- Show STOP NOW immediately after a Pause/return click. Pending requests take
+  priority over PAUSED status when choosing the label, matching the click
+  handler's existing immediate Stop behavior. Previously the label could offer
+  RETURN ITEM & STOP while a pending Pause still made that click issue Stop.
+  Return becomes available after the pending request clears and status confirms
+  PAUSED with trusted held source. Direct Stop remains unconditional.
+- A successful Recover ending HOLDING displays one instruction explaining the
+  preserved grip and PAUSE -> wait for RETURN ITEM & STOP -> controlled return
+  path. Include unexpected-item/sensor-obstruction guidance and explain that
+  confirmed loss with retained source makes Recovery put back and continue the
+  batch. Display only on the explicit service result, never periodic feedback;
+  the dialog itself sends no commands. Maintenance ownership failures now tell
+  the operator to close the named application and retry Recover.
+- Allow explicit Recover from HELD_UNKNOWN in the controller and GUI. It uses
+  the existing strict Stop, fresh raw DI1 and ownership checks. Unknown HIGH
+  suction continues to preserve outputs and block enable/reset, with explicit
+  instructions to keep stopped, safely secure/clear the item or check the sensor
+  for obstruction, then retry once DI1 is LOW. No separate Stop click is needed
+  to escape HELD_UNKNOWN after manual clearing. Missing/stale feedback fails;
+  there is no forced sensor clear, output override, inferred source, automatic
+  retry, or change to trusted held/loss put-back routes.
+- Verification: all 346 direct controller tests pass; package results report
+  347 tests with zero failures/errors/skips. New regressions cover the pending
+  Pause/status race, immediate Stop after Pause/return, exactly one held-recovery
+  instruction, preserved outputs and blocked enable/reset through repeated
+  unknown HIGH attempts, successful explicit retry after fresh LOW, and stale
+  feedback refusal. The full root symlink build passes all 15 packages. Python
+  compilation, ament_flake8 for all eight changed Python files, and git diff
+  --check pass. An offscreen Qt fixture renders the complete recovery dialog
+  without creating a ROS node or sending commands. Live robot/desktop recovery
+  and the logged parked-motion fault remain unverified. No physical robot
+  commands or new offline-transfer milestone.
+
 ### Future entry template
 
 ```text

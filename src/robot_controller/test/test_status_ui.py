@@ -127,3 +127,80 @@ def test_unavailable_feedback_never_displays_old_io_as_live_or_off(window):
     assert all(value.text() == "UNKNOWN" for value in window.gripper_values.values())
     assert not window.hardware_home.isEnabled() and not window.hardware_pick.isEnabled()
     assert window.stop.isEnabled() and window.stop.text() == "STOP"
+
+
+def test_pause_button_matches_direct_stop_until_both_status_and_reply_arrive(window):
+    commands = []
+    pending = SimpleNamespace(done=lambda: False)
+
+    def command(name):
+        commands.append(name)
+        window.pending[name] = pending
+        return True
+    window._command = command
+    window.node.status = status(state="HOLDING", holding_item=True, can_return_item=True)
+    window._refresh()
+    assert window.stop.text() == "PAUSE"
+    window.stop.click()
+    assert commands == ["pause"] and window.stop.text() == "STOP NOW"
+    window._refresh()
+    assert window.stop.text() == "STOP NOW"
+    window.node.status.state = "PAUSED"  # Topic can beat the Pause service reply.
+    window._refresh()
+    assert window.stop.text() == "STOP NOW"
+    window.stop.click()
+    assert commands == ["pause", "stop"]
+
+
+def test_confirmed_paused_button_returns_item_then_offers_immediate_stop(window):
+    commands = []
+    window._command = lambda name: commands.append(name) or True
+    window.node.status = status(state="PAUSED", holding_item=True, can_return_item=True)
+    window._refresh()
+    assert window.stop.text() == "RETURN ITEM & STOP"
+    window.stop.click()
+    assert commands == ["return_item"] and window.stop.text() == "STOP NOW"
+    window.stop.click()
+    assert commands == ["return_item", "stop"]
+
+
+@pytest.mark.parametrize("inputs", [0, 1])
+def test_unknown_held_state_allows_explicit_recovery_recheck(window, inputs):
+    window.node.status = status(state="HELD_UNKNOWN", digital_input_bits=inputs)
+    window._refresh()
+    assert window.recover.isEnabled()
+    assert not window.hardware_home.isEnabled() and not window.hardware_pick.isEnabled()
+    window.pending["recover"] = SimpleNamespace(done=lambda: False)
+    window._refresh()
+    assert not window.recover.isEnabled()
+    assert window.stop.isEnabled()
+
+
+def test_recover_response_shows_held_instructions_once_without_issuing_commands(
+        window, monkeypatch):
+    prompts = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        lambda _parent, title, text: prompts.append((title, text)))
+    window.pending["recover"] = SimpleNamespace(
+        done=lambda: True,
+        result=lambda: SimpleNamespace(success=True, state="HOLDING"))
+    window._refresh()
+    window._refresh()
+    assert len(prompts) == 1
+    assert "RETURN ITEM & STOP" in prompts[0][1]
+    assert "STOP NOW" in prompts[0][1] and "obstruction" in prompts[0][1]
+
+
+def test_recovery_unknown_suction_refusal_displays_server_clearing_instructions(
+        window, monkeypatch):
+    from robot_controller.errors import UNKNOWN_ITEM_GUIDANCE
+
+    prompts = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        lambda _parent, _title, text: prompts.append(text))
+    window.pending["recover"] = SimpleNamespace(
+        done=lambda: True,
+        result=lambda: SimpleNamespace(success=False, state="HELD_UNKNOWN",
+                                       message=UNKNOWN_ITEM_GUIDANCE))
+    window._refresh()
+    assert prompts == [UNKNOWN_ITEM_GUIDANCE]
