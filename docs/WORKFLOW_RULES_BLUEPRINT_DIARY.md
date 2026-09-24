@@ -4993,6 +4993,66 @@ Never use a floating “latest” version in an issue, script, or deployment not
   git diff --check pass. No controller build/test rerun, robot commands, runtime
   behavior changes or new offline-transfer milestone.
 
+### 2026-09-24 — Motion completion, interrupted release and fresh explicit Stop
+
+- Rule 120 supersedes rule 98/99 endpoint sampling only: capture the actual
+  starting pose, retain every ordered CP(100) waypoint, and confirm only the
+  group's terminal endpoint on enabled, fault-free, idle/empty-queue feedback
+  with required I/O and the existing position/joint tolerances. The sample must
+  have a sequence and advancing controller timer newer than the sample at
+  complete group acceptance. Do not add a fixed dwell, midpoint arrival waits,
+  query services, or per-motion CP/r. Final pick retains taught pick_settling.
+  Read the existing canonical FeedInfo currentCommandId as a required integer.
+  Terminal MovL must match its returned brace-only queued ID exactly. The fixed
+  vendor MovLIO and RelMovLUser response schemas contain only res: those use
+  execution evidence latched from advancing live queue/running flags, command-ID
+  change or actual pose movement, including activity during service replies.
+  This is a service-schema distinction, not a missing-data fallback; never
+  invent a queue ID or modify the vendor interfaces. Very short/zero-distance
+  required commands still queue and can use ID advancement as execution evidence.
+  Optional managed safety rises within the existing 5 mm position tolerance
+  are skipped before dispatch, retaining the actual pose; entry/exit transits
+  remain explicit. This closes the reproduced pre-acceptance idle-sample gap
+  consistent with the 06:37:17 UTC parked-motion fault; hardware cause/behavior
+  still needs live validation.
+- Rule 121 supersedes rule 113 only for interrupted return progress: retain the
+  candidate source, original Home/remaining-candidate destination and APPROACH,
+  RELEASING or RELEASED phase across Stop. Intentional holding_item=False during
+  release does not make a saved item unknown. Explicit Recovery protects outputs
+  and finishes that saved routine. Reconcile only the old/issued state of an
+  unconfirmed release output; a dispatched exhaust pulse may finish OFF after
+  Stop. Opposing/unrelated output changes remain blocked. At confirmed release,
+  mark a normal candidate RETURNED; a previously DROPPED candidate stays DROPPED.
+  After release, Recovery requires raw DI1 LOW, skips descent/exhaust, and replans
+  the remaining retreat upward at actual XY/attitude. Move neutral I/O to the
+  first remaining real rise; if already at safety height, neutralize while
+  stationary with guarded raw-DI1-clear commands before the queued exit/Home.
+  Retain progress until Home completes or next-candidate travel takes ownership.
+  Keep full-speed put-back, both transits, 50 ms exhaust, Stop pre-emption and
+  source/output/freshness/response checks. Progress remains in memory only.
+- Rule 122 supersedes indefinite shared Stop result caching: each attempt owns
+  its response, physical confirmation and error. Concurrent callers can share
+  the ongoing attempt; a later explicit Stop/native action cancel starts a new
+  attempt, including after rejection/timeout, and can send a new Stop despite
+  an unanswered older Stop. Old confirmations/errors cannot finish a newer
+  attempt or overwrite a new operation. Starting an operation cannot erase an
+  in-progress Stop. This does not add automatic retries or resume/release on Stop.
+- Update the root/package READMEs, AGENTS.md and maintained FSM Markdown plus
+  adjacent HTML/PDF exports. The separate unconfigured-Recover audit finding
+  is outside this approved change.
+- Verification: controller colcon build passes; its 385 pytest cases pass
+  (386 aggregate colcon results, zero failures). Regressions cover old idle
+  samples, both vendor response shapes, endpoint/queue-ID mismatch, fast and
+  zero-distance commands, frozen timers, coherent terminal I/O and its five-second
+  deadline, release-output/exhaust interruptions,
+  confirmed-release retreat, next-candidate handover/Pause and fresh/concurrent/
+  failed/stale Stop attempts. Python compilation, ament_flake8 and diff checks
+  pass. All six HTML diagrams load offline without external requests or script
+  errors; source SHA matches. PDF is six A3 pages; updated Recovery and put-back
+  pages were visually checked without clipping. No robot commands, vendor edits,
+  runtime version changes, teach-schema/artifact changes, or new offline transfer
+  milestone. Live robot validation remains outstanding.
+
 ### Future entry template
 
 ```text

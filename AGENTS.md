@@ -221,6 +221,20 @@ Rule 119 keeps adjacent offline HTML/PDF visual FSM exports generated from the
 Markdown document's diagrams and headings. Regenerate both with the documented
 local renderer whenever the source document changes; never maintain a separate
 behavior definition in the exports. No renderer is needed to view the exports.
+Rule 120 requires advancing feedback after complete motion-group acceptance,
+idle/empty queue and the actual terminal pose/I/O. MovL binds its returned queue
+ID to FeedInfo currentCommandId; acceptance-only MovLIO/RelMovLUser require
+latched live execution evidence. Preserve CP(100), both transits and no midpoint
+waits; only final pick has taught settling. Optional safety rises within 5 mm
+are skipped before dispatch using the actual pose.
+Rule 121 retains put-back source, destination and APPROACH/RELEASING/RELEASED
+progress across Stop. Explicit Recovery finishes interrupted return; confirmed
+release is never repeated. Reconcile only issued output transitions, resume
+retreat upward from actual pose, and retain strict DI1/output checks.
+Rule 122 scopes Stop responses and physical confirmation to one attempt.
+Concurrent callers may share an ongoing attempt; a later explicit Stop/cancel
+gets a new attempt even after failure. Old results cannot finish a newer Stop
+or operation, and operation startup cannot erase an in-progress Stop.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

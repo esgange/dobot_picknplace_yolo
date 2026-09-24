@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import threading
 import time
 
@@ -258,6 +259,11 @@ class DobotTransport:
             self.pending_response = (name, future, audit)
             if name == "DO" and fields.get("time", 0) == 0:
                 self.pending_motion_outputs[fields["index"]] = bool(fields["status"])
+            return_progress = getattr(
+                getattr(self.node, "managed", None), "return_progress", None)
+            if (name == "DO" and return_progress is not None
+                    and return_progress.phase == "RELEASING"):
+                return_progress.pending_outputs[fields["index"]] = bool(fields["status"])
             future.add_done_callback(
                 lambda done, service=name, record=audit: self._pending_completed(
                     service, done, record))
@@ -396,6 +402,8 @@ class DobotTransport:
                             level="ERROR")
                         raise CommandRejected(
                             f"{name} failed: {None if result is None else result.res}")
+                    if name == "MovL":
+                        self._motion_command_id(result)
                     self._finish_service_audit(audit, "accepted", result=result)
                     results.append(result)
                     if admitted is not None:
@@ -424,9 +432,9 @@ class DobotTransport:
             progress(self.monitor.snapshot(require_enabled=False))
         return tuple(results)
 
-    def request_stop(self, reason="operator/cancellation request"):
+    def request_stop(self, reason="operator/cancellation request", *, fresh=False):
         with self.stop_lock:
-            if self.stop_future is not None and not self.stop_future.done():
+            if not fresh and self.stop_future is not None and not self.stop_future.done():
                 return self.stop_future
             self.node.check_command_owner("Stop")
             if not self.stop_client.service_is_ready():
@@ -481,13 +489,20 @@ class DobotTransport:
         suction_lost = False
         last_snapshot = None
         planned_outputs = dict(getattr(self, "pending_motion_outputs", {}))
+        return_progress = getattr(getattr(self.node, "managed", None), "return_progress", None)
+        if return_progress is not None:
+            planned_outputs.update(return_progress.pending_outputs)
+        pulse_pending = bool(return_progress is not None
+                             and return_progress.pending_outputs.get(1) is True)
 
         def stationary(snapshot):
             nonlocal anchor, anchor_sequence, held_violation, last_snapshot, suction_lost
             last_snapshot = snapshot
             feed = snapshot.feed
-            if self.node.holding_item or getattr(self, "return_recovery", False):
-                if not snapshot.suction_present and not allow_suction_loss:
+            if (self.node.holding_item or getattr(self, "return_recovery", False)
+                    or return_progress is not None):
+                releasing = return_progress is not None and return_progress.phase != "APPROACH"
+                if not snapshot.suction_present and not allow_suction_loss and not releasing:
                     suction_lost = True
                     managed = getattr(self.node, "managed", None)
                     if managed is not None:
@@ -495,7 +510,7 @@ class DobotTransport:
                 for channel, active in self.node.expected_outputs.items():
                     actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
                     planned = planned_outputs.get(channel, active)
-                    if actual not in (active, planned):
+                    if actual not in (active, planned) and not (channel == 1 and pulse_pending):
                         held_violation = (
                             f"DO{channel} changed during Stop; expected {int(active)}")
             pose = np.asarray(feed["tool_vector_actual"], dtype=float)
@@ -520,7 +535,7 @@ class DobotTransport:
             for channel, planned in planned_outputs.items():
                 current = self.node.expected_outputs.get(channel, planned)
                 actual = bool(outputs & (1 << (channel - 1)))
-                if actual in (current, planned):
+                if actual in (current, planned) or channel == 1 and pulse_pending:
                     self.node.expected_outputs[channel] = actual
         self.pending_motion_outputs = {}
         self.node.events.record("INFO", "stop_confirmed",
@@ -568,6 +583,10 @@ class DobotTransport:
         if not holding:
             return snapshot
         feed = snapshot.feed
+        progress = getattr(getattr(self.node, "managed", None), "return_progress", None)
+        if returning and progress is not None and progress.phase == "RELEASED":
+            if feed["digital_input_bits"] & 1:
+                raise HeldUnknown("DI1 HIGH after confirmed release; clear item or obstruction")
         for channel, active in outputs.items():
             actual = bool(feed["digital_outputs"] & (1 << (channel - 1)))
             if actual != active:
@@ -741,7 +760,8 @@ class DobotTransport:
     def recover(self, speed_percent, *, return_item=False):
         """Restore readiness; uncertain-item recovery preserves every output."""
         if return_item and not self.node.managed.recovery_return_needed():
-            raise CommandRejected("Item recovery requires a retained source and confirmed loss")
+            raise CommandRejected(
+                "Item recovery requires a retained source with loss or return progress")
         self.return_recovery = return_item
         try:
             self._recover(speed_percent)
@@ -870,6 +890,15 @@ class DobotTransport:
             translation_m=CARTESIAN_POSITION_TOLERANCE_M,
             rotation_deg=CARTESIAN_ORIENTATION_TOLERANCE_DEG)
 
+    @staticmethod
+    def _motion_command_id(result):
+        value = getattr(result, "robot_return", None)
+        match = (re.fullmatch(r"\{\s*([0-9]+)\s*\}", value.strip())
+                 if isinstance(value, str) else None)
+        if match is None or int(match[1]) > 2**64 - 1:
+            raise FeedbackFailure("Motion acceptance lacks a valid queued command ID")
+        return int(match[1])
+
     def home_already_reached(self, joints_rad):
         """Confirm the normal joint-Home completion gate without commanding motion."""
         if len(joints_rad) != 6:
@@ -971,7 +1000,6 @@ class DobotTransport:
         suction_clear_seen = (not require_suction_reset
                               and not bool(initial.feed["digital_input_bits"] & 1))
         suction_armed = False
-        before_sequence = initial.sequence
         self.pending_motion_outputs = {}
         self.moving = True
         started = time.monotonic()
@@ -1033,6 +1061,7 @@ class DobotTransport:
                     "Invalid stopped FeedInfo tool_vector_actual") from exc
             return ((True, stopped_pose) if return_terminal_pose else True)
 
+        observation = self.monitor.begin_motion()
         try:
             calls = []
             outputs_by_call = []
@@ -1087,14 +1116,21 @@ class DobotTransport:
                 return finish_suction_interrupt()
             if len(replies) != len(calls):
                 raise FeedbackFailure("Motion group stopped before all targets were admitted")
+            # These are the fixed vendor service schemas: only MovL exposes the
+            # queued ID. MovLIO/RelMovLUser return res alone, so retain observed
+            # execution from the stream rather than inventing their queue IDs.
+            terminal_command_id = (self._motion_command_id(replies[-1])
+                                   if calls[-1][0] == "MovL" else None)
+            accepted = self.monitor.snapshot(require_enabled=True)
             self.node.events.record(
                 "INFO", "motion_batch_queued", batch_name,
                 batch=batch_name, targets=queued_targets,
-                terminal_target=targets[-1].name)
+                terminal_target=targets[-1].name, terminal_command_id=terminal_command_id)
             tail = targets[-1]
             terminal_stable_sec = (pick_settling_sec if stop_on_suction
                                    else 0.0)
             stable_since = None
+            output_wait_since = None
             sequence = self.monitor.sequence
             while True:
                 paused_for = self._wait_for_resume()
@@ -1110,17 +1146,28 @@ class DobotTransport:
                 if np.max(np.abs(vector - last_vector)) > 0.05:
                     last_progress, last_vector = now, vector
                 reached = self._target_reached(tail, snapshot)
-                outputs_ready = (not stop_on_suction or all(
+                outputs_ready = all(
                     bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
-                    == active for channel, active in expected_outputs.items()))
-                idle = (snapshot.sequence > before_sequence and reached
-                        and self._idle(snapshot) and outputs_ready)
+                    == active for channel, active in expected_outputs.items())
+                executed = (snapshot.feed["currentCommandId"] == terminal_command_id
+                            if terminal_command_id is not None else observation.started)
+                motion_idle = (
+                    snapshot.sequence > accepted.sequence
+                    and snapshot.feed["controller_timer"] != accepted.feed["controller_timer"]
+                    and executed and reached and self._idle(snapshot))
+                idle = motion_idle and outputs_ready
+                waiting_outputs = motion_idle and not outputs_ready and not stop_on_suction
+                output_wait_since = now if waiting_outputs and output_wait_since is None else (
+                    output_wait_since if waiting_outputs else None)
+                if (output_wait_since is not None
+                        and now - output_wait_since >= OUTPUT_FEEDBACK_TIMEOUT_SEC):
+                    raise FeedbackFailure("Timed out waiting for motion-timed output feedback")
                 stable_since = now if idle and stable_since is None else (
                     stable_since if idle else None)
                 if (stable_since is not None
                         and now - stable_since >= terminal_stable_sec):
                     break
-                if now - last_progress >= MOTION_NO_PROGRESS_SEC:
+                if not waiting_outputs and now - last_progress >= MOTION_NO_PROGRESS_SEC:
                     raise FeedbackFailure("Motion made no measurable progress for three seconds")
                 if now - started >= MOTION_HARD_CAP_SEC:
                     raise FeedbackFailure("Motion exceeded the 300-second hard deadline")
@@ -1128,13 +1175,6 @@ class DobotTransport:
                     sequence, min(1.0, MOTION_HARD_CAP_SEC - (now - started)),
                     cancel=self.node.cancel_requested)
             if expected_outputs and not stop_on_suction:
-                self.monitor.wait(
-                    lambda sample: all(
-                        bool(sample.feed["digital_outputs"] & (1 << (channel - 1))) == active
-                        for channel, active in expected_outputs.items()),
-                    OUTPUT_FEEDBACK_TIMEOUT_SEC, cancel=self.node.cancel_requested,
-                    pause=self._pause_requested, require_enabled=True,
-                    description="motion-timed output feedback")
                 self.node.expected_outputs.update(expected_outputs)
             if require_suction_reset and not suction_reset_seen:
                 raise FeedbackFailure(
@@ -1162,6 +1202,7 @@ class DobotTransport:
             self.request_stop("motion operation cancelled")
             raise
         finally:
+            self.monitor.end_motion(observation)
             self.moving = False
 
     def move(self, target, *, require_suction=False):

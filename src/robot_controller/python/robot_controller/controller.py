@@ -1,6 +1,6 @@
 """Robot Controller v2: explicit Startup, deterministic Home/Pick, native cancellation."""
 
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 import fcntl
 import json
 import os
@@ -43,6 +43,15 @@ from .motion import (candidate_pose_in_base, cartesian_home_targets,
 from .managed_control import ManagedControl
 from .pick_session import PickSession, return_targets
 from .state_machine import ControllerStateMachine
+
+
+@dataclass
+class StopAttempt:
+    previous: str
+    future: object = None
+    confirmed: bool = False
+    error: object = None
+    lock: object = field(default_factory=threading.Lock)
 
 
 class PackageEventLogger:
@@ -110,11 +119,7 @@ class RobotController(Node):
         self.candidate_total = 0
 
         self.stop_guard = threading.RLock()
-        self.stop_confirmation_guard = threading.Lock()
-        self.stop_future = None
-        self.stop_confirmed = False
-        self.stop_error = None
-        self.state_before_stop = None
+        self.stop_attempt = None
         self.late_stop_thread = None
         self.supervision_stop_thread = None
         self.pause_event = threading.Event()
@@ -357,14 +362,13 @@ class RobotController(Node):
         self.operator_log_publisher.publish(entry)
 
     def _begin_operation(self, name):
-        if not self.operation_lock.acquire(blocking=False):
-            raise CommandRejected("Another controller operation is active")
-        self.cancel_event.clear()
         with self.stop_guard:
-            self.stop_future = None
-            self.stop_confirmed = False
-            self.stop_error = None
-            self.state_before_stop = None
+            if self.machine.state == "STOPPING":
+                raise CommandRejected("Stop is still being confirmed")
+            if not self.operation_lock.acquire(blocking=False):
+                raise CommandRejected("Another controller operation is active")
+            self.cancel_event.clear()
+            self.stop_attempt = None
         self.active_action, self.phase, self.waypoint = name, "", ""
         self.candidate_index = self.candidate_total = 0
 
@@ -409,7 +413,7 @@ class RobotController(Node):
 
     def motion_admitted(self, target):
         if self.managed.session is not None and not self.managed.executing:
-            self.managed.session.admitted(target)
+            self.managed.motion_admitted(target)
 
     def _attempt_changed(self, index, attempt):
         self.events.record("INFO", "candidate_state", attempt.state,
@@ -554,13 +558,13 @@ class RobotController(Node):
         return response
 
     def _settle_lifecycle_cancellation(self, message):
+        future = None
         try:
             future = self._request_stop(message)
             self._confirm_shared_stop(future)
-            self._finish_stop_state()
+            self._finish_stop_state(future)
         except Exception as exc:
-            if self.machine.state != "FAULT":
-                self._transition("FAULT", f"Cancellation Stop unconfirmed: {exc}")
+            RobotController._fail_stop_state(self, future, f"Cancellation Stop unconfirmed: {exc}")
 
     def _set_global_speed(self, request, response):
         acquired = False
@@ -598,15 +602,15 @@ class RobotController(Node):
             event.clear()
 
     def _contain_queue_control_failure(self, operation, error):
+        future = None
         try:
             future = self._request_stop(
                 f"{operation} was not safely confirmed: {error}")
             self._confirm_shared_stop(future)
-            self._finish_stop_state()
+            self._finish_stop_state(future)
         except Exception as stop_exc:
-            if self.machine.state != "FAULT":
-                self._transition(
-                    "FAULT", f"{operation} failed and Stop was unconfirmed: {stop_exc}")
+            RobotController._fail_stop_state(
+                self, future, f"{operation} failed and Stop was unconfirmed: {stop_exc}")
 
     def _managed_request(self, kind, response):
         try:
@@ -637,35 +641,58 @@ class RobotController(Node):
         response.state = self.machine.state
         return response
 
-    def _request_stop(self, reason):
+    def _request_stop(self, reason, *, fresh=False):
         self.cancel_event.set()
         with self.stop_guard:
-            if self.state_before_stop is None:
-                self.state_before_stop = self.machine.state
+            attempt = self.stop_attempt
+            if attempt is None or fresh and (attempt.confirmed or attempt.error is not None):
+                previous = (attempt.previous if attempt and self.machine.state == "STOPPING"
+                            else self.machine.state)
+                attempt = StopAttempt(previous)
+                self.stop_attempt = attempt
+                dispatch = True
+            else:
+                dispatch = False
             if self.machine.state != "STOPPING":
                 self._transition("STOPPING", reason)
-            if self.stop_future is None:
-                self.stop_future = self.hardware.request_stop(reason)
-            return self.stop_future
+            if dispatch:
+                try:
+                    attempt.future = self.hardware.request_stop(reason, fresh=fresh)
+                except Exception as exc:
+                    attempt.error = StopUnconfirmed(str(exc))
+            return attempt
 
-    def _confirm_shared_stop(self, future):
-        with self.stop_confirmation_guard:
-            if self.stop_confirmed:
+    def _confirm_shared_stop(self, attempt):
+        with attempt.lock:
+            if attempt.confirmed:
                 return
-            if self.stop_error is not None:
-                raise self.stop_error
+            if attempt.error is not None:
+                raise attempt.error
             try:
-                self.hardware.confirm_stop(future)
-                self.stop_confirmed = True
+                self.hardware.confirm_stop(attempt.future)
+                attempt.confirmed = True
             except Exception as exc:
-                self.stop_error = StopUnconfirmed(str(exc))
-                raise self.stop_error
+                attempt.error = StopUnconfirmed(str(exc))
+                raise attempt.error
 
-    def _finish_stop_state(self):
-        previous = self.state_before_stop
+    def _finish_stop_state(self, attempt):
+        with self.stop_guard:
+            if self.stop_attempt is not attempt:
+                return
+            if not attempt.confirmed:
+                raise StopUnconfirmed("Stop has no physical confirmation")
+            RobotController._publish_stopped_state(self, attempt.previous)
+
+    def _fail_stop_state(self, attempt, message):
+        with self.stop_guard:
+            if self.stop_attempt is attempt and self.machine.state != "FAULT":
+                self._transition("FAULT", message)
+
+    def _publish_stopped_state(self, previous):
         session = getattr(getattr(self, "managed", None), "session", None)
         return_source = bool(session is not None and session.held_index is not None
-                             and session.attempts[session.held_index - 1].state == "DROPPED")
+                             and (session.attempts[session.held_index - 1].state == "DROPPED"
+                                  or getattr(self.managed, "return_progress", None) is not None))
         try:
             suction = bool(self.monitor.snapshot(
                 require_enabled=False).feed["digital_input_bits"] & 1)
@@ -690,21 +717,21 @@ class RobotController(Node):
         self._transition(target, message)
 
     def _stop(self, _request, response):
+        attempt = None
         try:
-            future = self._request_stop("Explicit Stop requested")
-            self._confirm_shared_stop(future)
-            self._finish_stop_state()
+            attempt = self._request_stop("Explicit Stop requested", fresh=True)
+            self._confirm_shared_stop(attempt)
+            self._finish_stop_state(attempt)
             response.success = True
         except Exception as exc:
-            if self.machine.state != "FAULT":
-                self._transition("FAULT", f"Stop unconfirmed: {exc}")
+            RobotController._fail_stop_state(self, attempt, f"Stop unconfirmed: {exc}")
             response.success = False
         response.message, response.state = self.machine.message, self.machine.state
         return response
 
     def _cancel_goal(self, _goal_handle):
         try:
-            self._request_stop("Native action cancellation requested")
+            self._request_stop("Native action cancellation requested", fresh=True)
         except Exception as exc:
             self.events.record("ERROR", "cancel_stop_dispatch_failed", str(exc))
         return CancelResponse.ACCEPT
@@ -876,16 +903,16 @@ class RobotController(Node):
             result.attempted_candidates = session.attempted_count
         message = str(exc)
         cancelled = isinstance(exc, OperationCanceled) or self.cancel_event.is_set()
+        future = None
         try:
             future = self._request_stop(
                 "Action cancellation" if cancelled else "Non-suction action failure")
             self._confirm_shared_stop(future)
-            self._finish_stop_state()
+            self._finish_stop_state(future)
         except Exception as stop_exc:
             outcome = result.STOP_UNCONFIRMED
             message = f"{message}; Stop unconfirmed: {stop_exc}"
-            if self.machine.state != "FAULT":
-                self._transition("FAULT", message)
+            RobotController._fail_stop_state(self, future, message)
         result.outcome = (result.CANCELED
                           if cancelled and outcome != result.STOP_UNCONFIRMED else outcome)
         result.message = message
@@ -1072,13 +1099,13 @@ class RobotController(Node):
         def confirm():
             try:
                 self._confirm_shared_stop(future)
-                self._finish_stop_state()
+                self._finish_stop_state(future)
                 self.events.record(
                     "ERROR", "unexpected_motion_stopped",
                     "Unexpected idle motion was stopped; explicit recovery required")
             except Exception as exc:
-                if self.machine.state != "FAULT":
-                    self._transition("FAULT", f"Unexpected-motion Stop unconfirmed: {exc}")
+                RobotController._fail_stop_state(
+                    self, future, f"Unexpected-motion Stop unconfirmed: {exc}")
 
         if (self.supervision_stop_thread is None
                 or not self.supervision_stop_thread.is_alive()):

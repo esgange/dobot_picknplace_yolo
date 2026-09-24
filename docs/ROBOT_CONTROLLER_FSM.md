@@ -1,7 +1,7 @@
 # Robot Controller — Finite State Machine
 
-Last behavior review: **2026-09-24**, against controller source at **`e4df7cd`**
-and diary rules through **117**. Rule **118** requires keeping this document
+Last behavior review: **2026-09-24**, against baseline **`61207aa`** plus the
+controller changes in diary rules **120–122**. Rule **118** requires keeping this document
 current with future controller changes.
 
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
@@ -142,7 +142,7 @@ flowchart TD
     ACTIVE -->|Settling ends without pickup| FAILED
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
-    HELD -->|Put-back completed| RETURNED
+    HELD -->|Put-back release confirmed| RETURNED
 ```
 
 FAILED, DROPPED and RETURNED are terminal ledger states. A returned uncertain
@@ -150,6 +150,9 @@ item remains **DROPPED**, recording the loss; it does not change to RETURNED.
 Eligible candidates are PENDING or INTERRUPTED in saved order. Thus Continue
 retries the interrupted candidate before later candidates. The ledger and held
 source exist only in memory; process restart does not reconstruct them.
+RETURNED confirms release feedback; retreat/Home may still be in progress.
+Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
+original destination until Home completes or next-candidate travel takes ownership.
 
 ## 4. Pause and Continue
 
@@ -177,6 +180,8 @@ Safety Z is **max(actual stopped Z, taught Home Z)**. The unheld Pick endpoint i
 pre-pick, not at pre-pick. If no candidate is eligible, there is no next-item XY
 transfer. A pickup recognized during the managed Stop uses the held branch only
 when the controller has an eligible active candidate and suction evidence.
+An optional vertical correction within 5 mm of Home Z is skipped before
+dispatch, retaining the measured pose. Required item transits remain queued.
 
 Continue requires valid sources, fresh enabled feedback, no unexpected queue
 motion, unchanged parked pose (1 mm / 0.5°), expected outputs and no pending
@@ -210,6 +215,11 @@ flowchart TD
     Guard -->|Unheld and clear| Ready["READY after readiness recovery"]
     Guard -->|Trusted grip intact| Holding["HOLDING after readiness recovery; outputs preserved"]
     Guard -->|Confirmed loss with saved source| Return["RETURNING_ITEM: put back, then remaining candidates or Home"]
+    Guard -->|Interrupted return with saved progress| ResumeReturn["RETURNING_ITEM: finish saved return destination"]
+    ResumeReturn -->|Home destination completed| Ready
+    ResumeReturn -->|Remaining candidates destination| Next["PICKING remaining saved candidates"]
+    Next -->|Picked| Holding
+    Next -->|Exhausted| Ready
     Return -->|Next candidate picked| Holding
     Return -->|No candidates left / none picked| Ready
 ```
@@ -220,11 +230,17 @@ independent of DI1 being HIGH; an uncertain item retains its available source.
 An unresolved/late motion response prevents later motion and can require another
 containment Stop. A managed routine also uses physical Stop internally, without
 necessarily publishing the lifecycle state STOPPING.
+Concurrent callers share only an ongoing Stop attempt. A later explicit
+Stop/action cancellation sends a new Stop and requires its own physical
+confirmation, even after failure. An older result cannot finish a newer Stop
+or overwrite a new operation. Operation startup cannot clear an in-progress Stop.
 
 | Recovery situation | Operator path / controller result |
 | --- | --- |
 | Known item, suction intact | Recover → HOLDING. To put back: PAUSE → wait for RETURN ITEM & STOP → click it. |
 | Saved item with latched suction loss | Recover puts back, then attempts remaining eligible candidates or Homes. A subsequent DI1 HIGH does not erase the latched loss. |
+| Interrupted put-back, release unconfirmed | Recover uses the saved source and return destination; finish release, then retreat. Intentional suction OFF does not discard source context. |
+| Interrupted put-back, release confirmed | Recover skips release/descent, retreats upward from actual stopped pose and finishes the saved destination. New DI1 HIGH blocks this route. |
 | Unknown HIGH suction, no trusted source | Keep stopped; safely secure/clear item or inspect the sensor for obstruction. Once DI1 shows LOW, click Recover again; no extra Stop click required. No invented return location. |
 | Competing maintenance app | Close the named Gripper Diagnostics/motion-debug application, then retry Recover. |
 | Stale feedback, alarm, output mismatch, changed source or failed command | Resolve the reported cause, then Recover. A click does not bypass the check. |
@@ -240,11 +256,13 @@ for put-back and the remaining saved Pick operation to finish.
 
 ```mermaid
 flowchart TD
-    Start["Confirmed stopped pose"] --> Up["Rise at current XY if below safety Z"]
-    Up --> Entry["Item entry park_transit"]
-    Entry --> Release["Exact saved pre-pick release pose"]
+    Start["Confirmed stopped pose and retained return progress"] --> Released{"Release already confirmed?"}
+    Released -->|No| Up["Approach via safety rise and entry park_transit if needed"]
+    Up --> Release["Exact saved pre-pick release pose"]
     Release --> Pulse["Open fingers; 50 ms exhaust; confirm exhaust OFF and DI1 LOW"]
     Pulse --> Retreat["First real upward segment neutralizes outputs"]
+    Released -->|Yes; DI1 LOW| Resume["Resume upward from actual pose; skip release"]
+    Resume --> Retreat
     Retreat --> Exit["Item exit park_transit"]
     Exit --> Home["Joint Home"]
     Exit --> Next["Next item's entry transit → clearance → pre-pick → pick"]
@@ -260,6 +278,13 @@ scaled by global SpeedFactor. If clearance equals pre-pick, the rise to exit
 transit carries the neutral events. A real upward retreat must exist. Both entry
 and exit transits are queued, with CP blending permitted. Physical item placement
 is not measured; the controller confirms release feedback and motion completion.
+Stop preserves the source, return destination and release progress. Recovery
+from RELEASING at the saved release pose can finish its I/O directly. After
+RELEASED, it never descends to release again or repeats confirmed exhaust. Neutral
+I/O moves to the first remaining upward segment; if already at safety height,
+neutralization uses stationary guarded commands with raw DI1 LOW. Only issued
+output transitions are reconciled after Stop, including the exhaust timer's OFF.
+Unexpected I/O changes remain faults. None of this context survives restart.
 
 | Why put-back started | After release and retreat |
 | --- | --- |
@@ -333,6 +358,18 @@ deadline; this is not a five-second motion-completion limit. Global CP is 100,
 with no per-motion CP/r override. No automatic runtime restart or general fault
 retry is performed.
 
+Every queued group's terminal check requires a fresh sample after the last
+acceptance, with a newer sequence and advancing controller timer, idle/empty
+queue, actual endpoint tolerance and confirmed I/O. For a terminal MovL, require
+the returned queue ID to equal the stream's currentCommandId. The fixed vendor
+MovLIO/RelMovLUser interfaces return only res; these instead require execution
+evidence latched from live running/queue flags, changed currentCommandId or
+actual pose movement, including during service waits. There is no extra
+query service or fixed stability interval. Only final pick retains taught
+pick_settling. Midpoints and both transits stay queued and CP-blended without
+arrival waits. A very short move need not expose a running sample if its streamed
+command ID demonstrates execution.
+
 The GUI receives `/robot_controller/status` at periodic **5 Hz** plus state and
 progress updates. Its DI1/DI12 LEDs show raw HIGH/LOW, or UNKNOWN if feedback is
 unavailable; status itself also expires after one second by source and local
@@ -404,6 +441,7 @@ Source map for the next review:
 | [gui.py](../src/robot_controller/python/robot_controller/gui.py) | Button meanings, feedback display and recovery instructions |
 | [Controller README](../src/robot_controller/README.md) / [blueprint diary](WORKFLOW_RULES_BLUEPRINT_DIARY.md) | Operational detail and superseding project rules |
 
-This documents software behavior; it is not new physical validation. The last
-reviewed operator log also contained an unresolved **Unexpected motion while
-parked** fault. Its strict containment path remains in place.
+This documents software behavior, not new physical validation. Rule 120 addresses
+premature endpoint completion consistent with the logged **Unexpected motion
+while parked** failure. Its strict containment remains; live validation of the
+new completion, interrupted-release and Stop behavior is still outstanding.

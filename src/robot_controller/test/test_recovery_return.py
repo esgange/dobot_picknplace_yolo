@@ -22,20 +22,17 @@ class RecoveryRig(Rig):
         self.startup_complete = False
         self.global_speed_percent = 60
         self.stop_guard = threading.RLock()
-        self.stop_confirmation_guard = threading.Lock()
-        self.stop_future = None
-        self.stop_error = None
-        self.stop_confirmed = False
-        self.state_before_stop = None
+        self.stop_attempt = None
         self.active_goal = None
         self.publish_status = lambda: None
         self.cancel_requested = self.cancel_event.is_set
         self._begin_operation = lambda name: RobotController._begin_operation(self, name)
         self._end_operation = lambda: RobotController._end_operation(self)
-        self._request_stop = lambda reason: RobotController._request_stop(self, reason)
+        self._request_stop = lambda reason, **kwargs: RobotController._request_stop(
+            self, reason, **kwargs)
         self._confirm_shared_stop = lambda future: (
             RobotController._confirm_shared_stop(self, future))
-        self._finish_stop_state = lambda: RobotController._finish_stop_state(self)
+        self._finish_stop_state = lambda attempt: RobotController._finish_stop_state(self, attempt)
         self._settle_lifecycle_cancellation = lambda message: (
             RobotController._settle_lifecycle_cancellation(self, message))
         self._contain_queue_control_failure = lambda operation, error: (

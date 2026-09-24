@@ -120,7 +120,7 @@ class FakeTransport:
         self.on_move = lambda _targets, _kwargs: None
         self.acquisitions = iter((False, False, False))
 
-    def request_stop(self, reason):
+    def request_stop(self, reason, **_kwargs):
         self.node.log.append(("stop", reason))
         return object()
 
@@ -136,8 +136,13 @@ class FakeTransport:
     def sensor(self, active, _timeout):
         return bool(self.node.feed["digital_input_bits"] & 1) == active
 
-    def output(self, channel, active):
+    def output(self, channel, active, *, require_clear=False):
         self.node.managed.checkpoint()
+        if require_clear and self.node.feed["digital_input_bits"] & 1:
+            raise FeedbackFailure("Unexpected DI1 before output change")
+        progress = self.node.managed.return_progress
+        if progress is not None and progress.phase == "RELEASING":
+            progress.pending_outputs[channel] = active
         self.node.log.append(("output", channel, active))
         mask = 1 << (channel - 1)
         self.node.feed["digital_outputs"] &= ~mask
@@ -146,6 +151,9 @@ class FakeTransport:
         self.node.expected_outputs[channel] = active
 
     def exhaust_pulse(self):
+        progress = self.node.managed.return_progress
+        if progress is not None:
+            progress.pending_outputs[1] = True
         self.node.log.append(("pulse", 50))
         self.node.set_di1(False)
 
@@ -157,7 +165,7 @@ class FakeTransport:
         node.log.append(("move", tuple(target.name for target in targets), kwargs))
         for target in targets:
             if not node.managed.executing:
-                node.managed.session.admitted(target)
+                node.managed.motion_admitted(target)
             for event in target.motion_io:
                 self.output(event.channel, event.active)
         node.feed["tool_vector_actual"] = pose_values(targets[-1].matrix)

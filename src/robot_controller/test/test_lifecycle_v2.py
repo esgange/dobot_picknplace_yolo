@@ -92,7 +92,7 @@ def finish_stop(previous, *, di1=False):
         state_before_stop=previous, monitor=Monitor(di1), startup_complete=True,
         machine=machine,
         _transition=lambda target, message: machine.transition(target, message))
-    RobotController._finish_stop_state(node)
+    RobotController._publish_stopped_state(node, previous)
     return machine.snapshot(), node.startup_complete
 
 

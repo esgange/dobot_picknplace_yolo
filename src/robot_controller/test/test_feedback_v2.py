@@ -12,7 +12,7 @@ from robot_controller.feedback import (
 def feed(**changes):
     value = {
         "robot_mode": 5, "digital_input_bits": 0, "digital_outputs": 0,
-        "controller_timer": 1, "isRunQueuedCmd": 0, "RunningStatus": 0,
+        "controller_timer": 1, "currentCommandId": 0, "isRunQueuedCmd": 0, "RunningStatus": 0,
         "ErrorStatus": 0, "CollisionStates": 0, "isPauseCmdFlag": 0,
         "userCoordinate": 0, "toolCoordinate": 0, "EnableStatus": 1,
         "tool_vector_actual": [0.0] * 6, "q_actual": [0.0] * 6,

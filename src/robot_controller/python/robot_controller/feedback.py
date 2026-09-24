@@ -15,7 +15,7 @@ SUCTION_LOSS_DEBOUNCE_SEC = 0.050
 REQUIRED_FEED_KEYS = (
     "robot_mode", "digital_input_bits", "digital_outputs", "controller_timer",
     "isRunQueuedCmd", "RunningStatus", "ErrorStatus", "CollisionStates",
-    "isPauseCmdFlag", "userCoordinate", "toolCoordinate", "EnableStatus",
+    "isPauseCmdFlag", "userCoordinate", "toolCoordinate", "EnableStatus", "currentCommandId",
 )
 
 
@@ -28,6 +28,26 @@ class FeedbackSnapshot:
     sequence: int
     received_at: float
     suction_present: bool
+
+
+class MotionObservation:
+    """Keep execution evidence that can arrive during a service response wait."""
+
+    def __init__(self, feed):
+        self.timer = feed["controller_timer"]
+        self.origin = tuple(feed["tool_vector_actual"])
+        self.command_id = feed["currentCommandId"]
+        self.started = False
+
+    def update(self, feed):
+        if feed["controller_timer"] == self.timer:
+            return
+        self.timer = feed["controller_timer"]
+        self.started |= bool(
+            feed["isRunQueuedCmd"] or feed["RunningStatus"]
+            or feed["currentCommandId"] != self.command_id
+            or max(abs(a - b) for a, b in zip(
+                feed["tool_vector_actual"], self.origin)) > 0.05)
 
 
 class SuctionLossDebounce:
@@ -70,6 +90,7 @@ class FeedbackMonitor:
         self._flags = deque(maxlen=16)
         self._outputs = deque(maxlen=1000)
         self._suction = SuctionLossDebounce()
+        self._motion = None
 
     @property
     def sequence(self):
@@ -123,7 +144,21 @@ class FeedbackMonitor:
                                 feed["ErrorStatus"], feed["CollisionStates"]))
             self._outputs.append((self._sequence, feed["controller_timer"],
                                   feed["digital_outputs"], feed["digital_input_bits"]))
+            if self._motion is not None:
+                self._motion.update(feed)
             self._condition.notify_all()
+
+    def begin_motion(self):
+        with self._condition:
+            if self._feed is None or self._motion is not None:
+                raise FeedbackFailure("Motion observation requires feedback and a free owner")
+            self._motion = MotionObservation(self._feed[0])
+            return self._motion
+
+    def end_motion(self, observation):
+        with self._condition:
+            if self._motion is observation:
+                self._motion = None
 
     def output_history(self, after_sequence):
         """Bounded feedback evidence, including pulses shorter than a service reply."""

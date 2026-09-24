@@ -192,7 +192,9 @@ def test_direct_stop_preempts_automatic_return_and_continuation(monkeypatch, pha
         assert not any(entry[0] == "pulse" for entry in rig.log)
 
 
-def test_pause_after_automatic_release_resumes_next_candidate_without_releasing_twice(monkeypatch):
+@pytest.mark.parametrize("entry_admitted", [False, True])
+def test_pause_after_automatic_release_resumes_next_candidate_without_releasing_twice(
+        monkeypatch, entry_admitted):
     rig = action_rig(monkeypatch)
     lose = rig.hardware.on_move
     paused = []
@@ -200,7 +202,8 @@ def test_pause_after_automatic_release_resumes_next_candidate_without_releasing_
     def pause(targets, kwargs):
         if kwargs.get("batch_name") == "return_item_to_candidate_2_pick" and not paused:
             paused.append(True)
-            rig.managed.session.admitted(next(t for t in targets if t.name == "p2_transit"))
+            if entry_admitted:
+                rig.managed.motion_admitted(next(t for t in targets if t.name == "p2_transit"))
             rig.managed.request("pause")
             rig.managed.checkpoint()
         lose(targets, kwargs)

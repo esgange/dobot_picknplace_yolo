@@ -87,6 +87,21 @@ def test_normal_service_timeout_after_five_seconds_blocks_later_dispatch(monkeyp
     assert len(dispatches) == 1
 
 
+def attach_batch_monitor(transport):
+    """Supply advancing post-admission samples for command-encoding tests."""
+    ready = transport._ready_snapshot
+
+    def sample():
+        value = ready()
+        value.feed["controller_timer"] = value.sequence
+        value.feed["currentCommandId"] = 7
+        return value
+    transport._ready_snapshot = sample
+    transport.monitor.snapshot = lambda **_kwargs: sample()
+    transport.monitor.begin_motion = lambda: SimpleNamespace(started=True)
+    transport.monitor.end_motion = lambda _observation: None
+
+
 @pytest.mark.parametrize("coincident_transits", [False, True])
 def test_move_batch_queues_both_transits_before_only_terminal_arrival_check(coincident_transits):
     transport = object.__new__(DobotTransport)
@@ -126,11 +141,12 @@ def test_move_batch_queues_both_transits_before_only_terminal_arrival_check(coin
         order.extend(("call", service, fields["param_value"],
                       tuple(fields[key] for key in "abc"))
                      for service, fields in calls)
-        return tuple(None for _call in calls)
+        return tuple(SimpleNamespace(robot_return="{7}") for _call in calls)
     transport.call_group = call_group
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     transport.moving = False
+    attach_batch_monitor(transport)
 
     assert transport.move_batch(targets, batch_name="forward") is False
     parameters = ["user=0", "tool=0", "v=100", "a=100"]
@@ -173,10 +189,11 @@ def test_hardware_home_waypoints_dispatch_cartesian_movl_only():
         reached.append(target.name) or True)
     calls = []
     transport.call_group = lambda group, **_kwargs: (
-        calls.extend(group) or tuple(None for _call in group))
+        calls.extend(group) or tuple(SimpleNamespace(robot_return="{7}") for _call in group))
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     transport.moving = False
+    attach_batch_monitor(transport)
 
     assert transport.move_batch(targets, batch_name="home") is False
 
@@ -219,12 +236,13 @@ def test_home_height_accepts_small_getpose_jitter_but_never_descends():
 
     def call_group(requests, **_kwargs):
         calls.extend(requests)
-        return (None,)
+        return (SimpleNamespace(robot_return="{7}"),)
 
     transport.call_group = call_group
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     transport.moving = False
+    attach_batch_monitor(transport)
 
     target = Target("home_height", height, 100, 100, relative_z=True)
     assert transport.move_batch((target,), batch_name="home_height") is False
@@ -250,7 +268,7 @@ def test_motion_group_preserves_cross_service_dashboard_order():
             return self.completed
 
         def result(self):
-            return SimpleNamespace(res=0)
+            return SimpleNamespace(res=0, robot_return="{7}")
 
         def add_done_callback(self, callback):
             self.callbacks.append(callback)
@@ -331,7 +349,7 @@ def test_motion_group_completion_callbacks_do_not_wait_for_group_lock():
             return self.completed
 
         def result(self):
-            return SimpleNamespace(res=0)
+            return SimpleNamespace(res=0, robot_return="{7}")
 
         def add_done_callback(self, callback):
             self.callbacks.append(callback)
@@ -395,7 +413,7 @@ def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeyp
             return False
 
         def result(self):
-            return SimpleNamespace(res=0)
+            return SimpleNamespace(res=0, robot_return="{7}")
 
         def add_done_callback(self, callback):
             self.callbacks.append(callback)
@@ -477,7 +495,7 @@ def test_suction_loss_stops_now_but_resolves_admission_before_put_back(monkeypat
             return self.completed
 
         def result(self):
-            return SimpleNamespace(res=1 if reply == "rejected" else 0)
+            return SimpleNamespace(res=1 if reply == "rejected" else 0, robot_return="{7}")
 
         def add_done_callback(self, callback):
             self.callback = callback
@@ -543,7 +561,7 @@ def test_suction_loss_stops_now_but_resolves_admission_before_put_back(monkeypat
 def test_motion_group_rejection_stops_before_later_dispatch():
     class ImmediateFuture:
         def __init__(self, result):
-            self.response = SimpleNamespace(res=result)
+            self.response = SimpleNamespace(res=result, robot_return="{7}")
 
         def done(self):
             return True
@@ -612,7 +630,7 @@ def test_motion_group_has_no_delay_after_accepted_response(monkeypatch):
             return True
 
         def result(self):
-            return SimpleNamespace(res=0)
+            return SimpleNamespace(res=0, robot_return="{7}")
 
         def add_done_callback(self, callback):
             callback(self)
@@ -656,7 +674,7 @@ def test_suction_interrupt_during_dispatch_prevents_later_motion(monkeypatch):
             return True
 
         def result(self):
-            return SimpleNamespace(res=0)
+            return SimpleNamespace(res=0, robot_return="{7}")
 
         def add_done_callback(self, callback):
             callback(self)
@@ -735,6 +753,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     transport.sensor = lambda *_args, **_kwargs: pytest.fail(
         "Final pick settling must not call the separate sensor wait")
     transport.moving = False
+    attach_batch_monitor(transport)
     transport.suction_interrupted = False
     transport.suction_stop_future = None
     captured = []
@@ -749,7 +768,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
         transport.pending_motion_outputs = {
             1: False, 2: False, 13: True, 14: True}
         progress(sample(vacuum_on))
-        return (None,) * len(calls)
+        return (SimpleNamespace(robot_return="{7}"),) * len(calls)
 
     transport.call_group = call_group
     targets = (
@@ -789,7 +808,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
 
     def no_reset(calls, *, progress, outputs_by_call, admitted):
         progress(sample(vacuum_on))
-        return (None,) * len(calls)
+        return (SimpleNamespace(robot_return="{7}"),) * len(calls)
 
     transport.call_group = no_reset
     with pytest.raises(FeedbackFailure, match="DO13 OFF was not observed"):
@@ -805,7 +824,7 @@ def test_motion_output_becomes_pending_only_after_its_movlio_is_dispatched():
             return True
 
         def result(self):
-            return SimpleNamespace(res=0)
+            return SimpleNamespace(res=0, robot_return="{7}")
 
         def add_done_callback(self, callback):
             callback(self)
@@ -1429,7 +1448,7 @@ def test_managed_pause_during_admission_waits_for_reply_and_never_sends_next_mot
 
         def result(self):
             assert answered.is_set()
-            return SimpleNamespace(res=0)
+            return SimpleNamespace(res=0, robot_return="{7}")
 
         def add_done_callback(self, _callback):
             pass
@@ -1484,7 +1503,7 @@ def test_controller_timed_exhaust_pulse_retains_feedback_while_reply_is_pending(
         # Entire physical pulse occurs before the service response is delivered.
         monitor.update_feed(feed(controller_timer=10, digital_outputs=open_bit | 1))
         monitor.update_feed(feed(controller_timer=60, digital_outputs=open_bit))
-        return SimpleNamespace(res=0)
+        return SimpleNamespace(res=0, robot_return="{7}")
     transport.call = call
     transport.exhaust_pulse()
     assert requests == [("DO", {"index": 1, "status": 1, "time": 50})]
@@ -1500,7 +1519,7 @@ def test_exhaust_pulse_never_accepts_missing_on_evidence_or_stuck_di1():
     transport.monitor = monitor
     transport.node = SimpleNamespace(expected_outputs={}, cancel_requested=lambda: False)
     transport._ready_snapshot = lambda: monitor.snapshot(require_enabled=True)
-    transport.call = lambda *_a, **_k: SimpleNamespace(res=0)
+    transport.call = lambda *_a, **_k: SimpleNamespace(res=0, robot_return="{7}")
 
     def assert_blocked(predicate, *_args, **_kwargs):
         assert not predicate(monitor.snapshot())

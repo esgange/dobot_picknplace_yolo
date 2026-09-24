@@ -36,6 +36,11 @@ for the current lifecycle, Pick, Pause/Continue, Stop/Recovery and item-return p
 Open the [visual HTML](docs/ROBOT_CONTROLLER_FSM.html) in a browser or the
 [visual PDF](docs/ROBOT_CONTROLLER_FSM.pdf) directly; both work offline.
 
+Motion groups retain CP(100) blending and confirm their final endpoint using
+fresh actual pose, queue/robot status and execution evidence after acceptance.
+Interrupted put-back retains release progress for explicit Recovery, and later
+Stop clicks send a new Stop with a fresh physical confirmation.
+
 `robot_controller` is now the production hardware authority for deterministic
 Home and Pick operations. Normal launch separates it into a headless controller,
 a TF-only preview process with no Dobot clients, and an API-only GUI. Headless

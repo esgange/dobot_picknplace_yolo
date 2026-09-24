@@ -274,12 +274,30 @@ remain. A dropped candidate stays `DROPPED`; completing the motions is not proof
 that the physical item was placed back. A new Pick replaces the old unheld batch.
 The source context is not restored after a process restart.
 
+Put-back also retains its destination and `APPROACH`, `RELEASING` or `RELEASED`
+progress until Home completes or the next-candidate route takes ownership.
+Stop before/during release preserves the source even when suction is already
+intentionally OFF. Explicit Recovery finishes the saved return route. After
+confirmed release, Recovery skips descent and exhaust, replans retreat upward
+from the actual stopped pose, and queues the exit before Home. Neutral I/O moves
+to the first remaining upward segment; if already at safety height, neutralize
+while stationary with raw DI1 LOW before queuing the exit/Home. Only issued,
+unconfirmed output changes may be reconciled; the timed exhaust may finish OFF
+after Stop. Unexpected output changes or new DI1 HIGH after confirmed release
+remain blocking faults. A normal candidate becomes RETURNED when release is
+confirmed; a candidate with latched loss remains DROPPED.
+
 Direct `/stop`, action cancellation, shutdown, and another Stop during parking
 or return cancel all further host-side commands and require recovery. The
 already-requested controller pulse can still switch EXHAUST OFF on its timer.
 Other faults never automatically invoke put-back or release. Confirmed held DI1
 loss during an active Pick uses the automatic routine below. The idle vendor
 `isPauseCmdFlag` remains contextual telemetry and does not enable Continue.
+
+Concurrent Stop callers may share the same ongoing attempt. Every later
+explicit Stop/action-cancel gets a new dispatch and physical confirmation,
+including after an earlier failure or unanswered Stop. Old results cannot
+complete a newer attempt or change a newly started operation's state.
 
 Confirmed held-item suction loss marks the owning candidate
 `DROPPED` while preserving its source and outputs. This records loss of vacuum
@@ -632,7 +650,17 @@ taught Home reference, and target RPY.
 Joint Home completion uses ±1° independently on every joint. Cartesian target
 completion uses 5 mm Euclidean translation and 1° orientation. Home, clearance
 and every other non-pick endpoint complete on the first fresh enabled,
-queue-idle feedback sample within the applicable tolerance. Only a final pick
+queue-idle feedback sample within the applicable tolerance after the complete
+group's acceptance, with a newer sequence and advancing controller timer.
+`MovL` exposes its queue ID in the existing reply: require that exact
+`FeedInfo.currentCommandId` at completion. The fixed vendor `MovLIO` and
+`RelMovLUser` response schemas expose only `res`; those endpoints instead require
+live execution evidence latched during dispatch/travel (running/queued status,
+changed queue ID or actual pose movement). Short/zero-distance commands can
+complete without ever observing a running flag when the stream shows their
+execution. No new query service or midpoint wait is added. Optional managed
+safety rises within the existing 5 mm tolerance are skipped before dispatch
+using the actual pose. Only a final pick
 uses a timed settling interval: its taught `pick_settling` duration under the
 same feedback gates. Home remains joint-only and does not additionally compare
 Cartesian FK with the streamed actual tool pose.
