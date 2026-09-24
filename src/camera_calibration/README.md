@@ -164,13 +164,13 @@ Loading alone never moves the robot.
    Teach files or controller process are required.
 2. Load a valid schema-7 calibration. Its settings and ordered joint positions
    become the replay recipe. Bringup must provide fresh canonical joints,
-   FeedInfo and RobotStatus, with no robot fault, an empty queue, user/tool zero
-   and DI1 LOW. Disabled, idle or drag mode can enter setup. Launch and loading
-   perform no enable or motion.
+   FeedInfo and connected RobotStatus. Robot state gates are checked after
+   setup commands. Launch and loading perform no enable or motion.
 3. Click **Start Automatic Capture** and confirm that the starting position and
    all connecting joint paths are clear; release the robot after hand guiding.
-   Calibration exits drag mode if active, enables the robot if disabled and
-   confirms stationary enabled/idle feedback. Replay uses exact saved joint targets
+   Calibration sends EnableRobot then StopDrag once each, regardless of initial
+   mode. It logs rejection replies as warnings and checks actual readiness before
+   moving. Replay uses exact saved joint targets
    with MovJ at 20% speed/acceleration; the existing global speed factor also
    applies. Calibration then sets global CP(100), preserves all outputs, and
    never disables the robot or resets the gripper during replay.
@@ -207,15 +207,22 @@ enabled/idle state, DI1 LOW and unchanged outputs remain monitored during
 capture and solving; only a successful capture permits the next move.
 
 Robot readiness setup occurs only after confirmed Start, before CP or any MovJ.
-Use `StopDrag` once for mode 6; after confirming drag exit, use `EnableRobot`
-once only if mode 4 remains. An already enabled/idle robot needs neither command.
-Every command requires `res=0` within five seconds, followed by advancing fresh
-feedback within five seconds; two distinct samples must show stationary TCP and
-joints, and final feedback must show mode 5, EnableStatus 1, enabled RobotStatus
-and an empty queue. The existing validated `/joint_states` must remain at most
+Always send `EnableRobot` first and wait for its reply, then send `StopDrag` once
+and wait for its reply, including when already enabled or not dragging. These
+two commands alone accept nonzero `res` as a logged warning; an empty, failed or
+unanswered response remains terminal. Each response has a five-second deadline.
+There is no initial mode/state gate or intermediate feedback wait between them.
+After both replies, allow five seconds for advancing fresh feedback; two distinct
+samples must show stationary TCP/joints, mode 5, EnableStatus 1, enabled
+RobotStatus, an empty queue, no error/collision, user/tool zero, DI1 LOW and no
+opposing gripper outputs HIGH together. Report each remaining failed condition
+explicitly. Only confirmed readiness allows CP(100) or motion, whose responses
+remain strictly `res=0`. The existing validated `/joint_states` must remain at most
 one second old throughout setup. Readiness work runs in the operation thread,
 so the GUI and independent Stop remain available.
-Setup failure is terminal for that run and requests physical Stop confirmation;
+Fresh robot feedback, sole command ownership, unchanged outputs and independent
+Stop remain monitored throughout both commands and confirmation. Setup failure
+is terminal for that run and requests physical Stop confirmation;
 it never uses the three-attempt observation retry or clears robot errors. A late
 accepted abandoned StopDrag/EnableRobot command triggers another containment
 Stop. Once replay begins, disabled/drag feedback aborts instead of automatically

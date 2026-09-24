@@ -5381,6 +5381,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Python compilation, ament_flake8 and diff checks pass. Hardware recovery
   remains untested; restart the calibration GUI to load this change.
 
+### 2026-09-24 — Calibration sends EnableRobot then StopDrag before readiness checks
+
+- Rule 129 supersedes rule 127's conditional setup order, initial robot-state
+  admission gate and strict rejection handling for the two setup commands only.
+  The operator explicitly requested fresh robot topics followed by EnableRobot,
+  then StopDrag even when already enabled or not dragging. The read-only live
+  snapshot during diagnosis showed connected disabled mode 4, EnableStatus 0,
+  an empty queue, no error/collision, user/tool zero and DI1 LOW. That snapshot
+  does not establish which field caused the earlier generic preflight error.
+- After explicit Start confirmation, validate saved joint targets, sole
+  canonical publishers/services, competing clients, fresh validated joints,
+  connected RobotStatus and advancing FeedInfo. Do not reject the initial mode,
+  enable, queue, fault, coordinate or input flags before setup. Send EnableRobot
+  once, wait for its response, then StopDrag once, with no intermediate state
+  confirmation. Nonzero responses from these two commands are logged warnings;
+  missing/failed/empty responses remain terminal. Never repeat either command
+  automatically, including when drag exit leaves the robot disabled.
+- After both responses, require two distinct stationary feedback samples newer
+  than the post-response observation within five seconds. All motion readiness
+  gates remain: mode 5, EnableStatus 1, enabled RobotStatus, empty/non-running
+  queue, no error/collision, user/tool zero, DI1 LOW, legal unchanged gripper
+  outputs and fresh canonical joints/feedback. Report the actual failing fields
+  and values rather than the old generic preflight error. CP and MovJ still
+  require res=0 and cannot run until readiness is confirmed.
+- Keep five-second response deadlines, ownership/freshness/output monitoring,
+  independent Stop pre-emption and containment of late accepted abandoned
+  setup requests. Setup failure stops the run; no ClearError, output resets or
+  setup retries are added. Full state/I/O fault latching resumes once ready.
+  Existing three-attempt sample recovery and one-second capture stability are
+  unchanged. No controller/FSM, vendor, runtime or artifact-schema changes.
+- Update AGENTS, root/package READMEs and the existing Start confirmation. No
+  physical commands or process launches/restarts were used for verification;
+  preserve operator artifacts. No offline-transfer milestone is claimed.
+- Validation: camera_calibration symlink build and all 189 package tests pass
+  (55 core, 130 automatic/maintenance, four private-runtime installation), with
+  zero errors, failures or skips. Isolated domain-232 fake-Dobot replay covers
+  already-enabled/non-drag rejection replies, disabled startup, accepted and
+  rejected enable while dragging, camera-gap/settling recovery and responsive
+  Stop during solving. Regressions verify setup order, no initial mode gate,
+  specific final blockers, live-topic requirements, unanswered/empty replies,
+  Stop/late-acceptance containment and no second Enable after disabled drag exit.
+  ament_flake8 and diff checks pass. Hardware readiness remains untested;
+  restart the calibration GUI to load this change.
+
 ### Future entry template
 
 ```text

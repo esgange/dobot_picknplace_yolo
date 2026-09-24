@@ -335,8 +335,8 @@ def test_motion_cannot_finish_on_old_queue_id_or_unchanged_feedback(robot, monke
     assert request.mode and request.param_value == ["user=0", "tool=0", "v=20", "a=20"]
 
 
-@pytest.mark.parametrize("scenario", ["normal", "stop_during_solve", "camera_gap",
-                                      "disabled", "drag_disabled", "drag_enabled", "settling"])
+@pytest.mark.parametrize("scenario", ["normal", "stop_during_solve", "camera_gap", "disabled",
+                                      "drag_rejected_enable", "drag_enabled", "settling"])
 def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, scenario):
     """Isolated fake Dobot services: no controller, camera hardware or robot connection."""
     import rclpy
@@ -426,19 +426,20 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
 
         def stop_drag(self, _request, response):
             with self.lock:
-                assert self.data["robot_mode"] == 6
                 self.startup_commands.append("StopDrag")
-                disabled = scenario == "drag_disabled"
-                self.data.update(robot_mode=4 if disabled else 5, EnableStatus=int(not disabled))
-            response.res = 0
+                response.res = 0 if self.data["robot_mode"] == 6 else -1
+                if response.res == 0:
+                    self.data.update(robot_mode=5, EnableStatus=1)
             return response
 
         def enable(self, _request, response):
             with self.lock:
-                assert self.data["robot_mode"] == 4
                 self.startup_commands.append("EnableRobot")
-                self.data.update(robot_mode=5, EnableStatus=1)
-            response.res = 0
+                response.res = 0 if self.data["robot_mode"] == 4 else -1
+                if scenario == "drag_enabled":
+                    response.res = 0
+                if self.data["robot_mode"] == 4:
+                    self.data.update(robot_mode=5, EnableStatus=1)
             return response
 
         def move(self, request, response):
@@ -518,9 +519,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
                               else list(range(5 if stop_during_solve else 6)))
         assert len(dobot.moves) == len(expected_positions)
         assert dobot.cp == [100]
-        expected_startup = {"disabled": ["EnableRobot"], "drag_enabled": ["StopDrag"],
-                            "drag_disabled": ["StopDrag", "EnableRobot"]}
-        assert dobot.startup_commands == expected_startup.get(scenario, [])
+        assert dobot.startup_commands == ["EnableRobot", "StopDrag"]
         for index, request in zip(expected_positions, dobot.moves):
             assert request.mode and request.a == pytest.approx(np.rad2deg(index * .01))
         if stop_during_solve:
@@ -909,9 +908,12 @@ def readiness_rig(robot, monkeypatch, mode, drag_exit=5):
         behavior = rig.behavior.get(name, "success")
         if behavior == "unanswered":
             return future
-        future.set_result(kind.Response(res=-1 if behavior == "rejected" else 0))
+        future.set_result(None if behavior == "empty" else
+                          kind.Response(res=-1 if behavior == "rejected" else 0))
         if behavior == "success":
-            target_mode = drag_exit if name == "StopDrag" else 5
+            current = rig.data["robot_mode"]
+            target_mode = (drag_exit if name == "StopDrag" and current == 6 else
+                           5 if name == "EnableRobot" and current == 4 else current)
             rig.data.update(robot_mode=target_mode, EnableStatus=int(target_mode != 4))
         return future
 
@@ -925,12 +927,13 @@ def readiness_rig(robot, monkeypatch, mode, drag_exit=5):
     return rig
 
 
-@pytest.mark.parametrize("mode,drag_exit,expected", [
-    (5, 5, []), (4, 5, ["EnableRobot"]), (6, 5, ["StopDrag"]),
-    (6, 4, ["StopDrag", "EnableRobot"])])
+@pytest.mark.parametrize("mode,rejected", [
+    (5, ()), (4, ()), (6, ()), (5, ("EnableRobot", "StopDrag")),
+    (4, ("StopDrag",)), (6, ("EnableRobot",))])
 def test_robot_prepares_itself_once_and_requires_advancing_idle_feedback(
-        robot, monkeypatch, mode, drag_exit, expected):
-    rig = readiness_rig(robot, monkeypatch, mode, drag_exit)
+        robot, monkeypatch, mode, rejected):
+    rig = readiness_rig(robot, monkeypatch, mode)
+    rig.behavior.update({name: "rejected" for name in rejected})
     targets = robot.prepare(rig.samples)
     assert not rig.calls  # Preflight and construction themselves never command hardware.
     assert targets == [(0.,) * 6] * 5
@@ -938,9 +941,13 @@ def test_robot_prepares_itself_once_and_requires_advancing_idle_feedback(
         robot.command("CP", CP.Request(r=100))
     initial_sequence = robot.sequence
     robot.ensure_ready(MagicMock())
-    assert rig.calls == expected and idle(robot.guard())
+    assert rig.calls == ["EnableRobot", "StopDrag"] and idle(robot.guard())
     assert robot.sequence >= initial_sequence + 2
-    assert not robot.startup_modes
+    assert not robot.preparing
+    warnings = [call.args[2] for call in robot.node._event_logger.record.call_args_list
+                if call.args[1] == "replay_setup_rejected"]
+    assert len(warnings) == len(rejected)
+    assert all(any(name in message for message in warnings) for name in rejected)
     for name, kind in (("EnableRobot", EnableRobot), ("StopDrag", StopDrag)):
         with pytest.raises(RuntimeError, match="explicit Start"):
             robot.command(name, kind.Request())
@@ -963,21 +970,63 @@ def test_readiness_requires_valid_live_joint_stream_before_any_command(robot, mo
     assert not rig.calls and not robot.watching
 
 
-@pytest.mark.parametrize("changes", [
-    {"ErrorStatus": 1}, {"CollisionStates": 1}, {"robot_mode": 7}, {"robot_mode": 10},
-    {"RunningStatus": 1}, {"isRunQueuedCmd": 1}, {"userCoordinate": 1},
-    {"toolCoordinate": 1}, {"digital_input_bits": 1}, {"digital_outputs": 4097}])
-def test_readiness_rejects_faults_motion_context_and_unsafe_io(robot, monkeypatch, changes):
+@pytest.mark.parametrize("failure", ["missing_feed", "missing_status", "stale", "frozen",
+                                     "disconnected"])
+def test_setup_requires_live_robot_topics_before_any_command(robot, monkeypatch, failure):
     rig = readiness_rig(robot, monkeypatch, 4)
+    if failure == "missing_feed":
+        robot.feed = None
+    elif failure == "missing_status":
+        robot.status = None
+    elif failure == "stale":
+        rig.now += 2.
+    elif failure == "frozen":
+        robot.progress_time = rig.now - 2.
+    else:
+        robot._on_status(RobotStatus(is_connected=False))
+    with pytest.raises(RuntimeError, match="feedback is missing, stale or not advancing"):
+        robot.prepare(rig.samples)
+    assert not rig.calls
+
+
+def test_drag_exit_to_disabled_fails_without_a_second_enable(robot, monkeypatch):
+    rig = readiness_rig(robot, monkeypatch, 6, drag_exit=4)
+    robot.prepare(rig.samples)
+    with pytest.raises(RuntimeError, match="robot_mode=4.*EnableStatus=0"):
+        robot.ensure_ready(MagicMock())
+    assert rig.calls == ["EnableRobot", "StopDrag"]
+    robot.clients["CP"].call_async.assert_not_called()
+    robot.clients["MovJ"].call_async.assert_not_called()
+
+
+@pytest.mark.parametrize("changes,reason", [
+    ({"ErrorStatus": 1}, "ErrorStatus=1"), ({"CollisionStates": 1}, "CollisionStates=1"),
+    ({"robot_mode": 7}, "robot_mode=7"), ({"robot_mode": 10}, "robot_mode=10"),
+    ({"EnableStatus": 0}, "EnableStatus=0"), ({"RunningStatus": 1}, "RunningStatus=1"),
+    ({"isRunQueuedCmd": 1}, "isRunQueuedCmd=1"), ({"userCoordinate": 1}, "userCoordinate=1"),
+    ({"toolCoordinate": 1}, "toolCoordinate=1"), ({"digital_input_bits": 1}, "DI1 is HIGH"),
+    ({"digital_outputs": 4097}, "DO1/DO13"), ({"digital_outputs": 8194}, "DO2/DO14")])
+def test_readiness_checks_state_after_both_commands_and_reports_specific_blocker(
+        node, robot, monkeypatch, changes, reason):
+    rig = readiness_rig(robot, monkeypatch, 5)
+    rig.behavior.update(EnableRobot="rejected", StopDrag="rejected")
     rig.data.update(changes)
     rig.publish()
-    with pytest.raises(RuntimeError):
-        robot.prepare(rig.samples)
-    assert not rig.calls and not robot.watching
+    targets = robot.prepare(rig.samples)
+    assert not rig.calls
+    robot.request_stop = MagicMock()
+    robot.wait_stop = MagicMock()
+    node.automatic.robot = robot
+    node.automatic._run(targets)
+    assert reason in node.automatic.message
+    assert rig.calls == ["EnableRobot", "StopDrag"] and not node.automatic.complete
+    robot.request_stop.assert_called_once()
+    robot.clients["CP"].call_async.assert_not_called()
+    robot.clients["MovJ"].call_async.assert_not_called()
 
 
 @pytest.mark.parametrize("name,mode", [("EnableRobot", 4), ("StopDrag", 6)])
-@pytest.mark.parametrize("behavior", ["rejected", "unanswered", "no_transition"])
+@pytest.mark.parametrize("behavior", ["rejected", "unanswered", "no_transition", "empty"])
 def test_failed_readiness_stops_without_retry_settings_or_motion(
         node, robot, monkeypatch, name, mode, behavior):
     rig = readiness_rig(robot, monkeypatch, mode)
@@ -987,7 +1036,9 @@ def test_failed_readiness_stops_without_retry_settings_or_motion(
     robot.wait_stop = MagicMock()
     node.automatic.robot = robot
     node.automatic._run(targets)
-    assert rig.calls == [name]
+    expected = (["EnableRobot"] if name == "EnableRobot" and behavior in ("unanswered", "empty")
+                else ["EnableRobot", "StopDrag"])
+    assert rig.calls == expected
     assert not node.automatic.complete and not node.automatic.active
     assert "Stop confirmed" in node.automatic.message
     robot.request_stop.assert_called_once()
@@ -1013,7 +1064,9 @@ def test_operator_stop_preempts_readiness_and_late_acceptance_is_contained(
     monkeypatch.setattr(robot.cancel, "wait", stop)
     node.automatic.robot = robot
     node.automatic._run(targets)
-    assert rig.calls == [name] and not node.automatic.complete
+    expected = (["EnableRobot"] if name == "EnableRobot" and when == "response"
+                else ["EnableRobot", "StopDrag"])
+    assert rig.calls == expected and not node.automatic.complete
     robot.clients["CP"].call_async.assert_not_called()
     robot.clients["MovJ"].call_async.assert_not_called()
     if when == "response":
@@ -1024,7 +1077,7 @@ def test_operator_stop_preempts_readiness_and_late_acceptance_is_contained(
 
 
 @pytest.mark.parametrize("failure", ["joints", "feed", "fault", "outputs", "disconnect"])
-def test_readiness_keeps_feedback_and_latched_safety_guards(robot, monkeypatch, failure):
+def test_readiness_keeps_feedback_output_and_final_fault_guards(robot, monkeypatch, failure):
     rig = readiness_rig(robot, monkeypatch, 4)
     robot.prepare(rig.samples)
 
@@ -1041,13 +1094,14 @@ def test_readiness_keeps_feedback_and_latched_safety_guards(robot, monkeypatch, 
             field = "ErrorStatus" if failure == "fault" else "digital_outputs"
             rig.data[field] = 1
             rig.publish()
-            rig.data[field] = 0
-            rig.publish()
+            if failure == "outputs":
+                rig.data[field] = 0
+                rig.publish()  # A brief output change must stay latched.
 
     monkeypatch.setattr(robot.cancel, "wait", fail)
     with pytest.raises(RuntimeError):
         robot.ensure_ready(MagicMock())
-    assert rig.calls == ["EnableRobot"]
+    assert rig.calls == ["EnableRobot", "StopDrag"]
 
 
 def test_stop_during_preflight_cannot_be_erased(robot, monkeypatch):
@@ -1071,7 +1125,8 @@ def test_start_confirmation_explains_enable_and_drag_and_cancel_is_read_only(nod
     CalibrationWindow._start_automatic(window)
     node.automatic.start.assert_not_called()
     prompt = question.call_args.args[2]
-    assert "exit drag mode" in prompt and "enable the robot if disabled" in prompt
+    assert "EnableRobot then StopDrag once each" in prompt
+    assert "Rejection replies are logged" in prompt
     assert question.call_args.args[-1] == QtWidgets.QMessageBox.No
     question.return_value = QtWidgets.QMessageBox.Yes
     CalibrationWindow._start_automatic(window)
@@ -1089,7 +1144,7 @@ def test_readiness_never_reenables_or_exits_drag_mid_replay(robot, monkeypatch, 
     rig.publish()
     with pytest.raises(RuntimeError, match="state or I/O changed"):
         robot.guard()
-    assert not rig.calls
+    assert rig.calls == ["EnableRobot", "StopDrag"]
 
 
 @pytest.mark.parametrize("changes", [

@@ -299,6 +299,15 @@ sample IDs. Suppress unconfirmed solution TF/overlays. Three failures prompt
 Continue/Stop; Stop, robot faults, solver/runtime failures and unconfirmed Stop
 remain terminal. Log actual TCP/joint changes and idle state on hold loss.
 
+Rule 129 makes explicit calibration Start send EnableRobot then StopDrag once
+each after fresh canonical robot/joint feedback and command ownership checks,
+regardless of initial mode. Nonzero setup replies are warnings; missing replies
+remain terminal. Supersede rule 127's conditional order and initial state gate.
+Confirm advancing stationary enabled/idle, fault-free empty-queue user/tool-zero
+feedback, DI1 LOW and legal unchanged outputs before CP or saved-joint motion.
+Report exact remaining blockers after five seconds. Keep Stop pre-emption,
+feedback/output monitoring, no error resets and no setup retries mid-replay.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
