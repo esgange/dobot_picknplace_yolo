@@ -52,6 +52,7 @@ from .calibration_core import (
     write_calibration_ui_state,
 )
 from . import opencv_worker as _opencv_worker
+from .automatic_capture import AutomaticCapture
 
 
 OpenCvWorkerClient = _opencv_worker.OpenCvWorkerClient
@@ -264,6 +265,8 @@ class CalibrationNode(Node):
         self._latest_overlay = None
         self._latest_pose = None
         self._latest_pose_time = None
+        self._latest_pose_stamp = None
+        self._latest_valid_rgb_stamp = None
         self._latest_corner_count = 0
         self._detection_status = "Enter settings and select Apply Settings."
         self._last_detection_event = None
@@ -281,6 +284,7 @@ class CalibrationNode(Node):
             self._on_joint_state,
             qos_profile_sensor_data,
         )
+        self.automatic = AutomaticCapture(self)
         self._event_logger.record(
             "INFO",
             "node_started",
@@ -365,6 +369,8 @@ class CalibrationNode(Node):
         settings.validate()
         calibration_mode = validate_calibration_mode(calibration_mode)
         reference_frame = reference_frame_for_mode(calibration_mode)
+        if hasattr(self, "automatic"):
+            self.automatic.clear_recipe()
 
         if self._color_subscription is not None:
             self.destroy_subscription(self._color_subscription)
@@ -388,6 +394,8 @@ class CalibrationNode(Node):
             self._latest_overlay = None
             self._latest_pose = None
             self._latest_pose_time = None
+            self._latest_pose_stamp = None
+            self._latest_valid_rgb_stamp = None
             self._latest_corner_count = 0
             self._detection_status = (
                 f"Waiting for {settings.color_topic} and "
@@ -446,6 +454,7 @@ class CalibrationNode(Node):
             if self._fatal_error is not None:
                 return
             self._fatal_error = message
+            self._latest_valid_rgb_stamp = None
             self._detection_status = message
             self._latest_pose = None
             self._latest_pose_time = None
@@ -475,6 +484,7 @@ class CalibrationNode(Node):
             self._latest_pose = None
             self._latest_pose_time = None
             self._detection_status = message
+            self._latest_valid_rgb_stamp = None
             changed = event != self._last_detection_event
             if changed:
                 self._last_detection_event = event
@@ -694,6 +704,8 @@ class CalibrationNode(Node):
             return
 
         self._store_latest_overlay(result.overlay_rgb)
+        with self._lock:
+            self._latest_valid_rgb_stamp = color_stamp_ns
         if result.camera_from_target is None:
             with self._lock:
                 self._latest_corner_count = result.corner_count
@@ -714,6 +726,7 @@ class CalibrationNode(Node):
         with self._lock:
             self._latest_pose = result.camera_from_target.copy()
             self._latest_pose_time = now
+            self._latest_pose_stamp = color_stamp_ns
             self._latest_corner_count = result.corner_count
         self._set_detection_status(
             result.state,
@@ -805,6 +818,8 @@ class CalibrationNode(Node):
 
     def _capture_observation(
         self,
+        not_before_ns=None,
+        expected_joints=None,
     ) -> tuple[bool, str, CalibrationSample | None, float | None, int | None]:
         with self._lock:
             ready, reason = self._target_gate_locked()
@@ -813,6 +828,18 @@ class CalibrationNode(Node):
             camera_from_target = self._latest_pose.copy()
             joint_positions = self._latest_joint_positions
             joint_state_stamp = self._latest_joint_state_stamp
+            pose_stamp = self._latest_pose_stamp if not_before_ns is not None else None
+        if not_before_ns is not None:
+            if (pose_stamp is None or pose_stamp <= not_before_ns
+                    or not 0 <= (self.get_clock().now().nanoseconds - pose_stamp) / 1e9
+                    <= TARGET_MAX_AGE_SEC
+                    or joint_state_stamp is None
+                    or joint_state_stamp.nanoseconds <= not_before_ns):
+                return False, "Waiting for RGB and joints newer than arrival", None, None, None
+            if (joint_positions is None or expected_joints is None
+                    or max(abs(a - b) for a, b in zip(joint_positions, expected_joints))
+                    > math.radians(1.0)):
+                return False, "Live joints do not match the saved position", None, None, None
         if joint_positions is None or joint_state_stamp is None:
             message = (
                 f"Required canonical {JOINT_STATE_TOPIC} feedback has not been received."
@@ -846,6 +873,8 @@ class CalibrationNode(Node):
             self._event_logger.record("ERROR", "sample_rejected", message)
             return False, message, None, None, None
         stamp = Time.from_msg(transform.header.stamp)
+        if not_before_ns is not None and stamp.nanoseconds <= not_before_ns:
+            return False, "Waiting for robot TF newer than arrival", None, None, None
         if stamp.nanoseconds == 0:
             message = f"Robot TF {BASE_FRAME} <- {TOOL_FRAME} has a zero timestamp."
             self._event_logger.record("ERROR", "sample_rejected", message)
@@ -893,11 +922,20 @@ class CalibrationNode(Node):
         )
         return True, "", sample, age, corner_count
 
-    def capture_sample(self) -> tuple[bool, str]:
-        success, reason, sample, age, corner_count = self._capture_observation()
+    def capture_sample(self, *, not_before_ns=None, expected_joints=None,
+                       run_id=None) -> tuple[bool, str]:
+        if not_before_ns is None and self._automatic_busy():
+            return False, "Stop automatic capture before editing samples."
+        success, reason, sample, age, corner_count = (
+            self._capture_observation() if not_before_ns is None
+            else self._capture_observation(not_before_ns, expected_joints))
         if not success or sample is None or age is None or corner_count is None:
             return False, reason
         with self._lock:
+            if not_before_ns is not None and (
+                    not self.automatic.active or self.automatic.stopping
+                    or run_id != self.automatic.run_id):
+                return False, "Automatic capture was stopped"
             self._calibration_samples.append(sample)
             count = len(self._calibration_samples)
             if count < self._minimum_samples:
@@ -930,6 +968,8 @@ class CalibrationNode(Node):
         return self.remove_sample(sample_id)
 
     def remove_sample(self, sample_id: str) -> tuple[bool, str]:
+        if self._automatic_busy():
+            return False, "Stop automatic capture before editing samples."
         with self._lock:
             calibration_index = next(
                 (
@@ -958,7 +998,13 @@ class CalibrationNode(Node):
             return computed, f"{message} {compute_message}"
         return True, message
 
-    def reset_samples(self) -> str:
+    def _automatic_busy(self):
+        automatic = getattr(self, "automatic", None)
+        return automatic is not None and (automatic.active or automatic.capturing)
+
+    def reset_samples(self, *, _automatic=False) -> str:
+        if not _automatic and self._automatic_busy():
+            return "Stop automatic capture before editing samples."
         with self._lock:
             self._calibration_samples.clear()
             self._next_calibration_sample_number = 1
@@ -997,6 +1043,7 @@ class CalibrationNode(Node):
             self._next_calibration_sample_number = max(
                 int(sample.sample_id[1:]) for sample in artifact.samples
             ) + 1
+        self.automatic.set_recipe(artifact, path)
         computed, compute_message = self.compute()
         if computed:
             message = (
@@ -1187,6 +1234,10 @@ class CalibrationNode(Node):
             self._publish_solution_preview(reference_frame, settings.camera_link_frame, solution)
 
     def save(self) -> tuple[bool, str]:
+        automatic = getattr(self, "automatic", None)
+        if automatic is not None and (self._automatic_busy()
+                                      or automatic.started and not automatic.complete):
+            return False, "Complete automatic capture before saving a new calibration."
         with self._lock:
             settings = self._settings
             solution = None if self._solution is None else self._solution.copy()
@@ -1356,13 +1407,14 @@ class CalibrationWindow(QtWidgets.QWidget):
         form.addRow("ArUco marker size", self.marker_length)
         form.addRow("Minimum samples", self.minimum_samples)
         guidance = QtWidgets.QLabel(
-            "At least four non-collinear ChArUco corners are required. "
-            "Hold the robot stationary when capturing. Rotate about multiple axes; "
-            "robot and board orientations must each differ by at least 5 degrees "
-            "from every earlier sample."
+            "Hold stationary; rotate about multiple axes.\n"
+            "Require ≥4 non-collinear ChArUco corners.\n"
+            "Each new robot and board orientation must\n"
+            "differ by ≥5° from every prior sample."
         )
         guidance.setWordWrap(True)
-        form.addRow("Capture guidance", guidance)
+        guidance.setMinimumHeight(guidance.fontMetrics().lineSpacing() * 4)
+        form.addRow(guidance)
         controls_layout.addLayout(form)
 
         self.apply_button = QtWidgets.QPushButton("Apply Settings")
@@ -1388,7 +1440,20 @@ class CalibrationWindow(QtWidgets.QWidget):
         actions.addWidget(self.remove_button, 1, 1)
         actions.addWidget(self.reset_button, 2, 0)
         actions.addWidget(self.save_button, 2, 1)
+        self.automatic_button = QtWidgets.QPushButton("Start Automatic Capture")
+        self.automatic_stop_button = QtWidgets.QPushButton("Stop Automatic Capture")
+        self.save_new_button = QtWidgets.QPushButton("Save as New Calibration")
+        self.automatic_button.clicked.connect(self._start_automatic)
+        self.automatic_stop_button.clicked.connect(self._node.automatic.stop)
+        self.save_new_button.clicked.connect(self._save)
+        actions.addWidget(self.automatic_button, 3, 0)
+        actions.addWidget(self.automatic_stop_button, 3, 1)
+        actions.addWidget(self.save_new_button, 4, 0, 1, 2)
         controls_layout.addLayout(actions)
+
+        self.automatic_label = QtWidgets.QLabel(self._node.automatic.message)
+        self.automatic_label.setWordWrap(True)
+        controls_layout.addWidget(self.automatic_label)
 
         self.gate_label = QtWidgets.QLabel("Configuration not applied")
         self.gate_label.setWordWrap(True)
@@ -1536,6 +1601,25 @@ class CalibrationWindow(QtWidgets.QWidget):
         success, message = self._node.capture_sample()
         self._log(("OK: " if success else "ERROR: ") + message)
 
+    def _start_automatic(self) -> None:
+        recipe = self._node.automatic.recipe
+        if recipe is None:
+            return
+        if QtWidgets.QMessageBox.question(
+            self, "Start automatic robot capture",
+            f"Move through {len(recipe.samples)} saved joint positions in order at "
+            "20% speed and acceleration (global speed also applies)?\n\n"
+            "Confirm the starting position and all connecting joint-motion paths are clear. "
+            "The robot must already be enabled and idle, with user/tool 0 and DI1 LOW. "
+            "Gripper outputs stay unchanged. Current samples will be replaced by fresh captures. "
+            "The robot will remain at the final position. The source file stays unchanged.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        ) != QtWidgets.QMessageBox.Yes:
+            return
+        success, message = self._node.automatic.start()
+        self._log(("OK: " if success else "ERROR: ") + message)
+
     def _undo(self) -> None:
         success, message = self._node.undo_sample()
         self._log(("OK: " if success else "ERROR: ") + message)
@@ -1625,7 +1709,8 @@ class CalibrationWindow(QtWidgets.QWidget):
 
     def _sample_selection_changed(self) -> None:
         self.remove_button.setEnabled(
-            self._configuration_applied and self._selected_sample_id() is not None
+            self._configuration_applied and not self._node._automatic_busy()
+            and self._selected_sample_id() is not None
         )
 
     def _reset(self) -> None:
@@ -1656,12 +1741,26 @@ class CalibrationWindow(QtWidgets.QWidget):
         has_solution: bool,
         save_allowed: bool,
     ) -> None:
-        active = configured and self._configuration_applied
+        automatic = self._node.automatic
+        busy = self._node._automatic_busy()
+        active = configured and self._configuration_applied and not busy
         self.capture_button.setEnabled(active and target_ready)
         self.undo_button.setEnabled(active and sample_count > 0)
         self.remove_button.setEnabled(active and self._selected_sample_id() is not None)
         self.reset_button.setEnabled(active and sample_count > 0)
-        self.save_button.setEnabled(active and has_solution and save_allowed)
+        can_save = (active and has_solution and save_allowed
+                    and (not automatic.started or automatic.complete))
+        self.save_button.setEnabled(can_save)
+        self.save_button.setVisible(automatic.recipe is None)
+        self.save_new_button.setVisible(automatic.recipe is not None)
+        self.save_new_button.setEnabled(can_save)
+        self.automatic_button.setEnabled(active and automatic.recipe is not None)
+        self.automatic_stop_button.setEnabled(automatic.active or automatic.stopping)
+        self.load_button.setEnabled(not busy)
+        self.apply_button.setEnabled(not busy)
+        for widget in (self.calibration_mode, self.camera_prefix, self.dictionary,
+                       self.squares_x, self.squares_y, self.square_length, self.marker_length):
+            widget.setEnabled(not busy)
 
     def _refresh_sample_table(self, rows: tuple[dict, ...]) -> None:
         signature = tuple(
@@ -1730,6 +1829,7 @@ class CalibrationWindow(QtWidgets.QWidget):
 
     def _refresh(self) -> None:
         snapshot = self._node.status_snapshot()
+        self.automatic_label.setText(self._node.automatic.message)
         fatal_error = snapshot.get("fatal_error")
         if fatal_error is not None:
             if not self._fatal_shutdown_requested:
@@ -1812,6 +1912,8 @@ def main(args=None) -> None:
                 f"Camera calibration GUI exited with code {application_exit_code}"
             )
     finally:
+        if node is not None and node.automatic.active:
+            node.automatic.stop()
         if executor is not None:
             executor.shutdown(timeout_sec=1.0)
         if spin_thread is not None:

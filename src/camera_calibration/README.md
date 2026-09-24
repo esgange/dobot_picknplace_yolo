@@ -16,7 +16,9 @@ See [NOTICE.md](NOTICE.md) for source attribution and the upstream BSD license.
 Start bringup, the canonical robot TF publisher, and the camera separately.
 Calibration needs actual `/joint_states`, fresh `base_link <- Link6`, and
 the camera's color image, color CameraInfo, and internal camera TF.
-It never launches cameras, bringup, RViz, or commands/replays robot motion.
+It never launches cameras, bringup, RViz or the controller. Manual capture is
+read-only. Explicit automatic capture requests motion exclusively through the
+typed Robot Controller replay action; this package has no Dobot command clients.
 Depth is neither subscribed to nor required. Camera-launcher settings and
 supervision remain independent and unchanged.
 
@@ -150,7 +152,55 @@ replacement, validates schema 7, at least five samples and both all-prior angula
 checks, preserves order/IDs/joints, applies artifact settings, and recomputes
 using the live internal camera TF. Older schema 1–6 files remain untouched but
 are explicitly rejected; there is no conversion reader or stored-result shortcut.
-Samples are never replayed as robot commands.
+Loading alone never moves the robot.
+
+## Automatic recalibration from a loaded file
+
+1. Start the configured cameras and canonical Dobot bringup (including its TF
+   publisher). Start the attended controller, for example with
+   `ros2 run robot_controller robot_controller`. No Item/Bin Teach configuration
+   is needed for calibration. The controller must be UNCONFIGURED, INACTIVE or
+   READY, with no retained item context or competing maintenance application.
+2. Load a valid schema-7 calibration. Its settings and ordered joint positions
+   become the replay recipe. Prepare an already enabled, idle robot with user
+   and tool zero and DI1 LOW. Launch and loading perform no enable or motion.
+3. Click **Start Automatic Capture** and confirm that the starting position and
+   all connecting joint paths are clear. Replay uses exact saved joint targets
+   with MovJ at 20% speed/acceleration; the existing global speed factor also
+   applies. The controller sets global CP(100), preserves all outputs, and never
+   enables/disables the robot or resets the gripper during replay.
+4. The first preparation clears the working observations and solution. Each
+   position is physically confirmed before collecting one new sample; no old
+   board observation is reused. Progress shows the position, motion and capture
+   phase. After the last accepted sample the robot stays at that position.
+5. Review the recalculated diagnostics, then **Save as New Calibration**. Saving
+   uses the same strict schema-7 writer and a new timestamped file. The loaded
+   source is never modified. Once replay begins, an incomplete or failed run
+   cannot be saved; all existing solver and leave-one-out gates still apply.
+
+Arrival requires advancing canonical FeedInfo after command acceptance, the
+returned MovJ queue ID, idle/empty queue, actual joints within 1 degree and TCP
+within 5 mm/1 degree of the modeled endpoint. Two distinct advancing samples
+must also show TCP unchanged within 0.05 mm/degrees and joints within 0.05 degree.
+This adds no fixed dwell. RGB, joint and robot-TF timestamps must all be newer
+than the confirmed arrival; RGB remains at most 0.5 seconds old and joints/TF
+at most 1 second old. The controller keeps checking stationarity, feedback and
+unchanged outputs while waiting for the sample acknowledgement before moving on.
+
+Fresh-sample waiting is bounded to 10 seconds, with a 20-second controller reply
+deadline including solving. A failure, changed output, lost receiver or Stop
+ends the sequence through the controller's direct Stop/confirmation path, with
+no skipped position, automatic retry or Home return. **Stop Automatic Capture**
+and controller Stop remain available; closing the calibration GUI requests Stop
+for an active run. Pause/Continue do not apply to calibration. A stopped/faulted
+controller must be explicitly recovered before another run. Apply Settings can
+start a separate manual calibration; partial automatic results are not a saved
+replacement. The recipe is memory-only and never replayed after process restart.
+
+The capture service waits asynchronously, retaining exactly two executor threads
+and the independent TF callback group. The pinned private OpenCV worker, manual
+capture path and artifact schema are unchanged. Automatic capture is covered by
+software tests; real robot paths and camera acquisition require attended validation.
 
 ## Isolated runtime, failure handling, and storage
 

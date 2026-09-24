@@ -1,7 +1,7 @@
 # Robot Controller — Finite State Machine
 
-Last behavior review: **2026-09-24**, against baseline **`61207aa`** plus the
-controller changes in diary rules **120–122**. Rule **118** requires keeping this document
+Last behavior review: **2026-09-24**, against baseline **`d8245a0`** plus the
+controller changes in diary rule **123**. Rule **118** requires keeping this document
 current with future controller changes.
 
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
@@ -9,12 +9,14 @@ open a Mermaid-capable Markdown preview or view this file on GitHub to render
 them. The tables also describe the behavior without a diagram renderer.
 
 Ready-to-view exports in this folder: [interactive visual FSM](ROBOT_CONTROLLER_FSM.html)
-and [six-page visual PDF](ROBOT_CONTROLLER_FSM.pdf). The HTML opens directly in
+and [seven-page visual PDF](ROBOT_CONTROLLER_FSM.pdf). The HTML opens directly in
 a browser with diagram selection, zoom and dragging; both exports work offline.
 
 ## 1. Read this first
 
 - **Launch does not enable or move the robot.** Load configuration, then Startup.
+  Attended calibration replay instead requires an already enabled/idle robot;
+  no Item/Bin Teach configuration or automatic enable is involved.
 - **READY** means available for an operation; it does not always mean at Home.
 - **HOLDING** means trusted held-item context; it does not always mean at Home.
 - **Pause moves to a parking position**, then waits for Continue or Return Item.
@@ -53,6 +55,11 @@ flowchart TD
     PICKING -->|No pick| READY
     STARTING -->|Unknown suction| HELD_UNKNOWN
     STARTING -->|Failed| FAULT
+    UNCONFIGURED -->|Explicit calibration| CALIBRATING
+    INACTIVE -->|Explicit calibration| CALIBRATING
+    READY -->|Explicit calibration| CALIBRATING
+    CALIBRATING -->|Success| Previous["Restore previous idle state; stay at final position"]
+    CALIBRATING -->|Stop or failure| STOPPING
 ```
 
 Headless launch loads the strict `runtime_teach/` catalog during construction,
@@ -77,6 +84,7 @@ later commands, including an unanswered best-effort StopMoveJog.
 | `READY` | Available and unheld; can Pick, Home, Pause, reload or change global speed. |
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `PICKING` | One accepted candidate batch is being planned/attempted/returned. |
+| `CALIBRATING` | Ordered saved joint targets and fresh camera captures; no Pick context, Pause, Home return or gripper command. |
 | `HOLDING` | Trusted item held; Home, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
 | `PAUSED` | Managed parking confirmed; controller continues checking pose, queue, outputs and held suction. |
@@ -305,6 +313,54 @@ Shared joint-Home planning skips its preliminary rise when current/planned Z is
 within 5 mm below Home Z or higher. Explicit Cartesian Home uses its own alignment
 target; its attitude and queue behavior must not be inferred from the joint route.
 
+## 7a. Attended calibration replay
+
+```mermaid
+flowchart TD
+    Load["Load schema-7 calibration: settings and ordered joint recipe; no motion"] --> Start["Operator confirms Start Automatic Capture and clear joint paths"]
+    Start --> Gate{"Attended UNCONFIGURED / INACTIVE / READY; no item context; enabled idle user/tool 0; DI1 LOW?"}
+    Gate -->|No| Reject["Reject; no command"]
+    Gate -->|Yes| Own["CALIBRATING owns operation; PREPARE receiver; clear old working samples"]
+    Own --> CP["CP 100; preserve outputs"]
+    CP --> Move["MovJ to exact saved joints: speed 20%, acceleration 20%"]
+    Move --> Arrival["Advancing feedback after acceptance; matching queue ID, joints and TCP; idle/empty queue"]
+    Arrival --> Still["Two advancing unchanged TCP/joint samples; no fixed dwell"]
+    Still --> Capture["Fresh RGB, joints and robot TF newer than arrival; solve and acknowledge"]
+    Capture --> More{"More saved positions?"}
+    More -->|Yes: PREPARE next| Move
+    More -->|No| Done["Restore prior idle state; remain at final position"]
+    Done --> Save["Review diagnostics; Save as New Calibration; source unchanged"]
+    Move -. Stop / fault .-> Stop["Direct Stop and physical confirmation; incomplete replay cannot save"]
+    Arrival -. Stop / fault .-> Stop
+    Still -. Stop / fault .-> Stop
+    Capture -. Stop / fault or timeout .-> Stop
+```
+
+The controller owns all hardware requests. Calibration has only a typed action
+client and its asynchronous capture service. PREPARE validates the active run
+token, next index and live RGB/CameraInfo before movement. CAPTURE waits up to ten
+seconds for a new acceptable observation; the controller bounds its response to
+twenty seconds including solving, and PREPARE to five. Each capture requires
+RGB/joints/TF newer than the confirmed arrival, with existing 0.5/1-second age
+limits and the all-prior orientation/solver checks. No recorded board pose is
+reused. The next move waits for the completed capture acknowledgement.
+
+MovJ uses exact joints, no I/O events or CP/r overrides, and matches the returned
+queue ID on post-acceptance advancing feedback. Arrival requires joints within
+1 degree and TCP within 5 mm/1 degree of modeled FK. Stationarity compares two
+distinct advancing samples, within 0.05 mm/degrees of TCP and 0.05 degree of joints,
+with no timed dwell. During capture, the controller checks idle/empty queue,
+fresh enabled feedback, unchanged TCP/joints and outputs, and raw DI1 LOW. It
+publishes progress heartbeats; receiver loss or a client heartbeat timeout
+requests direct Stop. No Enable, Disable or DO command is part of replay.
+
+The whole run is exclusive, including capture waits. Direct Stop/cancel remains
+unconditional; Pause/Continue and configuration/speed changes cannot interleave.
+Errors use existing Stop containment and require explicit recovery afterward.
+Success restores the original UNCONFIGURED/INACTIVE/READY state, without Home
+or automatic saving. Camera shutdown requests Stop; neither process restart,
+Load nor launch restores or resumes a replay. The saved artifact remains schema 7.
+
 ## 8. What drives transitions
 
 ### Commands and guards
@@ -317,6 +373,7 @@ Names below are relative to `/robot_controller/`.
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; operation slot free |
+| `replay_calibration` action | Attended UNCONFIGURED / INACTIVE / READY; no item context; enabled idle user/tool 0; DI1 LOW; canonical feedback/capture provider; valid joints; operation slot free |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
 | `return_item` service | Started eligible managed state and trusted held source; no conflicting request |
@@ -325,7 +382,7 @@ Names below are relative to `/robot_controller/`.
 | `set_global_speed` service | Stationary READY / HOLDING; integer 1–100; operation slot free |
 
 Acceptance is not proof of motion completion. Pause/Continue/Return services
-acknowledge a request; observe status afterward. Home/Pick actions provide final
+acknowledge a request; observe status afterward. Home/Pick/calibration actions provide final
 results: SUCCESS, NO_PICK (Pick only), CANCELED, COMMAND_REJECTED,
 FEEDBACK_FAILURE, STOP_UNCONFIRMED or CONTROLLER_FAULT. A controlled Return Item
 that ends an active Home/Pick reports CANCELED and final READY, not Pick success.
@@ -360,7 +417,7 @@ retry is performed.
 
 Every queued group's terminal check requires a fresh sample after the last
 acceptance, with a newer sequence and advancing controller timer, idle/empty
-queue, actual endpoint tolerance and confirmed I/O. For a terminal MovL, require
+queue, actual endpoint tolerance and confirmed I/O. For a terminal MovL or calibration MovJ, require
 the returned queue ID to equal the stream's currentCommandId. The fixed vendor
 MovLIO/RelMovLUser interfaces return only res; these instead require execution
 evidence latched from live running/queue flags, changed currentCommandId or
@@ -386,10 +443,11 @@ Updating a message without changing state is allowed in every state.
 
 | From | Allowed different target states |
 | --- | --- |
-| `UNCONFIGURED` | `FAULT`, `INACTIVE`, `STOPPING` |
-| `INACTIVE` | `FAULT`, `STARTING`, `STOPPING`, `UNCONFIGURED` |
+| `UNCONFIGURED` | `CALIBRATING`, `FAULT`, `INACTIVE`, `STOPPING` |
+| `INACTIVE` | `CALIBRATING`, `FAULT`, `STARTING`, `STOPPING`, `UNCONFIGURED` |
 | `STARTING` | `FAULT`, `HELD_UNKNOWN`, `READY`, `STOPPING` |
-| `READY` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `INACTIVE`, `PAUSED`, `PAUSING`, `PICKING`, `RECOVERING`, `STOPPING` |
+| `READY` | `CALIBRATING`, `FAULT`, `HELD_UNKNOWN`, `HOMING`, `INACTIVE`, `PAUSED`, `PAUSING`, `PICKING`, `RECOVERING`, `STOPPING` |
+| `CALIBRATING` | `FAULT`, `INACTIVE`, `READY`, `STOPPING`, `UNCONFIGURED` |
 | `HOMING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
 | `PICKING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `RETURNING_ITEM`, `STOPPING` |
 | `HOLDING` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `PAUSED`, `PAUSING`, `RECOVERING`, `STOPPING` |
@@ -433,6 +491,7 @@ Source map for the next review:
 | --- | --- |
 | [state_machine.py](../src/robot_controller/python/robot_controller/state_machine.py) | Lifecycle states and allowed edges |
 | [controller.py](../src/robot_controller/python/robot_controller/controller.py) | API guards, configuration, lifecycle, Home/Pick ownership, Stop and supervision |
+| [calibration_replay.py](../src/robot_controller/python/robot_controller/calibration_replay.py) | Exclusive attended joint replay, stationary capture handshake and Stop containment |
 | [managed_control.py](../src/robot_controller/python/robot_controller/managed_control.py) | Parking, Continue, put-back and held-loss recovery |
 | [pick_session.py](../src/robot_controller/python/robot_controller/pick_session.py) | Candidate ledger and put-back geometry |
 | [motion.py](../src/robot_controller/python/robot_controller/motion.py) | Motion targets, timed I/O and candidate execution |

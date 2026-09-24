@@ -235,6 +235,17 @@ Rule 122 scopes Stop responses and physical confirmation to one attempt.
 Concurrent callers may share an ongoing attempt; a later explicit Stop/cancel
 gets a new attempt even after failure. Old results cannot finish a newer Stop
 or operation, and operation startup cannot erase an in-progress Stop.
+Rule 123 permits explicitly confirmed automatic camera recalibration through
+the controller's ReplayCalibration action only, superseding rules 18/20's
+no-replay restriction for that workflow. Load retains an ordered joint recipe;
+Start collects fresh samples after guarded MovJ arrival and a timestamped
+capture handshake. Require attended UNCONFIGURED/INACTIVE/READY, already enabled
+idle user/tool zero, DI1 LOW and no held/retained item context. Use 20% joint
+speed/acceleration, preserve outputs, keep direct Stop and bounded failures,
+and leave the final pose unchanged. Save as New Calibration uses the existing
+schema-7 timestamped writer; incomplete replay cannot save. No launch/load
+motion, automatic enable, saved observation reuse, new config store or schema,
+gripper reset, extra executor thread, auto retry or Home return is permitted.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

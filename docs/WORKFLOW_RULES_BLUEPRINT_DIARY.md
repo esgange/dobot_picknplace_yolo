@@ -5053,6 +5053,68 @@ Never use a floating “latest” version in an issue, script, or deployment not
   runtime version changes, teach-schema/artifact changes, or new offline transfer
   milestone. Live robot validation remains outstanding.
 
+### 2026-09-24 — Automatic camera recalibration from a loaded joint recipe
+
+- Rule 123 supersedes rules 18/20's no-motion/no-replay restriction only for
+  explicit attended automatic recalibration. Load Calibration still validates
+  strict schema 7, applies its settings, preserves ordered samples and recomputes
+  the preview without motion. It additionally retains an in-memory joint recipe.
+  Start Automatic Capture requires operator confirmation of the starting pose
+  and connecting joint paths, replaces working observations at first PREPARE,
+  and visits every saved position in order with fresh observations only.
+  Save as New Calibration uses the existing exclusive, atomic timestamped
+  schema-7 writer; the source remains untouched. Started but incomplete replay
+  cannot save. Normal solver/diversity/leave-one-out rules remain unchanged.
+- Add typed ReplayCalibration action, CalibrationPosition message and
+  CaptureCalibration PREPARE/CAPTURE service to the shared interface package.
+  Robot Controller owns the whole run and every Dobot command, including waits
+  for capture. Admission requires attended UNCONFIGURED/INACTIVE/READY, a free
+  operation slot, no held or retained item context, canonical fresh feedback,
+  already enabled idle robot, user/tool zero and DI1 LOW. No Item/Bin Teach file
+  is required; immutable headless production mode rejects maintenance replay.
+  Validate all 5–1000 six-joint targets against CR10 limits before admission.
+- Use MovJ at fixed 20% speed/acceleration, with existing global SpeedFactor,
+  and set global CP(100). Preserve every digital output; never enable/disable
+  the robot, reset the gripper, add motion I/O or override per-motion CP/r.
+  MovJ joins the shared transport's serialized response, late-ack Stop and
+  queue-ID checks; regular Home/Pick service prerequisites remain unchanged.
+- Confirm each position using advancing feedback after acceptance, matching
+  returned MovJ queue ID, idle/empty queue, actual joints within 1 degree and
+  TCP within 5 mm/1 degree of modeled FK. Two distinct advancing samples require
+  unchanged TCP within 0.05 mm/degrees and joints within 0.05 degree, without a
+  fixed dwell. Capture then requires RGB, joints and robot TF newer than that
+  arrival, retaining RGB <=0.5 s and TF/joints <=1 s age limits. Keep checking
+  stationarity, enabled/idle feedback, DI1 LOW and unchanged outputs until the
+  sample is acknowledged; only then dispatch the next position.
+- PREPARE requires the active run token, next one-based index and independently
+  validated live RGB/CameraInfo. Wait at most ten seconds for an acceptable fresh
+  sample; bound service responses to five seconds for PREPARE and twenty seconds
+  for CAPTURE including solving. Preserve exactly two camera executor threads:
+  the reentrant async capture service yields while serialized sensor/timer work
+  captures/solves, leaving independent TF callbacks available. Keep the exact
+  private OpenCV runtime and single lifetime worker; no new config store/schema.
+- CALIBRATING is exclusive. Direct Stop/cancel, failure, changed outputs or lost
+  receiver contain the run through existing Stop confirmation; client heartbeat
+  loss also requests Stop. No automatic retry, skipped position, Pause/Continue,
+  startup replay or Home return. GUI shutdown stops its active run. Success
+  restores the previous idle lifecycle state and remains at the final pose.
+  Controls lock manual editing during replay; progress shows position and phase.
+- Update root/package READMEs and AGENTS.md. Update the maintained controller
+  FSM, admission/state tables and source map; regenerate adjacent offline
+  HTML/PDF with the documented local renderer. Seven diagrams load offline,
+  source SHA matches, and the PDF has seven A3 pages. Inspect the calibration
+  diagram and the offscreen GUI; keep capture guidance visible with the new controls.
+- Verification: full 15-package symlink build passes; controller 406 pytest
+  cases and camera 75 cases pass, including a real local ROS action/service
+  handshake with two camera executor threads and fake sensor observations.
+  Tests cover ordered replay, target limits, post-arrival timestamps, TCP/joint
+  evidence, queue IDs, rejected contexts, Stop/failure/timeout, no automatic Stop
+  retries, output preservation, manual-edit locks and incomplete-save refusal.
+  Existing calibration/core/private-runtime and controller suites pass.
+  Python/ament_flake8 and diff checks pass. No real robot commands, vendor edits,
+  operator artifact changes, global runtime install or new offline-transfer
+  milestone. Live paths and acquisition still require attended hardware validation.
+
 ### Future entry template
 
 ```text

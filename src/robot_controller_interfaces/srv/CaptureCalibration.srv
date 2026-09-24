@@ -1,0 +1,10 @@
+# PREPARE validates the active run before a move; CAPTURE requests a new observation.
+uint8 PREPARE=0
+uint8 CAPTURE=1
+uint8 phase
+string run_id
+uint32 position_index
+builtin_interfaces/Time not_before
+---
+bool success
+string message

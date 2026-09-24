@@ -8,6 +8,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import cv2
@@ -1048,6 +1049,13 @@ def test_gui_restores_last_session_as_unapplied_prefill(tmp_path):
     class FakeNode:
         ui_state_path = tmp_path / "logs" / "camera_calibration" / "last_session.json"
         configure_calls = 0
+        automatic = SimpleNamespace(
+            active=False, capturing=False, started=False, complete=False, recipe=None,
+            stopping=False, message="Load a calibration", stop=MagicMock())
+
+        @staticmethod
+        def _automatic_busy():
+            return False
 
         @staticmethod
         def load_last_session():
@@ -1822,6 +1830,7 @@ def test_node_load_calibration_restores_ids_and_recomputes(tmp_path):
     node._next_calibration_sample_number = 1
     node.configure = MagicMock(return_value="configured")
     node.compute = MagicMock(return_value=(True, "recomputed"))
+    node.automatic = MagicMock()
 
     artifact, computed, message = node.load_calibration(path)
 
@@ -1837,6 +1846,7 @@ def test_node_load_calibration_restores_ids_and_recomputes(tmp_path):
     assert node._next_calibration_sample_number == 6
     node.configure.assert_called_once_with(settings, CAMERA_ON_HAND)
     node.compute.assert_called_once_with()
+    node.automatic.set_recipe.assert_called_once_with(artifact, path)
     assert "Loaded 5 calibration samples" in message
 
 

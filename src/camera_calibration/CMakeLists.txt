@@ -98,6 +98,16 @@ if(BUILD_TESTING)
       "CAMERA_CALIBRATION_TEST_OPENCV_RUNTIME=${OPENCV_RUNTIME_DIR}"
   )
   ament_add_pytest_test(
+    test_automatic_capture
+    test/test_automatic_capture.py
+    TIMEOUT 60
+    ENV
+      "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python:$ENV{PYTHONPATH}"
+      "ROS_DOMAIN_ID=232"
+      "ROS_LOCALHOST_ONLY=1"
+      "QT_QPA_PLATFORM=offscreen"
+  )
+  ament_add_pytest_test(
     test_runtime_install
     test/test_runtime_install.py
     TIMEOUT 30
