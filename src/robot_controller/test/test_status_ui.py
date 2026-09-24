@@ -99,39 +99,31 @@ def window(tmp_path):
     app.processEvents()
 
 
-@pytest.mark.parametrize("outputs,inputs,vacuum,fingers", [
-    (0, 0, "NEUTRAL", "NEUTRAL"),
-    ((1 << 12) | (1 << 13), (1 << 11) | 1, "SUCK", "OPEN"),
-    (1 | (1 << 1), 0, "EXHAUST", "CLOSE"),
-    (1 | (1 << 1) | (1 << 12) | (1 << 13), 0, "CONFLICT", "CONFLICT"),
-])
-def test_live_io_reports_canonical_outputs_and_raw_sensors(
-        window, outputs, inputs, vacuum, fingers):
-    window.node.status = status(digital_outputs=outputs, digital_input_bits=inputs,
+@pytest.mark.parametrize("inputs", [0, 1, 1 << 11, (1 << 11) | 1])
+def test_gripper_leds_follow_two_raw_inputs_not_outputs_or_holding(window, inputs):
+    window.node.status = status(digital_outputs=(1 << 12) | (1 << 13), digital_input_bits=inputs,
                                 holding_item=True, robot_running=True, robot_queue_active=True)
     window._refresh()
-    text = window.gripper_status.text()
-    assert f"Vacuum: {vacuum}" in text and f"Finger outputs: {fingers}" in text
-    assert "Held context: YES" in text
-    assert f"DI1 suction {'HIGH' if inputs & 1 else 'LOW'}" in text
-    assert f"DI12 fully open {'HIGH' if inputs & (1 << 11) else 'LOW'}" in text
-    for channel, label in ((1, "exhaust"), (2, "close"), (13, "suction"), (14, "open")):
-        assert f"DO{channel} {label} {'ON' if outputs & (1 << (channel - 1)) else 'OFF'}" in text
-    assert "ENABLED · Moving · Queue active" in window.status.text()
+    assert set(window.gripper_leds) == {1, 12}
+    for channel in (1, 12):
+        expected = "HIGH" if inputs & (1 << (channel - 1)) else "LOW"
+        assert window.gripper_values[channel].text() == expected
+        assert window.gripper_leds[channel].accessibleDescription() == expected
+    assert window.status.text() == "READY"
 
 
 def test_unavailable_feedback_never_displays_old_io_as_live_or_off(window):
     window.node.status = status(digital_outputs=1 << 12, digital_input_bits=1)
     window._refresh()
-    assert "DO13 suction ON" in window.gripper_status.text()
+    assert window.gripper_values[1].text() == "HIGH"
     window.node.status.feedback_fresh = False
     window._refresh()
-    assert "UNKNOWN" in window.gripper_status.text()
-    assert "DO13" not in window.gripper_status.text()
-    assert "ENABLED" not in window.status.text()
+    assert all(value.text() == "UNKNOWN" for value in window.gripper_values.values())
+    assert all(led.accessibleDescription() == "UNKNOWN" for led in window.gripper_leds.values())
+    assert "Feedback: unavailable" in window.status.toolTip()
     window.node.status = None
     window._refresh()
-    assert "UNAVAILABLE" in window.status.text()
-    assert "UNKNOWN" in window.gripper_status.text()
+    assert window.status.text() == "UNAVAILABLE"
+    assert all(value.text() == "UNKNOWN" for value in window.gripper_values.values())
     assert not window.hardware_home.isEnabled() and not window.hardware_pick.isEnabled()
     assert window.stop.isEnabled() and window.stop.text() == "STOP"

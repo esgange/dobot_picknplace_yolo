@@ -19,9 +19,10 @@ flags and raw `digital_input_bits` / `digital_outputs` from one validated
 canonical feedback snapshot. They are valid only when `feedback_fresh` is true;
 otherwise their default zeros mean unavailable. Output bits are observed I/O,
 not commanded values, and DI1 is raw rather than the debounced holding decision.
-The GUI displays canonical DO1 exhaust, DO2 close, DO13 suction, DO14 open,
-DI1 suction detection and DI12 finger fully open through this topic. The stream
-updates periodically at 5 Hz and cannot guarantee display of every short pulse.
+The GUI uses this topic for its robot-state label and two LEDs for DI1 suction
+detection and DI12 finger fully open. The additional robot flags and output bits
+remain available to API consumers. The stream updates periodically at 5 Hz and
+cannot guarantee display of every short pulse.
 
 This package contains definitions only. It never connects to or commands the
 robot.

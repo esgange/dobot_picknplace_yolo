@@ -100,18 +100,40 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.speed_pending_percent = None
         self.speed_syncing = False
         self.setWindowTitle("Robot Controller v2")
-        self.resize(1050, 760)
+        self.resize(1050, 445)
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
 
         header = QtWidgets.QHBoxLayout()
-        status_column = QtWidgets.QVBoxLayout()
-        self.robot_panel, self.status = self._status_panel("Robot status")
-        self.gripper_panel, self.gripper_status = self._status_panel("Gripper status / Live I/O")
-        status_column.addWidget(self.robot_panel)
-        status_column.addWidget(self.gripper_panel)
-        header.addLayout(status_column, 3)
+        self.robot_panel, robot_layout = self._status_panel("Robot status")
+        self.status = QtWidgets.QLabel("UNAVAILABLE")
+        self.status.setTextFormat(QtCore.Qt.PlainText)
+        self.status.setAlignment(QtCore.Qt.AlignCenter)
+        self.status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.status.setMinimumWidth(0)
+        self.status.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        robot_layout.addWidget(self.status, 1)
+        self.gripper_panel, gripper_layout = self._status_panel("Gripper status")
+        indicators = QtWidgets.QHBoxLayout()
+        self.gripper_leds, self.gripper_values = {}, {}
+        for channel, name in ((1, "Suction"), (12, "Finger open")):
+            column = QtWidgets.QVBoxLayout()
+            label = QtWidgets.QLabel(f"DI{channel} · {name}")
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            led = QtWidgets.QLabel()
+            led.setFixedSize(24, 24)
+            led.setAccessibleName(f"DI{channel} {name}")
+            value = QtWidgets.QLabel("UNKNOWN")
+            value.setAlignment(QtCore.Qt.AlignCenter)
+            column.addWidget(label)
+            column.addWidget(led, 0, QtCore.Qt.AlignCenter)
+            column.addWidget(value)
+            indicators.addLayout(column, 1)
+            self.gripper_leds[channel], self.gripper_values[channel] = led, value
+        gripper_layout.addLayout(indicators, 1)
+        header.addWidget(self.robot_panel, 3)
+        header.addWidget(self.gripper_panel, 3)
 
         self.teach_panel = QtWidgets.QGroupBox("Teach files")
         self.teach_panel.setMinimumWidth(300)
@@ -130,21 +152,21 @@ class ControllerWindow(QtWidgets.QMainWindow):
         for index, (label, edit, directory) in enumerate((
                 ("Item Teach", self.item_path, "offline_teach/item_teach"),
                 ("Bin Teach", self.bin_path, "offline_teach/bin_teach"))):
-            teach.addWidget(QtWidgets.QLabel(label), index * 2, 0, 1, 2)
+            teach.addWidget(QtWidgets.QLabel(label), index, 0)
             edit.setMinimumWidth(0)
             edit.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
             edit.textChanged.connect(edit.setToolTip)
             edit.setToolTip(edit.text())
-            teach.addWidget(edit, index * 2 + 1, 0)
+            teach.addWidget(edit, index, 1)
             button = QtWidgets.QPushButton("Browse…")
             button.clicked.connect(
                 lambda _checked, e=edit, d=directory: self._browse(e, d))
-            teach.addWidget(button, index * 2 + 1, 1)
+            teach.addWidget(button, index, 2)
         self.configure = QtWidgets.QPushButton("Load Teach Configuration")
         self.configure.clicked.connect(self._configure)
-        teach.addWidget(self.configure, 4, 0, 1, 2)
-        teach.setColumnStretch(0, 1)
-        header.addWidget(self.teach_panel, 2, QtCore.Qt.AlignTop)
+        teach.addWidget(self.configure, 2, 0, 1, 3)
+        teach.setColumnStretch(1, 1)
+        header.addWidget(self.teach_panel, 4, QtCore.Qt.AlignTop)
         layout.addLayout(header)
 
         lifecycle = QtWidgets.QHBoxLayout()
@@ -197,11 +219,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
         layout.addLayout(speed)
 
         log_header = QtWidgets.QHBoxLayout()
-        log_title = QtWidgets.QLabel("Controller command log")
-        log_title.setStyleSheet("font-size:15px;font-weight:700")
+        self.log_toggle = QtWidgets.QPushButton("Show command log")
+        self.log_toggle.setCheckable(True)
+        self.log_toggle.toggled.connect(self._toggle_log)
         self.copy_log = QtWidgets.QPushButton("Copy Log")
         self.copy_log.clicked.connect(self._copy_log)
-        log_header.addWidget(log_title)
+        self.copy_log.hide()
+        log_header.addWidget(self.log_toggle)
         log_header.addStretch()
         log_header.addWidget(self.copy_log)
         layout.addLayout(log_header)
@@ -212,11 +236,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "Controller state, operation phases, and every Dobot service request/response "
             "will appear here.")
         self.log_view.document().setMaximumBlockCount(1000)
-        self.log_view.setMinimumHeight(180)
+        self.log_view.setMinimumHeight(240)
         self.log_view.setStyleSheet(
             "QPlainTextEdit{background:#101820;color:#dce6ef;border:1px solid #465463;"
             "font-family:monospace;font-size:13px;padding:8px;selection-background-color:#315f86}")
         layout.addWidget(self.log_view, 1)
+        self.log_view.hide()
+        layout.setAlignment(QtCore.Qt.AlignTop)
         self.item_path.textEdited.connect(self._selection_changed)
         self.bin_path.textEdited.connect(self._selection_changed)
         self.timer = QtCore.QTimer(self)
@@ -227,6 +253,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _status_panel(title):
         panel = QtWidgets.QFrame()
+        panel.setFixedHeight(150)
         panel.setStyleSheet("QFrame{background:#202a35;border-radius:6px}"
                             "QLabel{color:#edf3f8;border:0;font-size:14px}")
         column = QtWidgets.QVBoxLayout(panel)
@@ -234,77 +261,54 @@ class ControllerWindow(QtWidgets.QMainWindow):
         column.setSpacing(5)
         heading = QtWidgets.QLabel(title)
         heading.setStyleSheet("font-size:17px;font-weight:700;color:white")
-        text = QtWidgets.QLabel()
-        text.setWordWrap(True)
-        text.setTextFormat(QtCore.Qt.PlainText)
-        text.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        text.setMinimumWidth(0)
         column.addWidget(heading)
-        column.addWidget(text)
-        return panel, text
+        return panel, column
 
     def _refresh_status(self, state):
+        current = state.state if state is not None else "UNAVAILABLE"
+        self.status.setText(current)
+        color = ("#61dfa5" if current == "READY" else
+                 "#ff9393" if current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN") else
+                 "#ffd077" if current in ("PAUSED", "UNAVAILABLE") else "#edf3f8")
+        size = 19 if len(current) > 14 else 26
+        self.status.setStyleSheet(f"font-size:{size}px;font-weight:700;color:{color}")
         if state is None:
-            self.status.setText("UNAVAILABLE · Waiting for live controller status")
             self.status.setToolTip("/robot_controller/status is missing or older than 1 second")
-            self.gripper_status.setText("I/O unavailable · No live controller status\n"
-                                        "Suction, fingers and sensors: UNKNOWN")
-            self.gripper_status.setToolTip("")
-            return
-        robot = f"{state.state} · {state.message}"
-        if state.feedback_fresh:
-            robot += (f"\n{'ENABLED' if state.robot_enabled else 'DISABLED'} · "
-                      f"{'Moving' if state.robot_running else 'Stationary'} · "
-                      f"Queue {'active' if state.robot_queue_active else 'idle'} · Feedback LIVE")
-            flags = (("Robot error", state.robot_error), ("Collision", state.robot_collision))
-            faults = [name for name, active in flags if active]
-            if faults:
-                robot += "\n" + " · ".join(faults)
         else:
-            robot += "\nRobot feedback unavailable · Enable, motion and I/O UNKNOWN"
-        robot += f"\nStartup: {'complete' if state.startup_complete else 'required'}"
-        if state.candidate_total:
-            robot += f" · Candidate {state.candidate_index}/{state.candidate_total}"
-        if state.phase:
-            robot += f" · {state.phase}"
-        if state.waypoint:
-            robot += f" · {state.waypoint}"
-        self.status.setText(robot)
-        details = [f"Configuration: {state.configuration_id or 'none'}"]
-        if self.feedback_message:
-            details.append(self.feedback_message)
-        if state.candidate_states:
-            details.append("Candidates: " + ", ".join(
-                f"{index}: {value}" for index, value in enumerate(state.candidate_states, 1)))
-        self.status.setToolTip("\n".join(details))
-        self.gripper_status.setToolTip(
-            "Observed I/O from the controller's validated feedback, sampled at 5 Hz.\n"
-            "DI1 is raw; held-item decisions use the controller's 50 ms loss debounce.\n"
-            "Short pulses may occur between updates. LOW DI12 does not prove fingers closed.")
-        held = "YES" if state.holding_item else "NO"
-        if not state.feedback_fresh:
-            self.gripper_status.setText("I/O unavailable · Robot feedback missing or stale\n"
-                                        f"Outputs and sensors: UNKNOWN · Held context: {held}")
-            return
+            details = [state.message,
+                       f"Feedback: {'live' if state.feedback_fresh else 'unavailable'}",
+                       f"Configuration: {state.configuration_id or 'none'}"]
+            if self.feedback_message:
+                details.append(self.feedback_message)
+            if state.candidate_states:
+                details.append("Candidates: " + ", ".join(
+                    f"{index}: {value}" for index, value in enumerate(state.candidate_states, 1)))
+            self.status.setToolTip("\n".join(details))
+        fresh = state is not None and state.feedback_fresh
+        for channel, led in self.gripper_leds.items():
+            active = bool(state.digital_input_bits & (1 << (channel - 1))) if fresh else None
+            value = "UNKNOWN" if active is None else "HIGH" if active else "LOW"
+            color = "#e5a52e" if active is None else "#25c97e" if active else "#657789"
+            led.setStyleSheet(f"background:{color};border:2px solid #9aa9b7;border-radius:12px")
+            led.setAccessibleDescription(value)
+            self.gripper_values[channel].setText(value)
+            led.setToolTip(f"DI{channel}: {value}")
+        self.gripper_panel.setToolTip(
+            "Green = HIGH · Gray = LOW · Amber = UNKNOWN\n"
+            "Raw DI1 suction detection and DI12 fully-open detection.\n"
+            "Feedback updates at 5 Hz; brief pulses may fall between updates.\n"
+            "LOW DI12 does not prove fingers closed.")
 
-        def output(channel):
-            return bool(state.digital_outputs & (1 << (channel - 1)))
-
-        def on_off(channel):
-            return "ON" if output(channel) else "OFF"
-
-        def high_low(channel):
-            return "HIGH" if state.digital_input_bits & (1 << (channel - 1)) else "LOW"
-
-        vacuum = ("CONFLICT" if output(13) and output(1) else
-                  "SUCK" if output(13) else "EXHAUST" if output(1) else "NEUTRAL")
-        fingers = ("CONFLICT" if output(2) and output(14) else
-                   "CLOSE" if output(2) else "OPEN" if output(14) else "NEUTRAL")
-        self.gripper_status.setText(
-            f"Vacuum: {vacuum} · Finger outputs: {fingers} · Held context: {held}\n"
-            f"DO13 suction {on_off(13)} · DO1 exhaust {on_off(1)}\n"
-            f"DO2 close {on_off(2)} · DO14 open {on_off(14)}\n"
-            f"DI1 suction {high_low(1)} · DI12 fully open {high_low(12)}")
+    def _toggle_log(self, visible):
+        if visible:
+            self._collapsed_height = self.height()
+        target_height = self._collapsed_height + 240 if visible else self._collapsed_height
+        self.log_view.setVisible(visible)
+        self.copy_log.setVisible(visible)
+        self.log_toggle.setText("Hide command log" if visible else "Show command log")
+        self.centralWidget().layout().activate()
+        self.layout().activate()
+        self.resize(self.width(), target_height)
 
     def _browse(self, edit, directory):
         path, _filter = QtWidgets.QFileDialog.getOpenFileName(

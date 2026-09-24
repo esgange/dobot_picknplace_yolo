@@ -4859,6 +4859,44 @@ Never use a floating “latest” version in an issue, script, or deployment not
   launched; live hardware behavior remains unverified. No new offline-transfer
   milestone is claimed.
 
+### 2026-09-24 — Simplify controller state and gripper indicators
+
+- Rule 116 supersedes rule 115's stacked, detailed status presentation. The
+  operator requests a simple robot state and two I/O LEDs, side by side at the
+  top. Show only the current controller state (READY, PICKING, etc.) in Robot
+  status; retain detailed message, feedback availability, configuration ID,
+  action detail and candidate ledger in its tooltip. Keep compact teach loading
+  at top right and preserve explicit configuration/prefill behavior.
+- Gripper status has exactly two read-only indicators for the already selected
+  canonical inputs: DI1 suction detection and DI12 finger fully open. Green
+  means HIGH, gray means LOW and amber means UNKNOWN, with text labels for
+  every state. Raw inputs drive the LEDs independently of commanded/observed
+  outputs or logical holding; DI12 LOW never establishes closed fingers. No
+  direct robot/camera subscription, I/O command, interface or artifact change.
+- Preserve both one-second freshness checks. Stale canonical feedback makes
+  both LEDs UNKNOWN; stale/missing controller status also makes the robot label
+  UNAVAILABLE and retains existing control gates and direct Stop availability.
+  Valid controller lifecycle remains visible when its robot feedback is
+  unavailable. Periodic status remains 5 Hz, with no per-feedback log added.
+- The verbose command log contains every controller phase and robot service
+  request/reply. Collapse that diagnostic panel by default; Show command log
+  expands the same window, exposes Copy Log and shows all retained lines.
+  Hide command log restores the compact view. Continue accumulating the full
+  bounded 1,000-line stream while hidden; console/package/topic audit logging
+  and hardware behavior are unchanged. This is transient display state, not
+  a new persisted setup field or logging configuration.
+- Verification: all 338 direct controller tests pass; package results report
+  339 tests with zero failures/errors/skips. Updated regressions cover all four
+  DI1/DI12 combinations independently of output bits and logical holding,
+  UNKNOWN after feedback loss, stale status and preserved direct Stop. An
+  offscreen Qt fixture confirms the side-by-side header, READY and long
+  RECOVERY_REQUIRED labels, HIGH/LOW/UNKNOWN rendering, three log expansion/
+  collapse cycles with stable window size, retained messages and Copy Log.
+  Python syntax and ament_flake8 pass for both changed files; the full root
+  symlink build passes all 15 packages, and git diff --check passes. No real
+  ROS node, robot or camera was launched or commanded; live feedback/desktop
+  operation remain unverified. No new offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

@@ -200,6 +200,10 @@ Rule 115 places Robot status and Gripper status / Live I/O at the GUI's top
 left, with compact teach-file loading at top right. Publish observed robot flags
 and raw DI/DO through typed controller status; stale data displays UNKNOWN.
 The GUI remains a controller client, with no direct Dobot or camera subscription.
+Rule 116 simplifies that header to side-by-side robot-state and two-input LED
+panels (DI1 suction, DI12 finger open), with compact teach loading on the right.
+LEDs show HIGH/LOW/UNKNOWN; detailed messages remain in tooltips. Collapse the
+command log by default while retaining its full bounded stream and Copy Log.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

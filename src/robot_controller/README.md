@@ -334,25 +334,26 @@ pre-empts without waiting for the managed request's response. While paused and
 holding, **RETURN ITEM & STOP** requests put-back without first canceling its
 owning Pick action. External clients can always call direct `/stop`.
 
-The top-left header contains exactly two status panels, Robot status first and
-Gripper status / Live I/O second. Robot status shows lifecycle/message,
-enable/motion/queue feedback, faults, Startup and candidate/phase/waypoint progress.
-Hover for the full configuration ID, action detail and ordered candidate ledger.
-Gripper status decodes observed DO13 SUCK / DO1 EXHAUST and DO2 CLOSE / DO14 OPEN,
-shows NEUTRAL when each pair is OFF and CONFLICT when both are ON, and displays
-raw DI1 suction detection and DI12 fully-open detection. Finger outputs describe
-the output state; DI12 LOW does not establish that the fingers are closed. The
-separate held context comes from the controller, including its existing 50 ms
-falling-edge debounce. Short pulses may occur between status updates.
+The top row places Robot status and Gripper status side by side. Robot status
+shows only the controller state (READY, PICKING, HOLDING, PAUSED, etc.). Hover
+for its message, feedback availability, configuration ID, action detail and
+ordered candidate ledger. Gripper status contains exactly two read-only LEDs:
+DI1 Suction and DI12 Finger open. Green/HIGH and gray/LOW reflect raw inputs;
+amber/UNKNOWN means feedback is unavailable. Text accompanies every color.
+DO commands and the logical held-item state never drive these LEDs. LOW DI12
+does not establish that fingers are closed, and DI1 retains its raw display
+while held-item decisions retain their 50 ms loss debounce. Short input pulses
+may occur between the periodic 5 Hz status updates. Full robot flags and DI/DO
+bits remain available in the existing typed message for other consumers.
 
 Item/Bin Teach fields, Browse buttons and Load/Reload occupy the smaller
 top-right panel. Full paths remain editable and available in field tooltips;
 prefill, explicit load, reload gates and validated persistence are unchanged.
-Lifecycle/action controls, global speed and the command log remain below.
+Lifecycle/action controls, global speed and the command-log toggle remain below.
 The GUI consumes only controller APIs. It adds no Dobot/camera subscription or
-I/O command. Missing/stale canonical feedback displays UNKNOWN; a controller
-status older than one second by source timestamp or local receipt also clears
-live displays and disables controls that depend on status. Direct Stop remains
+I/O command. Missing/stale canonical feedback turns both LEDs UNKNOWN; a
+controller status older than one second by source timestamp or local receipt
+also shows robot UNAVAILABLE and disables controls that depend on status. Direct Stop remains
 available whenever its service is reachable. No automatic Stop or command is
 sent by this display logic. Rebuild interfaces and restart controller, GUI and
 preview together for the extended message definition.
@@ -385,7 +386,12 @@ remains required for completion.
 The authority publishes the same timestamped human-readable state, phase and
 Dobot audit lines on reliable transient-local
 `/robot_controller/operator_log` (`std_msgs/msg/String`) with a retained depth of
-1,000. The GUI lower panel is a read-only, no-wrap 1,000-line view of that topic.
+1,000. The GUI lower panel is a read-only, no-wrap 1,000-line view of that topic,
+collapsed by default to keep service request/reply traffic out of the main view.
+**Show command log** expands it and exposes Copy Log; **Hide command log**
+collapses it again. Messages continue accumulating while hidden, and expanding
+shows the full retained buffer. The toggle is a transient diagnostic view;
+no operator setup file or runtime logging policy changes.
 Text is selectable with Ctrl+C, **Copy Log** copies the entire displayed buffer,
 and incoming messages auto-scroll only while the operator is already following
 the bottom. The topic is observability-only and does not replace typed status,
