@@ -31,6 +31,9 @@ The root build contains 15 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller v2
 
+See the [controller FSM and workflow diagrams](docs/ROBOT_CONTROLLER_FSM.md)
+for the current lifecycle, Pick, Pause/Continue, Stop/Recovery and item-return paths.
+
 `robot_controller` is now the production hardware authority for deterministic
 Home and Pick operations. Normal launch separates it into a headless controller,
 a TF-only preview process with no Dobot clients, and an API-only GUI. Headless

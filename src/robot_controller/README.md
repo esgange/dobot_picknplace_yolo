@@ -1,5 +1,9 @@
 # Robot Controller v2
 
+Visual guide: [Controller finite state machine](../../docs/ROBOT_CONTROLLER_FSM.md).
+It covers the current lifecycle, candidate ledger and operation/recovery routes;
+update it in the same change whenever those behaviors change.
+
 `robot_controller` is the sole production application-level authority for the
 physical CR10. It provides two deterministic operations: Home and Pick Item.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.

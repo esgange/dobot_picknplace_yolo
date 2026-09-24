@@ -4938,6 +4938,33 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and the logged parked-motion fault remain unverified. No physical robot
   commands or new offline-transfer milestone.
 
+### 2026-09-24 — Maintain a visual controller FSM document
+
+- Rule 118 adds `docs/ROBOT_CONTROLLER_FSM.md` as the current implemented
+  controller's visual guide, at the operator's request. It separates lifecycle
+  states from the candidate ledger and diagrams normal operation, Pick,
+  Pause/Continue, direct Stop/Recovery and the common put-back route. Include
+  Home-route differences, command guards, feedback/I/O, all 15 states and the
+  exact low-level allowed transition table, with links to the source owners.
+- Future changes to those behaviors must update the affected diagrams/tables
+  and the review date/source baseline in the same change, alongside the diary.
+  Add this instruction to AGENTS.md and link the document from both root and
+  controller READMEs. This is a maintained Markdown/Mermaid document, not a
+  runtime state viewer, automatic generator or new controller API.
+- Review against controller source at `e4df7cd` and superseding rules through
+  117. Preserve the distinction between managed physical Stop and lifecycle
+  STOPPING, service acceptance and completion, early suction acquisition and
+  final-pose settling, trusted held recovery and unknown suction, and the
+  current exact pre-pick release instead of historical +50 mm behavior.
+- Verification: a read-only source comparison confirms all 15 lifecycle states,
+  81 allowed lifecycle edges, normal-diagram edges and all seven candidate-ledger
+  transitions. All source/document links resolve. All six Mermaid diagrams
+  render successfully using the installed VS Code renderer in headless Chromium
+  with network requests blocked; visual review removed overlapping labels and
+  made the put-back route vertical for readability. `git diff --check` passes.
+  Documentation only; no runtime changes, hardware commands or new offline-
+  transfer milestone. No controller rebuild/test rerun was needed.
+
 ### Future entry template
 
 ```text
