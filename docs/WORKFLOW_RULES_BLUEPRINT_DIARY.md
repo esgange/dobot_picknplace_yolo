@@ -4811,6 +4811,23 @@ Never use a floating “latest” version in an issue, script, or deployment not
   robot or camera process was launched or commanded; live telemetry and desktop
   rendering remain unverified. No new offline-transfer milestone is claimed.
 
+### 2026-09-24 — Remove Gripper Diagnostics Quick Actions
+
+- Remove the Quick Actions section and its Grip/Release buttons from
+  `gripper_control`, as requested by the operator. Remove their dedicated
+  callbacks, button-state updates and pulse constants; fit the window height
+  to its remaining content and move status and the auto-off hint directly below
+  Digital Inputs. Keep the 640-pixel minimum width.
+- This supersedes the historical diagnostic Grip/Release UI and sequences.
+  Independent DO1/DO2/DO13/DO14 controls, per-channel auto-off, generic DI1/DI2,
+  startup/feedback checks and shutdown OFF behavior retain their existing
+  contracts. Physical wiring and maintenance-client migration remain separate.
+- Verification: the gripper package symlink build, Python syntax, ament_flake8
+  and `git diff --check` pass. A withdrawn Tk window with a stub node confirms
+  exactly four output buttons, two input indicators, no Quick Actions widgets,
+  working ready/disabled refresh and content-driven height. No real ROS node,
+  robot or I/O command was launched; live hardware remains untested.
+
 ### Future entry template
 
 ```text

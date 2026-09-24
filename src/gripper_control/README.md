@@ -10,7 +10,7 @@ started.
 
 | Executable | Purpose |
 | --- | --- |
-| `gripper_control_gui` | Tkinter GUI for toggling `DO1`, `DO2`, `DO13`, and `DO14`, viewing generic `DI1`/`DI2` checks, and running grip/release actions. |
+| `gripper_control_gui` | Tkinter GUI for toggling `DO1`, `DO2`, `DO13`, and `DO14` and viewing generic `DI1`/`DI2` checks. |
 
 ## IO Map
 
@@ -82,19 +82,8 @@ In this example DI1 is HIGH, DI2 is LOW, and DO2 plus DO13 are ON
 - Always requests `DO1`, `DO2`, `DO13`, and `DO14` OFF during shutdown,
   regardless of cached UI state.
 
-Quick actions:
-
-| Action | Behavior |
-| --- | --- |
-| `Grip` | Sets `DO14` OFF, sets `DO1` OFF, sets `DO2` ON, and sets `DO13` ON to close the gripper and fingers. |
-| `Release` | Sets `DO2` and `DO13` OFF, pulses `DO1` for suction exhaust, and pulses `DO14` to open the gripper. |
-
-Release timing:
-
-| Output | Pulse |
-| --- | --- |
-| `DO1` exhaust | ON, wait `250 ms`, OFF |
-| `DO14` open | ON, wait `100 ms`, OFF |
+The window contains only Outputs, Digital Inputs, status and the auto-off hint.
+The Quick Actions panel and its automatic Grip/Release sequences are removed.
 
 ## Diagnostics
 

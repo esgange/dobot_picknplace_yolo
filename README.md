@@ -682,9 +682,9 @@ monitored as generic digital inputs with semantic names intentionally deferred.
 **Wiring correction / migration pending:** the user-confirmed physical map is
 DO1 exhaust, DO2 finger close, DO13 suction, DO14 finger open, DI1 suction
 detection, and DI12 finger fully open. The preceding paragraph describes the
-still-unmigrated GUI, not the new wiring contract. Do not use its old automatic
-Grip/Release patterns with the corrected wiring. The new controller's explicit
-I/O sequence and open-confirmation timing must be finalized before use.
+still-unmigrated GUI, not the new wiring contract. Its Quick Actions panel and
+automatic Grip/Release sequences have been removed; individual output controls,
+auto-off timing and the generic digital-input display remain.
 
 Configure and launch the Gemini 335 camera set through the project GUI:
 

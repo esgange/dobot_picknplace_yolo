@@ -38,8 +38,6 @@ OUTPUT_CHANNELS = (
     GRIPPER_OPEN_DO,
 )
 DI_CHANNELS = (1, 2)
-SUCTION_EXHAUST_PULSE_MS = 250
-GRIPPER_OPEN_PULSE_MS = 100
 SHUTDOWN_TIMEOUT_MS = 5000
 
 
@@ -146,7 +144,9 @@ class GripperControlNode(Node):
                 or not isinstance(output_bits, int)
                 or output_bits < 0
             ):
-                raise ValueError('digital_input_bits and digital_outputs must be non-negative integers')
+                raise ValueError(
+                    'digital_input_bits and digital_outputs must be non-negative integers'
+                )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             self._event_logger.record('ERROR', 'feed_info_invalid', str(exc))
             self.get_logger().error(f'Invalid canonical FeedInfo payload: {exc}')
@@ -320,8 +320,6 @@ class GripperControlApp:
 
         self._status_var = tk.StringVar(value='Ready')
         self._service_var = tk.StringVar(value='Bringup: ready')
-        self._grip_button = None
-        self._release_button = None
 
         self._build_ui()
         self._root.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -330,7 +328,7 @@ class GripperControlApp:
 
     def _build_ui(self) -> None:
         self._root.title('Dobot Gripper Diagnostics')
-        self._root.geometry('640x470')
+        self._root.minsize(640, 0)
         self._root.resizable(False, False)
 
         outer = ttk.Frame(self._root, padding=14)
@@ -356,36 +354,13 @@ class GripperControlApp:
         for row, di_index in enumerate(DI_CHANNELS):
             self._create_digital_input_row(input_panel, di_index, row)
 
-        action_panel = ttk.LabelFrame(outer, text='Quick Actions', padding=10)
-        action_panel.grid(row=4, column=0, sticky='ew', pady=(10, 0))
-        self._grip_button = tk.Button(
-            action_panel,
-            text='Grip',
-            width=12,
-            bg='#1f7a1f',
-            fg='white',
-            activebackground='#2e8b57',
-            command=self._on_grip,
-        )
-        self._grip_button.grid(row=0, column=0, padx=(0, 12))
-        self._release_button = tk.Button(
-            action_panel,
-            text='Release',
-            width=12,
-            bg='#8b1a1a',
-            fg='white',
-            activebackground='#b22222',
-            command=self._on_release,
-        )
-        self._release_button.grid(row=0, column=1, padx=(0, 12))
-
         ttk.Label(outer, textvariable=self._status_var, foreground='#204a87').grid(
-            row=5, column=0, sticky='w', pady=(10, 0)
+            row=4, column=0, sticky='w', pady=(10, 0)
         )
         ttk.Label(
             outer,
             text='0 ms keeps an output ON; a positive value schedules an explicit OFF call.',
-        ).grid(row=6, column=0, sticky='w', pady=(6, 0))
+        ).grid(row=5, column=0, sticky='w', pady=(6, 0))
 
     def _create_channel_row(self, parent: ttk.LabelFrame, do_index: int, row: int) -> None:
         frame = ttk.Frame(parent)
@@ -537,8 +512,6 @@ class GripperControlApp:
         for channel in self._channels.values():
             channel['button'].configure(state=state)
             channel['duration_entry'].configure(state=state)
-        self._grip_button.configure(state=state)
-        self._release_button.configure(state=state)
 
     def _parse_duration_ms(self, do_index: int) -> int | None:
         text = str(self._channels[do_index]['duration_var'].get()).strip()
@@ -599,38 +572,6 @@ class GripperControlApp:
             f'Automatic DO{do_index} OFF',
             [('set', do_index, 0)],
             f'DO{do_index}: automatic OFF confirmed',
-        )
-
-    def _on_grip(self) -> None:
-        for index in OUTPUT_CHANNELS:
-            self._cancel_auto_off_timer(index)
-        self._run_sequence(
-            'Grip',
-            [
-                ('set', GRIPPER_OPEN_DO, 0),
-                ('set', SUCTION_EXHAUST_DO, 0),
-                ('set', GRIPPER_CLOSE_DO, 1),
-                ('set', FINGER_CLOSE_DO, 1),
-            ],
-            'Grip complete: DO2 and DO13 ON; DO1 and DO14 OFF',
-        )
-
-    def _on_release(self) -> None:
-        for index in OUTPUT_CHANNELS:
-            self._cancel_auto_off_timer(index)
-        self._run_sequence(
-            'Release',
-            [
-                ('set', GRIPPER_CLOSE_DO, 0),
-                ('set', FINGER_CLOSE_DO, 0),
-                ('set', SUCTION_EXHAUST_DO, 1),
-                ('delay', SUCTION_EXHAUST_PULSE_MS),
-                ('set', SUCTION_EXHAUST_DO, 0),
-                ('set', GRIPPER_OPEN_DO, 1),
-                ('delay', GRIPPER_OPEN_PULSE_MS),
-                ('set', GRIPPER_OPEN_DO, 0),
-            ],
-            'Release complete: DO1, DO2, DO13, and DO14 OFF',
         )
 
     def _run_sequence(
