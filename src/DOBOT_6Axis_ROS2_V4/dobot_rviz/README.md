@@ -28,8 +28,20 @@ to `logs/dobot_rviz/events.jsonl` with UTC timestamps and the project-wide
 
 ## Run
 
-Start the safety-checked Dobot bringup in one sourced terminal. Then run the
-viewer in a second sourced terminal:
+The safety-checked Dobot bringup now starts this viewer automatically:
+
+```bash
+ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
+```
+
+Closing RViz or a viewer failure stops the viewer and its robot TF publisher,
+while the Dobot driver continues. Ctrl-C in the bringup terminal stops both;
+driver exit also stops the owned viewer. No viewer process is restarted
+automatically, and closing RViz does not command the robot to Stop.
+
+To reopen the viewer after it has exited, run this in a second sourced terminal
+while bringup is still publishing. Run only one viewer at a time to avoid
+duplicate robot TF publishers:
 
 ```bash
 cd ~/PicknPlace

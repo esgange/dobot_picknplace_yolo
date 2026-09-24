@@ -4728,6 +4728,44 @@ Never use a floating “latest” version in an issue, script, or deployment not
   placement and clearance remain unverified. No new offline-transfer milestone
   is claimed.
 
+### 2026-09-24 — Start the read-only RViz viewer with Dobot bringup
+
+- Rule 114 makes `ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py`
+  start the existing canonical `dobot_rviz.launch.py` alongside the driver.
+  The user requests one terminal command for both. Retain the fixed CR10 model,
+  direct canonical `/joint_states`, actual-joint monitor, strict root `.env`,
+  local-only ROS and read-only viewer contract. Add no launch arguments,
+  configuration keys, automatic enable, motion or gripper commands.
+- Launch the viewer in an owned child launch session. The existing viewer emits
+  a session-wide Shutdown whenever RViz, its monitor or robot_state_publisher
+  exits; directly including that launch would terminate the hardware driver
+  when the operator closes RViz or the viewer fails. The child session contains
+  those events: its three processes stop together, the terminal reports viewer
+  exit, and the driver continues. Parent Ctrl-C/shutdown or driver exit shuts
+  down the owned child too. The child uses ROS launch's `--noninteractive` mode
+  so signals from the parent are forwarded to its nodes. No automatic restart
+  or connection-policy change.
+- The standalone viewer command remains available to reopen an exited viewer.
+  Only one viewer should run at a time because each owns a robot TF publisher.
+  RViz requires a graphical desktop and rendering resources; a display failure
+  does not stop the driver. Viewer exit also removes its robot TF, which matters
+  to TF-dependent applications. Closing a viewer is never a robot Stop command.
+  Preserve the viewer's five-second startup and one-second stream-age checks;
+  this change does not alter or strengthen the driver's feedback behavior.
+- Intentional vendor patch: change only the bringup launch, package dependencies
+  and test registration, plus package documentation and new software lifecycle
+  regressions. Reuse the existing viewer launch unchanged. No C++ transport,
+  feedback, service, queue-order, controller, schema or operator-artifact change.
+- Verification: five new lifecycle regressions pass through the package CTest
+  wrapper using the real launch descriptions with dummy local processes:
+  normal RViz closure, RViz failure, monitor failure, driver failure and parent
+  Ctrl-C. The five existing viewer contract tests also pass. The complete root
+  symlink build passes for all 15 packages; Python syntax, package XML, new-test
+  ament_flake8 and `git diff --check` pass. Broader historical vendor lint is
+  outside this scoped validation. No robot or camera was launched or commanded;
+  display rendering and live robot behavior remain unverified. No new
+  offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

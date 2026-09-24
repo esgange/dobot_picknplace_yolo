@@ -14,6 +14,12 @@
   <depend>dobot_msgs_v4</depend>
   <build_depend>message_generation</build_depend>
 
+  <exec_depend>dobot_rviz</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

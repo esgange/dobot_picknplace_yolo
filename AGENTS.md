@@ -192,6 +192,10 @@ Rule 113 uses the exact saved pre-pick pose for every put-back release, removing
 the fixed +50 mm offset and minimum pre-pick check. With zero retract height,
 neutralize on the upward exit transit; clearance or safety Z must still provide
 a real upward retreat. Preserve full-speed return, both transits and 50 ms exhaust.
+Rule 114 starts the canonical read-only RViz viewer alongside Dobot bringup in
+an owned child launch session. Viewer exit stops only that viewer and its TF
+publisher; parent shutdown or driver exit stops the owned viewer. No automatic
+restart, enable, motion, gripper command, or extra configuration is added.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

@@ -2,6 +2,25 @@
 
 ROS 2 TCP/IP driver for the physical Dobot CR10. The node publishes joint state, robot status, and tool-vector feedback and exposes the retained Dobot command services. Streaming `ServoJ` and `ServoP` services are intentionally not built or exposed.
 
+The canonical launch also starts the existing `dobot_rviz` viewer, including
+its actual-joint monitor and CR10 `robot_state_publisher`. A graphical desktop
+is required to display RViz. Do not start a second viewer while this one is
+running: it would duplicate the robot TF publisher.
+
+The viewer runs in an owned child launch session. Closing RViz, a viewer crash,
+or a failed viewer feedback check stops that viewer session and its robot TF
+publisher while the Dobot driver continues. The terminal reports viewer exit;
+there is no automatic restart. The standalone
+`ros2 launch dobot_rviz dobot_rviz.launch.py` command can reopen it after it has
+exited. Ctrl-C in the bringup terminal stops both sessions, and driver exit also
+shuts down the owned viewer. Closing RViz is not a robot Stop command.
+
+RViz remains read-only. The launch adds no Enable, Home, motion, or gripper
+commands. Connection retries, service responses and feedback publication retain
+their existing behavior; the viewer retains its five-second startup and
+one-second stream-freshness checks. Display/GPU failures remain local to the
+viewer, but applications requiring its robot TF lose that TF when it exits.
+
 The bringup launch is strict and requires the repository root `.env`:
 
 ```bash

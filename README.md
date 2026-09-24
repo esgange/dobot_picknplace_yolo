@@ -618,8 +618,16 @@ Follow connection attempts and results live with:
 tail -f logs/dobot_bringup_v4/events.jsonl
 ```
 
-Launch the read-only actual-robot and TF viewer in a second sourced terminal
-after bringup is connected and publishing:
+The bringup command also opens the read-only actual-robot and TF viewer on the
+graphical desktop. It owns a separate viewer launch session: closing RViz or a
+viewer failure stops the viewer and its robot TF publisher while the driver
+continues. Ctrl-C in the bringup terminal stops both, and driver exit also stops
+the owned viewer. No robot enable or motion command is added, and closing RViz
+is not a robot Stop command. Viewer exit is reported without automatic restart.
+
+To reopen a viewer that has exited, use a second sourced terminal while bringup
+is still publishing. Run only one viewer at a time to avoid duplicate robot TF
+publishers:
 
 ```bash
 ros2 launch dobot_rviz dobot_rviz.launch.py

@@ -1,4 +1,7 @@
 from launch import LaunchDescription
+from launch.actions import EmitEvent, ExecuteProcess, LogInfo
+from launch.events import Shutdown
+from launch.substitutions import FindExecutable
 import launch_ros.actions
 from datetime import datetime, timezone
 import json
@@ -367,7 +370,19 @@ def generate_launch_description():
             executable="dobot_bringup_v4_node",
             name=robot_node_name,
             output="screen",
-            parameters=dobot_ros2_params
-            # respawn=True
+            parameters=dobot_ros2_params,
+            on_exit=[EmitEvent(event=Shutdown(reason="Dobot bringup exited"))],
+        ),
+        # The viewer emits Shutdown when any of its processes exits. Keep that
+        # event in a child launch session so closing RViz cannot stop the driver.
+        # Noninteractive mode forwards parent shutdown to the viewer's nodes.
+        ExecuteProcess(
+            cmd=[FindExecutable(name="ros2"), "launch", "--noninteractive",
+                 "dobot_rviz", "dobot_rviz.launch.py"],
+            name="dobot_rviz_launch",
+            output="screen",
+            on_exit=[LogInfo(msg=(
+                "Dobot RViz viewer exited; the driver continues while bringup is running."
+            ))],
         ),
     ])
