@@ -16,10 +16,10 @@ started.
 
 | Channel | Purpose |
 | --- | --- |
-| `DO1` | Suction exhaust |
-| `DO2` | Gripper close |
-| `DO13` | Finger close |
-| `DO14` | Gripper open |
+| `DO1` | Exhaust |
+| `DO2` | Finger close |
+| `DO13` | Suction |
+| `DO14` | Finger open |
 | `DI1` | Digital input check (name not assigned) |
 | `DI2` | Digital input check (name not assigned) |
 
@@ -28,6 +28,12 @@ The `Digital Inputs` panel reads `digital_input_bits` from the canonical
 payload's `digital_outputs` field. DI1 is bit `0` and DI2 is bit `1`, using the
 usual `N` to bit `N-1` mapping. Semantic names for these inputs are deferred.
 
+The output table records the user-confirmed physical wiring; the diagnostic
+buttons use raw DO channel numbers. This GUI still displays generic DI1/DI2;
+the production wiring's DI1 suction detection and DI12 full-open confirmation
+belong to the controller. Migration of these maintenance diagnostics remains
+pending.
+
 ## Build
 
 ```bash
@@ -35,6 +41,14 @@ cd WORKSPACE_ROOT
 source /opt/ros/humble/setup.bash
 colcon build --packages-select gripper_control
 source scripts/source_ros_workspace.bash
+```
+
+The command regressions use local fixtures and do not start ROS nodes or
+command hardware:
+
+```bash
+colcon test --packages-select gripper_control --return-code-on-test-failure
+colcon test-result --test-result-base build/gripper_control --verbose
 ```
 
 ## Run
@@ -74,11 +88,14 @@ In this example DI1 is HIGH, DI2 is LOW, and DO2 plus DO13 are ON
 
 - Provides independent controls for `DO1`, `DO2`, `DO13`, and `DO14`.
 - Shows read-only HIGH/LOW indicators for generic `DI1` and `DI2` checks.
-- Sends canonical `DO(index,status,time=0)` requests and confirms each result
-  from the FeedInfo `digital_outputs` bitmask.
+- Sends one canonical `DO(index,status,time=0)` request per output action,
+  requires `res=0`, then confirms the output from the FeedInfo
+  `digital_outputs` bitmask. Any nonzero service result fails the action.
 - Uses explicit GUI timers followed by a second OFF service call for pulses;
   it does not rely on undocumented controller timing semantics.
 - Supports per-channel auto-off timing in milliseconds.
+- Starts auto-off timing only after the ON response and observed output are
+  confirmed. A pending output action blocks other output actions.
 - Always requests `DO1`, `DO2`, `DO13`, and `DO14` OFF during shutdown,
   regardless of cached UI state.
 

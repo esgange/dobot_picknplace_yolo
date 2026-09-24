@@ -27,16 +27,7 @@ SERVICE_RESPONSE_TIMEOUT_SEC = 3.0
 OUTPUT_CONFIRM_TIMEOUT_SEC = 1.5
 FEEDBACK_STALE_SEC = 1.5
 MAX_LOG_EVENTS = 1000
-SUCTION_EXHAUST_DO = 1
-GRIPPER_CLOSE_DO = 2
-FINGER_CLOSE_DO = 13
-GRIPPER_OPEN_DO = 14
-OUTPUT_CHANNELS = (
-    SUCTION_EXHAUST_DO,
-    GRIPPER_CLOSE_DO,
-    FINGER_CLOSE_DO,
-    GRIPPER_OPEN_DO,
-)
+OUTPUT_CHANNELS = (1, 2, 13, 14)
 DI_CHANNELS = (1, 2)
 SHUTDOWN_TIMEOUT_MS = 5000
 
@@ -89,7 +80,6 @@ class GripperControlNode(Node):
         self._robot_status_received = False
         self._feed_info_received = False
         self._robot_connected = False
-        self._robot_enabled = False
         self._robot_status_monotonic: float | None = None
         self._feed_info_monotonic: float | None = None
         self._digital_input_bits = 0
@@ -120,7 +110,6 @@ class GripperControlNode(Node):
             previous_connected = self._robot_connected if self._robot_status_received else None
             self._robot_status_received = True
             self._robot_connected = bool(msg.is_connected)
-            self._robot_enabled = bool(msg.is_enable)
             self._robot_status_monotonic = now
         if previous_connected is None or previous_connected != bool(msg.is_connected):
             self._event_logger.record(
@@ -196,7 +185,6 @@ class GripperControlNode(Node):
                 and now - self._feed_info_monotonic <= FEEDBACK_STALE_SEC
             )
             connected = self._robot_connected
-            enabled = self._robot_enabled
             input_bits = self._digital_input_bits
             output_bits = self._digital_output_bits
         service_ready = self._do_client.service_is_ready()
@@ -213,15 +201,9 @@ class GripperControlNode(Node):
         return {
             'ready': ready,
             'health_text': 'ready' if ready else ', '.join(missing),
-            'connected': connected,
-            'enabled': enabled,
             'digital_input_bits': input_bits,
             'digital_output_bits': output_bits,
         }
-
-    def output_is_active(self, index: int) -> bool:
-        snapshot = self.io_snapshot()
-        return bool(int(snapshot['digital_output_bits']) & (1 << (index - 1)))
 
     def send_do(self, index: int, status: int, on_complete) -> None:
         if index not in OUTPUT_CHANNELS:
@@ -281,7 +263,7 @@ class GripperControlNode(Node):
                 return
             response_timer.cancel()
             _complete_once(
-                result_code != -1,
+                result_code == 0,
                 result_code,
                 f'res={result_code}',
             )
@@ -534,9 +516,9 @@ class GripperControlApp:
         channel = self._channels[do_index]
         if bool(channel['on']):
             self._cancel_auto_off_timer(do_index)
-            self._run_sequence(
+            self._run_output(
                 f'Manual DO{do_index} OFF',
-                [('set', do_index, 0)],
+                do_index, 0,
                 f'DO{do_index}: OFF confirmed',
             )
             return
@@ -551,9 +533,9 @@ class GripperControlApp:
                     lambda index=do_index: self._auto_off(index),
                 )
 
-        self._run_sequence(
+        self._run_output(
             f'Manual DO{do_index} ON',
-            [('set', do_index, 1)],
+            do_index, 1,
             f'DO{do_index}: ON confirmed',
             on_success=_schedule_auto_off,
         )
@@ -568,16 +550,17 @@ class GripperControlApp:
                 50, lambda index=do_index: self._auto_off(index)
             )
             return
-        self._run_sequence(
+        self._run_output(
             f'Automatic DO{do_index} OFF',
-            [('set', do_index, 0)],
+            do_index, 0,
             f'DO{do_index}: automatic OFF confirmed',
         )
 
-    def _run_sequence(
+    def _run_output(
         self,
         action_name: str,
-        steps: list[tuple],
+        do_index: int,
+        status: int,
         success_text: str,
         on_success=None,
     ) -> bool:
@@ -601,6 +584,7 @@ class GripperControlApp:
         def _finish(success: bool, detail: str) -> None:
             if token != self._operation_token or self._closing:
                 return
+            detail = success_text if success else f'failed at DO{do_index}={status}: {detail}'
             self._operation_name = None
             self._status_var.set(detail)
             self._node.event_logger.record(
@@ -612,32 +596,8 @@ class GripperControlApp:
             if success and on_success is not None:
                 on_success()
 
-        def _run_step(step_index: int) -> None:
-            if token != self._operation_token or self._closing:
-                return
-            if step_index >= len(steps):
-                _finish(True, success_text)
-                return
-            step = steps[step_index]
-            if step[0] == 'delay':
-                delay_ms = int(step[1])
-                self._status_var.set(f'{action_name}: waiting {delay_ms} ms')
-                self._root.after(delay_ms, lambda: _run_step(step_index + 1))
-                return
-            _, do_index, status = step
-            self._status_var.set(
-                f'{action_name}: DO{do_index} -> {"ON" if status else "OFF"}'
-            )
-
-            def _step_complete(success: bool, detail: str) -> None:
-                if not success:
-                    _finish(False, f'failed at DO{do_index}={status}: {detail}')
-                    return
-                _run_step(step_index + 1)
-
-            self._send_do_confirmed(do_index, status, token, _step_complete)
-
-        _run_step(0)
+        self._status_var.set(f'{action_name}: DO{do_index} -> {"ON" if status else "OFF"}')
+        self._send_do_confirmed(do_index, status, token, _finish)
         return True
 
     def _send_do_confirmed(self, do_index: int, status: int, token: int, on_complete) -> None:
@@ -645,7 +605,7 @@ class GripperControlApp:
         channel['pending'] = True
         self._set_channel_ui(do_index)
 
-        def _service_complete(success: bool, result_code: int, detail: str) -> None:
+        def _service_complete(success: bool, _result_code: int, detail: str) -> None:
             def _handle_service_result() -> None:
                 if token != self._operation_token or self._finalized:
                     return

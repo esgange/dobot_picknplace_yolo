@@ -675,16 +675,16 @@ Each package log overwrites itself before record 1,001. The compiler is a standa
 The `gripper_control` GUI requires the separately launched bringup to already be
 connected. It uses only the default Dobot V4 DO service and feedback topics; if
 those interfaces are not live within five seconds, it writes a failure to its
-package log and exits. Its fixed output map is DO1 suction exhaust, DO2
-gripper close, DO13 finger close, and DO14 gripper open; DI1 and DI2 are
-monitored as generic digital inputs with semantic names intentionally deferred.
+package log and exits. It exposes raw DO1, DO2, DO13 and DO14 controls and
+monitors DI1 and DI2 as generic digital inputs. Each output action requires
+service acceptance (`res=0`) and observed FeedInfo output confirmation.
 
 **Wiring correction / migration pending:** the user-confirmed physical map is
 DO1 exhaust, DO2 finger close, DO13 suction, DO14 finger open, DI1 suction
-detection, and DI12 finger fully open. The preceding paragraph describes the
-still-unmigrated GUI, not the new wiring contract. Its Quick Actions panel and
-automatic Grip/Release sequences have been removed; individual output controls,
-auto-off timing and the generic digital-input display remain.
+detection, and DI12 finger fully open. The diagnostic GUI's input display and
+maintenance-client migration remain pending. Its Quick Actions panel and
+automatic Grip/Release sequences have been removed; individual output controls
+and auto-off timing remain.
 
 Configure and launch the Gemini 335 camera set through the project GUI:
 

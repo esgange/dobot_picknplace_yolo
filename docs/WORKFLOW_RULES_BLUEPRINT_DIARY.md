@@ -4828,6 +4828,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   working ready/disabled refresh and content-driven height. No real ROS node,
   robot or I/O command was launched; live hardware remains untested.
 
+### 2026-09-24 — Clean up Gripper Diagnostics output handling
+
+- Replace the obsolete multi-step/delay runner with one confirmed-output action
+  shared by manual ON/OFF and automatic OFF. Remove the unused output-query
+  helper, unused enable/connection snapshot fields and historical semantic DO
+  aliases, including the incorrect DO13 finger-close name. Keep one fixed raw
+  channel tuple `(1, 2, 13, 14)` and correct the documentation's physical map
+  to the already-confirmed wiring. No output/input channel is remapped.
+- Correct the node's response check: only `res=0` is success. Previously it
+  accepted every result except `-1`, so other robot error codes could enter
+  output confirmation. All nonzero results now fail the individual action;
+  shutdown still attempts OFF on every channel even when earlier calls fail.
+- Preserve serialized actions, service and feedback deadlines, confirmation
+  before auto-off timing, operation-token cancellation, bounded startup and
+  shutdown, logs, canonical interfaces and the existing diagnostic UI. DI1/DI2
+  display and maintenance-client migration remain pending; no production
+  controller or vendor behavior changes. No automatic retry or fallback.
+- Register pytest through the package's test extra and manifest so the normal
+  `colcon test --packages-select gripper_control` command discovers its suite.
+  This replaces the empty default setuptools test run without restoring the
+  obsolete `tests_require` argument or changing runtime dependencies.
+- Verification: all 14 focused regressions pass directly and through colcon
+  with zero errors/failures/skips. Coverage includes zero/nonzero results,
+  unanswered/late/empty/failed replies, ordered admission, feedback confirmation,
+  auto-off timing, stale feedback and shutdown invalidation/OFF attempts.
+  The full 15-package root symlink build passes; the package rebuild after test
+  registration, Python syntax, package XML, all three changed Python files'
+  ament_flake8 and `git diff --check` pass. No ROS node, robot or I/O command was
+  launched; live hardware behavior remains unverified. No new offline-transfer
+  milestone is claimed.
+
 ### Future entry template
 
 ```text
