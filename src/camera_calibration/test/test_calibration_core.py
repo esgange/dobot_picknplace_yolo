@@ -1708,6 +1708,18 @@ def test_schema_seven_yaml_round_trip_restores_rgb_and_joint_observations(tmp_pa
         created_at=created_at,
     )
     content = path.read_text(encoding="utf-8")
+    custom = output_path_for_mode(CAMERA_ON_HAND, tmp_path, created_at, "renamed calibration")
+    write_calibration_yaml(
+        custom, CAMERA_ON_HAND, settings, solved,
+        _diagnostics(quality, leave_one_out=leave_one_out), samples, created_at=created_at)
+    with pytest.raises(FileExistsError):
+        write_calibration_yaml(
+            custom, CAMERA_ON_HAND, settings, solved,
+            _diagnostics(quality, leave_one_out=leave_one_out), samples, created_at=created_at)
+    assert custom.read_text(encoding="utf-8") == content
+    assert path.read_text(encoding="utf-8") == content
+    assert sorted(entry.name for entry in path.parent.iterdir()) == sorted(
+        [path.name, custom.name])
     assert "schema_version: 7" in content
     assert "calibration_mode: camera_on_hand" in content
     assert "prefix: camera_two" in content

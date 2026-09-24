@@ -24,7 +24,7 @@ from item_perception_yolo.item_teach_core import utc_now
 from item_perception_yolo.pick_planning import select_pick_attitude
 from item_perception_yolo.platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, workspace_root)
-from robot_controller_interfaces.action import GoHome, PickItem, ReplayCalibration
+from robot_controller_interfaces.action import GoHome, PickItem
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, SetGlobalSpeed
 
@@ -43,7 +43,6 @@ from .motion import (candidate_pose_in_base, cartesian_home_targets,
 from .managed_control import ManagedControl
 from .pick_session import PickSession, return_targets
 from .state_machine import ControllerStateMachine
-from .calibration_replay import CalibrationReplay
 
 
 @dataclass
@@ -179,7 +178,6 @@ class RobotController(Node):
             execute_callback=self._execute_pick_action,
             goal_callback=self._pick_goal, cancel_callback=self._cancel_goal,
             callback_group=self.control_group)
-        self.calibration_replay = CalibrationReplay(self)
 
         if self.headless:
             self.configuration = load_runtime_configuration(self.root, self.kinematics)
@@ -308,12 +306,7 @@ class RobotController(Node):
         self.publish_operator_log(
             "INFO", f"{operation.upper()} {phase}:{waypoint_text}{candidate_text} {message}")
         goal = self.active_goal
-        if goal is not None and self.active_action == "calibration":
-            feedback = ReplayCalibration.Feedback(
-                position_index=self.candidate_index, position_total=self.candidate_total,
-                phase=phase, message=message)
-            goal.publish_feedback(feedback)
-        elif goal is not None:
+        if goal is not None:
             feedback = GoHome.Feedback() if self.active_action == "home" else PickItem.Feedback()
             if self.active_action == "pick":
                 feedback.candidate_index = self.candidate_index

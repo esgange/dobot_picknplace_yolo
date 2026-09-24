@@ -5115,6 +5115,69 @@ Never use a floating “latest” version in an issue, script, or deployment not
   operator artifact changes, global runtime install or new offline-transfer
   milestone. Live paths and acquisition still require attended hardware validation.
 
+### 2026-09-24 — Direct maintenance calibration and editable Save As
+
+- Rule 124 supersedes rule 123's controller-owned calibration transport at the
+  user's explicit request. Camera Calibration is a direct-command maintenance
+  exception like Motion Debug and Gripper Diagnostics. Restore Robot Controller
+  and its interface package exactly to pre-replay baseline `d8245a0`: remove
+  ReplayCalibration, CalibrationPosition, CaptureCalibration and CALIBRATING.
+  No controller or Item/Bin Teach configuration is required for calibration.
+- Keep loaded strict schema-7 settings and ordered joint positions as a memory-only
+  recipe. Explicitly confirmed Start validates canonical CR10 joint limits,
+  camera readiness, sole canonical publishers/services, enabled idle user/tool
+  zero and DI1 LOW before clearing working samples. Reject simultaneous controller,
+  motion-debug, gripper-debug or duplicate calibration processes, including during
+  replay. Direct CP(100), then ordered MovJ at 20% joint speed/acceleration, preserve
+  outputs; never enable, disable, change gripper state or launch dependencies.
+- Confirm each MovJ's queue ID with advancing fresh FeedInfo, RobotStatus idle,
+  empty queue, modeled TCP within 5 mm/1 degree and joints within 1 degree. Two
+  advancing samples must show TCP unchanged within 0.05 mm/degrees and joints
+  within 0.05 degree; no timed dwell. Capture requires post-arrival RGB/joints/TF
+  and retains existing age/angular/solver/leave-one-out gates. Keep monitoring
+  robot stationarity, DI1 and outputs while capturing and solving. Only an
+  accepted fresh sample permits the next move; remain at the final pose.
+- Direct Stop stays independent of motion responses, camera processing and enable
+  gates. Bound responses to five seconds and physical Stop confirmation to two
+  seconds after acknowledgement. Stop confirmation requires advancing stationary
+  feedback and empty queue. Each explicit Stop gets a new attempt; stale replies
+  cannot finish a newer attempt. Late accepted abandoned MovJ receives containment
+  Stop. Block restart while any response is unanswered or Stop is unconfirmed.
+  Failures stop the run without skipped positions, automatic retry or Home return.
+  GUI exit keeps its executor alive for bounded Stop confirmation before shutdown.
+- Preserve exactly two ROS executor threads. Robot feedback/responses/Stop use an
+  independent reentrant group; serialized RGB/joints/sample processing and TF's
+  own reentrant group remain. An operation thread monitors hardware while the
+  unchanged lifetime private OpenCV worker solves. Bound motion to 300 seconds
+  and no progress to three seconds; fresh capture to ten seconds plus up to twenty
+  seconds processing. After solving allow two seconds for a fresh camera callback.
+- Save as New Calibration now opens an editable filename dialog prefilled from
+  the existing mode/UTC-microsecond naming rule. Keep the same timestamp in default
+  filename and artifact metadata. Save only inside root calibration/, append .yaml
+  if no extension, reject invalid paths/extensions and never overwrite existing
+  files. Cancel leaves everything unchanged. Default names retain strict automatic
+  Item Teach/Detect station discovery; custom names support explicit loading only.
+  No artifact/configuration schema changes or persistence of one-shot filenames.
+- Update READMEs, AGENTS and controller FSM; regenerate its six-diagram offline
+  HTML/PDF from Markdown. Source hash matches the HTML; all six diagrams render
+  without network access or JavaScript errors and the PDF has six A3 pages.
+- Validation: full 15-package symlink build passes. Camera Calibration passes
+  101 tests (55 core, 42 maintenance/automatic capture, four runtime installation);
+  restored Robot Controller passes all 385 tests. Real local ROS tests on isolated
+  domain 232 complete a six-position fake Dobot replay without any controller,
+  preserve feedback/Stop responsiveness during a slow serialized solve, and
+  exercise Stop without subsequent movement. Additional tests cover post-arrival
+  timestamps, modeled arrival and advancing queue evidence, faults/stale feedback,
+  latched transient faults and clock reset, response timeout, late acceptance,
+  independent Stop attempts, command/publisher ownership, GUI edit locks, partial
+  save refusal, editable/default/cancelled filenames, and no-overwrite saving.
+  Python/ament_flake8 and diff checks pass. Obsolete generated replay interfaces
+  were removed by rebuilding the two controller packages from clean build/install
+  directories; controller source/interfaces match baseline d8245a0 exactly.
+- No vendor edits, real robot commands, operator-artifact changes, global runtime
+  installs or new offline-transfer milestone. Live replay paths require attended
+  hardware validation.
+
 ### Future entry template
 
 ```text

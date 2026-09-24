@@ -17,8 +17,9 @@ Start bringup, the canonical robot TF publisher, and the camera separately.
 Calibration needs actual `/joint_states`, fresh `base_link <- Link6`, and
 the camera's color image, color CameraInfo, and internal camera TF.
 It never launches cameras, bringup, RViz or the controller. Manual capture is
-read-only. Explicit automatic capture requests motion exclusively through the
-typed Robot Controller replay action; this package has no Dobot command clients.
+read-only. Explicit automatic capture is an attended maintenance exception, like Motion
+Debug and Gripper Diagnostics: it sends guarded CP/MovJ/Stop requests directly
+to canonical Dobot bringup. It has no Robot Controller dependency.
 Depth is neither subscribed to nor required. Camera-launcher settings and
 supervision remain independent and unchanged.
 
@@ -156,51 +157,67 @@ Loading alone never moves the robot.
 
 ## Automatic recalibration from a loaded file
 
-1. Start the configured cameras and canonical Dobot bringup (including its TF
-   publisher). Start the attended controller, for example with
-   `ros2 run robot_controller robot_controller`. No Item/Bin Teach configuration
-   is needed for calibration. The controller must be UNCONFIGURED, INACTIVE or
-   READY, with no retained item context or competing maintenance application.
+1. Start the configured camera and canonical Dobot bringup (including its TF
+   publisher). Close Robot Controller, Motion Debug and Gripper Diagnostics
+   before replay; calibration must be the only command application. No Item/Bin
+   Teach files or controller process are required.
 2. Load a valid schema-7 calibration. Its settings and ordered joint positions
    become the replay recipe. Prepare an already enabled, idle robot with user
    and tool zero and DI1 LOW. Launch and loading perform no enable or motion.
 3. Click **Start Automatic Capture** and confirm that the starting position and
    all connecting joint paths are clear. Replay uses exact saved joint targets
    with MovJ at 20% speed/acceleration; the existing global speed factor also
-   applies. The controller sets global CP(100), preserves all outputs, and never
+   applies. Calibration sets global CP(100), preserves all outputs, and never
    enables/disables the robot or resets the gripper during replay.
-4. The first preparation clears the working observations and solution. Each
-   position is physically confirmed before collecting one new sample; no old
-   board observation is reused. Progress shows the position, motion and capture
-   phase. After the last accepted sample the robot stays at that position.
-5. Review the recalculated diagnostics, then **Save as New Calibration**. Saving
-   uses the same strict schema-7 writer and a new timestamped file. The loaded
-   source is never modified. Once replay begins, an incomplete or failed run
-   cannot be saved; all existing solver and leave-one-out gates still apply.
+4. After validating robot/camera readiness and all CR10 target limits, Start
+   clears working observations and the solution. Each position is physically
+   confirmed before collecting one new sample; old observations are not reused.
+   Progress shows the position and phase. The robot stays at the final position.
+5. Review diagnostics, then click **Save as New Calibration**. Edit the filename
+   in the dialog or accept the default
+   `<mode>_calibration_<YYYYMMDDTHHMMSS_microsecondsZ>.yaml`. Saves stay in root
+   `calibration/`; `.yaml` is appended when no extension is supplied. Cancel
+   changes nothing. Existing files, including the loaded source, cannot be
+   overwritten. The strict schema-7 writer and all quality gates still apply;
+   an incomplete or failed replay cannot be saved. Keep the default filename
+   for Item Teach/Detect's strict automatic station discovery; custom names are
+   intended for explicit loading and are not an alternative discovery format.
 
 Arrival requires advancing canonical FeedInfo after command acceptance, the
-returned MovJ queue ID, idle/empty queue, actual joints within 1 degree and TCP
-within 5 mm/1 degree of the modeled endpoint. Two distinct advancing samples
-must also show TCP unchanged within 0.05 mm/degrees and joints within 0.05 degree.
-This adds no fixed dwell. RGB, joint and robot-TF timestamps must all be newer
-than the confirmed arrival; RGB remains at most 0.5 seconds old and joints/TF
-at most 1 second old. The controller keeps checking stationarity, feedback and
-unchanged outputs while waiting for the sample acknowledgement before moving on.
+returned MovJ queue ID, idle/empty queue and RobotStatus's enabled-idle flag,
+actual joints within 1 degree and TCP within 5 mm/1 degree of canonical CR10 FK.
+Two distinct advancing samples must show TCP unchanged within 0.05 mm/degrees
+and joints within 0.05 degree. There is no fixed settling dwell. RGB, joints
+and robot TF must all be newer than arrival; RGB remains at most 0.5 seconds
+old and joints/TF at most 1 second old. FeedInfo and RobotStatus must remain
+fresh within 1 second, with an advancing controller timer. Stationarity,
+enabled/idle state, DI1 LOW and unchanged outputs remain monitored during
+capture and solving; only a successful capture permits the next move.
 
-Fresh-sample waiting is bounded to 10 seconds, with a 20-second controller reply
-deadline including solving. A failure, changed output, lost receiver or Stop
-ends the sequence through the controller's direct Stop/confirmation path, with
-no skipped position, automatic retry or Home return. **Stop Automatic Capture**
-and controller Stop remain available; closing the calibration GUI requests Stop
-for an active run. Pause/Continue do not apply to calibration. A stopped/faulted
-controller must be explicitly recovered before another run. Apply Settings can
-start a separate manual calibration; partial automatic results are not a saved
-replacement. The recipe is memory-only and never replayed after process restart.
+Dobot responses have a five-second deadline. Motion is bounded to 300 seconds,
+with a three-second no-progress limit. Fresh-sample waiting is bounded to ten
+seconds, with up to twenty additional seconds for processing; after solving,
+allow up to two seconds for the next valid RGB callback before moving again.
+Malformed/stale feedback, changed outputs, a competing command application,
+camera failure, rejected/timed-out commands, or Stop end the run through direct
+Dobot Stop and physical confirmation. Stop acknowledgement alone is insufficient:
+fresh advancing feedback must show a stationary robot and empty queue. A late
+accepted abandoned MovJ triggers another containment Stop. No position is
+skipped and no automatic replay retry or Home return occurs.
 
-The capture service waits asynchronously, retaining exactly two executor threads
-and the independent TF callback group. The pinned private OpenCV worker, manual
-capture path and artifact schema are unchanged. Automatic capture is covered by
-software tests; real robot paths and camera acquisition require attended validation.
+**Stop Automatic Capture** stays available while moving, sampling or stopping.
+An unconfirmed Stop blocks editing and another run; another explicit Stop makes
+a new attempt. GUI shutdown requests Stop for an active run before stopping its
+executor. A confirmed Stop permits explicit restart; Apply Settings can start a
+separate manual calibration. Partial replay is never saved as a replacement.
+The recipe stays in memory and never replays after process restart.
+
+Exactly two ROS executor threads remain: camera/joints/capture are serialized,
+while Dobot feedback, responses and Stop use an independent reentrant group;
+TF retains its own reentrant group. An operation thread sequences commands and
+supervises the robot while the existing private OpenCV worker solves. No new
+configuration store, artifact schema or native runtime is introduced. Software
+tests use an isolated fake Dobot node; live paths still require attended validation.
 
 ## Isolated runtime, failure handling, and storage
 
@@ -250,7 +267,7 @@ colcon test --packages-select camera_calibration
 colcon test-result --test-result-base build/camera_calibration --all
 ```
 
-Tests use synthetic transforms/images and offscreen Qt widgets, never cameras,
-bringup, RViz or robot commands. The standalone
+Tests use synthetic transforms/images, offscreen Qt widgets and isolated fake
+Dobot ROS services; they never connect to cameras or robot hardware. The standalone
 `test/opencv_worker_stress.py` runs 10,000 mixed 1920x1080 RGB frames through
 one unchanged private-worker PID.

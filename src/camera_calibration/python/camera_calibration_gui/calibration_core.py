@@ -996,6 +996,7 @@ def output_path_for_mode(
     calibration_mode: str,
     root: Path | None = None,
     created_at: datetime | None = None,
+    filename: str | None = None,
 ) -> Path:
     validate_calibration_mode(calibration_mode)
     project_root = root or workspace_root()
@@ -1003,7 +1004,19 @@ def output_path_for_mode(
     if timestamp.tzinfo is None:
         raise ValueError("Calibration output timestamp must include a timezone")
     timestamp_token = timestamp.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
-    return project_root / "calibration" / f"{calibration_mode}_calibration_{timestamp_token}.yaml"
+    if filename is None:
+        filename = f"{calibration_mode}_calibration_{timestamp_token}.yaml"
+    else:
+        if (not filename or filename != filename.strip() or filename.startswith(".")
+                or any(char in filename for char in ("/", "\\", "\x00"))
+                or any(ord(char) < 32 for char in filename)):
+            raise ValueError(
+                "Enter a filename only, inside calibration/ (no paths or hidden files)")
+        if not Path(filename).suffix:
+            filename += ".yaml"
+        if not filename.endswith(".yaml"):
+            raise ValueError("Calibration filename must end in .yaml")
+    return project_root / "calibration" / filename
 
 
 def output_pattern_for_mode(calibration_mode: str, root: Path | None = None) -> Path:

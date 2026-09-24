@@ -1,36 +1,5 @@
 # Robot Controller v2
 
-## Attended camera-calibration replay
-
-`/robot_controller/replay_calibration` is a native `ReplayCalibration` action.
-The calibration GUI submits an explicit run token and 5–1000 ordered six-joint
-positions from its loaded schema-7 artifact. The controller validates CR10 limits
-before admission and exclusively owns the complete run, including capture waits.
-No Item/Bin Teach configuration is required. The dedicated headless deployment
-mode rejects this maintenance operation; `ros2 run robot_controller robot_controller`
-starts an attended controller without enabling or moving the robot.
-
-Admission requires UNCONFIGURED, INACTIVE or READY, no retained item/held context,
-canonical fresh feedback, already enabled idle user/tool zero, DI1 LOW, and one
-canonical `/camera_calibration/capture_automatic` provider. The explicit operation
-enters CALIBRATING, sets CP(100), and uses MovJ at 20% speed/acceleration (existing
-global SpeedFactor applies). It preserves outputs and issues no Enable, Disable
-or DO commands. Every point requires matching joint/TCP arrival and the returned
-queue ID on advancing post-acceptance idle feedback. Two advancing unchanged
-TCP/joint samples establish stationarity without a fixed delay. Capture uses
-fresh RGB/joints/TF after that point; the next move waits for acknowledgement.
-
-The typed capture handshake is PREPARE then CAPTURE for each one-based index and
-run token. PREPARE is bounded to five seconds; CAPTURE to twenty including solving,
-with the calibrator's fresh-sample wait bounded to ten. Feedback/output/receiver
-changes, failure or cancellation invoke the normal direct Stop containment.
-Pause/Continue are unavailable during CALIBRATING. Success restores the previous
-idle lifecycle state and leaves the robot at the final calibration position;
-there is no automatic Home, gripper reset or save. Launch/loading remain inert.
-See [camera calibration](../camera_calibration/README.md) for operator controls.
-
-## Controller overview
-
 Visual guide: [Controller finite state machine](../../docs/ROBOT_CONTROLLER_FSM.md).
 It covers the current lifecycle, candidate ledger and operation/recovery routes;
 update it in the same change whenever those behaviors change.
@@ -38,7 +7,7 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 [visual PDF](../../docs/ROBOT_CONTROLLER_FSM.pdf), generated from that document.
 
 `robot_controller` is the sole production application-level authority for the
-physical CR10. It provides Home and Pick Item, plus attended calibration replay.
+physical CR10. It provides two deterministic operations: Home and Pick Item.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.
 
 Launching the package never enables, recovers, homes, or moves the robot. An
@@ -87,9 +56,6 @@ service.
 ## Typed API
 
 Actions:
-
-- `/robot_controller/replay_calibration` — explicit run ID and ordered six-joint
-  targets; attended calibration only, with a fresh-sample handshake per position.
 
 - `/robot_controller/go_home` — goal contains `configuration_id`.
 - `/robot_controller/pick_item` — goal contains `configuration_id` and the
@@ -668,8 +634,7 @@ Serialized service responses may let
 a short pick segment decelerate despite global CP 100; queue order takes
 precedence over uninterrupted blending.
 
-Home/Pick no-I/O targets use `MovL`; calibration replay uses `MovJ`.
-`MovLIO` is used only for a real non-empty timed DO
+No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
 tuple. Initial/shared Home's conditional rise uses `RelMovLUser`; item exit
 transits use Cartesian `MovL`. The controller never calls
 `InverseKin` or vendor `Continue`; controller Continue rebuilds the remaining route.

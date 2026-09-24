@@ -26,12 +26,3 @@ cannot guarantee display of every short pulse.
 
 This package contains definitions only. It never connects to or commands the
 robot.
-
-`ReplayCalibration` adds the attended calibration action: a fresh run ID plus
-ordered `CalibrationPosition` messages (six canonical joints in radians), with
-position/phase feedback and captured-count/final-state results. It uses the same
-success/cancel/fault outcome values as GoHome. `CaptureCalibration` is the
-controller-to-calibrator PREPARE/CAPTURE handshake, scoped by run ID and one-based
-position index; CAPTURE carries the earliest allowed observation timestamp.
-`ControllerStatus.state` additionally reports CALIBRATING. Rebuild interfaces
-and restart controller/calibration clients before using the new workflow.

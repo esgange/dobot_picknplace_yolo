@@ -1000,7 +1000,8 @@ class CalibrationNode(Node):
 
     def _automatic_busy(self):
         automatic = getattr(self, "automatic", None)
-        return automatic is not None and (automatic.active or automatic.capturing)
+        return automatic is not None and (
+            automatic.active or automatic.capturing or automatic.stopping)
 
     def reset_samples(self, *, _automatic=False) -> str:
         if not _automatic and self._automatic_busy():
@@ -1233,7 +1234,7 @@ class CalibrationNode(Node):
         if settings is not None and solution is not None:
             self._publish_solution_preview(reference_frame, settings.camera_link_frame, solution)
 
-    def save(self) -> tuple[bool, str]:
+    def save(self, filename=None, *, created_at=None) -> tuple[bool, str]:
         automatic = getattr(self, "automatic", None)
         if automatic is not None and (self._automatic_busy()
                                       or automatic.started and not automatic.complete):
@@ -1268,8 +1269,12 @@ class CalibrationNode(Node):
                 "YAML saving is disabled because leave-one-out diagnostics failed "
                 f"for {failed_ids}. Improve or remove calibration samples first."
             )
-        created_at = datetime.now(timezone.utc)
-        path = output_path_for_mode(calibration_mode, created_at=created_at)
+        created_at = created_at or datetime.now(timezone.utc)
+        try:
+            path = output_path_for_mode(
+                calibration_mode, created_at=created_at, filename=filename)
+        except ValueError as exc:
+            return False, str(exc)
         try:
             write_calibration_yaml(
                 path,
@@ -1445,7 +1450,7 @@ class CalibrationWindow(QtWidgets.QWidget):
         self.save_new_button = QtWidgets.QPushButton("Save as New Calibration")
         self.automatic_button.clicked.connect(self._start_automatic)
         self.automatic_stop_button.clicked.connect(self._node.automatic.stop)
-        self.save_new_button.clicked.connect(self._save)
+        self.save_new_button.clicked.connect(self._save_as)
         actions.addWidget(self.automatic_button, 3, 0)
         actions.addWidget(self.automatic_stop_button, 3, 1)
         actions.addWidget(self.save_new_button, 4, 0, 1, 2)
@@ -1610,6 +1615,7 @@ class CalibrationWindow(QtWidgets.QWidget):
             f"Move through {len(recipe.samples)} saved joint positions in order at "
             "20% speed and acceleration (global speed also applies)?\n\n"
             "Confirm the starting position and all connecting joint-motion paths are clear. "
+            "Close robot_controller, Motion Debug and Gripper Diagnostics first. "
             "The robot must already be enabled and idle, with user/tool 0 and DI1 LOW. "
             "Gripper outputs stay unchanged. Current samples will be replaced by fresh captures. "
             "The robot will remain at the final position. The source file stays unchanged.",
@@ -1724,6 +1730,22 @@ class CalibrationWindow(QtWidgets.QWidget):
 
     def _save(self) -> None:
         success, message = self._node.save()
+        self._show_save_result(success, message)
+
+    def _save_as(self) -> None:
+        created_at = datetime.now(timezone.utc)
+        default = output_path_for_mode(self._node._calibration_mode, created_at=created_at)
+        filename, accepted = QtWidgets.QInputDialog.getText(
+            self, "Save as New Calibration",
+            "Filename in calibration/ (existing files cannot be overwritten).\n"
+            "Keep the default name for automatic station discovery.",
+            QtWidgets.QLineEdit.Normal, default.name)
+        if not accepted:
+            return
+        success, message = self._node.save(filename, created_at=created_at)
+        self._show_save_result(success, message)
+
+    def _show_save_result(self, success, message) -> None:
         self._log(("OK: " if success else "ERROR: ") + message)
         if success:
             QtWidgets.QMessageBox.information(self, "Calibration saved", message)
@@ -1912,8 +1934,8 @@ def main(args=None) -> None:
                 f"Camera calibration GUI exited with code {application_exit_code}"
             )
     finally:
-        if node is not None and node.automatic.active:
-            node.automatic.stop()
+        if node is not None:
+            node.automatic.close()
         if executor is not None:
             executor.shutdown(timeout_sec=1.0)
         if spin_thread is not None:

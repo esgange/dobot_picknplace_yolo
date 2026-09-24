@@ -27,7 +27,7 @@ MOTION_NO_PROGRESS_SEC = 3.0
 MOTION_HARD_CAP_SEC = 300.0
 CARTESIAN_ORIENTATION_TOLERANCE_DEG = 1.0
 HOME_JOINT_TOLERANCE_RAD = math.radians(1.0)
-MOTION_SERVICES = ("MovJ", "MovL", "MovLIO", "RelMovLUser")
+MOTION_SERVICES = ("MovL", "MovLIO", "RelMovLUser")
 LATE_RESPONSE_OUTCOMES = ("timeout", "wait_canceled", "wait_aborted")
 
 
@@ -36,12 +36,12 @@ class DobotTransport:
 
     def __init__(self, node, monitor):
         from dobot_msgs_v4.srv import (CP, ClearError, DO, DisableRobot,
-                                       EnableRobot, MovJ, MovL, MovLIO,
+                                       EnableRobot, MovL, MovLIO,
                                        RelMovLUser, SetTool, SpeedFactor, Stop,
                                        StopMoveJog, Tool, User)
         self.node = node
         self.monitor = monitor
-        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, MovJ, MovL, MovLIO,
+        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, MovL, MovLIO,
                  RelMovLUser, SetTool, SpeedFactor, StopMoveJog, Tool, User)
         self.types = {kind.__name__: kind for kind in kinds}
         self.clients = {
@@ -66,7 +66,7 @@ class DobotTransport:
 
     @property
     def required_services(self):
-        return tuple(name for name in self.clients if name != "MovJ") + ("Stop",)
+        return tuple(self.clients) + ("Stop",)
 
     def close(self):
         for client in self.clients.values():
@@ -78,8 +78,7 @@ class DobotTransport:
         deadline = time.monotonic() + SERVICE_DISCOVERY_TIMEOUT_SEC
         while True:
             missing = [name for name, client in self.clients.items()
-                       if name in self.required_services and name not in optional
-                       and not client.service_is_ready()]
+                       if name not in optional and not client.service_is_ready()]
             if not self.stop_client.service_is_ready():
                 missing.append("Stop")
             if not missing:
@@ -884,10 +883,8 @@ class DobotTransport:
 
     def _target_reached(self, target, snapshot):
         if target.joints_rad is not None:
-            joints_reached = max(abs(actual - expected) for actual, expected in zip(
+            return max(abs(actual - expected) for actual, expected in zip(
                 snapshot.joints, target.joints_rad)) <= HOME_JOINT_TOLERANCE_RAD
-            if not target.joint_motion or not joints_reached:
-                return joints_reached
         return pose_reached(
             pose_matrix(snapshot.feed["tool_vector_actual"]), target.matrix,
             translation_m=CARTESIAN_POSITION_TOLERANCE_M,
@@ -957,7 +954,7 @@ class DobotTransport:
                    forbid_suction=False, stop_on_suction=False,
                    before_suction=None, pick_settling_sec=0.0,
                    require_suction_reset=False, return_terminal_pose=False,
-                   confirmed_start_pose=None, preserve_outputs=False, guard=None):
+                   confirmed_start_pose=None, preserve_outputs=False):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction)) > 1
@@ -1016,8 +1013,6 @@ class DobotTransport:
 
         def progress(snapshot):
             nonlocal suction_reset_seen, suction_clear_seen, suction_armed
-            if guard is not None:
-                guard(snapshot)
             for channel, active in fixed_outputs.items():
                 actual = bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
                 if actual != active:
@@ -1086,8 +1081,6 @@ class DobotTransport:
                         np.rad2deg(target.joints_rad))
                     events = [event.vendor_value() for event in target.motion_io]
                     service = "MovLIO" if events else "MovL"
-                    if target.joint_motion:
-                        service = "MovJ"
                     fields = dict(zip("abcdef", map(float, command)))
                     if events:
                         fields["mdis"] = events
@@ -1123,10 +1116,11 @@ class DobotTransport:
                 return finish_suction_interrupt()
             if len(replies) != len(calls):
                 raise FeedbackFailure("Motion group stopped before all targets were admitted")
-            # MovJ/MovL expose the queued ID. MovLIO/RelMovLUser return res alone,
-            # so retain observed execution rather than inventing their queue IDs.
+            # These are the fixed vendor service schemas: only MovL exposes the
+            # queued ID. MovLIO/RelMovLUser return res alone, so retain observed
+            # execution from the stream rather than inventing their queue IDs.
             terminal_command_id = (self._motion_command_id(replies[-1])
-                                   if calls[-1][0] in ("MovJ", "MovL") else None)
+                                   if calls[-1][0] == "MovL" else None)
             accepted = self.monitor.snapshot(require_enabled=True)
             self.node.events.record(
                 "INFO", "motion_batch_queued", batch_name,

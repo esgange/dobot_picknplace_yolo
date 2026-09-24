@@ -741,8 +741,8 @@ ros2 launch camera_calibration camera_calibration.launch.py
 The standalone GUI follows the pinned
 [MoveIt ROS 2 calibration pipeline](https://github.com/moveit/moveit_calibration/tree/3f9d48ebe843caf1de060bfafe78160585c7c26f)
 without adding MoveIt dependencies. Manual calibration remains read-only;
-explicit automatic capture uses the controller-owned replay action. Calibration uses only RGB
-ChArUco and color CameraInfo: there is no depth subscription, synchronization,
+explicit automatic capture sends guarded Dobot maintenance commands directly.
+Calibration uses only RGB ChArUco and color CameraInfo: there is no depth subscription, synchronization,
 plane fitting, fusion, or depth panel. Camera-launcher configuration is unchanged.
 
 Enter the camera prefix, mode, dictionary and measured board geometry manually;
@@ -779,10 +779,12 @@ sample. Load Calibration explicitly replaces confirmed samples, validates the
 five-sample/angular rules, and recomputes using live internal camera TF.
 Existing schema 1–6 files are preserved but rejected without conversion.
 After loading, **Start Automatic Capture** reuses the ordered joint positions
-through `robot_controller`, collects only fresh samples after each confirmed
+directly through canonical Dobot bringup, collects fresh samples after each confirmed
 stationary arrival, and leaves the robot at the final position. The separate
-**Save as New Calibration** button writes a new timestamped file without changing
-the source. Replay requires an attended controller (no Item/Bin Teach files),
+**Save as New Calibration** button opens an editable filename dialog with the
+existing timestamped naming rule as its default. It saves inside `calibration/`
+and never overwrites the source or another file. Replay is an attended maintenance
+exception: close Robot Controller and other command tools first. It requires an
 already enabled/idle robot, user/tool zero and DI1 LOW. It uses 20% joint speed
 and acceleration, preserves gripper outputs, and offers direct Stop throughout.
 Loading and launch never move or enable the robot. See the

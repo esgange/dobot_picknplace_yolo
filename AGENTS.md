@@ -247,6 +247,18 @@ schema-7 timestamped writer; incomplete replay cannot save. No launch/load
 motion, automatic enable, saved observation reuse, new config store or schema,
 gripper reset, extra executor thread, auto retry or Home return is permitted.
 
+Rule 124 supersedes rule 123's controller authority: automatic calibration is an
+explicitly confirmed maintenance exception like Motion Debug/Gripper Diagnostics.
+Camera Calibration sends CP/MovJ/Stop directly to canonical Dobot bringup; remove
+the calibration action, capture service and CALIBRATING state from Robot Controller.
+Require sole command ownership, already enabled/idle user/tool zero, DI1 LOW,
+fresh advancing feedback, modeled joint/TCP arrival and post-arrival observations.
+Preserve outputs, 20% joint rates, bounded failure/Stop confirmation and exactly
+two ROS executor threads. Save as New Calibration prompts for an editable filename
+inside calibration/, defaulting to the existing mode/timestamp rule. Never overwrite
+existing files; cancellation changes nothing. Custom names are for explicit loading;
+strict automatic station discovery retains its canonical filename contract.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

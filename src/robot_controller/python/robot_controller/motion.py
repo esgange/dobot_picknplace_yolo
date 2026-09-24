@@ -72,12 +72,8 @@ class Target:
     joints_rad: tuple | None = None
     relative_z: bool = False
     motion_io: tuple = ()
-    joint_motion: bool = False
 
     def __post_init__(self):
-        if type(self.joint_motion) is not bool or self.joint_motion and (
-                self.joints_rad is None or self.relative_z or self.motion_io):
-            raise ValueError("Joint motion requires exact joints and no relative motion or I/O")
         if type(self.speed_percent) is not int or not 1 <= self.speed_percent <= 100:
             raise ValueError("Target speed must be an explicit integer from 1 to 100 percent")
         if (type(self.acceleration_percent) is not int
