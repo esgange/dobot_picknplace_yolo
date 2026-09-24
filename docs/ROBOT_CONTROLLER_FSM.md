@@ -8,6 +8,10 @@ This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
 them. The tables also describe the behavior without a diagram renderer.
 
+Ready-to-view exports in this folder: [interactive visual FSM](ROBOT_CONTROLLER_FSM.html)
+and [six-page visual PDF](ROBOT_CONTROLLER_FSM.pdf). The HTML opens directly in
+a browser with diagram selection, zoom and dragging; both exports work offline.
+
 ## 1. Read this first
 
 - **Launch does not enable or move the robot.** Load configuration, then Startup.
@@ -370,6 +374,21 @@ the review date/source baseline, and the blueprint diary. This is a maintained
 source document, not a runtime-generated view. Newer diary rules supersede older
 ones; record any source/document mismatch explicitly rather than describing a
 proposed behavior as already implemented.
+
+Regenerate the HTML and PDF from this document in the same change whenever it
+is updated (rule 119). The export helper copies the Mermaid blocks and headings;
+do not separately edit their behavior in the exports. It requires local
+Playwright/Chromium and a local VS Code Mermaid Markdown preview bundle, and
+blocks network requests during rendering:
+
+```bash
+python3 scripts/render_controller_fsm.py \
+  --renderer /path/to/local/mermaid-markdown-features/markdown-preview-out/index.js
+```
+
+This is a documentation tool, not a ROS/build/runtime dependency. The resulting
+HTML embeds SVG diagrams and the full source SHA-256; the PDF has one vector
+diagram per A3 page with the source hash prefix. Viewers need no renderer installed.
 
 Source map for the next review:
 

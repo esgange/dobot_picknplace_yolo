@@ -6,6 +6,7 @@ Before making changes, read [`docs/WORKFLOW_RULES_BLUEPRINT_DIARY.md`](docs/WORK
 
 For controller behavior changes, also read and update
 [`docs/ROBOT_CONTROLLER_FSM.md`](docs/ROBOT_CONTROLLER_FSM.md) in the same change.
+Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
@@ -216,6 +217,10 @@ Rule 118 maintains docs/ROBOT_CONTROLLER_FSM.md as the visual description of
 the implemented controller. Update its diagrams, state/guard tables and behavior
 review baseline in the same change as affected controller behavior, alongside
 the diary. Describe current code and superseding rules, not historical behavior.
+Rule 119 keeps adjacent offline HTML/PDF visual FSM exports generated from the
+Markdown document's diagrams and headings. Regenerate both with the documented
+local renderer whenever the source document changes; never maintain a separate
+behavior definition in the exports. No renderer is needed to view the exports.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

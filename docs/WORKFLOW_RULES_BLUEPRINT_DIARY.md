@@ -4965,6 +4965,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Documentation only; no runtime changes, hardware commands or new offline-
   transfer milestone. No controller rebuild/test rerun was needed.
 
+### 2026-09-24 — Export the FSM as offline visual HTML and PDF
+
+- Rule 119 extends the maintained FSM document with adjacent
+  `docs/ROBOT_CONTROLLER_FSM.html` and `docs/ROBOT_CONTROLLER_FSM.pdf`, requested
+  as a directly viewable visual FSM. Use only the existing Markdown headings
+  and six Mermaid blocks; no controller behavior or diagram flow is redefined.
+- HTML embeds the rendered SVGs with diagram selection, zoom and drag controls.
+  The PDF gives each vector diagram its own A3 page. Both work offline without
+  a Mermaid plugin, CDN, ROS node or external script/font/image dependency.
+  Link both from the source document and the root/package READMEs.
+- Add `scripts/render_controller_fsm.py` for repeatable regeneration. It uses
+  locally available Playwright/Chromium and an explicitly supplied local VS Code
+  Mermaid Markdown preview bundle; all rendering network requests are blocked.
+  These are documentation-tool prerequisites, not new workspace build or robot
+  runtime dependencies. Do not install or silently choose another renderer.
+- Regenerate both exports whenever the Markdown document changes, including
+  alongside future controller behavior updates. The HTML records its complete
+  source SHA-256; PDF page footers record the prefix. Keep the Markdown as the
+  behavior source and the exports as derived views. Add the rule to AGENTS.md.
+- Verification: all six diagrams export and load offline with no JavaScript
+  errors or external requests. Browser checks cover all six selections, zoom
+  in/out/100%/fit, drag scrolling, and desktop/narrow layouts; source SHA-256
+  matches the Markdown. PDF checks confirm six A3 pages, each with its correct
+  diagram heading, page number and source hash; the longest Pick diagram was
+  visually reviewed without clipping. Python compilation, ament_flake8 and
+  git diff --check pass. No controller build/test rerun, robot commands, runtime
+  behavior changes or new offline-transfer milestone.
+
 ### Future entry template
 
 ```text

@@ -3,6 +3,8 @@
 Visual guide: [Controller finite state machine](../../docs/ROBOT_CONTROLLER_FSM.md).
 It covers the current lifecycle, candidate ledger and operation/recovery routes;
 update it in the same change whenever those behaviors change.
+Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
+[visual PDF](../../docs/ROBOT_CONTROLLER_FSM.pdf), generated from that document.
 
 `robot_controller` is the sole production application-level authority for the
 physical CR10. It provides two deterministic operations: Home and Pick Item.
