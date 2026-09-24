@@ -196,6 +196,10 @@ Rule 114 starts the canonical read-only RViz viewer alongside Dobot bringup in
 an owned child launch session. Viewer exit stops only that viewer and its TF
 publisher; parent shutdown or driver exit stops the owned viewer. No automatic
 restart, enable, motion, gripper command, or extra configuration is added.
+Rule 115 places Robot status and Gripper status / Live I/O at the GUI's top
+left, with compact teach-file loading at top right. Publish observed robot flags
+and raw DI/DO through typed controller status; stale data displays UNKNOWN.
+The GUI remains a controller client, with no direct Dobot or camera subscription.
 
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.

@@ -335,8 +335,15 @@ class RobotController(Node):
             self.global_speed_percent if self.global_speed_percent is not None else -1)
         status.startup_complete = self.startup_complete
         try:
-            self.monitor.snapshot(require_enabled=False)
+            sample = self.monitor.snapshot(require_enabled=False)
             status.feedback_fresh = True
+            status.robot_enabled = bool(sample.feed["EnableStatus"])
+            status.robot_running = bool(sample.feed["RunningStatus"])
+            status.robot_queue_active = bool(sample.feed["isRunQueuedCmd"])
+            status.robot_error = bool(sample.feed["ErrorStatus"])
+            status.robot_collision = bool(sample.feed["CollisionStates"])
+            status.digital_input_bits = sample.feed["digital_input_bits"]
+            status.digital_outputs = sample.feed["digital_outputs"]
         except FeedbackFailure:
             status.feedback_fresh = False
         self.status_publisher.publish(status)

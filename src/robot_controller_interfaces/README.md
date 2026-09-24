@@ -14,5 +14,14 @@ confirmed Stop; no vendor paused queue is resumed. `candidate_ids` and
 `can_return_item` reports availability of trusted held source context. Rebuild
 this interface package and restart all clients after updating these fields.
 
+`ControllerStatus` also carries observed enable/running/queue/error/collision
+flags and raw `digital_input_bits` / `digital_outputs` from one validated
+canonical feedback snapshot. They are valid only when `feedback_fresh` is true;
+otherwise their default zeros mean unavailable. Output bits are observed I/O,
+not commanded values, and DI1 is raw rather than the debounced holding decision.
+The GUI displays canonical DO1 exhaust, DO2 close, DO13 suction, DO14 open,
+DI1 suction detection and DI12 finger fully open through this topic. The stream
+updates periodically at 5 Hz and cannot guarantee display of every short pulse.
+
 This package contains definitions only. It never connects to or commands the
 robot.

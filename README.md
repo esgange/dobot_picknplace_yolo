@@ -65,6 +65,16 @@ before Hardware Home or Pick. An invalid replacement leaves the current
 configuration and state unchanged. Headless `runtime_teach/` configuration is
 immutable until the process is restarted.
 
+The GUI shows two status panels at the top left: **Robot status** and
+**Gripper status / Live I/O**, with compact Item/Bin Teach loading at top right.
+Robot status includes enable, motion, queue, faults and current operation progress.
+Gripper status shows observed DO1/DO2/DO13/DO14 and raw DI1/DI12, plus the
+controller's separate held-item context. These read-only values arrive through
+`/robot_controller/status`; missing/stale feedback displays UNKNOWN. The status
+stream updates periodically at 5 Hz, so brief output pulses may fall between
+updates. Restart the controller, GUI and preview together after rebuilding the
+extended `ControllerStatus` interface.
+
 ```bash
 ros2 launch robot_controller robot_controller.launch.py
 ros2 launch robot_controller robot_controller.launch.py headless:=true

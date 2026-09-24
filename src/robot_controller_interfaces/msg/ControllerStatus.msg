@@ -16,3 +16,11 @@ bool feedback_fresh
 string[] candidate_ids
 string[] candidate_states
 bool can_return_item
+# Observed canonical feedback; valid only while feedback_fresh is true.
+bool robot_enabled
+bool robot_running
+bool robot_queue_active
+bool robot_error
+bool robot_collision
+uint64 digital_input_bits
+uint64 digital_outputs

@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import threading
+import time
 
 from PyQt5 import QtCore, QtWidgets
 import rclpy
@@ -20,6 +21,7 @@ from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalSpeed
 
 from .ui_state import load_state, save_state
+from .feedback import FEEDBACK_MAX_AGE_SEC
 
 
 class GuiNode(rclpy.node.Node):
@@ -27,7 +29,7 @@ class GuiNode(rclpy.node.Node):
         super().__init__("robot_controller_gui")
         self.root = workspace_root()
         self.prefill = load_state(self.root / "logs/robot_controller/last_session.json")
-        self.status = None
+        self._status_sample = None
         self.operator_logs = deque(maxlen=1000)
         self.operator_log_lock = threading.Lock()
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -56,7 +58,21 @@ class GuiNode(rclpy.node.Node):
         }
 
     def _status(self, message):
-        self.status = message
+        self._status_sample = (message, time.monotonic())
+
+    @property
+    def status(self):
+        sample = self._status_sample
+        if sample is None:
+            return None
+        message, received = sample
+        stamp = message.header.stamp
+        source_ns = stamp.sec * 1_000_000_000 + stamp.nanosec
+        age = (self.get_clock().now().nanoseconds - source_ns) / 1e9
+        if (source_ns <= 0 or not 0 <= age <= FEEDBACK_MAX_AGE_SEC
+                or time.monotonic() - received > FEEDBACK_MAX_AGE_SEC):
+            return None
+        return message
 
     def _operator_log(self, message):
         with self.operator_log_lock:
@@ -89,9 +105,20 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
 
-        title = QtWidgets.QLabel("Deterministic Home and Pick")
-        title.setStyleSheet("font-size:22px;font-weight:700;padding:8px")
-        layout.addWidget(title)
+        header = QtWidgets.QHBoxLayout()
+        status_column = QtWidgets.QVBoxLayout()
+        self.robot_panel, self.status = self._status_panel("Robot status")
+        self.gripper_panel, self.gripper_status = self._status_panel("Gripper status / Live I/O")
+        status_column.addWidget(self.robot_panel)
+        status_column.addWidget(self.gripper_panel)
+        header.addLayout(status_column, 3)
+
+        self.teach_panel = QtWidgets.QGroupBox("Teach files")
+        self.teach_panel.setMinimumWidth(300)
+        self.teach_panel.setMaximumWidth(420)
+        self.teach_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
+                                       QtWidgets.QSizePolicy.Maximum)
+        teach = QtWidgets.QGridLayout(self.teach_panel)
         self.item_path = QtWidgets.QLineEdit()
         self.bin_path = QtWidgets.QLineEdit()
         if node.prefill:
@@ -100,20 +127,25 @@ class ControllerWindow(QtWidgets.QMainWindow):
             if node.prefill["bin"]:
                 self.bin_path.setText(str(
                     node.root / "offline_teach/bin_teach" / node.prefill["bin"]))
-        for label, edit, directory in (
+        for index, (label, edit, directory) in enumerate((
                 ("Item Teach", self.item_path, "offline_teach/item_teach"),
-                ("Bin Teach", self.bin_path, "offline_teach/bin_teach")):
-            row = QtWidgets.QHBoxLayout()
-            row.addWidget(QtWidgets.QLabel(label))
-            row.addWidget(edit, 1)
+                ("Bin Teach", self.bin_path, "offline_teach/bin_teach"))):
+            teach.addWidget(QtWidgets.QLabel(label), index * 2, 0, 1, 2)
+            edit.setMinimumWidth(0)
+            edit.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+            edit.textChanged.connect(edit.setToolTip)
+            edit.setToolTip(edit.text())
+            teach.addWidget(edit, index * 2 + 1, 0)
             button = QtWidgets.QPushButton("Browse…")
             button.clicked.connect(
                 lambda _checked, e=edit, d=directory: self._browse(e, d))
-            row.addWidget(button)
-            layout.addLayout(row)
+            teach.addWidget(button, index * 2 + 1, 1)
         self.configure = QtWidgets.QPushButton("Load Teach Configuration")
         self.configure.clicked.connect(self._configure)
-        layout.addWidget(self.configure)
+        teach.addWidget(self.configure, 4, 0, 1, 2)
+        teach.setColumnStretch(0, 1)
+        header.addWidget(self.teach_panel, 2, QtCore.Qt.AlignTop)
+        layout.addLayout(header)
 
         lifecycle = QtWidgets.QHBoxLayout()
         self.startup = QtWidgets.QPushButton("START")
@@ -164,12 +196,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
         speed.addWidget(self.speed_slider, 1)
         layout.addLayout(speed)
 
-        self.status = QtWidgets.QLabel("Waiting for /robot_controller/status")
-        self.status.setWordWrap(True)
-        self.status.setMinimumHeight(100)
-        self.status.setStyleSheet(
-            "background:#202a35;color:white;padding:14px;font-size:16px")
-        layout.addWidget(self.status)
         log_header = QtWidgets.QHBoxLayout()
         log_title = QtWidgets.QLabel("Controller command log")
         log_title.setStyleSheet("font-size:15px;font-weight:700")
@@ -196,6 +222,89 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh)
         self.timer.start(100)
+        self._refresh_status(None)
+
+    @staticmethod
+    def _status_panel(title):
+        panel = QtWidgets.QFrame()
+        panel.setStyleSheet("QFrame{background:#202a35;border-radius:6px}"
+                            "QLabel{color:#edf3f8;border:0;font-size:14px}")
+        column = QtWidgets.QVBoxLayout(panel)
+        column.setContentsMargins(12, 10, 12, 10)
+        column.setSpacing(5)
+        heading = QtWidgets.QLabel(title)
+        heading.setStyleSheet("font-size:17px;font-weight:700;color:white")
+        text = QtWidgets.QLabel()
+        text.setWordWrap(True)
+        text.setTextFormat(QtCore.Qt.PlainText)
+        text.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        text.setMinimumWidth(0)
+        column.addWidget(heading)
+        column.addWidget(text)
+        return panel, text
+
+    def _refresh_status(self, state):
+        if state is None:
+            self.status.setText("UNAVAILABLE · Waiting for live controller status")
+            self.status.setToolTip("/robot_controller/status is missing or older than 1 second")
+            self.gripper_status.setText("I/O unavailable · No live controller status\n"
+                                        "Suction, fingers and sensors: UNKNOWN")
+            self.gripper_status.setToolTip("")
+            return
+        robot = f"{state.state} · {state.message}"
+        if state.feedback_fresh:
+            robot += (f"\n{'ENABLED' if state.robot_enabled else 'DISABLED'} · "
+                      f"{'Moving' if state.robot_running else 'Stationary'} · "
+                      f"Queue {'active' if state.robot_queue_active else 'idle'} · Feedback LIVE")
+            flags = (("Robot error", state.robot_error), ("Collision", state.robot_collision))
+            faults = [name for name, active in flags if active]
+            if faults:
+                robot += "\n" + " · ".join(faults)
+        else:
+            robot += "\nRobot feedback unavailable · Enable, motion and I/O UNKNOWN"
+        robot += f"\nStartup: {'complete' if state.startup_complete else 'required'}"
+        if state.candidate_total:
+            robot += f" · Candidate {state.candidate_index}/{state.candidate_total}"
+        if state.phase:
+            robot += f" · {state.phase}"
+        if state.waypoint:
+            robot += f" · {state.waypoint}"
+        self.status.setText(robot)
+        details = [f"Configuration: {state.configuration_id or 'none'}"]
+        if self.feedback_message:
+            details.append(self.feedback_message)
+        if state.candidate_states:
+            details.append("Candidates: " + ", ".join(
+                f"{index}: {value}" for index, value in enumerate(state.candidate_states, 1)))
+        self.status.setToolTip("\n".join(details))
+        self.gripper_status.setToolTip(
+            "Observed I/O from the controller's validated feedback, sampled at 5 Hz.\n"
+            "DI1 is raw; held-item decisions use the controller's 50 ms loss debounce.\n"
+            "Short pulses may occur between updates. LOW DI12 does not prove fingers closed.")
+        held = "YES" if state.holding_item else "NO"
+        if not state.feedback_fresh:
+            self.gripper_status.setText("I/O unavailable · Robot feedback missing or stale\n"
+                                        f"Outputs and sensors: UNKNOWN · Held context: {held}")
+            return
+
+        def output(channel):
+            return bool(state.digital_outputs & (1 << (channel - 1)))
+
+        def on_off(channel):
+            return "ON" if output(channel) else "OFF"
+
+        def high_low(channel):
+            return "HIGH" if state.digital_input_bits & (1 << (channel - 1)) else "LOW"
+
+        vacuum = ("CONFLICT" if output(13) and output(1) else
+                  "SUCK" if output(13) else "EXHAUST" if output(1) else "NEUTRAL")
+        fingers = ("CONFLICT" if output(2) and output(14) else
+                   "CLOSE" if output(2) else "OPEN" if output(14) else "NEUTRAL")
+        self.gripper_status.setText(
+            f"Vacuum: {vacuum} · Finger outputs: {fingers} · Held context: {held}\n"
+            f"DO13 suction {on_off(13)} · DO1 exhaust {on_off(1)}\n"
+            f"DO2 close {on_off(2)} · DO14 open {on_off(14)}\n"
+            f"DI1 suction {high_low(1)} · DI12 fully open {high_low(12)}")
 
     def _browse(self, edit, directory):
         path, _filter = QtWidgets.QFileDialog.getOpenFileName(
@@ -414,6 +523,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._append_operator_logs()
         self._collect()
         state = self.node.status
+        self._refresh_status(state)
         reachable = state is not None
         active = bool(state and state.operation_active)
         current = state.state if state else "UNREACHABLE"
@@ -489,16 +599,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 speed_text = (f"{state.global_speed_percent}%"
                               if state.global_speed_percent >= 1 else "unknown")
             self.speed_label.setText(f"Global SpeedFactor: {speed_text}")
-            progress = f"\n{self.feedback_message}" if self.feedback_message else ""
-            candidate_states = getattr(state, "candidate_states", ())
-            if candidate_states:
-                progress += "\nCandidates: " + ", ".join(
-                    f"{index}: {value}" for index, value in enumerate(candidate_states, 1))
-            self.status.setText(
-                f"{state.state} · {state.message}\n"
-                f"Configuration: {state.configuration_id[:16] or 'none'} · "
-                f"Startup: {'complete' if state.startup_complete else 'required'} · "
-                f"Feedback: {'fresh' if state.feedback_fresh else 'unavailable'}{progress}")
+        else:
+            self.speed_label.setText("Global SpeedFactor: unavailable")
 
 
 def main(args=None):

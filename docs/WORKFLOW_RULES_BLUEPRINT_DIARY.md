@@ -4766,6 +4766,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   display rendering and live robot behavior remain unverified. No new
   offline-transfer milestone is claimed.
 
+### 2026-09-24 — Compact teach loading and two live controller status panels
+
+- Rule 115 places Robot status first and Gripper status / Live I/O second at
+  the top left of the controller GUI. Move Item/Bin Teach selection, Browse
+  and explicit Load/Reload into a smaller panel at top right. The operator
+  confirmed live gripper I/O rather than camera video. Keep lifecycle/actions,
+  speed and the bounded command log below. Full paths remain editable with
+  tooltips; saved prefill and explicit validated configuration behavior remain.
+- Extend typed ControllerStatus with observed robot enabled/running/queue/error/
+  collision flags and raw 64-bit digital_input_bits/digital_outputs. Publish
+  them from the same existing validated canonical feedback snapshot used by
+  feedback_fresh. Enable comes from FeedInfo EnableStatus, not the slower
+  RobotStatus idle-mode alias. Fields are valid only when feedback_fresh is
+  true; unavailable samples default to zero and must display UNKNOWN, never
+  false disabled/OFF/LOW. No commanded-output substitution or DI1 debounce is
+  applied to these raw display bits. Keep periodic status at 5 Hz plus existing
+  progress/state publication; short pulses may occur between display updates.
+- Robot status shows lifecycle/message, enable/motion/queue, error/collision,
+  Startup and candidate/phase/waypoint progress. Its tooltip retains exact
+  configuration ID, action detail and ordered candidate states. Gripper status
+  shows vacuum/finger output states and each canonical DO1/DO2/DO13/DO14, raw
+  DI1/DI12 and separate logical holding context. Both outputs ON in either
+  mutually exclusive pair displays CONFLICT; both OFF displays NEUTRAL. LOW
+  DI12 is not interpreted as proof of closed fingers or hardware damage.
+- The GUI remains API-only: no new Dobot, camera or I/O client/subscription.
+  Expire controller status after one second by source timestamp or local
+  receipt, including old transient-local messages. Clear the live display and
+  disable controls that require status; direct Stop stays available if its
+  service is reachable. Display updates never send commands. Controller motion,
+  safety gates, I/O sequencing and feedback acquisition are unchanged.
+- The typed message changed: rebuild robot_controller_interfaces and restart
+  controller, GUI and preview together. No artifact schema, deployment file,
+  operator setup, vendor, runtime version or camera configuration changes.
+- Verification: all 338 direct controller tests pass; package results report
+  339 tests with zero failures/errors/skips. New tests cover observed versus
+  commanded output bits, raw DI1 versus debounced holding, unavailable feedback,
+  old retained/source/local-receipt timestamps, all vacuum/finger combinations,
+  unknown displays and continued direct-Stop availability without UI commands.
+  An offscreen 1050x760 Qt render confirms two left status panels, compact
+  right teach loading and visible controls/log; it uses fixture data and no
+  ROS node. All three changed Python/test files compile and pass ament_flake8.
+  The full 15-package root symlink build and git diff --check pass. No physical
+  robot or camera process was launched or commanded; live telemetry and desktop
+  rendering remain unverified. No new offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

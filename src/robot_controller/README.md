@@ -81,6 +81,13 @@ Services:
 `robot_controller_interfaces/msg/ControllerStatus`, reliable/transient-local
 QoS. It reports state, phase, waypoint, candidate index, configuration ID,
 holding context, Startup completion, global factor, and feedback freshness.
+The same snapshot includes observed `robot_enabled` (FeedInfo EnableStatus),
+`robot_running`, `robot_queue_active`, `robot_error`, `robot_collision`, and raw
+64-bit `digital_input_bits` / `digital_outputs`. These fields are valid only
+when `feedback_fresh` is true; zeroed fields in an unavailable snapshot mean
+unknown, not confirmed disabled/OFF/LOW. These are feedback values, independent
+of expected/commanded outputs and the debounced held-item state. The periodic
+status rate remains 5 Hz, with additional state/progress updates.
 `candidate_ids` and `candidate_states` are parallel ordered arrays for the retained
 batch; `can_return_item` identifies trusted held source context.
 The removed Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image endpoints
@@ -326,6 +333,29 @@ only once parking completes. During `PAUSING` or `RETURNING_ITEM`, **STOP NOW**
 pre-empts without waiting for the managed request's response. While paused and
 holding, **RETURN ITEM & STOP** requests put-back without first canceling its
 owning Pick action. External clients can always call direct `/stop`.
+
+The top-left header contains exactly two status panels, Robot status first and
+Gripper status / Live I/O second. Robot status shows lifecycle/message,
+enable/motion/queue feedback, faults, Startup and candidate/phase/waypoint progress.
+Hover for the full configuration ID, action detail and ordered candidate ledger.
+Gripper status decodes observed DO13 SUCK / DO1 EXHAUST and DO2 CLOSE / DO14 OPEN,
+shows NEUTRAL when each pair is OFF and CONFLICT when both are ON, and displays
+raw DI1 suction detection and DI12 fully-open detection. Finger outputs describe
+the output state; DI12 LOW does not establish that the fingers are closed. The
+separate held context comes from the controller, including its existing 50 ms
+falling-edge debounce. Short pulses may occur between status updates.
+
+Item/Bin Teach fields, Browse buttons and Load/Reload occupy the smaller
+top-right panel. Full paths remain editable and available in field tooltips;
+prefill, explicit load, reload gates and validated persistence are unchanged.
+Lifecycle/action controls, global speed and the command log remain below.
+The GUI consumes only controller APIs. It adds no Dobot/camera subscription or
+I/O command. Missing/stale canonical feedback displays UNKNOWN; a controller
+status older than one second by source timestamp or local receipt also clears
+live displays and disables controls that depend on status. Direct Stop remains
+available whenever its service is reachable. No automatic Stop or command is
+sent by this display logic. Rebuild interfaces and restart controller, GUI and
+preview together for the extended message definition.
 
 Feedback is condition-driven from the approximately 100 Hz FeedInfo stream.
 Policies are: five seconds for service discovery and each Dobot
