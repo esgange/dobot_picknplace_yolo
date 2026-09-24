@@ -566,6 +566,15 @@ def test_color_callback_detects_without_any_depth_publisher_or_cache():
     message.height, message.width = 4, 6
     message.encoding, message.is_bigendian, message.step = "rgb8", 0, 18
     message.data = bytes(72)
+
+    def detect(**_kwargs):
+        # Valid stream input is visible even while this worker call is pending;
+        # it is not yet an accepted board observation for capture.
+        assert node._latest_valid_rgb_stamp == 1_000_000_000
+        assert getattr(node, "_latest_pose_stamp", None) is None
+        return node._opencv_worker.detect.return_value
+
+    node._opencv_worker.detect.side_effect = detect
     node._on_color_image(message)
     node._opencv_worker.detect.assert_called_once()
     assert set(node._opencv_worker.detect.call_args.kwargs) == {

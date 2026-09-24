@@ -16,7 +16,7 @@ import numpy as np
 from rclpy.callback_groups import ReentrantCallbackGroup
 from std_msgs.msg import String
 
-from .calibration_core import JOINT_NAMES, rotation_angle_deg, workspace_root
+from .calibration_core import JOINT_NAMES, workspace_root
 
 
 FEED_TOPIC = "/dobot_bringup_ros2/msg/FeedInfo"
@@ -37,23 +37,14 @@ class MotionArrivalTimeout(RuntimeError):
     """A replied-to move needs confirmed Stop before its target may be retried."""
 
 
-def rpy_rotation(angles):
-    roll, pitch, yaw = angles
-    cr, sr = math.cos(roll), math.sin(roll)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    return np.array([[cy*cp, cy*sp*sr-sy*cr, cy*sp*cr+sy*sr],
-                     [sy*cp, sy*sp*sr+cy*cr, sy*sp*cr-cy*sr], [-sp, cp*sr, cp*cr]])
-
-
-class Cr10Model:
-    """Read the canonical CR10 chain; no dependency on perception or controller."""
+class Cr10JointLimits:
+    """Validate saved joints against the canonical CR10 joint limits."""
 
     def __init__(self, path):
         robot = ElementTree.parse(path).getroot()
         if robot.attrib.get("name") != "cr10_robot":
             raise ValueError("Calibration replay requires the canonical CR10 model")
-        self.chain = []
+        self.limits = []
         parent = "base_link"
         for index, name in enumerate(JOINT_NAMES, 1):
             matches = robot.findall(f"joint[@name='{name}']")
@@ -65,25 +56,17 @@ class Cr10Model:
                     or joint.find("child").attrib["link"] != f"Link{index}"
                     or list(map(float, joint.find("axis").attrib["xyz"].split())) != [0, 0, 1]):
                 raise ValueError("Invalid canonical CR10 joint chain")
-            origin = joint.find("origin").attrib
-            matrix = np.eye(4)
-            matrix[:3, 3] = list(map(float, origin["xyz"].split()))
-            matrix[:3, :3] = rpy_rotation(map(float, origin["rpy"].split()))
             limits = joint.find("limit").attrib
-            self.chain.append((matrix, float(limits["lower"]), float(limits["upper"])))
+            self.limits.append((float(limits["lower"]), float(limits["upper"])))
             parent = f"Link{index}"
 
-    def forward(self, joints):
+    def validate(self, joints):
         if len(joints) != 6:
             raise ValueError("Calibration position requires exactly six joints")
-        matrix = np.eye(4)
-        for angle, (origin, lower, upper) in zip(joints, self.chain):
+        for angle, (lower, upper) in zip(joints, self.limits):
             if not math.isfinite(angle) or not lower <= angle <= upper:
                 raise ValueError("Saved joints are outside canonical CR10 limits")
-            rotation = np.eye(4)
-            rotation[:3, :3] = rpy_rotation((0., 0., angle))
-            matrix = matrix @ origin @ rotation
-        return matrix
+        return tuple(joints)
 
 
 @dataclass(frozen=True)
@@ -114,11 +97,8 @@ def idle(sample):
             and not feed["RunningStatus"] and not feed["isRunQueuedCmd"])
 
 
-def arrived(sample, joints, matrix):
-    rotation = rpy_rotation(np.deg2rad(sample.tcp[3:]))
-    return (np.max(np.abs(sample.joints - joints)) <= math.radians(1.)
-            and np.linalg.norm(sample.tcp[:3] / 1000. - matrix[:3, 3]) <= .005
-            and rotation_angle_deg(rotation @ matrix[:3, :3].T) <= 1.)
+def joints_at_target(sample, joints):
+    return np.max(np.abs(sample.joints - joints)) <= math.radians(1.)
 
 
 def configured_bringup(root):
@@ -257,12 +237,11 @@ class MaintenanceRobot:
         self.check_owners()
         for name in self.clients:
             self._service_owner(name)
-        model = Cr10Model(Path(get_package_share_directory("cra_description"))
-                          / "urdf/cr10_robot.xacro")
+        limits = Cr10JointLimits(Path(get_package_share_directory("cra_description"))
+                                 / "urdf/cr10_robot.xacro")
         if not 5 <= len(samples) <= 1000:
             raise ValueError("Automatic capture requires 5 through 1000 saved positions")
-        targets = [(tuple(s.joint_positions_rad), model.forward(s.joint_positions_rad))
-                   for s in samples]
+        targets = [limits.validate(s.joint_positions_rad) for s in samples]
         with self.condition:
             if any(not record["future"].done() for record in self.pending):
                 raise RuntimeError("A previous Dobot response is still unanswered")
@@ -378,7 +357,7 @@ class MaintenanceRobot:
                     self._late_reply(record)
             raise
 
-    def move(self, joints, matrix, *, monitor):
+    def move(self, joints, *, monitor):
         initial = self.guard()
         if not idle(initial):
             raise RuntimeError("Robot must be idle before the next saved position")
@@ -406,32 +385,33 @@ class MaintenanceRobot:
             endpoint = (sample.sequence > accepted.sequence
                         and sample.feed["controller_timer"] > accepted.feed["controller_timer"]
                         and sample.feed["currentCommandId"] == command_id
-                        and idle(sample) and arrived(sample, joints, matrix))
+                        and idle(sample) and joints_at_target(sample, joints))
             if endpoint and stationary(previous, sample):
                 return sample
             previous = sample if endpoint else None
             if now >= deadline or now - progress_at >= MOTION_PROGRESS_TIMEOUT:
                 joint_error = float(np.max(np.abs(np.rad2deg(sample.joints - joints))))
-                position_error = float(np.linalg.norm(sample.tcp[:3] - matrix[:3, 3] * 1000.))
-                angle_error = rotation_angle_deg(
-                    rpy_rotation(np.deg2rad(sample.tcp[3:])) @ matrix[:3, :3].T)
                 reason = ("motion deadline expired" if now >= deadline
                           else "no motion progress for 3 seconds")
                 message = (
                     f"Robot arrival not confirmed: {reason}; "
                     f"queue ID {sample.feed['currentCommandId']}/{command_id}, "
-                    f"idle={bool(idle(sample))}, joint error={joint_error:.3f} deg, "
-                    f"TCP error={position_error:.3f} mm/{angle_error:.3f} deg")
+                    f"idle={bool(idle(sample))}, joint error={joint_error:.3f} deg")
                 self.node._event_logger.record("WARNING", "replay_arrival_timeout", message)
                 raise MotionArrivalTimeout(message)
             self.cancel.wait(.01)
 
-    def hold(self, anchor, joints, matrix):
+    def hold_idle(self, anchor):
         sample = self.guard()
-        if (not idle(sample) or not arrived(sample, joints, matrix)
-                or np.max(np.abs(sample.tcp - anchor.tcp)) > .05
+        if (not idle(sample) or np.max(np.abs(sample.tcp - anchor.tcp)) > .05
                 or np.max(np.abs(sample.joints - anchor.joints)) > math.radians(.05)):
-            raise RuntimeError("Robot moved while collecting the calibration sample")
+            raise RuntimeError("Robot moved while waiting for calibration data")
+        return sample
+
+    def hold(self, anchor, joints):
+        sample = self.hold_idle(anchor)
+        if not joints_at_target(sample, joints):
+            raise RuntimeError("Robot left the saved joint position while collecting the sample")
         return sample
 
     def request_stop(self, *, fresh=False):

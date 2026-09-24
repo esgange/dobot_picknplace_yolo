@@ -270,6 +270,16 @@ state; prompts distinguish robot arrival from camera visibility. Faults,
 unanswered/rejected commands, unconfirmed Stop and solver/runtime failures
 remain terminal. Operator Stop always pre-empts and cannot be cleared by retry.
 
+Rule 126 removes automatic calibration's nominal-model TCP arrival comparison.
+Replay saved joints, confirm their returned queue ID, actual joint positions
+and idle state, then retain the full one-second live TCP/joint stationary hold
+before each fresh capture. Use the canonical CR10 model only for joint limits.
+Transient RGB/CameraInfo readiness failures consume the same three-attempt
+budget before/during motion and after retries; confirm Stop before retrying an
+interrupted move. Continue appears only after three failures at that position.
+Track validated RGB input before detection with a depth-one image subscription;
+keep strict observation age, fatal worker handling and all robot safety gates.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

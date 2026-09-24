@@ -5226,6 +5226,62 @@ Never use a floating “latest” version in an issue, script, or deployment not
   diff checks pass. No real hardware commands or launches; operator artifacts
   remain untouched and no offline-transfer milestone is claimed.
 
+### 2026-09-24 — Replay saved joints without nominal TCP arrival and retry camera gaps
+
+- Rule 126 supersedes calibration rules 123–125 only for nominal TCP arrival
+  and transient camera-readiness handling. Send the saved joint positions,
+  require post-acceptance advancing feedback with the returned MovJ queue ID,
+  enabled idle/empty queue and actual joints within one degree, then hold the
+  actual robot stationary for one second before every fresh capture attempt.
+  Remove the five-millimetre/one-degree comparison against canonical CR10 FK.
+  The canonical model now supplies joint limits only; neither nominal nor
+  previously saved TCP coordinates are an arrival target. Live TCP and joints
+  still establish progress and stationary feedback with unchanged tolerances.
+- Reason and read-only diagnosis: position five's logged timeout showed zero
+  joint error, idle state and a 6.377 mm/0.433 degree nominal-model TCP difference.
+  That extra model check rejected the correctly matched saved joints. Its first
+  retry did start, but a later generic RGB/CameraInfo readiness exception escaped
+  the bounded retry workflow. A read-only live subscription observed valid RGB
+  at 29.74 Hz, median image age 0.0394 seconds, matching CameraInfo, and an idle,
+  fault-free robot. The historical camera failure's exact input age was not
+  logged, so these observations do not establish its original timing cause.
+- Give transient missing/invalid CameraInfo and missing, stale or future-dated
+  RGB a distinct recoverable readiness exception with a specific reason/age.
+  Before each move, wait at most two seconds per attempt while monitoring the
+  actual idle robot. Include failures before the first position, during motion
+  and after a motion retry in the same three-attempt budget. Lost readiness
+  during motion requires acknowledged and physically confirmed Stop, all motion
+  replies and the existing guarded Stop identity before retrying saved joints.
+  Do not perform an unhandled immediate camera check after a motion retry.
+- Only after three failed attempts show nonmodal Continue/Stop. Continue starts
+  a new three-attempt batch at the same position, keeps earlier accepted samples,
+  and waits for camera readiness before moving. Observation retries stay at the
+  position and repeat the one-second hold. No skipped positions or partial saves.
+- Record the validated RGB input timestamp before the serialized OpenCV detect
+  call, independently of detector completion. Keep only the newest queued RGB
+  image with best-effort depth-one QoS. A valid input is not an accepted board
+  observation: retain post-hold timestamps, 0.5-second RGB and one-second
+  joints/TF freshness, board diversity, solver and save checks. Keep exactly two
+  ROS executor threads and the same single private OpenCV worker.
+- Native worker failures, malformed/stale/faulted robot feedback, changed I/O,
+  rejected/unanswered commands and unconfirmed Stop remain terminal. Operator
+  Stop still pre-empts every retry. No controller, interface, FSM, artifact
+  schema, configuration, vendor or runtime changes.
+- Update AGENTS and both calibration READMEs. No real hardware commands,
+  launches or restarts were performed; the running GUI must be restarted to
+  load the correction. Preserve operator artifacts. No new offline-transfer
+  milestone is claimed.
+- Validation: camera_calibration symlink build and all 125 package tests pass
+  (55 core, 66 maintenance/automatic capture, four private-runtime installation),
+  with zero errors, failures or skips. Regressions verify arbitrary absolute
+  TCP with matching joints, retained live-motion detection, validated-input
+  readiness before detection, specific missing/stale/future camera reasons,
+  recovery before/during motion and after arrival retry, exactly three attempts
+  before a prompt, and terminal native failure. Isolated domain-232 fake-Dobot
+  ROS tests complete six positions, confirm Stop/retry after a camera gap during
+  movement and retain Stop responsiveness during slow solving. Python compilation,
+  ament_flake8 and diff checks pass. Physical replay remains untested.
+
 ### Future entry template
 
 ```text

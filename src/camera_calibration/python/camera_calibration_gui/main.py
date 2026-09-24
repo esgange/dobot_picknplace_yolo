@@ -13,7 +13,7 @@ import rclpy
 from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, JointState
@@ -67,6 +67,7 @@ TARGET_MAX_AGE_SEC = 0.5
 ROBOT_TF_MAX_AGE_SEC = 1.0
 ROBOT_JOINT_STATE_MAX_AGE_SEC = 1.0
 CALIBRATION_EXECUTOR_THREAD_COUNT = 2
+COLOR_IMAGE_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
 
 
 def _create_calibration_executor(node: Node) -> MultiThreadedExecutor:
@@ -417,7 +418,7 @@ class CalibrationNode(Node):
             Image,
             settings.color_topic,
             self._on_color_image,
-            qos_profile_sensor_data,
+            COLOR_IMAGE_QOS,
         )
         message = (
             f"Applied mode={calibration_mode}, reference={reference_frame}, "
@@ -673,6 +674,9 @@ class CalibrationNode(Node):
             )
             return
         with self._lock:
+            # Stream freshness describes validated input, independently of how
+            # long the worker needs to detect/draw this particular board view.
+            self._latest_valid_rgb_stamp = color_stamp_ns
             self._frame_sequence += 1
             frame_sequence = self._frame_sequence
             self._last_frame_metadata = {
@@ -704,8 +708,6 @@ class CalibrationNode(Node):
             return
 
         self._store_latest_overlay(result.overlay_rgb)
-        with self._lock:
-            self._latest_valid_rgb_stamp = color_stamp_ns
         if result.camera_from_target is None:
             with self._lock:
                 self._latest_corner_count = result.corner_count
@@ -1867,12 +1869,15 @@ class CalibrationWindow(QtWidgets.QWidget):
             dialog.deleteLater()
         if prompt is None or self._retry_dialog is not None:
             return
-        detail = (
-            "Robot Stop is confirmed. Check the robot and the path to this position. "
-            "Continue may command movement again."
-            if prompt["phase"] == "motion" else
-            "Check whether the camera view or ChArUco board is obstructed. "
-            "The robot remains at this position for another capture attempt.")
+        if prompt["phase"] == "motion":
+            detail = ("Robot Stop is confirmed. Check the robot and the path to this position. "
+                      "Continue may command movement again.")
+        elif prompt["phase"] == "camera":
+            detail = ("Check the RGB stream and CameraInfo. The robot is stationary. "
+                      "Continue waits for valid camera data before moving to the saved joints.")
+        else:
+            detail = ("Check whether the camera view or ChArUco board is obstructed. "
+                      "The robot remains at this position for another capture attempt.")
         dialog = QtWidgets.QMessageBox(self)
         dialog.setWindowTitle("Calibration: three attempts exhausted")
         dialog.setIcon(QtWidgets.QMessageBox.Warning)

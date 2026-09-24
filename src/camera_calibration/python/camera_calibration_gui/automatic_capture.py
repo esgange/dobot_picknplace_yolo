@@ -13,6 +13,10 @@ CAPTURE_STABILITY_SEC = 1.0
 MAX_POSITION_ATTEMPTS = 3
 
 
+class CameraNotReady(RuntimeError):
+    """Recoverable camera input condition, distinct from native worker failure."""
+
+
 class AutomaticCapture:
     def __init__(self, node):
         self.node = node
@@ -42,11 +46,17 @@ class AutomaticCapture:
 
     def _require_camera(self):
         with self.node._lock:
+            if self.node._fatal_error is not None:
+                raise RuntimeError(self.node._fatal_error)
+            if self.node._camera_matrix is None:
+                raise CameraNotReady("Waiting for valid color CameraInfo")
             stamp = self.node._latest_valid_rgb_stamp
-            if (self.node._fatal_error is not None or stamp is None
-                    or self.node._camera_matrix is None
-                    or not 0 <= (self.node.get_clock().now().nanoseconds - stamp) / 1e9 <= .5):
-                raise RuntimeError("A live valid RGB stream and CameraInfo are required")
+            if stamp is None:
+                raise CameraNotReady("Waiting for a valid RGB input frame")
+            age = (self.node.get_clock().now().nanoseconds - stamp) / 1e9
+            if not 0 <= age <= .5:
+                raise CameraNotReady(
+                    f"Latest validated RGB input age is {age:.3f}s; required 0–0.500s")
 
     def start(self):
         with self.node._lock:
@@ -54,7 +64,8 @@ class AutomaticCapture:
                 return False, "Load a calibration and confirm Stop before starting another run."
             self.active = True
         try:
-            self._require_camera()
+            if self.node._fatal_error is not None:
+                raise RuntimeError(self.node._fatal_error)
             targets = self.robot.prepare(self.recipe.samples)
         except Exception as exc:
             self.active = False
@@ -70,27 +81,25 @@ class AutomaticCapture:
             self.thread.start()
         return True, self.message
 
-    def _wait_camera(self, anchor, target):
-        # Solving occupies the serial sensor callback. Wait for a new valid
-        # callback before the next move while continuing robot supervision.
+    def _wait_camera(self, monitor):
+        # Bound a camera-readiness attempt while supervising the actual idle
+        # pose. Failure belongs to this position's three-attempt workflow.
         deadline = time.monotonic() + 2.
         while True:
-            self.robot.guard()
-            if anchor is not None:
-                self.robot.hold(anchor, *target)
+            monitor()
             try:
                 self._require_camera()
                 return
-            except RuntimeError:
-                if time.monotonic() >= deadline or self.node._fatal_error is not None:
+            except CameraNotReady:
+                if time.monotonic() >= deadline:
                     raise
                 self.robot.cancel.wait(.01)
 
-    def _stable_capture(self, index, attempt, anchor, joints, matrix):
+    def _stable_capture(self, index, attempt, anchor, joints):
         prefix = (f"Position {index}/{len(self.recipe.samples)}, "
                   f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}")
         self.message = f"{prefix}: holding stationary for 1 second."
-        self._wait_stable(anchor, joints, matrix)
+        self._wait_stable(anchor, joints)
         with self.node._lock:
             self.robot.guard()
             request = dict(
@@ -101,17 +110,17 @@ class AutomaticCapture:
             self.pending = request
             self.message = f"{prefix}: waiting for a fresh sample."
         while not request["event"].wait(.01):
-            self.robot.hold(anchor, joints, matrix)
+            self.robot.hold(anchor, joints)
             # Solving blocks serial RGB callbacks, but never robot monitoring.
             if time.monotonic() > request["deadline"] + 20.:
                 raise RuntimeError("Automatic sample processing timed out")
-        self.robot.hold(anchor, joints, matrix)
+        self.robot.hold(anchor, joints)
         return request
 
-    def _wait_stable(self, anchor, joints, matrix):
+    def _wait_stable(self, anchor, joints):
         started = time.monotonic()
         while True:
-            sample = self.robot.hold(anchor, joints, matrix)
+            sample = self.robot.hold(anchor, joints)
             if (time.monotonic() - started >= CAPTURE_STABILITY_SEC
                     and sample.sequence > anchor.sequence
                     and sample.feed["controller_timer"] > anchor.feed["controller_timer"]):
@@ -163,43 +172,60 @@ class AutomaticCapture:
                 return
         self.stop()
 
+    def _retry_stopped(self, index, attempt, reason, phase):
+        self.stopping = True
+        self.robot.request_stop()
+        self.robot.wait_stop()
+        stopped_attempt = self.robot.stop_attempt
+        origin = self.robot.stopped_retry_snapshot(stopped_attempt)
+        self.stopping = False
+        attempt = self._retry_or_prompt(
+            index, attempt, reason, phase,
+            lambda: self.robot.hold_stopped(origin, stopped_attempt))
+        self.robot.resume_after_stop(stopped_attempt)
+        return attempt, origin
+
     def _run(self, targets):
         try:
             self.robot.command("CP", CP.Request(r=100))
-            anchor = previous_target = None
-            for index, (joints, matrix) in enumerate(targets, 1):
-                self._wait_camera(anchor, previous_target)
+            for index, joints in enumerate(targets, 1):
+                origin = self.robot.guard()
                 needs_move = True
                 attempt = 1
                 while True:
-                    if needs_move:
-                        self.message = (f"Position {index}/{len(targets)}, "
-                                        f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}: moving.")
-                        try:
-                            anchor = self.robot.move(joints, matrix, monitor=self._require_camera)
-                        except MotionArrivalTimeout as exc:
-                            self.stopping = True
-                            self.robot.request_stop()
-                            self.robot.wait_stop()
-                            stopped_attempt = self.robot.stop_attempt
-                            stopped_anchor = self.robot.stopped_retry_snapshot(stopped_attempt)
-                            self.stopping = False
+                    moving = False
+                    try:
+                        if needs_move:
+                            self.message = (f"Position {index}/{len(targets)}, "
+                                            f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}: "
+                                            "waiting for camera readiness.")
+                            self._wait_camera(lambda: self.robot.hold_idle(origin))
+                            self.message = (f"Position {index}/{len(targets)}, "
+                                            f"attempt {attempt}/{MAX_POSITION_ATTEMPTS}: moving.")
+                            moving = True
+                            anchor = self.robot.move(joints, monitor=self._require_camera)
+                            needs_move = False
+                    except CameraNotReady as exc:
+                        if moving:
+                            attempt, origin = self._retry_stopped(
+                                index, attempt, str(exc), "camera")
+                        else:
                             attempt = self._retry_or_prompt(
-                                index, attempt, str(exc), "motion",
-                                lambda: self.robot.hold_stopped(stopped_anchor, stopped_attempt))
-                            self.robot.resume_after_stop(stopped_attempt)
-                            self._require_camera()
-                            continue
-                        needs_move = False
-                    result = self._stable_capture(index, attempt, anchor, joints, matrix)
+                                index, attempt, str(exc), "camera",
+                                lambda: self.robot.hold_idle(origin))
+                        continue
+                    except MotionArrivalTimeout as exc:
+                        attempt, origin = self._retry_stopped(
+                            index, attempt, str(exc), "motion")
+                        continue
+                    result = self._stable_capture(index, attempt, anchor, joints)
                     if result["success"]:
                         break
                     if not result["retryable"]:
                         raise RuntimeError(result["message"])
                     attempt = self._retry_or_prompt(
                         index, attempt, result["message"], "capture",
-                        lambda: self.robot.hold(anchor, joints, matrix))
-                previous_target = joints, matrix
+                        lambda: self.robot.hold(anchor, joints))
             with self.node._lock:
                 self.robot.guard()
                 self.complete = self.captured == len(targets)

@@ -70,8 +70,9 @@ The dictionary and `CharucoBoard` use `setLegacyPattern(True)` for the existing
 physical boards. Missing markers, partial/collinear corners, or a normal
 no-pose result block that frame; malformed native output remains terminal.
 
-There is no stability history, one-second wait, pose averaging, depth fusion,
-or translation-based diversity exception. Hold the robot stationary while
+There is no target stability history, pose averaging, depth fusion,
+or translation-based diversity exception. Automatic capture adds a one-second
+robot stationary/idle hold before each attempt. Hold the robot stationary while
 capturing. A sample stores the latest valid RGB pose (age at most 0.5 seconds),
 latest robot TF (at most 1 second), and fresh ordered `joint1` through `joint6`
 feedback (at most 1 second, six finite radians, non-zero timestamp).
@@ -169,8 +170,9 @@ Loading alone never moves the robot.
    with MovJ at 20% speed/acceleration; the existing global speed factor also
    applies. Calibration sets global CP(100), preserves all outputs, and never
    enables/disables the robot or resets the gripper during replay.
-4. After validating robot/camera readiness and all CR10 target limits, Start
-   clears working observations and the solution. Each position is physically
+4. After validating robot readiness and all CR10 target limits, Start clears
+   working observations and the solution. Each position waits for valid camera
+   input before moving. The saved joints and completed queue are physically
    confirmed, then held stationary for one full second before collecting a fresh
    sample. Each position gets three automatic attempts before a Continue/Stop
    prompt. Continue starts another three attempts at that position, preserving
@@ -187,7 +189,10 @@ Loading alone never moves the robot.
 
 Arrival requires advancing canonical FeedInfo after command acceptance, the
 returned MovJ queue ID, idle/empty queue and RobotStatus's enabled-idle flag,
-actual joints within 1 degree and TCP within 5 mm/1 degree of canonical CR10 FK.
+and actual joints within 1 degree of the saved joints. There is no comparison
+against nominal CR10 forward kinematics or the previous calibration's TCP;
+the canonical CR10 file supplies joint limits only. Live TCP is used only to
+check movement between actual feedback samples.
 Two distinct advancing samples must show TCP unchanged within 0.05 mm/degrees
 and joints within 0.05 degree. Before **every capture attempt**, require a full
 one-second stationary/idle hold with advancing feedback and these same limits.
@@ -199,8 +204,16 @@ capture and solving; only a successful capture permits the next move.
 
 Dobot responses have a five-second deadline. Motion is bounded to 300 seconds,
 with a three-second no-progress limit. Fresh-sample waiting is bounded to ten
-seconds, with up to twenty additional seconds for processing; after solving,
-allow up to two seconds for the next valid RGB callback before moving again.
+seconds, with up to twenty additional seconds for processing. Before every
+move, each camera-readiness attempt allows up to two seconds for valid RGB and
+CameraInfo while supervising the actual idle pose. Missing CameraInfo or missing,
+stale or future-dated RGB input consumes an attempt, including before the first
+move, during a move and after a motion retry. Readiness lost during a move requires
+confirmed physical Stop before retrying. Three failed attempts show Continue/Stop;
+Continue waits for valid camera input before moving to the saved joints.
+Stream readiness uses the last validated RGB input timestamp before OpenCV
+detection; the subscription retains only the newest queued image. This does not
+relax capture freshness or treat input as an accepted board observation.
 A missing/rejected board observation after ten seconds retries capture at the
 same pose. The next attempt starts with a new one-second hold and fresh image/
 joints/TF; it does not move again or reuse earlier observations. After three
@@ -209,7 +222,7 @@ the camera view. Continue starts a new three-attempt batch here; Stop or closing
 the prompt ends the run. The main Stop button and robot monitoring stay active.
 
 A robot-arrival timeout is reported separately with observed/expected queue ID,
-idle state, joint error and TCP translation/rotation error. It consumes an
+idle state and joint error. It consumes an
 attempt and requires confirmed physical Stop, all replies received, unchanged
 outputs and fresh fault-free enabled/idle feedback before retrying the same
 move. After three such failures, the prompt explains that Continue may move
@@ -223,7 +236,7 @@ end the run through direct
 Dobot Stop and physical confirmation. Stop acknowledgement alone is insufficient:
 fresh advancing feedback must show a stationary robot and empty queue. A late
 accepted abandoned MovJ triggers another containment Stop. These failures do
-not enter the observation/arrival retry workflow.
+not enter the observation/camera-readiness/arrival retry workflow.
 
 **Stop Automatic Capture** stays available while moving, sampling or stopping.
 An unconfirmed Stop blocks editing and another run; another explicit Stop makes

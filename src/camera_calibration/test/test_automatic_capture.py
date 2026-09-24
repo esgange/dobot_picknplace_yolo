@@ -22,7 +22,7 @@ from camera_calibration_gui.automatic_capture import AutomaticCapture
 from camera_calibration_gui.calibration_core import output_path_for_mode
 from camera_calibration_gui.main import CalibrationNode, CalibrationWindow, TransformStamped
 from camera_calibration_gui.maintenance_robot import (
-    Cr10Model, MaintenanceRobot, RobotSample, arrived, idle, stationary)
+    Cr10JointLimits, MaintenanceRobot, RobotSample, idle, joints_at_target, stationary)
 
 
 def ros_time(seconds):
@@ -258,28 +258,26 @@ def test_guard_rejects_stale_frozen_or_malformed_feedback(robot):
         robot.guard()
 
 
-def test_arrival_requires_tcp_joints_and_two_advancing_samples():
+def test_saved_joints_ignore_absolute_tcp_but_stability_detects_motion():
     first = RobotSample(1, feedback(), True)
     second = RobotSample(2, feedback(controller_timer=2), True)
-    assert arrived(first, (0.,) * 6, np.eye(4)) and stationary(first, second)
+    assert joints_at_target(first, (0.,) * 6) and stationary(first, second)
     assert not stationary(first, first)
     assert not stationary(first, RobotSample(2, feedback(), True))
     wrong_tcp = RobotSample(2, feedback(tool_vector_actual=[10., 0., 0., 0., 0., 0.]), True)
-    assert not arrived(wrong_tcp, (0.,) * 6, np.eye(4))
+    assert joints_at_target(wrong_tcp, (0.,) * 6)
     assert not stationary(first, wrong_tcp)
     wrong_joints = RobotSample(2, feedback(q_actual=[2.] * 6), True)
-    assert not arrived(wrong_joints, (0.,) * 6, np.eye(4))
+    assert not joints_at_target(wrong_joints, (0.,) * 6)
 
 
 def test_cr10_targets_validate_before_motion():
-    model = Cr10Model(Path(__file__).resolve().parents[2]
-                      / "DOBOT_6Axis_ROS2_V4/cra_description/urdf/cr10_robot.xacro")
-    matrix = model.forward((0.,) * 6)
-    assert np.allclose(matrix[3], [0., 0., 0., 1.])
-    assert np.allclose(matrix[:3, :3] @ matrix[:3, :3].T, np.eye(3))
+    limits = Cr10JointLimits(Path(__file__).resolve().parents[2]
+                             / "DOBOT_6Axis_ROS2_V4/cra_description/urdf/cr10_robot.xacro")
+    assert limits.validate((0.,) * 6) == (0.,) * 6
     for joints in ((0.,) * 5, (float("nan"),) * 6, (100.,) * 6):
         with pytest.raises(ValueError):
-            model.forward(joints)
+            limits.validate(joints)
 
 
 def test_late_motion_acceptance_is_stopped_and_previous_response_blocks(robot):
@@ -327,14 +325,14 @@ def test_motion_cannot_finish_on_old_queue_id_or_unchanged_feedback(robot, monke
         RobotSample(4, feedback(controller_timer=4, currentCommandId=7), True),
     ])
     robot.guard = lambda: next(ticks)
-    sample = robot.move((0.,) * 6, np.eye(4), monitor=lambda: None)
+    sample = robot.move((0.,) * 6, monitor=lambda: None)
     assert sample.sequence == 4
     request = robot.command.call_args.args[1]
     assert request.mode and request.param_value == ["user=0", "tool=0", "v=20", "a=20"]
 
 
-@pytest.mark.parametrize("stop_during_solve", [False, True])
-def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, stop_during_solve):
+@pytest.mark.parametrize("scenario", ["normal", "stop_during_solve", "camera_gap"])
+def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, scenario):
     """Isolated fake Dobot services: no controller, camera hardware or robot connection."""
     import rclpy
     from rclpy.callback_groups import ReentrantCallbackGroup
@@ -343,15 +341,12 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, st
     from rclpy.node import Node
     from sensor_msgs.msg import JointState
 
-    from camera_calibration_gui.calibration_core import rotation_matrix_to_rpy_deg
-
     monkeypatch.setenv("ROS_DOMAIN_ID", "232")
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     monkeypatch.setattr(robot_module, "configured_bringup", lambda _root: "calibration_test_dobot")
     context = Context()
     rclpy.init(context=context)
-    model = Cr10Model(Path(__file__).resolve().parents[2]
-                      / "DOBOT_6Axis_ROS2_V4/cra_description/urdf/cr10_robot.xacro")
+    stop_during_solve = scenario == "stop_during_solve"
 
     class Camera(Node):
         def __init__(self):
@@ -367,9 +362,12 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, st
                 joint_positions_rad=(index * .01, 0., 0., 0., 0., 0.)) for index in range(6)])
             self.solving = threading.Event()
             self.frames = 0
+            self.gap_until = 0.
             self.create_timer(.01, self.sensor)
 
         def sensor(self):
+            if time.monotonic() < self.gap_until:
+                return
             self.frames += 1
             self._latest_pose_stamp = self.get_clock().now().nanoseconds
             self._latest_valid_rgb_stamp = self._latest_pose_stamp
@@ -394,6 +392,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, st
             self.cp = []
             self.moves = []
             self.stops = 0
+            self.moving_until = 0.
             self.lock = threading.Lock()
             self.feed_pub = self.create_publisher(String, robot_module.FEED_TOPIC, 10)
             self.status_pub = self.create_publisher(RobotStatus, robot_module.STATUS_TOPIC, 10)
@@ -412,25 +411,34 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, st
             with self.lock:
                 self.moves.append(request)
                 joints = [getattr(request, key) for key in "abcdef"]
-                matrix = model.forward(np.deg2rad(joints))
                 self.data.update(
                     currentCommandId=len(self.moves), q_actual=joints,
-                    tool_vector_actual=list(matrix[:3, 3] * 1000.)
-                    + list(rotation_matrix_to_rpy_deg(matrix[:3, :3])))
+                    tool_vector_actual=[747.562 + joints[0], 219.073, 159.800,
+                                        -175.635, 11.458, -108.158])
+                if scenario == "camera_gap" and len(self.moves) == 2:
+                    camera.gap_until = time.monotonic() + .9
+                    self.moving_until = time.monotonic() + 1.5
+                    self.data.update(robot_mode=7, RunningStatus=1, isRunQueuedCmd=1)
                 response.res = 0
                 response.robot_return = "{" + str(len(self.moves)) + "}"
             return response
 
         def stop(self, _request, response):
-            self.stops += 1
+            with self.lock:
+                self.stops += 1
+                self.moving_until = 0.
+                self.data.update(robot_mode=5, RunningStatus=0, isRunQueuedCmd=0)
             response.res = 0
             return response
 
         def publish(self):
             with self.lock:
+                if time.monotonic() >= self.moving_until:
+                    self.data.update(robot_mode=5, RunningStatus=0, isRunQueuedCmd=0)
                 self.data["controller_timer"] += 1
                 self.feed_pub.publish(String(data=json.dumps(self.data)))
-            self.status_pub.publish(RobotStatus(is_connected=True, is_enable=True))
+            self.status_pub.publish(RobotStatus(
+                is_connected=True, is_enable=self.data["robot_mode"] == 5))
             self.joint_pub.publish(JointState())
 
     camera, dobot = Camera(), Dobot()
@@ -461,14 +469,17 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, st
             time.sleep(.01)
         assert not camera.automatic.active, camera.automatic.message
         assert camera.automatic.complete is not stop_during_solve, camera.automatic.message
-        assert len(dobot.moves) == (5 if stop_during_solve else 6)
+        expected_positions = ([0, 1, 1, 2, 3, 4, 5] if scenario == "camera_gap"
+                              else list(range(5 if stop_during_solve else 6)))
+        assert len(dobot.moves) == len(expected_positions)
         assert dobot.cp == [100]
-        for index, request in enumerate(dobot.moves):
+        for index, request in zip(expected_positions, dobot.moves):
             assert request.mode and request.a == pytest.approx(np.rad2deg(index * .01))
         if stop_during_solve:
             assert camera.automatic.robot.stop_attempt["confirmed"]
         else:
-            assert len(camera._calibration_samples) == 6 and dobot.stops == 0
+            assert len(camera._calibration_samples) == 6
+            assert dobot.stops == (1 if scenario == "camera_gap" else 0)
     finally:
         camera.automatic.close()
         for executor in executors:
@@ -558,7 +569,7 @@ def test_only_three_failed_captures_prompt_and_continue_preserves_samples(node, 
         return dict(success=True)
 
     automatic._stable_capture = capture
-    worker = threading.Thread(target=automatic._run, args=([((0.,) * 6, np.eye(4))] * 5,))
+    worker = threading.Thread(target=automatic._run, args=([(0.,) * 6] * 5,))
     worker.start()
     try:
         deadline = time.monotonic() + 2.
@@ -604,7 +615,7 @@ def test_three_motion_timeouts_each_confirm_stop_before_retry_or_prompt(node):
         return dict(success=True)
 
     automatic._stable_capture = capture
-    worker = threading.Thread(target=automatic._run, args=([((0.,) * 6, np.eye(4))],))
+    worker = threading.Thread(target=automatic._run, args=([(0.,) * 6],))
     worker.start()
     try:
         deadline = time.monotonic() + 2.
@@ -641,7 +652,7 @@ def test_stability_requires_full_second_and_advancing_feedback(node, monkeypatch
     node.automatic.robot.hold.side_effect = hold
     node.automatic.robot.cancel.wait.side_effect = (
         lambda _dt: setattr(clock, "now", clock.now + .25))
-    node.automatic._wait_stable(anchor, (0.,) * 6, np.eye(4))
+    node.automatic._wait_stable(anchor, (0.,) * 6)
     assert clock.now == 1.25 and calls[0] == 0.
     assert len(calls) == 6
     assert node.automatic.pending is None
@@ -650,7 +661,7 @@ def test_stability_requires_full_second_and_advancing_feedback(node, monkeypatch
 def test_movement_during_stability_aborts_without_a_capture(node):
     node.automatic.robot.hold.side_effect = RuntimeError("Robot moved")
     with pytest.raises(RuntimeError, match="Robot moved"):
-        node.automatic._stable_capture(1, 1, object(), (0.,) * 6, np.eye(4))
+        node.automatic._stable_capture(1, 1, object(), (0.,) * 6)
     assert node.automatic.pending is None and not node._calibration_samples
 
 
@@ -686,8 +697,8 @@ def test_confirmed_motion_retry_resumes_without_resetting_outputs(robot):
 def test_arrival_timeout_reports_which_robot_gates_failed(robot, monkeypatch):
     monkeypatch.setattr(robot_module, "MOTION_PROGRESS_TIMEOUT", 0.)
     robot.command = MagicMock(return_value=MovJ.Response(res=0, robot_return="{7}"))
-    with pytest.raises(robot_module.MotionArrivalTimeout, match="queue ID 0/7.*joint error.*TCP"):
-        robot.move((0.,) * 6, np.eye(4), monitor=lambda: None)
+    with pytest.raises(robot_module.MotionArrivalTimeout, match="queue ID 0/7.*joint error"):
+        robot.move((0.,) * 6, monitor=lambda: None)
 
 
 @pytest.mark.parametrize("answer", ["continue", "stop", "close"])
@@ -723,3 +734,105 @@ def test_retry_prompt_is_nonmodal_and_close_means_stop(node, answer):
         window._refresh_retry_prompt()
         window.close()
         application.processEvents()
+
+
+@pytest.mark.parametrize("failure", ["no_info", "no_image", "stale", "future"])
+def test_camera_readiness_reason_is_specific_and_recoverable(node, failure):
+    if failure == "no_info":
+        node._camera_matrix = None
+        expected = "CameraInfo"
+    elif failure == "no_image":
+        node._latest_valid_rgb_stamp = None
+        expected = "valid RGB input"
+    else:
+        node._latest_valid_rgb_stamp = ros_time(9. if failure == "stale" else 11.).nanoseconds
+        expected = "input age"
+    with pytest.raises(automatic_module.CameraNotReady, match=expected):
+        node.automatic._require_camera()
+
+
+def test_native_worker_failure_is_not_a_recoverable_camera_input_condition(node):
+    node._fatal_error = "Native worker exited"
+    with pytest.raises(RuntimeError, match="Native worker") as failure:
+        node.automatic._require_camera()
+    assert not isinstance(failure.value, automatic_module.CameraNotReady)
+
+
+@pytest.mark.parametrize("phase", ["before_motion", "during_motion", "after_motion_retry"])
+def test_all_camera_readiness_paths_reach_three_attempt_prompt(node, phase):
+    automatic = node.automatic
+    automatic.robot.operator_cancel = threading.Event()
+    checks, moves = [], []
+
+    def monitor(*_args):
+        if automatic.robot.operator_cancel.is_set():
+            raise robot_module.ReplayStopped("Operator stopped")
+
+    automatic.robot.guard.side_effect = monitor
+    automatic.robot.hold_idle.side_effect = monitor
+    automatic.robot.hold_stopped.side_effect = monitor
+
+    def wait_camera(_monitor):
+        checks.append(True)
+        if phase == "before_motion" and len(checks) <= 3:
+            raise automatic_module.CameraNotReady("CameraInfo missing")
+        if phase == "after_motion_retry" and 2 <= len(checks) <= 3:
+            raise automatic_module.CameraNotReady("RGB input aged")
+
+    def move(*_args, **_kwargs):
+        moves.append(True)
+        if phase == "during_motion" and len(moves) <= 3:
+            raise automatic_module.CameraNotReady("RGB input aged")
+        if phase == "after_motion_retry" and len(moves) == 1:
+            raise robot_module.MotionArrivalTimeout("Queue ID not confirmed")
+        return object()
+
+    def capture(*_args):
+        automatic.captured += 1
+        return dict(success=True)
+
+    automatic._wait_camera = wait_camera
+    automatic.robot.move.side_effect = move
+    automatic._stable_capture = capture
+    worker = threading.Thread(target=automatic._run, args=([(0.,) * 6],))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 2.
+        while automatic.retry_prompt is None and worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(.005)
+        assert automatic.retry_prompt is not None, automatic.message
+        assert automatic.retry_prompt["phase"] == "camera"
+        assert automatic.retry_prompt["attempt"] == 3
+        assert automatic.active and not automatic.complete
+        assert len(checks) == 3
+        expected_moves = {"before_motion": 0, "during_motion": 3, "after_motion_retry": 1}
+        assert len(moves) == expected_moves[phase]
+        assert automatic.robot.wait_stop.call_count == len(moves)
+        time.sleep(.04)
+        assert len(checks) == 3
+        automatic.respond_retry(automatic.retry_prompt["token"], True)
+        worker.join(timeout=2.)
+        assert not worker.is_alive() and automatic.complete, automatic.message
+        assert len(checks) == 4 and automatic.captured == 1
+    finally:
+        automatic.stop()
+        worker.join(timeout=2.)
+
+
+def test_transient_camera_gap_recovers_within_same_attempt(node, monkeypatch):
+    clock = SimpleNamespace(now=0.)
+    monkeypatch.setattr(automatic_module, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    node._latest_valid_rgb_stamp = None
+
+    def wait(_dt):
+        clock.now += .1
+        if clock.now >= .3:
+            node._latest_valid_rgb_stamp = ros_time(9.9).nanoseconds
+
+    node.automatic.robot.cancel.wait.side_effect = wait
+    monitor = MagicMock()
+    node.automatic._wait_camera(monitor)
+    assert .3 <= clock.now < 2.
+    assert node.automatic.retry_prompt is None
+    assert monitor.call_count >= 4
+    node.automatic.robot.move.assert_not_called()

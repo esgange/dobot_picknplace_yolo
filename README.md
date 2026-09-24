@@ -754,7 +754,7 @@ Startup restores unapplied prefill only, not samples or a solution.
 The modern detector uses grayscale, color intrinsics/distortion, legacy board
 layout, no marker-corner refinement, two adjacent markers, no marker recovery,
 and iterative board PnP with at least four non-collinear ChArUco corners.
-There is no editable corner minimum, stability wait or pose averaging.
+There is no editable corner minimum, target stability history or pose averaging.
 Capture requires a board pose at most 0.5 seconds old plus robot TF and exact
 six-joint feedback at most 1 second old. Both robot and camera-relative board
 orientations must differ by at least 5 degrees from every earlier sample;
@@ -780,9 +780,13 @@ five-sample/angular rules, and recomputes using live internal camera TF.
 Existing schema 1–6 files are preserved but rejected without conversion.
 After loading, **Start Automatic Capture** reuses the ordered joint positions
 directly through canonical Dobot bringup, collects fresh samples after each confirmed
-stationary arrival and a one-second hold before each capture attempt. A position
+joint position and a one-second stationary/idle hold before each capture attempt.
+Reported TCP is checked for live movement only, never against nominal CR10 forward
+kinematics or the previous calibration's TCP. A position
 gets three automatic attempts; only after all three fail does Continue/Stop appear.
 Continue tries another three at the same position and keeps earlier samples.
+Temporary RGB/CameraInfo unavailability uses the same retry workflow, with
+confirmed Stop before retrying a move interrupted by lost camera readiness.
 The robot stays at the final position on completion. The separate
 **Save as New Calibration** button opens an editable filename dialog with the
 existing timestamped naming rule as its default. It saves inside `calibration/`
