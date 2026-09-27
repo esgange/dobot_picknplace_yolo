@@ -79,7 +79,7 @@ def test_runtime_catalog_reports_each_duplicate_artifact_kind(
         (lambda directory: (directory / "unknown.yaml").write_bytes(b"x"),
          "filename prefix"),
         (lambda directory: (directory / "tray_teach_future.yaml").write_bytes(b"x"),
-         "reserved"),
+         "Missing required tray_teach_ PT model"),
         (lambda directory: (directory / "bin_teach_notes.txt").write_bytes(b"x"),
          "extension"),
         (lambda directory: (directory / "partition").mkdir(), "regular files"),

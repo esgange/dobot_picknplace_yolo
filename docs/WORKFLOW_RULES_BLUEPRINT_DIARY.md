@@ -5917,6 +5917,77 @@ Never use a floating “latest” version in an issue, script, or deployment not
   pass. No hardware process/command, operator-model execution or operator artifact
   modification; physical validation and offline transfer remain unperformed.
 
+### 2026-09-27 — Tray trigger service, simulation and headless detection
+
+- Rule 140 extends rules 137/139 with the requested Item Teach-style top row:
+  **YOLO Detect**, **Simulate Trigger**, and explicit red **Armed**. GUI startup
+  and file loading remain disarmed. Arming requires valid YOLO settings, an
+  unchanged saved/loaded complete schema-1 profile matching the current settings,
+  plane and copied position, its verified mask/OBB model, matching calibration,
+  and fresh calibrated RGB/TF. Edits, YOLO OFF, changed sources and exit disarm;
+  no hardware command or placement behavior is added.
+- Add `tray_perception_interfaces` with `TrayPose` and `GetTrayPose`. Armed Tray
+  Teach and headless Tray Detect share `/tray_detect/get_tray_pose`; reject other
+  providers and duplicate node identities, including discovered collisions after
+  startup. The request carries the exact saved YAML SHA-256 and optional
+  `save_debug_images`. Return `base_link` and the original RGB timestamp, class,
+  confidence, sorted long/short lengths and actual inward X/Y axis extents in
+  metres, plus counts, source hashes, plane evidence and rejection diagnostics.
+  X need not be the long side. Validate the returned rectangle/axis evidence.
+  Only `success && found` makes the single tray usable; `NO_VALID_TRAY` is an
+  explicit successful empty observation. The controller still decides placement
+  coordinates and robot attitude; no tray motion/client is wired into it yet.
+- Both service requests and local simulation use one acquisition/inference/
+  filtering/selection path. Acquire RGB captured and received after the trigger,
+  with exact-time calibrated TF, then measure on the saved plane. Live depth
+  remains optional. Never return cached preview poses or retained cloud geometry.
+  Recheck file hashes and generation before/after inference and before simulation
+  display. A ten-second deadline includes queue/input waits and processing;
+  concurrent requests return BUSY immediately. Disarm/change/shutdown cancels
+  results. Preserve one native worker and exactly two ROS executor threads;
+  serialize requests against the GUI's one background job, without request backlog.
+- Simulate Trigger requires the exact saved profile and valid YOLO ON, works
+  while Armed OFF without exposing a service, and freezes both panes on the same
+  typed result. Click or Resume Live exits inspection. It never moves the robot,
+  overwrites dimensions or saves images automatically. Source changes invalidate
+  frozen simulation. Armed service requests still acquire independent new frames.
+- Service revocation is immediate in logical state. Retire ROS service handles
+  after active callbacks and their reply handoff, because destroying a service
+  inside its callback raises rclpy InvalidHandle before sending the response and
+  can terminate the executor. Bind callbacks to their original provider epoch;
+  retired callbacks cannot execute a new provider's request context. Re-arming
+  retires the old endpoint before registering a replacement. Existing
+  periodic callbacks perform cleanup; no executor/thread is added.
+- Add argument-free `tray_detect.launch.py`. Explicit launch trusts the deployed
+  pair, loads its hash-bound calibration/prefix, waits boundedly for fresh inputs,
+  then arms automatically. Headless inference is request-driven, with no GUI,
+  voxel/selected-TF publishers, continuous images or Item Teach dependency.
+  Save debug RGB/available depth only when requested under `debug/tray_img/`;
+  missing depth or image-save failure is diagnostic and cannot discard a valid
+  pose. Pin deployment until restart; source/runtime failures stop without retry.
+- Extend the shared flat `runtime_teach/` filename catalog to recognize the now
+  implemented tray pair. Tray Detect requires exactly one same-stem tray YAML/PT
+  and no Item/Bin file. Existing Item Detect/controller selection still requires
+  its Item pair and Bin YAML, but permits a complete optional tray pair alongside.
+  Keep distinct missing/duplicate errors, strict filenames/regular files, manual
+  deployment and no watcher, source copying, `.env` keys or schema migration.
+  Update the controller's deployment documentation and regenerate adjacent FSM
+  HTML/PDF exports; states, Home/Pick sequencing and hardware behavior are unchanged.
+- Validation: 80 Tray Perception tests pass, including 30 new trigger/UI/catalog
+  cases, and all 457 existing Item Perception/controller architecture checks pass.
+  Tests cover shared simulation/service geometry, fresh vs cached frames, missing
+  depth, hashes, changed/in-flight sources, cancellation, concurrent BUSY replies,
+  provider conflicts, debug opt-in, strict deployment, and malformed extent
+  evidence. An isolated real ROS service test uses synthetic camera messages and
+  confirms two executor threads continue receiving RGB while requests wait; an
+  in-flight disarm returns an error without an executor crash. Offscreen isolated
+  GUI startup/shutdown and visual row review pass, as does isolated missing-runtime
+  headless failure/cleanup. Full root symlink build passes all 17 packages;
+  ament_flake8, Python syntax, interface generation and git diff --check pass.
+  Six FSM diagrams export locally without network access. No physical hardware,
+  operator-model execution, deployment copying or operator artifact changes;
+  physical integration and offline transfer remain unperformed.
+
 ### Future entry template
 
 ```text

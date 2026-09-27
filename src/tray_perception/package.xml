@@ -2,13 +2,14 @@
 <package format="3">
   <name>tray_perception</name>
   <version>0.0.1</version>
-  <description>Read-only tray teaching with a saved base-frame reference plane.</description>
+  <description>Tray teaching and read-only, profile-bound headless tray pose requests.</description>
   <maintainer email="maintainer@example.com">maintainer</maintainer>
   <license>BSD-3-Clause</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
   <depend>rclpy</depend>
   <depend>item_perception_yolo</depend>
+  <depend>tray_perception_interfaces</depend>
   <depend>camera_calibration</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>

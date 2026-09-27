@@ -4,8 +4,10 @@ project(tray_perception)
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 ament_python_install_package(${PROJECT_NAME} PACKAGE_DIR python/${PROJECT_NAME})
-install(PROGRAMS scripts/tray_teach scripts/tray_worker DESTINATION lib/${PROJECT_NAME})
-install(FILES launch/tray_teach.launch.py DESTINATION share/${PROJECT_NAME}/launch)
+install(PROGRAMS scripts/tray_teach scripts/tray_detect scripts/tray_worker
+  DESTINATION lib/${PROJECT_NAME})
+install(FILES launch/tray_teach.launch.py launch/tray_detect.launch.py
+  DESTINATION share/${PROJECT_NAME}/launch)
 install(FILES README.md LICENSE NOTICE.md DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)

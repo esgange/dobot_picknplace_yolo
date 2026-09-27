@@ -25,7 +25,7 @@ def _artifact_kind(name):
     if len(matches) != 1:
         raise ValueError(
             f"Unsupported runtime_teach filename prefix: {name}; expected "
-            "item_teach_, bin_teach_, or reserved tray_teach_")
+            "item_teach_, bin_teach_, or tray_teach_")
     return matches[0]
 
 
@@ -39,27 +39,45 @@ def _require_one(paths, label):
     return paths[0]
 
 
-def runtime_teach_catalog(root):
-    """Select exactly one deployed Item pair and Bin YAML by filename prefix."""
+def _scan(root):
     directory = Path(root).resolve() / "runtime_teach"
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("Required flat root runtime_teach/ directory is missing or symlinked")
     artifacts = {"item_teach": {".yaml": [], ".pt": []},
-                 "bin_teach": {".yaml": []}}
+                 "bin_teach": {".yaml": []}, "tray_teach": {".yaml": [], ".pt": []}}
     for path in sorted(directory.iterdir()):
         if path.name.startswith("."):
             continue
         if path.is_symlink() or not path.is_file():
             raise ValueError("runtime_teach/ requires regular files only; no partitions/symlinks")
         kind = _artifact_kind(path.name)
-        if kind == "tray_teach":
-            raise ValueError(
-                f"tray_teach_ is reserved for a future artifact and is not supported: {path.name}")
         if path.suffix not in artifacts[kind]:
             allowed = ", ".join(sorted(artifacts[kind]))
             raise ValueError(
                 f"Unsupported {kind}_ runtime file extension: {path.name}; expected {allowed}")
         artifacts[kind][path.suffix].append(path.resolve())
+    return directory, artifacts
+
+
+def _tray_pair(artifacts):
+    yaml = _require_one(artifacts["tray_teach"][".yaml"], "tray_teach_ YAML")
+    model = _require_one(artifacts["tray_teach"][".pt"], "tray_teach_ PT model")
+    if yaml.stem != model.stem:
+        raise ValueError("runtime_teach/ Tray Teach YAML/PT must have the same filename stem")
+    return yaml, model
+
+
+def runtime_tray_catalog(root):
+    """One deployed tray pair; no Item/Bin dependency or automatic file copying."""
+    _directory, artifacts = _scan(root)
+    return _tray_pair(artifacts)
+
+
+def runtime_teach_catalog(root):
+    """One Item pair and Bin YAML; a complete optional tray pair may coexist."""
+    directory, artifacts = _scan(root)
+    if any(artifacts["tray_teach"].values()):
+        _tray_pair(artifacts)
     item_yaml = _require_one(
         artifacts["item_teach"][".yaml"], "item_teach_ YAML")
     item_model = _require_one(

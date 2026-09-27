@@ -18,6 +18,7 @@ from .core import (
     copy_teach_position, read_session, save_profile, tray_directory, validate_settings,
     validate_geometry, validate_preview, write_session)
 from item_perception_yolo.item_preview import validate_prefix
+from item_perception_yolo.item_teach_core import file_sha256
 from .node import TrayTeachNode
 
 
@@ -101,6 +102,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.preview_error = self.geometry_error = ""
         self.inspection = self.filling = False
         self.profile_path = None
+        self.profile_digest = ""
         self.profile_filename = ""
         self.buttons = []
         self.pending_ids = []
@@ -122,6 +124,11 @@ class TrayTeachWindow(QtWidgets.QWidget):
         header.addWidget(self.load_teach_button)
         header.addWidget(self.save_button)
         root.addLayout(header)
+        toggle_row = QtWidgets.QHBoxLayout()
+        root.addLayout(toggle_row)
+        self.request_status = QtWidgets.QLabel("Disarmed — no tray pose service")
+        self.request_status.setWordWrap(True)
+        root.addWidget(self.request_status)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         root.addWidget(splitter, 1)
         scroll = QtWidgets.QScrollArea()
@@ -179,15 +186,26 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.maximum = QtWidgets.QLineEdit("100")
         form.addRow("Max detections", self.maximum)
         self.maximum.textChanged.connect(self._edited)
-        self.name.textChanged.connect(lambda: setattr(self, "settings", None))
+        self.name.textChanged.connect(self._edited)
         self.classes.itemChanged.connect(self._edited)
         self.preview_toggle = QtWidgets.QPushButton("YOLO Detect: OFF")
         self.preview_toggle.setCheckable(True)
         self.preview_toggle.toggled.connect(self._toggle_yolo)
-        controls.addWidget(self.preview_toggle)
+        toggle_row.addWidget(self.preview_toggle, 1)
+        self.simulate_button = self._button("Simulate Trigger", self._simulate_trigger)
+        self.simulate_button.setToolTip(
+            "Run the real fresh-frame pose pipeline locally. Requires a saved profile and "
+            "YOLO ON; Armed may be OFF. No robot commands.")
+        toggle_row.addWidget(self.simulate_button, 1)
+        self.armed_toggle = QtWidgets.QPushButton("Armed: OFF")
+        self.armed_toggle.setCheckable(True)
+        self.armed_toggle.setToolTip(
+            "Expose /tray_detect/get_tray_pose for controller requests. No robot motion.")
+        self.armed_toggle.toggled.connect(self._toggle_armed)
+        toggle_row.addWidget(self.armed_toggle, 1)
         self.form_fields = [self.camera_prefix, self.name, self.classes,
                             self.confidence, self.iou, self.maximum,
-                            self.preview_toggle, *self.dimensions.values()]
+                            self.preview_toggle, self.armed_toggle, *self.dimensions.values()]
         self.plane_label = QtWidgets.QLabel("Reference plane: not taught")
         self.plane_label.setWordWrap(True)
         controls.addWidget(self.plane_label)
@@ -282,6 +300,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             return
         self.settings = None
         self.preview_settings = None
+        self.node.yolo_enabled = False
         self._invalidate_preview()
         self._resume()
         self.preview_due = time.monotonic() + .3
@@ -344,13 +363,20 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if self.future is not None:
             if self.job_kind == "preview" and kind != "preview" and self.pending_job is None:
                 self.pending_job = (function, callback, kind)
-                self._invalidate_preview()
+                if kind in ("simulate", "arm"):
+                    self.preview_cancelled = True
+                else:
+                    self._invalidate_preview()
                 self._update_controls()
                 self._message("Finishing the current preview before the requested action…")
             return
         self.job_kind, self.completion = kind, callback
         self.preview_cancelled = False
-        self.future = self.pool.submit(function)
+
+        def run():
+            with self.node.work_lock:
+                return function()
+        self.future = self.pool.submit(run)
         self._update_controls()
 
     def _choose(self, title, directory, pattern):
@@ -432,6 +458,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self.item_path.clear()
                 self.profile_filename = path.name
                 self.profile_path = path
+                self.profile_digest = file_sha256(path)
                 self._show_position()
                 self._refresh_preview_settings()
                 self._message("Tray loaded independently of Item Teach; preview enabled.")
@@ -493,6 +520,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _refresh_preview_settings(self):
         self.preview_due = None
         self.preview_settings = None
+        self.node.yolo_enabled = False
         self.preview_error = self.geometry_error = ""
         if not self.preview_toggle.isChecked():
             return
@@ -513,6 +541,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                         "geometry": geometry}
             validate_preview(settings)
             self.preview_settings = settings
+            self.node.yolo_enabled = True
         except (ValueError, TypeError) as exc:
             self.preview_error = str(exc)
         try:
@@ -520,6 +549,59 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._remember()
         except (ValueError, OSError):
             self.settings = None  # Incomplete drafts are not persisted as complete profiles.
+
+    def _trigger_settings(self):
+        if self.profile_path is None or not self.profile_digest:
+            raise ValueError("Save or load a complete Tray Teach profile first")
+        if not self.preview_toggle.isChecked() or self.preview_settings is None:
+            raise ValueError("Enable YOLO with valid settings before triggering or arming")
+        return self._form_settings()
+
+    def _style_armed(self, enabled):
+        self.armed_toggle.blockSignals(True)
+        self.armed_toggle.setChecked(enabled)
+        self.armed_toggle.setText("Armed: ON" if enabled else "Armed: OFF")
+        self.armed_toggle.setStyleSheet(
+            "background:#b51f24;color:white;font-weight:bold;" if enabled else "")
+        self.armed_toggle.blockSignals(False)
+
+    def _toggle_armed(self, enabled):
+        self._style_armed(enabled)
+        if not enabled:
+            self.node.requests.disarm()
+            return
+        try:
+            settings = self._trigger_settings()
+            path, digest = self.profile_path, self.profile_digest
+            self._resume()
+            self._job(lambda: self.node.requests.arm(path, settings, digest),
+                      lambda _: self._message("Armed: /tray_detect/get_tray_pose"), "arm")
+        except (ValueError, OSError) as exc:
+            self._style_armed(False)
+            self._message(str(exc), error=True)
+
+    def _simulate_trigger(self):
+        try:
+            settings = self._trigger_settings()
+            path, digest = self.profile_path, self.profile_digest
+            requested_at = (self.node.get_clock().now().nanoseconds, time.monotonic())
+            self._resume()
+
+            def shown(value):
+                response, view = value["response"], value["view"]
+                if not response.success:
+                    self._message(f"Simulate Trigger: {response.message}", error=True)
+                    return
+                self._show_view(view)
+                self.inspection = True
+                self.rgb_status.setText("SIMULATE TRIGGER — frozen fresh request result")
+                self.depth_status.setText("SIMULATE TRIGGER — same observation / optional depth")
+                self._message(f"{response.status}: {response.message}. "
+                              "Click the image or Resume live to continue.")
+            self._job(lambda: self.node.requests.simulate(path, settings, digest, requested_at),
+                      shown, "simulate")
+        except (ValueError, OSError) as exc:
+            self._message(str(exc), error=True)
 
     def _freeze(self):
         self._invalidate_preview()
@@ -624,6 +706,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
             def saved(path):
                 self.settings, self.profile_path = settings, path
+                self.profile_digest = file_sha256(path)
                 self.profile_filename = path.name
                 self._remember()
                 self._message(f"Saved new tray profile and paired model: {path}")
@@ -640,6 +723,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if (self.frozen is not None or self.inspection
                 or view["generation"] != self.node.generation):
             return
+        if "trigger_binding" in view:
+            self.node.requests.validate_view(view)
         self.node.accept_view(view)
         self.last_view = view
         rgb, result = view["rgb"], view["result"]
@@ -698,10 +783,24 @@ class TrayTeachWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Tray Teach stopped", self.node.fatal_error)
             self.close()
             return
+        if self.inspection and self.last_view is not None and "trigger_binding" in self.last_view:
+            try:
+                self.node.requests.validate_view(self.last_view)
+            except (ValueError, OSError, RuntimeError) as exc:
+                self._resume()
+                self.node.invalidate(str(exc))
+                self._message(f"Simulated tray result invalidated: {exc}", error=True)
         if self.future is None and self.pending_job is not None:
             job, self.pending_job = self.pending_job, None
             self._job(*job)
         busy = self.future is not None
+        requests = self.node.requests
+        arming = ((self.future is not None and self.job_kind == "arm") or
+                  (self.pending_job is not None and self.pending_job[2] == "arm"))
+        if not arming:
+            self._style_armed(requests.service is not None)
+        self.request_status.setText(
+            ("Request running | " if requests.busy else "") + requests.status)
         self._update_controls()
         prefix = self.node.camera_prefix
         self.camera_status.setText(self.node.camera_status + (
@@ -724,7 +823,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 f"Reference plane: base_link | fit error {self.node.plane['max_error_mm']:.2f} mm")
         else:
             self.plane_label.setText("Reference plane: not taught")
-        if (busy or self.frozen is not None or self.inspection or prefix is None
+        if (busy or requests.busy or self.frozen is not None or self.inspection or prefix is None
                 or prefix != self.camera_prefix.text().strip()):
             return
         if time.monotonic() < self.next_preview:

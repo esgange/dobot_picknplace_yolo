@@ -23,6 +23,8 @@ def window(tmp_path):
                            model=None, model_metadata=None, camera=None, plane=None,
                            position=None, selected=None, native=SimpleNamespace(failed=False),
                            fatal_error="", close=MagicMock(), generation=1,
+                           work_lock=threading.RLock(), requests=SimpleNamespace(
+                               service=None, busy=False, status="Disarmed", disarm=MagicMock()),
                            camera_prefix=None, camera_status="No camera connected",
                            accept_view=MagicMock(), get_clock=lambda: SimpleNamespace(
                                now=lambda: Time(seconds=100)), rviz=SimpleNamespace(
@@ -455,6 +457,7 @@ def test_teaching_tf_keeps_source_stamp_without_republishing_old_poses():
                            lock=threading.RLock(), generation=4, _published_key=None,
                            selected=(4, pose, 100_000_000_000, time.monotonic()),
                            fatal_error="", validate_sources=MagicMock(), broadcaster=MagicMock(),
+                           requests=SimpleNamespace(tick=MagicMock()),
                            rviz=SimpleNamespace(displayed=None, tick=MagicMock()))
     TrayTeachNode._tick(node)
     TrayTeachNode._tick(node)
@@ -481,6 +484,7 @@ def preview_node(view, response):
     view.update(depth=None, info=None, depth_info=None, metric_error="", depth_error="")
     return SimpleNamespace(
         lock=threading.RLock(), model={"task": "segment"}, plane=None, generation=4, selected=None,
+        deployment=False,
         raw_snapshot=lambda: view, snapshot=lambda **_: view,
         get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=100)),
         native=SimpleNamespace(call=MagicMock(return_value=(response, bytes(12)))),
@@ -556,10 +560,11 @@ def test_loaded_profile_restores_position_without_opening_item_file(tmp_path, mo
     source = {"settings": settings(), "model": {"sha256": "1" * 64},
               "camera_calibration": {"filename": "camera.yaml", "sha256": "2" * 64},
               "tray_teach_position": position(), "reference_plane": plane()}
-    monkeypatch.setattr(module, "load_profile", lambda *_: copy.deepcopy(source))
+    monkeypatch.setattr(module, "load_profile", lambda *_a, **_k: copy.deepcopy(source))
     monkeypatch.setattr(module, "load_camera_calibration", lambda *_a, **_k: SimpleNamespace(
         path=tmp_path / "calibration/camera.yaml", sha256="2" * 64))
     node = SimpleNamespace(root=tmp_path, lock=threading.RLock(), apply_camera=MagicMock(),
+                           deployment=False,
                            inspect_model=MagicMock(return_value={"task": "segment",
                                                                  "classes": {"0": "tray"}}))
     result = TrayTeachNode.load_saved(node, tmp_path / "tray.yaml")
@@ -577,3 +582,58 @@ def test_launch_is_local_only_and_does_not_launch_dependencies(monkeypatch):
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     description = factory()
     assert len(description.entities) == 1
+
+
+def ready_trigger_window(window):
+    enable_model(window)
+    window._fill_settings(settings())
+    window._refresh_preview_settings()
+    window.profile_path = window.node.root / "saved.yaml"
+    window.profile_digest = "1" * 64
+    window.node.requests.validate_view = MagicMock()
+
+
+def test_trigger_row_requires_saved_profile_and_arming_stays_explicit(window):
+    assert window.preview_toggle.text() == "YOLO Detect: OFF"
+    assert window.simulate_button.text() == "Simulate Trigger"
+    assert window.armed_toggle.text() == "Armed: OFF"
+    window._simulate_trigger()
+    assert "Save or load" in window.status.text() and window.future is None
+    ready_trigger_window(window)
+    assert not window.armed_toggle.isChecked()
+
+    def arm(*_):
+        window.node.requests.service = object()
+    window.node.requests.arm = MagicMock(side_effect=arm)
+    window.armed_toggle.setChecked(True)
+    window.future.result(timeout=2)
+    window._tick()
+    assert window.armed_toggle.isChecked() and "#b51f24" in window.armed_toggle.styleSheet()
+    assert window.node.requests.arm.call_args.args[1] == settings()
+
+    def disarm():
+        window.node.requests.service = None
+    window.node.invalidate.side_effect = disarm
+    window.confidence.setText("invalid")
+    window._tick()
+    assert not window.armed_toggle.isChecked() and not window.node.yolo_enabled
+
+
+def test_simulation_freezes_shared_result_without_arming_or_changing_dimensions(window):
+    ready_trigger_window(window)
+    view = {"generation": 1, "camera_context": None, "metric_error": "", "depth_error": "",
+            "rgb": {"width": 2, "height": 2, "stamp_ns": 100_000_000_000},
+            "overlay": bytes(12), "depth_overlay": b"", "cloud": None,
+            "result": {"selected": None, "reason": "No eligible tray", "detections": []}}
+    response = SimpleNamespace(success=True, status="NO_VALID_TRAY", message="No eligible tray")
+    window.node.requests.simulate = MagicMock(return_value={"response": response, "view": view})
+    before = {key: field.text() for key, field in window.dimensions.items()}
+    window._simulate_trigger()
+    window.future.result(timeout=2)
+    window._tick()
+    assert window.inspection and window.last_view is view
+    assert "SIMULATE TRIGGER" in window.rgb_status.text()
+    assert not window.armed_toggle.isChecked()
+    assert before == {key: field.text() for key, field in window.dimensions.items()}
+    window._click(1, 1)
+    assert not window.inspection

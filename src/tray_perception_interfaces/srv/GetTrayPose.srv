@@ -1,0 +1,14 @@
+string profile_sha256
+bool save_debug_images
+---
+bool success
+string status
+string message
+string batch_id
+std_msgs/Header header
+uint32 detected_count
+uint32 valid_count
+# Use tray only when success AND found are true. NO_VALID_TRAY is a successful observation.
+bool found
+tray_perception_interfaces/TrayPose tray
+string diagnostics_json

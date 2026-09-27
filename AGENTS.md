@@ -427,6 +427,21 @@ depth-one transport with zero RViz decay. Depth loss cannot block plane-based
 tray measurement. Keep one accepted tray TF, schema-1 paired saves, unapplied
 session prefill, no new .env keys and no hardware or controller commands.
 
+Rule 140 adds Tray Teach's Simulate Trigger and explicit red Armed control, plus
+request-driven headless tray_detect. Both use /tray_detect/get_tray_pose with the
+typed tray_perception_interfaces/GetTrayPose contract and the exact saved YAML
+SHA-256. Use a fresh post-trigger RGB/exact-time TF observation and the saved plane,
+never cached preview/voxel targets. Return one center-prioritized valid tray with
+base pose, sorted size and inward X/Y extents in metres, or explicit no-tray/error.
+Disarm edits/source changes; cancel obsolete requests and reject concurrent ones.
+Keep a ten-second bound, one native worker and two ROS executor threads. Simulation
+is local and read-only, may run disarmed, and freezes the exact result. Headless
+loads one strict deployed runtime_teach/ tray pair and its bound calibration,
+requires no Item/Bin input, and arms after readiness without continuous inference
+or RViz publishers. The shared Item/controller catalog permits a complete optional
+tray pair without loading it. Save images only on an explicit request flag; keep
+schema 1, manual deployment, no new .env keys, no motion or placement integration.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

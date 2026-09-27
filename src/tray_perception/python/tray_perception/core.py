@@ -131,14 +131,15 @@ def validate_profile(profile):
             raise ValueError(f"Invalid {key} filename or SHA-256")
 
 
-def load_profile(path, root):
+def load_profile(path, root, *, deployment=False):
     original = Path(path).expanduser().absolute()
-    directory = tray_directory(root)
+    directory = Path(root) / "runtime_teach" if deployment else tray_directory(root)
     if original.is_symlink() or directory.is_symlink():
         raise ValueError("Tray teaching files must be regular files, not symlinks")
     path = original.resolve()
     if path.parent != directory.resolve() or path.suffix != ".yaml":
-        raise ValueError("Select a YAML directly inside offline_teach/tray_teach/")
+        location = "runtime_teach/" if deployment else "offline_teach/tray_teach/"
+        raise ValueError(f"Select a YAML directly inside {location}")
     try:
         profile = yaml.load(path.read_bytes(), Loader=_UniqueKeyLoader)
         validate_profile(profile)
@@ -199,12 +200,13 @@ def save_profile(settings, position, plane, camera, model, expected_sha256, root
 
 
 class EventLogger:
-    def __init__(self, root):
+    def __init__(self, root, node="tray_teach"):
         self.path = Path(root) / "logs/tray_perception/events.jsonl"
+        self.node = node
         self.lock = threading.Lock()
 
     def record(self, level, event, message, **fields):
-        record = {"timestamp_utc": utc_now(), "package": "tray_perception", "node": "tray_teach",
+        record = {"timestamp_utc": utc_now(), "package": "tray_perception", "node": self.node,
                   "level": level, "event": event, "message": str(message), **fields}
         with self.lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)

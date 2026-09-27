@@ -11,7 +11,7 @@ src/
 ├── orbbec_camera_launcher/ # Gemini 335 configuration and bounded supervisor GUI
 ├── camera_calibration/    # manual-prefix two-mode ChArUco calibration GUI
 ├── item_perception_yolo/  # platform teaching and perception integration
-├── tray_perception/       # tray teaching, saved reference plane and selected tray pose preview
+├── tray_perception/       # tray teaching and headless, profile-bound tray pose requests
 ├── robot_controller/      # deterministic Home/Pick hardware authority + GUI/preview clients
 ├── robot_controller_interfaces/ # typed controller actions, services, and status
 ├── item_pick/             # imported reference only; excluded by COLCON_IGNORE
@@ -28,7 +28,7 @@ Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-ma
 
 ## Package organization
 
-The root build contains 16 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `tray_perception`, `robot_controller`, `robot_controller_interfaces`, and `item_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
+The root build contains 17 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `tray_perception`, `robot_controller`, `robot_controller_interfaces`, `item_perception_interfaces`, and `tray_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
 
 ## Robot Controller v2
 
@@ -55,8 +55,9 @@ exactly one `item_teach_*.yaml` with its same-stem `item_teach_*.pt`, and one
 `bin_teach_*.yaml`. Its launch has no file, trust or arming arguments. Starting
 that dedicated read-only process loads the deployed model once, validates fresh
 camera/TF inputs and advertises the pose service; inference remains request-driven.
-`tray_teach_` is reserved for a future artifact and is rejected until that
-workflow exists.
+A complete optional `tray_teach_` YAML/model pair may coexist for the independent
+headless Tray Detect consumer. Item Detect and Robot Controller still select only
+their Item/Bin inputs.
 
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
@@ -622,8 +623,17 @@ distance. Both positive axes run inward along adjacent tray edges, independent
 of image left/right. Save a new YAML/model pair under `offline_teach/tray_teach/`;
 reopening it needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
-variables. Headless detection and controller placement integration are later
-work. See [Tray Perception](src/tray_perception/README.md) for the complete
+variables. **Simulate Trigger** runs the same fresh observation pipeline as the
+controller-facing service and freezes the result without motion. **Armed ON**
+advertises `/tray_detect/get_tray_pose`; requests supply the saved YAML SHA-256
+and receive one tray or an explicit no-tray result. Settings changes disarm.
+
+For request-driven headless use, deploy one tray YAML/model pair to `runtime_teach/`
+and run `ros2 launch tray_perception tray_detect.launch.py`. It loads the bound
+calibration and arms after fresh-input validation, without an Item Teach dependency.
+Run only one armed tray provider. Debug images are saved only when a request asks;
+controller placement remains future work. See [Tray Perception](src/tray_perception/README.md)
+for the complete
 workflow, source checks, plane sampling limits and frame convention.
 
 ## Clone this workspace

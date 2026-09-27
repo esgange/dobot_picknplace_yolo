@@ -1,9 +1,9 @@
 # Tray Perception
 
 `tray_teach` is a read-only GUI for teaching one tray profile and inspecting the
-best detected tray pose in `base_link`. This phase implements teaching only;
-headless `tray_detect`, its controller service, placement and controller GUI
-integration are subsequent work. No camera/robot process is launched and no
+best detected tray pose in `base_link`. Headless `tray_detect` shares its fresh
+pose-request pipeline. Controller placement and placement GUI integration remain
+subsequent work. No camera/robot process is launched and no
 motion, enable, gripper or controller command is sent.
 
 Build and launch from the workspace root:
@@ -142,3 +142,72 @@ that explicit operation. Freeze acquisition and save validation also run in the
 background. Obsolete observations cannot restore a pose or overwrite the edit
 status; native/protocol failures remain terminal even if the preview was
 invalidated. See [NOTICE.md](NOTICE.md) for attribution.
+
+## Trigger, arming and controller requests
+
+The top row follows Item Teach: **YOLO Detect**, **Simulate Trigger**, and
+**Armed**. Preview and arming are separate. GUI startup and profile loading leave
+Armed OFF; Armed ON is red and advertises `/tray_detect/get_tray_pose` using
+[`tray_perception_interfaces/srv/GetTrayPose`](../tray_perception_interfaces/README.md).
+Arming requires YOLO ON with valid settings, an explicitly saved/loaded unchanged
+profile whose geometry/plane/position match the form, its verified mask/OBB model,
+matching calibration and fresh RGB/CameraInfo/exact-time TF. It needs no live
+depth, Item Teach, controller process or motion. Settings/source changes and YOLO
+OFF disarm immediately; changed files require explicit reload. Only one provider
+may advertise the canonical service. Logical revocation is immediate; retiring
+the ROS handle waits for an active callback's reply handoff to avoid destroying
+the service while rclpy sends its cancellation response. Re-arming retires the old
+endpoint before creating its replacement; old callbacks cannot use the new binding.
+
+**Simulate Trigger** runs the same acquisition, inference, size/class filtering,
+single-tray selection and typed response logic locally, even while Armed OFF.
+It never enables the robot or requests controller motion. It requires the exact
+saved profile and YOLO ON. The result freezes both panes for inspection; click
+the image or **Resume live** to continue. The service remains independent of
+that frozen view. Invalidated simulations cannot restore or retain old targets.
+
+Each request supplies `profile_sha256`, the SHA-256 of the saved tray YAML. It
+waits for RGB both captured and received after the trigger, resolves TF at that
+image's timestamp, and runs inference once against the unchanged saved plane.
+It never returns the continuous preview's cached pose or retained RViz cloud.
+The ten-second deadline includes waiting for preview work and fresh inputs;
+concurrent requests return BUSY without accumulating. Keep two ROS executor
+threads and one shared native worker, with request work serialized against GUI
+load/save/preview actions. Disarm, changes and shutdown cancel in-flight results.
+
+A successful request reports `OK` with `found=true` and one tray, or
+`NO_VALID_TRAY` with `found=false`. The response includes the source RGB timestamp,
+base_link pose, detected/valid counts, class/confidence, sorted long/short lengths,
+and actual positive-axis `extent_x`/`extent_y`, all metric lengths in metres.
+The controller chooses X/Y placement inside those extents; tray attitude is a
+reference frame, not a commanded robot TCP orientation. Diagnostics include the
+profile/model/calibration hashes, reference-plane evidence and detection reasons.
+
+`save_debug_images=true` writes only that request's annotated RGB and available
+depth image under ignored `debug/tray_img/`. Default requests and previews save
+no images. Missing depth or image-save failure is reported in diagnostics without
+discarding an otherwise valid tray pose. Simulate Trigger does not archive images.
+
+## Headless Tray Detect
+
+Manually deploy exactly one `tray_teach_*.yaml` and its same-stem `.pt` into flat
+root `runtime_teach/`. Keep the exact camera calibration named/hash-bound by the
+YAML under root `calibration/`. No Item/Bin Teach file is needed by Tray Detect;
+its complete pair may coexist with their files in the shared deployment folder.
+The Item/controller catalog still requires its own Item pair and Bin YAML, and
+now allows a complete optional tray pair. Missing/duplicate tray files, mismatched
+stems, unknown prefixes, unsupported extensions and symlinks fail visibly.
+
+```bash
+source scripts/source_ros_workspace.bash
+ros2 launch tray_perception tray_detect.launch.py
+```
+
+Starting this dedicated read-only process explicitly trusts the deployed model.
+It loads the pair once, connects the profile's calibrated prefix, waits boundedly
+for fresh calibrated RGB/TF, and arms automatically. There are no file/trust/arming
+launch arguments, latest-calibration search, `.env` keys or automatic deployment.
+Headless inference is request-driven only; there are no GUI, voxel or selected-TF
+publishers and no continuous image saving. Files are pinned until restart; source
+changes/fatal worker failure stop the process, with no reload/retry/restart loop.
+Do not run it while Tray Teach is Armed. An unarmed teaching GUI may still preview.

@@ -25,17 +25,21 @@ from item_perception_yolo.platform_teach_core import (
 
 from .core import EventLogger, load_profile, validate_plane, validate_preview
 from .rviz import TrayRvizPreview
+from .requests import TrayRequests
 
 
 class TrayTeachNode(Node):
-    def __init__(self):
-        super().__init__("tray_teach")
+    def __init__(self, *, deployment=False):
+        super().__init__("tray_detect" if deployment else "tray_teach")
+        self.deployment = deployment
         self.root = workspace_root()
         load_robot_lan1_ip(self.root)
-        self.events = EventLogger(self.root)
+        self.events = EventLogger(self.root, self.get_name())
         self.native = NativeClient(self.events, worker_package="tray_perception",
                                    worker_executable="tray_worker")
         self.lock = threading.RLock()
+        self.work_lock = threading.RLock()
+        self.yolo_enabled = False
         self.generation = 0
         self.connection = 0
         self.camera_prefix = None
@@ -48,17 +52,20 @@ class TrayTeachNode(Node):
         self.camera_status = "Enter a camera prefix and Connect RGB"
         self.tf_buffer = Buffer(cache_time=Duration(seconds=15))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=False)
-        self.broadcaster = TransformBroadcaster(self)
-        self.rviz = TrayRvizPreview(self)
+        self.broadcaster = None if deployment else TransformBroadcaster(self)
+        self.rviz = None if deployment else TrayRvizPreview(self)
+        self.requests = TrayRequests(self)
         self.create_timer(.2, self._tick)
-        self.events.record("INFO", "started", "Tray Teach started; read-only, no command clients")
+        self.events.record("INFO", "started", f"{self.get_name()} started; read-only, no commands")
 
     def invalidate(self, reason="Tray settings or sources changed"):
         with self.lock:
             self.generation += 1
             self.selected = None
             self._published_key = None
-        self.rviz.invalidate(reason)
+        self.requests.disarm(reason)
+        if self.rviz is not None:
+            self.rviz.invalidate(reason)
 
     def apply_camera(self, path):
         camera = load_camera_calibration(Path(path), root=self.root)
@@ -266,12 +273,14 @@ class TrayTeachNode(Node):
                            max_error_mm=self.plane["max_error_mm"])
         return self.plane
 
-    def preview(self, settings=None, *, generation):
-        view = self.raw_snapshot()
+    def preview(self, settings=None, *, generation, view=None, visualize=True, deadline=None):
+        supplied = view is not None
+        view = self.raw_snapshot() if view is None else view
         if view["generation"] != generation:
             raise ValueError("Tray preview was invalidated before processing")
         try:
-            view = self.snapshot(view=view)
+            if not supplied:
+                view = self.snapshot(view=view)
         except (ValueError, OSError, TransformException) as exc:
             view["metric_error"] = str(exc)
         try:
@@ -297,7 +306,8 @@ class TrayTeachNode(Node):
                 raise ValueError("Load a matching YOLO model first")
             request.update(operation="tray_preview", settings=settings,
                            model={**model, "yolo": settings["yolo"]})
-        result, pixels = self.native.call(request, rgb["rgb"], timeout=10)
+        remaining = 10 if deadline is None else max(.001, deadline - time.monotonic())
+        result, pixels = self.native.call(request, rgb["rgb"], timeout=remaining)
         fields = {"state", "width", "height", "error"} if settings is None else {
             "state", "width", "height", "count", "detections", "selected", "reason",
             "inference_ms"}
@@ -344,7 +354,10 @@ class TrayTeachNode(Node):
                     raise ValueError("Duplicate or excess detections")
             except (ValueError, TypeError, KeyError) as exc:
                 raise RuntimeError(f"Invalid native tray detections: {exc}") from exc
-        visuals = self.visuals(view, result.get("detections", []), cloud=context is not None)
+        visuals = (self.visuals(view, result.get("detections", []),
+                                cloud=context is not None and not self.deployment,
+                                deadline=deadline) if visualize else
+                   {"depth_overlay": b"", "samples": [], "cloud": None})
         self._check_snapshot(view, calibrated=context is not None)
         with self.lock:
             if view["generation"] != self.generation:
@@ -365,7 +378,7 @@ class TrayTeachNode(Node):
             else:
                 self.rviz.hold(view["metric_error"] or view["depth_error"] or "No valid voxels")
 
-    def visuals(self, view, detections, *, cloud, pixels=()):
+    def visuals(self, view, detections, *, cloud, pixels=(), deadline=None):
         rgb, depth = view["rgb"], view["depth"]
         if depth is None:
             return {"depth_overlay": b"", "samples": [], "cloud": None}
@@ -373,7 +386,7 @@ class TrayTeachNode(Node):
             "operation": "tray_visuals", "width": rgb["width"], "height": rgb["height"],
             "camera_context": view["camera_context"], "cloud": cloud,
             "detections": detections, "pixels": list(pixels)}, rgb["rgb"] + depth["depth"],
-            timeout=10)
+            timeout=10 if deadline is None else max(.001, deadline - time.monotonic()))
         size = rgb["width"] * rgb["height"] * 3
         if (set(result) != {"state", "width", "height", "point_count", "samples"}
                 or result["width"] != rgb["width"] or result["height"] != rgb["height"]
@@ -411,7 +424,7 @@ class TrayTeachNode(Node):
         return result
 
     def load_saved(self, path):
-        profile = load_profile(path, self.root)
+        profile = load_profile(path, self.root, deployment=self.deployment)
         camera_path = self.root / "calibration" / profile["camera_calibration"]["filename"]
         camera = load_camera_calibration(camera_path, root=self.root)
         if camera.sha256 != profile["camera_calibration"]["sha256"]:
@@ -434,6 +447,9 @@ class TrayTeachNode(Node):
             self.fatal_error = "Tray native worker exited; restart the node"
             self.native.failed = True
             self.events.record("FATAL", "worker_exit", self.fatal_error, code=process.returncode)
+        self.requests.tick()
+        if self.rviz is None:
+            return
         if self.native.failed or self.fatal_error:
             self.rviz.invalidate("Tray native worker failed")
         elif self.rviz.displayed is not None:

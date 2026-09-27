@@ -5,6 +5,10 @@ Automatic camera calibration is a separate direct-command maintenance exception;
 the controller has no calibration action or CALIBRATING state. Rule **118** requires keeping this document
 current with future controller changes.
 
+Deployment catalog review: **2026-09-27**, against **`d301221`** plus diary rule
+**140**. Complete optional Tray Teach pairs may coexist with Item/Bin deployment;
+controller sequencing, states and motion remain unchanged.
+
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
 them. The tables also describe the behavior without a diagram renderer.
@@ -61,6 +65,10 @@ then enters **INACTIVE**. Invalid deployment terminates startup; it does not
 invent a usable configuration or start an indefinite retry. Headless selection
 is immutable until restart. GUI configuration can be replaced from idle,
 unheld UNCONFIGURED, INACTIVE or READY; invalid replacement preserves the old one.
+
+The catalog permits a complete optional Tray Teach YAML/model pair for the
+separate Tray Detect consumer. Controller configuration still selects the Item
+pair and Bin YAML only; it has no tray request client or placement action yet.
 
 Startup order: validate ownership/feedback → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →

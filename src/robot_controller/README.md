@@ -35,6 +35,10 @@ Teach YAML/paired `.pt` plus one Bin Teach YAML from the flat root
 by `item_teach_` and `bin_teach_` filename prefix; Item YAML/PT must have the
 same stem. It still remains `INACTIVE` until Startup:
 
+A complete optional `tray_teach_*.yaml`/same-stem `.pt` pair may coexist in the
+catalog for Tray Detect. The controller still loads only Item/Bin inputs and has
+no tray-placement action or tray-service client in this change.
+
 Missing Item YAML, Item model and Bin YAML inputs are reported separately.
 Duplicate errors list the conflicting filenames. Manual or external deployment
 must finish one complete visible set before launch; replacement requires stopping
