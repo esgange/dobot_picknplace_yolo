@@ -5693,6 +5693,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   offline-transfer milestone claimed. Restart Item Teach to load the change;
   no RViz restart is required.
 
+### 2026-09-27 — Persistent RViz voxels with a five-second grey stale state
+
+- Rule 136 keeps the latest cloud visible indefinitely with zero RViz decay,
+  replacing its colors with grey after five seconds without new validated voxel
+  data. A distinct validated snapshot replaces the cloud and restores its
+  original colors. Repeated/frozen RGB/depth snapshots do not reset the timer or
+  restore colors. Use monotonic time since the last distinct cloud publication;
+  keep original source timestamps and report source age plus refresh age.
+- Retain geometry through input gaps, unavailable/empty results and slow work.
+  Source/settings/CameraInfo invalidation, terminal failure and orderly exit
+  grey the existing cloud immediately instead of deleting it, superseding rule
+  134's hard clearing. Suspend candidate markers/TF during acquisition gaps and
+  while grey until a new validated snapshot arrives. These retained clouds are
+  visualization only and cannot satisfy a production pose request.
+- Use reliable transient-local depth-one cloud QoS. Intentional vendor
+  integration patch: match that QoS in the canonical `dobot_rviz` display so a
+  late viewer receives the current colored or grey cloud while Item Teach runs.
+  Keep zero decay, 10 mm cells/boxes, bounded 1 Hz fresh updates and text-free
+  pose axes. Publish a grey transition once; do not accumulate cloud history or
+  repeatedly resend the same cloud. The bounded cache is in memory, not on disk.
+  No driver, controller/FSM, hardware, headless inference/image-saving, schema
+  or configuration-key changes.
+- Validation: Item Perception and Dobot RViz symlink builds and changed-file
+  ament_flake8 pass; all 442 Item Perception tests pass. The 17 visualization
+  regressions cover the five-second transition, immutable geometry/source stamp,
+  duplicate-frame rejection, fresh color recovery, input gaps, invalidation,
+  orderly clear and no repeated grey publications. An isolated local ROS domain
+  with synthetic points confirms
+  that a subscriber created after publication receives only the latest cached
+  grey cloud, preserving geometry and source stamp. The installed RViz YAML has
+  zero decay, 10 mm boxes and matching reliable/transient-local depth-one QoS.
+  No physical hardware launch/command, operator-model execution or artifact edit;
+  no offline-transfer milestone claimed. Restart Item Teach and reload the
+  canonical RViz configuration (or restart the viewer) to apply the change.
+
 ### Future entry template
 
 ```text

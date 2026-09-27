@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from rclpy.time import Time
+from rclpy.qos import DurabilityPolicy, ReliabilityPolicy
 from sensor_msgs.msg import PointField
 from visualization_msgs.msg import Marker
 
@@ -56,6 +57,9 @@ def fresh(node, clock):
 
 def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):
     visual, node, clock = preview
+    qos = node.create_publisher.call_args_list[0].args[2]
+    assert qos.depth == 1 and qos.reliability == ReliabilityPolicy.RELIABLE
+    assert qos.durability == DurabilityPolicy.TRANSIENT_LOCAL
     visual.publish(snapshot())
     cloud = visual.cloud_publisher.publish.call_args.args[0]
     assert cloud.header.frame_id == "base_link" and cloud.header.stamp.sec == 100
@@ -82,14 +86,64 @@ def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):
     clock[0] += .9
     fresh(node, clock)
     visual.tick()
-    assert visual.cloud_publisher.publish.call_count == 2
+    assert visual.cloud_publisher.publish.call_count == 1  # Same frame never resets its age.
     assert visual.cloud_publisher.publish.call_args.args[0].header.stamp.sec == 100
     diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
     assert diagnostic["age_sec"] == 1.
+    clock[0] += 3.99
+    fresh(node, clock)
+    visual.tick()
+    assert visual.cloud_publisher.publish.call_count == 1  # Still colored before five seconds.
+    assert node.selected_pose_broadcaster.sendTransform.call_count == 3
+    clock[0] += 1.
+    fresh(node, clock)
+    visual.tick()
+    assert visual.cloud_publisher.publish.call_count == 2 and visual.displayed_grey
+    grey = visual.cloud_publisher.publish.call_args.args[0]
+    assert bytes(grey.data)[:12] == snapshot()["data"][:12]
+    assert int.from_bytes(bytes(grey.data)[12:], "little") == 0x808080
+    assert grey.width == 1 and grey.header.stamp.sec == 100
+    assert node.selected_pose_broadcaster.sendTransform.call_count == 3
+    assert snapshot()["data"] != bytes(grey.data)  # Original colors are not mutated.
+    diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert diagnostic["status"] == "stale_grey" and not diagnostic["candidates"]
+    assert diagnostic["refresh_age_sec"] == pytest.approx(5.99)
+    assert visual.marker_publisher.publish.call_args.args[0].markers[0].action == Marker.DELETEALL
+    clock[0] += 30.
+    fresh(node, clock)
+    visual.publish(snapshot())  # Reprocessing the same frozen frame cannot restore color.
+    assert visual.cloud_publisher.publish.call_count == 2  # Grey cloud remains indefinitely.
+    clock[0] += 1.
+    fresh(node, clock)
+    visual.publish({**snapshot(), "stamp_ns": node._image["stamp_ns"],
+                    "depth_stamp_ns": node._depth["stamp_ns"]})
+    assert visual.cloud_publisher.publish.call_count == 3 and not visual.displayed_grey
+    assert bytes(visual.cloud_publisher.publish.call_args.args[0].data) == snapshot()["data"]
+    diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert diagnostic["refresh_age_sec"] == 0.
+
+
+def test_clear_retains_geometry_without_poses_or_repeated_cloud_messages(preview):
+    visual, node, clock = preview
+    visual.publish(snapshot())
+    visual.clear("Teaching preview closed")
+    assert visual.current is None and visual.displayed_grey
+    grey = visual.cloud_publisher.publish.call_args.args[0]
+    assert grey.width == 1 and bytes(grey.data)[:12] == snapshot()["data"][:12]
+    assert visual.cloud_publisher.publish.call_count == 2
+    clock[0] += 60.
+    visual.clear("Teaching preview closed")
+    visual.tick()
+    assert visual.cloud_publisher.publish.call_count == 2
+    assert node.selected_pose_broadcaster.sendTransform.call_count == 1
+    diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert diagnostic["status"] == "stale_grey"
+    assert diagnostic["reason"] == "Teaching preview closed"
+    assert diagnostic["source_stamp_ns"] == snapshot()["stamp_ns"]
 
 
 @pytest.mark.parametrize("invalid", ["epoch", "camera", "intrinsics", "source", "worker", "fatal"])
-def test_invalidated_or_lost_inputs_clear_visualization(preview, invalid):
+def test_invalidated_inputs_keep_grey_cloud_and_clear_poses(preview, invalid):
     visual, node, clock = preview
     visual.publish(snapshot())
     clock[0] += 1.
@@ -108,7 +162,8 @@ def test_invalidated_or_lost_inputs_clear_visualization(preview, invalid):
         node.fatal_error = "Synthetic fatal feedback"
     visual.tick()
     assert visual.current is None
-    assert visual.cloud_publisher.publish.call_args.args[0].width == 0
+    assert visual.cloud_publisher.publish.call_args.args[0].width == 1
+    assert visual.displayed_grey
     assert visual.marker_publisher.publish.call_args.args[0].markers[0].action == Marker.DELETEALL
     assert node.selected_pose_broadcaster.sendTransform.call_count == 1
 
@@ -146,7 +201,8 @@ def test_acquisition_gap_retains_cloud_until_valid_replacement(preview, gap):
     fresh(node, clock)
     node._color_info = first["camera"]
     visual.tick()
-    assert visual.current is first and visual.cloud_publisher.publish.call_count == 1
+    assert visual.current is first and visual.cloud_publisher.publish.call_count == 2
+    assert visual.displayed_grey
     assert node.selected_pose_broadcaster.sendTransform.call_count == 1
     # Fresh input alone never relabels an old observation as a new result.
     clock[0] += 1.
@@ -157,14 +213,15 @@ def test_acquisition_gap_retains_cloud_until_valid_replacement(preview, gap):
     assert visual.current is second and not visual.waiting_reason
     assert node.selected_pose_broadcaster.sendTransform.call_count == 2
     clouds = [call.args[0] for call in visual.cloud_publisher.publish.call_args_list]
-    assert len(clouds) == 2 and all(cloud.width == 1 for cloud in clouds)
+    assert len(clouds) == 3 and all(cloud.width == 1 for cloud in clouds)
     assert bytes(clouds[-1].data) == second["data"]
     assert clouds[-1].header.stamp.sec == int(clock[0])
     visual.hold("Another acquisition gap")
     node.arm_epoch += 1
     visual.tick()
-    assert visual.current is None  # Retention never survives a source/settings reset.
-    assert visual.cloud_publisher.publish.call_args.args[0].width == 0
+    assert visual.current is None  # Pose eligibility never survives a source/settings reset.
+    assert visual.cloud_publisher.publish.call_args.args[0].width == 1
+    assert visual.displayed_grey
 
 
 def test_exact_observation_used_without_second_yolo_or_production_request(preview):

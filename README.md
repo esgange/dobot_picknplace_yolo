@@ -485,12 +485,15 @@ no extra YOLO inference, new executor, backlog or automatic image saving. Slow
 processing lowers the update rate. Each published result remains a snapshot;
 the teaching view and diagnostics report its age. RViz has no item text or
 number overlays; confidence and other candidate details remain in diagnostics.
-The last valid cloud stays visible until a valid replacement arrives, including
-RGB/depth synchronization gaps, missing inputs and slow processing. Diagnostics
-retain its original timestamp/age; candidate markers and TF pause during gaps.
-Source/settings/CameraInfo changes, terminal failure or closing Item Teach still
-clear the cloud. RViz expires stopped frames after 2.5 seconds. These frame-local
-IDs are not tracked identities or production service results. Headless Item
+The latest cloud stays visible indefinitely and turns **grey after 5 seconds**
+without new validated voxel data. A fresh snapshot replaces it and restores its
+colors; repeated/frozen frames cannot reset that timer. The reliable depth-one
+cache also supplies the cloud to RViz viewers opened while Item Teach runs.
+Diagnostics retain original source timestamps and report source/refresh ages;
+candidate markers and TF pause during gaps or while grey. Source/settings/
+CameraInfo changes, terminal failure or orderly exit grey the cloud immediately.
+RViz uses zero cloud decay and expires stopped TF frames after 2.5 seconds.
+These frame-local IDs are not tracked identities or production service results. Headless Item
 Detect stays request-driven, publishes none of these visualization topics and
 saves RGB/depth images only when `GetItemPoses.save_debug_images=true`.
 RGB keeps mask shading and one mask-derived rectangle (or the native oriented

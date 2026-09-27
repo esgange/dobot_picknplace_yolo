@@ -147,9 +147,10 @@ executor or automatic image saving.
 | `String` JSON | `/item_teach/rviz_diagnostics` | Source timestamps/age, voxel count, every candidate and rejection reason |
 
 The canonical `dobot_rviz` configuration enables the cloud and marker displays.
-Cloud transport is best-effort, depth one; markers/diagnostics are reliable,
-depth one. Colors use both registered-depth and RGB distortion models. Complete
-platform/camera transforms preserve station tilt and height. Only visualization
+Cloud transport is reliable, transient-local, depth one; markers/diagnostics
+are reliable, volatile, depth one. Colors use both registered-depth and RGB
+distortion models. Complete platform/camera transforms preserve station tilt
+and height. Only visualization
 points are voxelized: pose depth sampling stays full resolution and retains
 class, dimensions, green/light-blue borders, MAD/quality and robot-camera
 clearance checks. All valid poses up to YOLO `max_detections` are included;
@@ -161,13 +162,19 @@ run and the view explains which pose prerequisites are missing.
 These are snapshots, also retained while the teaching view is frozen. Item rank,
 class, confidence and snapshot age are not overlaid as RViz text; candidate
 details and age remain available in diagnostics and the teaching view.
-The last valid cloud stays visible until its replacement arrives. RGB/depth
+RViz retains the latest cloud indefinitely. After five seconds without a new
+validated cloud, Item Teach replaces its colors with grey while keeping the
+geometry and source timestamps. A fresh snapshot replaces it and restores its
+colors; repeated/frozen snapshots cannot reset the refresh age. RGB/depth
 loss, synchronization gaps, a busy worker or an empty/unavailable next cloud
 never publish an intermediate empty cloud. During these gaps, diagnostics report
-`retained_cloud` with its original source timestamp, increasing age and reason;
-candidate markers/TF pause until a newly validated snapshot arrives. Changed
-CameraInfo, source/settings changes, terminal failure or exit still clear the
-cloud. RViz keeps **Decay Time = 0** (latest cloud) and **Size (m) = 0.010**.
+`retained_cloud`, then `stale_grey`, with original source timestamps, source and
+refresh ages, and the reason. Candidate markers/TF pause during gaps and while
+grey until a newly validated snapshot arrives. Changed CameraInfo, source/
+settings changes, terminal failure or orderly exit grey the cloud immediately.
+RViz uses **Decay Time = 0** and **Size (m) = 0.010**. Its reliable transient-local
+depth-one subscription receives the cached cloud even when opened after the
+last publication, while Item Teach runs. This cache is in memory, not on disk.
 The canonical RViz TF timeout
 is 2.5 seconds; other TF consumers may keep historical transforms. No cloud or
 pose preview can satisfy a production request. Headless Item Detect publishes

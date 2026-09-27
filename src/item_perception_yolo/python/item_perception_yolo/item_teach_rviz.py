@@ -8,7 +8,7 @@ import time
 import numpy as np
 from geometry_msgs.msg import Point
 from rclpy.duration import Duration
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
@@ -19,6 +19,7 @@ from .item_detector import validate_pair, validate_candidates
 
 
 PERIOD_SEC = 1.0
+STALE_AFTER_SEC = 5.0
 CLOUD_TOPIC = "/item_teach/voxel_cloud"
 MARKER_TOPIC = "/item_teach/valid_items"
 DIAGNOSTIC_TOPIC = "/item_teach/rviz_diagnostics"
@@ -43,9 +44,12 @@ class TeachingRvizPreview:
         self.lock = threading.RLock()
         self.current = None
         self.displayed = None
+        self.displayed_at = None
+        self.displayed_grey = False
         self.waiting_reason = ""
         self.next_publish = 0.
-        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                         durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.cloud_publisher = node.create_publisher(PointCloud2, CLOUD_TOPIC, qos)
         self.marker_publisher = node.create_publisher(MarkerArray, MARKER_TOPIC, 1)
         self.diagnostic_publisher = node.create_publisher(String, DIAGNOSTIC_TOPIC, 1)
@@ -161,22 +165,45 @@ class TeachingRvizPreview:
             self.waiting_reason = reason
 
     def clear(self, reason="Teaching preview cleared"):
+        """Invalidate poses immediately, retaining an explicitly untrusted grey cloud."""
         with self.lock:
-            if self.current is None:
-                return
             self.current = None
-            self.displayed = None
-            self.waiting_reason = ""
-            stamp = self.node.get_clock().now().to_msg()
-            self.cloud_publisher.publish(cloud_message(b"", 0, stamp))
-            self.marker_publisher.publish(MarkerArray(markers=[Marker(action=Marker.DELETEALL)]))
-            self.diagnostic_publisher.publish(String(data=json.dumps({"status": reason})))
+            self._grey_cloud(reason)
+            self._retained_status()
+
+    def _grey_cloud(self, reason):
+        self.waiting_reason = reason
+        if self.displayed is None or self.displayed_grey:
+            return
+        sample = self.displayed
+        data = bytearray(sample["data"])
+        np.frombuffer(data, "<u4").reshape(-1, 4)[:, 3] = 0x808080
+        self.cloud_publisher.publish(cloud_message(
+            bytes(data), sample["point_count"], Time(nanoseconds=sample["stamp_ns"]).to_msg()))
+        self.displayed_grey = True
+        self.marker_publisher.publish(MarkerArray(markers=[Marker(action=Marker.DELETEALL)]))
+
+    def _retained_status(self):
+        sample = self.displayed
+        if sample is None:
+            return
+        age = max(0., (self.node.get_clock().now().nanoseconds - sample["stamp_ns"]) / 1e9)
+        self.diagnostic_publisher.publish(String(data=json.dumps({
+            "status": "stale_grey" if self.displayed_grey else "retained_cloud",
+            "reason": self.waiting_reason, "source_stamp_ns": sample["stamp_ns"],
+            "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
+            "refresh_age_sec": max(0., time.monotonic() - self.displayed_at),
+            "voxel_size_mm": 10, "point_count": sample["point_count"],
+            "candidates": [], "rejected": [], "pose_error": self.waiting_reason})))
 
     def tick(self):
-        """Retain clouds between valid snapshots; clear only invalidated source state."""
+        """Keep the cached cloud, greying it when refresh stops or its sources invalidate."""
         with self.lock:
             sample, node = self.current, self.node
             if sample is None:
+                if time.monotonic() >= self.next_publish:
+                    self.next_publish = time.monotonic() + PERIOD_SEC
+                    self._retained_status()
                 return
             if (sample["epoch"] != node.arm_epoch
                     or sample["camera_generation"] != node._camera_generation
@@ -209,15 +236,17 @@ class TeachingRvizPreview:
                         return
             source_stamp = Time(nanoseconds=sample["stamp_ns"]).to_msg()
             age = max(0., (now.nanoseconds - sample["stamp_ns"]) / 1e9)
-            if self.waiting_reason:
-                self.diagnostic_publisher.publish(String(data=json.dumps({
-                    "status": "retained_cloud", "reason": self.waiting_reason,
-                    "source_stamp_ns": sample["stamp_ns"],
-                    "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
-                    "voxel_size_mm": 10, "point_count": sample["point_count"],
-                    "candidates": [], "rejected": [], "pose_error": self.waiting_reason})))
+            new_cloud = self.displayed is None or any(
+                sample[key] != self.displayed[key]
+                for key in ("epoch", "camera_generation", "stamp_ns", "depth_stamp_ns"))
+            if not new_cloud and (self.displayed_grey
+                                  or time.monotonic() - self.displayed_at >= STALE_AFTER_SEC):
+                self._grey_cloud(self.waiting_reason or "No refreshed voxel data for 5 seconds")
+                self._retained_status()
                 return
-            cloud = cloud_message(sample["data"], sample["point_count"], source_stamp)
+            if self.waiting_reason:
+                self._retained_status()
+                return
             markers = [Marker(action=Marker.DELETEALL)]
             transforms = []
             for rank, candidate in enumerate(sample["candidates"], 1):
@@ -244,12 +273,18 @@ class TeachingRvizPreview:
                     markers.append(marker)
             if transforms:
                 node.selected_pose_broadcaster.sendTransform(transforms)
-            self.cloud_publisher.publish(cloud)
-            self.displayed = sample
+            # The reliable depth-one cache supplies this cloud to late-joining RViz viewers.
+            if new_cloud:
+                self.cloud_publisher.publish(
+                    cloud_message(sample["data"], sample["point_count"], source_stamp))
+                self.displayed = sample
+                self.displayed_at = time.monotonic()
+                self.displayed_grey = False
             self.marker_publisher.publish(MarkerArray(markers=markers))
             self.diagnostic_publisher.publish(String(data=json.dumps({
                 "status": "snapshot", "source_stamp_ns": sample["stamp_ns"],
                 "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
+                "refresh_age_sec": max(0., time.monotonic() - self.displayed_at),
                 "voxel_size_mm": 10, "point_count": sample["point_count"],
                 "candidates": sample["candidates"], "rejected": sample["rejected"],
                 "pose_error": sample["pose_error"]}, allow_nan=False)))

@@ -61,8 +61,13 @@ Item Teach has calibrated inputs; the viewer does not start a detector, load
 models or save images. Candidate frames use `item_teach_live_candidate_N`.
 TF frames expire after 2.5 seconds without updates. This is an intentional
 project integration patch to the vendored RViz configuration only.
-The cloud's **Decay Time = 0** retains the latest message until replacement;
-Item Teach keeps the last valid cloud through transient acquisition gaps.
+The cloud's **Decay Time = 0** keeps the latest cloud until replacement.
+Matching **Reliable**, **Transient Local**, **Keep Last**, **Depth = 1** QoS
+supplies the cached cloud even when RViz opens after its publication, while Item
+Teach runs. Item Teach turns it grey after five seconds without new validated
+voxel data, or immediately on invalidation or orderly exit. A fresh snapshot
+replaces it and restores its colors; repeated/frozen frames cannot reset its age.
+Reload the canonical RViz configuration to apply this QoS to an existing viewer.
 Use **Size (m) = 0.010** when updating an already-open RViz display manually.
 
 Useful read-only checks:

@@ -43,8 +43,10 @@ The canonical RViz viewer also displays Item Teach's default 1 Hz colored 10 mm
 scene voxel cloud and all valid detected-item pose frames/markers. Complete the
 class, geometry, Home and planning settings for poses; missing settings have a
 visible reason. Pose sampling uses full-resolution depth. Slow inference reduces
-the rate without queuing work; the last valid cloud stays visible through input
-gaps until its replacement arrives. Frozen views retain labelled snapshots. Headless
+the rate without queuing work. The latest cloud stays visible indefinitely,
+turning grey after five seconds without new validated voxel data; a fresh
+snapshot replaces it and restores its colors. Frozen frames cannot reset that
+timer. Late RViz viewers receive the cached cloud while Item Teach runs. Headless
 Item Detect has no continuous RViz output and saves images only when a pose
 request sets `save_debug_images=true`.
 Use **Browse…** to select the platform, bin-camera and robot-camera calibration

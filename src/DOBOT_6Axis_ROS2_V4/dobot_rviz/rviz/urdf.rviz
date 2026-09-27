@@ -27,8 +27,8 @@ Visualization Manager:
       Value: true
       Topic:
         Value: /item_teach/voxel_cloud
-        Reliability Policy: Best Effort
-        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Depth: 1
       Position Transformer: XYZ

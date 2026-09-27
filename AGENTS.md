@@ -375,6 +375,17 @@ and snapshot age). Keep colored voxels, pose-axis markers and TF; retain all
 candidate details and ages in diagnostics. No detection, pose, snapshot-retention
 or headless behavior changes. This supersedes rule 133's RViz text labels only.
 
+Rule 136 keeps the latest RViz voxel cloud indefinitely with zero decay and a
+reliable, transient-local, depth-one publisher/subscriber. After five seconds
+without a new validated cloud, retain its geometry but turn it grey until a new
+snapshot replaces it. Source/settings invalidation, terminal failure and orderly
+exit grey it immediately instead of clearing it. Suspend candidate markers/TF
+while waiting or grey; retain original source timestamps and report refresh age.
+Repeated/frozen snapshots cannot reset that age or restore colors. Keep 10 mm
+voxels, 1 Hz fresh updates and no text overlays; late viewers receive the cached
+cloud while Item Teach runs. This supersedes rule 134's hard cloud clearing only;
+retained visualization cannot satisfy a production pose request.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
