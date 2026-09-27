@@ -6,11 +6,51 @@ import time
 
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
+from tf2_ros import TransformException
 
 from item_perception_yolo.item_teach_core import file_sha256
 from item_perception_yolo.runtime_teach import runtime_tray_catalog
 from .node import TrayTeachNode
 from .requests import REQUEST_TIMEOUT
+
+
+class TrayVoxelLoop:
+    """Best-effort 1 Hz scene refresh on the main thread, sharing the native worker."""
+
+    def __init__(self, node):
+        self.node = node
+        self.next_refresh = 0.
+
+    def tick(self):
+        node = self.node
+        if time.monotonic() < self.next_refresh:
+            return
+        if node.requests.busy or not node.work_lock.acquire(blocking=False):
+            node.rviz.hold("Waiting for tray pose processing")
+            return
+        try:
+            if node.requests.busy:
+                return
+            self.next_refresh = time.monotonic() + 1.
+            view = node.snapshot(depth_required=True)
+            previous = node.rviz.displayed
+            if previous is not None and previous["connection"] == view["connection"] and (
+                    view["rgb"]["stamp_ns"] <= previous["stamp_ns"] or
+                    view["depth"]["stamp_ns"] <= previous["depth_stamp_ns"]):
+                node.rviz.hold("Waiting for a new RGB/depth observation")
+                return
+            # Yield before native work if a request arrived during exact-time TF acquisition.
+            if node.requests.busy:
+                node.rviz.hold("Waiting for tray pose processing")
+                return
+            visuals = node.visuals(view, [], cloud=True)
+            with node.lock:
+                node._check_snapshot(view)
+                node.rviz.accept(visuals["cloud"])
+        except (ValueError, OSError, TransformException) as exc:
+            node.rviz.hold(str(exc))
+        finally:
+            node.work_lock.release()
 
 
 def configure(node):
@@ -36,7 +76,9 @@ def main(args=None):
         thread = threading.Thread(target=executor.spin, daemon=True)
         thread.start()
         configure(node)
+        voxels = TrayVoxelLoop(node)
         while rclpy.ok() and not node.fatal_error:
+            voxels.tick()
             time.sleep(.1)
         if node.fatal_error:
             raise RuntimeError(node.fatal_error)

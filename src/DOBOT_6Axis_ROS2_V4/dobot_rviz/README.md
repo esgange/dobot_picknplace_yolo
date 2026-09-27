@@ -79,6 +79,13 @@ tray plane. Only the selected tray has a TF (`tray_teach_selected_tray`), and
 there are no numeric tray overlays. This is a project viewer integration patch;
 the viewer starts no teaching nodes and sends no hardware commands.
 
+A separate enabled **Tray Detect - 10 mm colored voxels** display subscribes to
+`/tray_detect/voxel_cloud` with identical size, retention and QoS. Headless Tray
+Detect refreshes the calibrated scene at up to 1 Hz without background YOLO or
+tray-pose TF; pose inference remains request-driven. Reload this installed
+configuration via **File → Open Config** in an already-running RViz to add the
+display. Cloud status is available on `/tray_detect/rviz_diagnostics`.
+
 Useful read-only checks:
 
 ```bash

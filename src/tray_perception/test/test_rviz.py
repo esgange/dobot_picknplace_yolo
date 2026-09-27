@@ -19,12 +19,12 @@ def sample(stamp=100, connection=1):
             "depth_stamp_ns": stamp, "connection": connection, "detections": []}
 
 
-@pytest.fixture
-def cloud(monkeypatch):
+@pytest.fixture(params=["/tray_teach", "/tray_detect"])
+def cloud(monkeypatch, request):
     now = [10.]
     monkeypatch.setattr(rviz.time, "monotonic", lambda: now[0])
     node = SimpleNamespace(create_publisher=MagicMock(side_effect=lambda *_: MagicMock()))
-    return rviz.TrayRvizPreview(node), now
+    return rviz.TrayRvizPreview(node, topic_prefix=request.param), now
 
 
 def test_voxels_are_latched_in_base_with_original_timestamp(cloud):
@@ -75,7 +75,8 @@ def test_duplicates_empty_clouds_and_invalidation_cannot_restore_color(cloud):
     assert preview.grey and preview.publisher.publish.call_count == 4
 
 
-def test_canonical_rviz_has_independent_matching_tray_display():
+@pytest.mark.parametrize("prefix", ["/tray_teach", "/tray_detect"])
+def test_canonical_rviz_has_independent_matching_tray_display(prefix):
     from pathlib import Path
     import yaml
     root = Path(__file__).parents[3]
@@ -83,15 +84,17 @@ def test_canonical_rviz_has_independent_matching_tray_display():
     config = yaml.safe_load(path.read_text())
     displays = config["Visualization Manager"]["Displays"]
     cloud = next(d for d in displays if d.get("Topic", {}).get("Value") ==
-                 "/tray_teach/voxel_cloud")
+                 f"{prefix}/voxel_cloud")
     assert cloud["Enabled"] and cloud["Decay Time"] == 0 and cloud["Size (m)"] == .01
     assert cloud["Topic"]["Durability Policy"] == "Transient Local"
     assert cloud["Topic"]["Reliability Policy"] == "Reliable" and cloud["Topic"]["Depth"] == 1
 
 
-def test_late_ros_subscriber_receives_latest_grey_cloud():
+@pytest.mark.parametrize("prefix", ["/tray_teach", "/tray_detect"])
+def test_late_ros_subscriber_receives_latest_grey_cloud(prefix):
     script = '''
         import struct
+        import sys
         import time
         import rclpy
         from rclpy.node import Node
@@ -102,7 +105,7 @@ def test_late_ros_subscriber_receives_latest_grey_cloud():
         rclpy.init()
         sender, receiver = Node("tray_voxel_test_sender"), Node("tray_voxel_test_receiver")
         try:
-            preview = TrayRvizPreview(sender)
+            preview = TrayRvizPreview(sender, topic_prefix=sys.argv[1])
             preview.accept({"data": struct.pack("<fffI", .1, .2, .3, 0x112233),
                             "point_count": 1, "stamp_ns": 123, "depth_stamp_ns": 124,
                             "connection": 1, "detections": []})
@@ -110,7 +113,7 @@ def test_late_ros_subscriber_receives_latest_grey_cloud():
             received = []
             qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
-            receiver.create_subscription(PointCloud2, "/tray_teach/voxel_cloud",
+            receiver.create_subscription(PointCloud2, sys.argv[1] + "/voxel_cloud",
                                          received.append, qos)
             deadline = time.monotonic() + 5
             while not received and time.monotonic() < deadline:
@@ -125,7 +128,7 @@ def test_late_ros_subscriber_receives_latest_grey_cloud():
             sender.destroy_node()
             rclpy.shutdown()
     '''
-    result = subprocess.run([sys.executable, "-c", textwrap.dedent(script)],
+    result = subprocess.run([sys.executable, "-c", textwrap.dedent(script), prefix],
                             env={**os.environ, "ROS_DOMAIN_ID": "201", "ROS_LOCALHOST_ONLY": "1"},
                             capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr

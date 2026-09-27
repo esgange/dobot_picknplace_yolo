@@ -153,6 +153,12 @@ ROI, and requires synchronized RGB/depth/CameraInfo and timestamped calibrated T
 It needs neither a plane nor YOLO/classes/dimensions. Pose measurements still use
 full-resolution polygons and the taught plane, independently of live depth.
 
+Headless Tray Detect publishes the same scene voxels on `/tray_detect/voxel_cloud`
+with `/tray_detect/rviz_diagnostics`. Its separate enabled canonical RViz display
+is **Tray Detect - 10 mm colored voxels**. Both nodes use the same cloud geometry,
+timestamps, QoS and retention rules; their topics remain independent when an
+unarmed teaching GUI runs alongside headless detection.
+
 If Item Teach voxels are visible but Tray Teach voxels are absent, check that
 RViz has the enabled **Tray Teach - 10 mm colored voxels** display on
 `/tray_teach/voxel_cloud`. An already-running RViz does not reload changed files
@@ -252,7 +258,16 @@ Starting this dedicated read-only process explicitly trusts the deployed model.
 It loads the pair once, connects the profile's calibrated prefix, waits boundedly
 for fresh calibrated RGB/TF, and arms automatically. There are no file/trust/arming
 launch arguments, latest-calibration search, `.env` keys or automatic deployment.
-Headless inference is request-driven only; there are no GUI, voxel or selected-TF
-publishers and no continuous image saving. Files are pinned until restart; source
+Headless YOLO inference is request-driven only; there is no GUI, selected-TF
+publication or continuous image saving. Scene voxels refresh at up to 1 Hz from
+fresh calibrated synchronized RGB/depth/exact-time TF, independently of pose
+requests. The main loop shares the existing single native worker and gives
+pending pose requests priority; no cloud backlog or extra executor thread is
+created. A request arriving during an active cloud calculation waits for that
+bounded calculation. Cloud processing never invokes YOLO or returns a cached
+pose. Missing depth/TF retains the old cloud and greys it after five seconds;
+missing depth alone does not block plane-based tray requests. Diagnostics report
+the blocking input, and advancing valid RGB/depth restore color. Files are pinned
+until restart; source
 changes/fatal worker failure stop the process, with no reload/retry/restart loop.
 Do not run it while Tray Teach is Armed. An unarmed teaching GUI may still preview.

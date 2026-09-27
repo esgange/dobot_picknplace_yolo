@@ -15,7 +15,7 @@ from item_perception_yolo.item_teach_rviz import cloud_message
 
 
 class TrayRvizPreview:
-    def __init__(self, node):
+    def __init__(self, node, *, topic_prefix="/tray_teach"):
         self.node = node
         self.lock = threading.RLock()
         self.displayed = None
@@ -25,8 +25,8 @@ class TrayRvizPreview:
         self.next_status = 0.
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.publisher = node.create_publisher(PointCloud2, "/tray_teach/voxel_cloud", qos)
-        self.diagnostics = node.create_publisher(String, "/tray_teach/rviz_diagnostics", 1)
+        self.publisher = node.create_publisher(PointCloud2, f"{topic_prefix}/voxel_cloud", qos)
+        self.diagnostics = node.create_publisher(String, f"{topic_prefix}/rviz_diagnostics", 1)
 
     def accept(self, snapshot):
         with self.lock:

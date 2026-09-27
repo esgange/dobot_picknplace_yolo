@@ -481,6 +481,18 @@ and single-tray ranking remain strict; service extents must be X=width/Y=length.
 Exact equal-edge ties use adjacent endpoint base XYZ. No additional TF targets,
 RViz numeric overlays, model executions, schema or hardware changes are added.
 
+Rule 144 adds default up-to-1-Hz colored scene voxels to headless Tray Detect on
+/tray_detect/voxel_cloud and status on /tray_detect/rviz_diagnostics, superseding
+rule 140's no-headless-RViz-publishers restriction only. Use calibrated synchronized
+RGB/depth/exact-time TF, the existing native worker and main loop; yield to pose
+requests without queuing work or adding executor threads. YOLO remains exclusively
+request-driven, with no background pose/TF or image saving. Retain 10 mm clouds
+indefinitely, grey after five seconds without fresh data or immediately on
+invalidation/failure/exit, and restore colors only with advancing RGB/depth stamps.
+Missing depth blocks only cloud refresh, not plane-based pose requests. Add a
+separate enabled canonical RViz display with reliable/transient-local depth-one
+QoS and zero decay. Keep strict deployment, schemas and controller behavior.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

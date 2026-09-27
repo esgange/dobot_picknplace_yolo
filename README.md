@@ -644,6 +644,12 @@ and receive one tray or an explicit no-tray result. Settings changes disarm.
 For request-driven headless use, deploy one tray YAML/model pair to `runtime_teach/`
 and run `ros2 launch tray_perception tray_detect.launch.py`. It loads the bound
 calibration and arms after fresh-input validation, without an Item Teach dependency.
+It also publishes calibrated scene voxels at up to 1 Hz on
+`/tray_detect/voxel_cloud`, with status on `/tray_detect/rviz_diagnostics`.
+Cloud refresh shares the native worker and yields to pose requests; YOLO still
+runs only on requests. The canonical RViz **Tray Detect - 10 mm colored voxels**
+display uses the same retention/greying behavior as Tray Teach. Reload the
+installed RViz configuration in an existing viewer to add this display.
 Run only one armed tray provider. Debug images are saved only when a request asks;
 controller placement remains future work. See [Tray Perception](src/tray_perception/README.md)
 for the complete

@@ -6110,6 +6110,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   operator-model execution, deployment copying or operator artifact changes.
   Physical validation and offline transfer remain unperformed.
 
+### 2026-09-27 — Headless Tray Detect scene voxels
+
+- Rule 144 supersedes rule 140's no-headless-RViz-publishers restriction. The
+  operator expects scene voxels while using headless Tray Detect, but that node
+  explicitly disabled visualization publishers and had no background cloud
+  refresh. Add `/tray_detect/voxel_cloud` and `/tray_detect/rviz_diagnostics`,
+  independently of the existing Tray Teach topics.
+- Refresh at up to 1 Hz after successful deployment loading/arming, using fresh
+  synchronized RGB/depth/CameraInfo and exact-time calibrated TF. Run cloud work
+  in the existing main loop with the existing single native worker; preserve
+  exactly two ROS executor threads. Skip while pose requests are pending/active
+  or the worker is occupied, recheck request priority after TF acquisition and
+  reject observations invalidated during processing. No backlog or extra worker.
+  An active bounded cloud calculation may delay a newly arriving request.
+- Reuse Tray Teach's native voxel generation and retained-cloud publisher:
+  averaged RGB at 10 mm voxel centroids in base_link, original observation stamps,
+  reliable/transient-local depth-one QoS, indefinite geometry retention and
+  greying after five seconds without a fresh replacement. Invalidation, terminal
+  failure and orderly shutdown grey immediately. Repeated RGB/depth stamps
+  cannot renew age or restore color; advancing valid frames restore it. Missing
+  depth/TF reports the input gap without clearing the last cloud or terminating
+  the detector. Pose requests still work without depth, using the taught plane.
+- YOLO remains exclusively request-driven. Background clouds perform no model
+  inference, pose generation, selected-tray TF publication or image saving.
+  Keep exact profile/model/calibration validation, manual runtime deployment,
+  strict schemas, debug-image opt-in and controller/hardware behavior unchanged.
+- Intentional viewer integration patch to the vendored `dobot_rviz` configuration:
+  add a separate enabled Tray Detect display with the correct topic, 10 mm boxes,
+  RGB8 colors, zero decay and retained QoS. Update its README and document
+  File → Open Config for existing viewers. Do not restart operator processes.
+- Validation: all 114 Tray Perception tests and all Dobot RViz package tests/checks
+  pass; both packages build with symlink install. Added coverage verifies 1 Hz
+  processing without YOLO, request priority, input-gap retention/greying/recovery,
+  duplicate and obsolete observations, worker failure propagation, the headless
+  publisher topics, both RViz displays and real ROS late subscribers on both
+  topics. Changed-file ament_flake8 and git diff --check pass. Read-only ROS graph
+  inspection found no running Tray Detect during this change; live operator
+  clouds were not tested. No hardware commands, operator-model execution or
+  operator artifact changes. Offline transfer remains unperformed.
+
 ### Future entry template
 
 ```text

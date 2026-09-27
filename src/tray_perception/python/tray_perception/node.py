@@ -53,7 +53,8 @@ class TrayTeachNode(Node):
         self.tf_buffer = Buffer(cache_time=Duration(seconds=15))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=False)
         self.broadcaster = None if deployment else TransformBroadcaster(self)
-        self.rviz = None if deployment else TrayRvizPreview(self)
+        self.rviz = TrayRvizPreview(
+            self, topic_prefix="/tray_detect" if deployment else "/tray_teach")
         self.requests = TrayRequests(self)
         self.create_timer(.2, self._tick)
         self.events.record("INFO", "started", f"{self.get_name()} started; read-only, no commands")
@@ -490,5 +491,5 @@ class TrayTeachNode(Node):
         self._published_key = (generation, source_stamp)
 
     def close(self):
-        self.invalidate("Tray Teach closed")
+        self.invalidate(f"{self.get_name()} closed")
         self.native.close()
