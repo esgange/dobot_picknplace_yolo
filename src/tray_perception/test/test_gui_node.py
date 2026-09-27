@@ -73,6 +73,8 @@ def test_settings_and_state_restore_without_loading_weights(window):
     profile_settings["yolo"]["image_size"] = 320
     window._fill_settings(profile_settings)
     window._refresh_preview_settings()
+    window.session_due = 0
+    window._tick()
     assert window.settings == profile_settings
     assert window.preview_toggle.isChecked()
     node = SimpleNamespace(**vars(window.node))
@@ -89,6 +91,146 @@ def test_settings_and_state_restore_without_loading_weights(window):
         assert restored.preview_toggle.isChecked()  # Explicit trusted model load enables preview.
     finally:
         restored.close()
+
+
+def test_incomplete_draft_autosaves_during_busy_preview_and_restores_unapplied(window):
+    window.camera_prefix.setText("alternate_camera")
+    window.name.setText("unfinished_tray")
+    window.dimensions["length_mm"].setText("300.50")
+    window.confidence.setText("0.")
+    window.camera_path.setText("camera_to_hand_calibration_test.yaml")
+    window.model_path.setText("/synthetic.pt")
+    window.item_path.setText("item_teach_test.yaml")
+    # Neither a complete profile nor a loaded model/camera is needed to remember edits.
+    assert window.session_due is not None
+    assert gui.read_session(window.node.root) is None
+    window.future, window.job_kind = Future(), "preview"
+    window.session_due = 0
+    window._tick()
+    assert gui.read_session(window.node.root)["draft"]["length_mm"] == "300.50"
+    window.future = None
+    restored = gui.TrayTeachWindow(window.node)
+    restored.timer.stop()
+    try:
+        assert restored.camera_prefix.text() == "alternate_camera"
+        assert restored.name.text() == "unfinished_tray"
+        assert restored.dimensions["length_mm"].text() == "300.50"
+        assert restored.dimensions["width_mm"].text() == ""
+        assert restored.confidence.text() == "0."
+        assert restored.camera_path.text() == "camera_to_hand_calibration_test.yaml"
+        assert restored.model_path.text() == "/synthetic.pt"
+        assert restored.item_path.text() == "item_teach_test.yaml"
+        assert restored.settings is None and restored.preview_settings is None
+        assert not restored.preview_toggle.isChecked() and not restored.armed_toggle.isChecked()
+        assert restored.node.model is None and restored.node.camera is None
+        assert restored.node.plane is None and restored.node.position is None
+    finally:
+        restored.close()
+
+
+def test_close_flushes_latest_invalid_edit_without_applying_it(window):
+    window.confidence.setText("1.5")
+    window.dimensions["width_mm"].setText("still typing")
+    window.close()  # Before the debounce expires, including with YOLO OFF.
+    state = gui.read_session(window.node.root)
+    assert state["draft"]["confidence"] == "1.5"
+    assert state["draft"]["width_mm"] == "still typing"
+    restored = gui.TrayTeachWindow(window.node)
+    restored.timer.stop()
+    try:
+        enable_model(restored)
+        assert restored.preview_settings is None and restored.settings is None
+        assert "confidence" in restored.preview_error
+    finally:
+        restored.close()
+
+
+def test_remembered_classes_survive_relaunch_and_revalidate_against_explicit_model(window):
+    enable_model(window)
+    window.classes.item(1).setCheckState(gui.QtCore.Qt.Checked)
+    window.image_size = 320
+    window.close()
+    node = SimpleNamespace(**vars(window.node))
+    node.model = node.model_metadata = None
+    restored = gui.TrayTeachWindow(node)
+    restored.timer.stop()
+    try:
+        assert restored._class_ids() == [1]
+        assert "load model to verify" in restored.classes.item(0).text()
+        assert restored.image_size == 320
+        enable_model(restored)
+        assert restored._class_ids() == [1]
+        restored.classes.item(1).setCheckState(gui.QtCore.Qt.Unchecked)
+        restored._model_loaded(node.model_metadata)
+        assert restored._class_ids() == []  # Re-loading cannot resurrect deselected IDs.
+        restored.classes.item(0).setCheckState(gui.QtCore.Qt.Checked)
+        node.model = {"task": "segment", "path": "/different.pt"}
+        restored._model_loaded(node.model_metadata)
+        assert restored._class_ids() == []  # Class IDs belong to the remembered model.
+    finally:
+        restored.close()
+
+
+def test_legacy_complete_session_still_restores_without_executing_model(window):
+    gui.write_session(window.node.root, {
+        "schema_version": 1, "profile_filename": "tray_teach_saved.yaml",
+        "camera_filename": "camera.yaml", "item_filename": "item.yaml",
+        "model_path": "/synthetic.pt", "settings": settings()})
+    restored = gui.TrayTeachWindow(window.node)
+    restored.timer.stop()
+    try:
+        assert restored.name.text() == "tray" and restored._class_ids() == [0]
+        assert restored.profile_filename == "tray_teach_saved.yaml"
+        assert restored.node.model is None and restored.settings is None
+        assert restored.profile_path is None and not restored.armed_toggle.isChecked()
+        restored.close()
+        assert gui.read_session(window.node.root)["schema_version"] == 2
+    finally:
+        restored.close()
+
+
+def test_draft_write_failure_is_visible_and_preserves_previous_session(window, monkeypatch):
+    window.name.setText("saved")
+    window._remember()
+    window.name.setText("new")
+    monkeypatch.setattr(gui, "write_session", MagicMock(side_effect=OSError("disk full")))
+    window.session_due = 0
+    window._tick()
+    assert "Could not remember Tray Teach draft: disk full" in window.status.text()
+    assert gui.read_session(window.node.root)["draft"]["name"] == "saved"
+    assert window.name.isEnabled()
+
+
+def test_file_dialogs_remember_choices_and_cancel_preserves_draft(window, monkeypatch):
+    chooser = MagicMock(return_value=("", ""))
+    monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", chooser)
+    window.camera_path.setText("camera.yaml")
+    window.item_path.setText("item.yaml")
+    window.model_path.setText("/synthetic.pt")
+    window.profile_filename = "tray_teach_saved.yaml"
+    for action, expected in (
+            (window._load_camera, window.node.root / "calibration/camera.yaml"),
+            (window._copy_position, window.node.root / "offline_teach/item_teach/item.yaml"),
+            (window._load_model, Path("/synthetic.pt")),
+            (window._load_tray,
+             window.node.root / "offline_teach/tray_teach/tray_teach_saved.yaml")):
+        action()
+        assert chooser.call_args.args[2] == str(expected)
+        assert window.future is None
+    assert window.model_path.text() == "/synthetic.pt"
+
+
+def test_draft_autosave_waits_until_typing_pauses_with_yolo_off(window):
+    window.timer.start(20)
+    QtTest.QTest.keyClicks(window.name, "tray")
+    QtTest.QTest.qWait(180)
+    assert gui.read_session(window.node.root) is None
+    QtTest.QTest.keyClicks(window.name, "_large")
+    QtTest.QTest.qWait(180)
+    assert gui.read_session(window.node.root) is None
+    QtTest.QTest.qWait(200)
+    assert gui.read_session(window.node.root)["draft"]["name"] == "tray_large"
+    assert window.name.isEnabled() and not window.preview_toggle.isChecked()
 
 
 def test_changed_settings_discard_inflight_view(window):

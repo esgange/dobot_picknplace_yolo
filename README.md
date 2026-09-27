@@ -608,6 +608,9 @@ Enter the setup's camera prefix and **Connect RGB**, then explicitly load a
 trusted YOLO model. RGB detection works independently of calibration and a
 completed profile; live settings update after a 300 ms typing pause. Side-by-side
 RGB/depth views support click inspection with manually entered dimensions/tolerance.
+Form entries and file choices are remembered across relaunches, even with YOLO
+off or an incomplete form. Drafts save after a 300 ms pause and on orderly close;
+restoration leaves YOLO and Armed off and input loading explicit.
 Load matching camera calibration and Item Teach once to copy its Home into
 **Tray Teach Position**. Freeze a fresh uncovered-tray
 view and click four reference-surface corners in any order. The saved plane and

@@ -5988,6 +5988,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   operator-model execution, deployment copying or operator artifact changes;
   physical integration and offline transfer remain unperformed.
 
+### 2026-09-27 — Remember incomplete Tray Teach forms across relaunches
+
+- Rule 141 fixes Tray Teach session persistence: the old writer ran only after
+  complete settings validation with YOLO enabled, losing camera-only setups,
+  unfinished dimensions and edits made with YOLO off. Remember the draft
+  independently of inference or save readiness after a 300 ms typing pause;
+  flush the latest fields on orderly close, including before debounce expires.
+  Use the existing GUI timer, single authoritative ignored
+  `logs/tray_perception/last_session.json`, atomic replacement and no extra worker.
+- Session schema 2 stores camera prefix, input/profile file choices, tray name,
+  dimensions/tolerance, confidence/IoU/cap as raw unapplied text, plus validated
+  class IDs and inference size. Preserve incomplete and invalid text for editing;
+  it does not satisfy preview, save, simulation or service validation. This
+  supersedes rules 19/137/139's complete validated-field restriction only for
+  Tray Teach drafts. Strict saved tray artifact schema 1 is unchanged.
+- Explicitly accept and validate the existing complete schema-1 session format,
+  restore its fields and write schema 2 on the next save. Unknown or malformed
+  session formats still fail visibly without default substitution. On write or
+  flush failure, preserve the previous session, clean up the temporary file,
+  report the error and leave the form editable.
+- Relaunch restores fields and marks saved class IDs pending explicit model
+  verification. It never connects a camera, executes weights, restores live
+  observations/plane/teaching position, enables YOLO or arms a service. Loading
+  the saved Tray Teach profile remains the way to restore plane/position.
+  File dialogs preselect remembered inputs/profile; cancel changes nothing.
+  Same-model loading keeps currently checked IDs that exist in its class list;
+  selecting another model clears the old model's class choices.
+- Validation: Tray Perception symlink build and all 94 then-current package
+  tests pass (95 colcon-reported results including its wrapper). A further
+  offscreen Qt timing regression passes for real typing/debounce while YOLO
+  stays off, for 95 passing cases overall. Coverage includes incomplete/invalid
+  drafts, busy previews, close-before-debounce, explicit class verification,
+  legacy session import, remembered dialogs/cancel, malformed state and failed
+  atomic writes. Changed-file ament_flake8 and git diff --check pass. No physical
+  hardware, operator-model execution, deployment copying, `.env` changes or
+  operator artifact edits; physical testing and offline transfer are unperformed.
+
 ### Future entry template
 
 ```text

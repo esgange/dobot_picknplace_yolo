@@ -104,6 +104,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.profile_path = None
         self.profile_digest = ""
         self.profile_filename = ""
+        self.session_ready = False
+        self.session_due = None
+        self.last_session = None
         self.buttons = []
         self.pending_ids = []
         self.image_size = 640
@@ -272,8 +275,30 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.item_path.setText(state["item_filename"])
             self.profile_filename = state["profile_filename"]
             self.model_path.setText(state["model_path"])
-            self._fill_settings(state["settings"])
-            self.status.setText("Previous values restored as prefill. Explicitly load inputs.")
+            if state["schema_version"] == 1:
+                self._fill_settings(state["settings"])
+            else:
+                self.filling = True
+                for key, widget in self._draft_fields().items():
+                    widget.setText(state["draft"][key])
+                self.image_size = state["draft"]["image_size"]
+                self.pending_ids = state["draft"]["class_ids"][:]
+                self.filling = False
+            self.classes.blockSignals(True)
+            for identifier in self.pending_ids:
+                entry = QtWidgets.QListWidgetItem(
+                    f"{identifier}: saved selection (load model to verify)")
+                entry.setData(QtCore.Qt.UserRole, identifier)
+                entry.setFlags(entry.flags() | QtCore.Qt.ItemIsUserCheckable)
+                entry.setCheckState(QtCore.Qt.Checked)
+                self.classes.addItem(entry)
+            self.classes.blockSignals(False)
+            self.status.setText("Previous draft restored. Load inputs to validate and preview; "
+                                "YOLO and Armed are OFF.")
+        self.last_session = state
+        self.session_ready = True
+        for widget in (self.camera_path, self.item_path, self.model_path):
+            widget.textChanged.connect(self._schedule_remember)
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(100)
@@ -298,6 +323,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _edited(self, *_args):
         if self.filling:
             return
+        self._schedule_remember()
         self.settings = None
         self.preview_settings = None
         self.node.yolo_enabled = False
@@ -379,8 +405,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.future = self.pool.submit(run)
         self._update_controls()
 
-    def _choose(self, title, directory, pattern):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, str(directory), pattern)
+    def _choose(self, title, directory, pattern, remembered=""):
+        initial = directory / remembered if remembered else directory
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, str(initial), pattern)
         return Path(path) if path else None
 
     def _trust(self):
@@ -390,7 +417,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No) == QtWidgets.QMessageBox.Yes
 
     def _load_camera(self):
-        path = self._choose("Camera calibration", self.node.root / "calibration", "YAML (*.yaml)")
+        path = self._choose("Camera calibration", self.node.root / "calibration", "YAML (*.yaml)",
+                            self.camera_path.text())
         if path is not None:
             self._edited()
             self._resume()
@@ -402,13 +430,13 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._job(lambda: self.node.apply_camera(path), loaded, "camera")
 
     def _load_model(self):
-        path = self._choose("YOLO model", self.node.root, "PyTorch (*.pt)")
+        path = self._choose("YOLO model", self.node.root, "PyTorch (*.pt)", self.model_path.text())
         if path is not None and self._trust():
             self._edited()
             self._job(lambda: self.node.inspect_model(path), self._model_loaded, "model")
 
     def _model_loaded(self, metadata):
-        restored_ids = (self.pending_ids if self.model_path.text() == self.node.model["path"]
+        restored_ids = (self._class_ids() if self.model_path.text() == self.node.model["path"]
                         else [])
         self.model_path.setText(self.node.model["path"])
         self.classes.blockSignals(True)
@@ -421,6 +449,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                                 else QtCore.Qt.Unchecked)
             self.classes.addItem(entry)
         self.classes.blockSignals(False)
+        self._schedule_remember()
         self.preview_toggle.setChecked(True)
         self._refresh_preview_settings()
         self._message(f"Loaded {metadata['task']} model. Preview shows all classes; "
@@ -428,7 +457,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
     def _copy_position(self):
         path = self._choose("Copy Item Teach Home", self.node.root / "offline_teach/item_teach",
-                            "YAML (*.yaml)")
+                            "YAML (*.yaml)", self.item_path.text())
         if path is not None:
             def loaded(position):
                 self.node.position = position
@@ -445,7 +474,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.position_label.setText(f"Tray Teach Position — J1…J6:\n{joints}")
 
     def _load_tray(self):
-        path = self._choose("Load Tray Teach", tray_directory(self.node.root), "YAML (*.yaml)")
+        path = self._choose("Load Tray Teach", tray_directory(self.node.root), "YAML (*.yaml)",
+                            self.profile_filename)
         if path is not None and self._trust():
             self._edited()
             self._resume()
@@ -493,9 +523,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         try:
             return {"confidence": float(self.confidence.text()), "iou": float(self.iou.text()),
                     "max_detections": int(self.maximum.text()), "image_size": self.image_size,
-                    "class_ids": [self.classes.item(i).data(QtCore.Qt.UserRole)
-                                  for i in range(self.classes.count())
-                                  if self.classes.item(i).checkState() == QtCore.Qt.Checked]}
+                    "class_ids": self._class_ids()}
         except ValueError as exc:
             raise ValueError("Enter valid confidence, IoU and integer detection cap") from exc
 
@@ -509,13 +537,39 @@ class TrayTeachWindow(QtWidgets.QWidget):
         validate_settings(settings)
         return settings
 
+    def _class_ids(self):
+        return [self.classes.item(i).data(QtCore.Qt.UserRole)
+                for i in range(self.classes.count())
+                if self.classes.item(i).checkState() == QtCore.Qt.Checked]
+
+    def _draft_fields(self):
+        return {"camera_prefix": self.camera_prefix, "name": self.name,
+                **self.dimensions, "confidence": self.confidence, "iou": self.iou,
+                "max_detections": self.maximum}
+
+    def _schedule_remember(self, *_args):
+        if self.session_ready and not self.filling:
+            self.session_due = time.monotonic() + .3
+
     def _remember(self):
-        if self.settings is not None:
-            self.pending_ids = self.settings["yolo"]["class_ids"][:]
-            write_session(self.node.root, {
-                "schema_version": 1, "profile_filename": self.profile_filename,
-                "camera_filename": self.camera_path.text(), "item_filename": self.item_path.text(),
-                "model_path": self.model_path.text(), "settings": self.settings})
+        if not self.session_ready:
+            return
+        self.session_due = None
+        state = {"schema_version": 2, "profile_filename": self.profile_filename,
+                 "camera_filename": self.camera_path.text(),
+                 "item_filename": self.item_path.text(),
+                 "model_path": self.model_path.text(),
+                 "draft": {key: widget.text() for key, widget in self._draft_fields().items()}}
+        state["draft"].update(image_size=self.image_size, class_ids=self._class_ids())
+        if state != self.last_session:
+            write_session(self.node.root, state)
+            self.last_session = state
+
+    def _persist_session(self):
+        try:
+            self._remember()
+        except (ValueError, OSError) as exc:
+            self._message(f"Could not remember Tray Teach draft: {exc}", error=True)
 
     def _refresh_preview_settings(self):
         self.preview_due = None
@@ -546,9 +600,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.preview_error = str(exc)
         try:
             self.settings = self._form_settings()
-            self._remember()
-        except (ValueError, OSError):
-            self.settings = None  # Incomplete drafts are not persisted as complete profiles.
+        except ValueError:
+            self.settings = None  # Session drafts never bypass complete-profile validation.
 
     def _trigger_settings(self):
         if self.profile_path is None or not self.profile_digest:
@@ -757,6 +810,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _tick(self):
         if self.closing:
             return
+        if self.session_due is not None and time.monotonic() >= self.session_due:
+            self._persist_session()
         if self.preview_due is not None and time.monotonic() >= self.preview_due:
             self._refresh_preview_settings()
         if self.future is not None and self.future.done():
@@ -836,6 +891,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
                   self._show_view, "preview")
 
     def closeEvent(self, event):
+        if self.closing:
+            event.accept()
+            return
+        self._persist_session()
         self.closing = True
         self.timer.stop()
         self.pending_job = None

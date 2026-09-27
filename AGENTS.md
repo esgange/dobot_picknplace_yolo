@@ -442,6 +442,18 @@ or RViz publishers. The shared Item/controller catalog permits a complete option
 tray pair without loading it. Save images only on an explicit request flag; keep
 schema 1, manual deployment, no new .env keys, no motion or placement integration.
 
+Rule 141 makes Tray Teach remember form drafts independently of YOLO, model
+loading or complete-profile validation. Atomically save after a 300 ms edit pause
+and flush on orderly close to logs/tray_perception/last_session.json. Session
+schema 2 stores unapplied text, including incomplete/invalid edits, file choices,
+camera prefix, selected class IDs and inference size; it is not runtime authority.
+Explicitly support validated schema-1 session import, writing schema 2 on the next
+save; reject malformed/unknown formats. Restore fields only, with YOLO/Armed OFF
+and no camera/model/plane/position loading. File dialogs preselect remembered
+choices and explicit model loading verifies saved classes. Keep strict schema-1
+tray artifacts, manual deployment and no new .env keys. This supersedes rules
+19/137/139's complete validated-field requirement only for Tray Teach draft text.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

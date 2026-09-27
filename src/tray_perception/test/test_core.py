@@ -119,6 +119,45 @@ def test_ui_state_is_strict_and_atomic(tmp_path):
         core.read_session(tmp_path)
 
 
+def draft_session():
+    return {"schema_version": 2, "profile_filename": "", "camera_filename": "",
+            "item_filename": "", "model_path": "", "draft": {
+                "camera_prefix": "preview_camera", "name": "", "length_mm": "123.",
+                "width_mm": "", "tolerance_mm": "", "confidence": "not finished",
+                "iou": "0.7", "max_detections": "100", "image_size": 320, "class_ids": []}}
+
+
+@pytest.mark.parametrize("key,value", [
+    ("confidence", .25), ("image_size", 33), ("image_size", True),
+    ("class_ids", [0, 0]), ("class_ids", [True]), ("class_ids", [-1])])
+def test_draft_text_is_preserved_but_malformed_session_is_rejected(tmp_path, key, value):
+    state = draft_session()
+    core.write_session(tmp_path, state)
+    assert core.read_session(tmp_path) == state
+    broken = copy.deepcopy(state)
+    broken["draft"][key] = value
+    with pytest.raises(ValueError):
+        core.write_session(tmp_path, broken)
+    assert core.read_session(tmp_path) == state
+
+
+@pytest.mark.parametrize("operation", ["fsync", "replace"])
+def test_session_io_failure_preserves_previous_draft_and_cleans_temporary(
+        tmp_path, monkeypatch, operation):
+    state = draft_session()
+    core.write_session(tmp_path, state)
+
+    def fail(*_args):
+        raise OSError("synthetic disk error")
+    monkeypatch.setattr(core.os, operation, fail)
+    changed = copy.deepcopy(state)
+    changed["draft"]["name"] = "new"
+    with pytest.raises(OSError, match="synthetic disk error"):
+        core.write_session(tmp_path, changed)
+    assert core.read_session(tmp_path) == state
+    assert list(core.session_path(tmp_path).parent.iterdir()) == [core.session_path(tmp_path)]
+
+
 def test_model_copy_never_overwrites_or_accepts_changed_sources(tmp_path, artifact, monkeypatch):
     path, camera, model = artifact
     profile = core.load_profile(path, tmp_path)

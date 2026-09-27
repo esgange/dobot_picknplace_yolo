@@ -220,16 +220,34 @@ def session_path(root):
 
 
 def validate_session(state):
+    version = state.get("schema_version") if type(state) is dict else None
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError("Tray UI schema_version must be exactly 1 or 2")
     _fields(state, ("schema_version", "profile_filename", "camera_filename", "item_filename",
-                    "model_path", "settings"), "Tray UI state")
-    if type(state["schema_version"]) is not int or state["schema_version"] != 1:
-        raise ValueError("Tray UI schema_version must be exactly 1")
+                    "model_path", "settings" if version == 1 else "draft"), "Tray UI state")
     for key in ("profile_filename", "camera_filename", "item_filename", "model_path"):
         if type(state[key]) is not str:
             raise ValueError(f"Invalid tray UI field: {key}")
         if key != "model_path" and state[key] and Path(state[key]).name != state[key]:
             raise ValueError(f"Tray UI {key} must be a filename")
-    validate_settings(state["settings"])
+    if version == 1:
+        validate_settings(state["settings"])
+        return
+    draft = state["draft"]
+    text_fields = ("camera_prefix", "name", "length_mm", "width_mm", "tolerance_mm",
+                   "confidence", "iou", "max_detections")
+    _fields(draft, (*text_fields, "image_size", "class_ids"), "Tray UI draft")
+    # Preserve unfinished edits as text, never as applied detection settings.
+    for key in text_fields:
+        if type(draft[key]) is not str or len(draft[key]) > 32767:
+            raise ValueError(f"Invalid tray UI draft text: {key}")
+    ids = draft["class_ids"]
+    if (type(ids) is not list or any(type(i) is not int or i < 0 for i in ids)
+            or len(ids) != len(set(ids))):
+        raise ValueError("Invalid tray UI draft class IDs")
+    size = draft["image_size"]
+    if type(size) is not int or not 32 <= size <= 8192 or size % 32:
+        raise ValueError("Invalid tray UI draft inference size")
 
 
 def read_session(root):
@@ -245,12 +263,14 @@ def write_session(root, state):
     validate_session(state)
     path = session_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        json.dump(state, stream, allow_nan=False)
-        stream.flush()
-        os.fsync(stream.fileno())
+    temporary = None
     try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(state, stream, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

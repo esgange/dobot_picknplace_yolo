@@ -99,9 +99,19 @@ origin convention. Distances are mm for dimension settings, metres for plane/
 pose geometry and radians for taught joints. No images or live depth are saved.
 Changing the camera calibration or intrinsics requires re-teaching the plane.
 
-Validated GUI fields are restored as unapplied prefill from the single ignored
-`logs/tray_perception/last_session.json`. Startup never loads weights, connects
-cameras or restores a plane automatically. A malformed state fails explicitly.
+GUI form drafts are remembered automatically after a 300 ms typing pause and
+flushed on orderly close to the single ignored `logs/tray_perception/last_session.json`.
+This includes camera prefix, file choices, tray name, dimensions/tolerance,
+confidence/IoU/detection cap, selected classes and inference size. Saving the draft
+works with YOLO OFF, no loaded inputs, incomplete dimensions and invalid text;
+the restored text must still pass normal validation before use. File dialogs
+preselect remembered choices, and saved class IDs are checked against the model
+on explicit load. Startup restores only the form: YOLO and Armed remain OFF,
+with no automatic model, camera, teaching position or reference-plane loading.
+Use **Load Tray Teach…** to restore a saved plane and teaching position.
+Session schema 2 explicitly imports validated schema-1 sessions and replaces
+them on the next draft save. Malformed or unknown formats fail explicitly;
+write failures are reported and preserve the previous session.
 Events are timestamped and capped at 1000 in the package's `events.jsonl`.
 An arbitrary preview prefix is session-only; loading calibration or a saved tray
 restores its calibrated prefix. Incomplete drafts never change the strict
