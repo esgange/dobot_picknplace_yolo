@@ -22,7 +22,7 @@ Visualization Manager:
       Name: TF
       Value: true
     - Class: rviz_default_plugins/PointCloud2
-      Name: Item Teach - 5 mm colored voxels
+      Name: Item Teach - 10 mm colored voxels
       Enabled: true
       Value: true
       Topic:
@@ -34,7 +34,7 @@ Visualization Manager:
       Position Transformer: XYZ
       Color Transformer: RGB8
       Style: Boxes
-      Size (m): 0.005
+      Size (m): 0.010
       Alpha: 1
       Decay Time: 0
     - Class: rviz_default_plugins/MarkerArray

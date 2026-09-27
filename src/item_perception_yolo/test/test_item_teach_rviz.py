@@ -73,7 +73,7 @@ def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):
     assert all(m.lifetime.sec == 2 for m in markers[1:])
     diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
     assert diagnostic["rejected"] == snapshot()["rejected"]
-    assert len(diagnostic["candidates"]) == 4 and diagnostic["voxel_size_mm"] == 5
+    assert len(diagnostic["candidates"]) == 4 and diagnostic["voxel_size_mm"] == 10
     clock[0] += .1
     visual.publish(snapshot())  # Completed job cannot bypass the 1 Hz publishing bound.
     visual.tick()
@@ -86,8 +86,7 @@ def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):
     assert "snapshot 1.0s" in visual.marker_publisher.publish.call_args.args[0].markers[-1].text
 
 
-@pytest.mark.parametrize("invalid", ["epoch", "camera", "intrinsics", "source", "stale",
-                                     "worker", "fatal"])
+@pytest.mark.parametrize("invalid", ["epoch", "camera", "intrinsics", "source", "worker", "fatal"])
 def test_invalidated_or_lost_inputs_clear_visualization(preview, invalid):
     visual, node, clock = preview
     visual.publish(snapshot())
@@ -101,8 +100,6 @@ def test_invalidated_or_lost_inputs_clear_visualization(preview, invalid):
         node._depth_info = {**node._depth_info, "d": [0.1, 0., 0., 0., 0.]}
     elif invalid == "source":
         node._validate_sources.side_effect = ValueError("Selected source changed")
-    elif invalid == "stale":
-        node._depth["stamp_ns"] = 90_000_000_000
     elif invalid == "worker":
         node.native.failed = True
     else:
@@ -112,6 +109,60 @@ def test_invalidated_or_lost_inputs_clear_visualization(preview, invalid):
     assert visual.cloud_publisher.publish.call_args.args[0].width == 0
     assert visual.marker_publisher.publish.call_args.args[0].markers[0].action == Marker.DELETEALL
     assert node.selected_pose_broadcaster.sendTransform.call_count == 1
+
+
+@pytest.mark.parametrize("gap", ["sync", "stale", "missing", "busy", "no_result", "empty"])
+def test_acquisition_gap_retains_cloud_until_valid_replacement(preview, gap):
+    visual, node, clock = preview
+    first = snapshot()
+    visual.publish(first)
+    clock[0] += 1.
+    fresh(node, clock)
+    if gap == "sync":
+        node._depth["stamp_ns"] -= 200_000_000  # Fresh, but not synchronized with RGB.
+    elif gap == "stale":
+        node._depth["stamp_ns"] = 90_000_000_000
+    elif gap == "missing":
+        node._color_info = None
+    elif gap == "busy":
+        visual.publish({"error": "Pose request has priority"})
+    elif gap == "no_result":
+        visual.publish(None)
+    else:
+        visual.publish({**first, "point_count": 0, "data": b"", "candidates": []})
+    visual.tick()
+    assert visual.current is first and visual.waiting_reason
+    # No empty cloud is sent during a slow/missing/rejected replacement.
+    assert visual.cloud_publisher.publish.call_count == 1
+    assert node.selected_pose_broadcaster.sendTransform.call_count == 1
+    assert visual.marker_publisher.publish.call_args.args[0].markers[0].action == Marker.DELETEALL
+    diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert diagnostic["status"] == "retained_cloud" and diagnostic["age_sec"] == 1.
+    assert diagnostic["source_stamp_ns"] == first["stamp_ns"] and not diagnostic["candidates"]
+
+    clock[0] += 10.
+    fresh(node, clock)
+    node._color_info = first["camera"]
+    visual.tick()
+    assert visual.current is first and visual.cloud_publisher.publish.call_count == 1
+    assert node.selected_pose_broadcaster.sendTransform.call_count == 1
+    # Fresh input alone never relabels an old observation as a new result.
+    clock[0] += 1.
+    fresh(node, clock)
+    second = {**snapshot(), "stamp_ns": node._image["stamp_ns"],
+              "depth_stamp_ns": node._depth["stamp_ns"], "data": bytes(16)}
+    visual.publish(second)
+    assert visual.current is second and not visual.waiting_reason
+    assert node.selected_pose_broadcaster.sendTransform.call_count == 2
+    clouds = [call.args[0] for call in visual.cloud_publisher.publish.call_args_list]
+    assert len(clouds) == 2 and all(cloud.width == 1 for cloud in clouds)
+    assert bytes(clouds[-1].data) == second["data"]
+    assert clouds[-1].header.stamp.sec == int(clock[0])
+    visual.hold("Another acquisition gap")
+    node.arm_epoch += 1
+    visual.tick()
+    assert visual.current is None  # Retention never survives a source/settings reset.
+    assert visual.cloud_publisher.publish.call_args.args[0].width == 0
 
 
 def test_exact_observation_used_without_second_yolo_or_production_request(preview):
@@ -154,3 +205,22 @@ def test_corrupt_native_cloud_is_terminal(preview):
         visual.compute(view, options)
     assert node.native.failed and not node.operation_lock.locked()
     node.native.close.assert_called_once()
+
+
+def test_gap_retains_the_published_cloud_not_an_unpublished_result(preview):
+    visual, node, clock = preview
+    first = snapshot()
+    visual.publish(first)
+    clock[0] += .1
+    second = {**snapshot(), "stamp_ns": 100_100_000_000}
+    visual.publish(second)  # Waiting for the next publication slot.
+    assert visual.current is second and visual.cloud_publisher.publish.call_count == 1
+    clock[0] += .9
+    fresh(node, clock)
+    node._depth["stamp_ns"] -= 200_000_000
+    visual.tick()
+    assert visual.current is first
+    assert visual.cloud_publisher.publish.call_count == 1
+    diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert diagnostic["source_stamp_ns"] == first["stamp_ns"]
+    assert diagnostic["age_sec"] == 1.

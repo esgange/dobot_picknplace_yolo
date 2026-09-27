@@ -39,11 +39,12 @@ YOLO/model loading and re-arming remain explicit. Unsaved fields are not autosav
 Item overlays keep mask shading, one mask-derived rectangle (or native OBB),
 long-X/short-Y centered axes and a pick dot, with no extra axis-aligned YOLO box.
 The green bin border coexists with detections and also works with YOLO OFF.
-The canonical RViz viewer also displays Item Teach's default 1 Hz colored 5 mm
+The canonical RViz viewer also displays Item Teach's default 1 Hz colored 10 mm
 scene voxel cloud and all valid detected-item pose frames/markers. Complete the
 class, geometry, Home and planning settings for poses; missing settings have a
 visible reason. Pose sampling uses full-resolution depth. Slow inference reduces
-the rate without queuing work; frozen views retain labelled snapshots. Headless
+the rate without queuing work; the last valid cloud stays visible through input
+gaps until its replacement arrives. Frozen views retain labelled snapshots. Headless
 Item Detect has no continuous RViz output and saves images only when a pose
 request sets `save_debug_images=true`.
 Use **Browse…** to select the platform, bin-camera and robot-camera calibration

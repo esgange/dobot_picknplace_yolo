@@ -360,6 +360,16 @@ and stop TF. Canonical RViz includes the optional cloud/marker displays and a
 publishers, and saves images only on save_debug_images=true requests. No new
 configuration key, schema, hardware command or automatic image archive is added.
 
+Rule 134 increases Item Teach's display voxels and canonical RViz boxes to
+10 mm. Keep the last valid cloud until a valid replacement arrives, including
+input/synchronization gaps, busy processing and empty/unavailable observations;
+never publish a transient empty cloud. Retain its original timestamp and report
+retained_cloud age/reason while suspending candidate markers/TF until a newly
+validated snapshot arrives. Source/settings/CameraInfo changes, terminal failures
+and exit still clear the cloud. Keep 1 Hz, full-resolution pose sampling, all
+existing acquisition/pose checks and headless behavior unchanged. This supersedes
+rule 133's 5 mm size and transient-input cloud clearing only.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

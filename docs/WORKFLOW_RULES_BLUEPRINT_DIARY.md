@@ -5637,6 +5637,44 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No offline-transfer milestone is claimed. Restart Item Teach and reload the
   canonical RViz configuration (or restart the viewer) to use the new displays.
 
+### 2026-09-27 — Retain RViz clouds between frames and use 10 mm voxels
+
+- Rule 134 supersedes rule 133's 5 mm display voxel size and transient-input
+  cloud clearing. The user observed blinking and requested the last cloud stay
+  until the next frame, with larger 10 mm voxels. A read-only 15-second live
+  subscription reproduced zero-width cloud publications accompanied by
+  `RGB/depth synchronization tolerance exceeded`, between valid clouds. The
+  canonical RViz display already used zero decay; the application was clearing
+  it during asynchronous RGB/depth gaps.
+- Retain the last valid cloud on synchronization/freshness gaps, missing
+  inputs, busy processing, unavailable observations and zero-voxel results.
+  Do not publish an intermediate empty cloud. A new validated nonempty snapshot
+  replaces it at the existing bounded 1 Hz rate. Keep the original source stamp
+  and report `retained_cloud`, increasing age and the wait reason in diagnostics.
+  Suspend candidate markers/TF until a newly validated snapshot arrives; fresh
+  input alone cannot turn the old observation into a new result. Source/settings
+  invalidation, changed CameraInfo, terminal worker failure and exit still clear
+  the cloud. All pose acquisition checks and full-resolution depth remain strict.
+- Increase native centroid/color aggregation cells, diagnostics and GUI labels
+  to 10 mm. Intentional vendor integration patch: update the canonical
+  `dobot_rviz` cloud display's name and box size to `0.010` metres. Keep zero
+  decay (latest cloud), existing QoS, 1 Hz scheduling, candidate checks, headless
+  request/debug-image behavior, source schemas and configuration unchanged.
+  No controller/FSM, driver or hardware-command changes.
+- Validation: Item Perception and Dobot RViz symlink builds and all 440 package
+  tests pass. The final focused geometry/GUI/visualization suite passes 114 tests,
+  including a subsequent regression for retaining the actually published cloud
+  when another result is still waiting for its 1 Hz slot, synchronization,
+  stale/missing inputs, unavailable/busy/empty replacements, no intermediate
+  empty clouds, exact subsequent replacement, suspended candidates and explicit
+  invalidation after retention. Native geometry verifies points 6.25 mm apart
+  merge into one 10 mm cell. Changed Python modules/tests pass ament_flake8;
+  the installed RViz YAML matches native 10 mm cells and zero decay;
+  `git diff --check` passes. Live diagnosis used subscriptions only; no robot
+  command, operator-model execution, process restart or artifact change. No
+  offline-transfer milestone claimed. Restart Item Teach for the code change;
+  reload the RViz configuration or set its cloud **Size (m)** to `0.010`.
+
 ### Future entry template
 
 ```text

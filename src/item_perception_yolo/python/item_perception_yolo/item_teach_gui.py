@@ -1224,8 +1224,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 self._finish_model_load()
             if error is not None:
                 if kind in ("preview", "roi"):
-                    self.node.rviz.clear(str(error))
-                    self.rviz_status = f"RViz unavailable: {error}"
+                    self.node.rviz.hold(str(error))
+                    self.rviz_status = f"RViz waiting for next valid frame: {error}"
                 self.preview_status = str(error)
                 self.preview_error = str(error)
                 if kind == "simulate":
@@ -1319,12 +1319,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
             elif value is not None:
                 snapshot = value.get("rviz")
                 self.node.rviz.publish(snapshot)
-                if snapshot is None or "error" in snapshot:
-                    reason = "waiting for RGB/depth" if snapshot is None else snapshot["error"]
-                    self.rviz_status = f"RViz unavailable: {reason}"
+                if snapshot is None or "error" in snapshot or snapshot["point_count"] == 0:
+                    reason = ("waiting for RGB/depth" if snapshot is None else
+                              snapshot.get("error", "No valid depth voxels"))
+                    self.rviz_status = f"RViz waiting for next valid frame: {reason}"
                 else:
                     self.rviz_status = (
-                        f"RViz 1 Hz: {snapshot['point_count']} colored 5 mm voxels | "
+                        f"RViz 1 Hz: {snapshot['point_count']} colored 10 mm voxels | "
                         f"{len(snapshot['candidates'])} valid poses | "
                         f"{len(snapshot['rejected'])} rejected")
                     if snapshot["pose_error"]:

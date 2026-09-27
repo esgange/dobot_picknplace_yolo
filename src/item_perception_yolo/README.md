@@ -134,14 +134,14 @@ ros2 launch item_perception_yolo item_teach.launch.py
 After explicit trusted model loading, Item Teach enables YOLO preview when its
 camera/settings are ready. Startup prefill never executes weights, and arming
 remains explicit. At most once per second, one existing worker job runs YOLO,
-then reuses that exact RGB/depth/TF observation for a calibrated colored 5 mm
+then reuses that exact RGB/depth/TF observation for a calibrated colored 10 mm
 voxel cloud and every valid candidate. Slow processing lowers the rate; jobs
 never accumulate or catch up. There is no second YOLO prediction, additional
 executor or automatic image saving.
 
 | Output | Topic or frame | Contents |
 | --- | --- | --- |
-| `PointCloud2` | `/item_teach/voxel_cloud` | Valid depth view including bin surroundings, 5 mm centroids with averaged original RGB, `base_link`, source stamp |
+| `PointCloud2` | `/item_teach/voxel_cloud` | Valid depth view including bin surroundings, 10 mm centroids with averaged original RGB, `base_link`, source stamp |
 | `MarkerArray` | `/item_teach/valid_items` | All valid pose XYZ axes, class/confidence and snapshot-age labels |
 | TF | `base_link -> item_teach_live_candidate_N` | Frame-local ranked item poses; 1 Hz, not tracked identities |
 | `String` JSON | `/item_teach/rviz_diagnostics` | Source timestamps/age, voxel count, every candidate and rejection reason |
@@ -159,8 +159,14 @@ poses. With incomplete pose settings or YOLO OFF, the calibrated cloud can still
 run and the view explains which pose prerequisites are missing.
 
 These are labelled snapshots, also retained while the teaching view is frozen.
-Current RGB/depth loss, changed CameraInfo, source/settings changes or failure
-clear the cloud and markers and stop candidate TF. The canonical RViz TF timeout
+The last valid cloud stays visible until its replacement arrives. RGB/depth
+loss, synchronization gaps, a busy worker or an empty/unavailable next cloud
+never publish an intermediate empty cloud. During these gaps, diagnostics report
+`retained_cloud` with its original source timestamp, increasing age and reason;
+candidate markers/TF pause until a newly validated snapshot arrives. Changed
+CameraInfo, source/settings changes, terminal failure or exit still clear the
+cloud. RViz keeps **Decay Time = 0** (latest cloud) and **Size (m) = 0.010**.
+The canonical RViz TF timeout
 is 2.5 seconds; other TF consumers may keep historical transforms. No cloud or
 pose preview can satisfy a production request. Headless Item Detect publishes
 none of these topics, remains request-driven, and writes images only for an

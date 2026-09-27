@@ -464,7 +464,7 @@ paragraph above the views is removed. Platform/Bin Teach use the same compact
 setup/large-video presentation, with Save/capture visible and extra calibration
 details expandable; their explicit Apply and capture/save workflow is unchanged.
 
-Item Teach also publishes a default **1 Hz RViz preview**: a colored **5 mm voxel
+Item Teach also publishes a default **1 Hz RViz preview**: a colored **10 mm voxel
 cloud** of the valid depth view, including surroundings outside the bin,
 plus TF/axis/label markers for
 **all valid item poses**, up to the YOLO detection cap. The canonical Dobot RViz
@@ -484,8 +484,11 @@ One existing worker job processes the latest pair at most once per second, with
 no extra YOLO inference, new executor, backlog or automatic image saving. Slow
 processing lowers the update rate. Each published result remains a labelled
 snapshot; a frozen teaching view retains that snapshot and reports its age.
-Input loss, source/settings changes or failure clear clouds/markers and stop
-candidate TF. RViz expires stopped frames after 2.5 seconds. These frame-local
+The last valid cloud stays visible until a valid replacement arrives, including
+RGB/depth synchronization gaps, missing inputs and slow processing. Diagnostics
+retain its original timestamp/age; candidate markers and TF pause during gaps.
+Source/settings/CameraInfo changes, terminal failure or closing Item Teach still
+clear the cloud. RViz expires stopped frames after 2.5 seconds. These frame-local
 IDs are not tracked identities or production service results. Headless Item
 Detect stays request-driven, publishes none of these visualization topics and
 saves RGB/depth images only when `GetItemPoses.save_debug_images=true`.

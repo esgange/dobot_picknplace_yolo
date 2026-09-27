@@ -29,6 +29,12 @@ def exercise_voxels():
     assert cloud["rgb"].tolist() == [0x808080]
     assert all(cloud.dtype.fields[f][1] == offset
                for f, offset in (("x", 0), ("y", 4), ("z", 8), ("rgb", 12)))
+    # A 6.25 mm separation merges into one 10 mm voxel (four cells at 5 mm).
+    wider = {**camera, "k": [80., 0., 0., 0., 80., 0., 0., 0., 1.]}
+    merged = colored_voxels(rgb, depth, {**context, "camera": wider, "depth_camera": wider},
+                            base, QUALITY_DEFAULTS, cv2, np)
+    assert len(merged) == 1 and merged["rgb"].tolist() == [0x808080]
+    assert np.allclose([merged[0][f] for f in ("x", "y", "z")], [.003125, .003125, .5])
     # Invalid depth/range is excluded, with no nearest-point filling.
     depth[:] = [[500, 0], [199, 1001]]
     cloud = colored_voxels(rgb, depth, context, base, QUALITY_DEFAULTS, cv2, np)

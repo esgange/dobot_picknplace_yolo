@@ -42,6 +42,8 @@ class TeachingRvizPreview:
         self.node, self.transform_builder = node, transform_builder
         self.lock = threading.RLock()
         self.current = None
+        self.displayed = None
+        self.waiting_reason = ""
         self.next_publish = 0.
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.cloud_publisher = node.create_publisher(PointCloud2, CLOUD_TOPIC, qos)
@@ -136,23 +138,42 @@ class TeachingRvizPreview:
     def publish(self, snapshot):
         with self.lock:
             if snapshot is None or "error" in snapshot:
-                self.clear("No RViz snapshot" if snapshot is None else snapshot["error"])
+                self.hold("No RViz snapshot" if snapshot is None else snapshot["error"])
+                return
+            if snapshot["point_count"] == 0:
+                self.hold("No valid depth voxels; waiting for next frame")
                 return
             self.current = snapshot
+            self.waiting_reason = ""
             self.tick()
+
+    def hold(self, reason):
+        """Keep the last cloud during acquisition gaps; suspend candidate TF/markers."""
+        with self.lock:
+            if self.current is None:
+                return
+            if not self.waiting_reason:
+                self.marker_publisher.publish(
+                    MarkerArray(markers=[Marker(action=Marker.DELETEALL)]))
+            # A completed result may still await the 1 Hz publication slot.
+            # Retention must describe the cloud RViz actually received.
+            self.current = self.displayed
+            self.waiting_reason = reason
 
     def clear(self, reason="Teaching preview cleared"):
         with self.lock:
             if self.current is None:
                 return
             self.current = None
+            self.displayed = None
+            self.waiting_reason = ""
             stamp = self.node.get_clock().now().to_msg()
             self.cloud_publisher.publish(cloud_message(b"", 0, stamp))
             self.marker_publisher.publish(MarkerArray(markers=[Marker(action=Marker.DELETEALL)]))
             self.diagnostic_publisher.publish(String(data=json.dumps({"status": reason})))
 
     def tick(self):
-        """Re-display the latest labelled snapshot, clearing invalid/stale input state."""
+        """Retain clouds between valid snapshots; clear only invalidated source state."""
         with self.lock:
             sample, node = self.current, self.node
             if sample is None:
@@ -169,16 +190,33 @@ class TeachingRvizPreview:
                 node._validate_sources()
                 now = node.get_clock().now()
                 with node.condition:
-                    validate_pair(node._image, node._depth, node._color_info, node._depth_info,
-                                  now.nanoseconds, sample["quality"])
-                    if (sample["camera"] != node._color_info
-                            or sample["depth_camera"] != node._depth_info):
+                    if ((node._color_info is not None and sample["camera"] != node._color_info)
+                            or (node._depth_info is not None
+                                and sample["depth_camera"] != node._depth_info)):
                         raise ValueError("CameraInfo changed since RViz snapshot")
             except (ValueError, OSError) as exc:
                 self.clear(str(exc))
                 return
+            if not self.waiting_reason:
+                try:
+                    with node.condition:
+                        validate_pair(node._image, node._depth, node._color_info, node._depth_info,
+                                      now.nanoseconds, sample["quality"])
+                except ValueError as exc:
+                    self.hold(str(exc))
+                    sample = self.current
+                    if sample is None:
+                        return
             source_stamp = Time(nanoseconds=sample["stamp_ns"]).to_msg()
             age = max(0., (now.nanoseconds - sample["stamp_ns"]) / 1e9)
+            if self.waiting_reason:
+                self.diagnostic_publisher.publish(String(data=json.dumps({
+                    "status": "retained_cloud", "reason": self.waiting_reason,
+                    "source_stamp_ns": sample["stamp_ns"],
+                    "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
+                    "voxel_size_mm": 10, "point_count": sample["point_count"],
+                    "candidates": [], "rejected": [], "pose_error": self.waiting_reason})))
+                return
             cloud = cloud_message(sample["data"], sample["point_count"], source_stamp)
             markers = [Marker(action=Marker.DELETEALL)]
             transforms = []
@@ -219,10 +257,11 @@ class TeachingRvizPreview:
             if transforms:
                 node.selected_pose_broadcaster.sendTransform(transforms)
             self.cloud_publisher.publish(cloud)
+            self.displayed = sample
             self.marker_publisher.publish(MarkerArray(markers=markers))
             self.diagnostic_publisher.publish(String(data=json.dumps({
                 "status": "snapshot", "source_stamp_ns": sample["stamp_ns"],
                 "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
-                "voxel_size_mm": 5, "point_count": sample["point_count"],
+                "voxel_size_mm": 10, "point_count": sample["point_count"],
                 "candidates": sample["candidates"], "rejected": sample["rejected"],
                 "pose_error": sample["pose_error"]}, allow_nan=False)))

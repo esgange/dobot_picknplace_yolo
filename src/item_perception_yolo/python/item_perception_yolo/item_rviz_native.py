@@ -4,11 +4,11 @@ from .item_geometry import generate_candidates, rays, reproject_pixels, rectangl
 from .item_teach_core import validate_detection_settings, validate_quality
 
 
-VOXEL_METRES = 0.005
+VOXEL_METRES = 0.010
 
 
 def colored_voxels(rgb, depth, context, base_from_platform, quality, cv2, np):
-    """Centroid/color-average occupied 5 mm cells; never alter pose sampling inputs."""
+    """Centroid/color-average occupied 10 mm cells; never alter pose sampling inputs."""
     valid = ((depth > 0) & (depth >= quality["depth_min_mm"])
              & (depth <= quality["depth_max_mm"]))
     yy, xx = np.nonzero(valid)
