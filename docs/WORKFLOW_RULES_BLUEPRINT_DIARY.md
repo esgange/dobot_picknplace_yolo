@@ -6229,6 +6229,52 @@ Never use a floating “latest” version in an issue, script, or deployment not
   commands, operator artifact edits or process restarts. Physical verification
   and offline transfer remain unperformed.
 
+### 2026-09-27 — Save named Tray Teach drafts and update the existing pair
+
+- Rule 147 follows the request to save with only a tray name, fill data gradually
+  and match Item Teach's file handling. The old Save button required a copied
+  Tray Teach Position in addition to the visible model/plane/dimensions and
+  matching calibration; missing position silently disabled it. Save now needs
+  only the existing valid name format and an available explicit worker slot.
+- Write named teaching documents only to offline_teach/tray_teach/. First saves
+  use tray_teach_<name>_<UTC_TIMESTAMP>.yaml. Copy a loaded model unchanged into
+  the same-stem .pt, verify its SHA-256, and never execute or re-export weights
+  while saving. Calibration retains its existing root-calibration filename/hash
+  binding. No live frames or duplicated camera artifacts are introduced.
+- Preserve incomplete/invalid field text, selected classes, inference size,
+  file choices and any created plane/copied position in a distinct GUI-only
+  tray_teach_draft schema-1 artifact. Name-only drafts need no other files or
+  model trust prompt. Reopening a model-containing draft requires explicit trust
+  and validates the copied model and any bound calibration before restoring the
+  plane. The original Item Teach file is never needed after position copying.
+- Complete inputs save the unchanged strict production tray_teach schema 1.
+  Finishing a draft and saving again promotes the same path; incomplete edits
+  can save a draft again. Runtime readers, arming and production simulation
+  explicitly reject drafts. Save reports draft/complete state and a remaining
+  requirement; a missing position no longer prevents preserving a taught plane.
+- Match Item Teach's save target identity: unchanged name updates the loaded or
+  saved file; renaming creates another timestamped file/pair. Preserve creation
+  time on updates, leave unchanged paired weights untouched and retain one hidden
+  .<stem>.previous.zip with the previous YAML and optional model. Check observed
+  YAML/model hashes before updates, stage/fsync files, publish YAML last and
+  restore the old model if YAML replacement fails. Refuse symlinks, external
+  target changes and changed loaded sources. New filenames never overwrite a pair.
+- This supersedes rules 137/139/145/146's complete-profile save prerequisite and
+  new-pair-only writer policy. Four corner clicks still require Create to become
+  persisted plane evidence; Save can preserve the named form during corner work.
+  Session prefill remains unapplied, save/load never arms, requests disarm before
+  writes, and there are no new .env keys, executor/native workers, runtime deployment
+  writes, controller changes, hardware commands or operator artifact modifications.
+- Validation: all 135 Tray Perception tests pass; the package symlink build,
+  changed-file ament_flake8 and git diff --check pass. Added coverage includes
+  name-only saves, literal unfinished text, copied raw-model bytes, optional
+  plane/position restoration, draft-to-complete updates, renamed copies,
+  previous-version contents, unchanged-weight identity, external changes,
+  YAML-write failure rollback with/without prior weights, strict runtime draft
+  rejection and saving without discarding an active inline corner selection.
+  Verification used temporary synthetic artifacts and offscreen Qt. No operator
+  model execution, process restart, hardware test or offline-transfer milestone.
+
 ### Future entry template
 
 ```text

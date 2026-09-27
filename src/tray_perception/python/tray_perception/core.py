@@ -105,6 +105,9 @@ def copy_teach_position(path, root):
 
 
 def validate_profile(profile):
+    if isinstance(profile, dict) and profile.get("artifact_type") == "tray_teach_draft":
+        raise ValueError("Incomplete Tray Teach draft; complete it and Save in Tray Teach "
+                         "before detection or deployment")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "settings", "model",
                       "camera_calibration", "tray_teach_position", "reference_plane",
                       "origin_convention", "frame_id", "units"), "Tray teach artifact")

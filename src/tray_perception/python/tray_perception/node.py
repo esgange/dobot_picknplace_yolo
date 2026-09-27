@@ -446,6 +446,33 @@ class TrayTeachNode(Node):
             self.plane = copy.deepcopy(profile["reference_plane"])
         return profile
 
+    def load_draft(self, path, expected_digest):
+        from .documents import open_document
+
+        profile, target = open_document(path, self.root)
+        if target.yaml_sha256 != expected_digest:
+            raise ValueError("Tray Teach draft changed; load it again")
+        camera = None
+        if profile["camera_calibration"] is not None:
+            camera = load_camera_calibration(
+                self.root / "calibration" / profile["camera_calibration"]["filename"],
+                root=self.root)
+            if camera.sha256 != profile["camera_calibration"]["sha256"]:
+                raise ValueError("Draft camera calibration changed; cannot restore its plane")
+        self.invalidate("Loading Tray Teach draft")
+        if profile["model"] is not None:
+            self.inspect_model(Path(path).with_suffix(".pt"), profile["model"]["sha256"])
+        else:
+            self.model = self.model_metadata = None
+        if camera is not None:
+            self.apply_camera(camera.path)
+        else:
+            self.camera = None
+        with self.lock:
+            self.position = copy.deepcopy(profile["tray_teach_position"])
+            self.plane = copy.deepcopy(profile["reference_plane"])
+        return profile
+
     def _tick(self):
         process = self.native.process
         if (process is not None and process.poll() is not None and not self.native.closed

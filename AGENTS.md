@@ -516,6 +516,20 @@ metric geometry is ready; never infer mm, a base origin or an accepted pose from
 them. Preserve metric short-X/long-Y corner frames, save requirements, schema 1,
 single native worker, two executor threads and read-only hardware authority.
 
+Rule 147 permits explicit Tray Teach Save with only a valid tray name. Save named
+GUI-only tray_teach_draft documents under offline_teach/tray_teach/ with unfinished
+form text and any existing plane, copied position and bound calibration. Copy a
+loaded model byte-for-byte to a same-stem hashed .pt; name-only drafts need no model.
+Complete data saves the unchanged production tray_teach schema 1. Save updates the
+loaded/saved file while its name is unchanged; renaming creates a new timestamped
+file/pair. Match Item Teach's one hidden previous-version ZIP, source/target hash
+checks, staged writes, YAML-last commit and rollback. Drafts reopen for editing but
+cannot arm, simulate production requests or deploy. Save never runs model code,
+writes runtime_teach or changes controller behavior. Preserve explicit model trust,
+session-only startup restoration and existing worker/executor limits. This supersedes
+rules 137/139/145/146's complete-profile save gate and new-pair-only saving; corner
+edits still require Create before they are persisted as a plane.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

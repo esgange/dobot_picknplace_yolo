@@ -42,7 +42,7 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    Edits apply after 300 ms without typing. Invalid inference values pause YOLO
    with an inline reason; correction resumes it, with no old-value fallback.
    Segmentation masks and OBB models support metric poses; box-only models remain
-   detection previews and cannot produce a saved tray profile.
+   detection previews and can be saved in drafts but cannot produce a detection profile.
 2. Leave **Length**, **Width** and **Tolerance** blank to measure first. Neither
    these filters nor a copied teaching position is needed to capture the plane
    or inspect measured trays. Before saving the complete profile, load an Item
@@ -107,14 +107,34 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    rectangle and red short/green long image axes labelled **X 2D / Y 2D**. These
    are pixel-only orientation guides; they have no nearest-base corner, mm size,
    TF or production pose. Valid plane-based corner axes replace them once ready.
-5. **Save Tray Teach…** at the top right writes a new same-stem YAML/model pair to
-   `offline_teach/tray_teach/tray_teach_<name>_<UTC_TIMESTAMP>.yaml` and `.pt`.
-   Existing pairs are never overwritten. The adjacent **Load Tray Teach…**
-   reopens an existing profile for preview or further teaching; loading a tray
-   is optional when creating a new profile. Explicit loading verifies schema,
-   model hash and the bound camera calibration. The stored Tray Teach Position
-   and reference plane are sufficient: the original Item Teach file/model is
-   not needed to reopen, preview or re-teach the tray.
+5. **Save Tray Teach…** needs only a valid tray name (1–64 letters, digits,
+   underscores or hyphens, starting with a letter or digit). The first save writes
+   `offline_teach/tray_teach/tray_teach_<name>_<UTC_TIMESTAMP>.yaml`. Any loaded
+   model is copied byte-for-byte to a same-stem `.pt`, with SHA-256 verification;
+   saving never executes or re-exports the model. Without a model only YAML is needed.
+   Blank/unfinished fields are preserved as draft text alongside any created
+   reference plane, copied position and bound calibration. Only created planes
+   are persisted; four corner clicks must still be committed with Create.
+   Complete validated data saves the existing production schema-1 profile.
+   The status distinguishes **Saved draft** with the remaining requirement from
+   **Saved complete profile**. Calibration stays in root `calibration/` and is
+   referenced by filename/hash, as before; no camera file or live image is copied.
+6. Like Item Teach, subsequent Save clicks update the loaded/saved YAML and model
+   in place while the tray name is unchanged. One hidden
+   `.<stem>.previous.zip` retains the previous YAML and model (when present).
+   Settings-only updates leave unchanged weights untouched. Source/target hashes,
+   staged copies, YAML-last publication and rollback protect against changed files
+   and failed writes. A renamed tray creates a new timestamped file/pair and leaves
+   the previous one unchanged. Saved drafts become complete profiles at the same
+   path when all required data validates; incomplete edits can save them as drafts
+   again. External YAML/model modifications require reloading before overwriting.
+7. **Load Tray Teach…** restores complete profiles or partial drafts for further
+   teaching. Model-containing documents require explicit trust and verify the paired
+   model plus any bound calibration; name-only drafts need no model trust prompt.
+   A saved plane or copied position needs no source Item Teach file/model to reopen.
+   Incomplete drafts cannot arm, simulate a production request or run headlessly.
+   Loading a tray is optional when starting a new profile; Save does not deploy files
+   into `runtime_teach/` or alter controller configuration.
 
 The origin is the detected rectangle corner nearest the robot `base_link`
 origin by **3D Euclidean distance**. Both +X and +Y point along its adjacent
@@ -158,8 +178,11 @@ them on the next draft save. Malformed or unknown formats fail explicitly;
 write failures are reported and preserve the previous session.
 Events are timestamped and capped at 1000 in the package's `events.jsonl`.
 An arbitrary preview prefix is session-only; loading calibration or a saved tray
-restores its calibrated prefix. Incomplete drafts never change the strict
-schema-1 saved profile or its unchanged YAML/model pairing and save prerequisites.
+restores its calibrated prefix. Named incomplete saves use a distinct
+`tray_teach_draft` artifact (draft schema 1) in the same teaching directory.
+This is separate from automatic session prefill and preserves the strict production
+`tray_teach` schema 1: runtime readers reject drafts until they are completed and
+saved again. Model pairing remains same-stem.
 
 ## RViz voxels
 

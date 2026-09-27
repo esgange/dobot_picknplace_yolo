@@ -612,7 +612,7 @@ Form entries and file choices are remembered across relaunches, even with YOLO
 off or an incomplete form. Drafts save after a 300 ms pause and on orderly close;
 restoration leaves YOLO and Armed off and input loading explicit.
 Load matching camera calibration. You can leave size filters blank and copy
-Item Teach's Home into **Tray Teach Position** later, before saving. The sidebar
+Item Teach's Home into **Tray Teach Position** later, before detection. The sidebar
 separates camera/model settings from teaching position and reference-plane data.
 Use **Capture 4-corner snapshot…** in Reference Plane, select four surface corners
 in the existing RGB pane, then Create. The RGB/depth panes hold one captured
@@ -620,7 +620,7 @@ observation during selection; Create or Cancel restores live display. Each
 corner uses its remaining valid depth samples, even one. A created or loaded
 plane remains outlined green with P1–P4 on both live panes; the sidebar identifies
 whether it has been saved. Click a live tray to read width/X and length/Y, enter the
-desired size filters, and Save Tray Teach when complete. Plane capture and
+desired size filters, and Save Tray Teach as you progress. Plane capture and
 measurement need no copied position. Streams and background preview keep running.
 The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
@@ -641,8 +641,14 @@ red/green axes labelled **2D**, without mm dimensions or a base-frame pose.
 Only the eligible center-prioritized tray is returned by the pose service.
 If an older RViz window has no Tray Teach display, reload the installed canonical
 `dobot_rviz/rviz/urdf.rviz` configuration to subscribe to `/tray_teach/voxel_cloud`.
-Save a new YAML/model pair under `offline_teach/tray_teach/`;
-reopening it needs no source Item Teach file. Controller Home remains in the
+**Save Tray Teach** needs only a valid tray name. It writes a named YAML under
+`offline_teach/tray_teach/` and copies a loaded model unchanged to a same-stem `.pt`.
+Incomplete fields are saved as a draft, including any created plane and copied
+position. Further saves update that loaded/saved file and retain one hidden
+`.previous.zip` backup; changing the tray name creates a new file/pair. Once all
+required data validates, Save makes the same file a complete detection profile.
+Load Tray Teach restores either form; incomplete drafts cannot arm or deploy.
+Reopening needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
 variables. **Simulate Trigger** runs the same fresh observation pipeline as the
 controller-facing service and reports its result while preview continues. **Armed ON**

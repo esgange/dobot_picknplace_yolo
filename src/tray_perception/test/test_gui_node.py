@@ -201,6 +201,97 @@ def test_draft_write_failure_is_visible_and_preserves_previous_session(window, m
     assert window.name.isEnabled()
 
 
+def finish_jobs(window):
+    deadline = time.monotonic() + 3
+    while window.future is not None or window.pending_job is not None:
+        assert time.monotonic() < deadline
+        QtTest.QTest.qWait(10)
+        window._tick()
+
+
+def test_save_only_needs_name_and_reopens_partial_form_without_trusting_model(window, monkeypatch):
+    window.node.lock = threading.RLock()
+    window.node.validate_sources = MagicMock(side_effect=ValueError("Load a camera calibration"))
+    window.node.load_draft = lambda path, digest: TrayTeachNode.load_draft(
+        window.node, path, digest)
+    window._trust = MagicMock(side_effect=AssertionError("No model should execute"))
+    window._update_controls()
+    assert not window.save_button.isEnabled()
+    window.name.setText("brown_tray")
+    window.confidence.setText("unfinished")
+    window._update_controls()
+    assert window.save_button.isEnabled()
+    window._save()
+    finish_jobs(window)
+    path = window.profile_path
+    assert path.parent == window.node.root / "offline_teach/tray_teach"
+    assert "Saved draft" in window.status.text() and window.draft_reason
+    assert not path.with_suffix(".pt").exists()
+    window.dimensions["width_mm"].setText("200")
+    window._save()
+    finish_jobs(window)
+    assert window.profile_path == path and window.save_target.path == path
+    assert "Update" in window.save_button.toolTip()
+    window.name.setText("unsaved_change")
+    window.dimensions["width_mm"].clear()
+    monkeypatch.setattr(window, "_choose", lambda *_a: path)
+    window._load_tray()
+    finish_jobs(window)
+    assert window.name.text() == "brown_tray"
+    assert window.dimensions["width_mm"].text() == "200"
+    assert window.confidence.text() == "unfinished"
+    assert window.save_target.path == path
+    assert not window.preview_toggle.isChecked() and window.node.plane is None
+    with pytest.raises(ValueError, match="draft"):
+        window._trigger_settings()
+    window._trust.assert_not_called()
+
+
+def test_save_complete_form_without_position_preserves_plane_as_draft(window):
+    from test_documents import sources
+    _, camera, model = sources.__wrapped__(window.node.root)
+    window.node.camera = camera
+    window.node.camera_prefix = camera.settings.camera_prefix
+    window.node.plane = plane()
+    window.node.model = model
+    window.node.model_metadata = {"task": "segment", "classes": {"0": "tray"}}
+    window.node.validate_sources = MagicMock()
+    window._model_loaded(window.node.model_metadata)
+    window.camera_prefix.setText(camera.settings.camera_prefix)
+    window._fill_settings(settings())
+    window._save()
+    finish_jobs(window)
+    assert "Position" in window.draft_reason
+    assert window.saved_plane == plane() and window.profile_path.exists()
+    path = window.profile_path
+    window.node.position = position()
+    window._save()
+    finish_jobs(window)
+    assert window.profile_path == path and not window.draft_reason
+    assert "Saved complete profile" in window.status.text()
+    window.preview_toggle.setChecked(True)
+    window._refresh_preview_settings()
+    assert window._trigger_settings() == settings()
+
+
+def test_save_during_corner_capture_keeps_uncreated_corners(window):
+    window.node.validate_sources = MagicMock(side_effect=ValueError("Load a camera calibration"))
+    window.name.setText("new_tray")
+    window.plane_view = {"generation": window.node.generation,
+                         "rgb": {"stamp_ns": 100_000_000_000}}
+    window.points = [(10, 10), (20, 20)]
+    window.future, window.job_kind = Future(), "preview"
+    window.node.invalidate.reset_mock()
+    window._save()
+    window.node.invalidate.assert_not_called()
+    assert window.pending_job is not None
+    window.future.set_result(None)  # Obsolete preview must not be displayed.
+    finish_jobs(window)
+    assert window.profile_path.exists()
+    assert window.plane_view is not None and window.points == [(10, 10), (20, 20)]
+    assert window.saved_plane is None
+
+
 def test_file_dialogs_remember_choices_and_cancel_preserves_draft(window, monkeypatch):
     chooser = MagicMock(return_value=("", ""))
     monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", chooser)
@@ -866,6 +957,27 @@ def test_loaded_profile_restores_position_without_opening_item_file(tmp_path, mo
     result = TrayTeachNode.load_saved(node, tmp_path / "tray.yaml")
     assert node.position == position() and node.plane == plane() and result == source
     assert not (tmp_path / "offline_teach/item_teach").exists()
+
+
+def test_loaded_draft_restores_optional_sources_and_plane_without_position(tmp_path, monkeypatch):
+    from tray_perception import documents, node as module
+    from test_documents import form, sources
+    _, camera, model = sources.__wrapped__(tmp_path)
+    path, _, target, _ = documents.save_document(
+        form(), settings(), None, plane(), camera, model, tmp_path)
+    monkeypatch.setattr(module, "load_camera_calibration", lambda *_a, **_k: camera)
+    node = SimpleNamespace(root=tmp_path, lock=threading.RLock(), apply_camera=MagicMock(),
+                           invalidate=MagicMock(), inspect_model=MagicMock())
+    profile = TrayTeachNode.load_draft(node, path, target.yaml_sha256)
+    assert profile["artifact_type"] == "tray_teach_draft"
+    assert node.position is None and node.plane == plane()
+    node.inspect_model.assert_called_once_with(path.with_suffix(".pt"), model["sha256"])
+    node.apply_camera.assert_called_once_with(camera.path)
+    camera.sha256 = "0" * 64
+    node.inspect_model.reset_mock()
+    with pytest.raises(ValueError, match="calibration changed"):
+        TrayTeachNode.load_draft(node, path, target.yaml_sha256)
+    node.inspect_model.assert_not_called()
 
 
 def test_launch_is_local_only_and_does_not_launch_dependencies(monkeypatch):

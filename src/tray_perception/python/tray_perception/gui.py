@@ -15,8 +15,9 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.signals import SignalHandlerOptions
 
 from .core import (
-    copy_teach_position, read_session, save_profile, tray_directory, validate_settings,
+    copy_teach_position, read_session, tray_directory, validate_settings,
     validate_geometry, validate_preview, write_session)
+from .documents import open_document, save_document, validate_name
 from item_perception_yolo.item_preview import validate_prefix
 from item_perception_yolo.item_teach_core import file_sha256
 from .node import TrayTeachNode
@@ -114,6 +115,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.profile_path = None
         self.profile_digest = ""
         self.profile_filename = ""
+        self.save_target = None
+        self.draft_reason = ""
         self.saved_plane = None
         self.session_ready = False
         self.session_due = None
@@ -437,20 +440,17 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.simulate_button.setEnabled(not exclusive and self.plane_view is None)
         self.armed_toggle.setEnabled(not exclusive and self.plane_view is None)
         self.save_button.setEnabled(
-            not exclusive and self.plane_view is None
-            and self.node.plane is not None and self.node.position is not None
-            and self.node.model is not None and self._save_ready())
+            not exclusive and self._save_ready())
 
     def _save_ready(self):
         try:
-            self._form_settings()
-            if (self.node.camera is None or self.camera_prefix.text().strip() !=
-                    self.node.camera.settings.camera_prefix or self.node.camera_prefix !=
-                    self.node.camera.settings.camera_prefix):
-                raise ValueError("Connect the calibrated camera before saving")
-            if self.node.model["task"] == "detect":
-                raise ValueError("Saving requires a segmentation or OBB model")
-            self.save_button.setToolTip("Save a new timestamped tray YAML and paired model")
+            validate_name(self.name.text().strip())
+            updating = self.save_target is not None and (
+                self.name.text().strip() == self.save_target.name)
+            self.save_button.setToolTip(
+                (f"Update {self.save_target.path.name}" if updating else
+                 "Save a new named Tray Teach file in offline_teach/tray_teach/") +
+                "; incomplete fields are saved as a draft. Create the plane to save corner edits.")
             return True
         except (ValueError, TypeError) as exc:
             self.save_button.setToolTip(str(exc))
@@ -462,7 +462,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if self.future is not None:
             if self.job_kind == "preview" and kind != "preview" and self.pending_job is None:
                 self.pending_job = (function, callback, kind)
-                if kind in ("simulate", "arm", "snapshot", "corners", "plane"):
+                if kind in ("simulate", "arm", "snapshot", "corners", "plane", "read_profile",
+                            "save"):
                     self.preview_cancelled = True
                 else:
                     self._invalidate_preview()
@@ -546,28 +547,80 @@ class TrayTeachWindow(QtWidgets.QWidget):
             joints = ", ".join(f"{math.degrees(q):.2f}°"
                                for q in self.node.position["positions_rad"])
             self.position_label.setText(f"Tray Teach Position — J1…J6:\n{joints}")
+        else:
+            self.position_label.setText("Tray Teach Position: not copied")
 
     def _load_tray(self):
         path = self._choose("Load Tray Teach", tray_directory(self.node.root), "YAML (*.yaml)",
                             self.profile_filename)
-        if path is not None and self._trust():
-            self._edited()
-            self._reset_inspection()
+        if path is not None:
+            self._job(lambda: open_document(path, self.node.root),
+                      lambda result: self._open_tray(path, *result), "read_profile")
 
-            def loaded(profile):
+    def _open_tray(self, path, document, target):
+        if document["model"] is not None and not self._trust():
+            return
+        self._edited()
+        draft = document["artifact_type"] == "tray_teach_draft"
+
+        def loaded(profile):
+            self.preview_toggle.setChecked(False)
+            if draft:
+                self._fill_draft(profile["form"])
+                if self.node.model is not None:
+                    self.model_path.setText(self.node.model["path"])
+                    self._model_loaded(self.node.model_metadata)
+                else:
+                    self.model_status.setText("No verified model loaded")
+                if self.node.camera is not None:
+                    self.camera_path.setText(self.node.camera.path.name)
+                    self.camera_prefix.setText(self.node.camera_prefix)
+                self.draft_reason = "Complete missing fields and save again before detection"
+            else:
                 self._model_loaded(self.node.model_metadata)
                 self._fill_settings(profile["settings"])
                 self.camera_path.setText(profile["camera_calibration"]["filename"])
                 self.camera_prefix.setText(self.node.camera_prefix)
                 self.item_path.clear()
-                self.profile_filename = path.name
-                self.profile_path = path
-                self.profile_digest = file_sha256(path)
-                self.saved_plane = copy.deepcopy(profile["reference_plane"])
-                self._show_position()
-                self._refresh_preview_settings()
-                self._message("Tray loaded independently of Item Teach; preview enabled.")
-            self._job(lambda: self.node.load_saved(path), loaded, "profile")
+                self.draft_reason = ""
+            self.profile_filename, self.profile_path = path.name, path
+            self.profile_digest, self.save_target = target.yaml_sha256, target
+            self.saved_plane = copy.deepcopy(profile["reference_plane"])
+            self._show_position()
+            self._refresh_preview_settings()
+            self._remember()
+            self._message(f"Loaded {'draft' if draft else 'complete profile'}: {path.name}. "
+                          "Save updates this file; renaming creates a new file.")
+
+        def load():
+            if file_sha256(path) != target.yaml_sha256:
+                raise ValueError("Tray Teach file changed; load it again")
+            result = (self.node.load_draft(path, target.yaml_sha256) if draft
+                      else self.node.load_saved(path))
+            if file_sha256(path) != target.yaml_sha256:
+                raise ValueError("Tray Teach file changed while loading; reload it")
+            return result
+        self._job(load, loaded, "profile")
+
+    def _fill_draft(self, form):
+        self.filling = True
+        self.camera_path.setText(form["camera_filename"])
+        self.item_path.setText(form["item_filename"])
+        self.model_path.setText(form["model_path"])
+        for key, widget in self._draft_fields().items():
+            widget.setText(form["draft"][key])
+        self.image_size = form["draft"]["image_size"]
+        self.pending_ids = form["draft"]["class_ids"][:]
+        self.classes.clear()
+        for identifier in self.pending_ids:
+            entry = QtWidgets.QListWidgetItem(
+                f"{identifier}: saved selection (load model to verify)")
+            entry.setData(QtCore.Qt.UserRole, identifier)
+            entry.setFlags(entry.flags() | QtCore.Qt.ItemIsUserCheckable)
+            entry.setCheckState(QtCore.Qt.Checked)
+            self.classes.addItem(entry)
+        self.filling = False
+        self._edited()
 
     def _fill_settings(self, settings):
         self.filling = True
@@ -630,15 +683,19 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if not self.session_ready:
             return
         self.session_due = None
+        state = self._form_state()
+        if state != self.last_session:
+            write_session(self.node.root, state)
+            self.last_session = state
+
+    def _form_state(self):
         state = {"schema_version": 2, "profile_filename": self.profile_filename,
                  "camera_filename": self.camera_path.text(),
                  "item_filename": self.item_path.text(),
                  "model_path": self.model_path.text(),
                  "draft": {key: widget.text() for key, widget in self._draft_fields().items()}}
         state["draft"].update(image_size=self.image_size, class_ids=self._class_ids())
-        if state != self.last_session:
-            write_session(self.node.root, state)
-            self.last_session = state
+        return state
 
     def _persist_session(self):
         try:
@@ -679,6 +736,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.settings = None  # Session drafts never bypass complete-profile validation.
 
     def _trigger_settings(self):
+        if self.draft_reason:
+            raise ValueError(f"Saved Tray Teach is a draft: {self.draft_reason}")
         if self.profile_path is None or not self.profile_digest:
             raise ValueError("Save or load a complete Tray Teach profile first")
         if not self.preview_toggle.isChecked() or self.preview_settings is None:
@@ -889,24 +948,38 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
     def _save(self):
         try:
-            settings = self._form_settings()
-            if self.node.position is None or self.node.plane is None:
-                raise ValueError("Copy a Tray Teach Position and teach its reference plane first")
+            validate_name(self.name.text().strip())
+            form, target = self._form_state(), self.save_target
+            try:
+                settings = self._form_settings()
+            except ValueError:
+                settings = None
             position, plane = copy.deepcopy(self.node.position), copy.deepcopy(self.node.plane)
             camera, model = self.node.camera, copy.deepcopy(self.node.model)
+            self.node.requests.disarm("Saving Tray Teach")
 
-            def saved(path):
+            def saved(result):
+                path, document, self.save_target, self.draft_reason = result
                 self.settings, self.profile_path = settings, path
-                self.profile_digest = file_sha256(path)
+                self.profile_digest = self.save_target.yaml_sha256
                 self.saved_plane = copy.deepcopy(plane)
                 self.profile_filename = path.name
                 self._remember()
-                self._message(f"Saved new tray profile and paired model: {path}")
+                state = "draft" if self.draft_reason else "complete profile"
+                detail = f" Still needed: {self.draft_reason}." if self.draft_reason else ""
+                self._message(f"Saved {state}: {path}.{detail} "
+                              "Save updates this file; renaming creates a new file.")
 
             def save():
-                self.node.validate_sources()
-                return save_profile(settings, position, plane, camera, model["path"],
-                                    model["sha256"], self.node.root)
+                reason = ""
+                try:
+                    self.node.validate_sources()
+                    if form["draft"]["camera_prefix"].strip() != camera.settings.camera_prefix:
+                        raise ValueError("Connect the calibrated camera before detection")
+                except ValueError as exc:
+                    reason = str(exc)
+                return save_document(form, settings, position, plane, camera, model,
+                                     self.node.root, target=target, readiness_error=reason)
             self._job(save, saved, "save")
         except (ValueError, OSError, RuntimeError) as exc:
             self._message(str(exc), error=True)
