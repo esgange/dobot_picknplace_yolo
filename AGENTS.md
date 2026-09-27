@@ -413,6 +413,20 @@ shared 100 ms wait for exact RGB-time TF, then recheck input freshness; missing
 TF still rejects the observation. Keep the 1 Hz limit, two ROS executor threads,
 read-only authority, strict artifacts and explicit Apply unchanged.
 
+Rule 139 aligns Tray Teach with Item Teach's editable-prefix Connect RGB,
+independent all-class RGB/YOLO preview, manual size/tolerance entry, 300 ms live
+edits and horizontal RGB/depth inspection. This supersedes mandatory Apply in
+rule 138; invalid inference fields pause without old-value reuse, while missing
+geometry leaves size unchecked. Calibrated measurement requires a matching
+prefix and the taught plane; changing the connected prefix invalidates geometry.
+Add default 1 Hz 10 mm colored scene voxels on /tray_teach/voxel_cloud and
+diagnostics, using the displayed RGB/depth/TF observation without another YOLO
+prediction. Retain clouds indefinitely, grey after five seconds without fresh
+data or immediately on invalidation/exit, and use reliable transient-local
+depth-one transport with zero RViz decay. Depth loss cannot block plane-based
+tray measurement. Keep one accepted tray TF, schema-1 paired saves, unapplied
+session prefill, no new .env keys and no hardware or controller commands.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -36,7 +36,10 @@ def validate_settings(settings):
     if settings["geometry_source"] != {"segment": "mask", "obb": "obb", "detect": "none"}[
             settings["model_task"]]:
         raise ValueError("Geometry must match the model's mask/OBB output")
-    geometry = settings["geometry"]
+    validate_geometry(settings["geometry"])
+
+
+def validate_geometry(geometry):
     _fields(geometry, ("length_mm", "width_mm", "tolerance_mm"), "Tray geometry")
     for key, value in geometry.items():
         _number(value, key, low=0. if key == "tolerance_mm" else .001)
@@ -44,6 +47,23 @@ def validate_settings(settings):
         raise ValueError("Length is the long side and must be at least the width")
     if geometry["tolerance_mm"] >= geometry["width_mm"]:
         raise ValueError("Tolerance must be smaller than tray width")
+
+
+def validate_preview(settings):
+    """Preview needs model settings, not a complete production teach profile."""
+    _fields(settings, ("model_task", "geometry_source", "geometry", "yolo",
+                       "accepted_class_ids"), "Tray preview")
+    validate_yolo_settings(settings["model_task"], settings["yolo"])
+    if settings["geometry_source"] != {"segment": "mask", "obb": "obb", "detect": "none"}[
+            settings["model_task"]]:
+        raise ValueError("Geometry must match the loaded model")
+    ids = settings["accepted_class_ids"]
+    if (type(ids) is not list or any(
+            type(i) is not int or i not in settings["yolo"]["class_ids"] for i in ids)
+            or len(ids) != len(set(ids))):
+        raise ValueError("Invalid accepted tray classes")
+    if settings["geometry"] is not None:
+        validate_geometry(settings["geometry"])
 
 
 def validate_plane(plane):

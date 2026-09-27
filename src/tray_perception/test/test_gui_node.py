@@ -13,7 +13,7 @@ from rclpy.time import Time
 
 from tray_perception import gui
 from tray_perception.node import TrayTeachNode
-from test_core import camera_info, plane, position, settings
+from test_core import camera_info, plane, position, preview_settings, settings
 
 
 @pytest.fixture
@@ -22,7 +22,12 @@ def window(tmp_path):
     node = SimpleNamespace(root=tmp_path, invalidate=MagicMock(), events=MagicMock(),
                            model=None, model_metadata=None, camera=None, plane=None,
                            position=None, selected=None, native=SimpleNamespace(failed=False),
-                           fatal_error="", close=MagicMock(), generation=1)
+                           fatal_error="", close=MagicMock(), generation=1,
+                           camera_prefix=None, camera_status="No camera connected",
+                           accept_view=MagicMock(), get_clock=lambda: SimpleNamespace(
+                               now=lambda: Time(seconds=100)), rviz=SimpleNamespace(
+                               status=lambda: {"status": "waiting", "point_count": 0,
+                                               "reason": "No camera"}))
     widget = gui.TrayTeachWindow(node)
     widget.timer.stop()
     yield widget
@@ -41,6 +46,7 @@ def test_gui_starts_unapplied_and_has_no_motion_client(window):
 
 
 def test_canvas_maps_scaled_pixels_and_rejects_letterboxing(window):
+    window._corner_evidence = MagicMock()
     canvas = window.canvas
     canvas.resize(800, 800)
     canvas.show_frame(bytes(640 * 480 * 3), 640, 480)
@@ -59,11 +65,12 @@ def test_canvas_maps_scaled_pixels_and_rejects_letterboxing(window):
 
 def test_settings_and_state_restore_without_loading_weights(window):
     window.node.model = {"task": "segment", "path": "/synthetic.pt"}
-    window._model_loaded({"task": "segment", "classes": {"0": "tray"}})
+    window.node.model_metadata = {"task": "segment", "classes": {"0": "tray"}}
+    window._model_loaded(window.node.model_metadata)
     profile_settings = settings()
     profile_settings["yolo"]["image_size"] = 320
     window._fill_settings(profile_settings)
-    window._apply()
+    window._refresh_preview_settings()
     assert window.settings == profile_settings
     assert window.preview_toggle.isChecked()
     node = SimpleNamespace(**vars(window.node))
@@ -77,7 +84,7 @@ def test_settings_and_state_restore_without_loading_weights(window):
         restored.node.model = {"task": "segment", "path": "/synthetic.pt"}
         restored._model_loaded({"task": "segment", "classes": {"0": "tray"}})
         assert restored._form_settings() == profile_settings
-        assert not restored.preview_toggle.isChecked()  # Explicit Apply is still required.
+        assert restored.preview_toggle.isChecked()  # Explicit trusted model load enables preview.
     finally:
         restored.close()
 
@@ -89,11 +96,104 @@ def test_changed_settings_discard_inflight_view(window):
     assert not window.preview_toggle.isChecked() and window.settings is None
 
 
+def enable_model(window):
+    window.node.model = {"task": "segment", "path": "/synthetic.pt"}
+    window.node.model_metadata = {"task": "segment", "classes": {"0": "tray", "1": "other"}}
+    window._model_loaded(window.node.model_metadata)
+
+
+def test_model_preview_needs_no_profile_geometry_or_selected_classes(window):
+    enable_model(window)
+    assert window.preview_toggle.isChecked()
+    assert window.preview_settings["geometry"] is None
+    assert window.preview_settings["accepted_class_ids"] == []
+    assert window.preview_settings["yolo"]["class_ids"] == [0, 1]
+    assert not window.name.text() and window.node.camera is None and window.node.position is None
+    assert window.settings is None
+
+
+def test_live_settings_debounce_invalid_values_and_keep_manual_size(window, monkeypatch):
+    now = [10.]
+    monkeypatch.setattr(gui.time, "monotonic", lambda: now[0])
+    enable_model(window)
+    window.confidence.setText("0.")
+    window._tick()
+    assert window.preview_settings is None and window.preview_toggle.isChecked()
+    now[0] += .2
+    window.confidence.setText("0.45")
+    now[0] += .2
+    window._tick()
+    assert window.preview_settings is None
+    now[0] += .11
+    window._tick()
+    assert window.preview_settings["yolo"]["confidence"] == .45
+    window.iou.setText("bad")
+    now[0] += .31
+    window._tick()
+    assert window.preview_settings is None and window.preview_error
+    window.iou.setText("0.4")
+    window.dimensions["length_mm"].setText("200")
+    window.dimensions["width_mm"].setText("100")
+    window.dimensions["tolerance_mm"].setText("5")
+    window.classes.item(0).setCheckState(gui.QtCore.Qt.Checked)
+    now[0] += .31
+    window._tick()
+    assert not window.preview_error
+    assert window.preview_settings["geometry"]["tolerance_mm"] == 5
+    assert window.preview_settings["accepted_class_ids"] == [0]
+    assert window.preview_settings["yolo"]["class_ids"] == [0, 1]
+    window.dimensions["width_mm"].clear()
+    now[0] += .31
+    window._tick()
+    assert window.preview_settings["geometry"] is None and window.geometry_error
+
+
+def test_click_inspection_freezes_observation_without_overwriting_dimensions(window):
+    enable_model(window)
+    window.dimensions["length_mm"].setText("222")
+    item = {"polygon": [[10, 10], [100, 10], [100, 100], [10, 100]],
+            "source_index": 1, "confidence": .9, "class_name": "tray",
+            "length_mm": 200., "width_mm": 100., "reason": "Unselected tray class"}
+    window.last_view = {"result": {"detections": [item]}}
+    window._click(50, 50)
+    assert window.inspection and window.frozen is None
+    assert window.dimensions["length_mm"].text() == "222"
+    assert "200.0 × 100.0" in window.result_label.text()
+    window._show_view({"generation": window.node.generation})  # Does not touch the new image.
+    window.node.accept_view.assert_not_called()
+    window._click(20, 20)
+    assert not window.inspection and window.last_view is None
+
+
+def test_prefix_edit_stops_old_preview_and_connect_runs_explicitly(window):
+    window.node.camera_prefix = "camera_a"
+    window.node.connect_camera = MagicMock(return_value="camera_b")
+    window.camera_prefix.setText("camera_b")
+    window.node.preview = MagicMock()
+    window._tick()
+    window.node.preview.assert_not_called()
+    window._connect_camera()
+    window.future.result(timeout=2)
+    window._tick()
+    window.node.connect_camera.assert_called_once_with("camera_b")
+
+
+def test_yolo_off_keeps_background_camera_preview(window):
+    window.node.camera_prefix = "cam"
+    window.camera_prefix.setText("cam")
+    window.node.preview = MagicMock(return_value={"generation": -1})
+    window._tick()
+    window.future.result(timeout=2)
+    window._tick()
+    window.node.preview.assert_called_once_with(None, generation=window.node.generation)
+
+
 def test_slow_preview_keeps_typing_focus_and_controls_available(window):
     release = threading.Event()
     callback = MagicMock()
     window.show()
-    window.name.setFocus()
+    field = window.dimensions["length_mm"]
+    field.setFocus()
     gui.QtWidgets.QApplication.processEvents()
     heartbeats = []
     heartbeat = gui.QtCore.QTimer(window)
@@ -104,11 +204,11 @@ def test_slow_preview_keeps_typing_focus_and_controls_available(window):
         window._job(lambda: release.wait(2), callback, "preview")
         window._tick()
         assert all(widget.isEnabled() for widget in window.form_fields)
-        assert window.name.hasFocus()
-        QtTest.QTest.keyClicks(window.name, "new tray name")
+        assert field.hasFocus()
+        QtTest.QTest.keyClicks(field, "200")
         QtTest.QTest.qWait(100)
-        assert window.name.text() == "new tray name"
-        assert window.name.hasFocus() and len(heartbeats) >= 3
+        assert field.text() == "200"
+        assert field.hasFocus() and len(heartbeats) >= 3
         assert window.load_teach_button.isEnabled()
         assert window.freeze_button.isEnabled()
     finally:
@@ -176,7 +276,7 @@ def test_obsolete_preview_errors_do_not_hide_worker_failures(window, monkeypatch
     else:
         critical.assert_not_called()
         window.node.events.record.assert_not_called()
-        assert "Settings changed" in window.result_label.text()
+        assert "Updating detection settings" in window.result_label.text()
         assert not window.node.fatal_error and window.name.isEnabled()
 
 
@@ -205,8 +305,9 @@ def snapshot_node():
                              calibration_mode="camera_to_hand")
     node = SimpleNamespace(validate_sources=MagicMock(), lock=threading.RLock(), rgb=rgb,
                            depth=None, color_info=info, depth_info=None, camera=camera,
-                           generation=4, tf_buffer=MagicMock(),
+                           generation=4, connection=1, tf_buffer=MagicMock(),
                            get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=100)))
+    node.raw_snapshot = lambda: TrayTeachNode.raw_snapshot(node)
     return node
 
 
@@ -222,7 +323,7 @@ def test_detection_snapshot_has_no_depth_dependency(monkeypatch):
     with pytest.raises(ValueError, match="depth"):
         TrayTeachNode.snapshot(node, depth_required=True)
     node.rgb["stamp_ns"] -= 1_000_000_000
-    with pytest.raises(ValueError, match="Fresh"):
+    with pytest.raises(ValueError, match="fresh"):
         TrayTeachNode.snapshot(node)
 
 
@@ -287,7 +388,8 @@ def test_snapshot_rechecks_freshness_after_tf_wait(monkeypatch):
     import numpy as np
     from tray_perception import node as module
     node = snapshot_node()
-    clock = SimpleNamespace(now=MagicMock(side_effect=[Time(seconds=100), Time(seconds=100.6)]))
+    clock = SimpleNamespace(now=MagicMock(side_effect=[
+        Time(seconds=100), Time(seconds=100), Time(seconds=100.6)]))
     node.get_clock = lambda: clock
     monkeypatch.setattr(module, "transform_matrix", lambda *_: np.eye(4))
     monkeypatch.setattr(module, "resolve_base_from_camera_link", lambda *_: np.eye(4))
@@ -298,13 +400,53 @@ def test_snapshot_rechecks_freshness_after_tf_wait(monkeypatch):
 def test_bad_depth_does_not_invalidate_a_depth_free_tray_pose():
     camera = SimpleNamespace(settings=SimpleNamespace(camera_prefix="cam"))
     node = SimpleNamespace(camera=camera, lock=threading.RLock(), selected="existing pose",
-                           depth="previous depth", events=MagicMock())
+                           depth="previous depth", events=MagicMock(), connection=1,
+                           get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=100)))
     invalid = SimpleNamespace(header=SimpleNamespace(frame_id="wrong_frame",
                                                      stamp=Time(seconds=100).to_msg()))
-    TrayTeachNode._receive(node, invalid, "depth", camera)
+    TrayTeachNode._receive(node, invalid, "depth", "cam", 1)
     assert node.depth is None and node.selected == "existing pose"
-    TrayTeachNode._receive(node, invalid, "rgb", camera)
+    TrayTeachNode._receive(node, invalid, "rgb", "cam", 1)
     assert node.rgb is None and node.selected is None
+
+
+def test_reconnecting_changes_exact_topics_and_rejects_retired_callbacks():
+    from sensor_msgs.msg import Image
+    node = snapshot_node()
+    node.camera_prefix, node.plane = "old", plane()
+    node.subscriptions_owned = [object()]
+    retired = node.subscriptions_owned[0]
+    node.destroy_subscription, node.events = MagicMock(), MagicMock()
+    node.create_subscription = MagicMock(side_effect=lambda *args: args[2])
+    node.invalidate = MagicMock()
+    node._receive = lambda *args: TrayTeachNode._receive(node, *args)
+    TrayTeachNode.connect_camera(node, "new")
+    assert node.plane is None and node.rgb is None and node.connection == 2
+    assert [call.args[1] for call in node.create_subscription.call_args_list] == [
+        "/new/color/image_raw", "/new/depth/image_raw",
+        "/new/color/camera_info", "/new/depth/camera_info"]
+    node.destroy_subscription.assert_called_once_with(retired)
+    message = Image()
+    message.header.stamp = Time(seconds=100).to_msg()
+    message.header.frame_id = "new_color_optical_frame"
+    message.encoding, message.width, message.height, message.step = "rgb8", 2, 2, 6
+    message.data = bytes(12)
+    callbacks = list(node.subscriptions_owned)
+    callbacks[0](message)
+    assert node.rgb["width"] == 2
+    TrayTeachNode.connect_camera(node, "new")  # Even same-prefix old connections are retired.
+    callbacks[0](message)
+    assert node.rgb is None
+    with pytest.raises(ValueError, match="prefix"):
+        TrayTeachNode.connect_camera(node, "/bad/name")
+
+
+def test_calibration_prefix_mismatch_is_not_remapped():
+    node = SimpleNamespace(fatal_error="", native=SimpleNamespace(failed=False),
+                           camera_prefix="other", camera=SimpleNamespace(
+                               settings=SimpleNamespace(camera_prefix="calibrated")))
+    with pytest.raises(ValueError, match="does not match"):
+        TrayTeachNode.validate_sources(node)
 
 
 def test_teaching_tf_keeps_source_stamp_without_republishing_old_poses():
@@ -312,7 +454,8 @@ def test_teaching_tf_keeps_source_stamp_without_republishing_old_poses():
     node = SimpleNamespace(native=SimpleNamespace(process=None, failed=False),
                            lock=threading.RLock(), generation=4, _published_key=None,
                            selected=(4, pose, 100_000_000_000, time.monotonic()),
-                           fatal_error="", validate_sources=MagicMock(), broadcaster=MagicMock())
+                           fatal_error="", validate_sources=MagicMock(), broadcaster=MagicMock(),
+                           rviz=SimpleNamespace(displayed=None, tick=MagicMock()))
     TrayTeachNode._tick(node)
     TrayTeachNode._tick(node)
     node.broadcaster.sendTransform.assert_called_once()
@@ -329,32 +472,80 @@ def test_corrupt_native_pose_is_terminal():
     response = {"state": "ok", "width": 2, "height": 2, "count": 1,
                 "selected": {"valid": True}, "detections": [{"valid": True}],
                 "reason": "malformed synthetic pose", "inference_ms": 1.}
-    node = SimpleNamespace(lock=threading.RLock(), model={"task": "segment"}, plane=None,
-                           snapshot=lambda: view, native=SimpleNamespace(
-                               call=MagicMock(return_value=(response, bytes(12)))),
-                           _check_snapshot=MagicMock())
+    node = preview_node(view, response)
     with pytest.raises(RuntimeError, match="Invalid native selected"):
-        TrayTeachNode.preview(node, settings(), generation=4)
+        TrayTeachNode.preview(node, preview_settings(), generation=4)
+
+
+def preview_node(view, response):
+    view.update(depth=None, info=None, depth_info=None, metric_error="", depth_error="")
+    return SimpleNamespace(
+        lock=threading.RLock(), model={"task": "segment"}, plane=None, generation=4, selected=None,
+        raw_snapshot=lambda: view, snapshot=lambda **_: view,
+        get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=100)),
+        native=SimpleNamespace(call=MagicMock(return_value=(response, bytes(12)))),
+        visuals=MagicMock(return_value={"cloud": None, "depth_overlay": b"", "samples": []}),
+        _check_snapshot=MagicMock())
+
+
+@pytest.mark.parametrize("missing", ["calibration", "TF", "depth"])
+def test_missing_geometry_inputs_do_not_stop_rgb_yolo(missing):
+    from tf2_ros import TransformException
+    view = {"generation": 4, "camera_context": None,
+            "rgb": {"width": 2, "height": 2, "rgb": bytes(12), "stamp_ns": 100}}
+    response = {"state": "ok", "width": 2, "height": 2, "count": 0,
+                "selected": None, "detections": [], "reason": "No tray", "inference_ms": 1.}
+    node = preview_node(view, response)
+    if missing != "depth":
+        error = ValueError("No calibration") if missing == "calibration" else TransformException(
+            "No exact-time TF")
+        node.snapshot = MagicMock(side_effect=error)
+    config = preview_settings()
+    config["geometry"], config["accepted_class_ids"] = None, []
+    result = TrayTeachNode.preview(node, config, generation=4)
+    assert result["overlay"] == bytes(12) and result["result"]["count"] == 0
+    node.native.call.assert_called_once()
+    assert node.selected is None  # Worker computation alone never publishes a pose.
+
+
+def test_missing_depth_keeps_plane_pose_and_only_display_commits_it():
+    view = {"generation": 4, "camera_context": {"camera": camera_info()},
+            "rgb": {"width": 2, "height": 2, "rgb": bytes(12), "stamp_ns": 100}}
+    selected = {"valid": True, "position": [0., 0., .2], "quaternion": [0., 0., 0., 1.],
+                "polygon": [[0., 0.], [1., 0.], [1., 1.]], "source_index": 0,
+                "class_name": "tray", "confidence": .9, "size_status": "pass", "reason": "OK"}
+    response = {"state": "ok", "width": 2, "height": 2, "count": 1,
+                "selected": selected, "detections": [selected], "reason": "", "inference_ms": 1.}
+    node = preview_node(view, response)
+    node.plane = {"camera": camera_info()}
+    node.rviz = MagicMock()
+    result = TrayTeachNode.preview(node, preview_settings(), generation=4)
+    assert result["depth"] is None and result["result"]["selected"] == selected
+    assert node.native.call.call_args.args[0]["plane"] == node.plane
+    assert node.selected is None
+    node.rviz.accept.assert_not_called()
+    TrayTeachNode.accept_view(node, result)
+    assert node.selected[1] == selected
+    node.rviz.hold.assert_called_once()
 
 
 @pytest.mark.parametrize("when", ["before_snapshot", "before_commit"])
 def test_preview_cannot_publish_old_settings_after_edit(when):
     view = {"generation": 4, "camera_context": {},
             "rgb": {"width": 2, "height": 2, "rgb": bytes(12), "stamp_ns": 100}}
-    selected = {"valid": True, "position": [0., 0., 0.], "quaternion": [0., 0., 0., 1.]}
+    selected = {"valid": True, "position": [0., 0., 0.], "quaternion": [0., 0., 0., 1.],
+                "polygon": [[0., 0.], [1., 0.], [1., 1.]], "source_index": 0,
+                "class_name": "tray", "confidence": .9, "size_status": "pass", "reason": "OK"}
     response = {"state": "ok", "width": 2, "height": 2, "count": 1,
                 "selected": selected, "detections": [selected], "reason": "", "inference_ms": 1.}
-    node = SimpleNamespace(lock=threading.RLock(), model={"task": "segment"}, plane=None,
-                           generation=4, selected=None, snapshot=lambda: view,
-                           native=SimpleNamespace(call=MagicMock(
-                               return_value=(response, bytes(12)))))
+    node = preview_node(view, response)
     if when == "before_snapshot":
         view["generation"] = node.generation = 5
         node._check_snapshot = MagicMock()
     else:
-        node._check_snapshot = lambda _view: setattr(node, "generation", 5)
+        node._check_snapshot = lambda _view, **_: setattr(node, "generation", 5)
     with pytest.raises(ValueError, match="invalidated"):
-        TrayTeachNode.preview(node, settings(), generation=4)
+        TrayTeachNode.preview(node, preview_settings(), generation=4)
     assert node.selected is None
     if when == "before_snapshot":
         node.native.call.assert_not_called()

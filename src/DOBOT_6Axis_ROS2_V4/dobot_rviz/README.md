@@ -70,6 +70,15 @@ replaces it and restores its colors; repeated/frozen frames cannot reset its age
 Reload the canonical RViz configuration to apply this QoS to an existing viewer.
 Use **Size (m) = 0.010** when updating an already-open RViz display manually.
 
+A separate enabled **Tray Teach - 10 mm colored voxels** display subscribes to
+`/tray_teach/voxel_cloud` with the same 10 mm boxes, zero decay and retained-cloud
+QoS. Tray Teach produces it from calibrated synchronized RGB/depth/TF even with
+YOLO off, retains its source timestamp, and greys it after five seconds without
+a fresh replacement or immediately on invalidation/exit. It needs no taught
+tray plane. Only the selected tray has a TF (`tray_teach_selected_tray`), and
+there are no numeric tray overlays. This is a project viewer integration patch;
+the viewer starts no teaching nodes and sends no hardware commands.
+
 Useful read-only checks:
 
 ```bash

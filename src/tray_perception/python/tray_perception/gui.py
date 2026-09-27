@@ -16,7 +16,8 @@ from rclpy.signals import SignalHandlerOptions
 
 from .core import (
     copy_teach_position, read_session, save_profile, tray_directory, validate_settings,
-    write_session)
+    validate_geometry, validate_preview, write_session)
+from item_perception_yolo.item_preview import validate_prefix
 from .node import TrayTeachNode
 
 
@@ -28,6 +29,8 @@ class TrayCanvas(QtWidgets.QWidget):
         self.image = None
         self.points = []
         self.selecting = False
+        self.highlight = []
+        self.empty_text = "Connect RGB to begin"
         self.setMinimumSize(480, 360)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
@@ -64,11 +67,16 @@ class TrayCanvas(QtWidgets.QWidget):
         if self.image is None:
             painter.setPen(QtCore.Qt.white)
             painter.drawText(self.rect(), QtCore.Qt.AlignCenter,
-                             "Load camera calibration to begin")
+                             self.empty_text)
             return
         rect = self.image_rect()
         painter.drawImage(rect, self.image)
         painter.setPen(QtGui.QPen(QtGui.QColor("cyan"), 2))
+        if self.highlight:
+            painter.drawPolygon(QtGui.QPolygonF([
+                QtCore.QPointF(rect.left() + x * rect.width() / self.image.width(),
+                               rect.top() + y * rect.height() / self.image.height())
+                for x, y in self.highlight]))
         for index, (x, y) in enumerate(self.points, 1):
             point = QtCore.QPointF(
                 rect.left() + x * rect.width() / self.image.width(),
@@ -88,6 +96,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.closing = False
         self.job_kind = ""
         self.settings = self.frozen = None
+        self.preview_settings = self.last_view = None
+        self.preview_due = None
+        self.preview_error = self.geometry_error = ""
+        self.inspection = self.filling = False
         self.profile_path = None
         self.profile_filename = ""
         self.buttons = []
@@ -120,12 +132,23 @@ class TrayTeachWindow(QtWidgets.QWidget):
         controls = QtWidgets.QVBoxLayout(sidebar)
         form = QtWidgets.QFormLayout()
         controls.addLayout(form)
+        self.camera_prefix = QtWidgets.QLineEdit()
+        self.camera_prefix.setPlaceholderText("Camera prefix, e.g. robot_camera")
+        self.camera_prefix.textChanged.connect(self._prefix_edited)
+        camera_row = QtWidgets.QHBoxLayout()
+        camera_row.addWidget(self.camera_prefix, 1)
+        camera_row.addWidget(self._button("Connect RGB", self._connect_camera))
+        form.addRow(camera_row)
+        self.camera_status = QtWidgets.QLabel("No camera connected")
+        self.camera_status.setWordWrap(True)
+        form.addRow(self.camera_status)
         self.camera_path = QtWidgets.QLineEdit()
         self.model_path = QtWidgets.QLineEdit()
         self.item_path = QtWidgets.QLineEdit()
         self._path_row(form, "Calibration", self.camera_path, self._load_camera)
         self._path_row(form, "YOLO model", self.model_path, self._load_model)
-        self._path_row(form, "Item Home", self.item_path, self._copy_position)
+        self._path_row(form, "Item Teach", self.item_path, self._copy_position,
+                       button_text="Copy Position…")
         self.position_label = QtWidgets.QLabel("Tray Teach Position: not copied")
         self.position_label.setWordWrap(True)
         controls.addWidget(self.position_label)
@@ -139,36 +162,31 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.dimensions = {}
         for key, label in (("length_mm", "Length (mm)"), ("width_mm", "Width (mm)"),
                            ("tolerance_mm", "Tolerance ± (mm)")):
-            widget = QtWidgets.QDoubleSpinBox()
-            widget.setRange(0, 10000)
-            widget.setDecimals(2)
+            widget = QtWidgets.QLineEdit()
+            widget.setPlaceholderText("Required for size acceptance")
             form.addRow(label, widget)
             self.dimensions[key] = widget
-            widget.valueChanged.connect(self._edited)
+            widget.textChanged.connect(self._edited)
         self.classes = QtWidgets.QListWidget()
         self.classes.setMaximumHeight(120)
         form.addRow("Tray classes", self.classes)
-        self.confidence, self.iou = QtWidgets.QDoubleSpinBox(), QtWidgets.QDoubleSpinBox()
+        self.confidence, self.iou = QtWidgets.QLineEdit(), QtWidgets.QLineEdit()
         for widget, initial in ((self.confidence, .25), (self.iou, .7)):
-            widget.setRange(.01, 1.)
-            widget.setSingleStep(.05)
-            widget.setValue(initial)
-            widget.valueChanged.connect(self._edited)
-        form.addRow("Confidence", self.confidence)
-        form.addRow("IoU", self.iou)
-        self.maximum = QtWidgets.QSpinBox()
-        self.maximum.setRange(1, 1000)
-        self.maximum.setValue(100)
+            widget.setText(str(initial))
+            widget.textChanged.connect(self._edited)
+        form.addRow("Confidence (0–1)", self.confidence)
+        form.addRow("Overlap IoU (0–1)", self.iou)
+        self.maximum = QtWidgets.QLineEdit("100")
         form.addRow("Max detections", self.maximum)
-        self.maximum.valueChanged.connect(self._edited)
-        self.name.textChanged.connect(self._edited)
+        self.maximum.textChanged.connect(self._edited)
+        self.name.textChanged.connect(lambda: setattr(self, "settings", None))
         self.classes.itemChanged.connect(self._edited)
-        self.apply_button = self._button("Apply && Preview", self._apply)
-        controls.addWidget(self.apply_button)
-        self.preview_toggle = QtWidgets.QCheckBox("YOLO preview (up to 1 Hz)")
-        self.preview_toggle.toggled.connect(self._invalidate_preview)
+        self.preview_toggle = QtWidgets.QPushButton("YOLO Detect: OFF")
+        self.preview_toggle.setCheckable(True)
+        self.preview_toggle.toggled.connect(self._toggle_yolo)
         controls.addWidget(self.preview_toggle)
-        self.form_fields = [self.name, self.classes, self.confidence, self.iou, self.maximum,
+        self.form_fields = [self.camera_prefix, self.name, self.classes,
+                            self.confidence, self.iou, self.maximum,
                             self.preview_toggle, *self.dimensions.values()]
         self.plane_label = QtWidgets.QLabel("Reference plane: not taught")
         self.plane_label.setWordWrap(True)
@@ -176,7 +194,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         instructions = QtWidgets.QLabel(
             "Keep the robot and uncovered tray still, then freeze a fresh view. Click four "
             "distinct corners on its "
-            "reference surface in any order, then create the plane. Depth is used only here.\n\n"
+            "reference surface in any order, then create the plane. Depth supplies the corner "
+            "samples and RViz voxels.\n\n"
             "Detection measures on that saved plane. The corner nearest base_link is the "
             "origin; red +X and green +Y follow adjacent edges into the tray. The valid tray "
             "nearest the image center wins.")
@@ -197,8 +216,28 @@ class TrayTeachWindow(QtWidgets.QWidget):
                        self.plane_button, self.resume_button):
             actions.addWidget(button)
         self.canvas = TrayCanvas()
+        self.canvas.selecting = True
         self.canvas.clicked.connect(self._click)
-        column.addWidget(self.canvas, 1)
+        self.depth_canvas = TrayCanvas()
+        self.depth_canvas.empty_text = "Waiting for synchronized registered depth"
+        images = QtWidgets.QWidget()
+        layout = QtWidgets.QGridLayout(images)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.setRowStretch(1, 1)
+        for index, (title, canvas) in enumerate((
+                ("RGB", self.canvas), ("Registered depth", self.depth_canvas))):
+            label = QtWidgets.QLabel(title)
+            label.setWordWrap(True)
+            label.setStyleSheet("background: #111; color: white; padding: 7px;")
+            layout.addWidget(label, 0, index)
+            layout.addWidget(canvas, 1, index)
+            layout.setColumnStretch(index, 1)
+            if canvas is self.canvas:
+                self.rgb_status = label
+            else:
+                self.depth_status = label
+        column.addWidget(images, 1)
         self.result_label = QtWidgets.QLabel("No tray pose selected")
         self.result_label.setWordWrap(True)
         column.addWidget(self.result_label)
@@ -206,7 +245,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         splitter.setSizes([400, 1100])
         splitter.setStretchFactor(1, 1)
         self.status = QtWidgets.QLabel(
-            "Load a camera calibration, a trusted model and Item Teach.")
+            "Connect RGB and load a trusted model to preview. Calibration enables geometry.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
         state = read_session(node.root)
@@ -227,11 +266,11 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.buttons.append(button)
         return button
 
-    def _path_row(self, form, label, field, callback):
+    def _path_row(self, form, label, field, callback, *, button_text="Load…"):
         field.setReadOnly(True)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(field, 1)
-        row.addWidget(self._button("Load…", callback))
+        row.addWidget(self._button(button_text, callback))
         form.addRow(label, row)
 
     def _message(self, text, *, error=False):
@@ -239,12 +278,33 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.node.events.record("WARNING" if error else "INFO", "gui", text)
 
     def _edited(self, *_args):
+        if self.filling:
+            return
         self.settings = None
+        self.preview_settings = None
         self._invalidate_preview()
-        if hasattr(self, "preview_toggle"):
-            self.preview_toggle.setChecked(False)
+        self._resume()
+        self.preview_due = time.monotonic() + .3
         if hasattr(self, "result_label"):
-            self.result_label.setText("Settings changed; Apply & Preview for a new tray pose")
+            self.result_label.setText("Updating detection settings after typing…")
+
+    def _prefix_edited(self):
+        self._edited()
+
+    def _connect_camera(self):
+        try:
+            prefix = validate_prefix(self.camera_prefix.text().strip())
+        except ValueError as exc:
+            self._message(str(exc), error=True)
+            return
+        self._edited()
+        self._job(lambda: self.node.connect_camera(prefix),
+                  lambda value: self._message(f"Connected /{value}"), "connect")
+
+    def _toggle_yolo(self, enabled):
+        self._edited()
+        self.preview_toggle.setText("YOLO Detect: ON" if enabled else "YOLO Detect: OFF")
+        self._refresh_preview_settings()
 
     def _invalidate_preview(self, *_args):
         if self.future is not None and self.job_kind == "preview":
@@ -261,7 +321,22 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.undo_button.setEnabled(not exclusive and bool(self.points))
         self.save_button.setEnabled(
             not exclusive and self.node.plane is not None and self.node.position is not None
-            and self.node.model is not None)
+            and self.node.model is not None and self._save_ready())
+
+    def _save_ready(self):
+        try:
+            self._form_settings()
+            if (self.node.camera is None or self.camera_prefix.text().strip() !=
+                    self.node.camera.settings.camera_prefix or self.node.camera_prefix !=
+                    self.node.camera.settings.camera_prefix):
+                raise ValueError("Connect the calibrated camera before saving")
+            if self.node.model["task"] == "detect":
+                raise ValueError("Saving requires a segmentation or OBB model")
+            self.save_button.setToolTip("Save a new timestamped tray YAML and paired model")
+            return True
+        except (ValueError, TypeError) as exc:
+            self.save_button.setToolTip(str(exc))
+            return False
 
     def _job(self, function, callback, kind):
         if self.closing or self.node.fatal_error:
@@ -296,6 +371,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
             def loaded(camera):
                 self.camera_path.setText(camera.path.name)
+                self.camera_prefix.setText(camera.settings.camera_prefix)
                 self._message(f"Loaded camera calibration: {camera.path.name}")
             self._job(lambda: self.node.apply_camera(path), loaded, "camera")
 
@@ -319,7 +395,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
                                 else QtCore.Qt.Unchecked)
             self.classes.addItem(entry)
         self.classes.blockSignals(False)
-        self._message(f"Loaded {metadata['task']} model. Select tray classes and Apply & Preview.")
+        self.preview_toggle.setChecked(True)
+        self._refresh_preview_settings()
+        self._message(f"Loaded {metadata['task']} model. Preview shows all classes; "
+                      "check classes to accept for tray poses.")
 
     def _copy_position(self):
         path = self._choose("Copy Item Teach Home", self.node.root / "offline_teach/item_teach",
@@ -349,27 +428,49 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self._model_loaded(self.node.model_metadata)
                 self._fill_settings(profile["settings"])
                 self.camera_path.setText(profile["camera_calibration"]["filename"])
+                self.camera_prefix.setText(self.node.camera_prefix)
                 self.item_path.clear()
                 self.profile_filename = path.name
                 self.profile_path = path
                 self._show_position()
-                self._apply()
+                self._refresh_preview_settings()
                 self._message("Tray loaded independently of Item Teach; preview enabled.")
             self._job(lambda: self.node.load_saved(path), loaded, "profile")
 
     def _fill_settings(self, settings):
+        self.filling = True
         self.name.setText(settings["name"])
         for key, value in settings["geometry"].items():
-            self.dimensions[key].setValue(value)
-        self.confidence.setValue(settings["yolo"]["confidence"])
-        self.iou.setValue(settings["yolo"]["iou"])
-        self.maximum.setValue(settings["yolo"]["max_detections"])
+            self.dimensions[key].setText(str(value))
+        self.confidence.setText(str(settings["yolo"]["confidence"]))
+        self.iou.setText(str(settings["yolo"]["iou"]))
+        self.maximum.setText(str(settings["yolo"]["max_detections"]))
         self.image_size = settings["yolo"]["image_size"]
         self.pending_ids = settings["yolo"]["class_ids"][:]
         for index in range(self.classes.count()):
             item = self.classes.item(index)
             item.setCheckState(QtCore.Qt.Checked if item.data(QtCore.Qt.UserRole) in
                                self.pending_ids else QtCore.Qt.Unchecked)
+        self.filling = False
+        self._edited()
+
+    def _geometry(self):
+        try:
+            geometry = {key: float(widget.text()) for key, widget in self.dimensions.items()}
+            validate_geometry(geometry)
+            return geometry
+        except ValueError as exc:
+            raise ValueError("Enter valid length, width and tolerance in mm") from exc
+
+    def _yolo(self):
+        try:
+            return {"confidence": float(self.confidence.text()), "iou": float(self.iou.text()),
+                    "max_detections": int(self.maximum.text()), "image_size": self.image_size,
+                    "class_ids": [self.classes.item(i).data(QtCore.Qt.UserRole)
+                                  for i in range(self.classes.count())
+                                  if self.classes.item(i).checkState() == QtCore.Qt.Checked]}
+        except ValueError as exc:
+            raise ValueError("Enter valid confidence, IoU and integer detection cap") from exc
 
     def _form_settings(self):
         if self.node.model is None:
@@ -377,13 +478,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         task = self.node.model["task"]
         settings = {"name": self.name.text().strip(), "model_task": task,
                     "geometry_source": {"segment": "mask", "obb": "obb", "detect": "none"}[task],
-                    "geometry": {key: widget.value() for key, widget in self.dimensions.items()},
-                    "yolo": {"confidence": self.confidence.value(), "iou": self.iou.value(),
-                             "max_detections": self.maximum.value(), "image_size": self.image_size,
-                             "class_ids": [self.classes.item(i).data(QtCore.Qt.UserRole)
-                                           for i in range(self.classes.count())
-                                           if self.classes.item(i).checkState() ==
-                                           QtCore.Qt.Checked]}}
+                    "geometry": self._geometry(), "yolo": self._yolo()}
         validate_settings(settings)
         return settings
 
@@ -395,15 +490,36 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 "camera_filename": self.camera_path.text(), "item_filename": self.item_path.text(),
                 "model_path": self.model_path.text(), "settings": self.settings})
 
-    def _apply(self):
+    def _refresh_preview_settings(self):
+        self.preview_due = None
+        self.preview_settings = None
+        self.preview_error = self.geometry_error = ""
+        if not self.preview_toggle.isChecked():
+            return
+        try:
+            if self.node.model is None:
+                raise ValueError("Load a trusted model to enable YOLO")
+            task = self.node.model["task"]
+            yolo = self._yolo()
+            accepted = yolo["class_ids"]
+            yolo["class_ids"] = sorted(int(i) for i in self.node.model_metadata["classes"])
+            try:
+                geometry = self._geometry()
+            except ValueError as exc:
+                geometry, self.geometry_error = None, str(exc)
+            settings = {"model_task": task,
+                        "geometry_source": {"segment": "mask", "obb": "obb", "detect": "none"}[
+                            task], "yolo": yolo, "accepted_class_ids": accepted,
+                        "geometry": geometry}
+            validate_preview(settings)
+            self.preview_settings = settings
+        except (ValueError, TypeError) as exc:
+            self.preview_error = str(exc)
         try:
             self.settings = self._form_settings()
-            self._invalidate_preview()
             self._remember()
-            self.preview_toggle.setChecked(True)
-            self._message("Preview enabled. Green trays pass dimensions; red trays are rejected.")
-        except (ValueError, OSError) as exc:
-            self._message(str(exc), error=True)
+        except (ValueError, OSError):
+            self.settings = None  # Incomplete drafts are not persisted as complete profiles.
 
     def _freeze(self):
         self._invalidate_preview()
@@ -415,10 +531,14 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.canvas.selecting = True
             rgb = self.frozen["rgb"]
             self.canvas.show_frame(rgb["rgb"], rgb["width"], rgb["height"])
+            self._show_depth(view)
             self._message("Frozen RGB/depth snapshot. Click four surface corners in any order.")
         self._job(self.node.freeze_for_plane, frozen, "freeze")
 
     def _click(self, x, y):
+        if self.pending_job is not None or (
+                self.future is not None and self.job_kind != "preview"):
+            return
         if self.frozen is not None and self.future is None and len(self.points) < 4:
             if any(math.hypot(x - px, y - py) < 3 for px, py in self.points):
                 self._message("Choose a different corner", error=True)
@@ -426,11 +546,51 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.points.append([x, y])
             self.canvas.update()
             self._message(f"Selected {len(self.points)}/4 corners on the frozen snapshot")
+            self._corner_evidence()
+        elif self.frozen is None:
+            if self.inspection:
+                self._resume()
+                return
+            if self.last_view is None:
+                return
+            hits = []
+            for item in self.last_view["result"].get("detections", []):
+                polygon = QtGui.QPolygonF([QtCore.QPointF(*p) for p in item["polygon"]])
+                if polygon.containsPoint(QtCore.QPointF(x, y), QtCore.Qt.WindingFill):
+                    rect = polygon.boundingRect()
+                    hits.append((rect.width() * rect.height(), -item["confidence"],
+                                 item["source_index"], item))
+            if hits:
+                item = min(hits, key=lambda hit: hit[:3])[3]
+                self.inspection = True
+                self.preview_cancelled = self.future is not None and self.job_kind == "preview"
+                self.canvas.highlight = item["polygon"]
+                self.canvas.update()
+                measured = (f"Measured {item['length_mm']:.1f} × {item['width_mm']:.1f} mm"
+                            if "length_mm" in item else "Dimensions unavailable")
+                self.result_label.setText(
+                    f"{item['class_name']}: {measured} | {item['reason']} | "
+                    "Frozen for inspection; click again to resume. Manual dimensions unchanged.")
+
+    def _corner_evidence(self):
+        view, pixels = self.frozen, copy.deepcopy(self.points)
+
+        def shown(result):
+            self._show_depth({**view, **result})
+            self.canvas.show_frame(result["corner_overlay"],
+                                   view["rgb"]["width"], view["rgb"]["height"])
+            details = [f"{s['index']}: {s['accepted']}/49 valid, "
+                       f"{s['median_mm']} mm — {s['reason']}" for s in result["samples"]]
+            text = "Corners: " + "; ".join(details)
+            self.rgb_status.setText(text)
+            self.depth_status.setText(text)
+        self._job(lambda: self.node.corner_preview(view, pixels), shown, "corners")
 
     def _undo(self):
         if self.points:
             self.points.pop()
             self.canvas.update()
+            self._corner_evidence()
 
     def _capture(self):
         if self.frozen is None or len(self.points) != 4:
@@ -446,9 +606,12 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
     def _resume(self):
         self.frozen = None
+        self.inspection = False
+        self.last_view = None
         self.points.clear()
         self.canvas.points = self.points
-        self.canvas.selecting = False
+        self.canvas.selecting = True
+        self.canvas.highlight = []
         self.canvas.update()
 
     def _save(self):
@@ -474,10 +637,14 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._message(str(exc), error=True)
 
     def _show_view(self, view):
-        if self.frozen is not None or view["generation"] != self.node.generation:
+        if (self.frozen is not None or self.inspection
+                or view["generation"] != self.node.generation):
             return
+        self.node.accept_view(view)
+        self.last_view = view
         rgb, result = view["rgb"], view["result"]
         self.canvas.show_frame(view["overlay"], rgb["width"], rgb["height"])
+        self._show_depth(view)
         age = max(0., (self.node.get_clock().now().nanoseconds - rgb["stamp_ns"]) / 1e9)
         selected = result.get("selected")
         if selected is None:
@@ -492,9 +659,21 @@ class TrayTeachWindow(QtWidgets.QWidget):
                     if not d["valid"]]
         self.result_label.setToolTip("\n".join(rejected))
 
+    def _show_depth(self, view):
+        rgb = view["rgb"]
+        if view.get("depth_overlay"):
+            self.depth_canvas.show_frame(view["depth_overlay"], rgb["width"], rgb["height"])
+        else:
+            self.depth_canvas.image = None
+            self.depth_canvas.update()
+        self.depth_status.setText("Registered depth | " + (
+            view.get("depth_error", "") or "200–1000 mm; black = outside range"))
+
     def _tick(self):
         if self.closing:
             return
+        if self.preview_due is not None and time.monotonic() >= self.preview_due:
+            self._refresh_preview_settings()
         if self.future is not None and self.future.done():
             future, callback, kind = self.future, self.completion, self.job_kind
             obsolete = kind == "preview" and self.preview_cancelled
@@ -524,17 +703,35 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._job(*job)
         busy = self.future is not None
         self._update_controls()
+        prefix = self.node.camera_prefix
+        self.camera_status.setText(self.node.camera_status + (
+            f"\n/{prefix}/color/image_raw\n/{prefix}/depth/image_raw" if prefix else ""))
+        self.camera_status.setToolTip("\n".join(f"/{prefix}/{topic}" for topic in (
+            "color/image_raw", "depth/image_raw", "color/camera_info", "depth/camera_info"))
+            if prefix else "Connect RGB first")
+        if self.frozen is None and not self.inspection:
+            error = self.preview_error or self.geometry_error
+            mode = ("YOLO paused: " + self.preview_error if self.preview_error else
+                    "YOLO ON" if self.preview_toggle.isChecked() else "YOLO OFF — raw RGB")
+            metric = "" if self.last_view is None else self.last_view["metric_error"]
+            cloud = self.node.rviz.status()
+            detail = "\n".join(text for text in (metric, error) if text)
+            self.rgb_status.setText(
+                f"RGB /{prefix or 'not connected'} | {mode}\n{detail}\n"
+                f"RViz: {cloud['status']} — {cloud['point_count']} voxels {cloud['reason']}")
         if self.node.plane is not None:
             self.plane_label.setText(
                 f"Reference plane: base_link | fit error {self.node.plane['max_error_mm']:.2f} mm")
         else:
             self.plane_label.setText("Reference plane: not taught")
-        if busy or self.frozen is not None or self.node.camera is None:
+        if (busy or self.frozen is not None or self.inspection or prefix is None
+                or prefix != self.camera_prefix.text().strip()):
             return
         if time.monotonic() < self.next_preview:
             return
         self.next_preview = time.monotonic() + 1.
-        settings = copy.deepcopy(self.settings) if self.preview_toggle.isChecked() else None
+        settings = (copy.deepcopy(self.preview_settings)
+                    if self.preview_toggle.isChecked() else None)
         generation = self.node.generation
         self._job(lambda: self.node.preview(settings, generation=generation),
                   self._show_view, "preview")

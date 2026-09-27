@@ -5843,6 +5843,80 @@ Never use a floating “latest” version in an issue, script, or deployment not
   pass. Only existing Tray Teach logs were read; no hardware process/command,
   operator-model execution or calibration/teaching artifact edits occurred.
 
+### 2026-09-27 — Tray Teach live camera workflow and retained RViz voxels
+
+- Rule 139 supersedes rules 137/138's mandatory Apply step. Add editable camera
+  prefix and **Connect RGB**, connected stream/topic status and independent
+  RGB/YOLO preview. Subscribe only to that prefix's color/depth images and both
+  CameraInfo topics; reconnect destroys old subscriptions and rejects old
+  callbacks, including same-prefix reconnects. Loading calibration connects its
+  recorded prefix. Another prefix invalidates the plane/pose and requires its
+  own matching calibration for measurements, without remapping sources.
+- Explicit trusted model loading enables up to 1 Hz preview as RGB becomes
+  available, independently of calibration, depth, robot TF, Item Teach, name,
+  dimensions, plane or selected classes. Show every model class under the
+  current confidence/IoU/cap; checked classes affect pose eligibility only.
+  Defaults remain 0.25/0.70/100 and internal size 640; preserve loaded sizes.
+  Apply valid detection edits after 300 ms without typing. Invalid inference
+  fields pause inference with an inline explanation, without using old values;
+  correction resumes it. Keep fields/focus available during automatic work.
+- Present RGB and registered depth together with status in aligned black bands.
+  Preserve explicit Freeze/Undo/Create Plane and four coplanar clicks from one
+  synchronized RGB/depth/exact-time-TF observation. Both panes show corner
+  locations, valid sample counts, median depth and black/red accepted/rejected
+  sampling evidence, mapped through separate RGB/depth distortion models.
+  A clicked detection freezes its displayed observation for measured-size and
+  acceptance inspection; a second click resumes. Inspection is independent of
+  corner teaching and never replaces the manually entered long-side length,
+  short-side width or one ±mm tolerance. Grey/green/red borders indicate size
+  unchecked/pass/fail independently of selected classes. Incomplete geometry
+  keeps detections visible but cannot produce an accepted pose.
+- Continue measuring full-resolution mask/OBB polygons against the saved
+  base_link plane without live surface depth. Choose exactly one eligible tray
+  nearest image center with deterministic confidence/index ties. Retain the
+  nearest-base 3D corner origin and inward positive axes. A changed tray support
+  height or tilt requires a new plane. Keep box-only models preview-only.
+- Add `/tray_teach/voxel_cloud` and `/tray_teach/rviz_diagnostics`. A Tray Teach
+  adapter reuses Item Perception's voxel utility to publish 10 mm centroids and
+  averaged source RGB in base_link with original observation timestamps. Use
+  the same displayed RGB/depth/TF snapshot and existing worker, with no second
+  YOLO prediction. Matching calibration and synchronized inputs are required;
+  a plane, model, class selection and enabled YOLO are not. Missing depth must
+  leave RGB detection and plane-based measurements usable.
+- Retain the latest cloud indefinitely, greying it after five seconds without
+  fresh validated data or immediately on settings/source/CameraInfo invalidation,
+  terminal failure and orderly exit. Repeated/frozen observations cannot reset
+  its age or restore color; gaps/empty observations never publish empty clouds.
+  Use reliable/transient-local depth-one transport for late viewers. Only the
+  selected tray retains its original-timestamp TF; no extra targets or numeric
+  RViz overlays. A preview commits pose/cloud only when the GUI accepts that
+  observation, preventing an in-flight result from replacing a frozen inspection.
+- Intentional vendor integration patch: add a separate enabled Tray Teach cloud
+  display to canonical `dobot_rviz/rviz/urdf.rviz`, with 10 mm boxes, zero decay
+  and matching retained-cloud QoS. This makes the requested tray scene visible
+  alongside existing Item Teach data; no driver or launch behavior changes.
+  Update the viewer README alongside this documented configuration patch.
+- Keep one background job, one pending explicit action and two ROS executor
+  threads. Source generations reject stale results; native failures remain
+  terminal. Save still requires matching calibration, copied teaching position,
+  plane, mask/OBB model, selected classes and complete dimensions. Keep strict
+  schema 1 and new timestamped paired YAML/model writes without overwrite.
+  Existing profiles reopen independently of Item Teach. Session fields remain
+  unapplied on restoration; arbitrary preview prefixes are session-only. No
+  `.env` keys, headless detector, controller placement or motion commands added.
+- Validation: all 50 Tray Perception tests pass, including synthetic private
+  worker inference, independent RGB previews, exact prefix subscriptions and
+  retired callbacks, live debounce/invalid edits and slow-worker typing,
+  frozen inspection, depth-free measurement, tolerance boundaries, deterministic
+  single selection, distorted corner evidence, voxel centroid/color averaging,
+  retained geometry/greying/fresh recovery and canonical viewer configuration.
+  An isolated local ROS domain verifies a late subscriber receives the latest
+  grey cloud. An isolated offscreen GUI/node startup/shutdown and visual review
+  pass with no automatic camera/model load or native imports in ROS/Qt.
+  Tray Perception and Dobot RViz symlink builds, ament_flake8 and git diff --check
+  pass. No hardware process/command, operator-model execution or operator artifact
+  modification; physical validation and offline transfer remain unperformed.
+
 ### Future entry template
 
 ```text

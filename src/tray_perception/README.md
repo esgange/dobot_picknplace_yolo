@@ -15,19 +15,30 @@ source scripts/source_ros_workspace.bash
 ros2 launch tray_perception tray_teach.launch.py
 ```
 
-Bring up the configured camera and calibrated TF sources separately. Load its
-schema-7 camera calibration from `calibration/`; its prefix determines the RGB,
-registered-depth and CameraInfo subscriptions. Fixed and on-hand cameras are
-supported. On-hand observations require fresh RGB-time `base_link <- Link6` TF.
-Acquisition waits up to a shared 100 ms budget for TF at the image timestamp in
-the background worker, then rechecks image freshness. Missing or late TF still
-rejects the observation; it never substitutes the latest transform.
-No platform/bin/item station calibration selection or `.env` edit is needed.
+Bring up the configured camera separately. Enter its exact prefix and click
+**Connect RGB**. The UI shows the connected RGB/depth topics; its status tooltip
+lists both CameraInfo topics too. RGB/YOLO preview needs no calibration, depth,
+robot TF, Item Teach, name, dimensions or selected classes. The RGB and registered
+depth panes share a horizontal layout and show unavailable-input reasons.
 
-1. Load a trusted local YOLO `.pt` model. Select tray classes and enter a name,
-   expected long-side length, short-side width, and absolute tolerance in mm.
-   Segmentation masks and OBB models support metric tray poses. Box-only models
-   are preview-only and cannot produce a saved tray profile.
+Load the camera's schema-7 calibration from `calibration/` to enable metric
+geometry; this also fills/connects its recorded prefix. A different manually
+connected prefix permits detection but cannot reuse that calibration. Reconnecting
+to another prefix invalidates the plane and pose; no calibration remapping occurs.
+Fixed and on-hand cameras are supported. On-hand measurements require fresh
+RGB-time `base_link <- Link6` TF. A shared 100 ms background TF wait preserves
+the exact image timestamp and rechecks freshness. Missing TF blocks geometry,
+not RGB detection. No platform/bin artifacts or `.env` changes are needed.
+
+1. Load a trusted local YOLO `.pt` model to enable up to 1 Hz preview when RGB is
+   ready. **YOLO Detect ON/OFF** controls inference; OFF retains RGB/depth/voxel
+   preview. Show all model classes under the current confidence, IoU and detection
+   cap; checked classes determine pose eligibility. Defaults are 0.25 / 0.70 / 100
+   and internal inference size 640; loaded profiles retain their inference size.
+   Edits apply after 300 ms without typing. Invalid inference values pause YOLO
+   with an inline reason; correction resumes it, with no old-value fallback.
+   Segmentation masks and OBB models support metric poses; box-only models remain
+   detection previews and cannot produce a saved tray profile.
 2. Load an Item Teach YAML from `offline_teach/item_teach/` to copy its six Home
    joints into **Tray Teach Position**. The paired Item model is verified but
    never executed. Position copying does not move the robot. Position the robot
@@ -41,12 +52,21 @@ No platform/bin/item station calibration selection or `.env` edit is needed.
    between 200 and 1000 mm after MAD filtering. Separate RGB/depth distortion is
    preserved. Four convex, noncollinear base-frame points must fit a plane with
    maximum residual at most 5 mm; bad samples are refused, never filled in.
-4. **Apply & Preview** detects trays at up to 1 Hz. Measurements intersect model
+   Numbered corner locations, accepted-sample counts and median depth appear in
+   both panes; sampled pixels mark accepted values black and rejected values red,
+   mapped with each pane's distortion model.
+4. Click a displayed tray to freeze and inspect its measured size and acceptance
+   reason; click again to resume. This is separate from four-corner teaching.
+   Enter long-side **Length**, short-side **Width**, and one **Tolerance ± (mm)**
+   manually. Clicking never overwrites those fields. Missing/invalid dimensions
+   keep detections visible with grey unchecked borders but prevent accepted poses.
+   Green/red means size pass/fail, independently of class acceptance. Measurements intersect model
    polygons with the saved reference plane, fit a metric enclosing rectangle,
    and check both dimensions against the tolerance. Live depth is not used for
    subsequent measurements, so items on top cannot change the reference height.
    A clipped tray is rejected. Rank valid trays by image-center distance,
    confidence and source index; select exactly one or report no valid tray.
+   A changed tray support height or tilt requires teaching the plane again.
 5. **Save Tray Teach…** at the top right writes a new same-stem YAML/model pair to
    `offline_teach/tray_teach/tray_teach_<name>_<UTC_TIMESTAMP>.yaml` and `.pt`.
    Existing pairs are never overwritten. The adjacent **Load Tray Teach…**
@@ -64,8 +84,7 @@ the long edge. Image left/right is irrelevant. Exact distance ties use base XYZ
 ordering. A symmetric unmarked tray has no tracked physical-corner identity;
 the origin can switch when another corner becomes nearest the base.
 
-The preview marks the selected origin in cyan with red +X and green +Y. Green
-outlines pass dimensions; red outlines are rejected. Dimensions, base XYZ and
+The preview marks the selected origin in cyan with red +X and green +Y. Dimensions, base XYZ and
 snapshot age appear below the image; rejection reasons are in its tooltip.
 `base_link -> tray_teach_selected_tray` is a teaching-only TF published once per
 selected RGB observation with its original timestamp. Changes, failures or
@@ -84,6 +103,31 @@ Validated GUI fields are restored as unapplied prefill from the single ignored
 `logs/tray_perception/last_session.json`. Startup never loads weights, connects
 cameras or restores a plane automatically. A malformed state fails explicitly.
 Events are timestamped and capped at 1000 in the package's `events.jsonl`.
+An arbitrary preview prefix is session-only; loading calibration or a saved tray
+restores its calibrated prefix. Incomplete drafts never change the strict
+schema-1 saved profile or its unchanged YAML/model pairing and save prerequisites.
+
+## RViz voxels
+
+`/tray_teach/voxel_cloud` publishes `PointCloud2` snapshots in `base_link`, using
+10 mm occupied-cell centroids and averaged original RGB. The canonical RViz
+configuration includes a separate Tray Teach display with 10 mm boxes, zero decay,
+and reliable/transient-local depth-one transport. `/tray_teach/rviz_diagnostics`
+reports cloud state, source timestamps, refresh age, counts and detection reasons.
+The cloud covers the calibrated valid depth scene (200–1000 mm), without a tray
+ROI, and requires synchronized RGB/depth/CameraInfo and timestamped calibrated TF.
+It needs neither a plane nor YOLO/classes/dimensions. Pose measurements still use
+full-resolution polygons and the taught plane, independently of live depth.
+
+Reuse the exact displayed observation, at most once per second, without a second
+YOLO prediction. Retain the latest cloud indefinitely; after five seconds without
+a new validated frame its geometry stays but becomes grey. Fresh data replaces it
+and restores color; duplicate/frozen observations never reset the refresh age.
+Input gaps and empty results never publish intermediate empty clouds. Source or
+settings changes, CameraInfo changes, terminal failure and orderly exit grey the
+retained cloud immediately. A late RViz subscriber receives the current cached
+cloud while the node runs. The existing single selected-tray TF remains; no
+additional tray targets or numeric RViz overlays are published.
 
 The package reuses Item Perception's existing pinned private CPU runtime via
 one lifetime native worker, without another wheel extraction, global install,
@@ -91,8 +135,8 @@ network access, worker restart or alternate model/runtime. ROS/Qt never imports
 OpenCV, Torch or Ultralytics. A single GUI job slot prevents queued inference;
 two ROS executor threads keep TF and camera reception independent of native work.
 Automatic preview leaves fields, typing focus and controls available, including
-when YOLO is off. Edits discard the in-flight preview and require **Apply &
-Preview** for updated detection settings. Load, Save, Freeze and plane creation
+when YOLO is off. Edits discard the in-flight preview; detection settings update
+after the typing pause. Load, Save, Freeze and plane creation
 reserve at most one action after the current preview; controls lock only for
 that explicit operation. Freeze acquisition and save validation also run in the
 background. Obsolete observations cannot restore a pose or overwrite the edit

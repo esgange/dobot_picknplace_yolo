@@ -4,9 +4,10 @@ from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternio
 from item_perception_yolo.item_geometry import (
     objects_from_result, on_plane, project, rays, reproject_pixels, filter_depth)
 from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+from item_perception_yolo.item_rviz_native import colored_voxels
 from item_perception_yolo.yolo_worker_native import render_result
 
-from .core import MAX_PLANE_ERROR_MM, validate_plane, validate_settings
+from .core import MAX_PLANE_ERROR_MM, validate_plane, validate_preview
 
 
 def corner_frame(corners, normal, np):
@@ -118,22 +119,22 @@ def overlay_plane(request, data, cv2, np):
 
 def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
     """Depth-free measurement and exactly one winner; also used by teaching previews."""
-    validate_settings(settings)
-    transform = np.asarray(plane["base_from_plane"])
-    optical = np.asarray(context["base_from_optical"])
-    plane_from_optical = np.linalg.inv(transform) @ optical
+    validate_preview(settings)
+    if plane is not None and context is not None:
+        transform = np.asarray(plane["base_from_plane"])
+        optical = np.asarray(context["base_from_optical"])
+        plane_from_optical = np.linalg.inv(transform) @ optical
     detections, valid = [], []
     expected = settings["geometry"]
     for item in objects:
         detection = {"source_index": item["index"], "class_id": item["class_id"],
                      "class_name": item["class_name"], "confidence": item["confidence"],
-                     "polygon": item["polygon"].tolist(), "valid": False, "reason": ""}
+                     "polygon": item["polygon"].tolist(), "valid": False, "reason": "",
+                     "size_status": "unchecked"}
         detections.append(detection)
         try:
-            if item["class_id"] not in settings["yolo"]["class_ids"]:
-                raise ValueError("Unselected tray class")
-            if item["confidence"] < settings["yolo"]["confidence"]:
-                raise ValueError("Below confidence threshold")
+            if plane is None or context is None:
+                raise ValueError("Matching calibration and reference plane required for size")
             polygon = item["polygon"]
             if (np.any(polygon[:, 0] <= 0) or np.any(polygon[:, 0] >= width - 1)
                     or np.any(polygon[:, 1] <= 0) or np.any(polygon[:, 1] >= height - 1)):
@@ -143,9 +144,17 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
             lengths = np.linalg.norm(np.roll(rectangle, -1, axis=0) - rectangle, axis=1) * 1000
             length, short = float(lengths.max()), float(lengths.min())
             detection.update(length_mm=length, width_mm=short)
+            if expected is None:
+                raise ValueError("Enter valid expected length, width and tolerance")
             if (short <= 0 or abs(length - expected["length_mm"]) > expected["tolerance_mm"]
                     or abs(short - expected["width_mm"]) > expected["tolerance_mm"]):
+                detection["size_status"] = "fail"
                 raise ValueError("Tray dimensions outside tolerance")
+            detection["size_status"] = "pass"
+            if item["class_id"] not in settings["accepted_class_ids"]:
+                raise ValueError("Unselected tray class")
+            if item["confidence"] < settings["yolo"]["confidence"]:
+                raise ValueError("Below confidence threshold")
             base = np.column_stack((rectangle, np.zeros(4))) @ transform[:3, :3].T + \
                 transform[:3, 3]
             frame, order = corner_frame(base, transform[:3, 2], np)
@@ -167,7 +176,7 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
 
 def predict_trays(request, result, rgb, names, cv2, np):
     settings, plane, context = request["settings"], request["plane"], request["camera_context"]
-    validate_settings(settings)
+    validate_preview(settings)
     overlay, count = render_result(result, rgb, names, settings["model_task"],
                                    settings["yolo"]["max_detections"], cv2, np)
     detections, selected = [], None
@@ -177,23 +186,80 @@ def predict_trays(request, result, rgb, names, cv2, np):
     else:
         objects = objects_from_result(result, settings["geometry_source"], names,
                                       settings["yolo"]["max_detections"], cv2, np)
-        if plane is not None:
-            detections, selected = evaluate_objects(
-                objects, settings, plane, context, rgb.shape[1], rgb.shape[0], cv2, np)
-            reason = "One valid tray selected" if selected is not None else "No valid tray"
+        detections, selected = evaluate_objects(
+            objects, settings, plane, context, rgb.shape[1], rgb.shape[0], cv2, np)
+        reason = "One valid tray selected" if selected is not None else "No eligible tray"
+        if plane is not None and context is not None:
             try:
                 draw_plane(overlay, plane, context, cv2, np)
             except ValueError as exc:
                 reason += f" | Reference plane outline unavailable: {exc}"
-            for detection in detections:
-                polygon = np.rint(detection["polygon"]).astype(np.int32)
-                cv2.polylines(overlay, [polygon], True,
-                              (0, 220, 0) if detection["valid"] else (255, 50, 50), 2)
-            if selected is not None:
-                rectangle = np.rint(selected["rectangle"]).astype(np.int32)
-                cv2.circle(overlay, tuple(rectangle[0]), 8, (0, 255, 255), 3)
-                for index, color in ((1, (255, 0, 0)), (3, (0, 255, 0))):
-                    cv2.arrowedLine(overlay, tuple(rectangle[0]), tuple(rectangle[index]),
-                                    color, 3, tipLength=.08)
+        for detection in detections:
+            polygon = np.rint(detection["polygon"]).astype(np.int32)
+            color = {"pass": (0, 220, 0), "fail": (255, 50, 50),
+                     "unchecked": (160, 160, 160)}[detection["size_status"]]
+            cv2.polylines(overlay, [polygon], True, color, 2)
+        if selected is not None:
+            rectangle = np.rint(selected["rectangle"]).astype(np.int32)
+            cv2.circle(overlay, tuple(rectangle[0]), 8, (0, 255, 255), 3)
+            for index, color in ((1, (255, 0, 0)), (3, (0, 255, 0))):
+                cv2.arrowedLine(overlay, tuple(rectangle[0]), tuple(rectangle[index]),
+                                color, 3, tipLength=.08)
     return {"state": "ok", "width": rgb.shape[1], "height": rgb.shape[0], "count": count,
             "detections": detections, "selected": selected, "reason": reason}, overlay.tobytes()
+
+
+def tray_visuals(request, data, cv2, np):
+    """Depth evidence and cloud from the original observation, never a second inference."""
+    width, height = request["width"], request["height"]
+    if len(data) != width * height * 5:
+        raise RuntimeError("Malformed tray RGB/depth visualization snapshot")
+    rgb = np.frombuffer(data[:width * height * 3], np.uint8).reshape(height, width, 3)
+    rgb_overlay = rgb.copy()
+    depth = np.frombuffer(data[width * height * 3:], "<u2").reshape(height, width)
+    low, high = QUALITY_DEFAULTS["depth_min_mm"], QUALITY_DEFAULTS["depth_max_mm"]
+    scaled = np.clip((depth.astype(float) - low) * 255 / (high - low), 0, 255).astype(np.uint8)
+    overlay = cv2.cvtColor(cv2.applyColorMap(scaled, cv2.COLORMAP_TURBO), cv2.COLOR_BGR2RGB)
+    overlay[(depth < low) | (depth > high)] = 0
+    context, samples = request["camera_context"], []
+    if context is not None:
+        color_info, depth_info = context["camera"], context["depth_camera"]
+        for detection in request["detections"]:
+            pixels = reproject_pixels(np.asarray(detection["polygon"]),
+                                      color_info, depth_info, cv2, np)
+            color = {"pass": (0, 220, 0), "fail": (255, 50, 50),
+                     "unchecked": (160, 160, 160)}[detection["size_status"]]
+            cv2.polylines(overlay, [np.rint(pixels).astype(np.int32)], True, color, 2)
+        for index, pixel in enumerate(request["pixels"], 1):
+            mapped = reproject_pixels(np.asarray([pixel]), color_info, depth_info, cv2, np)[0]
+            x, y = np.rint(mapped).astype(int)
+            sample = {"index": index, "depth_pixel": [int(x), int(y)], "accepted": 0,
+                      "median_mm": None, "reason": "Depth sampling patch falls outside image"}
+            if 3 <= x < width - 3 and 3 <= y < height - 3:
+                values = depth[y - 3:y + 4, x - 3:x + 4].reshape(-1)
+                accepted, median, _ = filter_depth(values, low, high, cv2, np)
+                sample.update(accepted=int(accepted.sum()),
+                              median_mm=median,
+                              reason="OK" if int(accepted.sum()) >= 30 else
+                              "Fewer than 30 valid samples")
+                patch = overlay[y - 3:y + 4, x - 3:x + 4]
+                patch[:] = np.where(accepted.reshape(7, 7, 1), (0, 0, 0), (255, 0, 0))
+                yy, xx = np.mgrid[y - 3:y + 4, x - 3:x + 4]
+                rgb_samples = reproject_pixels(
+                    np.column_stack((xx.ravel(), yy.ravel())), depth_info, color_info, cv2, np)
+                for point, valid in zip(np.rint(rgb_samples).astype(int), accepted):
+                    cv2.circle(rgb_overlay, tuple(point), 1,
+                               (0, 0, 0) if valid else (255, 0, 0), -1)
+            cv2.circle(overlay, (int(x), int(y)), 8, (0, 255, 255), 2)
+            cv2.putText(overlay, str(index), (int(x + 10), int(y - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 255, 255), 1)
+            samples.append(sample)
+    cloud = b""
+    if request["cloud"]:
+        # Base is the intermediate frame; no platform artifact is involved.
+        cloud_context = {**context, "platform_from_optical": context["base_from_optical"]}
+        cloud = colored_voxels(rgb, depth, cloud_context, np.eye(4),
+                               QUALITY_DEFAULTS, cv2, np).tobytes()
+    return {"state": "ok", "width": width, "height": height,
+            "point_count": len(cloud) // 16, "samples": samples}, \
+        overlay.tobytes() + rgb_overlay.tobytes() + cloud

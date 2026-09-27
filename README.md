@@ -603,12 +603,19 @@ The separate `tray_perception` package currently provides the read-only
 ros2 launch tray_perception tray_teach.launch.py
 ```
 
-Load a camera calibration, trusted segmentation/OBB YOLO model, and Item Teach
-once to copy its Home into **Tray Teach Position**. Freeze a fresh uncovered-tray
+Enter the setup's camera prefix and **Connect RGB**, then explicitly load a
+trusted YOLO model. RGB detection works independently of calibration and a
+completed profile; live settings update after a 300 ms typing pause. Side-by-side
+RGB/depth views support click inspection with manually entered dimensions/tolerance.
+Load matching camera calibration and Item Teach once to copy its Home into
+**Tray Teach Position**. Freeze a fresh uncovered-tray
 view and click four reference-surface corners in any order. The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
 that plane, without live surface depth, and reject detections outside the taught
 length/width tolerance. Select one valid tray nearest the image center.
+Calibrated synchronized RGB/depth also supplies 1 Hz colored 10 mm RViz voxels on
+`/tray_teach/voxel_cloud`, including with YOLO off. Retain the latest cloud until
+replaced; grey it after five seconds without fresh data or immediately on invalidation.
 
 The detected origin is the rectangle corner nearest the robot base by 3D
 distance. Both positive axes run inward along adjacent tray edges, independent

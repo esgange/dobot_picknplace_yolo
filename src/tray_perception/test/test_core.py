@@ -22,6 +22,13 @@ def camera_info():
             "d": [0.] * 5, "distortion_model": "plumb_bob"}
 
 
+def preview_settings():
+    value = settings()
+    del value["name"]
+    value["accepted_class_ids"] = value["yolo"]["class_ids"][:]
+    return value
+
+
 def plane():
     transform = np.eye(4)
     transform[:3, 3] = [.1, .1, .2]

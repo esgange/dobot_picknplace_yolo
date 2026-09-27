@@ -21,7 +21,7 @@ def exercise_geometry():
     plane = {"base_from_plane": plane_transform.tolist()}
     context = {"camera": camera, "depth_camera": camera,
                "base_from_optical": optical.tolist()}
-    settings = {"name": "tray", "model_task": "segment", "geometry_source": "mask",
+    settings = {"accepted_class_ids": [1], "model_task": "segment", "geometry_source": "mask",
                 "geometry": {"length_mm": 200., "width_mm": 100., "tolerance_mm": 1.},
                 "yolo": {"class_ids": [1], "confidence": .5, "iou": .7,
                          "max_detections": 100, "image_size": 640}}
@@ -38,6 +38,17 @@ def exercise_geometry():
     assert np.allclose(selected["position"], [.2, .15, .2], atol=1e-6)
     assert abs(selected["length_mm"] - 200) < .001
     assert abs(selected["width_mm"] - 100) < .001
+    # Dimensions can be inspected before typing a size or accepting any class.
+    draft = {**settings, "geometry": None, "accepted_class_ids": []}
+    measured, winner = evaluate_objects(objects, draft, plane, context, 640, 480, cv2, np)
+    assert winner is None and measured[0]["length_mm"] > 199
+    assert all(d["size_status"] == "unchecked" for d in measured)
+    measured, winner = evaluate_objects(objects, {**settings, "accepted_class_ids": []},
+                                        plane, context, 640, 480, cv2, np)
+    assert winner is None and measured[0]["size_status"] == "pass"
+    assert measured[2]["size_status"] == "fail"
+    measured, winner = evaluate_objects(objects, draft, None, None, 640, 480, cv2, np)
+    assert winner is None and len(measured) == 3 and "length_mm" not in measured[0]
     context["depth_camera"] = None  # Detection needs neither current depth nor depth CameraInfo.
     assert evaluate_objects(objects, settings, plane, context, 640, 480, cv2, np)[1] == selected
     for x in (-.4, .4):
@@ -92,6 +103,34 @@ def exercise_geometry():
     request["pixels"] = pixels
     reply, _ = capture_plane(request, sparse.tobytes(), cv2, np)
     assert reply["plane"] is not None, reply
+    from tray_perception.native import tray_visuals
+    result, visual = tray_visuals({**request, "detections": [], "cloud": False},
+                                  bytes([120]) * (640 * 480 * 3) + sparse.tobytes(), cv2, np)
+    rgb = np.frombuffer(visual[640 * 480 * 3:], np.uint8).reshape(480, 640, 3)
+    for sample, (x, y) in zip(result["samples"], pixels):
+        assert sample["accepted"] == 49 and sample["median_mm"] == 800
+        assert (rgb[int(y), int(x)] == 0).all()  # Evidence follows distorted RGB rays.
+    # Exact inclusive tolerance boundary and the first value outside it.
+    expected = {"length_mm": selected["length_mm"] + 1.,
+                "width_mm": selected["width_mm"], "tolerance_mm": 1.}
+    boundary = {**settings, "geometry": expected}
+    assert evaluate_objects([objects[1]], boundary, plane, context, 640, 480, cv2, np)[1]
+    boundary["geometry"] = {**expected, "length_mm": expected["length_mm"] + .0001}
+    assert evaluate_objects([objects[1]], boundary, plane, context, 640, 480, cv2, np)[1] is None
+    small_camera = {**camera, "width": 2, "height": 2,
+                    "k": [10000., 0., 1., 0., 10000., 1., 0., 0., 1.]}
+    small_optical = optical.copy()
+    small_optical[:3, 3] = [.305, .205, .8]
+    colors = np.array([[0, 0, 0], [100, 200, 100], [20, 40, 60], [80, 0, 40]], np.uint8)
+    result, visual = tray_visuals({"width": 2, "height": 2, "cloud": True, "pixels": [],
+                                  "detections": [], "camera_context": {
+                                      "camera": small_camera, "depth_camera": small_camera,
+                                      "base_from_optical": small_optical.tolist()}},
+                                  colors.tobytes() + np.full(4, 600, "<u2").tobytes(), cv2, np)
+    assert result["point_count"] == 1
+    point = np.frombuffer(visual[24:], dtype=[("xyz", "<f4", 3), ("rgb", "<u4")])[0]
+    assert np.allclose(point["xyz"], [.30497, .20503, .2])
+    assert point["rgb"] == 0x323c32  # Mean source RGB, not an arbitrary retained pixel.
 
 
 def test_private_geometry():
@@ -140,10 +179,32 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
             np.full((48, 64), 600, "<u2").tobytes())
         assert result["plane"] is not None and not data
         plane = result["plane"]
+        rgb = np.broadcast_to(np.array([17, 34, 51], np.uint8), (48, 64, 3)).tobytes()
+        depths = np.full((48, 64), 600, "<u2").tobytes()
+        visual_request = {"operation": "tray_visuals", "width": 64, "height": 48,
+                          "camera_context": context, "cloud": True, "detections": [],
+                          "pixels": [[10, 10]]}
+        result, data = client.call(visual_request, rgb + depths)
+        points = np.frombuffer(data[64 * 48 * 6:], dtype=[
+            ("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("rgb", "<u4")])
+        assert 0 < result["point_count"] == len(points) < 64 * 48
+        assert np.allclose(points["z"], .2) and (points["rgb"] == 0x112233).all()
+        xyz = np.column_stack([points[axis] for axis in ("x", "y", "z")])
+        assert len(np.unique(np.floor(xyz / .01), axis=0)) == len(points)
+        assert result["samples"][0]["accepted"] == 49
+        assert result["samples"][0]["median_mm"] == 600
+        rgb_overlay = np.frombuffer(data[64 * 48 * 3:64 * 48 * 6], np.uint8).reshape(48, 64, 3)
+        assert (rgb_overlay[10, 10] == 0).all()
+        result, data = client.call({**visual_request, "cloud": False}, rgb + bytes(64 * 48 * 2))
+        assert result["point_count"] == 0 and len(data) == 64 * 48 * 6
+        assert result["samples"][0]["median_mm"] is None
+        result, _ = client.call({**visual_request, "camera_context": None,
+                                 "pixels": [], "cloud": False}, rgb + depths)
+        assert result["point_count"] == 0  # Uncalibrated depth view without a cloud.
         model_config = {"path": str(model), "sha256": file_sha256(model)}
         result, data = client.call({"operation": "inspect", "model": model_config})
         assert result["task"] == "segment" and not data
-        settings = {"name": "tray", "model_task": "segment", "geometry_source": "mask",
+        settings = {"accepted_class_ids": [0], "model_task": "segment", "geometry_source": "mask",
                     "geometry": {"length_mm": 200., "width_mm": 100., "tolerance_mm": 2.},
                     "yolo": {"class_ids": [0], "confidence": .99, "iou": .7,
                              "max_detections": 10, "image_size": 64}}
@@ -152,7 +213,7 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
              "camera_context": context, "plane": plane, "settings": settings,
              "model": {**model_config, "task": "segment", "yolo": settings["yolo"]}},
             bytes(64 * 48 * 3))
-        assert result["selected"] is None and result["reason"] == "No valid tray"
+        assert result["selected"] is None and result["reason"] == "No eligible tray"
         assert len(data) == 64 * 48 * 3 and not client.failed
         # Losing the saved outline behind the camera is an observation issue, not worker failure.
         optical[:3, :3] = np.eye(3)
