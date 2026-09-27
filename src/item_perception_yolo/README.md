@@ -142,7 +142,7 @@ executor or automatic image saving.
 | Output | Topic or frame | Contents |
 | --- | --- | --- |
 | `PointCloud2` | `/item_teach/voxel_cloud` | Valid depth view including bin surroundings, 10 mm centroids with averaged original RGB, `base_link`, source stamp |
-| `MarkerArray` | `/item_teach/valid_items` | All valid pose XYZ axes, class/confidence and snapshot-age labels |
+| `MarkerArray` | `/item_teach/valid_items` | All valid pose XYZ axes, without text/number overlays |
 | TF | `base_link -> item_teach_live_candidate_N` | Frame-local ranked item poses; 1 Hz, not tracked identities |
 | `String` JSON | `/item_teach/rviz_diagnostics` | Source timestamps/age, voxel count, every candidate and rejection reason |
 
@@ -158,7 +158,9 @@ dimensions, recorded Home, pick rotation and standoff are required for valid
 poses. With incomplete pose settings or YOLO OFF, the calibrated cloud can still
 run and the view explains which pose prerequisites are missing.
 
-These are labelled snapshots, also retained while the teaching view is frozen.
+These are snapshots, also retained while the teaching view is frozen. Item rank,
+class, confidence and snapshot age are not overlaid as RViz text; candidate
+details and age remain available in diagnostics and the teaching view.
 The last valid cloud stays visible until its replacement arrives. RGB/depth
 loss, synchronization gaps, a busy worker or an empty/unavailable next cloud
 never publish an intermediate empty cloud. During these gaps, diagnostics report

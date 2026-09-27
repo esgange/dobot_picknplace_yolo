@@ -370,6 +370,11 @@ and exit still clear the cloud. Keep 1 Hz, full-resolution pose sampling, all
 existing acquisition/pose checks and headless behavior unchanged. This supersedes
 rule 133's 5 mm size and transient-input cloud clearing only.
 
+Rule 135 removes Item Teach's RViz item text markers (rank, class, confidence
+and snapshot age). Keep colored voxels, pose-axis markers and TF; retain all
+candidate details and ages in diagnostics. No detection, pose, snapshot-retention
+or headless behavior changes. This supersedes rule 133's RViz text labels only.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

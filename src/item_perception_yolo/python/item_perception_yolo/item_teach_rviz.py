@@ -242,18 +242,6 @@ class TeachingRvizPreview:
                     setattr(marker.color, ("r", "g", "b")[axis], 1.)
                     marker.lifetime = Duration(seconds=2.5).to_msg()
                     markers.append(marker)
-                label = Marker()
-                label.header, label.ns, label.id = frame.header, "item_labels", rank
-                label.type, label.action = Marker.TEXT_VIEW_FACING, Marker.ADD
-                label.pose.position = Point(x=frame.transform.translation.x,
-                                            y=frame.transform.translation.y,
-                                            z=frame.transform.translation.z + .05)
-                label.pose.orientation.w, label.scale.z = 1., .018
-                label.color.r = label.color.g = label.color.b = label.color.a = 1.
-                label.text = (f"P{rank} {candidate['class_name']} {candidate['confidence']:.2f}"
-                              f" | snapshot {age:.1f}s")
-                label.lifetime = Duration(seconds=2.5).to_msg()
-                markers.append(label)
             if transforms:
                 node.selected_pose_broadcaster.sendTransform(transforms)
             self.cloud_publisher.publish(cloud)

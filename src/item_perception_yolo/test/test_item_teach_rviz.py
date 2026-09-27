@@ -69,7 +69,8 @@ def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):
     assert frames[3].transform.translation.x == pytest.approx(.3)
     markers = visual.marker_publisher.publish.call_args.args[0].markers
     assert markers[0].action == Marker.DELETEALL
-    assert len(markers) == 17  # 3 axes + label for each of all four candidates.
+    assert len(markers) == 13  # Three axes for each of all four candidates, with no text.
+    assert all(m.type == Marker.ARROW and not m.text for m in markers[1:])
     assert all(m.lifetime.sec == 2 for m in markers[1:])
     diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
     assert diagnostic["rejected"] == snapshot()["rejected"]
@@ -83,7 +84,8 @@ def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):
     visual.tick()
     assert visual.cloud_publisher.publish.call_count == 2
     assert visual.cloud_publisher.publish.call_args.args[0].header.stamp.sec == 100
-    assert "snapshot 1.0s" in visual.marker_publisher.publish.call_args.args[0].markers[-1].text
+    diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert diagnostic["age_sec"] == 1.
 
 
 @pytest.mark.parametrize("invalid", ["epoch", "camera", "intrinsics", "source", "worker", "fatal"])

@@ -466,7 +466,7 @@ details expandable; their explicit Apply and capture/save workflow is unchanged.
 
 Item Teach also publishes a default **1 Hz RViz preview**: a colored **10 mm voxel
 cloud** of the valid depth view, including surroundings outside the bin,
-plus TF/axis/label markers for
+plus TF/axis markers for
 **all valid item poses**, up to the YOLO detection cap. The canonical Dobot RViz
 configuration includes both displays. Topics are `/item_teach/voxel_cloud`
 (`PointCloud2`), `/item_teach/valid_items` (`MarkerArray`) and
@@ -482,8 +482,9 @@ applies to this teaching preview.
 
 One existing worker job processes the latest pair at most once per second, with
 no extra YOLO inference, new executor, backlog or automatic image saving. Slow
-processing lowers the update rate. Each published result remains a labelled
-snapshot; a frozen teaching view retains that snapshot and reports its age.
+processing lowers the update rate. Each published result remains a snapshot;
+the teaching view and diagnostics report its age. RViz has no item text or
+number overlays; confidence and other candidate details remain in diagnostics.
 The last valid cloud stays visible until a valid replacement arrives, including
 RGB/depth synchronization gaps, missing inputs and slow processing. Diagnostics
 retain its original timestamp/age; candidate markers and TF pause during gaps.

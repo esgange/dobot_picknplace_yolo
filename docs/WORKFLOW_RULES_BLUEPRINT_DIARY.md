@@ -5675,6 +5675,24 @@ Never use a floating “latest” version in an issue, script, or deployment not
   offline-transfer milestone claimed. Restart Item Teach for the code change;
   reload the RViz configuration or set its cloud **Size (m)** to `0.010`.
 
+### 2026-09-27 — Remove RViz item text overlays
+
+- Rule 135 removes Item Teach's RViz text markers at the user's request: no
+  rank, class, confidence or snapshot-age text is drawn over the scene. Keep
+  colored 10 mm voxels, pose-axis markers, TF and retained-cloud behavior.
+  Full candidate details and snapshot age remain in diagnostics. This
+  supersedes rule 133's RViz label requirement only.
+- Delete the text-marker construction; the existing DELETEALL on each marker
+  update clears old labels. Detection, pose validation, GUI image annotations,
+  headless behavior and hardware authority are unchanged. Update current usage
+  documentation; no vendor code/configuration or controller/FSM change.
+- Validation: Item Perception symlink build, all 16 existing RViz visualization
+  tests, changed-file ament_flake8 and git diff --check pass. Update existing
+  expectations for axes-only markers and diagnostics-only age. No hardware
+  launch, operator-model execution, process restart or artifact edits. No
+  offline-transfer milestone claimed. Restart Item Teach to load the change;
+  no RViz restart is required.
+
 ### Future entry template
 
 ```text
