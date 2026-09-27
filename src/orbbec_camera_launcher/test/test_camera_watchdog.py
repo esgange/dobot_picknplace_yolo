@@ -323,6 +323,13 @@ class CameraLauncherTests(unittest.TestCase):
                 .joinpath('.env.example')
                 .read_text(encoding='utf-8')
             )
+            selections = dict(zip(project_config.ITEM_TEACH_ENV_KEYS, (
+                'platform_calibration_station.yaml',
+                'camera_to_hand_calibration_station_2.yaml',
+                'camera_on_hand_calibration_robot.yaml',
+            )))
+            for key, value in selections.items():
+                example_text = example_text.replace(f'{key}=\n', f'{key}={value}\n')
             root.joinpath('.env').write_text(example_text, encoding='utf-8')
             values = parse_example()
             original_dobot = {
@@ -342,6 +349,7 @@ class CameraLauncherTests(unittest.TestCase):
 
             self.assertEqual(returned_root, root)
             self.assertEqual(saved, loaded)
+            self.assertEqual({key: loaded[key] for key in selections}, selections)
             self.assertEqual(
                 {key: loaded[key] for key in project_config.DOBOT_ENV_KEYS},
                 original_dobot,
@@ -350,6 +358,21 @@ class CameraLauncherTests(unittest.TestCase):
                 '# Project-wide runtime configuration.',
                 root.joinpath('.env').read_text(encoding='utf-8'),
             )
+
+    def test_calibration_selection_requires_complete_local_filenames(self):
+        values = parse_example()
+        for key in project_config.ITEM_TEACH_ENV_KEYS:
+            values[key] = 'calibration_station 2.yaml'
+        project_config.validate_project_config(values, require_camera_ready=False)
+        key = project_config.ITEM_TEACH_ENV_KEYS[0]
+        for bad in ('', '../outside.yaml', '/tmp/file.yaml', 'file=bad.yaml', 'file.txt'):
+            with self.subTest(value=bad):
+                with self.assertRaisesRegex(RuntimeError, 'calibration|YAML'):
+                    project_config.validate_project_config(
+                        {**values, key: bad}, require_camera_ready=False)
+        del values[key]
+        with self.assertRaisesRegex(RuntimeError, 'missing'):
+            project_config.validate_project_config(values, require_camera_ready=False)
 
     def test_project_config_requires_exact_five_second_startup_timeout(self):
         values = parse_example()

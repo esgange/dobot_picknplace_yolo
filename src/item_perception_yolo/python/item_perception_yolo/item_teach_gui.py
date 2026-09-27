@@ -35,8 +35,9 @@ from .item_preview import validate_prefix
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
-from .bin_teach_core import bin_platform_warning
-from .station_calibration import latest_station_calibration, latest_robot_camera_calibration
+from .bin_teach_core import bin_platform_warning, load_bin_teach_calibration_context
+from .item_teach_calibration import (
+    saved_calibration_paths, load_calibration_selection, save_calibration_selection)
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -342,14 +343,21 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.calibration_camera_path = QtWidgets.QLineEdit()
         self.robot_camera_path = QtWidgets.QLineEdit()
         self.bin_path = QtWidgets.QLineEdit()
-        for label, field in (("Latest platform", self.platform_path),
+        for label, field in (("Platform calibration", self.platform_path),
                              ("Bin camera calibration", self.calibration_camera_path),
                              ("Robot camera calibration", self.robot_camera_path)):
             field.setReadOnly(True)
-            field.setPlaceholderText("Automatically selected from calibration/")
-            station.addRow(label, field)
-        reload_station = QtWidgets.QPushButton("Reload Latest Calibration")
-        reload_station.clicked.connect(self._update_station_preview)
+            field.setPlaceholderText("Select from calibration/")
+            row = QtWidgets.QHBoxLayout()
+            choose = QtWidgets.QPushButton("Browse…")
+            choose.clicked.connect(lambda _checked=False, f=field: self._choose_calibration_file(f))
+            row.addWidget(field)
+            row.addWidget(choose)
+            station.addRow(QtWidgets.QLabel(label))
+            station.addRow(row)
+        reload_station = QtWidgets.QPushButton("Load Calibration")
+        reload_station.clicked.connect(lambda _checked=False:
+                                       self._update_station_preview(persist=True))
         station.addRow(reload_station)
         station_fields = (("Bin teach", self.bin_path,
                            workspace_root() / "offline_teach/bin_teach"),)
@@ -375,7 +383,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.bin_platform_warning.hide()
         station.addRow(self.bin_platform_warning)
         self.station_status = QtWidgets.QLabel(
-            "Station calibration loads automatically; select a bin teach for its ROI."
+            "Select calibration files and load them to remember this station in .env."
         )
         self.station_status.setWordWrap(True)
         station.addRow(self.station_status)
@@ -669,9 +677,16 @@ class ItemTeachWindow(QtWidgets.QWidget):
         else:
             self._message("Load model + Connect RGB, then enable YOLO Detect. "
                           "Dimensions may be blank for detection; pose checks require them.")
-        # Restore the bin before latest-station discovery. This is the read-only station-preview
-        # exception to unapplied prefill; model execution and arming stay explicit.
-        self.bin_path.textChanged.connect(self._update_station_preview)
+        paths = saved_calibration_paths(root=workspace_root())
+        if paths is not None:
+            for field, path in zip(self._calibration_fields(), paths):
+                field.setText(str(path))
+                field.setToolTip(str(path))
+        for field in self._calibration_fields():
+            field.textChanged.connect(self._calibration_selection_changed)
+        # Restore only the explicitly saved .env selection for read-only preview.
+        self.bin_path.textChanged.connect(lambda _text:
+                                          self._update_station_preview(persist=True))
         self._update_station_preview()
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh_video)
@@ -985,12 +1000,36 @@ class ItemTeachWindow(QtWidgets.QWidget):
             if field.text() == path:
                 # Explicit reselection may revalidate a corrected file; no timer
                 # repeatedly reloads a failed or externally changed artifact.
-                self._update_station_preview()
+                self._update_station_preview(persist=True)
             else:
                 field.setText(path)
 
-    def _update_station_preview(self, *_):
-        """Select latest station once, validate the bin and subscribe without Apply."""
+    def _calibration_fields(self):
+        return self.platform_path, self.calibration_camera_path, self.robot_camera_path
+
+    def _choose_calibration_file(self, field):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select calibration", str(workspace_root() / "calibration"), "YAML (*.yaml)")
+        if not path:
+            return
+        field.setText(path)
+        field.setToolTip(path)
+        self._calibration_selection_changed()
+        if field is self.platform_path:
+            try:
+                applied = load_bin_teach_calibration_context(Path(path), root=workspace_root())
+                self.calibration_camera_path.setText(str(applied.camera.path))
+                self.calibration_camera_path.setToolTip(str(applied.camera.path))
+            except (ValueError, OSError) as exc:
+                self.station_status.setText(f"Selected platform is invalid: {exc}")
+                self._message(self.station_status.text())
+
+    def _calibration_selection_changed(self, *_):
+        self._clear_station_preview()
+        self.station_status.setText(
+            "Selection changed. Load Calibration to validate and save to .env.")
+
+    def _clear_station_preview(self):
         self.yolo_toggle.setChecked(False)
         self.node.disarm()
         self.armed_toggle.setChecked(False)
@@ -1001,42 +1040,47 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.bin_platform_warning.clear()
         self.bin_platform_warning.setToolTip("")
         self.bin_platform_warning.hide()
-        platform, bin_path = "", self.bin_path.text()
-        self.platform_path.clear()
-        self.calibration_camera_path.clear()
-        self.robot_camera_path.clear()
-        self.platform_path.setToolTip("")
-        self.calibration_camera_path.setToolTip("")
-        self.robot_camera_path.setToolTip("")
+
+    def _update_station_preview(self, *_, persist=False):
+        """Validate explicit files, optionally remember them, and reconnect read-only preview."""
+        self._clear_station_preview()
+        platform, bin_path = self.platform_path.text(), self.bin_path.text()
         try:
-            latest = latest_station_calibration(root=workspace_root())
-            robot_camera = latest_robot_camera_calibration(root=workspace_root())
-            platform = str(latest.platform.path)
+            paths = tuple(field.text() for field in self._calibration_fields())
+            if not all(paths):
+                self.station_status.setText(
+                    "Select platform, bin-camera and robot-camera files, then Load Calibration.")
+                return
+            loader = save_calibration_selection if persist else load_calibration_selection
+            selected, robot_camera = loader(*paths, root=workspace_root())
+            platform = str(selected.platform.path)
             self.platform_path.setText(platform)
-            self.calibration_camera_path.setText(str(latest.camera.path))
+            self.calibration_camera_path.setText(str(selected.camera.path))
             self.robot_camera_path.setText(str(robot_camera.path))
             self.platform_path.setToolTip(platform)
-            self.calibration_camera_path.setToolTip(str(latest.camera.path))
+            self.calibration_camera_path.setToolTip(str(selected.camera.path))
             self.robot_camera_path.setToolTip(str(robot_camera.path))
             self.node.events.record(
-                "INFO", "item_latest_station_selected", "Selected newest hash-bound calibration",
-                platform=platform, platform_sha256=latest.platform.sha256,
-                camera=str(latest.camera.path), camera_sha256=latest.camera.sha256,
+                "INFO", "item_calibration_selected", "Validated explicit calibration selection",
+                platform=platform, platform_sha256=selected.platform.sha256,
+                camera=str(selected.camera.path), camera_sha256=selected.camera.sha256,
                 robot_camera=str(robot_camera.path),
-                robot_camera_sha256=robot_camera.sha256)
+                robot_camera_sha256=robot_camera.sha256, saved_to_env=persist)
+            saved_message = "Calibration selection saved to .env. " if persist else ""
             if not bin_path:
                 self.station_status.setText(
-                    "Latest platform, bin camera and robot-camera transform loaded. "
+                    saved_message + "Selected calibrations loaded. "
                     "Select a bin teach to display its ROI.")
                 return
             self.node.apply_station(
-                platform, bin_path, expected_station=latest,
-                expected_robot_camera=robot_camera)
+                platform, bin_path, expected_station=selected,
+                expected_robot_camera=robot_camera, robot_camera_path=robot_camera.path)
             self._sync_bin_clearance_preview()
             self.camera_prefix.setText(self.node.camera_prefix)
             write_item_station_state(ui_state_path(), Path(platform).name, Path(bin_path).name)
             write_item_preview_state(ui_state_path(), self.node.camera_prefix)
-            message = (f"Bin ROI ready for /{self.node.camera_prefix}: automatically displayed "
+            message = (saved_message +
+                       f"Bin ROI ready for /{self.node.camera_prefix}: automatically displayed "
                        "when valid RGB, CameraInfo and TF are available. "
                        "YOLO detection and arming remain manual.")
             self.station_status.setText(message)
@@ -1068,7 +1112,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.bin_platform_warning.clear()
             self.bin_platform_warning.setToolTip("")
             self.bin_platform_warning.hide()
-            message = (f"Bin ROI hidden: {exc}. Check latest station, robot-camera "
+            message = (f"Bin ROI hidden: {exc}. Check selected platform, robot-camera "
                        "calibration and bin teach.")
             self.station_status.setText(message)
             self._message(message)

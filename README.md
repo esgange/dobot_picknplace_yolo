@@ -463,24 +463,24 @@ details expandable; their explicit Apply and capture/save workflow is unchanged.
 RGB keeps mask shading and one mask-derived rectangle (or the native oriented
 rectangle for OBB), with centered long-X/short-Y lines and a pick-point dot.
 No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the
-same image, including with YOLO OFF. Item Teach automatically selects the latest
-platform for this robot and latest calibration for that platform's camera from
-root `calibration/`; filenames' UTC timestamps define newest, not modification
-times. Select only the portable bin file to validate and connect its calibrated
-camera; there is no platform picker or Apply button. Read-only paths show the
-chosen pair; **Reload Latest Calibration** reselects it, stopping YOLO/disarming
-and clearing old previews first. Calibration selection is not a live watcher.
-The newest camera must match the platform's recorded hash: after recalibrating
-that camera, re-teach the platform. Invalid/missing/ambiguous files fail visibly;
-there is no older-file fallback or mixing of calibration transforms.
+same image, including with YOLO OFF. Item Teach provides **Browse…** selectors
+for platform, bin-camera and robot-camera calibration files inside root
+`calibration/`. Selecting a platform fills its exact bound bin-camera file.
+**Load Calibration** validates all three and remembers their filenames in root
+`.env`; descriptive mode-prefixed camera filenames are supported. Selection
+changes stop YOLO, disarm and clear old previews. Invalid selections leave the
+saved filenames unchanged. The bin camera must match the platform's recorded
+hash: after recalibrating that camera, re-teach the platform. There is no catalog
+scan, newer-file substitution or mixing of calibration transforms in Item Teach.
+Select the portable bin file to connect its calibrated camera preview.
 The bin file records its teaching platform's filename, SHA-256 and transform.
 If the selected platform's SHA-256 differs, Item Teach shows an amber warning
 under the file selectors with both filenames (full hashes in its tooltip and
 Activity event). Intentional cross-station reuse stays allowed: verify the
 same physical origin, X/Y directions, bin size and placement. This checks file
 identity, not physical alignment; it never substitutes the original transform.
-The saved bin selection reconnects this preview using the latest station pair at
-startup, not an older platform prefill. The border appears when fresh RGB,
+The saved bin selection reconnects this preview using the `.env` calibration
+choices at startup. The border appears when fresh RGB,
 CameraInfo and required TF arrive; this never launches cameras, executes a model
 or arms the pose service. The
 bin-border geometry uses the same shared platform-Z=0 construction as Bin Teach:
@@ -519,8 +519,9 @@ Unsaved text-box edits are not autosaved; restart prefills the selected saved
 teach YAML and camera prefix. Station/bin selections are the narrow automatic
 read-only-preview exception; item settings, model execution and arming remain unapplied.
 
-`item_detect.launch.py` uses the same automatic station selection and the shared
-flat `runtime_teach/` catalog used by headless Robot Controller. Launch it with:
+`item_detect.launch.py` retains strict automatic latest-station selection,
+independent of Item Teach's saved choices, and the shared flat `runtime_teach/`
+catalog used by headless Robot Controller. Launch it with:
 
 ```bash
 ros2 launch item_perception_yolo item_detect.launch.py
@@ -684,7 +685,16 @@ Enable and all setting steps stop on failure. See
 [`src/motion_debug/README.md`](src/motion_debug/README.md) for the full timeout
 and logging contract.
 
-The file uses strict `KEY=value` lines and does not require a Python dotenv package. Do not use shell exports, alternate key names, or alternate configuration paths. Every Dobot and Orbbec key shown in `.env.example` is required. Active Orbbec serial numbers may remain empty only while opening the camera GUI for first-time configuration; camera startup remains disabled until the configured set is complete.
+The file uses strict `KEY=value` lines and does not require a Python dotenv package. Do not use shell exports, alternate key names, or alternate configuration paths. Every key shown in `.env.example` is required. Active Orbbec serial numbers may remain empty only while opening the camera GUI for first-time configuration; camera startup remains disabled until the configured set is complete.
+
+Item Teach writes `ITEM_TEACH_PLATFORM_CALIBRATION`,
+`ITEM_TEACH_BIN_CAMERA_CALIBRATION` and `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION` after
+**Load Calibration** validates the selected set. Values are filenames directly
+inside `calibration/`, never machine-specific paths. All three empty means no
+selection yet; otherwise all three must be populated. Existing workspaces must
+add these keys from `.env.example`, initially empty. The shell loader, bringup,
+Motion Debug and camera launcher accept and validate them; only Item Teach
+uses them to choose calibrations.
 
 Runtime datalogs are isolated per package under `logs/<package-name>/events.jsonl`; the bringup launch creates the package files before starting the node. Compile the timestamped package records into a separate universal file only when needed:
 

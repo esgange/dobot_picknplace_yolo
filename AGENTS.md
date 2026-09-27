@@ -320,6 +320,20 @@ confirmation before MovJ. Abandoned optional replies cannot block progression,
 but late accepted setup commands require Stop containment. No launch-time
 initialization, StopDrag, error/output reset or controller dependency is added.
 
+Rule 131 replaces automatic latest-calibration discovery in Item Teach only
+with explicit platform, bin-camera and robot-camera selectors. Load Calibration
+validates the complete set, then atomically saves root-calibration basenames in
+the mandatory ITEM_TEACH_PLATFORM_CALIBRATION, ITEM_TEACH_BIN_CAMERA_CALIBRATION
+and ITEM_TEACH_ROBOT_CAMERA_CALIBRATION root .env keys. All three empty is the
+first-run state; partial selections are invalid. Platform selection fills its
+exact hash-bound camera; keep schema, robot identity and robot-camera mounting
+checks. Custom mode-prefixed camera filenames are allowed for explicit loading.
+Restore saved choices for the existing read-only station/bin preview on startup;
+no catalog scan, newest-file substitution, automatic model execution or arming.
+Changing a selection clears old preview and disarms; failed validation or dialog
+cancellation never replaces saved choices. Recheck the exact selected files on
+use. Headless Item Detect and Robot Controller keep strict latest discovery.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

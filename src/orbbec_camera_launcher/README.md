@@ -19,6 +19,9 @@ the detected serials, validates every Orbbec setting, and atomically updates
 only the canonical `ORBBEC_*` lines in the ignored root `.env`. The detected
 serial selector is informational: it does not assign a slot or change the
 clipboard. Enter the exact serial in the intended camera row and save it.
+Saving preserves Dobot settings and Item Teach's three calibration filenames.
+Those mandatory `ITEM_TEACH_*_CALIBRATION` keys must be all empty or all local
+YAML basenames; the camera launcher does not load the calibration artifacts.
 
 Device-scan results, raw scan output, configuration actions, and supervisor
 activity share one chronological read-only GUI log. Select text and press

@@ -43,6 +43,7 @@ from .pick_planning import Cr10Kinematics, rigid_matrix
 from .station_calibration import (
     latest_station_calibration, latest_robot_camera_calibration,
     validate_robot_camera_calibration)
+from .item_teach_calibration import selected_robot_camera, validate_selected_robot_camera
 from .runtime_teach import runtime_teach_catalog
 
 
@@ -299,6 +300,7 @@ class ItemDetectNode(Node):
         self.camera_status = "Camera not connected"
         self.model_metadata = self.model_config = None
         self.applied = self.bin_artifact = self.robot_camera = None
+        self.explicit_robot_camera = False
         self.settings = self.profile_path = None
         self.profile_digest = None
         self.yolo_enabled = False
@@ -416,7 +418,7 @@ class ItemDetectNode(Node):
         return metadata
 
     def apply_station(self, platform_path, bin_path, *, expected_station=None,
-                      expected_robot_camera=None):
+                      expected_robot_camera=None, robot_camera_path=None):
         self.disarm()
         applied = load_bin_teach_calibration_context(Path(platform_path))
         if expected_station is not None and (
@@ -425,17 +427,20 @@ class ItemDetectNode(Node):
                 or applied.camera.path != expected_station.camera.path
                 or applied.camera.sha256 != expected_station.camera.sha256):
             raise ValueError(
-                "Automatically selected station calibration changed before application")
-        robot_camera = latest_robot_camera_calibration(root=self.root)
+                "Selected station calibration changed before application")
+        robot_camera = (latest_robot_camera_calibration(root=self.root)
+                        if robot_camera_path is None else
+                        selected_robot_camera(robot_camera_path, root=self.root))
         if expected_robot_camera is not None and (
                 robot_camera.path != expected_robot_camera.path
                 or robot_camera.sha256 != expected_robot_camera.sha256):
             raise ValueError(
-                "Automatically selected robot-camera calibration changed before application")
+                "Selected robot-camera calibration changed before application")
         template = (load_bin_teach(Path(bin_path), root=self.root, deployment=True)
                     if getattr(self, "deployment", False) else load_bin_teach(Path(bin_path)))
         place_bin_roi(template, applied.platform)
         self.applied, self.bin_artifact, self.robot_camera = applied, template, robot_camera
+        self.explicit_robot_camera = robot_camera_path is not None
         self.connect_camera(applied.camera.settings.camera_prefix)
         self.events.record(
             "INFO", "item_station_applied",
@@ -540,7 +545,10 @@ class ItemDetectNode(Node):
                 "Valid station, bin teach, and robot-camera calibration are required")
         try:
             validate_applied_sources(self.applied)
-            validate_robot_camera_calibration(self.robot_camera, root=self.root)
+            if getattr(self, "explicit_robot_camera", False):
+                validate_selected_robot_camera(self.robot_camera, root=self.root)
+            else:
+                validate_robot_camera_calibration(self.robot_camera, root=self.root)
             if file_sha256(self.bin_artifact.path) != self.bin_artifact.sha256:
                 raise ValueError("Applied bin teach changed")
         except (ValueError, OSError):

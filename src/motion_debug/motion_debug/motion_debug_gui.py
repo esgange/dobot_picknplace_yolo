@@ -240,6 +240,9 @@ def _load_robot_type_from_project_env() -> str:
         'ORBBEC_MAX_ATTEMPTS',
         'ORBBEC_RETRY_DELAY_SEC',
         'ORBBEC_SHUTDOWN_TIMEOUT_SEC',
+        'ITEM_TEACH_PLATFORM_CALIBRATION',
+        'ITEM_TEACH_BIN_CAMERA_CALIBRATION',
+        'ITEM_TEACH_ROBOT_CAMERA_CALIBRATION',
     }
     with env_path.open('r', encoding='utf-8') as env_file:
         for line_number, line in enumerate(env_file, start=1):
@@ -254,6 +257,19 @@ def _load_robot_type_from_project_env() -> str:
             if key in values:
                 raise RuntimeError(f'Duplicate project .env key {key} at {env_path}:{line_number}')
             values[key] = value
+
+    calibration_keys = (
+        'ITEM_TEACH_PLATFORM_CALIBRATION',
+        'ITEM_TEACH_BIN_CAMERA_CALIBRATION',
+        'ITEM_TEACH_ROBOT_CAMERA_CALIBRATION',
+    )
+    for key in calibration_keys:
+        if key not in values:
+            raise RuntimeError(f'Missing project .env key: {key}')
+        if values[key] and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_. -]*\.yaml', values[key]) is None:
+            raise RuntimeError(f'{key} must be empty or a YAML filename inside calibration/')
+    if sum(bool(values[key]) for key in calibration_keys) not in (0, 3):
+        raise RuntimeError('Item Teach calibration selections must be all empty or all selected')
 
     if values.get('ROS_LOCALHOST_ONLY') != '1':
         raise RuntimeError("ROS_LOCALHOST_ONLY must be exactly '1'")

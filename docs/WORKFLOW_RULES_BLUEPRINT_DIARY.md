@@ -5478,6 +5478,63 @@ Never use a floating “latest” version in an issue, script, or deployment not
   process launches/restarts were used. Hardware initialization remains untested;
   restart the calibration GUI to load this change.
 
+### 2026-09-27 — Explicit Item Teach calibration choices remembered in .env
+
+- Rule 131 supersedes latest-file discovery from rules 50/83 for Item Teach
+  only. Add Browse selectors for platform, bin-camera and robot-camera files
+  directly inside root `calibration/`, plus Load Calibration. This permits
+  operator-named camera calibrations such as
+  `camera_to_hand_calibration_station_2.yaml` without failing a timestamp catalog
+  scan. Preserve mode prefixes, strict schemas, current robot identity, exact
+  platform/camera filename/hash/settings/transform binding and the robot-camera
+  `camera_on_hand` / `Link6 <- robot_camera_link` requirement. Selecting a platform
+  fills its recorded bin-camera file; another camera requires a newly taught
+  platform. No schema conversion, file renaming or source-hash adoption is added.
+- Make root `.env` authoritative for the three required keys
+  `ITEM_TEACH_PLATFORM_CALIBRATION`, `ITEM_TEACH_BIN_CAMERA_CALIBRATION` and
+  `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION`. Store portable local YAML basenames,
+  not machine-specific paths; all three empty means first run, otherwise require
+  all three. Validate the complete selection before atomically replacing only
+  these lines, preserving other settings/comments and permissions. Detect
+  concurrent `.env` edits before replacement. Failed validation/write and canceled
+  browse dialogs do not replace the saved selection; show the failure visibly.
+  Reselecting a bin also validates and persists the chosen calibration set.
+- Restore these files for the existing read-only station/bin preview exception
+  on startup, without another config write. Selection changes stop YOLO, disarm
+  and clear old overlays/TF. Requests recheck the exact selected source files,
+  including the robot-camera hash; newer or unrelated files cannot replace them.
+  Keep UI-state schema 6 for other teaching fields and bin selection; its older
+  platform field is not authoritative for calibration selection. No automatic
+  model execution, arming, process launch, motion or I/O is added. Headless Item
+  Detect and Robot Controller retain their strict timestamp-based latest catalog
+  and existing configuration behavior; no controller/FSM changes are needed.
+- Extend `.env.example` and all affected strict readers: canonical shell loader,
+  Motion Debug, Orbbec launcher and Dobot bringup. The camera GUI continues to
+  update only ORBBEC keys and preserves the calibration selections. Add the three
+  empty keys to this workstation's ignored `.env`; never commit that local file
+  or operator artifacts. Existing workspaces must add these keys explicitly;
+  no aliases, compatibility defaults or alternate config store are introduced.
+- Intentional vendor integration patch: extend the existing root `.env`
+  validator in `dobot_bringup_v4/launch/dobot_bringup_ros2.launch.py` to require
+  and validate these canonical keys. This prevents rejection of the new shared
+  configuration schema; the launch still uses only Dobot settings and never
+  loads calibration artifacts. No upstream revision or driver behavior changes.
+- Validation: symlink builds pass for Item Perception, Orbbec launcher, Motion
+  Debug and Dobot bringup. All 411 Item Perception tests, 22 camera-launcher
+  tests and five bringup launch tests pass. Thirty-two isolated configuration
+  checks cover empty/selected, partial/missing and invalid filename cases across
+  all four readers; no hardware launch is invoked. Regressions cover custom
+  filenames, exact camera binding, restore, cancellation, failed/concurrent
+  writes, preserved permissions/settings, changed-source disarming and unchanged
+  headless discovery. Offscreen mock-node inspection checks the full-width file
+  rows. Changed Item Perception modules and the new test pass ament_flake8.
+- The broader vendor test run still fails existing copyright, cpplint, flake8,
+  lint_cmake and uncrustify checks. The seven launch-file E501 reports reproduce
+  on the pre-change HEAD; C++/CMake/license files are unchanged. Do not claim all
+  vendor checks passed or reformat vendored source as part of this feature.
+  No physical robot/camera launches, hardware commands or operator-artifact edits.
+  No offline-transfer milestone claimed. Restart Item Teach for the new controls.
+
 ### Future entry template
 
 ```text

@@ -35,7 +35,9 @@ this computer. The robot driver still uses its explicit TCP connection to the
 configured controller addresses.
 
 The parser validates the complete project `.env` schema, including the
-canonical Orbbec keys, so every package sees one strict configuration file.
+canonical Orbbec keys and the three `ITEM_TEACH_*_CALIBRATION` filename keys,
+so every package sees one strict configuration file. Calibration values must be
+all empty or all local YAML basenames; bringup does not load those artifacts.
 Bringup itself uses only the Dobot values.
 
 LAN1 is attempted first, followed by LAN2 when LAN1 cannot establish both Dobot TCP channels. Each channel is bounded by the required `DOBOT_CONNECTION_TIMEOUT_MS`; the canonical value is `3000` ms. The node prints and logs an attempt before entering the bounded TCP call, so an unreachable LAN1 is visible and cannot wait for the operating system's default timeout. Each successful connection writes a `robot_connection_result` record to this package's `logs/dobot_bringup_v4/events.jsonl` containing `status=connected`, the selected `interface`, and its `ip`. If both addresses fail, one result for that continuous outage contains `status=failed` and both attempted addresses, then the driver retries the same explicit sequence. Missing, malformed, unsupported, duplicate, or invalid configuration fails before the node starts. Confirm the robot, network, remote-control mode, workspace clearance, and emergency-stop readiness before launching against hardware.

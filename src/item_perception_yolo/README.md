@@ -56,35 +56,35 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Displaying all means detections under those settings, not every raw proposal.
    No platform/bin/depth, home or saved item file is required to see detections.
    OFF stops inference and shows raw RGB; it also removes the pose service.
-4. Station calibration loads automatically from root `calibration/`: newest
-   platform for `.env`'s `DOBOT_ROBOT_LAN1_IP`, then newest camera calibration
-   matching that platform's camera prefix. Canonical filename UTC timestamps,
-   not file modification times, define newest. Read-only **Latest platform**
-   **Bin camera calibration** and **Robot camera calibration** fields show the
-   selected files; no platform picker. The separate newest strict schema-7
-   robot-camera calibration must be `camera_on_hand` and exactly
-   `Link6 <- robot_camera_link`. It supplies only the calibrated camera-origin
-   offset for pick clearance; no robot-camera RGB/depth/CameraInfo/TF subscription
-   is created. Missing, ambiguous or invalid robot-camera calibration blocks
-   pose generation rather than accepting an unverified camera position.
-   The camera must match the platform's recorded SHA-256/mode/settings/transform.
-   A newer calibration for that camera requires a newly taught platform. A
-   newer file for another camera is not substituted. Invalid/missing/ambiguous
-   selected files or unidentifiable catalog entries fail without an older-pair
-   fallback. For dimensions/depth, select only the portable bin ROI. The GUI
-   automatically validates the station/bin and connects the camera preview:
-   **no Apply button and no additional Connect RGB click are needed**. The camera
-   calibration/prefix comes only from that platform artifact and its hash-bound
-   camera file. Existing platform schema 3, camera schema 7 and bin schema 3 are
-   unchanged. The saved bin selection reconnects using the latest station pair
-   on startup; an old platform prefill is not authoritative. This narrow
-   read-only-preview exception to unapplied prefill never launches a camera,
-   loads model weights, enables YOLO or arms the service. Incomplete/invalid files
-   leave the ROI hidden with a status reason. Selection validates on startup,
-   and pose requests recheck the selected source files and robot-camera hash;
-   no calibration is silently replaced during a request. Use **Reload Latest
-   Calibration** after teaching/correcting files, or reselect the bin, to revalidate.
-   Reloading/changing selection stops YOLO, disarms and clears old overlays/TF.
+4. Use **Browse…** beside **Platform calibration**, **Bin camera calibration**
+   and **Robot camera calibration** to choose files directly inside root
+   `calibration/`. Choosing a platform fills its recorded bin-camera file.
+   **Load Calibration** validates the complete set and atomically saves only
+   their basenames to root `.env` as `ITEM_TEACH_PLATFORM_CALIBRATION`,
+   `ITEM_TEACH_BIN_CAMERA_CALIBRATION` and `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION`.
+   Every key is required; all empty is first run, otherwise all must be set.
+   Descriptive camera filenames such as `camera_to_hand_calibration_station_2.yaml`
+   work. Existing mode prefixes and strict schemas still apply, but Item Teach
+   does not scan for newer files or reject unrelated catalog entries.
+   The bin camera must match the platform's exact recorded filename,
+   SHA-256/mode/settings/transform and current robot identity. To use a different
+   bin-camera calibration, teach a new platform with it. The robot-camera file
+   must be strict schema 7, `camera_on_hand`, and exactly
+   `Link6 <- robot_camera_link`. It supplies only the camera-origin offset for
+   pick clearance; no robot-camera RGB/depth/CameraInfo/TF subscription is added.
+   Invalid choices leave `.env` unchanged and show the reason. Canceling a file
+   dialog changes nothing. Missing or changed files never select a replacement.
+   Selecting the portable bin ROI also validates and saves the chosen calibration
+   set, then connects the camera preview; no additional Connect RGB click is
+   needed. The prefix comes from the platform's hash-bound camera calibration.
+   Saved `.env` choices and the saved bin reconnect this read-only preview on
+   startup. This narrow restoration exception never launches a camera, loads
+   weights, enables YOLO or arms the service. Platform schema 3, camera schema 7,
+   bin schema 3 and package UI-state schema 6 remain unchanged. Incomplete or
+   invalid files leave the ROI hidden with a status reason. Requests recheck the
+   exact selected files and hashes, regardless of other newer calibrations.
+   Selection changes stop YOLO, disarm and clear old overlays/TF. Use **Load
+   Calibration** after correcting a file, or reselect the bin, to revalidate.
 5. **Click an item** to freeze that exact displayed RGB/depth result, highlight
    its pick dot with a cyan ring and show its measured **X / height (long side)** and
    **Y / width (short side)** in millimetres at the top-left. Mask uses its
@@ -228,7 +228,7 @@ A preview dot is not a validated 3D pick pose. Production service calculations
 continue to retain only validated candidates.
 Metric dimensions, depth sampling and pose-generation mathematics are unchanged.
 
-With the automatically selected station and selected bin validated, a green
+With the selected station and bin validated, a green
 unfilled border labelled **Loaded Bin ROI** projects the saved bin XY points at
 platform Z=0 into the RGB
 view when its valid camera inputs arrive. No Apply click or model loading is needed.
@@ -529,7 +529,13 @@ archive. Events remain timestamped and bounded at 1,000 package records.
 
 ### Headless detection and controller request
 
-Station files are selected automatically by the same strict rule as Item Teach.
+Headless Item Detect and Robot Controller retain strict automatic latest-station
+selection, independent of Item Teach's `.env` calibration choices: newest
+platform for the configured robot, its newest matching camera, and newest
+`robot_camera` calibration, by canonical filename UTC timestamps. The platform's
+camera hash/mode/settings/transform must match. Invalid or unidentifiable catalog
+entries fail; there is no older-file fallback. Custom filenames supported by
+explicit Item Teach loading are not part of this automatic catalog contract.
 Populate flat root `runtime_teach/` with exactly these ordinary files:
 
 ```text

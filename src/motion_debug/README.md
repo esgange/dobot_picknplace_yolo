@@ -4,6 +4,10 @@
 commands, IO/motion service calls, and motion script editing/playback. It is a
 diagnostic and commissioning tool, not an autonomous pick workflow.
 
+The root `.env` reader accepts the mandatory `ITEM_TEACH_*_CALIBRATION` keys
+alongside the robot/camera configuration. Their values must be all empty or all
+local YAML basenames. Motion Debug does not load or change those calibrations.
+
 ## Executable
 
 | Executable | Purpose |

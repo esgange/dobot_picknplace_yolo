@@ -54,6 +54,9 @@ _SUPPORTED_ENV_KEYS = {
     "ORBBEC_MAX_ATTEMPTS",
     "ORBBEC_RETRY_DELAY_SEC",
     "ORBBEC_SHUTDOWN_TIMEOUT_SEC",
+    "ITEM_TEACH_PLATFORM_CALIBRATION",
+    "ITEM_TEACH_BIN_CAMERA_CALIBRATION",
+    "ITEM_TEACH_ROBOT_CAMERA_CALIBRATION",
 }
 _REQUIRED_ENV_KEYS = frozenset(_SUPPORTED_ENV_KEYS)
 _MAX_LOG_EVENTS = 1000
@@ -128,6 +131,19 @@ def _load_project_env():
         raise RuntimeError(
             f"[DOBOT BRINGUP] .env is missing required key(s): {', '.join(missing)}"
         )
+
+    calibration_keys = (
+        'ITEM_TEACH_PLATFORM_CALIBRATION',
+        'ITEM_TEACH_BIN_CAMERA_CALIBRATION',
+        'ITEM_TEACH_ROBOT_CAMERA_CALIBRATION',
+    )
+    for key in calibration_keys:
+        if key not in values:
+            raise RuntimeError(f'Missing project .env key: {key}')
+        if values[key] and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_. -]*\.yaml', values[key]) is None:
+            raise RuntimeError(f'{key} must be empty or a YAML filename inside calibration/')
+    if sum(bool(values[key]) for key in calibration_keys) not in (0, 3):
+        raise RuntimeError('Item Teach calibration selections must be all empty or all selected')
 
     for key in ("DOBOT_ROBOT_LAN1_IP", "DOBOT_ROBOT_LAN2_IP"):
         try:

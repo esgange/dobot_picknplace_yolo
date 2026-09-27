@@ -637,6 +637,7 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
                            clear_selected_pose=MagicMock(),
                            yolo_enabled=False, native=SimpleNamespace(failed=False),
                            camera_snapshot=lambda: (None, "No camera in fixture"))
+    monkeypatch.setattr(gui, "saved_calibration_paths", lambda **_kw: None)
     window = gui.ItemTeachWindow(node)
     try:
         assert window.home == profile["home"]

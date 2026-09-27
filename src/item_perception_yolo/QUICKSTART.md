@@ -38,17 +38,17 @@ YOLO/model loading and re-arming remain explicit. Unsaved fields are not autosav
 Item overlays keep mask shading, one mask-derived rectangle (or native OBB),
 long-X/short-Y centered axes and a pick dot, with no extra axis-aligned YOLO box.
 The green bin border coexists with detections and also works with YOLO OFF.
-Station calibration is selected automatically: newest platform for the configured
-robot, then newest camera calibration for its prefix, by filename UTC timestamps.
-Their hashes/mode/settings must match; recalibrating the camera requires platform
-reteaching, not mixing transforms or falling back. Select the bin file to connect
-preview; the border appears when RGB/CameraInfo/TF are available. There is no
-platform picker or Apply button. **Reload Latest Calibration** reselects files
-and clears old overlays/disarms; no periodic watcher. The restored bin selection
-uses the latest station pair on startup. YOLO/model loading and arming stay manual,
-and no camera process is launched.
+Use **Browse…** to select the platform, bin-camera and robot-camera calibration
+files from root `calibration/`, then **Load Calibration**. The platform fills its
+bound bin-camera filename; their hashes/mode/settings must match. Recalibrating
+that camera requires platform reteaching. A successful load saves all three
+filenames to root `.env` and restores those choices on restart. Descriptive
+mode-prefixed camera filenames work; no latest-file scan occurs in Item Teach.
+Select the bin file to connect preview; the border appears when RGB/CameraInfo/TF
+are available. Changing selections clears overlays and disarms. YOLO/model
+loading and arming stay manual, and no camera process is launched.
 Item Teach shares Bin Teach's saved-plane border geometry. On another station,
-provide that station's own latest platform/camera files and select the copied bin
+select that station's own platform/camera files and the copied bin
 YAML: the unchanged metric XY follows its platform origin, axes, tilt and height. No markers or depth
 are needed for the border. Keep the same physical bin size/offset/reference axes;
 loading does not detect, reposition or resize the bin.
