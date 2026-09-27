@@ -11,6 +11,7 @@ Every ROS 2 package in this workspace lives below `src/` and has a package-local
 | [`orbbec_camera_launcher`](orbbec_camera_launcher/) | Gemini 335 configuration GUI and strict three-attempt complete-set supervisor |
 | [`camera_calibration`](camera_calibration/) | Manual-prefix ChArUco camera-to-hand (`base_link`) and camera-on-hand (`Link6`) calibration |
 | [`item_perception_yolo`](item_perception_yolo/) | Fixed/on-hand ChArUco `platform_teach`, mode-matched four-marker `bin_teach`, and staged perception integration |
+| [`tray_perception`](tray_perception/) | Read-only YOLO tray teaching, four-corner base-frame reference plane, and one selected tray pose preview |
 | [`robot_controller`](robot_controller/) | Deterministic headless Home/Pick hardware authority plus separate API-only GUI and TF-only preview |
 | [`robot_controller_interfaces`](robot_controller_interfaces/) | Typed controller actions, lifecycle/configuration services, preview service, and transient-local status |
 | [`item_perception_interfaces`](item_perception_interfaces/) | Ranked candidate message and read-only GetItemPoses service |

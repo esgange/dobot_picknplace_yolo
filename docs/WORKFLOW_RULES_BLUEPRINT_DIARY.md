@@ -5728,6 +5728,73 @@ Never use a floating “latest” version in an issue, script, or deployment not
   no offline-transfer milestone claimed. Restart Item Teach and reload the
   canonical RViz configuration (or restart the viewer) to apply the change.
 
+### 2026-09-27 — Tray Teach with an independent saved plane and inward corner frame
+
+- Rule 137 introduces the separate `tray_perception` package and its first
+  installed GUI, `tray_teach`. Scope is teaching and read-only pose inspection;
+  headless `tray_detect`, a controller detection service, placement simulation
+  and controller placement integration remain subsequent work. No controller
+  behavior/FSM, vendor source, robot command, gripper output or launch ownership
+  changes. The root now discovers 16 packages.
+- Explicitly load a trusted local YOLO model and one schema-7 fixed/on-hand
+  camera calibration. Reuse Item Perception's strict RGB/registered-depth and
+  CameraInfo validation, timestamped camera-internal TF and on-hand robot TF.
+  Copy a valid Item Teach Home once into the independent Tray Teach Position;
+  the source YAML/model is not required after a tray profile is saved. The
+  copied joints are a teaching reference, never a controller Home override or
+  automatic motion. Controller Home stays in its own Item Teach profile.
+- Freeze one fresh synchronized RGB/depth/TF observation, then click four
+  surface corners in any order. Handle pixel scaling/letterboxing explicitly.
+  Reproject each color pixel through separate RGB/depth distortion, sample its
+  7×7 registered-depth patch, apply the existing range/MAD filter and require
+  at least 30 accepted values between 200 and 1000 mm. Transform the points to
+  base_link; reject collinear/non-convex geometry or maximum fitted plane error
+  above 5 mm. Freeze/retake replaces the previous teaching plane; no images or
+  live depth are persisted. Keep robot/tray stationary during acquisition.
+- Project subsequent mask/OBB polygons onto the saved plane and fit a metric
+  enclosing rectangle; neither measurement nor selection depends on live depth.
+  Filter selected class/confidence and taught long-side length, short-side width
+  and absolute mm tolerance. Reject image-clipped trays. Rank valid trays by
+  pixel distance to image center, descending confidence and source index; expose
+  exactly one selected pose or an explicit no-valid-tray result. Box-only YOLO
+  models are visual preview only and cannot create a production tray profile.
+- The final user-selected origin convention is `nearest_base_corner_v1`: choose
+  the rectangle corner nearest base_link (0,0,0) by full 3D Euclidean distance,
+  with base XYZ ordering for exact ties. Both +X and +Y run inward along adjacent
+  edges; order edges to preserve right-handed Z toward the teaching camera.
+  X need not be the long edge. No image-left/right or tracked physical-corner
+  identity is implied. Preview draws the origin and positive axes, displays
+  dimensions/base XYZ/source age and emits a teaching-only selected-tray TF
+  once per RGB observation with its original timestamp, never refreshed old TF.
+- Save strict schema-1 YAML and a same-stem SHA-256-verified model copy under
+  `offline_teach/tray_teach/`, using tray name and UTC timestamp. Publish YAML
+  after its staged model; never overwrite existing pairs. Include camera
+  filename/hash, copied teaching joints, base-frame corner/plane evidence,
+  detection settings, explicit units and origin convention. No placement-area,
+  placement-target, controller Home, speed or I/O variables. Reject schema,
+  file/hash and plane-evidence drift without migration or alternate sources.
+- Reuse the already installed pinned private Item Perception runtime through a
+  separate lifetime tray worker. Add internal worker-executable and operation/
+  prediction hooks to the existing client/server; existing item operations stay
+  unchanged. No second extraction, new wheels, global installation, network
+  access or OpenCV/Torch/Ultralytics import in ROS/Qt. One GUI worker slot and two
+  ROS executor threads keep bounded native work separate from camera/TF input.
+  Native/protocol failures are terminal; invalid observations are recoverable.
+  Package-local bounded events and strict unapplied GUI state live only in
+  ignored `logs/tray_perception/`. No `.env` keys or operator artifacts change.
+- Validation: both package symlink builds pass. All 442 existing Item Perception
+  tests pass after the shared-worker extension. All 24 Tray Teach tests pass;
+  changed Python code/tests pass ament_flake8 and git diff --check. Tests cover artifact
+  pairing/independence/corruption, plane fitting, separate distortion models,
+  3D nearest-corner selection and positive inward axes across rotations and
+  quadrants, image-center ranking after size rejection, missing/invalid live
+  depth, fresh on-hand TF, GUI coordinate mapping/unapplied restore, source
+  invalidation, native protocol handling and real private-worker inference with
+  a temporary synthetic model. An isolated local ROS domain verifies installed
+  GUI/node startup and shutdown with no native parent imports or automatic
+  setup. Offscreen GUI review checks layout. No real camera/robot launch or
+  command, operator-model execution or offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

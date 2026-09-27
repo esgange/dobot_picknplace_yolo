@@ -90,7 +90,10 @@ def render_result(result, rgb, names, task, maximum, cv2, np, *, included_indice
     return overlay, len(classes)
 
 
-def serve(input_stream, output_stream, runtime, manifest, scratch):
+def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations=None,
+          predictions=None):
+    """Share the pinned runtime/model lifecycle with project perception workers."""
+    operations, predictions = operations or {}, predictions or {}
     try:
         cv2, np, torch, ultralytics = initialize(runtime, manifest)
         send_packet(output_stream, {
@@ -107,10 +110,14 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
             request, data = receive_packet(input_stream)
             if request.get("operation") not in (
                     "detect", "inspect", "preview", "overlay_roi", "selected_pose",
-                    "teaching_rviz"):
+                    "teaching_rviz", *operations, *predictions):
                 raise RuntimeError("Unsupported preview operation")
             if cv2.getNumThreads() != 1 or cv2.ocl.useOpenCL() or torch.get_num_threads() != 4:
                 raise RuntimeError("Native thread/OpenCL runtime drift")
+            if request["operation"] in operations:
+                header, pixels = operations[request["operation"]](request, data, cv2, np)
+                send_packet(output_stream, header, pixels)
+                continue
             if request["operation"] == "teaching_rviz":
                 from .item_rviz_native import teaching_rviz
                 header, pixels = teaching_rviz(request, data, cv2, np)
@@ -157,7 +164,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
                 continue
             config = request["model"]
             from .item_preview import validate_preview_settings
-            if request["operation"] in ("detect", "preview"):
+            if request["operation"] in ("detect", "preview", *predictions):
                 validate_preview_settings(config["task"], config["yolo"])
             path = Path(config["path"]).resolve(strict=True)
             key = (str(path), config["sha256"])
@@ -213,6 +220,12 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
             )
             if len(results) != 1 or tuple(results[0].orig_shape) != (height, width):
                 raise RuntimeError("Detector result does not match the submitted frame")
+            if request["operation"] in predictions:
+                header, pixels = predictions[request["operation"]](
+                    request, results[0], rgb, names, cv2, np)
+                header["inference_ms"] = round((time.monotonic() - start) * 1000, 1)
+                send_packet(output_stream, header, pixels)
+                continue
             overlay, count = render_result(
                 results[0], rgb, names, config["task"], settings["max_detections"], cv2, np,
             )

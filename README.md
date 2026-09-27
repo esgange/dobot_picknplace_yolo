@@ -11,6 +11,7 @@ src/
 ├── orbbec_camera_launcher/ # Gemini 335 configuration and bounded supervisor GUI
 ├── camera_calibration/    # manual-prefix two-mode ChArUco calibration GUI
 ├── item_perception_yolo/  # platform teaching and perception integration
+├── tray_perception/       # tray teaching, saved reference plane and selected tray pose preview
 ├── robot_controller/      # deterministic Home/Pick hardware authority + GUI/preview clients
 ├── robot_controller_interfaces/ # typed controller actions, services, and status
 ├── item_pick/             # imported reference only; excluded by COLCON_IGNORE
@@ -27,7 +28,7 @@ Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-ma
 
 ## Package organization
 
-The root build contains 15 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `robot_controller`, `robot_controller_interfaces`, and `item_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
+The root build contains 16 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `tray_perception`, `robot_controller`, `robot_controller_interfaces`, and `item_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
 
 ## Robot Controller v2
 
@@ -592,6 +593,31 @@ Item model or Bin YAML produces its own fatal startup error; a duplicate error
 lists every conflicting filename. There is no watcher or startup retry. Stop the
 consumer before replacing the catalog, stage incomplete transfers under hidden
 dot-prefixed names, expose exactly one complete set, and then restart it.
+
+## Tray Teach
+
+The separate `tray_perception` package currently provides the read-only
+`tray_teach` GUI:
+
+```bash
+ros2 launch tray_perception tray_teach.launch.py
+```
+
+Load a camera calibration, trusted segmentation/OBB YOLO model, and Item Teach
+once to copy its Home into **Tray Teach Position**. Freeze a fresh uncovered-tray
+view and click four reference-surface corners in any order. The saved plane and
+corner points are expressed in `base_link`. Subsequent tray measurements use
+that plane, without live surface depth, and reject detections outside the taught
+length/width tolerance. Select one valid tray nearest the image center.
+
+The detected origin is the rectangle corner nearest the robot base by 3D
+distance. Both positive axes run inward along adjacent tray edges, independent
+of image left/right. Save a new YAML/model pair under `offline_teach/tray_teach/`;
+reopening it needs no source Item Teach file. Controller Home remains in the
+controller's Item Teach file. Teaching has no motion commands or placement
+variables. Headless detection and controller placement integration are later
+work. See [Tray Perception](src/tray_perception/README.md) for the complete
+workflow, source checks, plane sampling limits and frame convention.
 
 ## Clone this workspace
 

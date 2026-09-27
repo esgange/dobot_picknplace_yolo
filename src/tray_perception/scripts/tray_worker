@@ -1,0 +1,31 @@
+#!/usr/bin/python3
+"""Native child: select the existing pinned private runtime before native imports."""
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+runtime = Path(sys.argv[1]).resolve(strict=True)
+manifest = json.loads((runtime / "runtime-lock.json").read_text())
+sys.path.insert(0, str(runtime))
+protocol_output = sys.stdout.buffer
+sys.stdout = sys.stderr
+
+
+def block_network(event, _args):
+    if event in {"socket.connect", "socket.connect_ex", "socket.getaddrinfo",
+                 "socket.gethostbyname", "socket.sendto"}:
+        raise RuntimeError("Network access is forbidden in the tray worker")
+
+
+sys.addaudithook(block_network)
+with tempfile.TemporaryDirectory(prefix="picknplace-tray-") as scratch:
+    os.environ.update({"YOLO_CONFIG_DIR": scratch, "YOLO_OFFLINE": "true",
+                       "YOLO_AUTOINSTALL": "false", "YOLO_VERBOSE": "false",
+                       "MPLCONFIGDIR": scratch, "MPLBACKEND": "Agg"})
+    from item_perception_yolo.yolo_worker_native import serve
+    from tray_perception.native import capture_plane, predict_trays, overlay_plane
+    serve(sys.stdin.buffer, protocol_output, runtime, manifest, Path(scratch),
+          operations={"tray_plane": capture_plane, "tray_overlay": overlay_plane},
+          predictions={"tray_preview": predict_trays})

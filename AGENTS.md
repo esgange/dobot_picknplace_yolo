@@ -386,6 +386,23 @@ voxels, 1 Hz fresh updates and no text overlays; late viewers receive the cached
 cloud while Item Teach runs. This supersedes rule 134's hard cloud clearing only;
 retained visualization cannot satisfy a production pose request.
 
+Rule 137 adds the separate read-only `tray_perception/tray_teach` GUI. Copy
+Item Teach Home once into a saved Tray Teach Position; reopening the tray needs
+no Item Teach file. Controller Home remains in Item Teach. Teach a base_link
+reference plane from four explicitly clicked, frozen synchronized RGB/depth/TF
+corners, then measure YOLO mask/OBB polygons on that plane without live depth.
+Filter expected length/width by mm tolerance and select one valid tray nearest
+image center. Origin is the rectangle corner nearest base_link by 3D distance;
+both +X/+Y follow adjacent edges inward, with right-handed Z toward the teaching
+camera. Save strict schema-1 YAML and a same-stem hashed model under
+offline_teach/tray_teach/, including copied joints and bound camera/plane
+evidence. No placement areas/targets, robot command clients or controller Home
+are added. Headless detection and controller placement remain subsequent work.
+Reuse the pinned private Item Perception CPU runtime through a separate lifetime
+tray worker; no duplicate extraction or native imports in ROS/Qt. Restore only
+unapplied fields from logs/tray_perception/last_session.json, keep bounded package
+events, and require explicit trusted model loading and source validation.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

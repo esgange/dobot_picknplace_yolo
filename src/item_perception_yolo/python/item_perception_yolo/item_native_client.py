@@ -13,8 +13,11 @@ from .preview_protocol import receive_packet, send_packet
 
 
 class NativeClient:
-    def __init__(self, events):
+    def __init__(self, events, *, worker_package="item_perception_yolo",
+                 worker_executable="item_preview_worker"):
         self.events = events
+        self.worker_package = worker_package
+        self.worker_executable = worker_executable
         self.lock = threading.Lock()
         self.process_lock = threading.Lock()
         self.process = None
@@ -31,11 +34,13 @@ class NativeClient:
                 return
             directory = Path(get_package_prefix("item_perception_yolo")) / \
                 "lib/item_perception_yolo"
+            executable = Path(get_package_prefix(self.worker_package)) / \
+                "lib" / self.worker_package / self.worker_executable
             environment = dict(os.environ, YOLO_AUTOINSTALL="false", YOLO_OFFLINE="true",
                                QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg", OMP_NUM_THREADS="4",
                                MKL_NUM_THREADS="4", OPENBLAS_NUM_THREADS="1")
             self.process = subprocess.Popen(
-                ["/usr/bin/python3", str(directory / "item_preview_worker"),
+                ["/usr/bin/python3", str(executable),
                  str(directory / "yolo_runtime")], stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
             process = self.process
