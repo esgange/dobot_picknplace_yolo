@@ -12,6 +12,7 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import String
 
 from item_perception_yolo.item_teach_rviz import cloud_message
+from item_perception_yolo.pose_guides import PoseGuidePublisher
 
 
 class TrayRvizPreview:
@@ -27,6 +28,19 @@ class TrayRvizPreview:
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.publisher = node.create_publisher(PointCloud2, f"{topic_prefix}/voxel_cloud", qos)
         self.diagnostics = node.create_publisher(String, f"{topic_prefix}/rviz_diagnostics", 1)
+        self.pose_guides = (PoseGuidePublisher(
+            node, f"{topic_prefix}/pose_guides", "tray_selected")
+            if topic_prefix == "/tray_teach" else None)
+
+    def show_pose(self, transform):
+        with self.lock:
+            if self.pose_guides is not None:
+                self.pose_guides.publish([transform])
+
+    def clear_pose(self):
+        with self.lock:
+            if self.pose_guides is not None:
+                self.pose_guides.clear()
 
     def accept(self, snapshot):
         with self.lock:
@@ -49,8 +63,10 @@ class TrayRvizPreview:
         with self.lock:
             self.reason = reason
 
-    def invalidate(self, reason):
+    def invalidate(self, reason, *, clear_pose=True):
         with self.lock:
+            if clear_pose:
+                self.clear_pose()
             self.reason = reason
             if self.displayed is None or self.grey:
                 return
@@ -65,7 +81,10 @@ class TrayRvizPreview:
         with self.lock:
             now = time.monotonic()
             if self.displayed is not None and now - self.refreshed_at >= 5.:
-                self.invalidate(self.reason or "No fresh validated voxels for five seconds")
+                # Plane-based poses remain usable without live depth. Cloud age
+                # must not erase a fresh independently validated pose guide.
+                self.invalidate(self.reason or "No fresh validated voxels for five seconds",
+                                clear_pose=False)
             if now < self.next_status:
                 return
             self.next_status = now + 1.

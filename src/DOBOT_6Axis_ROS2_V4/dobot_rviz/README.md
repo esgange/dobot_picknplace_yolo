@@ -56,7 +56,7 @@ published by other local ROS nodes.
 
 The bundled configuration also subscribes to Item Teach's optional 1 Hz
 `/item_teach/voxel_cloud` (colored 10 mm boxes) and `/item_teach/valid_items`
-(validated pose axes without text/number overlays). These displays stay empty until
+(validated pose guides without text/number overlays). These displays stay empty until
 Item Teach has calibrated inputs; the viewer does not start a detector, load
 models or save images. Candidate frames use `item_teach_live_candidate_N`.
 TF frames expire after 2.5 seconds without updates. This is an intentional
@@ -85,6 +85,16 @@ Detect refreshes the calibrated scene at up to 1 Hz without background YOLO or
 tray-pose TF; pose inference remains request-driven. Reload this installed
 configuration via **File → Open Config** in an already-running RViz to add the
 display. Cloud status is available on `/tray_detect/rviz_diagnostics`.
+
+The enabled **XY and blue UP guides** displays retain true red X/green Y and show
+the blue reference-plane normal facing positive `base_link` Z. In addition to
+live `/item_teach/valid_items`, subscribe to `/item_teach/selected_pose_guides`
+for clicked/simulated items and `/tray_teach/pose_guides` for the selected tray.
+These arrows do not change any actual TF or controller pose. The TF display
+remains independent and may still show downward actual +Z; uncheck its Show Axes
+option when inspecting only the guides. No numeric labels are added. Guides
+clear with invalidation and expire after 2.5 seconds without publication.
+Reload this installed configuration to add the new guide displays.
 
 Useful read-only checks:
 

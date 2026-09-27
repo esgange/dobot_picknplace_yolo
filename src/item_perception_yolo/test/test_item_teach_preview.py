@@ -637,9 +637,10 @@ def test_clicked_tf_preserves_platform_tilt_and_stops_on_invalidation():
                            fatal_error=None, _validate_sources=MagicMock(), events=MagicMock(),
                            get_clock=lambda: SimpleNamespace(
                                now=lambda: SimpleNamespace(to_msg=lambda: Time(sec=124))),
-                           selected_pose_broadcaster=MagicMock())
+                           selected_pose_broadcaster=MagicMock(), pose_guides=MagicMock())
     gui.ItemTeachNode._broadcast_selected_pose(node)
     assert node.selected_pose_broadcaster.sendTransform.call_count == 1
+    node.pose_guides.publish.assert_called_once_with((message,))
     for failure in ("epoch", "off", "native", "source"):
         node.selected_pose = (1, (message,), None)
         node.arm_epoch = 2 if failure == "epoch" else 1
@@ -650,6 +651,7 @@ def test_clicked_tf_preserves_platform_tilt_and_stops_on_invalidation():
         gui.ItemTeachNode._broadcast_selected_pose(node)
         assert node.selected_pose is None
     assert node.selected_pose_broadcaster.sendTransform.call_count == 1
+    assert node.pose_guides.clear.call_count == 4
 
 
 @pytest.mark.parametrize("running_kind", ["roi", "preview"])

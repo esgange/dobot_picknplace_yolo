@@ -494,16 +494,19 @@ class TrayTeachNode(Node):
         with self.lock:
             selected = self.selected
         if selected is None:
+            self.rviz.clear_pose()
             return
         generation, pose, source_stamp, receipt = selected
         if (generation != self.generation or time.monotonic() - receipt > 2.5
                 or self.native.failed or self.fatal_error):
             self.selected = None
+            self.rviz.clear_pose()
             return
         try:
             self.validate_sources()
         except (ValueError, OSError, RuntimeError):
             self.selected = None
+            self.rviz.clear_pose()
             return
         if self._published_key == (generation, source_stamp):
             return
@@ -514,6 +517,7 @@ class TrayTeachNode(Node):
         t.x, t.y, t.z = map(float, pose["position"])
         q.x, q.y, q.z, q.w = map(float, pose["quaternion"])
         self.broadcaster.sendTransform(message)
+        self.rviz.show_pose(message)
         self._published_key = (generation, source_stamp)
 
     def close(self):

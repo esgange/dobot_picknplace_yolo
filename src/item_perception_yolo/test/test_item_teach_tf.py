@@ -45,6 +45,8 @@ def teaching_node(monkeypatch):
         selection_lock=threading.RLock(), selected_pose=None, arm_epoch=7, yolo_enabled=True,
         native=SimpleNamespace(failed=False), fatal_error=None, service=None, events=MagicMock(),
         get_clock=lambda: clock, selected_pose_broadcaster=MagicMock(),
+        pose_guides=gui.PoseGuidePublisher(SimpleNamespace(create_publisher=MagicMock(
+            return_value=MagicMock())), "/test/item_guides", "item"),
         _validate_sources=MagicMock(), applied=SimpleNamespace(
             platform=SimpleNamespace(base_from_platform=base)),
         settings={"quality": {}}, disarm=MagicMock())
@@ -72,10 +74,15 @@ def test_simulated_tf_matches_every_ranked_pose_and_preserves_platform_tilt(teac
         p, q = candidate.pose.position, candidate.pose.orientation
         clicked = gui.build_selected_pose_transform(
             node.applied.platform.base_from_platform,
-            {"position": [p.x, p.y, p.z], "quaternion": [q.x, q.y, q.z, q.w]}, message.header.stamp)
+            {"position": [p.x, p.y, p.z], "quaternion": [q.x, q.y, q.z, q.w]},
+            message.header.stamp)
         assert np.allclose(gui.transform_matrix(message), gui.transform_matrix(clicked))
     assert not np.allclose(gui.transform_matrix(transforms[0])[:3, 2], [0., 0., 1.])
     assert response == original  # Neither platform poses nor priorities are modified.
+    markers = node.pose_guides.publisher.publish.call_args.args[0].markers[1:]
+    assert len(markers) == 15
+    for index, message in enumerate(transforms):
+        assert markers[index * 3].pose.orientation == message.transform.rotation
     assert set(node.selected_pose[2]) == {"simulation_epoch", "simulation_profile"}
     assert node.service is None
     node.disarm.assert_not_called()
@@ -223,7 +230,8 @@ def exercise_tf_transport():
         native=SimpleNamespace(failed=False), fatal_error=None, service=None, events=MagicMock(),
         get_clock=publisher.get_clock, validate_simulation_view=lambda _: None,
         applied=SimpleNamespace(platform=SimpleNamespace(base_from_platform=np.eye(4))),
-        settings={"quality": {}})
+        settings={"quality": {}}, pose_guides=gui.PoseGuidePublisher(
+            publisher, "/test/item_guides", "item"))
 
     def send(transforms):
         sent.append(deepcopy(transforms))

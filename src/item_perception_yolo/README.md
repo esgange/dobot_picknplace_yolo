@@ -164,6 +164,17 @@ run and the view explains which pose prerequisites are missing.
 These are snapshots, also retained while the teaching view is frozen. Item rank,
 class, confidence and snapshot age are not overlaid as RViz text; candidate
 details and age remain available in diagnostics and the teaching view.
+The marker displays show unchanged red X/green Y and a blue **UP** guide: the
+reference-plane normal on the side with positive `base_link` Z. An exactly
+horizontal normal remains horizontal. This blue arrow is a visual guide, not
+necessarily the pose's +Z. Actual pose quaternions, TF, service responses and pick
+planning remain unchanged. Clicked and simulated poses use the same convention
+on `/item_teach/selected_pose_guides`; live poses retain `/item_teach/valid_items`.
+The selected guides follow their existing frozen-preview lifetime and clear with
+the selection. Every marker expires after 2.5 seconds without publication.
+Canonical RViz enables both guide displays. Its separate TF display still shows
+the real axes; hide that display's axes to inspect just the guides. No numeric
+RViz labels, additional inference or headless publishers are introduced.
 RViz retains the latest cloud indefinitely. After five seconds without a new
 validated cloud, Item Teach replaces its colors with grey while keeping the
 geometry and source timestamps. A fresh snapshot replaces it and restores its

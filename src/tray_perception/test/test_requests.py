@@ -362,6 +362,7 @@ def exercise_ros_transport(root):
         assert "cancelled" in cancelled.result().message and thread.is_alive()
         assert node.rviz.publisher.topic_name == "/tray_detect/voxel_cloud"
         assert node.rviz.diagnostics.topic_name == "/tray_detect/rviz_diagnostics"
+        assert node.rviz.pose_guides is None
         assert node.broadcaster is None and node.native.process is None
         assert not (root / "debug").exists()
         assert all(name not in sys.modules for name in ("cv2", "torch", "ultralytics"))

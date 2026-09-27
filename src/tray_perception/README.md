@@ -147,6 +147,20 @@ ties use base XYZ ordering; equal-length edges use their adjacent endpoints'
 base XYZ ordering. A symmetric unmarked tray has no tracked physical-corner identity;
 the origin can switch when another corner becomes nearest the base.
 
+RViz also shows a separate **XY and blue UP guides** marker display on
+`/tray_teach/pose_guides`. Red X and green Y follow that same actual pose. The blue
+arrow uses the reference-plane normal facing positive `base_link` Z; it may be
+opposite the actual pose's +Z. An exactly horizontal normal stays horizontal.
+Only the displayed arrow changes: TF, returned tray quaternions, nearest-base
+origin, X/Y extents, saved plane and controller placement coordinates are untouched.
+The guides clear on invalidation/no selection, expire after 2.5 seconds and share
+the selected observation's timestamp. Missing depth or grey voxels do not clear
+fresh plane-based pose guides. Reload canonical RViz to add the display.
+Its separate TF display still shows the real axes, including downward Z; those
+axes can be hidden independently when viewing the guides. Headless Tray Detect
+retains its existing voxel-only visualization, with no added pose publisher or
+background inference.
+
 The preview measures all complete tray polygons, while only the single eligible
 tray nearest image center supplies TF/service output. Dimensions, base XYZ and
 observation age appear below the image; rejection reasons remain visible.

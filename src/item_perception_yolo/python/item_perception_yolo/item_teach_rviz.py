@@ -6,8 +6,6 @@ import threading
 import time
 
 import numpy as np
-from geometry_msgs.msg import Point
-from rclpy.duration import Duration
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import PointCloud2, PointField
@@ -16,6 +14,7 @@ from tf2_ros import TransformException
 from visualization_msgs.msg import Marker, MarkerArray
 
 from .item_detector import validate_pair, validate_candidates
+from .pose_guides import pose_guide_markers
 
 
 PERIOD_SEC = 1.0
@@ -254,23 +253,7 @@ class TeachingRvizPreview:
                     sample["base_from_platform"], candidate, now.to_msg(),
                     child_frame_id=f"item_teach_live_candidate_{rank}")
                 transforms.append(frame)
-                for axis in range(3):
-                    marker = Marker()
-                    marker.header = frame.header
-                    marker.ns, marker.id = "item_axes", rank * 4 + axis
-                    marker.type, marker.action = Marker.ARROW, Marker.ADD
-                    marker.pose.position = Point(x=frame.transform.translation.x,
-                                                 y=frame.transform.translation.y,
-                                                 z=frame.transform.translation.z)
-                    marker.pose.orientation = frame.transform.rotation
-                    endpoint = [0., 0., 0.]
-                    endpoint[axis] = .04
-                    marker.points = [Point(), Point(x=endpoint[0], y=endpoint[1], z=endpoint[2])]
-                    marker.scale.x, marker.scale.y, marker.scale.z = .002, .004, .008
-                    marker.color.a = 1.
-                    setattr(marker.color, ("r", "g", "b")[axis], 1.)
-                    marker.lifetime = Duration(seconds=2.5).to_msg()
-                    markers.append(marker)
+                markers.extend(pose_guide_markers(frame, "item_axes", rank))
             if transforms:
                 node.selected_pose_broadcaster.sendTransform(transforms)
             # The reliable depth-one cache supplies this cloud to late-joining RViz viewers.
@@ -286,5 +269,6 @@ class TeachingRvizPreview:
                 "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
                 "refresh_age_sec": max(0., time.monotonic() - self.displayed_at),
                 "voxel_size_mm": 10, "point_count": sample["point_count"],
+                "blue_guide": "upward_surface_normal_not_pose_z",
                 "candidates": sample["candidates"], "rejected": sample["rejected"],
                 "pose_error": sample["pose_error"]}, allow_nan=False)))

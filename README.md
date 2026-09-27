@@ -642,6 +642,13 @@ entered; clicks report that tray's measurements without changing your settings.
 Before metric geometry is ready, mask/OBB detections show grey rectangles and
 red/green axes labelled **2D**, without mm dimensions or a base-frame pose.
 Only the eligible center-prioritized tray is returned by the pose service.
+RViz's separate **XY and blue UP guides** show the same X/Y and a blue normal
+pointing toward positive `base_link` Z. Item Teach uses the same convention for
+live, clicked and simulated poses. These are display arrows only: actual TF,
+controller-facing poses, calibration and pick/place coordinates stay unchanged.
+The TF display may therefore still show a downward actual Z; its axes can be
+hidden independently when inspecting just the guides. Reload the installed
+canonical RViz configuration to add the selected-item and tray guide displays.
 If an older RViz window has no Tray Teach display, reload the installed canonical
 `dobot_rviz/rviz/urdf.rviz` configuration to subscribe to `/tray_teach/voxel_cloud`.
 **Save Tray Teach** needs only a valid tray name. It writes a named YAML under

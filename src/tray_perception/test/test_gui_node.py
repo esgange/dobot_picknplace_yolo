@@ -940,21 +940,26 @@ def test_calibration_prefix_mismatch_is_not_remapped():
 
 
 def test_teaching_tf_keeps_source_stamp_without_republishing_old_poses():
-    pose = {"position": [.1, .2, .3], "quaternion": [0., 0., 0., 1.]}
+    pose = {"position": [.1, .2, .3], "quaternion": [1., 0., 0., 0.]}
     node = SimpleNamespace(native=SimpleNamespace(process=None, failed=False),
                            lock=threading.RLock(), generation=4, _published_key=None,
                            selected=(4, pose, 100_000_000_000, time.monotonic()),
                            fatal_error="", validate_sources=MagicMock(), broadcaster=MagicMock(),
                            requests=SimpleNamespace(tick=MagicMock()),
-                           rviz=SimpleNamespace(displayed=None, tick=MagicMock()))
+                           rviz=SimpleNamespace(displayed=None, tick=MagicMock(),
+                                                show_pose=MagicMock(), clear_pose=MagicMock()))
     TrayTeachNode._tick(node)
     TrayTeachNode._tick(node)
     node.broadcaster.sendTransform.assert_called_once()
     message = node.broadcaster.sendTransform.call_args.args[0]
     assert message.header.frame_id == "base_link" and message.header.stamp.sec == 100
+    assert message.transform.rotation.x == 1. and message.transform.rotation.w == 0.
+    assert pose["quaternion"] == [1., 0., 0., 0.]
+    node.rviz.show_pose.assert_called_once_with(message)
     node.selected = (4, pose, 100_000_000_000, time.monotonic() - 3)
     TrayTeachNode._tick(node)
     assert node.selected is None
+    node.rviz.clear_pose.assert_called_once()
 
 
 def test_corrupt_native_pose_is_terminal():

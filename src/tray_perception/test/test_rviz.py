@@ -8,8 +8,64 @@ import textwrap
 import numpy as np
 import pytest
 from rclpy.qos import DurabilityPolicy, ReliabilityPolicy
+from geometry_msgs.msg import TransformStamped
+from visualization_msgs.msg import Marker
 
 from tray_perception import rviz
+
+
+def test_tray_guides_are_separate_from_tf_and_clear_without_a_cloud(cloud):
+    preview, _ = cloud
+    message = TransformStamped()
+    message.header.frame_id = "base_link"
+    message.header.stamp.sec = 100
+    message.transform.rotation.x = 1.
+    message.transform.rotation.w = 0.
+    preview.show_pose(message)
+    if preview.pose_guides is None:
+        # Headless keeps only its two existing voxel/diagnostic publishers.
+        assert preview.node.create_publisher.call_count == 2
+        return
+    markers = preview.pose_guides.publisher.publish.call_args.args[0].markers
+    assert len(markers) == 4 and markers[3].points[1].z == -.04
+    assert markers[1].points[1].x == .04 and markers[2].points[1].y == .04
+    assert message.transform.rotation.x == 1. and message.transform.rotation.w == 0.
+    assert all(m.header.stamp.sec == 100 for m in markers[1:])
+    preview.invalidate("Source changed")
+    cleared = preview.pose_guides.publisher.publish.call_args.args[0].markers
+    assert len(cleared) == 1 and cleared[0].action == Marker.DELETEALL
+
+
+def test_canonical_rviz_has_separate_guides_and_unchanged_tf():
+    from pathlib import Path
+    import yaml
+    root = Path(__file__).parents[3]
+    path = root / "src/DOBOT_6Axis_ROS2_V4/dobot_rviz/rviz/urdf.rviz"
+    config = yaml.safe_load(path.read_text())
+    displays = config["Visualization Manager"]["Displays"]
+    tf = next(d for d in displays if d["Class"] == "rviz_default_plugins/TF")
+    assert tf["Value"] and tf["Frame Timeout"] == 2.5 and "Show Axes" not in tf
+    for topic in ("/item_teach/valid_items", "/item_teach/selected_pose_guides",
+                  "/tray_teach/pose_guides"):
+        display = next(d for d in displays if d.get("Topic", {}).get("Value") == topic)
+        assert display["Enabled"] and "blue UP" in display["Name"]
+        assert display["Class"] == "rviz_default_plugins/MarkerArray"
+
+
+def test_cloud_expiry_does_not_clear_a_fresh_plane_based_pose(cloud):
+    preview, now = cloud
+    preview.accept(sample())
+    now[0] += 6.
+    pose = TransformStamped()
+    pose.header.frame_id = "base_link"
+    preview.show_pose(pose)
+    preview.tick()
+    assert preview.grey
+    if preview.pose_guides is not None:
+        assert preview.pose_guides.visible
+        assert preview.pose_guides.publisher.publish.call_count == 1
+        preview.clear_pose()
+        assert not preview.pose_guides.visible
 
 
 def sample(stamp=100, connection=1):

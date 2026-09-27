@@ -545,6 +545,19 @@ No hardware commands, additional workers/executors or configuration stores are a
 This supersedes the explicit model-load/trust and unapplied calibration/model
 restoration requirements in rules 19/42/131/133/137/139/141/147 only.
 
+Rule 149 renders Item/Tray teaching RViz pose guides as unchanged red X/green Y
+and a blue upward reference-plane normal. Choose the sign of the pose's local Z
+whose base_link Z component is positive; an exactly horizontal normal stays
+horizontal. These independent marker arrows are not a replacement coordinate
+frame. Never modify candidate/service poses, quaternions, TF, origins, dimensions,
+calibration, controller planning or saved artifacts for this display convention.
+Cover live, clicked and simulated Item Teach poses and the selected Tray Teach
+pose, with existing validation, invalidation and 2.5-second marker lifetime.
+Canonical RViz enables separate blue-UP guide displays; its actual TF display
+remains unchanged and can still show downward pose Z. Keep headless publishers
+and request-driven inference unchanged; add no extra inference or numeric overlays.
+This supersedes the blue marker direction only, not rules 133/137/143's real frames.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

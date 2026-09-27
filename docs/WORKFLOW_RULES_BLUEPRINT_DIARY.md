@@ -6314,6 +6314,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   controls in both windows. No operator model execution, operator artifact/config
   edits, live process restarts, hardware tests or offline-transfer milestone.
 
+### 2026-09-27 — Upward display normals without changing item or tray poses
+
+- Rule 149 implements the agreed visualization-only option. Item Teach's live,
+  clicked and simulated RViz poses and Tray Teach's selected tray show unchanged
+  red X/green Y and a blue upward reference-plane normal. Choose local +Z or -Z
+  from the sign of its base_link vertical component, preserving tilt; an exactly
+  horizontal normal stays horizontal. No reflected matrix/quaternion is created.
+- The shared marker helper copies message fields and never changes the source
+  transform. Keep all actual TF frames, candidate/service orientations, origins,
+  tray inward extents, model geometry, calibration, profiles and controller
+  planning intact. The real tray frame still follows X cross Y and can point down.
+  Actual TF remains visible separately; guide display names explicitly say blue UP.
+- Keep live item guides on /item_teach/valid_items. Add teaching-only marker batches
+  on /item_teach/selected_pose_guides and /tray_teach/pose_guides, using existing
+  validated observations, timer paths and invalidation. Publish no new TF, no
+  text/number overlays and no extra inference. Marker lifetime remains 2.5 seconds;
+  clear guides when the selection becomes invalid or disappears and on exit.
+  Expiring/greying depth voxels cannot clear a fresh plane-based tray pose guide;
+  source/pose invalidation still clears it independently.
+- Headless Item Detect and Tray Detect publishers/services are unchanged. Tray
+  Detect retains its scene voxels and request-only YOLO. No robot motion, placement
+  integration, new executor thread, source artifact or configuration key is added.
+- Intentional viewer integration patch: update the canonical vendored
+  dobot_rviz/rviz/urdf.rviz to enable separately named guide displays, and document
+  their distinction from TF in its README. Preserve the TF display and timeout;
+  users may hide its axes independently. Add the Tray visualization_msgs dependency.
+- Validation: symlink builds passed for Item Perception, Tray Perception and
+  Dobot RViz. All 456 Item tests, 144 Tray tests and five viewer tests passed,
+  alongside the viewer's four lint checks. All 12 changed Python files passed
+  flake8; installed guide imports, viewer YAML/topic configuration, package XML
+  and git diff --check passed. Regression checks cover up/down/tilted/horizontal
+  normals, immutable poses and XY/TF, batch replacement, invalidation and cloud-age
+  independence. No live cameras, operator model execution, robot commands or
+  operator artifact edits were used for testing; no offline-transfer milestone.
+
 ### Future entry template
 
 ```text

@@ -1,6 +1,7 @@
 """GUI-only ROS visualization lifecycle; no executor or hardware launched."""
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 import threading
 from unittest.mock import MagicMock
@@ -53,6 +54,26 @@ def snapshot():
 def fresh(node, clock):
     for image in (node._image, node._depth):
         image.update(stamp_ns=int(clock[0] * 1e9), received_at=clock[0])
+
+
+def test_live_markers_reverse_only_downward_blue_guide_not_candidates_or_tf(preview):
+    visual, node, _ = preview
+    sample = snapshot()
+    sample["base_from_platform"] = np.diag([1., -1., -1., 1.]).tolist()
+    original = deepcopy(sample)
+    visual.publish(sample)
+    assert sample == original
+    frames = node.selected_pose_broadcaster.sendTransform.call_args.args[0]
+    markers = visual.marker_publisher.publish.call_args.args[0].markers[1:]
+    for index, frame in enumerate(frames):
+        assert frame.transform.rotation.x == 1.  # The real TF still points down.
+        blue = markers[3 * index + 2]
+        assert blue.points[1].z == -.04 and blue.ns.endswith("_up")
+        assert markers[3 * index].points[1].x == .04
+        assert markers[3 * index + 1].points[1].y == .04
+    diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert diagnostic["candidates"] == original["candidates"]
+    assert diagnostic["blue_guide"] == "upward_surface_normal_not_pose_z"
 
 
 def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):

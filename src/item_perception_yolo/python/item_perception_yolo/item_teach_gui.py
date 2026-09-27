@@ -40,6 +40,7 @@ from .bin_teach_core import bin_platform_warning, load_bin_teach_calibration_con
 from .item_teach_calibration import (
     saved_calibration_paths, load_calibration_selection, save_calibration_selection)
 from .item_teach_rviz import PERIOD_SEC, TeachingRvizPreview
+from .pose_guides import PoseGuidePublisher
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -89,6 +90,8 @@ class ItemTeachNode(ItemDetectNode):
         self.selection_lock = threading.RLock()
         self.selected_pose = None
         self.selected_pose_broadcaster = TransformBroadcaster(self)
+        self.pose_guides = PoseGuidePublisher(
+            self, "/item_teach/selected_pose_guides", "item_selected")
         self.rviz = TeachingRvizPreview(self, build_selected_pose_transform)
         self.create_timer(0.1, self._broadcast_selected_pose)
         self.create_subscription(
@@ -100,6 +103,7 @@ class ItemTeachNode(ItemDetectNode):
         """Clear both clicked and simulated teaching previews; never retain old batch frames."""
         with self.selection_lock:
             self.selected_pose = None
+            self.pose_guides.clear()
 
     def show_selected_pose(self, candidate, stamp_ns, epoch):
         self._validate_sources()
@@ -145,11 +149,13 @@ class ItemTeachNode(ItemDetectNode):
     def _broadcast_selected_pose(self):
         with self.selection_lock:
             if self.selected_pose is None:
+                self.pose_guides.clear()
                 return
             epoch, transforms, binding = self.selected_pose
             if (epoch != self.arm_epoch or not self.yolo_enabled
                     or self.native.failed or self.fatal_error):
                 self.selected_pose = None
+                self.pose_guides.clear()
                 return
             try:
                 if binding is None:
@@ -158,15 +164,18 @@ class ItemTeachNode(ItemDetectNode):
                     self.validate_simulation_view(binding)
             except (ValueError, OSError) as exc:
                 self.selected_pose = None
+                self.pose_guides.clear()
                 self.events.record("WARNING", "item_teach_pose_cleared", str(exc))
                 return
             if epoch != self.arm_epoch or not self.yolo_enabled or self.native.failed:
                 self.selected_pose = None
+                self.pose_guides.clear()
                 return
             stamp = self.get_clock().now().to_msg()
             for transform in transforms:
                 transform.header.stamp = stamp
             self.selected_pose_broadcaster.sendTransform(list(transforms))
+            self.pose_guides.publish(transforms)
 
     def close_runtime(self):
         self.rviz.clear("Item Teach closed")
