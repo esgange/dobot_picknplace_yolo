@@ -519,16 +519,23 @@ Unsaved text-box edits are not autosaved; restart prefills the selected saved
 teach YAML and camera prefix. Station/bin selections are the narrow automatic
 read-only-preview exception; item settings, model execution and arming remain unapplied.
 
-`item_detect.launch.py` retains strict automatic latest-station selection,
-independent of Item Teach's saved choices, and the shared flat `runtime_teach/`
-catalog used by headless Robot Controller. Launch it with:
+`item_detect.launch.py` loads the same three calibration filenames saved by Item
+Teach in root `.env`. An empty, missing, invalid or mismatched selection fails
+startup; no latest-file scan or replacement occurs. Its Item YAML, matching
+model and Bin YAML still come from the shared flat `runtime_teach/` catalog.
+Launch it with:
 
 ```bash
 ros2 launch item_perception_yolo item_detect.launch.py
 ```
 
 It accepts no artifact, trust, arming or platform arguments. Platform/Bin Teach
-retain their explicit calibration selection. The controller requests one fresh batch directly
+retain their explicit calibration selection. Headless Item Detect loads the
+model and enables YOLO/arming after validating artifacts and fresh camera/TF
+inputs; inference runs only on requests. Restart to load changed `.env` choices.
+Robot Controller retains its independent latest-calibration selection, and its
+hash checks require the same artifacts as the detector. The controller requests
+one fresh batch directly
 from `/item_detect/get_item_poses`, always using the taught `pose_candidates`
 limit and exact profile/station hashes. Detector/teach nodes remain read-only;
 only explicit controller Startup followed by a typed Home/Pick action can issue
@@ -693,8 +700,9 @@ Item Teach writes `ITEM_TEACH_PLATFORM_CALIBRATION`,
 inside `calibration/`, never machine-specific paths. All three empty means no
 selection yet; otherwise all three must be populated. Existing workspaces must
 add these keys from `.env.example`, initially empty. The shell loader, bringup,
-Motion Debug and camera launcher accept and validate them; only Item Teach
-uses them to choose calibrations.
+Motion Debug and camera launcher accept and validate them. Item Teach and
+headless Item Detect use them to choose calibrations; Item Detect requires a
+complete selection and never writes `.env`.
 
 Runtime datalogs are isolated per package under `logs/<package-name>/events.jsonl`; the bringup launch creates the package files before starting the node. Compile the timestamped package records into a separate universal file only when needed:
 

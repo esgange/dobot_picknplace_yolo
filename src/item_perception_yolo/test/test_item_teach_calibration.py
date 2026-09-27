@@ -106,11 +106,13 @@ def test_selected_robot_camera_content_change_is_rejected(files):
         selection.validate_selected_robot_camera(robot, root=root)
 
 
-def test_gui_keeps_explicit_robot_camera_and_disarms_on_change(files, monkeypatch):
+def test_loaded_camera_stays_pinned_until_reload_and_disarms_on_source_change(files, monkeypatch):
     root, paths = files
     applied, robot = selection.load_calibration_selection(*paths, root=root)
-    _camera(root, stamp="20260920T083036_133658Z", prefix="robot_camera",
-            mode=camera_core.CAMERA_ON_HAND)
+    newer = _camera(root, stamp="20260920T083036_133658Z", prefix="robot_camera",
+                    mode=camera_core.CAMERA_ON_HAND)
+    selection.save_calibration_selection(paths[0], paths[1], newer.path, root=root)
+    assert selection.saved_calibration_paths(root)[2] == newer.path
     bin_path = root / "bin.yaml"
     bin_path.write_text("synthetic bin")
     node = SimpleNamespace(

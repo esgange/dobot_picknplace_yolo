@@ -334,6 +334,18 @@ Changing a selection clears old preview and disarms; failed validation or dialog
 cancellation never replaces saved choices. Recheck the exact selected files on
 use. Headless Item Detect and Robot Controller keep strict latest discovery.
 
+Rule 132 makes headless Item Detect load the same three saved calibration
+filenames from root .env as Item Teach, superseding rules 50/83/131's latest
+discovery for the detector. Require a complete valid selection at startup;
+empty, missing, malformed or mismatched files fail visibly without scanning or
+falling back. Reuse Item Teach's exact source/hash/mounting validation, including
+custom mode-prefixed camera names, and pin those files until restart. Keep the
+strict runtime_teach/ Item YAML/model/Bin YAML catalog and automatic YOLO/arming
+after fresh-input validation. Inference remains request-driven and debug images
+remain per-request. No config writes, watcher, hardware command or new key is
+added. Robot Controller's independent calibration selection and hash checks
+remain unchanged; controller and detector must still use matching artifacts.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

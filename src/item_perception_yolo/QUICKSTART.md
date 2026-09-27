@@ -47,6 +47,10 @@ mode-prefixed camera filenames work; no latest-file scan occurs in Item Teach.
 Select the bin file to connect preview; the border appears when RGB/CameraInfo/TF
 are available. Changing selections clears overlays and disarms. YOLO/model
 loading and arming stay manual, and no camera process is launched.
+Headless `item_detect` restores the same `.env` calibration selection at startup;
+save all three choices before launching it. Its item/model/bin files still come
+from `runtime_teach/`, and it enables YOLO/arming after source and fresh-input
+validation. Detection remains request-driven. Restart to adopt changed choices.
 Item Teach shares Bin Teach's saved-plane border geometry. On another station,
 select that station's own platform/camera files and the copied bin
 YAML: the unchanged metric XY follows its platform origin, axes, tilt and height. No markers or depth

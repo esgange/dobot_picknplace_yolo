@@ -5535,6 +5535,49 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No physical robot/camera launches, hardware commands or operator-artifact edits.
   No offline-transfer milestone claimed. Restart Item Teach for the new controls.
 
+### 2026-09-27 — Headless Item Detect uses Item Teach's saved calibrations
+
+- Rule 132 supersedes rules 50/83/131's newest-calibration discovery for headless
+  Item Detect. Read the existing `ITEM_TEACH_PLATFORM_CALIBRATION`,
+  `ITEM_TEACH_BIN_CAMERA_CALIBRATION` and `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION`
+  keys from root `.env`, then use the same explicit selection loader as Item
+  Teach. Empty selections fail with instructions to select files and click Load
+  Calibration in Item Teach. Missing/partial keys, invalid paths/schemas, missing
+  files, incorrect mounting or platform-camera bindings remain fatal startup
+  errors. Never scan for newer files, infer a replacement or rewrite `.env`.
+- Pass the selected robot-camera path and expected hashes into the shared
+  station application so ongoing source validation checks that exact calibration
+  rather than rediscovering the latest robot-camera file. Preserve strict
+  platform/camera filename/hash/settings/transform, robot identity and on-hand
+  `Link6 <- robot_camera_link` checks. Custom mode-prefixed camera names work;
+  newer or unrelated malformed catalog entries cannot affect the selection.
+  Selected file contents remain checked during use. `.env` selection changes
+  take effect only after restarting the detector, with no live watcher.
+- Item Teach and Item Detect already share the inference/pose-generation code;
+  keep that one implementation. Retain the strict flat `runtime_teach/` catalog
+  for exactly one current-schema Item YAML/paired model/Bin YAML, separate fatal
+  missing/duplicate errors, trusted model verification, three executor threads,
+  bounded fresh-input readiness and automatic YOLO/arming on successful startup.
+  Inference remains request-driven, with the existing per-request debug-image
+  flag. No new config key, artifact schema, launch argument, hardware command,
+  model execution test, vendor patch or calibration artifact edit is added.
+- Robot Controller is outside this detector-only change. Its independent strict
+  latest-calibration loading and detector-response hash checks remain unchanged;
+  mismatched calibration choices still block Pick and custom catalog filenames
+  can block controller loading. Document this integration constraint explicitly.
+  No controller behavior/FSM change or visual export regeneration is needed.
+- Validation: Item Perception symlink build and all 421 package tests pass with
+  zero errors, failures or skips; changed Python code/tests pass ament_flake8.
+  Headless startup regressions use real synthetic calibration YAMLs and a mock
+  node/executor/model to cover saved custom names despite newer/unrelated files,
+  all-empty/partial/missing keys, directory escape, missing files, incorrect
+  camera binding/hash/mode/schema, application-time invalidation and unavailable
+  fresh inputs. Verify load/enable/readiness/arm order, fatal logging, cleanup,
+  unchanged `.env` bytes and no automatic latest selection. Shared source tests
+  verify `.env` edits do not switch a running selection and changing a loaded
+  source still disarms. No physical robot or camera launch, no live detector
+  startup, and no offline-transfer milestone.
+
 ### Future entry template
 
 ```text

@@ -529,13 +529,26 @@ archive. Events remain timestamped and bounded at 1,000 package records.
 
 ### Headless detection and controller request
 
-Headless Item Detect and Robot Controller retain strict automatic latest-station
-selection, independent of Item Teach's `.env` calibration choices: newest
-platform for the configured robot, its newest matching camera, and newest
-`robot_camera` calibration, by canonical filename UTC timestamps. The platform's
-camera hash/mode/settings/transform must match. Invalid or unidentifiable catalog
-entries fail; there is no older-file fallback. Custom filenames supported by
-explicit Item Teach loading are not part of this automatic catalog contract.
+Headless Item Detect loads the same exact calibration files as Item Teach from
+these existing root `.env` keys:
+
+```text
+ITEM_TEACH_PLATFORM_CALIBRATION
+ITEM_TEACH_BIN_CAMERA_CALIBRATION
+ITEM_TEACH_ROBOT_CAMERA_CALIBRATION
+```
+
+Use Item Teach's selectors and **Load Calibration** to save a complete validated
+set before starting the detector. Values are filenames directly inside root
+`calibration/`. All empty is allowed for Item Teach's first run, but headless
+startup fails with an instruction to make a selection. Partial/missing keys,
+missing files, invalid schemas, camera/platform hash or mounting mismatches fail
+without a latest-file scan or fallback. Descriptive mode-prefixed camera names
+are supported, and unrelated or newer files cannot replace the chosen set.
+The detector reads `.env` once for selection and never writes it. Runtime source
+hash checks continue to protect the exact loaded files; changing `.env` choices
+requires a restart. The camera prefix comes from the platform's bound calibration.
+
 Populate flat root `runtime_teach/` with exactly these ordinary files:
 
 ```text
@@ -569,9 +582,10 @@ ros2 launch item_perception_yolo item_detect.launch.py
 
 Starting this dedicated process is the explicit decision to load the trusted
 deployed `.pt` and advertise `/item_detect/get_item_poses`. It validates the
-latest station/robot-camera pair, current Item Teach model/settings and Bin Teach,
+saved station/robot-camera selection, current Item Teach model/settings and Bin Teach,
 then waits only the taught request deadline for fresh inputs. The model stays
-loaded, but inference runs only for a service request and every request acquires
+loaded and YOLO/arming enable automatically after validation. Inference runs
+only for a service request and every request acquires
 a new RGB/depth pair after arrival. It never returns a cached batch. Restart is
 required to select replacement runtime or calibration artifacts. Item Teach and
 an armed headless detector must not advertise the service simultaneously.
@@ -579,6 +593,11 @@ an armed headless detector must not advertise the service simultaneously.
 The separate Robot Controller must load the same runtime snapshot in headless
 mode, or the matching explicit files in GUI mode. Its typed Pick action requests
 the batch; Item Detect remains read-only and cannot issue motion or I/O.
+Robot Controller still selects calibrations using its strict canonical latest
+catalog, independently of these `.env` choices. Its source-hash checks reject
+detector results from different calibrations. Custom catalog filenames can also
+block controller loading; this detector change does not alter that controller
+contract. Configure matching artifacts when using both processes together.
 
 ## Transform contract
 

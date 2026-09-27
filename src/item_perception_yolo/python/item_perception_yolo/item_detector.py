@@ -41,9 +41,10 @@ from .item_preview import frame_from_message, validate_prefix, validate_preview_
 from .item_native_client import NativeClient
 from .pick_planning import Cr10Kinematics, rigid_matrix
 from .station_calibration import (
-    latest_station_calibration, latest_robot_camera_calibration,
-    validate_robot_camera_calibration)
-from .item_teach_calibration import selected_robot_camera, validate_selected_robot_camera
+    latest_robot_camera_calibration, validate_robot_camera_calibration)
+from .item_teach_calibration import (
+    selected_robot_camera, validate_selected_robot_camera,
+    saved_calibration_paths, load_calibration_selection)
 from .runtime_teach import runtime_teach_catalog
 
 
@@ -1121,20 +1122,25 @@ def main(args=None):
             "Selected prefix-classified headless Item/Bin Teach artifacts",
             item_teach=str(catalog.item_yaml), model=str(catalog.item_model),
             bin_teach=str(catalog.bin_yaml))
-        latest = latest_station_calibration()
-        robot_camera = latest_robot_camera_calibration()
+        paths = saved_calibration_paths(root=node.root)
+        if paths is None:
+            raise ValueError(
+                "Item Detect requires saved calibration selections in root .env; "
+                "select platform, bin-camera and robot-camera files in Item Teach "
+                "and click Load Calibration before starting item_detect")
+        selected, robot_camera = load_calibration_selection(*paths, root=node.root)
         node.events.record(
-            "INFO", "item_latest_station_selected", "Selected newest hash-bound calibration",
-            platform=str(latest.platform.path), platform_sha256=latest.platform.sha256,
-            camera=str(latest.camera.path), camera_sha256=latest.camera.sha256,
+            "INFO", "item_calibration_selected", "Loaded Item Teach calibration choices from .env",
+            platform=str(selected.platform.path), platform_sha256=selected.platform.sha256,
+            camera=str(selected.camera.path), camera_sha256=selected.camera.sha256,
             robot_camera=str(robot_camera.path),
             robot_camera_sha256=robot_camera.sha256)
         profile, _digest = load_item_profile(
             catalog.item_yaml, root=node.root, deployment=True)
         node.inspect_model(catalog.item_model, expected_sha256=profile["model"]["sha256"])
         node.apply_station(
-            latest.platform.path, catalog.bin_yaml, expected_station=latest,
-            expected_robot_camera=robot_camera)
+            selected.platform.path, catalog.bin_yaml, expected_station=selected,
+            expected_robot_camera=robot_camera, robot_camera_path=robot_camera.path)
         node.enable_yolo(detection_settings(settings_from_profile(profile)))
         # Startup has a bounded input-readiness deadline; no retry/restart.
         node._snapshot(0, time.monotonic() +

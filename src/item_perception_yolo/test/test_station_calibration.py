@@ -1,4 +1,4 @@
-"""Automatic station selection with real strict synthetic calibration artifacts."""
+"""Strict automatic catalogs and headless saved-calibration startup."""
 
 from datetime import datetime, timezone
 import os
@@ -13,6 +13,7 @@ import yaml
 
 from camera_calibration_gui import calibration_core as camera_core
 from item_perception_yolo import item_detector as detector
+from item_perception_yolo import item_teach_calibration as calibration
 from item_perception_yolo import platform_teach_core as platform_core
 from item_perception_yolo import station_calibration as station
 
@@ -256,19 +257,65 @@ def test_selected_hash_changes_before_application_cannot_replace_binding(
     assert node.applied is None
 
 
-@pytest.mark.parametrize("selection_error", (False, True))
-def test_headless_main_uses_runtime_catalog_and_automatic_station(
-        root, monkeypatch, selection_error):
+@pytest.mark.parametrize("failure, reason", (
+    (None, None),
+    ("blank", "Load Calibration"),
+    ("partial", "all empty or all selected"),
+    ("missing_key", "missing"),
+    ("outside", "filename"),
+    ("missing_file", "regular local file"),
+    ("camera_pair", "bound"),
+    ("camera_hash", "SHA-256"),
+    ("robot_mode", "Robot-camera calibration"),
+    ("robot_invalid", "schema_version"),
+    ("changed_before_application", "changed before application"),
+    ("fresh_inputs", "Fresh inputs unavailable"),
+))
+def test_headless_main_uses_runtime_catalog_and_saved_calibrations(
+        root, monkeypatch, failure, reason):
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
-    _platform(root, _camera(root))
+    for name in (".env", ".env.example"):
+        path = root / name
+        path.write_text(path.read_text() + "".join(
+            f"{key}=\n" for key in calibration.CALIBRATION_ENV_KEYS))
+    camera = _camera(root)
+    custom = camera.path.with_name("camera_to_hand_calibration_station_2.yaml")
+    camera.path.rename(custom)
+    camera = platform_core.load_camera_calibration(custom, root=root)
+    platform_path = _platform(root, camera)
     robot_camera = _camera(root, prefix="robot_camera", mode=camera_core.CAMERA_ON_HAND)
-    latest = station.latest_station_calibration(root)
-    selection = MagicMock(return_value=latest)
-    if selection_error:
-        selection.side_effect = ValueError("Latest calibration invalid")
-    monkeypatch.setattr(detector, "latest_station_calibration", selection)
-    robot_selection = MagicMock(return_value=robot_camera)
-    monkeypatch.setattr(detector, "latest_robot_camera_calibration", robot_selection)
+    calibration.save_calibration_selection(platform_path, custom, robot_camera.path, root=root)
+    # Newer and unrelated malformed catalog entries must not replace the saved choices.
+    newer = _camera(root, stamp="20260920T120000_000000Z")
+    _platform(root, newer, stamp="20260921T120000_000000Z")
+    _camera(root, stamp="20260920T120000_000000Z", prefix="robot_camera",
+            mode=camera_core.CAMERA_ON_HAND)
+    (root / "calibration/camera_to_hand_calibration_unrelated.yaml").write_text("invalid")
+    automatic_robot = MagicMock(side_effect=AssertionError("No automatic selection"))
+    monkeypatch.setattr(detector, "latest_robot_camera_calibration", automatic_robot)
+    env = root / ".env"
+    values = platform_core._parse_env_file(env)
+    keys = calibration.CALIBRATION_ENV_KEYS
+    if failure == "blank":
+        values.update(dict.fromkeys(keys, ""))
+    elif failure == "partial":
+        values[keys[1]] = ""
+    elif failure == "missing_key":
+        del values[keys[2]]
+    elif failure == "outside":
+        values[keys[2]] = "../outside.yaml"
+    elif failure == "missing_file":
+        robot_camera.path.unlink()
+    elif failure == "camera_pair":
+        values[keys[1]] = newer.path.name
+    elif failure == "camera_hash":
+        custom.write_text(custom.read_text() + "\n# changed source\n")
+    elif failure == "robot_mode":
+        values[keys[2]] = custom.name
+    elif failure == "robot_invalid":
+        robot_camera.path.write_text("invalid calibration")
+    env.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+    original_env = env.read_bytes()
     catalog = SimpleNamespace(
         item_yaml=root / "runtime_teach/item_teach_part.yaml",
         item_model=root / "runtime_teach/item_teach_part.pt",
@@ -277,6 +324,10 @@ def test_headless_main_uses_runtime_catalog_and_automatic_station(
     monkeypatch.setattr(detector, "runtime_teach_catalog", runtime_selection)
     node = MagicMock(fatal_error=None, root=root)
     node.settings = {"quality": {"request_timeout_sec": 10}}
+    if failure == "fresh_inputs":
+        node._snapshot.side_effect = ValueError("Fresh inputs unavailable")
+    elif failure == "changed_before_application":
+        node.apply_station.side_effect = ValueError("Calibration changed before application")
     node_factory = MagicMock(return_value=node)
     monkeypatch.setattr(detector, "ItemDetectNode", node_factory)
     monkeypatch.setattr(detector, "MultiThreadedExecutor", MagicMock())
@@ -287,22 +338,34 @@ def test_headless_main_uses_runtime_catalog_and_automatic_station(
     monkeypatch.setattr(detector, "load_item_profile", lambda *_args, **_kwargs: (profile, "c"))
     monkeypatch.setattr(detector, "settings_from_profile", lambda _: {})
     monkeypatch.setattr(detector, "detection_settings", lambda _: {})
-    if selection_error:
-        with pytest.raises(ValueError, match="Latest calibration invalid"):
+    if failure:
+        with pytest.raises(ValueError, match=reason):
             detector.main()
-        node.inspect_model.assert_not_called()
+        if failure not in ("fresh_inputs", "changed_before_application"):
+            node.inspect_model.assert_not_called()
         node.arm.assert_not_called()
+        assert node.events.record.call_args.args[:2] == ("FATAL", "item_detector_failed")
+        node.get_logger.return_value.fatal.assert_called_once()
     else:
         detector.main()
-        node.apply_station.assert_called_once_with(
-            latest.platform.path, catalog.bin_yaml, expected_station=latest,
-            expected_robot_camera=robot_camera)
+        node.apply_station.assert_called_once()
+        assert node.apply_station.call_args.args == (platform_path, catalog.bin_yaml)
+        selected = node.apply_station.call_args.kwargs["expected_station"]
+        selected_robot = node.apply_station.call_args.kwargs["expected_robot_camera"]
+        assert selected.platform.path == platform_path and selected.camera.path == custom
+        assert selected_robot.path == robot_camera.path
+        assert node.apply_station.call_args.kwargs["robot_camera_path"] == robot_camera.path
         node.inspect_model.assert_called_once_with(
             catalog.item_model, expected_sha256="a" * 64)
+        node.enable_yolo.assert_called_once_with({})
         node.arm.assert_called_once_with(catalog.item_yaml)
         node._snapshot.assert_called_once()
-        selection.assert_called_once_with()
-        robot_selection.assert_called_once_with()
+        calls = [call[0] for call in node.method_calls]
+        assert calls.index("inspect_model") < calls.index("apply_station")
+        assert calls.index("apply_station") < calls.index("enable_yolo")
+        assert calls.index("enable_yolo") < calls.index("_snapshot") < calls.index("arm")
+    assert env.read_bytes() == original_env  # Headless startup never persists selections.
+    automatic_robot.assert_not_called()
     node_factory.assert_called_once_with(deployment=True)
     runtime_selection.assert_called_once_with(root)
     node.close_runtime.assert_called_once()
@@ -314,7 +377,7 @@ def test_headless_main_logs_runtime_catalog_failure_and_exits(root, monkeypatch)
     runtime_selection = MagicMock(side_effect=ValueError(message))
     monkeypatch.setattr(detector, "runtime_teach_catalog", runtime_selection)
     station_selection = MagicMock()
-    monkeypatch.setattr(detector, "latest_station_calibration", station_selection)
+    monkeypatch.setattr(detector, "saved_calibration_paths", station_selection)
     node = MagicMock(fatal_error=None, root=root)
     node_factory = MagicMock(return_value=node)
     monkeypatch.setattr(detector, "ItemDetectNode", node_factory)
