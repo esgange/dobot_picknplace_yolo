@@ -612,8 +612,11 @@ Form entries and file choices are remembered across relaunches, even with YOLO
 off or an incomplete form. Drafts save after a 300 ms pause and on orderly close;
 restoration leaves YOLO and Armed off and input loading explicit.
 Load matching camera calibration and Item Teach once to copy its Home into
-**Tray Teach Position**. Freeze a fresh uncovered-tray
-view and click four reference-surface corners in any order. The saved plane and
+**Tray Teach Position**. The Item Teach-style sidebar separates camera/model
+settings from teaching position and reference-plane data. Use **Capture 4-corner
+snapshot…** in Reference Plane, select four surface corners in its captured-image
+editor, then Create and Save Tray Teach. Main RGB/depth views stay live throughout.
+The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
 that plane, without live surface depth, and reject detections outside the taught
 length/width tolerance. Select one valid tray nearest the image center.
@@ -627,7 +630,7 @@ of image left/right. Save a new YAML/model pair under `offline_teach/tray_teach/
 reopening it needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
 variables. **Simulate Trigger** runs the same fresh observation pipeline as the
-controller-facing service and freezes the result without motion. **Armed ON**
+controller-facing service and reports its result while preview continues. **Armed ON**
 advertises `/tray_detect/get_tray_pose`; requests supply the saved YAML SHA-256
 and receive one tray or an explicit no-tray result. Settings changes disarm.
 

@@ -6025,6 +6025,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   hardware, operator-model execution, deployment copying, `.env` changes or
   operator artifact edits; physical testing and offline transfer are unperformed.
 
+### 2026-09-27 — Live Tray Teach views and separate reference-plane editing
+
+- Rule 142 reorganizes Tray Teach like Item Teach: numbered sidebar groups for
+  Camera/Calibration, Tray/Model, Detection Settings, Dimensions, Teaching
+  Position and Reference Plane. Keep Load/Save at the top right and the
+  YOLO/Simulate/Armed row above horizontal RGB/depth panes. Reference-plane
+  capture, Undo and Create are teach-artifact controls in their own sidebar
+  group, with a reminder to Save Tray Teach after creating the plane.
+- Remove Resume Live and persistent freezing of the main panes. Inspection
+  clicks display an age-labelled last-observation summary without cancelling
+  an in-flight preview or stopping the next frame. Clear the clicked outline
+  on the next displayed observation. Simulate Trigger still uses the exact
+  fresh service pipeline, but shows its result and resumes scheduled preview
+  automatically; retain an age-labelled request summary, with the same source
+  invalidation checks. This supersedes rules 139/140's main-view freezing.
+- Capture 4-corner snapshot opens a separate nonmodal reference-plane editor.
+  Main panes and RViz continue their usual up-to-1-Hz updates while corner
+  clicks, Undo and depth evidence use only one initially fresh synchronized
+  RGB/depth/TF observation. Keep separate distortion handling and all existing
+  geometric checks. Closing the editor discards its unfinished corner draft.
+  Source/settings invalidation discards old drafts and callbacks; no obsolete
+  evidence may reopen the editor or replace current live images.
+- Retain the current plane during snapshot acquisition and corner editing;
+  replace it only after a successful Create. Save still writes the strict
+  schema-1 teach pair. Queue corner evidence/Create behind an active preview
+  without invalidating their own captured source. Keep the existing one worker,
+  at most one pending action, two executor threads, and 1 Hz refresh limit;
+  explicit work can delay a refresh but never leaves a manual-resume gate.
+  No headless request contract, hardware command, `.env` key, session format,
+  deployment behavior or controller behavior changes.
+- Validation: all 101 Tray Perception tests pass (102 colcon-reported results,
+  zero failures/errors/skips). New coverage checks live frames advancing during
+  corner selection, immutable captured evidence, queued Create, retaining the
+  old plane until commit, discarded/invalidated callbacks, simulation continuing
+  live and source revocation. Offscreen visual review covers the full main
+  layout, scrolled reference-plane sidebar and captured RGB/depth editor.
+  Tray Perception symlink build, changed-file ament_flake8 and git diff --check
+  pass. Synthetic inputs only; no hardware, operator-model execution, operator
+  artifacts or deployment files changed. Physical testing and offline transfer
+  remain unperformed.
+
 ### Future entry template
 
 ```text

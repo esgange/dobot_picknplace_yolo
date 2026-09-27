@@ -20,6 +20,10 @@ Bring up the configured camera separately. Enter its exact prefix and click
 lists both CameraInfo topics too. RGB/YOLO preview needs no calibration, depth,
 robot TF, Item Teach, name, dimensions or selected classes. The RGB and registered
 depth panes share a horizontal layout and show unavailable-input reasons.
+The Item Teach-style sidebar groups Camera/Calibration, Tray/Model, Detection
+Settings, Dimensions, Teaching Position and Reference Plane. Load/Save stay at
+the top right, with YOLO/Simulate/Armed above the live views. Reference-plane
+controls edit the teach file's geometry, independently of camera setup.
 
 Load the camera's schema-7 calibration from `calibration/` to enable metric
 geometry; this also fills/connects its recorded prefix. A different manually
@@ -44,19 +48,27 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    never executed. Position copying does not move the robot. Position the robot
    with the existing authorized motion workflow if needed. Controller Home will
    continue to come from the controller's own Item Teach file.
-3. With the tray uncovered, select **Freeze for 4 corners**. Click four distinct
-   corners on the tray reference surface in any order and create the reference
-   plane. Click coordinates account for scaling and letterboxing. All clicks use
-   the same frozen, initially fresh synchronized RGB/depth/TF observation.
+3. With the tray uncovered, select **Capture 4-corner snapshot…** in the sidebar's
+   **Reference Plane — teach file** section. A nonmodal captured-image editor
+   opens while the main RGB/depth views continue updating. Click four distinct
+   corners on its RGB image in any order, use **Undo corner** if needed, then
+   **Create reference plane**. Both actions are also available inside the editor.
+   Click coordinates account for scaling and letterboxing. All clicks use the
+   same initially fresh synchronized RGB/depth/TF observation; live frames never
+   replace that corner source. Capturing leaves the existing plane active until
+   Create succeeds. Closing the editor discards its unfinished corner selection.
+   Source/settings changes discard the draft and require another capture.
    A 7×7 registered-depth patch per corner requires at least 30 valid samples
    between 200 and 1000 mm after MAD filtering. Separate RGB/depth distortion is
    preserved. Four convex, noncollinear base-frame points must fit a plane with
    maximum residual at most 5 mm; bad samples are refused, never filled in.
    Numbered corner locations, accepted-sample counts and median depth appear in
-   both panes; sampled pixels mark accepted values black and rejected values red,
+   both captured panes; sampled pixels mark accepted values black and rejected values red,
    mapped with each pane's distortion model.
-4. Click a displayed tray to freeze and inspect its measured size and acceptance
-   reason; click again to resume. This is separate from four-corner teaching.
+4. Click a displayed tray to inspect its measured size and acceptance reason.
+   Main views stay live; the last clicked observation is labelled with its age.
+   Its highlight disappears on the next frame, and settings changes invalidate
+   the summary. There is no Resume Live button or persistent main-view freeze.
    Enter long-side **Length**, short-side **Width**, and one **Tolerance ± (mm)**
    manually. Clicking never overwrites those fields. Missing/invalid dimensions
    keep detections visible with grey unchecked borders but prevent accepted poses.
@@ -172,9 +184,12 @@ endpoint before creating its replacement; old callbacks cannot use the new bindi
 **Simulate Trigger** runs the same acquisition, inference, size/class filtering,
 single-tray selection and typed response logic locally, even while Armed OFF.
 It never enables the robot or requests controller motion. It requires the exact
-saved profile and YOLO ON. The result freezes both panes for inspection; click
-the image or **Resume live** to continue. The service remains independent of
-that frozen view. Invalidated simulations cannot restore or retain old targets.
+saved profile and YOLO ON. The exact request result is displayed and preview
+continues automatically, with a separate age-labelled last-request summary.
+Invalidated simulations cannot restore or retain old targets. Inspection and
+corner teaching also leave the main preview scheduled. The existing single
+worker serializes inference and explicit actions, so processing can briefly
+delay a refresh; no extra inference worker or camera subscription is added.
 
 Each request supplies `profile_sha256`, the SHA-256 of the saved tray YAML. It
 waits for RGB both captured and received after the trigger, resolves TF at that

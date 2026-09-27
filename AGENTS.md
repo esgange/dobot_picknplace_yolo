@@ -454,6 +454,20 @@ choices and explicit model loading verifies saved classes. Keep strict schema-1
 tray artifacts, manual deployment and no new .env keys. This supersedes rules
 19/137/139's complete validated-field requirement only for Tray Teach draft text.
 
+Rule 142 keeps Tray Teach's main RGB/depth preview continuously scheduled,
+including after inspection, simulation and during reference-plane teaching.
+Remove Resume Live and the main-view freeze state. Group camera, tray/model,
+detection, dimensions, teaching position and reference-plane controls in the
+Item Teach-style sidebar; plane creation belongs to the teach artifact. Capture
+one fresh synchronized RGB/depth/TF observation in a separate nonmodal corner
+editor; its four corners and depth evidence never follow changing live frames.
+Discard obsolete drafts/results on source/settings changes, retain the current
+plane until successful Create and require Save Tray Teach to persist it. Keep
+inspection/simulation summaries labelled as past observations with age, never
+hold old highlights/TF instead of new preview data. Preserve the single worker,
+bounded pending action, two executor threads, 1 Hz processing and strict schemas.
+This supersedes rules 139/140's frozen main-view inspection/simulation only.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

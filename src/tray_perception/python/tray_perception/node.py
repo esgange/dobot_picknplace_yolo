@@ -237,15 +237,12 @@ class TrayTeachNode(Node):
     def freeze_for_plane(self):
         if self.position is None:
             raise ValueError("Copy Tray Teach Position from Item Teach before teaching a plane")
-        # Re-teaching must remain possible after intrinsics changed.
-        previous = self.plane
-        self.plane = None
-        try:
-            view = self.snapshot(depth_required=True)
-            return {**view, **self.visuals(view, [], cloud=False)}
-        except Exception:
-            self.plane = previous
-            raise
+        # Snapshot validation intentionally ignores the previous plane. Keep
+        # that plane active for live preview until a new one is actually created.
+        view = self.snapshot(depth_required=True)
+        result = {**view, **self.visuals(view, [], cloud=False)}
+        self._check_snapshot(view)
+        return result
 
     def capture_plane(self, view, pixels):
         self._check_snapshot(view)

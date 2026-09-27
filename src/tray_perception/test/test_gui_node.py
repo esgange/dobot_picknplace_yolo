@@ -54,12 +54,12 @@ def test_canvas_maps_scaled_pixels_and_rejects_letterboxing(window):
     canvas.show_frame(bytes(640 * 480 * 3), 640, 480)
     assert canvas.image_point(gui.QtCore.QPointF(400, 400)) == pytest.approx((320, 240))
     assert canvas.image_point(gui.QtCore.QPointF(100, 50)) is None
-    window.frozen = {"synthetic": True}
-    window._click(10, 10)
-    window._click(11, 11)  # Duplicate point refused.
+    window.plane_view = {"generation": window.node.generation}
+    window._plane_click(10, 10)
+    window._plane_click(11, 11)  # Duplicate point refused.
     assert len(window.points) == 1
     for x, y in ((100, 10), (100, 100), (10, 100), (200, 200)):
-        window._click(x, y)
+        window._plane_click(x, y)
     assert len(window.points) == 4
     window._undo()
     assert len(window.points) == 3
@@ -292,21 +292,31 @@ def test_live_settings_debounce_invalid_values_and_keep_manual_size(window, monk
     assert window.preview_settings["geometry"] is None and window.geometry_error
 
 
-def test_click_inspection_freezes_observation_without_overwriting_dimensions(window):
+def live_view(pixel=0):
+    return {"generation": 1, "camera_context": None, "metric_error": "", "depth_error": "",
+            "rgb": {"width": 2, "height": 2, "stamp_ns": 100_000_000_000,
+                    "rgb": bytes([pixel]) * 12},
+            "overlay": bytes([pixel]) * 12, "depth_overlay": bytes([pixel]) * 12, "cloud": None,
+            "result": {"selected": None, "reason": "No eligible tray", "detections": []}}
+
+
+def test_click_inspection_keeps_live_updates_without_overwriting_dimensions(window):
     enable_model(window)
     window.dimensions["length_mm"].setText("222")
     item = {"polygon": [[10, 10], [100, 10], [100, 100], [10, 100]],
             "source_index": 1, "confidence": .9, "class_name": "tray",
             "length_mm": 200., "width_mm": 100., "reason": "Unselected tray class"}
-    window.last_view = {"result": {"detections": [item]}}
+    window.last_view = {**live_view(), "result": {"detections": [item]}}
     window._click(50, 50)
-    assert window.inspection and window.frozen is None
+    assert window.detail_sample is not None and window.plane_view is None
     assert window.dimensions["length_mm"].text() == "222"
-    assert "200.0 × 100.0" in window.result_label.text()
-    window._show_view({"generation": window.node.generation})  # Does not touch the new image.
-    window.node.accept_view.assert_not_called()
-    window._click(20, 20)
-    assert not window.inspection and window.last_view is None
+    assert "200.0 × 100.0" in window.detail_label.text()
+    view = live_view(45)
+    window._show_view(view)
+    window.node.accept_view.assert_called_once_with(view)
+    assert window.last_view is view and not window.canvas.highlight
+    assert window.canvas.image.pixelColor(0, 0).red() == 45
+    assert "Last clicked tray" in window.detail_label.text()
 
 
 def test_prefix_edit_stops_old_preview_and_connect_runs_explicitly(window):
@@ -354,7 +364,7 @@ def test_slow_preview_keeps_typing_focus_and_controls_available(window):
         assert field.text() == "200"
         assert field.hasFocus() and len(heartbeats) >= 3
         assert window.load_teach_button.isEnabled()
-        assert window.freeze_button.isEnabled()
+        assert window.snapshot_button.isEnabled()
     finally:
         window.timer.stop()
         heartbeat.stop()
@@ -364,10 +374,10 @@ def test_slow_preview_keeps_typing_focus_and_controls_available(window):
     callback.assert_not_called()  # The edited preview cannot replace current UI state.
 
 
-def test_freeze_waits_for_preview_then_runs_off_gui_thread(window):
+def test_plane_snapshot_waits_for_preview_then_runs_off_gui_thread(window):
     release = threading.Event()
     thread_ids = []
-    view = {"rgb": {"width": 2, "height": 2, "rgb": bytes(12)}}
+    view = live_view()
 
     def freeze():
         thread_ids.append(threading.get_ident())
@@ -378,7 +388,7 @@ def test_freeze_waits_for_preview_then_runs_off_gui_thread(window):
     window.future = preview = Future()
     window.job_kind, window.completion = "preview", MagicMock()
     stale_callback = window.completion
-    window._freeze()
+    window._snapshot_plane()
     assert window.pending_job is not None
     assert not window.name.isEnabled()  # Only this explicit operation locks edits.
     window._job(MagicMock(), MagicMock(), "preview")
@@ -386,16 +396,119 @@ def test_freeze_waits_for_preview_then_runs_off_gui_thread(window):
     preview.set_result({"obsolete": True})
     window._tick()
     try:
-        assert window.pending_job is None and window.job_kind == "freeze"
-        assert window.frozen is None and not window.name.isEnabled()
+        assert window.pending_job is None and window.job_kind == "snapshot"
+        assert window.plane_view is None and not window.name.isEnabled()
     finally:
         release.set()
         window.future.result(timeout=2)
     window._tick()
     stale_callback.assert_not_called()
     assert thread_ids and thread_ids[0] != threading.get_ident()
-    assert window.frozen is view and window.canvas.selecting
+    assert window.plane_view is view and window.plane_editor.isVisible()
+    assert not window.plane_editor.isModal()
     assert window.name.isEnabled()
+    assert window.canvas.image is None  # Plane snapshot is confined to its editor.
+
+
+def test_corner_editor_uses_one_snapshot_while_live_panes_keep_updating(window):
+    captured = live_view(10)
+    window.node.freeze_for_plane = MagicMock(return_value=captured)
+    window._snapshot_plane()
+    window.future.result(timeout=2)
+    window._tick()
+    # A new displayed observation never replaces the corner editor's source.
+    window._show_view(live_view(90))
+    assert window.canvas.image.pixelColor(0, 0).red() == 90
+    assert window.plane_editor.rgb.image.pixelColor(0, 0).red() == 10
+    window.node.corner_preview = MagicMock(return_value={
+        "corner_overlay": bytes([20]) * 12, "depth_overlay": bytes([30]) * 12,
+        "samples": [{"index": 1, "accepted": 49, "median_mm": 600, "reason": "Accepted"}]})
+    window.future = preview = Future()
+    window.job_kind, window.completion = "preview", MagicMock()
+    window.node.invalidate.reset_mock()
+    window._plane_click(.5, .5)
+    assert window.pending_job[2] == "corners"
+    window.node.invalidate.assert_not_called()  # Corner work must not invalidate its own source.
+    preview.set_result(live_view(120))
+    window._tick()
+    window.future.result(timeout=2)
+    window._tick()
+    window.node.corner_preview.assert_called_once_with(captured, [[.5, .5]])
+    assert window.plane_editor.rgb.image.pixelColor(0, 0).red() == 20
+    assert window.plane_editor.depth.image.pixelColor(0, 0).red() == 30
+    assert window.canvas.image.pixelColor(0, 0).red() == 90
+    assert "49/49 valid" in window.plane_editor.evidence.text()
+    # The normal timer still schedules preview without another operator action.
+    window.camera_prefix.blockSignals(True)
+    window.camera_prefix.setText("cam")
+    window.camera_prefix.blockSignals(False)
+    window.node.camera_prefix = "cam"
+    window.node.preview = MagicMock(return_value=live_view(150))
+    window.next_preview = 0
+    window._tick()
+    window.future.result(timeout=2)
+    window._tick()
+    assert window.canvas.image.pixelColor(0, 0).red() == 150
+    assert window.plane_view is captured and window.points == [[.5, .5]]
+
+
+@pytest.mark.parametrize("invalidate", [False, True])
+def test_discarded_or_invalidated_corner_work_cannot_restore_editor(window, invalidate):
+    view = live_view()
+    window.plane_view = view
+    window.plane_editor.show_observation(view, window.points)
+    window.plane_editor.show()
+    window.points.append([.5, .5])
+    window.node.corner_preview = MagicMock(return_value={
+        "corner_overlay": bytes(12), "depth_overlay": bytes(12), "samples": []})
+    window._corner_evidence()
+    window.future.result(timeout=2)
+    if invalidate:
+        window.node.generation += 1
+    else:
+        window.plane_editor.reject()
+    window._tick()
+    assert window.plane_view is None and not window.points
+    assert not window.plane_editor.isVisible()
+    window.node.accept_view.assert_not_called()
+
+
+def test_plane_create_queues_original_snapshot_and_keeps_existing_plane_until_commit(window):
+    original = plane()
+    view = live_view()
+    window.node.plane = original
+    window.plane_view = view
+    window.points[:] = [[10, 10], [20, 10], [20, 20], [10, 20]]
+    window._show_view(live_view(80))
+    window.future = preview = Future()
+    window.job_kind, window.completion = "preview", MagicMock()
+    window.node.capture_plane = MagicMock(return_value={"max_error_mm": 1.2})
+    window._capture()
+    assert window.node.plane is original
+    window.node.invalidate.assert_not_called()
+    preview.set_result(live_view(100))
+    window._tick()
+    window.future.result(timeout=2)
+    window._tick()
+    window.node.capture_plane.assert_called_once_with(
+        view, [[10, 10], [20, 10], [20, 20], [10, 20]])
+    assert window.plane_view is None and not window.plane_editor.isVisible()
+    assert "Save Tray Teach" in window.status.text()
+    assert window.canvas.image.pixelColor(0, 0).red() == 80
+
+
+def test_snapshot_acquisition_preserves_existing_plane_and_rejects_invalidated_sources():
+    original, view = plane(), live_view()
+    node = SimpleNamespace(position=position(), plane=original,
+                           snapshot=MagicMock(return_value=view),
+                           visuals=MagicMock(return_value={}), _check_snapshot=MagicMock())
+    TrayTeachNode.freeze_for_plane(node)
+    assert node.plane is original
+    node._check_snapshot.assert_called_once_with(view)
+    node._check_snapshot.side_effect = ValueError("source changed during snapshot")
+    with pytest.raises(ValueError, match="source changed"):
+        TrayTeachNode.freeze_for_plane(node)
+    assert node.plane is original
 
 
 @pytest.mark.parametrize("terminal", [False, True])
@@ -761,7 +874,7 @@ def test_trigger_row_requires_saved_profile_and_arming_stays_explicit(window):
     assert not window.armed_toggle.isChecked() and not window.node.yolo_enabled
 
 
-def test_simulation_freezes_shared_result_without_arming_or_changing_dimensions(window):
+def test_simulation_shows_shared_result_and_continues_live_without_arming(window):
     ready_trigger_window(window)
     view = {"generation": 1, "camera_context": None, "metric_error": "", "depth_error": "",
             "rgb": {"width": 2, "height": 2, "stamp_ns": 100_000_000_000},
@@ -773,9 +886,33 @@ def test_simulation_freezes_shared_result_without_arming_or_changing_dimensions(
     window._simulate_trigger()
     window.future.result(timeout=2)
     window._tick()
-    assert window.inspection and window.last_view is view
-    assert "SIMULATE TRIGGER" in window.rgb_status.text()
+    assert window.last_view is view
+    assert "Last simulated request: NO_VALID_TRAY" in window.detail_label.text()
     assert not window.armed_toggle.isChecked()
     assert before == {key: field.text() for key, field in window.dimensions.items()}
-    window._click(1, 1)
-    assert not window.inspection
+    window.camera_prefix.blockSignals(True)
+    window.camera_prefix.setText("cam")
+    window.camera_prefix.blockSignals(False)
+    window.node.camera_prefix = "cam"
+    window.node.preview = MagicMock(return_value=live_view(60))
+    window.next_preview = 0
+    window._tick()
+    window.future.result(timeout=2)
+    window._tick()
+    assert window.canvas.image.pixelColor(0, 0).red() == 60
+    assert window.node.preview.call_count == 1
+    assert "Last simulated request" in window.detail_label.text()
+
+
+def test_simulated_detail_source_change_revokes_old_target_without_stopping_preview(window):
+    view = {**live_view(), "trigger_binding": {}, "trigger_epoch": 1}
+    window.node.requests.validate_view = MagicMock()
+    window._show_detail(view, "Last simulated request: OK", trigger=True)
+    window.node.requests.validate_view.side_effect = ValueError("profile changed")
+    window._tick()
+    assert window.detail_sample is None
+    assert "invalidated: profile changed" in window.detail_label.text()
+    window.node.invalidate.assert_called_with("profile changed")
+    replacement = live_view(70)
+    window._show_view(replacement)
+    assert window.last_view is replacement and window.canvas.image.pixelColor(0, 0).red() == 70
