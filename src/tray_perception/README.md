@@ -44,9 +44,11 @@ No platform/bin/item station calibration selection or `.env` edit is needed.
    subsequent measurements, so items on top cannot change the reference height.
    A clipped tray is rejected. Rank valid trays by image-center distance,
    confidence and source index; select exactly one or report no valid tray.
-5. **Save as New Tray Teach** writes a new same-stem YAML/model pair to
+5. **Save Tray Teach…** at the top right writes a new same-stem YAML/model pair to
    `offline_teach/tray_teach/tray_teach_<name>_<UTC_TIMESTAMP>.yaml` and `.pt`.
-   Existing pairs are never overwritten. Explicit loading verifies schema,
+   Existing pairs are never overwritten. The adjacent **Load Tray Teach…**
+   reopens an existing profile for preview or further teaching; loading a tray
+   is optional when creating a new profile. Explicit loading verifies schema,
    model hash and the bound camera calibration. The stored Tray Teach Position
    and reference plane are sufficient: the original Item Teach file/model is
    not needed to reopen, preview or re-teach the tray.

@@ -5795,6 +5795,20 @@ Never use a floating “latest” version in an issue, script, or deployment not
   setup. Offscreen GUI review checks layout. No real camera/robot launch or
   command, operator-model execution or offline-transfer milestone is claimed.
 
+### 2026-09-27 — Tray Teach file actions in the header
+
+- Clarify rule 137's teaching workflow: place **Load Tray Teach…** and
+  **Save Tray Teach…** together at the top right, matching Item Teach. Remove
+  the sidebar Tray Teach file row and save button. Loading is optional for a
+  new profile and reopens an existing profile for preview or further teaching.
+- Preserve explicit trusted loading, independent profiles, save eligibility,
+  background-job control locking and remembered filenames. Save still creates
+  a new timestamped YAML/model pair without overwriting existing artifacts.
+- Validation: all 11 existing GUI/node tests, changed-file ament_flake8 and the
+  tray_perception symlink build pass. Offscreen visual inspection confirms the
+  header layout and removed sidebar row. No hardware process or command ran;
+  no controller behavior, vendor code, schema or operator artifact changes.
+
 ### Future entry template
 
 ```text

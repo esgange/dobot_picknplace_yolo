@@ -86,6 +86,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.job_kind = ""
         self.settings = self.frozen = None
         self.profile_path = None
+        self.profile_filename = ""
+        self.buttons = []
         self.pending_ids = []
         self.image_size = 640
         self.points = []
@@ -95,7 +97,16 @@ class TrayTeachWindow(QtWidgets.QWidget):
         root = QtWidgets.QVBoxLayout(self)
         title = QtWidgets.QLabel("Tray Teach")
         title.setFont(QtGui.QFont("Sans", 18, QtGui.QFont.Bold))
-        root.addWidget(title)
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(title)
+        header.addStretch()
+        self.load_teach_button = self._button("Load Tray Teach…", self._load_tray)
+        self.load_teach_button.setToolTip("Reopen a saved tray profile for preview or teaching")
+        self.save_button = self._button("Save Tray Teach…", self._save)
+        self.save_button.setToolTip("Save a new timestamped tray YAML and paired model")
+        header.addWidget(self.load_teach_button)
+        header.addWidget(self.save_button)
+        root.addLayout(header)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         root.addWidget(splitter, 1)
         scroll = QtWidgets.QScrollArea()
@@ -109,12 +120,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.camera_path = QtWidgets.QLineEdit()
         self.model_path = QtWidgets.QLineEdit()
         self.item_path = QtWidgets.QLineEdit()
-        self.tray_path = QtWidgets.QLineEdit()
-        self.buttons = []
         self._path_row(form, "Calibration", self.camera_path, self._load_camera)
         self._path_row(form, "YOLO model", self.model_path, self._load_model)
         self._path_row(form, "Item Home", self.item_path, self._copy_position)
-        self._path_row(form, "Tray Teach", self.tray_path, self._load_tray)
         self.position_label = QtWidgets.QLabel("Tray Teach Position: not copied")
         self.position_label.setWordWrap(True)
         controls.addWidget(self.position_label)
@@ -159,8 +167,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
         controls.addWidget(self.preview_toggle)
         self.form_fields = [self.name, self.classes, self.confidence, self.iou, self.maximum,
                             self.preview_toggle, *self.dimensions.values()]
-        self.save_button = self._button("Save as New Tray Teach", self._save)
-        controls.addWidget(self.save_button)
         self.plane_label = QtWidgets.QLabel("Reference plane: not taught")
         self.plane_label.setWordWrap(True)
         controls.addWidget(self.plane_label)
@@ -204,7 +210,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if state is not None:
             self.camera_path.setText(state["camera_filename"])
             self.item_path.setText(state["item_filename"])
-            self.tray_path.setText(state["profile_filename"])
+            self.profile_filename = state["profile_filename"]
             self.model_path.setText(state["model_path"])
             self._fill_settings(state["settings"])
             self.status.setText("Previous values restored as prefill. Explicitly load inputs.")
@@ -314,7 +320,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self._fill_settings(profile["settings"])
                 self.camera_path.setText(profile["camera_calibration"]["filename"])
                 self.item_path.clear()
-                self.tray_path.setText(path.name)
+                self.profile_filename = path.name
                 self.profile_path = path
                 self._show_position()
                 self._apply()
@@ -355,7 +361,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if self.settings is not None:
             self.pending_ids = self.settings["yolo"]["class_ids"][:]
             write_session(self.node.root, {
-                "schema_version": 1, "profile_filename": self.tray_path.text(),
+                "schema_version": 1, "profile_filename": self.profile_filename,
                 "camera_filename": self.camera_path.text(), "item_filename": self.item_path.text(),
                 "model_path": self.model_path.text(), "settings": self.settings})
 
@@ -426,7 +432,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
             def saved(path):
                 self.settings, self.profile_path = settings, path
-                self.tray_path.setText(path.name)
+                self.profile_filename = path.name
                 self._remember()
                 self._message(f"Saved new tray profile and paired model: {path}")
             self._job(lambda: save_profile(
