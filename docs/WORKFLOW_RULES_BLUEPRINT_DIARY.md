@@ -6066,6 +6066,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   artifacts or deployment files changed. Physical testing and offline transfer
   remain unperformed.
 
+### 2026-09-27 — Tray corner axes, ungated size inspection and RViz diagnosis
+
+- Rule 143 fixes every detected tray frame to the rectangle corner nearest
+  `base_link` by 3D distance, with inward X along the short edge and inward Y
+  along the long edge. Z follows their right-handed cross product; retaining
+  camera-facing Z is not compatible with those requirements for every nearest
+  corner. Supersede rules 137/140's detected-tray camera-facing Z only. Keep the
+  reference plane's existing camera-facing normal, schema 1, saved evidence and
+  model pairing unchanged. Exact equal-length edges use adjacent endpoint base
+  XYZ ordering. GUI, selected TF, simulation and headless responses share this
+  geometry; service extent evidence now requires X=width and Y=length.
+- Compute each full mask/OBB's plane intersection, enclosing metric rectangle,
+  corner origin and attitude before expected-size/class eligibility gates.
+  Draw red X/short and green Y/long arrows with mm lengths from the cyan origin
+  for every measurable tray. Mirror the axes on registered depth using that
+  pane's own calibrated distortion model. Missing live depth does not block
+  RGB measurements. Clipped, degenerate or uncalibrated detections remain
+  unmeasurable; invalid projected geometry is rejected at the worker boundary.
+- Clicking any measured tray reports its own X/width, Y/length, base corner XYZ
+  and rejection reason without overwriting manual dimensions or freezing the
+  live view. Blank expected dimensions, unchecked classes or failed tolerance
+  still permit inspection, but never supply the controller's selected tray.
+  Preserve existing confidence/size/class gates, deterministic single-winner
+  ranking, one native inference per preview/request and exactly two executor
+  threads. No additional TF targets or RViz numeric overlays are introduced.
+- Investigated the missing RViz voxels through read-only process/config/ROS
+  graph inspection. The running viewer predates the Tray Teach display update
+  and subscribes only to Item Teach voxel/marker topics, not the tray cloud.
+  The installed canonical RViz config already contains an enabled tray display
+  with correct topic, 10 mm boxes, zero decay and reliable/transient-local QoS.
+  Document File → Open Config reload for existing viewers; do not alter the
+  working cloud publisher or restart operator-owned hardware/viewer sessions.
+  Tray Teach had exited when inspected, so live operator-cloud publication was
+  not verified. Existing isolated retained-cloud/late-subscriber tests pass.
+- Validation: all 103 Tray Perception tests pass (104 colcon-reported results;
+  zero errors/failures/skips), including real private-worker rendering checks,
+  short-X/long-Y across quadrants, rotations, tilt and reversed corner order,
+  square ties, measurement before eligibility, distinct depth distortion,
+  ordered service extents and live click inspection. Synthetic RGB/depth axis
+  images were visually reviewed. Tray Perception and interface symlink builds,
+  changed-file ament_flake8 and git diff --check pass. No physical commands,
+  operator-model execution, deployment copying or operator artifact changes.
+  Physical validation and offline transfer remain unperformed.
+
 ### Future entry template
 
 ```text

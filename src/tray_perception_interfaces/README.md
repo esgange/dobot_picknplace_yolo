@@ -14,11 +14,11 @@ tray nearest image center; `NO_VALID_TRAY` is a successful observation with
 this request result. Diagnostics include hashes, source/plane evidence, rejected
 detections and optional debug-image results.
 
-The origin is the rectangle corner nearest the base in 3D. Positive X and Y
-follow adjacent edges inward; right-handed Z follows the taught plane normal
-toward its teaching camera. `length`/`width` are sorted long/short sides in metres.
-`extent_x`/`extent_y` are the actual lengths along frame X/Y, also in metres;
-do not assume X is the long side. Orientation is the tray frame, not robot TCP
+The origin is the rectangle corner nearest the base in 3D. Positive X follows
+the short edge inward; positive Y follows the long edge inward. Right-handed
+Z is X cross Y and may face either side of the reference plane. Its sign is
+not forced toward the camera. `length`/`width` are long/short sides in metres,
+with `extent_x = width` and `extent_y = length`. Orientation is the tray frame, not robot TCP
 attitude. The controller chooses placement coordinates and motion separately.
 
 `save_debug_images=true` saves only this result's annotated RGB and, if available,

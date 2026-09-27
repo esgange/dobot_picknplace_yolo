@@ -29,7 +29,7 @@ def selected():
     return {"valid": True, "source_index": 2, "class_id": 0, "class_name": "tray",
             "confidence": .9, "position": [.1, .1, .2], "quaternion": [0., 0., 0., 1.],
             "length_mm": 200., "width_mm": 100., "center_distance_px": 4.,
-            "corners_base_m": [[.1, .1, .2], [.3, .1, .2], [.3, .2, .2], [.1, .2, .2]],
+            "corners_base_m": [[.1, .1, .2], [.2, .1, .2], [.2, .3, .2], [.1, .3, .2]],
             "reason": "Dimensions within tolerance"}
 
 
@@ -102,8 +102,8 @@ def test_armed_and_simulated_requests_share_fresh_single_pose_pipeline(backend):
     assert actual.header.frame_id == "base_link" and actual.header.stamp.nanosec == 1
     assert actual.tray.pose == local["response"].tray.pose
     assert actual.tray.length == .2 and actual.tray.width == .1
-    assert actual.tray.extent_x == pytest.approx(.2)
-    assert actual.tray.extent_y == pytest.approx(.1)
+    assert actual.tray.extent_x == pytest.approx(.1)
+    assert actual.tray.extent_y == pytest.approx(.2)
     assert actual.tray.id.startswith(actual.batch_id + ":")
     assert actual.batch_id != local["response"].batch_id
     assert actual.valid_count == 1 and actual.detected_count == 3
@@ -393,13 +393,15 @@ def test_headless_launch_is_argument_free_and_local_only(monkeypatch):
     assert len(factory().entities) == 1
 
 
-@pytest.mark.parametrize("cause", ["nan", "wrong_axis", "wrong_origin"])
+@pytest.mark.parametrize("cause", ["nan", "wrong_axis", "wrong_origin", "long_x"])
 def test_tray_extent_evidence_cannot_return_invalid_geometry(cause):
     value = selected()
     if cause == "nan":
         value["corners_base_m"][1][0] = float("nan")
     elif cause == "wrong_axis":
         value["quaternion"] = [0., 0., 1., 0.]
+    elif cause == "long_x":
+        value["corners_base_m"] = [[.1, .1, .2], [.3, .1, .2], [.3, .2, .2], [.1, .2, .2]]
     else:
         value["position"][0] += .1
     with pytest.raises(RuntimeError, match="extent evidence"):

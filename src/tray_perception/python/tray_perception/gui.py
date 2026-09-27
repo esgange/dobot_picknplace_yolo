@@ -315,7 +315,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             "Capture the uncovered tray, then select four corners in the snapshot editor. "
             "Create the plane and Save Tray Teach to keep it in the teach file. "
             "Main RGB/depth views remain live.\n\n"
-            "Origin: corner nearest base_link. Positive X/Y point inward. "
+            "Origin: corner nearest base_link. X = short edge; Y = long edge, both inward. "
             "Re-teach after changing tray support height or tilt.")
         instructions.setWordWrap(True)
         plane_form.addRow(instructions)
@@ -798,11 +798,15 @@ class TrayTeachWindow(QtWidgets.QWidget):
             item = min(hits, key=lambda hit: hit[:3])[3]
             self.canvas.highlight = item["polygon"]
             self.canvas.update()
-            measured = (f"Measured {item['length_mm']:.1f} × {item['width_mm']:.1f} mm"
+            measured = (f"Reference plane: X/width {item['width_mm']:.1f} mm × "
+                        f"Y/length {item['length_mm']:.1f} mm"
                         if "length_mm" in item else "Dimensions unavailable")
+            origin = (" | base_link corner XYZ: " + ", ".join(
+                f"{value * 1000:.1f}" for value in item["position"]) + " mm"
+                if "position" in item else "")
             self._show_detail(self.last_view,
                               f"Last clicked tray: {item['class_name']} | {measured} | "
-                              f"{item['reason']}")
+                              f"{item['reason']}{origin}")
 
     def _show_detail(self, view, summary, *, trigger=False):
         sample = view if trigger else {

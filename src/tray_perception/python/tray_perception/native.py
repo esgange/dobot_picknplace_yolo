@@ -10,14 +10,22 @@ from item_perception_yolo.yolo_worker_native import render_result
 from .core import MAX_PLANE_ERROR_MM, validate_plane, validate_preview
 
 
-def corner_frame(corners, normal, np):
+def corner_frame(corners, normal, np, *, short_x=False):
     """Nearest base-origin corner; both planar axes point along edges into the tray."""
     corners = np.asarray(corners, dtype=float)
     origin = min(range(4), key=lambda i: (float(corners[i] @ corners[i]), *corners[i]))
     following, previous = (origin + 1) % 4, (origin - 1) % 4
+    if short_x:
+        # A detected rectangle has orthogonal adjacent edges. Fix their physical
+        # lengths before choosing Z; camera-facing Z cannot always satisfy this.
+        following, previous = sorted((following, previous), key=lambda i: (
+            float(np.linalg.norm(corners[i] - corners[origin])), *corners[i]))
     x = corners[following] - corners[origin]
     y = corners[previous] - corners[origin]
-    if np.dot(np.cross(x, y), normal) < 0:
+    if short_x:
+        normal = np.cross(x, y)
+        normal /= np.linalg.norm(normal)
+    elif np.dot(np.cross(x, y), normal) < 0:
         following, previous = previous, following
         x, y = y, x
     x = x / np.linalg.norm(x)
@@ -27,6 +35,29 @@ def corner_frame(corners, normal, np):
     matrix[:3, :3] = np.column_stack((x, y, np.cross(x, y)))
     matrix[:3, 3] = corners[origin]
     return matrix, [origin, following, (origin + 2) % 4, previous]
+
+
+def draw_tray_axes(overlay, detection, cv2, np, *, depth=False):
+    """Measured corner axes are independent of production size/class eligibility."""
+    key = "depth_rectangle" if depth else "rectangle"
+    if key not in detection:
+        return
+    rectangle = np.rint(detection[key]).astype(np.int32)
+    origin = tuple(rectangle[0])
+    cv2.polylines(overlay, [rectangle], True, (0, 210, 255), 1, cv2.LINE_AA)
+    for index, label, dimension, color in (
+            (1, "X", "width_mm", (255, 0, 0)), (3, "Y", "length_mm", (0, 255, 0))):
+        end = tuple(rectangle[index])
+        cv2.arrowedLine(overlay, origin, end, color, 3, cv2.LINE_AA, tipLength=.08)
+        text = f"{label} {detection[dimension]:.1f} mm"
+        (width, height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, .5, 1)
+        x = int(np.clip(end[0] + 5, 0, max(0, overlay.shape[1] - width - 1)))
+        y = int(np.clip(end[1] - 5, height + 1, overlay.shape[0] - baseline - 1))
+        cv2.putText(overlay, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, .5,
+                    (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(overlay, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, .5, color, 1, cv2.LINE_AA)
+    cv2.circle(overlay, origin, 5, (0, 0, 0), -1, cv2.LINE_AA)
+    cv2.circle(overlay, origin, 3, (0, 255, 255), -1, cv2.LINE_AA)
 
 
 def fit_plane(points, pixels, base_from_optical, cv2, np):
@@ -144,9 +175,24 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
             lengths = np.linalg.norm(np.roll(rectangle, -1, axis=0) - rectangle, axis=1) * 1000
             length, short = float(lengths.max()), float(lengths.min())
             detection.update(length_mm=length, width_mm=short)
+            if short <= 0:
+                raise ValueError("Degenerate tray rectangle")
+            base = np.column_stack((rectangle, np.zeros(4))) @ transform[:3, :3].T + \
+                transform[:3, 3]
+            frame, order = corner_frame(base, transform[:3, 2], np, short_x=True)
+            rectangle_pixels = project(base, context["camera"], optical, cv2, np)
+            center = project([base.mean(axis=0)], context["camera"], optical, cv2, np)[0]
+            distance = float(np.linalg.norm(center - [width / 2, height / 2]))
+            detection.update(position=frame[:3, 3].tolist(),
+                             quaternion=list(rotation_matrix_to_quaternion(frame[:3, :3])),
+                             rectangle=rectangle_pixels[order].tolist(),
+                             corners_base_m=base[order].tolist(), center_distance_px=distance)
+            if context.get("depth_camera") is not None:
+                detection["depth_rectangle"] = project(
+                    base[order], context["depth_camera"], optical, cv2, np).tolist()
             if expected is None:
                 raise ValueError("Enter valid expected length, width and tolerance")
-            if (short <= 0 or abs(length - expected["length_mm"]) > expected["tolerance_mm"]
+            if (abs(length - expected["length_mm"]) > expected["tolerance_mm"]
                     or abs(short - expected["width_mm"]) > expected["tolerance_mm"]):
                 detection["size_status"] = "fail"
                 raise ValueError("Tray dimensions outside tolerance")
@@ -155,17 +201,7 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
                 raise ValueError("Unselected tray class")
             if item["confidence"] < settings["yolo"]["confidence"]:
                 raise ValueError("Below confidence threshold")
-            base = np.column_stack((rectangle, np.zeros(4))) @ transform[:3, :3].T + \
-                transform[:3, 3]
-            frame, order = corner_frame(base, transform[:3, 2], np)
-            rectangle_pixels = project(base, context["camera"], optical, cv2, np)
-            center = project([base.mean(axis=0)], context["camera"], optical, cv2, np)[0]
-            distance = float(np.linalg.norm(center - [width / 2, height / 2]))
-            detection.update(valid=True, reason="Dimensions within tolerance",
-                             position=frame[:3, 3].tolist(),
-                             quaternion=list(rotation_matrix_to_quaternion(frame[:3, :3])),
-                             rectangle=rectangle_pixels[order].tolist(),
-                             corners_base_m=base[order].tolist(), center_distance_px=distance)
+            detection.update(valid=True, reason="Dimensions within tolerance")
             valid.append(detection)
         except ValueError as exc:
             detection["reason"] = str(exc)
@@ -199,12 +235,7 @@ def predict_trays(request, result, rgb, names, cv2, np):
             color = {"pass": (0, 220, 0), "fail": (255, 50, 50),
                      "unchecked": (160, 160, 160)}[detection["size_status"]]
             cv2.polylines(overlay, [polygon], True, color, 2)
-        if selected is not None:
-            rectangle = np.rint(selected["rectangle"]).astype(np.int32)
-            cv2.circle(overlay, tuple(rectangle[0]), 8, (0, 255, 255), 3)
-            for index, color in ((1, (255, 0, 0)), (3, (0, 255, 0))):
-                cv2.arrowedLine(overlay, tuple(rectangle[0]), tuple(rectangle[index]),
-                                color, 3, tipLength=.08)
+            draw_tray_axes(overlay, detection, cv2, np)
     return {"state": "ok", "width": rgb.shape[1], "height": rgb.shape[0], "count": count,
             "detections": detections, "selected": selected, "reason": reason}, overlay.tobytes()
 
@@ -230,6 +261,7 @@ def tray_visuals(request, data, cv2, np):
             color = {"pass": (0, 220, 0), "fail": (255, 50, 50),
                      "unchecked": (160, 160, 160)}[detection["size_status"]]
             cv2.polylines(overlay, [np.rint(pixels).astype(np.int32)], True, color, 2)
+            draw_tray_axes(overlay, detection, cv2, np, depth=True)
         for index, pixel in enumerate(request["pixels"], 1):
             mapped = reproject_pixels(np.asarray([pixel]), color_info, depth_info, cv2, np)[0]
             x, y = np.rint(mapped).astype(int)

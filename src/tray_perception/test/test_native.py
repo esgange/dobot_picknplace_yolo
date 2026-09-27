@@ -50,7 +50,8 @@ def exercise_geometry():
     measured, winner = evaluate_objects(objects, draft, None, None, 640, 480, cv2, np)
     assert winner is None and len(measured) == 3 and "length_mm" not in measured[0]
     context["depth_camera"] = None  # Detection needs neither current depth nor depth CameraInfo.
-    assert evaluate_objects(objects, settings, plane, context, 640, 480, cv2, np)[1] == selected
+    without_depth = evaluate_objects(objects, settings, plane, context, 640, 480, cv2, np)[1]
+    assert without_depth == {k: v for k, v in selected.items() if k != "depth_rectangle"}
     for x in (-.4, .4):
         for y in (-.4, .4):
             for angle in (0, 25, 75, 150):
@@ -138,6 +139,99 @@ def test_private_geometry():
         "lib/item_perception_yolo/yolo_runtime"
     command = "import sys,runpy; sys.path.insert(0,sys.argv[1]); " \
         "runpy.run_path(sys.argv[2])['exercise_geometry']()"
+    result = subprocess.run(["/usr/bin/python3", "-c", command, str(runtime), __file__],
+                            env=dict(os.environ, OPENBLAS_NUM_THREADS="1"),
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def exercise_tray_axis_overlays():
+    import cv2
+    import numpy as np
+    from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
+    from item_perception_yolo.item_geometry import project
+    from tray_perception import native
+
+    camera = {"width": 640, "height": 480,
+              "k": [400., 0., 320., 0., 400., 240., 0., 0., 1.],
+              "d": [.9, .2, 0., 0., 0.], "distortion_model": "plumb_bob"}
+    depth_camera = {**camera, "d": [0.] * 5}
+    optical = np.diag([1., -1., -1., 1.])
+    optical[:3, 3] = [.3, .2, 1.]
+    plane_transform = np.eye(4)
+    plane_transform[2, 3] = .2
+    plane = {"base_from_plane": plane_transform.tolist(),
+             "corners_base_m": [[.2, .15, .2], [.4, .15, .2], [.4, .25, .2], [.2, .25, .2]]}
+    context = {"camera": camera, "depth_camera": depth_camera,
+               "base_from_optical": optical.tolist()}
+    corners = np.asarray(plane["corners_base_m"])
+    objects = [{"index": 0, "class_id": 1, "class_name": "tray", "confidence": .9,
+                "polygon": project(corners, camera, optical, cv2, np).astype(np.float32)}]
+    settings = {"accepted_class_ids": [], "model_task": "segment", "geometry_source": "mask",
+                "geometry": None, "yolo": {"class_ids": [1], "confidence": .5, "iou": .7,
+                                           "max_detections": 100, "image_size": 640}}
+    request = {"settings": settings, "plane": plane, "camera_context": context}
+    rgb = np.zeros((480, 640, 3), np.uint8)
+    native.render_result = lambda *_: (rgb.copy(), 1)
+    native.objects_from_result = lambda *_: objects
+    result, data = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
+    item = result["detections"][0]
+    assert result["selected"] is None and not item["valid"]
+    assert item["size_status"] == "unchecked"
+    assert np.isclose(item["length_mm"], 200, atol=.01)
+    assert np.isclose(item["width_mm"], 100, atol=.01)
+    frame = quaternion_to_rotation_matrix(*item["quaternion"])
+    assert np.allclose(frame[:, 0], [0, 1, 0], atol=1e-5)
+    assert np.allclose(frame[:, 1], [1, 0, 0], atol=1e-5)
+    assert np.allclose(frame[:, 2], [0, 0, -1], atol=1e-5)
+    assert np.allclose(item["position"], [.2, .15, .2], atol=1e-6)
+    assert np.allclose(item["depth_rectangle"], project(
+        item["corners_base_m"], depth_camera, optical, cv2, np))
+    assert not np.allclose(item["rectangle"], item["depth_rectangle"])
+    overlay = np.frombuffer(data, np.uint8).reshape(rgb.shape)
+    assert np.any(np.all(overlay == [255, 0, 0], axis=2))
+    assert np.any(np.all(overlay == [0, 255, 0], axis=2))
+    _, data = native.tray_visuals(
+        {"width": 640, "height": 480, "camera_context": context,
+         "detections": [item], "pixels": [], "cloud": False},
+        rgb.tobytes() + np.full((480, 640), 800, "<u2").tobytes(), cv2, np)
+    depth_overlay = np.frombuffer(data[:rgb.size], np.uint8).reshape(rgb.shape)
+    assert np.all(depth_overlay[240, 270] == [255, 0, 0])  # X/short edge in depth pixels.
+    assert np.all(depth_overlay[265, 320] == [0, 255, 0])  # Y/long edge in depth pixels.
+    # Size failure still provides inspection geometry, but never a production winner.
+    settings["geometry"] = {"length_mm": 300., "width_mm": 150., "tolerance_mm": 1.}
+    result, _ = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
+    assert result["selected"] is None and result["detections"][0]["size_status"] == "fail"
+    assert "rectangle" in result["detections"][0]
+    result, data = native.predict_trays({**request, "plane": None}, None, rgb, {}, cv2, np)
+    assert "rectangle" not in result["detections"][0] and result["selected"] is None
+    # Every quadrant, tilt and rotation keeps inward short X / long Y and right-handed Z.
+    tilt = cv2.Rodrigues(np.array([.4, .2, .1]))[0]
+    for x in (-.4, .4):
+        for y in (-.4, .4):
+            for angle in (0, 25, 75, 150):
+                rectangle = cv2.boxPoints(((0, 0), (.2, .1), angle))
+                base = np.column_stack((rectangle, np.zeros(4))) @ tilt.T + [x, y, .2]
+                for points in (base, base[::-1]):
+                    frame, order = native.corner_frame(points, tilt[:, 2], np, short_x=True)
+                    lengths = np.linalg.norm(points[[order[1], order[3]]] - frame[:3, 3], axis=1)
+                    assert np.allclose(lengths, [.1, .2])
+                    local = (points - frame[:3, 3]) @ frame[:3, :3]
+                    assert np.all(local[:, :2] >= -1e-7)
+                    assert np.linalg.det(frame[:3, :3]) > .999999
+                    assert order[0] == min(range(4), key=lambda i: (
+                        float(points[i] @ points[i]), *points[i]))
+    square = np.array([[.1, .1, .2], [.3, .1, .2], [.3, .3, .2], [.1, .3, .2]])
+    first, _ = native.corner_frame(square, np.array([0., 0., 1.]), np, short_x=True)
+    second, _ = native.corner_frame(square[::-1], np.array([0., 0., 1.]), np, short_x=True)
+    assert np.allclose(first, second)
+
+
+def test_private_tray_axes_and_inspection_overlays():
+    runtime = Path(get_package_prefix("item_perception_yolo")) / \
+        "lib/item_perception_yolo/yolo_runtime"
+    command = "import sys,runpy; sys.path.insert(0,sys.argv[1]); " \
+        "runpy.run_path(sys.argv[2])['exercise_tray_axis_overlays']()"
     result = subprocess.run(["/usr/bin/python3", "-c", command, str(runtime), __file__],
                             env=dict(os.environ, OPENBLAS_NUM_THREADS="1"),
                             capture_output=True, text=True, timeout=30)

@@ -25,7 +25,7 @@ from item_perception_yolo.platform_teach_core import (
 
 from .core import EventLogger, load_profile, validate_plane, validate_preview
 from .rviz import TrayRvizPreview
-from .requests import TrayRequests
+from .requests import pose_extents, TrayRequests
 
 
 class TrayTeachNode(Node):
@@ -346,6 +346,15 @@ class TrayTeachNode(Node):
                             np.isfinite([detection["length_mm"], detection["width_mm"]]).all()
                             and detection["length_mm"] >= detection["width_mm"] >= 0):
                         raise ValueError("Malformed dimensions")
+                    if "rectangle" in detection:
+                        pose_extents(detection)
+                        for key in ("rectangle", "depth_rectangle"):
+                            if key not in detection:
+                                continue
+                            rectangle = np.asarray(detection[key], dtype=float)
+                            if (rectangle.shape != (4, 2) or not np.isfinite(rectangle).all()
+                                    or np.any(np.abs(rectangle) > 2_000_000_000)):
+                                raise ValueError("Malformed projected tray rectangle")
                     identities.append(detection["source_index"])
                 if len(identities) > result["count"] or len(set(identities)) != len(identities):
                     raise ValueError("Duplicate or excess detections")

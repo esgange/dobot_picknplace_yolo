@@ -310,7 +310,7 @@ def test_click_inspection_keeps_live_updates_without_overwriting_dimensions(wind
     window._click(50, 50)
     assert window.detail_sample is not None and window.plane_view is None
     assert window.dimensions["length_mm"].text() == "222"
-    assert "200.0 × 100.0" in window.detail_label.text()
+    assert "X/width 100.0 mm × Y/length 200.0 mm" in window.detail_label.text()
     view = live_view(45)
     window._show_view(view)
     window.node.accept_view.assert_called_once_with(view)

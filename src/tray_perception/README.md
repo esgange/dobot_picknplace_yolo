@@ -66,6 +66,14 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    both captured panes; sampled pixels mark accepted values black and rejected values red,
    mapped with each pane's distortion model.
 4. Click a displayed tray to inspect its measured size and acceptance reason.
+   Once the reference plane exists, every fully measurable mask/OBB has a cyan
+   nearest-base corner, red **X / short-edge** arrow, green **Y / long-edge** arrow
+   and edge lengths in mm. Measurements and axes work before dimensions are
+   entered, for unchecked classes, and outside size tolerance; those detections
+   remain ineligible for a production pose. Clicks report that tray's X/width,
+   Y/length and corner XYZ in `base_link`, without changing your expected dimensions.
+   Depth shows the same geometry projected with its own distortion model when
+   available. Missing live depth does not block plane-based RGB measurements.
    Main views stay live; the last clicked observation is labelled with its age.
    Its highlight disappears on the next frame, and settings changes invalidate
    the summary. There is no Resume Live button or persistent main-view freeze.
@@ -90,14 +98,18 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
 
 The origin is the detected rectangle corner nearest the robot `base_link`
 origin by **3D Euclidean distance**. Both +X and +Y point along its adjacent
-edges into the tray. Z follows the taught plane normal toward the teaching
-camera; X/Y edge order preserves a right-handed frame. X is not required to be
-the long edge. Image left/right is irrelevant. Exact distance ties use base XYZ
-ordering. A symmetric unmarked tray has no tracked physical-corner identity;
+edges into the tray: **X is always the short edge; Y is the long edge**. Z is
+their right-handed cross product and may point to either side of the plane;
+its direction cannot also be forced toward the camera for every nearest corner.
+The saved reference-plane normal still faces its teaching camera; it is separate
+from the detected tray attitude. Image left/right is irrelevant. Exact distance
+ties use base XYZ ordering; equal-length edges use their adjacent endpoints'
+base XYZ ordering. A symmetric unmarked tray has no tracked physical-corner identity;
 the origin can switch when another corner becomes nearest the base.
 
-The preview marks the selected origin in cyan with red +X and green +Y. Dimensions, base XYZ and
-snapshot age appear below the image; rejection reasons are in its tooltip.
+The preview measures all complete tray polygons, while only the single eligible
+tray nearest image center supplies TF/service output. Dimensions, base XYZ and
+observation age appear below the image; rejection reasons remain visible.
 `base_link -> tray_teach_selected_tray` is a teaching-only TF published once per
 selected RGB observation with its original timestamp. Changes, failures or
 expiry stop publication; TF viewers can retain history until their timeout. It is not a
@@ -140,6 +152,14 @@ The cloud covers the calibrated valid depth scene (200–1000 mm), without a tra
 ROI, and requires synchronized RGB/depth/CameraInfo and timestamped calibrated TF.
 It needs neither a plane nor YOLO/classes/dimensions. Pose measurements still use
 full-resolution polygons and the taught plane, independently of live depth.
+
+If Item Teach voxels are visible but Tray Teach voxels are absent, check that
+RViz has the enabled **Tray Teach - 10 mm colored voxels** display on
+`/tray_teach/voxel_cloud`. An already-running RViz does not reload changed files
+automatically. Use **File → Open Config** with
+`install/dobot_rviz/share/dobot_rviz/rviz/urdf.rviz` to load the canonical display.
+Tray Teach must be running with matching calibration and synchronized inputs to
+publish its first cloud. Its RGB-pane RViz status and diagnostics report input gaps.
 
 Reuse the exact displayed observation, at most once per second, without a second
 YOLO prediction. Retain the latest cloud indefinitely; after five seconds without
@@ -203,7 +223,7 @@ load/save/preview actions. Disarm, changes and shutdown cancel in-flight results
 A successful request reports `OK` with `found=true` and one tray, or
 `NO_VALID_TRAY` with `found=false`. The response includes the source RGB timestamp,
 base_link pose, detected/valid counts, class/confidence, sorted long/short lengths,
-and actual positive-axis `extent_x`/`extent_y`, all metric lengths in metres.
+and positive-axis `extent_x = width` / `extent_y = length`, all in metres.
 The controller chooses X/Y placement inside those extents; tray attitude is a
 reference frame, not a commanded robot TCP orientation. Diagnostics include the
 profile/model/calibration hashes, reference-plane evidence and detection reasons.

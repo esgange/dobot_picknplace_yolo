@@ -626,7 +626,14 @@ replaced; grey it after five seconds without fresh data or immediately on invali
 
 The detected origin is the rectangle corner nearest the robot base by 3D
 distance. Both positive axes run inward along adjacent tray edges, independent
-of image left/right. Save a new YAML/model pair under `offline_teach/tray_teach/`;
+of image left/right: red X follows the short edge and green Y the long edge.
+Z follows their right-handed cross product. After plane teaching, all measurable
+trays show these axes and mm dimensions, including before expected sizes are
+entered; clicks report that tray's measurements without changing your settings.
+Only the eligible center-prioritized tray is returned by the pose service.
+If an older RViz window has no Tray Teach display, reload the installed canonical
+`dobot_rviz/rviz/urdf.rviz` configuration to subscribe to `/tray_teach/voxel_cloud`.
+Save a new YAML/model pair under `offline_teach/tray_teach/`;
 reopening it needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
 variables. **Simulate Trigger** runs the same fresh observation pipeline as the

@@ -36,7 +36,7 @@ def pose_extents(selected):
         if (np.any(lengths <= 0) or not np.allclose(corners[0], selected["position"], atol=1e-6)
                 or not np.allclose(axes / lengths[:, None], rotation[:, :2].T, atol=1e-5)
                 or not np.allclose(corners[2], corners[0] + axes.sum(axis=0), atol=1e-6)
-                or not np.allclose(sorted(lengths),
+                or not np.allclose(lengths,
                                    [selected["width_mm"] / 1000, selected["length_mm"] / 1000],
                                    atol=1e-6)):
             raise ValueError("Tray corners, axes or dimensions disagree")

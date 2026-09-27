@@ -468,6 +468,19 @@ hold old highlights/TF instead of new preview data. Preserve the single worker,
 bounded pending action, two executor threads, 1 Hz processing and strict schemas.
 This supersedes rules 139/140's frozen main-view inspection/simulation only.
 
+Rule 143 fixes detected tray axes to inward short-edge X and long-edge Y at the
+rectangle corner nearest base_link in 3D. Z follows X cross Y and can face either
+side of the reference plane, superseding rules 137/140's camera-facing detected
+tray Z; keep the taught plane's existing normal and schema 1. Show plane-based
+dimensions and red-X/green-Y edge overlays for all fully measurable mask/OBB
+detections, including missing expected sizes, unchecked classes and tolerance
+failures. Mirror geometry using each RGB/depth distortion model; live depth is
+optional after plane teaching. Clicks report that detection's X/width, Y/length
+and base corner without overwriting fields or freezing preview. Production gates
+and single-tray ranking remain strict; service extents must be X=width/Y=length.
+Exact equal-edge ties use adjacent endpoint base XYZ. No additional TF targets,
+RViz numeric overlays, model executions, schema or hardware changes are added.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
