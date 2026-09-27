@@ -530,6 +530,21 @@ session-only startup restoration and existing worker/executor limits. This super
 rules 137/139/145/146's complete-profile save gate and new-pair-only saving; corner
 edits still require Create before they are persisted as a plane.
 
+Rule 148 automatically loads available selected calibration/model files in Item
+Teach and Tray Teach at startup and after Browse. Remove Item Teach's separate
+Load Calibration and Load Model buttons; Tray Teach's source selectors say Browse.
+The selected/restored model path authorizes loading in the existing native worker,
+without a separate model trust prompt. Retain paired hash/task/class validation,
+saved class selections, bounded work, stale-result rejection and terminal native
+failures. Missing sources do not block independent inputs; load once they become
+available. Invalid existing files are not retried until reselected. Item calibration
+choices validate together and only valid complete sets update existing .env keys;
+startup restoration does not rewrite .env. Preview starts when ready; Armed remains
+manual. Preserve teach-file save/load actions, strict artifacts and headless behavior.
+No hardware commands, additional workers/executors or configuration stores are added.
+This supersedes the explicit model-load/trust and unapplied calibration/model
+restoration requirements in rules 19/42/131/133/137/139/141/147 only.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

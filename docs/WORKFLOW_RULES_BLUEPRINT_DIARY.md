@@ -6275,6 +6275,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Verification used temporary synthetic artifacts and offscreen Qt. No operator
   model execution, process restart, hardware test or offline-transfer milestone.
 
+### 2026-09-27 — Automatically load selected teaching calibration and model files
+
+- Rule 148 follows the request to load available calibration/model files from
+  restored fields and immediately after browsing. Remove Item Teach's separate
+  Load Calibration and Load Model / Read Classes buttons. Tray Teach camera and
+  model selectors now say Browse. Top-level teach-file Load/Save and the explicit
+  Item Teach form/Home replacement confirmation remain separate artifact actions.
+- Selecting/restoring a local model path now authorizes its native load, without
+  another model trust prompt. Item Teach's restored paired model still checks its
+  saved YAML/model hashes, task, classes and geometry before/after inspection.
+  A reopened profile clears prior model authority before revalidation. Keep saved
+  class IDs and inference sizes, verify them against loaded metadata, then start
+  the existing 1 Hz preview when camera/settings are ready. Arming stays manual.
+- Item Teach loads its existing complete .env calibration set on startup without
+  rewriting the file. Browsing or coalesced field updates validate the complete
+  platform/bin-camera/robot-camera set before atomically remembering it in the
+  existing keys. Platform browsing fills its exact bound camera before validation;
+  normalized filenames cannot recursively trigger another load. Partial, missing
+  or invalid selections clear stale authority but never replace saved .env choices.
+- Tray Teach restores camera/model fields from its existing session and loads
+  available calibration then model using the same single worker, before the next
+  preview. Browsing loads in that same bounded slot. Missing/invalid calibration
+  cannot block independent RGB/model preview. Keep incomplete form text, saved
+  classes and matching camera prefixes; changing calibration invalidates the plane.
+  Session restoration still does not load a Tray Teach plane/position; the existing
+  Load Tray Teach action restores those artifact values.
+- Missing selected files report availability and may load once they appear.
+  Existing invalid files are attempted once per selection; browse the corrected
+  file again to retry. Already loaded files are not watched, hash-adopted or silently
+  replaced. No automatic native-worker restart, inference backlog, extra executor,
+  new configuration key/store, camera process, robot command or arming is introduced.
+  Headless readers and save formats remain unchanged. This supersedes the earlier
+  standalone trust/load and unapplied source-restoration rules listed in AGENTS.md.
+- Validation: both scoped symlink builds passed; Item Perception's 446 tests and
+  Tray Perception's 139 tests passed. All four changed Python files passed flake8,
+  and git diff --check passed. Mocked offscreen Qt screenshots verified the revised
+  controls in both windows. No operator model execution, operator artifact/config
+  edits, live process restarts, hardware tests or offline-transfer milestone.
+
 ### Future entry template
 
 ```text

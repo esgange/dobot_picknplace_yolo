@@ -25,7 +25,7 @@ Settings, Tray Size Filter, Teaching Position and Reference Plane. Load/Save sta
 the top right, with YOLO/Simulate/Armed above the live views. Reference-plane
 controls edit the teach file's geometry, independently of camera setup.
 
-Load the camera's schema-7 calibration from `calibration/` to enable metric
+Browse the camera's schema-7 calibration from `calibration/` to enable metric
 geometry; this also fills/connects its recorded prefix. A different manually
 connected prefix permits detection but cannot reuse that calibration. Reconnecting
 to another prefix invalidates the plane and pose; no calibration remapping occurs.
@@ -34,7 +34,7 @@ RGB-time `base_link <- Link6` TF. A shared 100 ms background TF wait preserves
 the exact image timestamp and rechecks freshness. Missing TF blocks geometry,
 not RGB detection. No platform/bin artifacts or `.env` changes are needed.
 
-1. Load a trusted local YOLO `.pt` model to enable up to 1 Hz preview when RGB is
+1. Browse a local YOLO `.pt` model to automatically load it and enable 1 Hz preview when RGB is
    ready. **YOLO Detect ON/OFF** controls inference; OFF retains RGB/depth/voxel
    preview. Show all model classes under the current confidence, IoU and detection
    cap; checked classes determine pose eligibility. Defaults are 0.25 / 0.70 / 100
@@ -129,8 +129,8 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    path when all required data validates; incomplete edits can save them as drafts
    again. External YAML/model modifications require reloading before overwriting.
 7. **Load Tray Teach…** restores complete profiles or partial drafts for further
-   teaching. Model-containing documents require explicit trust and verify the paired
-   model plus any bound calibration; name-only drafts need no model trust prompt.
+   teaching. Model-containing documents verify and load the paired model plus any
+   bound calibration automatically; there is no additional model trust prompt.
    A saved plane or copied position needs no source Item Teach file/model to reopen.
    Incomplete drafts cannot arm, simulate a production request or run headlessly.
    Loading a tray is optional when starting a new profile; Save does not deploy files
@@ -170,8 +170,15 @@ confidence/IoU/detection cap, selected classes and inference size. Saving the dr
 works with YOLO OFF, no loaded inputs, incomplete dimensions and invalid text;
 the restored text must still pass normal validation before use. File dialogs
 preselect remembered choices, and saved class IDs are checked against the model
-on explicit load. Startup restores only the form: YOLO and Armed remain OFF,
-with no automatic model, camera, teaching position or reference-plane loading.
+on loading. Available calibration/model paths restore automatically through the
+existing worker, calibration first and model next. Both source selectors use
+**Browse…**, and choosing a file also loads it without another click or model
+confirmation. Selecting/restoring a model path authorizes that local load.
+Missing or invalid calibration cannot block RGB/model preview. Missing files can
+load once available; an invalid existing file is attempted once until browsed again.
+Already loaded files are never silently replaced. YOLO preview starts when inputs
+are ready; Armed stays OFF. No automatic teaching-position or reference-plane restoration
+is added to session prefill.
 Use **Load Tray Teach…** to restore a saved plane and teaching position.
 Session schema 2 explicitly imports validated schema-1 sessions and replaces
 them on the next draft save. Malformed or unknown formats fail explicitly;

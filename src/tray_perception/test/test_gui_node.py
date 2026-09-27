@@ -47,6 +47,107 @@ def test_gui_starts_unapplied_and_has_no_motion_client(window):
                        ("create_client", "create_service") for n in calls)
 
 
+def automatic_sources(window):
+    camera = window.node.root / "calibration/camera_to_hand_calibration_test.yaml"
+    camera.parent.mkdir(exist_ok=True)
+    camera.write_text("synthetic calibration; loader is mocked")
+    model = window.node.root / "model.pt"
+    model.write_bytes(b"synthetic weights; inspector is mocked")
+    calls = []
+
+    def load_camera(path):
+        calls.append(("camera", path))
+        window.node.camera = SimpleNamespace(
+            path=path, settings=SimpleNamespace(camera_prefix="robot_camera"))
+        return window.node.camera
+
+    def load_model(path):
+        calls.append(("model", path))
+        window.node.model = {"path": str(path), "task": "segment", "sha256": "1" * 64}
+        window.node.model_metadata = {"task": "segment", "classes": {"0": "tray", "1": "brown"}}
+        return window.node.model_metadata
+
+    window.node.apply_camera = MagicMock(side_effect=load_camera)
+    window.node.inspect_model = MagicMock(side_effect=load_model)
+    return camera, model, calls
+
+
+def test_restored_available_sources_load_once_in_order_and_keep_classes(window, monkeypatch):
+    from test_core import draft_session
+    camera, model, calls = automatic_sources(window)
+    state = draft_session()
+    state.update(camera_filename=camera.name, model_path=str(model))
+    state["draft"].update(name="brown_tray", confidence="0.25", class_ids=[1])
+    gui.write_session(window.node.root, state)
+    question = MagicMock(side_effect=AssertionError("No model confirmation needed"))
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
+    restored = gui.TrayTeachWindow(window.node)
+    restored.timer.stop()
+    try:
+        assert not calls
+        restored._tick()
+        finish_jobs(restored)
+        assert calls == [("camera", camera), ("model", model)]
+        assert restored.camera_prefix.text() == "robot_camera"
+        assert restored._class_ids() == [1] and restored.image_size == 320
+        assert restored.preview_toggle.isChecked() and not restored.armed_toggle.isChecked()
+        assert restored.node.plane is None and restored.node.position is None
+        for _ in range(3):
+            restored._tick()
+        assert len(calls) == 2
+        question.assert_not_called()
+    finally:
+        restored.close()
+
+
+def test_browse_loads_sources_and_cancel_preserves_them(window, monkeypatch):
+    camera, model, calls = automatic_sources(window)
+    buttons = [button.text() for button in window.findChildren(gui.QtWidgets.QPushButton)]
+    assert buttons.count("Browse…") == 2 and "Load…" not in buttons
+    monkeypatch.setattr(window, "_choose", lambda *_a: camera)
+    window._load_camera()
+    finish_jobs(window)
+    monkeypatch.setattr(window, "_choose", lambda *_a: model)
+    window._load_model()
+    finish_jobs(window)
+    assert calls == [("camera", camera), ("model", model)]
+    monkeypatch.setattr(window, "_choose", lambda *_a: None)
+    window._load_camera()
+    window._load_model()
+    assert len(calls) == 2 and window.node.model["path"] == str(model)
+
+
+def test_missing_or_invalid_camera_does_not_block_model_or_repeat_load(window):
+    camera, model, calls = automatic_sources(window)
+    window.camera_path.setText("missing.yaml")
+    window.model_path.setText(str(model))
+    window._tick()
+    finish_jobs(window)
+    assert calls == [("model", model)]
+    window.node.apply_camera.side_effect = ValueError("Invalid calibration")
+    window.camera_path.setText(camera.name)
+    window._tick()
+    finish_jobs(window)
+    assert "Invalid calibration" in window.status.text()
+    for _ in range(3):
+        window._tick()
+    window.node.apply_camera.assert_called_once()
+    assert window.node.model is not None and window.node.camera is None
+
+
+def test_available_sources_wait_for_preview_and_explicit_work(window):
+    camera, model, calls = automatic_sources(window)
+    window.camera_path.setText(camera.name)
+    window.model_path.setText(str(model))
+    window.future, window.job_kind, window.completion = Future(), "preview", MagicMock()
+    window._tick()
+    assert not calls and window.pending_job is None
+    window.future.set_result(None)
+    window._tick()
+    finish_jobs(window)
+    assert calls == [("camera", camera), ("model", model)]
+
+
 def test_canvas_maps_scaled_pixels_and_rejects_letterboxing(window):
     window._corner_evidence = MagicMock()
     canvas = window.canvas

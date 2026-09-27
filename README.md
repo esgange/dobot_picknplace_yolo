@@ -413,9 +413,10 @@ short segments may still decelerate despite CP 100. See the
 controller README for feedback/Stop confirmation and
 deployment safety requirements.
 
-For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
-load while the automatic bin border is updating: the confirmed
-load takes the next worker slot, with queued/loading progress and no retry.
+Browse a standalone `.pt` to load it and read its classes automatically. Available
+model paths restored from the saved Item Teach also load automatically, with the
+paired YAML/model hashes checked. The load takes the next worker slot while the
+automatic bin border is updating, with queued/loading progress and no repeated retry.
 Connect RGB before or after loading; the 1 Hz YOLO preview starts automatically
 once its inputs/settings are ready. **YOLO Detect** can stop or resume it.
 Armed remains OFF until explicitly enabled.
@@ -504,7 +505,7 @@ No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the
 same image, including with YOLO OFF. Item Teach provides **Browse…** selectors
 for platform, bin-camera and robot-camera calibration files inside root
 `calibration/`. Selecting a platform fills its exact bound bin-camera file.
-**Load Calibration** validates all three and remembers their filenames in root
+The complete selection automatically validates and remembers its filenames in root
 `.env`; descriptive mode-prefixed camera filenames are supported. Selection
 changes stop YOLO, disarm and clear old previews. Invalid selections leave the
 saved filenames unchanged. The bin camera must match the platform's recorded
@@ -519,8 +520,8 @@ same physical origin, X/Y directions, bin size and placement. This checks file
 identity, not physical alignment; it never substitutes the original transform.
 The saved bin selection reconnects this preview using the `.env` calibration
 choices at startup. The border appears when fresh RGB,
-CameraInfo and required TF arrive; this never launches cameras, executes a model
-or arms the pose service. The
+CameraInfo and required TF arrive. Model loading runs independently from its selected
+path; neither restoration nor browsing launches cameras or arms the pose service. The
 bin-border geometry uses the same shared platform-Z=0 construction as Bin Teach:
 saved metric XY is placed using only this station's full platform/camera chain,
 preserving tilt and height. No source-station transform, marker detection, depth
@@ -554,8 +555,8 @@ valid items is explicit. Click RGB again to resume; edits/source changes or YOLO
 OFF cancel old results. The armed service continues acquiring independent fresh
 observations—it never returns this frozen teaching batch.
 Unsaved text-box edits are not autosaved; restart prefills the selected saved
-teach YAML and camera prefix. Station/bin selections are the narrow automatic
-read-only-preview exception; item settings, model execution and arming remain unapplied.
+teach YAML and camera prefix. Available selected calibrations and models load
+automatically, with preview starting when ready; arming remains manual.
 
 `item_detect.launch.py` loads the same three calibration filenames saved by Item
 Teach in root `.env`. An empty, missing, invalid or mismatched selection fails
@@ -604,14 +605,16 @@ The separate `tray_perception` package currently provides the read-only
 ros2 launch tray_perception tray_teach.launch.py
 ```
 
-Enter the setup's camera prefix and **Connect RGB**, then explicitly load a
-trusted YOLO model. RGB detection works independently of calibration and a
+Enter the setup's camera prefix and **Connect RGB**, then browse a YOLO model
+to load it automatically. RGB detection works independently of calibration and a
 completed profile; live settings update after a 300 ms typing pause. Side-by-side
 RGB/depth views support click inspection with manually entered dimensions/tolerance.
 Form entries and file choices are remembered across relaunches, even with YOLO
 off or an incomplete form. Drafts save after a 300 ms pause and on orderly close;
-restoration leaves YOLO and Armed off and input loading explicit.
-Load matching camera calibration. You can leave size filters blank and copy
+available restored camera calibration/model files load automatically, and YOLO
+preview starts when ready. Armed stays OFF. The camera/model selectors use
+**Browse…** with no extra Load button or model confirmation.
+Browse matching camera calibration. You can leave size filters blank and copy
 Item Teach's Home into **Tray Teach Position** later, before detection. The sidebar
 separates camera/model settings from teaching position and reference-plane data.
 Use **Capture 4-corner snapshot…** in Reference Plane, select four surface corners
@@ -808,7 +811,7 @@ The file uses strict `KEY=value` lines and does not require a Python dotenv pack
 
 Item Teach writes `ITEM_TEACH_PLATFORM_CALIBRATION`,
 `ITEM_TEACH_BIN_CAMERA_CALIBRATION` and `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION` after
-**Load Calibration** validates the selected set. Values are filenames directly
+automatic selection validation succeeds. Values are filenames directly
 inside `calibration/`, never machine-specific paths. All three empty means no
 selection yet; otherwise all three must be populated. Existing workspaces must
 add these keys from `.env.example`, initially empty. The shell loader, bringup,

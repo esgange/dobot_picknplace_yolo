@@ -25,18 +25,20 @@ not compatibility aliases.
 ros2 launch item_perception_yolo item_teach.launch.py
 ```
 
-1. Browse for a trusted pretrained `.pt` anywhere on the PC, then explicitly
-   select **Load Model / Read Classes**. PyTorch weights can execute code; the
-   confirmation is mandatory. One package-private CPU worker loads the model,
+1. Browse for a local pretrained `.pt` anywhere on the PC; it loads automatically
+   and reads classes without another Load button or model confirmation. Available
+   model paths restored from an Item Teach profile also load automatically, with
+   the saved pair's hashes checked. Selecting/restoring that path authorizes local
+   model loading. One package-private CPU worker loads the model,
    reports its actual task and lists **one checkbox per class ID/name**. Check
    only production classes to accept; no implicit production all-classes selection. A new model starts
    with unchecked classes. A saved profile restores selected IDs as unverified
-   prefill until the model is explicitly loaded.
+   prefill until the automatic model load verifies them.
    Model loading takes priority over the automatic bin-border/inference preview:
-   the current operation finishes, then the confirmed load runs once in the
-   same worker. The button reports queued/loading progress; no repeated clicks
-   or YOLO activation are needed. Cancelling the trust question resumes previews
-   without loading. Successful loading automatically starts the 1 Hz YOLO
+   the current operation finishes, then the selected load runs once in the
+   same worker. A status label reports queued/loading progress; no extra clicks
+   or YOLO activation are needed. Cancelling Browse retains the previous selection.
+   Successful loading automatically starts the 1 Hz YOLO
    preview when ready; Armed stays OFF. Worker failures remain terminal.
    The locked native runtime is copied into the install prefix as ordinary
    files even for a workspace `--symlink-install`. Its `cv2` loader and binary
@@ -47,7 +49,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
    If both outputs are observed, choose one explicitly. Box-only `detect` models
    can be previewed but cannot be armed as mask/OBB pose generators. There is no
    task conversion or alternate-model fallback.
-3. Enter a prefix and **Connect RGB**. The explicitly loaded model's 1 Hz preview
+3. Enter a prefix and **Connect RGB**. The loaded model's 1 Hz preview
    starts when ready; **YOLO Detect** stops/resumes it. There is one view;
    the Detect All/Filtered controls, dropdown and Resume Live button are removed.
    It displays every model class, including size failures. Home and a saved item
@@ -60,7 +62,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
 4. Use **Browse…** beside **Platform calibration**, **Bin camera calibration**
    and **Robot camera calibration** to choose files directly inside root
    `calibration/`. Choosing a platform fills its recorded bin-camera file.
-   **Load Calibration** validates the complete set and atomically saves only
+   Browsing automatically validates the complete set and atomically saves only
    their basenames to root `.env` as `ITEM_TEACH_PLATFORM_CALIBRATION`,
    `ITEM_TEACH_BIN_CAMERA_CALIBRATION` and `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION`.
    Every key is required; all empty is first run, otherwise all must be set.
@@ -131,9 +133,9 @@ ros2 launch item_perception_yolo item_teach.launch.py
 
 ### Default 1 Hz RViz preview
 
-After explicit trusted model loading, Item Teach enables YOLO preview when its
-camera/settings are ready. Startup prefill never executes weights, and arming
-remains explicit. At most once per second, one existing worker job runs YOLO,
+After an automatic model load, Item Teach enables YOLO preview when its
+camera/settings are ready. Available model selections restored at startup also
+load, while arming remains explicit. At most once per second, one worker job runs YOLO,
 then reuses that exact RGB/depth/TF observation for a calibrated colored 10 mm
 voxel cloud and every valid candidate. Slow processing lowers the rate; jobs
 never accumulate or catch up. There is no second YOLO prediction, additional
@@ -325,7 +327,7 @@ source-frame age and inference time; at over 0.5 seconds explicitly label
 Never transfer old annotated pixels onto a newer raw image, show a past detection
 count over raw RGB, or pass display snapshots into production service requests. Incoming-input
 and pose-service freshness limits are unchanged. Frozen selections are also
-age-labelled. Loading a station automatically never starts a model.
+age-labelled. Station and model selections load independently; neither arms the service.
 
 The ROS/Qt parent never imports cv2/Torch/Ultralytics. Build verifies and extracts
 the exact private inference wheels without internet/global installation. Fixed
@@ -362,7 +364,7 @@ model remains untouched and the pair works without it.
 **Load Item Teach** accepts only that directory. Complete schema-9 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
-trust/verification, YOLO ON and fresh station inputs remain mandatory. Loading
+verification, YOLO ON and fresh station inputs remain mandatory. Loading
 does not arm, simulate or command anything. Older/partially invalid files open as
 labelled GUI-only recovery drafts: keep independently valid fields, blank unclear/missing values,
 and show unknown booleans as partial checkboxes requiring an explicit choice.
@@ -372,15 +374,15 @@ home records are cleared as a whole, never filled with zero joints. Unverified
 paired weights leave the model field empty; browse a trusted model explicitly.
 The warning/Activity log explains every cleared field. Missing internal
 `image_size` requires explicitly browsing a model to establish new-profile 640.
-Recovery also applies to named-file startup prefill, without executing weights.
+Recovery also applies to named-file startup prefill; any independently verified
+paired model then loads automatically. Missing/changed pairs never execute.
 No recovered draft can simulate, arm or be validated in the controller until
 reviewed and saved as a strict schema-9 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
 controller readers stay strict and never call the GUI recovery reader.
-Its single confirmation now covers replacing the form/home and trusting the
-paired `.pt` (weights can execute code). Loading the YAML automatically queues
+Its single confirmation covers replacing the form/home. Loading the YAML queues
 that exact model and reads its classes—no second Load Model click. The existing
 worker finishes its current preview and gives the load the next slot. Overlapping
 loads are disabled. The pair's hash is checked before queuing/loading and after
@@ -388,8 +390,10 @@ inspection, along with saved task, class IDs and geometry support. Keep the save
 selection and fields; do not substitute classes, a task or another output.
 Failures are visible and never retried. Successful verified loading starts the
 1 Hz teaching preview when ready; Armed stays OFF.
-Startup form prefill remains weight-free; manually browsing a standalone model
-still requires the separate explicit Load Model/trust action.
+Startup prefill and browsing a standalone model both load available selected weights
+automatically. Missing files are reported without blocking independent camera work;
+they can load once available. Invalid existing files do not trigger repeated loads;
+Browse the same corrected file to retry. Already loaded files are not watched/replaced.
 
 The YAML groups `item`, `model`, `units`, `home`, `pick_rotation`, `motion`, `speed`, `acceleration`, `timing`, `gripper`,
 `retry`, `yolo`, `geometry`, `geometry_source`, `bin_clearance`, `quality`, and the non-executing
@@ -458,14 +462,15 @@ motion.
 
 Item Save/Load records the selected artifact filename in shared strict schema-6
 UI state, alongside explicit preview prefix and applied station/bin filenames.
-Restart reads validated fields and treats a complete valid item profile as saved
-without enabling execution. It never sends a controller profile, replays joints,
-loads native weights, arms a service, restores an external model path or keeps
-duplicate profile settings. Read-only station/RGB preview restoration follows
-the validated automatic bin-ROI workflow described above.
+Restart reads validated fields, treats a complete valid item profile as saved,
+and automatically loads its verified paired model plus the selected calibrations.
+It never sends a controller profile, replays joints, arms a service, restores an
+external model path or keeps duplicate profile settings. Read-only station/RGB
+preview restoration follows the validated automatic bin-ROI workflow above.
 Unsaved text-box edits are **not** autosaved. Only fields in the selected saved
 teach YAML return on restart. Live/frozen images, clicked measurements, stage,
-model execution and arming state are never restored or written as image files.
+and arming state are never restored or written as image files. Model loading is
+fresh verification of the selected file, not restoration of an old worker result.
 
 ### Pose generation contract
 
@@ -592,7 +597,7 @@ ITEM_TEACH_BIN_CAMERA_CALIBRATION
 ITEM_TEACH_ROBOT_CAMERA_CALIBRATION
 ```
 
-Use Item Teach's selectors and **Load Calibration** to save a complete validated
+Use Item Teach's Browse selectors to automatically save a complete validated
 set before starting the detector. Values are filenames directly inside root
 `calibration/`. All empty is allowed for Item Teach's first run, but headless
 startup fails with an instruction to make a selection. Partial/missing keys,

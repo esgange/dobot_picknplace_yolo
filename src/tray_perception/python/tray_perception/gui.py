@@ -117,6 +117,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.profile_filename = ""
         self.save_target = None
         self.draft_reason = ""
+        self.auto_source_attempts = {}
+        self.auto_source_notices = {}
         self.saved_plane = None
         self.session_ready = False
         self.session_due = None
@@ -337,7 +339,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         splitter.setSizes([390, 1170])
         splitter.setStretchFactor(1, 1)
         self.status = QtWidgets.QLabel(
-            "Connect RGB and load a trusted model to preview. Calibration enables geometry.")
+            "Connect RGB and browse a model to preview. Selected files load automatically.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
         state = read_session(node.root)
@@ -364,8 +366,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 entry.setCheckState(QtCore.Qt.Checked)
                 self.classes.addItem(entry)
             self.classes.blockSignals(False)
-            self.status.setText("Previous draft restored. Load inputs to validate and preview; "
-                                "YOLO and Armed are OFF.")
+            self.status.setText("Previous draft restored. Available calibration/model files "
+                                "load automatically; Armed stays OFF.")
         self.last_session = state
         self.session_ready = True
         for widget in (self.camera_path, self.item_path, self.model_path):
@@ -380,7 +382,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.buttons.append(button)
         return button
 
-    def _path_row(self, form, label, field, callback, *, button_text="Load…"):
+    def _path_row(self, form, label, field, callback, *, button_text="Browse…"):
         field.setReadOnly(True)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(field, 1)
@@ -484,30 +486,72 @@ class TrayTeachWindow(QtWidgets.QWidget):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, str(initial), pattern)
         return Path(path) if path else None
 
-    def _trust(self):
-        return QtWidgets.QMessageBox.question(
-            self, "Load trusted model", "PyTorch model loading executes serialized model code. "
-            "Do you trust the selected local model?", QtWidgets.QMessageBox.Yes |
-            QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No) == QtWidgets.QMessageBox.Yes
-
     def _load_camera(self):
         path = self._choose("Camera calibration", self.node.root / "calibration", "YAML (*.yaml)",
                             self.camera_path.text())
         if path is not None:
-            self._edited()
-            self._reset_inspection()
+            if path.resolve().parent != (self.node.root / "calibration").resolve():
+                self._message("Select a camera YAML inside calibration/", error=True)
+                return
+            self.camera_path.setText(path.name)
+            self._start_camera_load(path)
 
-            def loaded(camera):
-                self.camera_path.setText(camera.path.name)
-                self.camera_prefix.setText(camera.settings.camera_prefix)
-                self._message(f"Loaded camera calibration: {camera.path.name}")
-            self._job(lambda: self.node.apply_camera(path), loaded, "camera")
+    def _start_camera_load(self, path):
+        self.auto_source_attempts["camera"] = str(path.absolute())
+        self._edited()
+        self.node.camera = self.node.plane = None
+
+        def loaded(camera):
+            self.camera_path.setText(camera.path.name)
+            self.camera_prefix.setText(camera.settings.camera_prefix)
+            self._message(f"Loaded camera calibration: {camera.path.name}")
+        self._job(lambda: self.node.apply_camera(path), loaded, "camera")
 
     def _load_model(self):
         path = self._choose("YOLO model", self.node.root, "PyTorch (*.pt)", self.model_path.text())
-        if path is not None and self._trust():
-            self._edited()
-            self._job(lambda: self.node.inspect_model(path), self._model_loaded, "model")
+        if path is not None:
+            if str(path) != self.model_path.text():
+                self.classes.clear()
+                self.pending_ids = []
+            self.model_path.setText(str(path))
+            self._start_model_load(path)
+
+    def _start_model_load(self, path):
+        self.auto_source_attempts["model"] = str(path.absolute())
+        self.model_path.setText(str(path.absolute()))
+        self._edited()
+        self.node.model = self.node.model_metadata = None
+        self.model_status.setText("Loading model / reading classes…")
+        self._job(lambda: self.node.inspect_model(path), self._model_loaded, "model")
+
+    def _autoload_sources(self):
+        if (self.closing or self.node.fatal_error or self.node.native.failed or
+                self.future is not None or self.pending_job is not None
+                or self.node.requests.busy):
+            return
+        for kind, field, directory, start in (
+                ("camera", self.camera_path, self.node.root / "calibration",
+                 self._start_camera_load),
+                ("model", self.model_path, self.node.root, self._start_model_load)):
+            value = field.text().strip()
+            if not value:
+                continue
+            path = Path(value).expanduser()
+            path = path if path.is_absolute() else directory / path
+            key = str(path.absolute())
+            loaded = (getattr(self.node.camera, "path", None) if kind == "camera" else
+                      self.node.model.get("path") if self.node.model is not None else None)
+            if loaded is not None and Path(loaded) == path:
+                self.auto_source_attempts[kind] = key
+            if self.auto_source_attempts.get(kind) == key:
+                continue
+            if not path.is_file():
+                if self.auto_source_notices.get(kind) != key:
+                    self.auto_source_notices[kind] = key
+                    self._message(f"Selected {kind} file is unavailable: {path}", error=True)
+                continue
+            start(path)
+            return  # One explicit operation; the next source uses the next free worker slot.
 
     def _model_loaded(self, metadata):
         restored_ids = (self._class_ids() if self.model_path.text() == self.node.model["path"]
@@ -558,8 +602,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
                       lambda result: self._open_tray(path, *result), "read_profile")
 
     def _open_tray(self, path, document, target):
-        if document["model"] is not None and not self._trust():
-            return
         self._edited()
         draft = document["artifact_type"] == "tray_teach_draft"
 
@@ -657,7 +699,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
     def _form_settings(self):
         if self.node.model is None:
-            raise ValueError("Explicitly load a trusted YOLO model")
+            raise ValueError("Select an available YOLO model; it loads automatically")
         task = self.node.model["task"]
         settings = {"name": self.name.text().strip(), "model_task": task,
                     "geometry_source": {"segment": "mask", "obb": "obb", "detect": "none"}[task],
@@ -712,7 +754,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             return
         try:
             if self.node.model is None:
-                raise ValueError("Load a trusted model to enable YOLO")
+                raise ValueError("Waiting for the selected YOLO model to load")
             task = self.node.model["task"]
             yolo = self._yolo()
             accepted = yolo["class_ids"]
@@ -1061,6 +1103,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if self.future is None and self.pending_job is not None:
             job, self.pending_job = self.pending_job, None
             self._job(*job)
+        self._autoload_sources()
         busy = self.future is not None
         requests = self.node.requests
         arming = ((self.future is not None and self.job_kind == "arm") or

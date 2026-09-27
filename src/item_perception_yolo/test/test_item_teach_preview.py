@@ -167,8 +167,9 @@ def simulation_setup(window):
                               rejected_depth_count=2)
     candidate.pose.position.z = .1
     candidate.pose.orientation.w = 1.
-    response = GetItemPoses.Response(success=True, status="SHORTAGE", message="Returned 1 of 3 requested",
-                                     valid_count=1, detected_count=20, candidates=[candidate])
+    response = GetItemPoses.Response(
+        success=True, status="SHORTAGE", message="Returned 1 of 3 requested",
+        valid_count=1, detected_count=20, candidates=[candidate])
     view = {"width": 200, "height": 100, "rgb": bytes([80, 100, 120])*20000,
             "depth_rgb": bytes([160, 50, 90])*20000, "stamp_ns": 100_100_000_000,
             "depth_stamp_ns": 100_100_000_000, "sequence": 10, "preview_mode": "filtered",
@@ -196,7 +197,8 @@ def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(windo
     assert window.simulation_response is response
     assert "SIMULATED SHORTAGE" in window.rgb_feedback.text()
     assert "SIMULATED SHORTAGE" in window.depth_feedback.text()
-    assert "P1 part" in window.rgb_feedback.text() and "100 accepted / 2 rejected" in window.depth_feedback.text()
+    assert "P1 part" in window.rgb_feedback.text()
+    assert "100 accepted / 2 rejected" in window.depth_feedback.text()
     window.node.simulate_trigger.assert_called_once()
     window.node.arm.assert_not_called()
     window.node.show_selected_pose.assert_not_called()
@@ -267,7 +269,8 @@ def test_simulation_requirements_and_empty_or_failed_batch(window, failure):
             assert "NO_VALID_ITEMS" in window.rgb_feedback.text()
             assert window.frozen_view is not None and not window.simulation_response.candidates
         else:
-            assert window.frozen_view is None and "One request active" in window.status.toPlainText()
+            assert window.frozen_view is None
+            assert "One request active" in window.status.toPlainText()
     else:
         assert window.pending_simulation is None
         window.node.simulate_trigger.assert_not_called()
@@ -390,7 +393,7 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
         assert feedback.geometry().bottom() < image.geometry().top()
         assert feedback.height() >= feedback.heightForWidth(feedback.width())
         expected = gui.QtGui.QImage(pixels, width, height, width * 3,
-                                   gui.QtGui.QImage.Format_RGB888)
+                                    gui.QtGui.QImage.Format_RGB888)
         expected = gui.QtGui.QPixmap.fromImage(expected).scaled(
             image.size(), gui.QtCore.Qt.KeepAspectRatio, gui.QtCore.Qt.SmoothTransformation)
         assert image.pixmap().toImage() == expected.toImage()  # No burnt-in text/background.
@@ -401,9 +404,9 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
     # Header clicks are not image clicks and cannot select/release a frozen target.
     clicked = MagicMock()
     window.video.clicked.connect(clicked)
-    event = gui.QtGui.QMouseEvent(gui.QtCore.QEvent.MouseButtonPress, gui.QtCore.QPointF(20, 10),
-                                 gui.QtCore.Qt.LeftButton, gui.QtCore.Qt.LeftButton,
-                                 gui.QtCore.Qt.NoModifier)
+    event = gui.QtGui.QMouseEvent(
+        gui.QtCore.QEvent.MouseButtonPress, gui.QtCore.QPointF(20, 10),
+        gui.QtCore.Qt.LeftButton, gui.QtCore.Qt.LeftButton, gui.QtCore.Qt.NoModifier)
     gui.QtWidgets.QApplication.sendEvent(window.rgb_feedback, event)
     clicked.assert_not_called()
     window.node.last_view = {**view, "depth_rgb": None, "depth_error": "Synthetic missing pair"}
@@ -642,7 +645,8 @@ def test_clicked_tf_preserves_platform_tilt_and_stops_on_invalidation():
         node.arm_epoch = 2 if failure == "epoch" else 1
         node.yolo_enabled = failure != "off"
         node.native.failed = failure == "native"
-        node._validate_sources.side_effect = ValueError("Source changed") if failure == "source" else None
+        node._validate_sources.side_effect = (
+            ValueError("Source changed") if failure == "source" else None)
         gui.ItemTeachNode._broadcast_selected_pose(node)
         assert node.selected_pose is None
     assert node.selected_pose_broadcaster.sendTransform.call_count == 1
@@ -660,19 +664,8 @@ def test_model_load_takes_next_slot_from_continuous_preview(window, monkeypatch,
     node.preview_once = MagicMock(return_value=None)
     window.job_busy = True  # A native preview is already in flight.
 
-    def trust_dialog(*_):
-        # Exercise the nested Qt-event-loop timing, including preview completion
-        # before the operator finishes answering the trust question.
-        window.job_results.put((running_kind, None, None))
-        window._refresh_video()
-        assert not window.job_busy
-        assert not window.load_model_button.isEnabled()
-        node.roi_once.assert_not_called()
-        node.preview_once.assert_not_called()
-        window.job_busy = True  # Also exercise an outstanding result at confirmation.
-        return gui.QtWidgets.QMessageBox.Yes
-
-    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", trust_dialog)
+    question = MagicMock(side_effect=AssertionError("Selected models load without confirmation"))
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
     release = threading.Event()
     entered = threading.Event()
     path = window.model.text()
@@ -707,7 +700,7 @@ def test_model_load_takes_next_slot_from_continuous_preview(window, monkeypatch,
         window._refresh_video()
         node.inspect_model.assert_called_once_with(path)
         assert not window.model_load_reserved
-        assert window.load_model_button.isEnabled() and window.yolo_toggle.isEnabled()
+        assert window.browse_model_button.isEnabled() and window.yolo_toggle.isEnabled()
         assert window.classes.item(0).text() == "1: part"
         assert window.yolo_toggle.isChecked() and node.yolo_enabled
         assert not window.armed_toggle.isChecked()
@@ -723,7 +716,7 @@ def test_model_load_takes_next_slot_from_continuous_preview(window, monkeypatch,
         release.set()
 
 
-def test_declining_model_trust_resumes_roi_without_loading(window, monkeypatch):
+def test_cancelled_model_browse_keeps_roi_without_loading(window, monkeypatch):
     window.node.applied = object()
     frame = {"width": 2, "height": 2, "rgb": bytes(12), "sequence": 1,
              "stamp_ns": 100_000_000_000}
@@ -731,15 +724,10 @@ def test_declining_model_trust_resumes_roi_without_loading(window, monkeypatch):
     window.node.roi_once = MagicMock(return_value=None)
     window.node.inspect_model = MagicMock()
 
-    def decline(*_):
-        window._refresh_video()
-        window.node.roi_once.assert_not_called()
-        return gui.QtWidgets.QMessageBox.No
-
-    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", decline)
-    window._load_model()
+    monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", lambda *_a: ("", ""))
+    window._browse_model()
     assert not window.model_load_reserved and window.pending_model_path is None
-    assert window.load_model_button.isEnabled() and window.yolo_toggle.isEnabled()
+    assert window.browse_model_button.isEnabled() and window.yolo_toggle.isEnabled()
     window._refresh_video()
     completed = window.job_results.get(timeout=3)
     window.job_results.put(completed)
@@ -778,7 +766,7 @@ def test_failed_model_load_unlocks_controls_without_retry(window, monkeypatch):
     window.job_results.put(completed)
     window._refresh_video()
     assert not window.model_load_reserved and window.pending_model_path is None
-    assert window.load_model_button.isEnabled() and window.yolo_toggle.isEnabled()
+    assert window.browse_model_button.isEnabled() and window.yolo_toggle.isEnabled()
     assert window.node.model_config is None
     assert "Select a non-empty .pt model" in window.status.toPlainText()
     window._refresh_video()
@@ -807,9 +795,11 @@ def paired_teach(window, tmp_path, monkeypatch):
     source.write_bytes(b"Synthetic pair; never deserialize these bytes")
     path, profile = core.save_item_profile(settings, home, source, root=tmp_path)
     metadata = {**window.node.model_metadata, "sha256": profile["model"]["sha256"]}
-    monkeypatch.setattr(gui, "load_item_profile", lambda p: core.load_item_profile(p, root=tmp_path))
+    monkeypatch.setattr(gui, "load_item_profile",
+                        lambda p: core.load_item_profile(p, root=tmp_path))
     from item_perception_yolo.item_teach_recovery import recover_item_fields
-    monkeypatch.setattr(gui, "recover_item_fields", lambda p: recover_item_fields(p, root=tmp_path))
+    monkeypatch.setattr(gui, "recover_item_fields",
+                        lambda p: recover_item_fields(p, root=tmp_path))
     monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", lambda *_: (str(path), ""))
     question = MagicMock(return_value=gui.QtWidgets.QMessageBox.Yes)
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
@@ -842,8 +832,8 @@ def test_explicit_teach_load_automatically_loads_exact_pair(window, paired_teach
     assert not window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
     window._load_dialog()
     window._load_model()  # Neither entry point can enqueue a duplicate load.
-    question.assert_called_once()  # Combined replacement/trust dialog, no second Load Model click.
-    assert "execute code" in question.call_args.args[2]
+    question.assert_called_once()  # Confirm replacing form/Home only, no model-load click.
+    assert "automatically" in question.call_args.args[2]
     if busy_preview:
         window.node.inspect_model.assert_not_called()
         window.job_results.put(("roi", None, None))
@@ -860,14 +850,60 @@ def test_explicit_teach_load_automatically_loads_exact_pair(window, paired_teach
     assert "Item teach and paired model loaded" in window.status.toPlainText()
 
 
-def test_teach_prefill_never_loads_weights(window, paired_teach):
-    path, _, settings, _, question = paired_teach
+def test_teach_prefill_automatically_loads_verified_pair_on_next_tick(window, paired_teach):
+    path, profile, settings, _, question = paired_teach
     window._load(path, prefill=True)
     assert window._settings() == settings
     assert window.saved_path == path
     window.node.inspect_model.assert_not_called()
     question.assert_not_called()
     assert not window.model_load_reserved and not window.node.yolo_enabled
+    window._refresh_video()
+    finish_model_job(window)
+    window.node.inspect_model.assert_called_once_with(
+        str(path.with_suffix(".pt")), expected_sha256=profile["model"]["sha256"])
+    assert window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
+    question.assert_not_called()
+
+
+def test_browse_model_loads_classes_without_load_button_or_confirmation(
+        window, paired_teach, monkeypatch):
+    path, _, _, _, question = paired_teach
+    # The fixture's file dialog selects the teach YAML; select its raw model instead.
+    monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", MagicMock(
+        return_value=(str(path.with_suffix(".pt")), "PyTorch")))
+    window._browse_model()
+    finish_model_job(window)
+    window.node.inspect_model.assert_called_once_with(str(path.with_suffix(".pt")))
+    assert window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
+    assert window.classes.count() == 2
+    question.assert_not_called()
+
+
+def test_missing_restored_model_loads_once_when_available(window, tmp_path):
+    path = tmp_path / "later.pt"
+    window.node.model_config = None
+    window.model.setText(str(path))
+    metadata = window.node.model_metadata
+
+    def inspect(selected):
+        window.node.model_config = {"path": selected, "task": "segment"}
+        window.node.model_metadata = metadata
+        return metadata
+
+    window.node.inspect_model = MagicMock(side_effect=inspect)
+    for _ in range(2):
+        window._refresh_video()
+    window.node.inspect_model.assert_not_called()
+    assert "not available" in window.status.toPlainText()
+    path.write_bytes(b"synthetic model; inspect is mocked")
+    window._refresh_video()
+    finish_model_job(window)
+    for _ in range(3):
+        window._refresh_video()
+    window.node.inspect_model.assert_called_once_with(str(path))
+    assert not window.armed_toggle.isChecked()
+    assert not window.model_load_reserved and window.node.yolo_enabled
 
 
 def test_new_speed_acceleration_controls_are_explicit_and_edits_disarm(window, paired_teach):
@@ -1383,7 +1419,8 @@ def test_station_files_automatically_enable_roi_when_stream_arrives(window, monk
 
 
 def test_platform_mismatch_warns_once_without_blocking_preview(window, monkeypatch):
-    station_write, prefix_write = selected_station_fixture(window, monkeypatch, source_sha="b" * 64)
+    station_write, prefix_write = selected_station_fixture(
+        window, monkeypatch, source_sha="b" * 64)
     window.platform_path.setText("/selected/platform_calibration_test.yaml")
     window.bin_path.setText("/selected/bin_teach_test.yaml")
     assert window.node.applied is not None and window.node.bin_artifact is not None
@@ -1497,7 +1534,8 @@ def test_invalid_station_hides_roi_without_repeated_apply_or_modal(window, monke
 
 
 @pytest.mark.parametrize("source_sha", ["a" * 64, "b" * 64])
-def test_restored_station_files_connect_readonly_preview_without_apply(window, monkeypatch, source_sha):
+def test_restored_station_files_connect_readonly_preview_without_apply(
+        window, monkeypatch, source_sha):
     selected_station_fixture(window, monkeypatch, source_sha=source_sha)
     monkeypatch.setattr(gui, "load_package_ui_state", lambda _: SimpleNamespace(
         item_platform_filename="platform_calibration_saved.yaml",
@@ -1530,9 +1568,9 @@ def test_invalid_explicit_load_clears_preview_but_keeps_chosen_paths(window, mon
     window.node.disarm.reset_mock()
     window.node.clear_selected_pose.reset_mock()
     gui.save_calibration_selection.side_effect = ValueError("Selected calibration is invalid")
-    reload_button = next(button for button in window.findChildren(gui.QtWidgets.QPushButton)
-                         if button.text() == "Load Calibration")
-    reload_button.click()
+    window._calibration_selection_changed()
+    window.calibration_due = 0
+    window._refresh_video()
     assert window.node.applied is None and window.node.last_view is None
     assert not window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
     window.node.disarm.assert_called()
@@ -1567,7 +1605,7 @@ def test_calibration_browse_cancel_preserves_binding_and_does_not_save(window, m
     gui.save_calibration_selection.assert_not_called()
 
 
-def test_platform_browse_prefills_bound_camera_and_waits_for_explicit_load(window, monkeypatch):
+def test_platform_browse_prefills_bound_camera_and_loads_complete_selection(window, monkeypatch):
     selected_station_fixture(window, monkeypatch)
     window.bin_path.setText("/selected/bin_teach_test.yaml")
     gui.save_calibration_selection.reset_mock()
@@ -1577,19 +1615,54 @@ def test_platform_browse_prefills_bound_camera_and_waits_for_explicit_load(windo
                         SimpleNamespace(camera=SimpleNamespace(
                             path=Path("/selected/camera_to_hand_calibration_station_2.yaml"))))
     window._choose_calibration_file(window.platform_path)
-    assert window.node.applied is None
-    assert window.calibration_camera_path.text().endswith("station_2.yaml")
-    assert "Load Calibration" in window.station_status.text()
-    gui.save_calibration_selection.assert_not_called()
+    assert window.node.applied is not None
+    assert gui.save_calibration_selection.call_args.args[1].endswith("station_2.yaml")
+    assert window.calibration_due is None  # Canonicalized fields cannot schedule another load.
+    gui.save_calibration_selection.assert_called_once()
 
 
-def test_load_calibration_remembers_validated_files_without_a_bin(window, monkeypatch):
+def test_calibration_edits_automatically_remember_files_without_a_bin(window, monkeypatch):
     selected_station_fixture(window, monkeypatch)
-    button = next(button for button in window.findChildren(gui.QtWidgets.QPushButton)
-                  if button.text() == "Load Calibration")
-    button.click()
+    buttons = [button.text() for button in window.findChildren(gui.QtWidgets.QPushButton)]
+    assert "Load Calibration" not in buttons and "Load Model / Read Classes" not in buttons
+    window.calibration_due = 0
+    window._refresh_video()
     gui.save_calibration_selection.assert_called_once_with(
         *(field.text() for field in window._calibration_fields()), root=gui.workspace_root())
     assert "Select a bin teach" in window.station_status.text()
     window.node.apply_station.assert_not_called()
+    window.node.arm.assert_not_called()
+
+
+def test_partial_calibration_selection_never_replaces_saved_selection(window, monkeypatch):
+    selected_station_fixture(window, monkeypatch)
+    window.robot_camera_path.clear()
+    window.calibration_due = 0
+    window._refresh_video()
+    gui.save_calibration_selection.assert_not_called()
+    assert "Browse platform" in window.station_status.text()
+    assert window.node.applied is None and not window.armed_toggle.isChecked()
+
+
+def test_missing_calibration_loads_once_when_selected_files_become_available(window, monkeypatch):
+    selected_station_fixture(window, monkeypatch)
+    paths = {Path(field.text()) for field in window._calibration_fields()}
+    available = [False]
+    is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file",
+                        lambda path: available[0] if path in paths else is_file(path))
+    gui.save_calibration_selection.side_effect = ValueError("Selected calibration is missing")
+    window._update_station_preview(persist=True)
+    assert window.calibration_waiting is not None
+    for _ in range(3):
+        window._refresh_video()
+    gui.save_calibration_selection.assert_called_once()
+    available[0] = True
+    gui.save_calibration_selection.side_effect = None
+    window._refresh_video()
+    assert gui.save_calibration_selection.call_count == 2
+    assert window.calibration_waiting is None and window.calibration_due is None
+    for _ in range(3):
+        window._refresh_video()
+    assert gui.save_calibration_selection.call_count == 2
     window.node.arm.assert_not_called()

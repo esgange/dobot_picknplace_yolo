@@ -252,6 +252,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.model_load_reserved = False
         self.pending_model_path = None
         self.model_requested_pair = None
+        self.auto_model_attempt = None
+        self.auto_model_notice = None
+        self.calibration_due = None
+        self.calibration_waiting = None
+        self.calibration_loading = False
+        self.calibration_resume_preview = False
         self.closing = False
         self.preview_revision = self.job_revision = 0
         self.preview_update_due = None
@@ -364,10 +370,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
             row.addWidget(choose)
             station.addRow(QtWidgets.QLabel(label))
             station.addRow(row)
-        reload_station = QtWidgets.QPushButton("Load Calibration")
-        reload_station.clicked.connect(lambda _checked=False:
-                                       self._update_station_preview(persist=True))
-        station.addRow(reload_station)
         station_fields = (("Bin teach", self.bin_path,
                            workspace_root() / "offline_teach/bin_teach"),)
         for label, field, directory in station_fields:
@@ -392,7 +394,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.bin_platform_warning.hide()
         station.addRow(self.bin_platform_warning)
         self.station_status = QtWidgets.QLabel(
-            "Select calibration files and load them to remember this station in .env."
+            "Browse calibration files; a complete valid selection loads and is remembered in .env."
         )
         self.station_status.setWordWrap(True)
         station.addRow(self.station_status)
@@ -485,13 +487,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.model = QtWidgets.QLineEdit()
         self.model.setReadOnly(True)
         self.model.setPlaceholderText("Select .pt anywhere on this PC")
-        browse = QtWidgets.QPushButton("Browse .pt…")
+        browse = self.browse_model_button = QtWidgets.QPushButton("Browse .pt…")
         browse.clicked.connect(self._browse_model)
         model_row = QtWidgets.QHBoxLayout()
         model_row.addWidget(self.model)
         model_row.addWidget(browse)
-        self.load_model_button = QtWidgets.QPushButton("Load Model / Read Classes")
-        self.load_model_button.clicked.connect(self._load_model)
+        self.model_load_status = QtWidgets.QLabel("Selected models load automatically")
+        self.model_load_status.setWordWrap(True)
         self.task = QtWidgets.QComboBox()
         self.task.addItem("Select model task", "")
         for task in MODEL_TASKS:
@@ -499,7 +501,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.task.setEnabled(False)
         identity.addRow("Item name", self.name)
         identity.addRow("Model source", model_row)
-        identity.addRow(self.load_model_button)
+        identity.addRow(self.model_load_status)
         identity.addRow("Verified task", self.task)
         self.classes = QtWidgets.QListWidget()
         self.classes.setMaximumHeight(100)
@@ -684,7 +686,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if state is not None and state.item_profile_filename is not None:
             self._load(item_directory() / state.item_profile_filename, prefill=True)
         else:
-            self._message("Load model + Connect RGB, then enable YOLO Detect. "
+            self._message("Browse a model + Connect RGB to start automatic YOLO preview. "
                           "Dimensions may be blank for detection; pose checks require them.")
         paths = saved_calibration_paths(root=workspace_root())
         if paths is not None:
@@ -744,14 +746,14 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _configure_preview(self):
         if self.model_load_reserved:
-            raise ValueError("Model loading is pending; wait for Load Model to finish")
+            raise ValueError("Model loading is pending; wait for it to finish")
         if self.node.camera_prefix != self.camera_prefix.text().strip():
             raise ValueError("Connect the exact camera prefix before enabling YOLO")
         if not self.node.camera_prefix:
             raise ValueError("Connect RGB first")
         if self.node.model_config is None or self.node.model_config["path"] != str(
                 Path(self.model.text()).expanduser().resolve()):
-            raise ValueError("Load the selected model first")
+            raise ValueError("The selected model has not finished loading")
         # Incomplete dimensions are explicitly unchecked, not guessed or reused.
         size_fields = ("height", "width", "tolerance")
         geometry = ({key: self._number(key) for key in GEOMETRY_FIELDS}
@@ -915,25 +917,35 @@ class ItemTeachWindow(QtWidgets.QWidget):
     def _load_model(self):
         if self.model_load_reserved or self.closing or self.node.native.failed:
             return
-        # Reserve before the modal question: Qt timers also run inside its event
-        # loop and must not keep taking the worker for automatic ROI previews.
         self._reserve_model_load()
         path = self.model.text()
-        if QtWidgets.QMessageBox.question(self, "Load trusted model?",
-                                          "A .pt can execute code. Load only a model you trust.\n"
-                                          "Load this model locally and read its classes?",
-                                          QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                                          QtWidgets.QMessageBox.No) != QtWidgets.QMessageBox.Yes:
-            self._finish_model_load()
+        pair = None
+        if self.save_target is not None and Path(path) == self.save_target.path.with_suffix(".pt"):
+            pair = (self.save_target.path, self.save_target.yaml_sha256)
+            if self.recovered_draft:
+                pair += ("recovery",)
+        self._queue_model_load(path, pair=pair)
+
+    def _autoload_model(self):
+        if self.closing or self.model_load_reserved or self.node.native.failed:
             return
-        if self.closing or self.node.native.failed:
-            self._finish_model_load()
+        path = self.model.text().strip()
+        if not path or path == self.auto_model_attempt:
             return
-        self._queue_model_load(path)
+        if self.node.model_config is not None and self.node.model_config["path"] == path:
+            self.auto_model_attempt = path
+            return
+        if not Path(path).is_file():
+            if path != self.auto_model_notice:
+                self.auto_model_notice = path
+                self.model_load_status.setText("Model unavailable; browse another file")
+                self._message(f"Model not available: {path}")
+            return
+        self._load_model()
 
     def _reserve_model_load(self):
         self.model_load_reserved = True
-        self.load_model_button.setEnabled(False)
+        self.browse_model_button.setEnabled(False)
         self.load_teach_button.setEnabled(False)
         self.save_button.setEnabled(False)
         self.yolo_toggle.setEnabled(False)
@@ -948,9 +960,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node.model_config = None
         self.node.model_metadata = None
         self.model_requested_path = path
+        self.auto_model_attempt = path
         self.model_requested_pair = pair
         self.pending_model_path = path
-        self.load_model_button.setText("Model queued — waiting for current preview…")
+        self.model_load_status.setText("Model queued — waiting for current preview…")
         self.preview_status = "Model load queued; automatic previews paused"
         self._message(self.preview_status)
         self.node.events.record("INFO", "item_model_load_queued", self.preview_status,
@@ -961,8 +974,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.pending_model_path = None
         self.model_requested_pair = None
         self.model_load_reserved = False
-        self.load_model_button.setText("Load Model / Read Classes")
-        self.load_model_button.setEnabled(True)
+        self.browse_model_button.setEnabled(True)
         self.load_teach_button.setEnabled(True)
         self.save_button.setEnabled(True)
         self.yolo_toggle.setEnabled(True)
@@ -977,10 +989,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if self.model.text() != path:
             self._finish_model_load()
             self._message("Model selection changed while queued; load cancelled. "
-                          "Select Load Model again.")
+                          "The current selection will load automatically.")
             return
         self.pending_model_path = None
-        self.load_model_button.setText("Loading model / reading classes…")
+        self.model_load_status.setText("Loading model / reading classes…")
         self.preview_status = "Loading model; automatic previews paused"
         pair = self.model_requested_pair
 
@@ -1074,11 +1086,21 @@ class ItemTeachWindow(QtWidgets.QWidget):
             except (ValueError, OSError) as exc:
                 self.station_status.setText(f"Selected platform is invalid: {exc}")
                 self._message(self.station_status.text())
+                self.calibration_due = None
+                return
+        self._update_station_preview(persist=True)
 
     def _calibration_selection_changed(self, *_):
+        if self.calibration_loading:
+            return
+        resume = (self.yolo_toggle.isChecked() or self.auto_preview_pending
+                  or self.calibration_resume_preview)
         self._clear_station_preview()
+        self.calibration_waiting = None
+        self.calibration_resume_preview = resume
+        self.calibration_due = time.monotonic() + .3
         self.station_status.setText(
-            "Selection changed. Load Calibration to validate and save to .env.")
+            "Selection changed; validating the complete calibration selection automatically…")
 
     def _clear_station_preview(self):
         self.yolo_toggle.setChecked(False)
@@ -1094,13 +1116,19 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _update_station_preview(self, *_, persist=False):
         """Validate explicit files, optionally remember them, and reconnect read-only preview."""
+        self.calibration_due = None
+        self.calibration_waiting = None
+        self.calibration_loading = True
+        resume = (self.yolo_toggle.isChecked() or self.auto_preview_pending
+                  or self.calibration_resume_preview)
+        self.calibration_resume_preview = False
         self._clear_station_preview()
         platform, bin_path = self.platform_path.text(), self.bin_path.text()
         try:
             paths = tuple(field.text() for field in self._calibration_fields())
             if not all(paths):
                 self.station_status.setText(
-                    "Select platform, bin-camera and robot-camera files, then Load Calibration.")
+                    "Browse platform, bin-camera and robot-camera files to load this station.")
                 return
             loader = save_calibration_selection if persist else load_calibration_selection
             selected, robot_camera = loader(*paths, root=workspace_root())
@@ -1117,6 +1145,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 camera=str(selected.camera.path), camera_sha256=selected.camera.sha256,
                 robot_camera=str(robot_camera.path),
                 robot_camera_sha256=robot_camera.sha256, saved_to_env=persist)
+            self.auto_preview_pending = resume and self.node.model_config is not None
             saved_message = "Calibration selection saved to .env. " if persist else ""
             if not bin_path:
                 self.station_status.setText(
@@ -1133,7 +1162,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             message = (saved_message +
                        f"Bin ROI ready for /{self.node.camera_prefix}: automatically displayed "
                        "when valid RGB, CameraInfo and TF are available. "
-                       "YOLO detection and arming remain manual.")
+                       "Models load automatically; arming remains manual.")
             self.station_status.setText(message)
             self._message(message)
             self.node.events.record("INFO", "item_station_preview_auto_loaded", message,
@@ -1157,6 +1186,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     selected_platform_filename=selected_platform.path.name,
                     selected_platform_sha256=selected_platform.sha256)
         except (ValueError, OSError, RuntimeError) as exc:
+            if all(paths) and any(not Path(path).is_file() for path in paths):
+                self.calibration_waiting = paths, persist
             self.node.disarm()
             self.node.applied = self.node.bin_artifact = self.node.robot_camera = None
             self.node.last_view = None
@@ -1169,6 +1200,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._message(message)
             self.node.events.record("WARNING", "item_station_preview_invalid", message,
                                     platform=platform, bin=bin_path)
+        finally:
+            self.calibration_loading = False
 
     def _style_armed(self, enabled):
         self.armed_toggle.setStyleSheet(
@@ -1236,6 +1269,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.selected_pose_status = "Pose unavailable: " + str(error)
                     self._message(self.selected_pose_status)
                 if kind == "model":
+                    self.model_load_status.setText(f"Model load failed: {error}")
                     self.node.model_config = self.node.model_metadata = None
                     if pair is not None:
                         self.saved_path = None
@@ -1262,6 +1296,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.geometry_source.setCurrentIndex(-1)
                     self._message("Recovered geometry output is unknown/incompatible; select it.")
                 self.preview_error = ""
+                self.model_load_status.setText("Model loaded; classes verified")
                 self.preview_status = "Model loaded — starting 1 Hz teaching preview"
                 self.auto_preview_pending = True
                 self._message("Model loaded. Preview displays all model classes. "
@@ -1350,7 +1385,15 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.node.get_logger().fatal(self.node.fatal_error)
             QtWidgets.QApplication.instance().quit()
             return
-        # The explicitly trusted model takes the next free slot exactly once.
+        if self.calibration_waiting is not None:
+            paths, persist = self.calibration_waiting
+            if paths == tuple(field.text() for field in self._calibration_fields()) and all(
+                    Path(path).is_file() for path in paths):
+                self._update_station_preview(persist=persist)
+        if self.calibration_due is not None and time.monotonic() >= self.calibration_due:
+            self._update_station_preview(persist=True)
+        self._autoload_model()
+        # The selected model takes the next free slot exactly once.
         # Never interrupt/restart the lifetime worker or retry a failed request.
         self._start_pending_model_load()
         self._start_automatic_preview()
@@ -1676,7 +1719,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.node.model_config = None
             self._populate_classes({}, [])
             self._populate_sources([], "none")
-            self._message("Model selected. Save will copy/hash it; no weights are executed here.")
+            self._load_model()
 
     def _show_home(self):
         self.home_label.setText(
@@ -1846,9 +1889,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if QtWidgets.QMessageBox.question(
             self, "Load item teach and paired model?",
             "Replace the form and recorded home, then load this teach file's paired .pt?\n"
-            "A .pt can execute code; continue only if you trust this pair.\n"
             "Old/invalid files open as recovery drafts with unclear fields empty.\n"
-            "YOLO Detect and Armed stay OFF. No robot movement.\n" + Path(path).name,
+            "Model and preview load automatically; Armed stays OFF.\n" + Path(path).name,
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No,
         ) != QtWidgets.QMessageBox.Yes:
             self._finish_model_load()
@@ -1882,6 +1924,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             created_at_utc=profile["created_at_utc"], root=workspace_root())
         if target.model_sha256 != profile["model"]["sha256"]:
             raise ValueError("Paired model changed while loading; load it again")
+        self.node.model_config = self.node.model_metadata = None
+        self.auto_model_attempt = None
         self.recovered_draft = False
         self.recovery_notice.clear()
         self.recovery_notice.hide()
@@ -1919,12 +1963,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
         action = "Restored saved item teach" if prefill else "Loaded saved item teach"
         self._message(
             f"{action}: {path.name}. "
-            "No extra Save required. Model trust/loading, YOLO and Armed stay explicit; "
+            "No extra Save required. The paired model loads automatically; Armed stays OFF; "
             "no controller request or motion was sent."
         )
         return profile, _digest
 
     def _load_recovery(self, path, error, *, prefill):
+        self.auto_model_attempt = None
         draft = recover_item_fields(path)
         self.save_target = (item_save_target(
             path, draft.values.get("name"), draft.digest, root=workspace_root())
