@@ -92,7 +92,7 @@ def exercise_geometry():
     reply, _ = capture_plane(request, np.full((480, 640), 800, "<u2").tobytes(), cv2, np)
     assert reply["plane"] is not None, reply
     reply, _ = capture_plane(request, np.zeros((480, 640), "<u2").tobytes(), cv2, np)
-    assert reply["plane"] is None and "30" in reply["error"]
+    assert reply["plane"] is None and "no valid" in reply["error"]
     # Registered depth can be rectified while color is distorted: sample mapped rays.
     from item_perception_yolo.item_geometry import reproject_pixels
     distorted = {**camera, "d": [.9, .2, 0., 0., 0.]}
@@ -111,6 +111,23 @@ def exercise_geometry():
     for sample, (x, y) in zip(result["samples"], pixels):
         assert sample["accepted"] == 49 and sample["median_mm"] == 800
         assert (rgb[int(y), int(x)] == 0).all()  # Evidence follows distorted RGB rays.
+    # Sparse corners use every remaining valid sample, including only one.
+    for counts in ((33, 49, 28, 26), (1, 1, 1, 1), (0, 49, 49, 49)):
+        sparse[:] = 0
+        for count, (x, y) in zip(counts, np.rint(reproject_pixels(
+                pixels, distorted, camera, cv2, np)).astype(int)):
+            patch = np.zeros(49, dtype="<u2")
+            patch[:count] = 800
+            sparse[y - 3:y + 4, x - 3:x + 4] = patch.reshape(7, 7)
+        reply, _ = capture_plane(request, sparse.tobytes(), cv2, np)
+        result, _ = tray_visuals({**request, "detections": [], "cloud": False},
+                                 bytes(640 * 480 * 3) + sparse.tobytes(), cv2, np)
+        assert [sample["accepted"] for sample in result["samples"]] == list(counts)
+        for sample, count in zip(result["samples"], counts):
+            assert sample["reason"] == ("OK" if count else "No valid depth samples")
+        assert (reply["plane"] is not None) == all(counts), reply
+        if not all(counts):
+            assert "Corner 1: no valid" in reply["error"]
     # Exact inclusive tolerance boundary and the first value outside it.
     expected = {"length_mm": selected["length_mm"] + 1.,
                 "width_mm": selected["width_mm"], "tolerance_mm": 1.}
@@ -210,9 +227,34 @@ def exercise_tray_axis_overlays():
     assert "rectangle" not in result["detections"][0] and result["selected"] is None
     assert "Create the reference plane" in result["reason"]
     assert "Create the reference plane" in result["detections"][0]["reason"]
-    result, _ = native.predict_trays({**request, "camera_context": None}, None, rgb, {}, cv2, np)
+    image_preview = np.frombuffer(data, np.uint8).reshape(rgb.shape)
+    assert np.any(np.all(image_preview == [255, 0, 0], axis=2))
+    assert np.any(np.all(image_preview == [0, 255, 0], axis=2))
+    assert "position" not in result["detections"][0] and "length_mm" not in result["detections"][0]
+    _, data = native.tray_visuals(
+        {"width": 640, "height": 480, "camera_context": context,
+         "detections": result["detections"], "pixels": [], "cloud": False},
+        rgb.tobytes() + np.full((480, 640), 800, "<u2").tobytes(), cv2, np)
+    image_preview = np.frombuffer(data[:rgb.size], np.uint8).reshape(rgb.shape)
+    assert np.any(np.all(image_preview == [255, 0, 0], axis=2))
+    result, data = native.predict_trays(
+        {**request, "camera_context": None}, None, rgb, {}, cv2, np)
     assert "RGB-time TF" in result["reason"]
     assert "rectangle" not in result["detections"][0]
+    image_preview = np.frombuffer(data, np.uint8).reshape(rgb.shape)
+    assert np.any(np.all(image_preview == [255, 0, 0], axis=2))
+    # Taught-plane marks persist even without YOLO/detections, in each camera model.
+    _, data = native.overlay_plane({"width": 640, "height": 480, "plane": plane,
+                                    "camera_context": context}, rgb.tobytes(), cv2, np)
+    green_rgb = np.frombuffer(data, np.uint8).reshape(rgb.shape)
+    _, data = native.tray_visuals(
+        {"width": 640, "height": 480, "camera_context": context, "plane": plane,
+         "detections": [], "pixels": [], "cloud": False},
+        rgb.tobytes() + np.full((480, 640), 800, "<u2").tobytes(), cv2, np)
+    green_depth = np.frombuffer(data[:rgb.size], np.uint8).reshape(rgb.shape)
+    for camera_model, overlay in ((camera, green_rgb), (depth_camera, green_depth)):
+        for x, y in np.rint(project(corners, camera_model, optical, cv2, np)).astype(int):
+            assert np.all(overlay[y, x] == [0, 255, 0])
     # Every quadrant, tilt and rotation keeps inward short X / long Y and right-handed Z.
     tilt = cv2.Rodrigues(np.array([.4, .2, .1]))[0]
     for x in (-.4, .4):

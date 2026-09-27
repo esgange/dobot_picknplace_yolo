@@ -6181,6 +6181,54 @@ Never use a floating “latest” version in an issue, script, or deployment not
   process restart, robot command or operator artifact edit. Live physical
   verification and offline transfer remain unperformed.
 
+### 2026-09-27 — Inline tray corners, sparse depth and persistent plane overlays
+
+- Rule 146 follows the operator's overlay verification and subsequent requests
+  to use remaining corner samples and the existing panes. Read-only live ROS
+  diagnostics confirmed calibrated fresh voxels and tray masks but no reference
+  plane; the session log showed the 30-sample corner gate preventing creation.
+  Item Teach draws pixel geometry before metric eligibility, whereas Tray Teach
+  previously drew axes only after successful plane measurement.
+- Add grey fitted mask/OBB rectangles with red short/green long image axes,
+  explicitly labelled X 2D / Y 2D, when metric geometry is unavailable. Reuse
+  Item Teach's rectangle-axis utility and render corresponding registered-depth
+  previews when available. Do not invent mm dimensions, a base-frame origin,
+  TF or an accepted pose from image axes. Valid measurements retain the existing
+  nearest-base corner, inward short X/long Y, strict acceptance and single target.
+- Remove the minimum of 30 accepted depth samples in both corner evidence and
+  plane capture. Use the median of any remaining valid samples in the same 7x7
+  patch, including one. Zero valid samples still fail with an exact corner reason.
+  Keep the 200–1000 mm range, MAD filter, finite rays, patch boundaries, one
+  synchronized observation, timestamped TF and 5 mm coplanarity limit. Do not
+  change schema 1 or fill missing depth. The displayed sample counts remain visible.
+- Replace the separate PlaneEditor dialog with inline capture in the existing
+  RGB/depth panes. Both display one immutable captured observation during corner
+  selection and show CAPTURED/age; main RGB clicks select cyan draft corners.
+  Undo, Create and Cancel live in the reference-plane sidebar. Background streams,
+  1 Hz preview and RViz continue without replacing the displayed corner source.
+  Create/Cancel/invalidation automatically returns to live display; obsolete work
+  cannot restore a discarded draft. Keep the previous plane until successful Create.
+  Disable Save/Simulate/Armed during a draft. This supersedes rule 142's separate
+  editor and continuously live displayed panes during explicit corner selection only.
+- Render the created or loaded plane as a persistent green border with P1–P4
+  markers in both live panes, using each pane's own distortion model. It remains
+  visible with YOLO off or no valid detections. Put plane labels inside the border
+  to separate them from metric edge labels. Green indicates an active plane;
+  show not-saved versus saved-in-teach-file state explicitly. Save/load records
+  which plane was persisted; creating another plane requires another Save.
+  No automatic file write, new configuration, worker, executor or hardware command.
+- Validation: all 118 Tray Perception tests pass; symlink build, changed-file
+  ament_flake8 and git diff --check pass. Coverage includes the operator's
+  33/49, 49/49, 28/49, 26/49 counts, one-sample and zero-sample corners, distortion,
+  pre-plane pixel axes without metric poses, green RGB/depth marks with YOLO off,
+  no capture dialog, fixed-source inline clicks, background preview, cancellation,
+  stale-result rejection and saved/unsaved indicators. Synthetic renderer exports
+  and offscreen full-window capture/plane states were visually reviewed. Direct
+  Xwayland window capture returned black and was not treated as visual evidence;
+  live diagnosis used ROS diagnostics/logs. No operator-model execution, robot
+  commands, operator artifact edits or process restarts. Physical verification
+  and offline transfer remain unperformed.
+
 ### Future entry template
 
 ```text

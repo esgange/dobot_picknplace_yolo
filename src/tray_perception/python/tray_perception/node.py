@@ -361,7 +361,7 @@ class TrayTeachNode(Node):
                 raise RuntimeError(f"Invalid native tray detections: {exc}") from exc
         visuals = (self.visuals(view, result.get("detections", []),
                                 cloud=context is not None and not self.deployment,
-                                deadline=deadline) if visualize else
+                                deadline=deadline, plane=plane) if visualize else
                    {"depth_overlay": b"", "samples": [], "cloud": None})
         self._check_snapshot(view, calibrated=context is not None)
         with self.lock:
@@ -383,14 +383,15 @@ class TrayTeachNode(Node):
             else:
                 self.rviz.hold(view["metric_error"] or view["depth_error"] or "No valid voxels")
 
-    def visuals(self, view, detections, *, cloud, pixels=(), deadline=None):
+    def visuals(self, view, detections, *, cloud, pixels=(), deadline=None, plane=None):
         rgb, depth = view["rgb"], view["depth"]
         if depth is None:
             return {"depth_overlay": b"", "samples": [], "cloud": None}
         result, data = self.native.call({
             "operation": "tray_visuals", "width": rgb["width"], "height": rgb["height"],
             "camera_context": view["camera_context"], "cloud": cloud,
-            "detections": detections, "pixels": list(pixels)}, rgb["rgb"] + depth["depth"],
+            "detections": detections, "pixels": list(pixels), "plane": plane},
+            rgb["rgb"] + depth["depth"],
             timeout=10 if deadline is None else max(.001, deadline - time.monotonic()))
         size = rgb["width"] * rgb["height"] * 3
         if (set(result) != {"state", "width", "height", "point_count", "samples"}

@@ -404,29 +404,30 @@ def test_plane_snapshot_waits_for_preview_then_runs_off_gui_thread(window):
     window._tick()
     stale_callback.assert_not_called()
     assert thread_ids and thread_ids[0] != threading.get_ident()
-    assert window.plane_view is view and window.plane_editor.isVisible()
-    assert not window.plane_editor.isModal()
+    assert window.plane_view is view
+    assert not window.findChildren(gui.QtWidgets.QDialog)
     assert window.name.isEnabled()
-    assert window.canvas.image is None  # Plane snapshot is confined to its editor.
+    assert window.canvas.image is not None
+    assert "CAPTURED" in window.rgb_status.text()
 
 
-def test_corner_editor_uses_one_snapshot_while_live_panes_keep_updating(window):
+def test_inline_corners_hold_one_observation_while_background_preview_continues(window):
     captured = live_view(10)
     window.node.freeze_for_plane = MagicMock(return_value=captured)
     window._snapshot_plane()
     window.future.result(timeout=2)
     window._tick()
-    # A new displayed observation never replaces the corner editor's source.
+    # Background preview/RViz continues, but cannot replace the clicked observation.
     window._show_view(live_view(90))
-    assert window.canvas.image.pixelColor(0, 0).red() == 90
-    assert window.plane_editor.rgb.image.pixelColor(0, 0).red() == 10
+    assert window.canvas.image.pixelColor(0, 0).red() == 10
+    assert window.last_view["rgb"]["rgb"][0] == 90
     window.node.corner_preview = MagicMock(return_value={
         "corner_overlay": bytes([20]) * 12, "depth_overlay": bytes([30]) * 12,
         "samples": [{"index": 1, "accepted": 49, "median_mm": 600, "reason": "Accepted"}]})
     window.future = preview = Future()
     window.job_kind, window.completion = "preview", MagicMock()
     window.node.invalidate.reset_mock()
-    window._plane_click(.5, .5)
+    window._click(.5, .5)  # Main RGB clicks select corners while capture is active.
     assert window.pending_job[2] == "corners"
     window.node.invalidate.assert_not_called()  # Corner work must not invalidate its own source.
     preview.set_result(live_view(120))
@@ -434,10 +435,9 @@ def test_corner_editor_uses_one_snapshot_while_live_panes_keep_updating(window):
     window.future.result(timeout=2)
     window._tick()
     window.node.corner_preview.assert_called_once_with(captured, [[.5, .5]])
-    assert window.plane_editor.rgb.image.pixelColor(0, 0).red() == 20
-    assert window.plane_editor.depth.image.pixelColor(0, 0).red() == 30
-    assert window.canvas.image.pixelColor(0, 0).red() == 90
-    assert "49/49 valid" in window.plane_editor.evidence.text()
+    assert window.canvas.image.pixelColor(0, 0).red() == 20
+    assert window.depth_canvas.image.pixelColor(0, 0).red() == 30
+    assert "49/49 valid" in window.detail_label.text()
     # The normal timer still schedules preview without another operator action.
     window.camera_prefix.blockSignals(True)
     window.camera_prefix.setText("cam")
@@ -448,16 +448,19 @@ def test_corner_editor_uses_one_snapshot_while_live_panes_keep_updating(window):
     window._tick()
     window.future.result(timeout=2)
     window._tick()
-    assert window.canvas.image.pixelColor(0, 0).red() == 150
+    assert window.canvas.image.pixelColor(0, 0).red() == 20
+    assert window.last_view["rgb"]["rgb"][0] == 150
     assert window.plane_view is captured and window.points == [[.5, .5]]
+    window.cancel_plane_button.click()
+    assert window.plane_view is None and not window.canvas.points
+    assert window.canvas.image.pixelColor(0, 0).red() == 150
 
 
 @pytest.mark.parametrize("invalidate", [False, True])
-def test_discarded_or_invalidated_corner_work_cannot_restore_editor(window, invalidate):
+def test_discarded_or_invalidated_corner_work_cannot_restore_capture(window, invalidate):
     view = live_view()
     window.plane_view = view
-    window.plane_editor.show_observation(view, window.points)
-    window.plane_editor.show()
+    window._show_plane_view(view)
     window.points.append([.5, .5])
     window.node.corner_preview = MagicMock(return_value={
         "corner_overlay": bytes(12), "depth_overlay": bytes(12), "samples": []})
@@ -466,10 +469,10 @@ def test_discarded_or_invalidated_corner_work_cannot_restore_editor(window, inva
     if invalidate:
         window.node.generation += 1
     else:
-        window.plane_editor.reject()
+        window._discard_plane_draft()
     window._tick()
     assert window.plane_view is None and not window.points
-    assert not window.plane_editor.isVisible()
+    assert not window.canvas.points
     window.node.accept_view.assert_not_called()
 
 
@@ -492,9 +495,23 @@ def test_plane_create_queues_original_snapshot_and_keeps_existing_plane_until_co
     window._tick()
     window.node.capture_plane.assert_called_once_with(
         view, [[10, 10], [20, 10], [20, 20], [10, 20]])
-    assert window.plane_view is None and not window.plane_editor.isVisible()
+    assert window.plane_view is None and not window.canvas.points
     assert "Save Tray Teach" in window.status.text()
     assert window.canvas.image.pixelColor(0, 0).red() == 80
+
+
+def test_created_plane_readiness_distinguishes_unsaved_from_saved(window):
+    window.node.plane = plane()
+    window._tick()
+    assert "GREEN / ready" in window.plane_label.text()
+    assert "not saved" in window.plane_label.text()
+    window.saved_plane = copy.deepcopy(window.node.plane)
+    window._tick()
+    assert "saved in teach file" in window.plane_label.text()
+    window.node.plane = None
+    window._tick()
+    assert window.plane_label.text() == "Reference plane: not taught"
+    assert not window.plane_label.styleSheet()
 
 
 @pytest.mark.parametrize("copied_position", [None, position()])

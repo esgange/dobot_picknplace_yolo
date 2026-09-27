@@ -615,10 +615,13 @@ Load matching camera calibration. You can leave size filters blank and copy
 Item Teach's Home into **Tray Teach Position** later, before saving. The sidebar
 separates camera/model settings from teaching position and reference-plane data.
 Use **Capture 4-corner snapshot…** in Reference Plane, select four surface corners
-in its captured-image
-editor, then Create. Click a live tray to read width/X and length/Y, enter the
+in the existing RGB pane, then Create. The RGB/depth panes hold one captured
+observation during selection; Create or Cancel restores live display. Each
+corner uses its remaining valid depth samples, even one. A created or loaded
+plane remains outlined green with P1–P4 on both live panes; the sidebar identifies
+whether it has been saved. Click a live tray to read width/X and length/Y, enter the
 desired size filters, and Save Tray Teach when complete. Plane capture and
-measurement need no copied position. Main RGB/depth views stay live throughout.
+measurement need no copied position. Streams and background preview keep running.
 The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
 that plane, without live surface depth, and reject detections outside the taught
@@ -633,6 +636,8 @@ of image left/right: red X follows the short edge and green Y the long edge.
 Z follows their right-handed cross product. After plane teaching, all measurable
 trays show these axes and mm dimensions, including before expected sizes are
 entered; clicks report that tray's measurements without changing your settings.
+Before metric geometry is ready, mask/OBB detections show grey rectangles and
+red/green axes labelled **2D**, without mm dimensions or a base-frame pose.
 Only the eligible center-prioritized tray is returned by the pose service.
 If an older RViz window has no Tray Teach display, reload the installed canonical
 `dobot_rviz/rviz/urdf.rviz` configuration to subscribe to `/tray_teach/voxel_cloud`.

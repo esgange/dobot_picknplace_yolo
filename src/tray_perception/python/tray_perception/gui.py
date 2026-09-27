@@ -78,62 +78,21 @@ class TrayCanvas(QtWidgets.QWidget):
                 QtCore.QPointF(rect.left() + x * rect.width() / self.image.width(),
                                rect.top() + y * rect.height() / self.image.height())
                 for x, y in self.highlight]))
+        if len(self.points) > 1:
+            polygon = QtGui.QPolygonF([
+                QtCore.QPointF(rect.left() + x * rect.width() / self.image.width(),
+                               rect.top() + y * rect.height() / self.image.height())
+                for x, y in self.points])
+            if len(self.points) == 4:
+                painter.drawPolygon(polygon)
+            else:
+                painter.drawPolyline(polygon)
         for index, (x, y) in enumerate(self.points, 1):
             point = QtCore.QPointF(
                 rect.left() + x * rect.width() / self.image.width(),
                 rect.top() + y * rect.height() / self.image.height())
             painter.drawEllipse(point, 7, 7)
             painter.drawText(point + QtCore.QPointF(10, -8), str(index))
-
-
-class PlaneEditor(QtWidgets.QDialog):
-    """A fixed teaching observation, independent of the main live camera panes."""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setWindowTitle("Tray reference plane — captured observation")
-        self.setModal(False)
-        self.resize(1060, 620)
-        layout = QtWidgets.QVBoxLayout(self)
-        notice = QtWidgets.QLabel(
-            "Click four tray-surface corners in the captured RGB image. "
-            "All samples use this one observation. The main camera views stay live.")
-        notice.setWordWrap(True)
-        layout.addWidget(notice)
-        images = QtWidgets.QHBoxLayout()
-        self.rgb, self.depth = TrayCanvas(), TrayCanvas()
-        self.rgb.selecting = True
-        self.rgb.clicked.connect(parent._plane_click)
-        for title, canvas in (("Captured RGB — select corners", self.rgb),
-                              ("Captured depth — sample evidence", self.depth)):
-            panel = QtWidgets.QVBoxLayout()
-            heading = QtWidgets.QLabel(title)
-            heading.setObjectName("viewHeading")
-            panel.addWidget(heading)
-            panel.addWidget(canvas, 1)
-            images.addLayout(panel, 1)
-        layout.addLayout(images, 1)
-        self.evidence = QtWidgets.QLabel()
-        self.evidence.setWordWrap(True)
-        layout.addWidget(self.evidence)
-        actions = QtWidgets.QHBoxLayout()
-        self.undo = parent._button("Undo corner", parent._undo)
-        self.create = parent._button("Create reference plane", parent._capture)
-        actions.addWidget(self.undo)
-        actions.addWidget(self.create)
-        layout.addLayout(actions)
-        self.finished.connect(parent._discard_plane_draft)
-
-    def show_observation(self, view, points, evidence=""):
-        rgb = view["rgb"]
-        self.rgb.points = points
-        self.rgb.show_frame(view.get("corner_overlay", rgb["rgb"]), rgb["width"], rgb["height"])
-        if view.get("depth_overlay"):
-            self.depth.show_frame(view["depth_overlay"], rgb["width"], rgb["height"])
-        else:
-            self.depth.image = None
-            self.depth.update()
-        self.evidence.setText(evidence or "0/4 corners selected — captured observation")
 
 
 class TrayTeachWindow(QtWidgets.QWidget):
@@ -155,6 +114,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.profile_path = None
         self.profile_digest = ""
         self.profile_filename = ""
+        self.saved_plane = None
         self.session_ready = False
         self.session_due = None
         self.last_session = None
@@ -312,17 +272,21 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.snapshot_button = self._button("Capture 4-corner snapshot…", self._snapshot_plane)
         self.undo_button = self._button("Undo corner", self._undo)
         self.plane_button = self._button("Create reference plane", self._capture)
+        self.cancel_plane_button = self._button("Cancel corner capture", self._discard_plane_draft)
         plane_form.addRow(self.snapshot_button)
         plane_form.addRow(self.undo_button)
         plane_form.addRow(self.plane_button)
+        plane_form.addRow(self.cancel_plane_button)
         self.corner_status = QtWidgets.QLabel("No corner snapshot captured")
         self.corner_status.setWordWrap(True)
         plane_form.addRow(self.corner_status)
         instructions = QtWidgets.QLabel(
-            "Capture the uncovered tray, then select four corners in the snapshot editor. "
+            "Capture the uncovered tray, then select four corners in the RGB pane. "
+            "The panes hold that observation until Create or Cancel; streams keep running. "
+            "Each corner uses the valid depth samples available; zero valid samples blocks it. "
             "Create the plane to enable measurements; dimensions and Item Teach position "
             "are not needed yet. Save the complete Tray Teach profile to keep the plane. "
-            "Main RGB/depth views remain live.\n\n"
+            "A green four-corner outline marks the created or loaded plane.\n\n"
             "Origin: corner nearest base_link. X = short edge; Y = long edge, both inward. "
             "Re-teach after changing tray support height or tilt.")
         instructions.setWordWrap(True)
@@ -373,7 +337,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
             "Connect RGB and load a trusted model to preview. Calibration enables geometry.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        self.plane_editor = PlaneEditor(self)
         state = read_session(node.root)
         if state is not None:
             self.camera_path.setText(state["camera_filename"])
@@ -469,11 +432,13 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.plane_button.setEnabled(
             not exclusive and self.plane_view is not None and len(self.points) == 4)
         self.undo_button.setEnabled(not exclusive and bool(self.points))
-        self.plane_editor.undo.setEnabled(self.undo_button.isEnabled())
-        self.plane_editor.create.setEnabled(self.plane_button.isEnabled())
-        self.plane_editor.rgb.selecting = not exclusive
+        self.cancel_plane_button.setEnabled(not exclusive and self.plane_view is not None)
+        self.canvas.selecting = not exclusive
+        self.simulate_button.setEnabled(not exclusive and self.plane_view is None)
+        self.armed_toggle.setEnabled(not exclusive and self.plane_view is None)
         self.save_button.setEnabled(
-            not exclusive and self.node.plane is not None and self.node.position is not None
+            not exclusive and self.plane_view is None
+            and self.node.plane is not None and self.node.position is not None
             and self.node.model is not None and self._save_ready())
 
     def _save_ready(self):
@@ -598,6 +563,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self.profile_filename = path.name
                 self.profile_path = path
                 self.profile_digest = file_sha256(path)
+                self.saved_plane = copy.deepcopy(profile["reference_plane"])
                 self._show_position()
                 self._refresh_preview_settings()
                 self._message("Tray loaded independently of Item Teach; preview enabled.")
@@ -770,10 +736,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 raise ValueError("Corner snapshot was invalidated; capture it again")
             self.plane_view = view
             self.points.clear()
-            self.plane_editor.show_observation(view, self.points)
-            self.plane_editor.show()
-            self.corner_status.setText("0/4 corners — select in the captured RGB editor")
-            self._message("Captured plane observation. Main camera views remain live.")
+            self.detail_sample = None
+            self._show_plane_view(view)
+            self._message("Select four corners in the captured RGB pane, then Create or Cancel.")
         self._job(self.node.freeze_for_plane, captured, "snapshot")
 
     def _plane_click(self, x, y):
@@ -788,11 +753,14 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self._message("Choose a different corner", error=True)
                 return
             self.points.append([x, y])
-            self.plane_editor.rgb.update()
+            self.canvas.update()
             self.corner_status.setText(f"{len(self.points)}/4 corners on captured observation")
             self._corner_evidence()
 
     def _click(self, x, y):
+        if self.plane_view is not None:
+            self._plane_click(x, y)
+            return
         if self.last_view is None or self.last_view["generation"] != self.node.generation:
             return
         hits = []
@@ -808,7 +776,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.canvas.update()
             measured = (f"Reference plane: X/width {item['width_mm']:.1f} mm × "
                         f"Y/length {item['length_mm']:.1f} mm"
-                        if "length_mm" in item else "Dimensions unavailable")
+                        if "length_mm" in item else
+                        "2D outline only; metric dimensions unavailable")
             origin = (" | base_link corner XYZ: " + ", ".join(
                 f"{value * 1000:.1f}" for value in item["position"]) + " mm"
                 if "position" in item else "")
@@ -823,7 +792,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self._update_detail()
 
     def _update_detail(self):
-        if self.detail_sample is None:
+        if self.detail_sample is None or self.plane_view is not None:
             return
         view, summary = self.detail_sample
         if view["generation"] != self.node.generation:
@@ -850,13 +819,13 @@ class TrayTeachWindow(QtWidgets.QWidget):
             details = [f"{s['index']}: {s['accepted']}/49 valid, "
                        f"{s['median_mm']} mm — {s['reason']}" for s in result["samples"]]
             text = "Corners: " + "; ".join(details)
-            self.plane_editor.show_observation({**view, **result}, self.points, text)
+            self._show_plane_view({**view, **result}, text)
         self._job(lambda: self.node.corner_preview(view, pixels), shown, "corners")
 
     def _undo(self):
         if self.points:
             self.points.pop()
-            self.plane_editor.rgb.update()
+            self.canvas.update()
             self.corner_status.setText(f"{len(self.points)}/4 corners on captured observation")
             self._corner_evidence()
 
@@ -881,10 +850,34 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self._job(create, captured, "plane")
 
     def _discard_plane_draft(self, *_args):
+        had_draft = self.plane_view is not None
         self.plane_view = None
         self.points.clear()
-        self.plane_editor.hide()
+        self.canvas.points = []
+        self.canvas.highlight = []
         self.corner_status.setText("No corner snapshot captured")
+        if had_draft:
+            self.detail_label.setText("Click a live tray to inspect its size.")
+            if self.last_view is not None and self.last_view["generation"] == self.node.generation:
+                self._display_view(self.last_view)
+            else:
+                for canvas in (self.canvas, self.depth_canvas):
+                    canvas.image = None
+                    canvas.empty_text = "Waiting for the next live observation"
+                    canvas.update()
+            self.next_preview = 0.
+
+    def _show_plane_view(self, view, evidence=""):
+        rgb = view["rgb"]
+        self.canvas.points = self.points
+        self.canvas.highlight = []
+        self.canvas.show_frame(view.get("corner_overlay", rgb["rgb"]), rgb["width"], rgb["height"])
+        self._show_depth(view)
+        self.result_label.setText(f"Reference plane draft: {len(self.points)}/4 corners — "
+                                  "select in RGB, then Create or Cancel")
+        self.corner_status.setText(f"{len(self.points)}/4 corners on captured observation")
+        self.detail_label.setText(
+            evidence or "Each corner uses all valid depth samples available.")
 
     def _reset_inspection(self):
         self._discard_plane_draft()
@@ -905,6 +898,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             def saved(path):
                 self.settings, self.profile_path = settings, path
                 self.profile_digest = file_sha256(path)
+                self.saved_plane = copy.deepcopy(plane)
                 self.profile_filename = path.name
                 self._remember()
                 self._message(f"Saved new tray profile and paired model: {path}")
@@ -924,6 +918,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.node.requests.validate_view(view)
         self.node.accept_view(view)
         self.last_view = view
+        if self.plane_view is None:
+            self._display_view(view)
+
+    def _display_view(self, view):
         self.canvas.highlight = []
         rgb, result = view["rgb"], view["result"]
         self.canvas.show_frame(view["overlay"], rgb["width"], rgb["height"])
@@ -1015,11 +1013,23 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.rgb_status.setText(
             f"RGB /{prefix or 'not connected'} — LIVE | {mode}\n{detail}\n"
             f"RViz: {cloud['status']} — {cloud['point_count']} voxels {cloud['reason']}")
+        if self.plane_view is not None:
+            age = max(0., (self.node.get_clock().now().nanoseconds -
+                           self.plane_view["rgb"]["stamp_ns"]) / 1e9)
+            self.rgb_status.setText(
+                f"RGB — CAPTURED {age:.1f} s ago | select four corners\n"
+                "Create or Cancel returns to live view; camera streams keep running")
+            self.depth_status.setText("Depth — CAPTURED | matching corner sample evidence")
         if self.node.plane is not None:
+            stored = "saved in teach file" if self.node.plane == self.saved_plane else \
+                "not saved — Save Tray Teach"
             self.plane_label.setText(
-                f"Reference plane: base_link | fit error {self.node.plane['max_error_mm']:.2f} mm")
+                f"Reference plane: GREEN / ready | {stored}\n"
+                f"base_link | fit error {self.node.plane['max_error_mm']:.2f} mm")
+            self.plane_label.setStyleSheet("color: #187a29")
         else:
             self.plane_label.setText("Reference plane: not taught")
+            self.plane_label.setStyleSheet("")
         if (busy or requests.busy or prefix is None
                 or prefix != self.camera_prefix.text().strip()):
             return

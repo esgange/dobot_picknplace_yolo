@@ -503,6 +503,19 @@ the taught plane. The copied Tray Teach Position and complete filters remain
 mandatory for Save, arming and deployed profiles. This supersedes the previous
 position-before-plane teaching order only; keep schema 1 and production gates.
 
+Rule 146 uses Tray Teach's existing RGB/depth panes for four-corner capture,
+superseding rule 142's separate editor. Hold one captured observation in those
+panes during selection, label its age and return to live on Create/Cancel or
+invalidation; background acquisition/preview/RViz continue through the same
+worker. Draft corners are cyan. A created/loaded plane remains green with P1–P4
+on live RGB and depth, even with YOLO off; label unsaved versus saved explicitly.
+Use all valid depth samples remaining in each 7x7 patch, including one; remove
+the 30-sample minimum. Zero valid samples still fail, and range/MAD/synchronization/
+TF/plane-fit gates remain. Draw labelled 2D-only mask/OBB rectangle axes before
+metric geometry is ready; never infer mm, a base origin or an accepted pose from
+them. Preserve metric short-X/long-Y corner frames, save requirements, schema 1,
+single native worker, two executor threads and read-only hardware authority.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

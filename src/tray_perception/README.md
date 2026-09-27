@@ -52,22 +52,31 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    with the existing authorized motion workflow if needed. Controller Home will
    continue to come from the controller's own Item Teach file.
 3. With the tray uncovered, select **Capture 4-corner snapshot…** in the sidebar's
-   **Reference Plane — teach file** section. A nonmodal captured-image editor
-   opens while the main RGB/depth views continue updating. Click four distinct
-   corners on its RGB image in any order, use **Undo corner** if needed, then
-   **Create reference plane**. Both actions are also available inside the editor.
+   **Reference Plane — teach file** section. The existing RGB/depth panes hold
+   that captured observation, labelled **CAPTURED** with its age; no new window
+   opens. Click four distinct corners on RGB in any order, use **Undo corner**
+   if needed, then **Create reference plane**. **Cancel corner capture** discards
+   the draft. Both Create and Cancel return the panes to live automatically.
    Click coordinates account for scaling and letterboxing. All clicks use the
    same initially fresh synchronized RGB/depth/TF observation; live frames never
-   replace that corner source. Capturing leaves the existing plane active until
-   Create succeeds. Closing the editor discards its unfinished corner selection.
+   replace that corner source. Streams, background preview and RViz keep updating,
+   while inspection clicks in the captured pane select corners. Capturing leaves
+   the existing plane active until Create succeeds; draft lines/corners are cyan.
    Source/settings changes discard the draft and require another capture.
-   A 7×7 registered-depth patch per corner requires at least 30 valid samples
-   between 200 and 1000 mm after MAD filtering. Separate RGB/depth distortion is
+   A 7×7 registered-depth patch per corner uses the median of whatever valid
+   samples remain between 200 and 1000 mm after MAD filtering, including only
+   one sample. There is no 30-sample minimum; zero valid samples still fail.
+   Separate RGB/depth distortion is
    preserved. Four convex, noncollinear base-frame points must fit a plane with
    maximum residual at most 5 mm; bad samples are refused, never filled in.
    Numbered corner locations, accepted-sample counts and median depth appear in
    both captured panes; sampled pixels mark accepted values black and rejected values red,
    mapped with each pane's distortion model.
+   Once created or loaded, the plane's green border and P1–P4 corners remain on
+   both live panes, independently of YOLO or tray acceptance. Their projection
+   follows the current timestamped calibrated view. Green means a plane is
+   available in this session; the sidebar explicitly says **not saved — Save
+   Tray Teach** until the plane is written to a profile or loaded from one.
 4. Click a displayed tray to inspect its measured size and acceptance reason.
    Once the reference plane exists, every fully measurable mask/OBB has a cyan
    nearest-base corner, red **X / short-edge** arrow, green **Y / long-edge** arrow
@@ -82,7 +91,8 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    timestamped TF or reference plane instead of only saying no tray was accepted.
    Main views stay live; the last clicked observation is labelled with its age.
    Its highlight disappears on the next frame, and settings changes invalidate
-   the summary. There is no Resume Live button or persistent main-view freeze.
+   the summary. Only explicit corner capture holds the displayed observation;
+   there is no Resume Live button for ordinary inspection.
    Enter long-side **Length**, short-side **Width**, and one **Tolerance ± (mm)**
    manually. Clicking never overwrites those fields. Missing/invalid dimensions
    keep detections visible with grey unchecked borders but prevent accepted poses.
@@ -93,6 +103,10 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    A clipped tray is rejected. Rank valid trays by image-center distance,
    confidence and source index; select exactly one or report no valid tray.
    A changed tray support height or tilt requires teaching the plane again.
+   Without usable metric geometry, mask/OBB detections still show a grey fitted
+   rectangle and red short/green long image axes labelled **X 2D / Y 2D**. These
+   are pixel-only orientation guides; they have no nearest-base corner, mm size,
+   TF or production pose. Valid plane-based corner axes replace them once ready.
 5. **Save Tray Teach…** at the top right writes a new same-stem YAML/model pair to
    `offline_teach/tray_teach/tray_teach_<name>_<UTC_TIMESTAMP>.yaml` and `.pt`.
    Existing pairs are never overwritten. The adjacent **Load Tray Teach…**

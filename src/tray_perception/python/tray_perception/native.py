@@ -2,7 +2,7 @@
 
 from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternion
 from item_perception_yolo.item_geometry import (
-    objects_from_result, on_plane, project, rays, reproject_pixels, filter_depth)
+    objects_from_result, on_plane, project, rays, reproject_pixels, filter_depth, rectangle_axes)
 from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
 from item_perception_yolo.item_rviz_native import colored_voxels
 from item_perception_yolo.yolo_worker_native import render_result
@@ -37,10 +37,33 @@ def corner_frame(corners, normal, np, *, short_x=False):
     return matrix, [origin, following, (origin + 2) % 4, previous]
 
 
-def draw_tray_axes(overlay, detection, cv2, np, *, depth=False):
+def draw_tray_image_axes(overlay, polygon, cv2, np):
+    """Image-only orientation, never a metric tray frame or a base-frame origin."""
+    rectangle = cv2.boxPoints(cv2.minAreaRect(np.asarray(polygon, np.float32)))
+    try:
+        long_axis, short_axis, _ = rectangle_axes(rectangle, np)
+    except ValueError:
+        return
+    cv2.polylines(overlay, [np.rint(rectangle).astype(np.int32)], True,
+                  (160, 160, 160), 2, cv2.LINE_AA)
+    for axis, label, color in ((short_axis, "X 2D", (255, 0, 0)),
+                               (long_axis, "Y 2D", (0, 255, 0))):
+        start, end = np.rint(axis).astype(int)
+        cv2.line(overlay, tuple(start), tuple(end), (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.line(overlay, tuple(start), tuple(end), color, 2, cv2.LINE_AA)
+        cv2.putText(overlay, label, tuple(end + [4, -4]), cv2.FONT_HERSHEY_SIMPLEX,
+                    .5, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(overlay, label, tuple(end + [4, -4]), cv2.FONT_HERSHEY_SIMPLEX,
+                    .5, color, 1, cv2.LINE_AA)
+
+
+def draw_tray_axes(overlay, detection, cv2, np, *, depth=False, preview_polygon=None):
     """Measured corner axes are independent of production size/class eligibility."""
     key = "depth_rectangle" if depth else "rectangle"
     if key not in detection:
+        polygon = preview_polygon if depth else detection["polygon"]
+        if polygon is not None:
+            draw_tray_image_axes(overlay, polygon, cv2, np)
         return
     rectangle = np.rint(detection[key]).astype(np.int32)
     origin = tuple(rectangle[0])
@@ -107,8 +130,8 @@ def capture_plane(request, data, cv2, np):
             accepted, median, _ = filter_depth(
                 values, QUALITY_DEFAULTS["depth_min_mm"],
                 QUALITY_DEFAULTS["depth_max_mm"], cv2, np)
-            if int(accepted.sum()) < 30:
-                raise ValueError(f"Corner {index}: fewer than 30 valid local depth samples")
+            if not accepted.any():
+                raise ValueError(f"Corner {index}: no valid local depth samples")
             optical = ray * (median / 1000)
             points.append(transform[:3, :3] @ optical + transform[:3, 3])
         plane = fit_plane(points, pixels, transform, cv2, np)
@@ -131,7 +154,20 @@ def draw_plane(overlay, plane, context, cv2, np):
     border = np.concatenate([np.linspace(corners[i], corners[(i + 1) % 4], 32)
                              for i in range(4)])
     image_points = project(border, context["camera"], optical, cv2, np)
-    cv2.polylines(overlay, [np.rint(image_points).astype(np.int32)], True, (0, 210, 255), 2)
+    cv2.polylines(overlay, [np.rint(image_points).astype(np.int32)], True,
+                  (0, 255, 0), 5, cv2.LINE_AA)
+    corner_pixels = project(corners, context["camera"], optical, cv2, np)
+    center = corner_pixels.mean(axis=0)
+    for index, point in enumerate(corner_pixels, 1):
+        point = tuple(np.rint(point).astype(int))
+        cv2.circle(overlay, point, 6, (0, 0, 0), -1, cv2.LINE_AA)
+        cv2.circle(overlay, point, 4, (0, 255, 0), -1, cv2.LINE_AA)
+        label = f"P{index}"
+        (width, height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .5, 1)
+        at = (point[0] + 12 if center[0] >= point[0] else point[0] - width - 12,
+              point[1] + height + 8 if center[1] >= point[1] else point[1] - 8)
+        cv2.putText(overlay, label, at, cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(overlay, label, at, cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 255, 0), 1, cv2.LINE_AA)
 
 
 def overlay_plane(request, data, cv2, np):
@@ -270,13 +306,18 @@ def tray_visuals(request, data, cv2, np):
     context, samples = request["camera_context"], []
     if context is not None:
         color_info, depth_info = context["camera"], context["depth_camera"]
+        if request.get("plane") is not None:
+            try:
+                draw_plane(overlay, request["plane"], {**context, "camera": depth_info}, cv2, np)
+            except ValueError:
+                pass  # An off-camera taught plane cannot suppress the available depth scene.
         for detection in request["detections"]:
             pixels = reproject_pixels(np.asarray(detection["polygon"]),
                                       color_info, depth_info, cv2, np)
             color = {"pass": (0, 220, 0), "fail": (255, 50, 50),
                      "unchecked": (160, 160, 160)}[detection["size_status"]]
             cv2.polylines(overlay, [np.rint(pixels).astype(np.int32)], True, color, 2)
-            draw_tray_axes(overlay, detection, cv2, np, depth=True)
+            draw_tray_axes(overlay, detection, cv2, np, depth=True, preview_polygon=pixels)
         for index, pixel in enumerate(request["pixels"], 1):
             mapped = reproject_pixels(np.asarray([pixel]), color_info, depth_info, cv2, np)[0]
             x, y = np.rint(mapped).astype(int)
@@ -287,8 +328,7 @@ def tray_visuals(request, data, cv2, np):
                 accepted, median, _ = filter_depth(values, low, high, cv2, np)
                 sample.update(accepted=int(accepted.sum()),
                               median_mm=median,
-                              reason="OK" if int(accepted.sum()) >= 30 else
-                              "Fewer than 30 valid samples")
+                              reason="OK" if accepted.any() else "No valid depth samples")
                 patch = overlay[y - 3:y + 4, x - 3:x + 4]
                 patch[:] = np.where(accepted.reshape(7, 7, 1), (0, 0, 0), (255, 0, 0))
                 yy, xx = np.mgrid[y - 3:y + 4, x - 3:x + 4]
