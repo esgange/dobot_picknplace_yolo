@@ -5809,6 +5809,40 @@ Never use a floating “latest” version in an issue, script, or deployment not
   header layout and removed sidebar row. No hardware process or command ran;
   no controller behavior, vendor code, schema or operator artifact changes.
 
+### 2026-09-27 — Keep Tray Teach responsive during automatic preview
+
+- Rule 138 fixes the observed typing interruptions: the shared GUI job helper
+  and 100 ms refresh timer disabled every field/button for every automatic
+  preview, including YOLO-off overlays. Slow inference and even short failed
+  acquisitions repeatedly stole editing focus. A slow-worker Qt typing test
+  reproduces that failure before the change.
+- Automatic preview now leaves controls and focus available. An explicit
+  load/save/freeze/plane action reserves one pending slot behind the active
+  preview, blocks further actions/edits until completion and takes priority over
+  the next refresh. Keep one worker and no accumulated previews. Move Freeze
+  snapshot acquisition and save source validation off the Qt thread as well.
+- Edits invalidate in-flight observations without displaying their expected
+  cancellation errors over the edit status. Bind settings to the source
+  generation at dispatch and recheck generation under the pose commit lock, so
+  neither a delayed worker start nor a late completion can restore an old pose.
+  Native/protocol failures remain terminal; terminal failure or closing drops
+  pending actions. Existing explicit Apply and 1 Hz limits remain.
+- The local Tray Teach log also showed repeated RGB-time TF extrapolation
+  failures with robot TF only milliseconds behind the image. Wait within one
+  shared 100 ms budget for exact camera/robot TF in the background acquisition,
+  then recheck RGB/depth age and existing synchronization gates. Never substitute
+  latest TF or accept expired images; unavailable TF still fails within the
+  bounded wait. No inference, plane/frame geometry, artifact schema, controller,
+  vendor or other package behavior changes.
+- Validation: all 34 Tray Perception tests pass, including the 10 added cases
+  for slow-preview typing/focus and Qt timer responsiveness, serialized Freeze
+  off the GUI thread, obsolete results/errors, terminal failures and shutdown,
+  generation races, exact-time delayed/missing TF and post-wait freshness.
+  TF tests use a local synthetic buffer, with no ROS hardware publisher. The
+  tray_perception symlink build, changed-file ament_flake8 and git diff --check
+  pass. Only existing Tray Teach logs were read; no hardware process/command,
+  operator-model execution or calibration/teaching artifact edits occurred.
+
 ### Future entry template
 
 ```text

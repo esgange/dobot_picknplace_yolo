@@ -403,6 +403,16 @@ tray worker; no duplicate extraction or native imports in ROS/Qt. Restore only
 unapplied fields from logs/tray_perception/last_session.json, keep bounded package
 events, and require explicit trusted model loading and source validation.
 
+Rule 138 keeps Tray Teach fields and controls usable throughout automatic
+preview, including YOLO-off frames. Serialize explicit load/save/freeze/plane
+actions behind the active preview with at most one pending action; lock edits
+only for that explicit work. Bind previews to the generation at dispatch and
+discard edited observations without hiding native failures. Freeze acquisition
+and save validation run in the existing single background worker. Allow one
+shared 100 ms wait for exact RGB-time TF, then recheck input freshness; missing
+TF still rejects the observation. Keep the 1 Hz limit, two ROS executor threads,
+read-only authority, strict artifacts and explicit Apply unchanged.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

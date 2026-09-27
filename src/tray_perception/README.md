@@ -19,6 +19,9 @@ Bring up the configured camera and calibrated TF sources separately. Load its
 schema-7 camera calibration from `calibration/`; its prefix determines the RGB,
 registered-depth and CameraInfo subscriptions. Fixed and on-hand cameras are
 supported. On-hand observations require fresh RGB-time `base_link <- Link6` TF.
+Acquisition waits up to a shared 100 ms budget for TF at the image timestamp in
+the background worker, then rechecks image freshness. Missing or late TF still
+rejects the observation; it never substitutes the latest transform.
 No platform/bin/item station calibration selection or `.env` edit is needed.
 
 1. Load a trusted local YOLO `.pt` model. Select tray classes and enter a name,
@@ -87,4 +90,11 @@ one lifetime native worker, without another wheel extraction, global install,
 network access, worker restart or alternate model/runtime. ROS/Qt never imports
 OpenCV, Torch or Ultralytics. A single GUI job slot prevents queued inference;
 two ROS executor threads keep TF and camera reception independent of native work.
-Native/protocol failures are terminal. See [NOTICE.md](NOTICE.md) for attribution.
+Automatic preview leaves fields, typing focus and controls available, including
+when YOLO is off. Edits discard the in-flight preview and require **Apply &
+Preview** for updated detection settings. Load, Save, Freeze and plane creation
+reserve at most one action after the current preview; controls lock only for
+that explicit operation. Freeze acquisition and save validation also run in the
+background. Obsolete observations cannot restore a pose or overwrite the edit
+status; native/protocol failures remain terminal even if the preview was
+invalidated. See [NOTICE.md](NOTICE.md) for attribution.

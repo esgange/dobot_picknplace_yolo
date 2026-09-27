@@ -154,15 +154,28 @@ class TrayTeachNode(Node):
               or (info["width"], info["height"]) != (rgb["width"], rgb["height"])):
             raise ValueError("Fresh RGB and matching CameraInfo required")
         instant = Time(nanoseconds=rgb["stamp_ns"])
+        # Robot TF may trail RGB by a few milliseconds. Wait only in the GUI's
+        # background worker, at this exact timestamp, with one shared 100 ms budget.
+        tf_deadline = time.monotonic() + .1
         internal = self.tf_buffer.lookup_transform(
-            camera.settings.camera_link_frame, camera.settings.optical_frame, instant)
+            camera.settings.camera_link_frame, camera.settings.optical_frame, instant,
+            timeout=Duration(seconds=max(0., tf_deadline - time.monotonic())))
         robot = None
         if camera.calibration_mode == "camera_on_hand":
-            observed = self.tf_buffer.lookup_transform("base_link", "Link6", instant)
+            observed = self.tf_buffer.lookup_transform(
+                "base_link", "Link6", instant,
+                timeout=Duration(seconds=max(0., tf_deadline - time.monotonic())))
+            now = self.get_clock().now().nanoseconds
             age = (now - stamp_ns(observed.header.stamp)) / 1e9
             if not 0 <= age <= 1.0:
                 raise ValueError("Camera-on-hand requires fresh RGB-time robot TF")
             robot = transform_matrix(observed)
+        now = self.get_clock().now().nanoseconds
+        if depth_required:
+            validate_pair(rgb, depth, info, depth_info, now, QUALITY_DEFAULTS)
+        elif (not 0 <= (now - rgb["stamp_ns"]) / 1e9 <= .5
+              or time.monotonic() - rgb["received_at"] > .5):
+            raise ValueError("RGB expired while waiting for its timestamped TF")
         base_from_optical = resolve_base_from_camera_link(camera, robot) @ \
             transform_matrix(internal)
         return {"rgb": rgb, "depth": depth if depth_required else None, "generation": generation,
@@ -214,8 +227,10 @@ class TrayTeachNode(Node):
                            max_error_mm=self.plane["max_error_mm"])
         return self.plane
 
-    def preview(self, settings=None):
+    def preview(self, settings=None, *, generation):
         view = self.snapshot()
+        if view["generation"] != generation:
+            raise ValueError("Tray preview was invalidated before processing")
         rgb, context = view["rgb"], view["camera_context"]
         with self.lock:
             plane, model = copy.deepcopy(self.plane), copy.deepcopy(self.model)
@@ -239,7 +254,6 @@ class TrayTeachNode(Node):
                 or result.get("height") != rgb["height"]
                 or len(pixels) != rgb["width"] * rgb["height"] * 3):
             raise RuntimeError("Invalid native tray image reply")
-        self._check_snapshot(view)
         selected = result.get("selected")
         if settings is not None and (type(result["detections"]) is not list
                                      or type(result["count"]) is not int
@@ -256,7 +270,10 @@ class TrayTeachNode(Node):
                     raise RuntimeError("Invalid native selected tray pose")
         except (ValueError, KeyError, TypeError) as exc:
             raise RuntimeError(f"Invalid native selected tray pose: {exc}") from exc
+        self._check_snapshot(view)
         with self.lock:
+            if view["generation"] != self.generation:
+                raise ValueError("Tray preview was invalidated while processing")
             self.selected = None if selected is None else (
                 view["generation"], selected, rgb["stamp_ns"], time.monotonic())
         return {**view, "overlay": pixels, "result": result}

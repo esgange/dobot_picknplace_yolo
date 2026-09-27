@@ -83,6 +83,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.node = node
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tray-teach")
         self.future = self.completion = None
+        self.pending_job = None
+        self.preview_cancelled = False
+        self.closing = False
         self.job_kind = ""
         self.settings = self.frozen = None
         self.profile_path = None
@@ -163,7 +166,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.apply_button = self._button("Apply && Preview", self._apply)
         controls.addWidget(self.apply_button)
         self.preview_toggle = QtWidgets.QCheckBox("YOLO preview (up to 1 Hz)")
-        self.preview_toggle.toggled.connect(lambda _checked: self.node.invalidate())
+        self.preview_toggle.toggled.connect(self._invalidate_preview)
         controls.addWidget(self.preview_toggle)
         self.form_fields = [self.name, self.classes, self.confidence, self.iou, self.maximum,
                             self.preview_toggle, *self.dimensions.values()]
@@ -237,19 +240,43 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
     def _edited(self, *_args):
         self.settings = None
-        self.node.invalidate()
+        self._invalidate_preview()
         if hasattr(self, "preview_toggle"):
             self.preview_toggle.setChecked(False)
         if hasattr(self, "result_label"):
             self.result_label.setText("Settings changed; Apply & Preview for a new tray pose")
 
+    def _invalidate_preview(self, *_args):
+        if self.future is not None and self.job_kind == "preview":
+            self.preview_cancelled = True
+        self.node.invalidate()
+
+    def _update_controls(self):
+        exclusive = self.pending_job is not None or (
+            self.future is not None and self.job_kind != "preview")
+        for widget in self.buttons + self.form_fields:
+            widget.setEnabled(not exclusive)
+        self.plane_button.setEnabled(
+            not exclusive and self.frozen is not None and len(self.points) == 4)
+        self.undo_button.setEnabled(not exclusive and bool(self.points))
+        self.save_button.setEnabled(
+            not exclusive and self.node.plane is not None and self.node.position is not None
+            and self.node.model is not None)
+
     def _job(self, function, callback, kind):
+        if self.closing or self.node.fatal_error:
+            return
         if self.future is not None:
+            if self.job_kind == "preview" and kind != "preview" and self.pending_job is None:
+                self.pending_job = (function, callback, kind)
+                self._invalidate_preview()
+                self._update_controls()
+                self._message("Finishing the current preview before the requested action…")
             return
         self.job_kind, self.completion = kind, callback
-        for widget in self.buttons + self.form_fields:
-            widget.setEnabled(False)
+        self.preview_cancelled = False
         self.future = self.pool.submit(function)
+        self._update_controls()
 
     def _choose(self, title, directory, pattern):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, str(directory), pattern)
@@ -266,8 +293,11 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if path is not None:
             self._edited()
             self._resume()
-            self._job(lambda: self.node.apply_camera(path),
-                      lambda camera: self.camera_path.setText(camera.path.name), "camera")
+
+            def loaded(camera):
+                self.camera_path.setText(camera.path.name)
+                self._message(f"Loaded camera calibration: {camera.path.name}")
+            self._job(lambda: self.node.apply_camera(path), loaded, "camera")
 
     def _load_model(self):
         path = self._choose("YOLO model", self.node.root, "PyTorch (*.pt)")
@@ -297,7 +327,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if path is not None:
             def loaded(position):
                 self.node.position = position
-                self.node.invalidate()
+                self._invalidate_preview()
                 self.item_path.setText(path.name)
                 self._show_position()
                 self._message("Copied Tray Teach Position. Item Teach is no longer needed.")
@@ -368,7 +398,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _apply(self):
         try:
             self.settings = self._form_settings()
-            self.node.invalidate()
+            self._invalidate_preview()
             self._remember()
             self.preview_toggle.setChecked(True)
             self._message("Preview enabled. Green trays pass dimensions; red trays are rejected.")
@@ -376,17 +406,17 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._message(str(exc), error=True)
 
     def _freeze(self):
-        try:
-            self.node.invalidate()
-            self.frozen = self.node.freeze_for_plane()
+        self._invalidate_preview()
+
+        def frozen(view):
+            self.frozen = view
             self.points.clear()
             self.canvas.points = self.points
             self.canvas.selecting = True
             rgb = self.frozen["rgb"]
             self.canvas.show_frame(rgb["rgb"], rgb["width"], rgb["height"])
             self._message("Frozen RGB/depth snapshot. Click four surface corners in any order.")
-        except Exception as exc:
-            self._message(str(exc), error=True)
+        self._job(self.node.freeze_for_plane, frozen, "freeze")
 
     def _click(self, x, y):
         if self.frozen is not None and self.future is None and len(self.points) < 4:
@@ -424,7 +454,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _save(self):
         try:
             settings = self._form_settings()
-            self.node.validate_sources()
             if self.node.position is None or self.node.plane is None:
                 raise ValueError("Copy a Tray Teach Position and teach its reference plane first")
             position, plane = copy.deepcopy(self.node.position), copy.deepcopy(self.node.plane)
@@ -435,9 +464,12 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self.profile_filename = path.name
                 self._remember()
                 self._message(f"Saved new tray profile and paired model: {path}")
-            self._job(lambda: save_profile(
-                settings, position, plane, camera, model["path"], model["sha256"], self.node.root),
-                saved, "save")
+
+            def save():
+                self.node.validate_sources()
+                return save_profile(settings, position, plane, camera, model["path"],
+                                    model["sha256"], self.node.root)
+            self._job(save, saved, "save")
         except (ValueError, OSError, RuntimeError) as exc:
             self._message(str(exc), error=True)
 
@@ -461,34 +493,37 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.result_label.setToolTip("\n".join(rejected))
 
     def _tick(self):
+        if self.closing:
+            return
         if self.future is not None and self.future.done():
             future, callback, kind = self.future, self.completion, self.job_kind
+            obsolete = kind == "preview" and self.preview_cancelled
             self.future = self.completion = None
             if kind == "preview":
                 self.next_preview = time.monotonic() + 1.
             try:
-                callback(future.result())
+                result = future.result()
+                if not obsolete:
+                    callback(result)
             except Exception as exc:
-                self.node.selected = None
-                self._message(str(exc), error=True)
-                if self.node.native.failed or isinstance(exc, RuntimeError):
+                terminal = self.node.native.failed or isinstance(exc, RuntimeError)
+                if terminal or not obsolete:
+                    self.node.selected = None
+                    self._message(str(exc), error=True)
+                    if kind == "preview":
+                        self.result_label.setText(f"No current tray pose: {exc}")
+                if terminal:
                     self.node.fatal_error = str(exc)
-                if kind == "preview":
-                    self.result_label.setText(f"No current tray pose: {exc}")
         if self.node.fatal_error:
             self.timer.stop()
             QtWidgets.QMessageBox.critical(self, "Tray Teach stopped", self.node.fatal_error)
             self.close()
             return
+        if self.future is None and self.pending_job is not None:
+            job, self.pending_job = self.pending_job, None
+            self._job(*job)
         busy = self.future is not None
-        for widget in self.buttons + self.form_fields:
-            widget.setEnabled(not busy)
-        self.plane_button.setEnabled(
-            not busy and self.frozen is not None and len(self.points) == 4)
-        self.undo_button.setEnabled(not busy and bool(self.points))
-        self.save_button.setEnabled(
-            not busy and self.node.plane is not None and self.node.position is not None
-            and self.node.model is not None)
+        self._update_controls()
         if self.node.plane is not None:
             self.plane_label.setText(
                 f"Reference plane: base_link | fit error {self.node.plane['max_error_mm']:.2f} mm")
@@ -500,10 +535,14 @@ class TrayTeachWindow(QtWidgets.QWidget):
             return
         self.next_preview = time.monotonic() + 1.
         settings = copy.deepcopy(self.settings) if self.preview_toggle.isChecked() else None
-        self._job(lambda: self.node.preview(settings), self._show_view, "preview")
+        generation = self.node.generation
+        self._job(lambda: self.node.preview(settings, generation=generation),
+                  self._show_view, "preview")
 
     def closeEvent(self, event):
+        self.closing = True
         self.timer.stop()
+        self.pending_job = None
         self.node.close()
         self.pool.shutdown(wait=True, cancel_futures=True)
         event.accept()
