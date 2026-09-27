@@ -18,8 +18,35 @@ Visualization Manager:
       Name: RobotModel
       Value: true
     - Class: rviz_default_plugins/TF
+      Frame Timeout: 2.5
       Name: TF
       Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Item Teach - 5 mm colored voxels
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /item_teach/voxel_cloud
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Position Transformer: XYZ
+      Color Transformer: RGB8
+      Style: Boxes
+      Size (m): 0.005
+      Alpha: 1
+      Decay Time: 0
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Item Teach - valid item poses
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /item_teach/valid_items
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
   Global Options:
     Fixed Frame: base_link
     Frame Rate: 30

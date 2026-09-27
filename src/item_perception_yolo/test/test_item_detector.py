@@ -121,8 +121,10 @@ def call(node, count=3, digest="a"*64):
                                             GetItemPoses.Request(max_candidates=count, profile_sha256=digest), GetItemPoses.Response())
 
 
-def test_request_new_observation_shortage_identity_and_no_cache(service_node):
+def test_request_new_observation_shortage_identity_and_no_cache(service_node, monkeypatch):
     node, _ = service_node
+    save_images = MagicMock()
+    monkeypatch.setattr(detector, "save_pick_debug_pair", save_images)
     result = call(node)
     assert result.success and result.status == "SHORTAGE"
     assert len(result.candidates) == 1 and result.header.frame_id == "platform_reference"
@@ -136,6 +138,8 @@ def test_request_new_observation_shortage_identity_and_no_cache(service_node):
     again = call(node)
     assert again.batch_id != result.batch_id
     assert node.infer.call_count == 2  # no cached pose response
+    save_images.assert_not_called()
+    assert not (node.root / "debug/pick_img").exists()
 
 
 def test_requested_debug_pair_is_exact_annotated_result_and_bounded_to_debug_dir(service_node):

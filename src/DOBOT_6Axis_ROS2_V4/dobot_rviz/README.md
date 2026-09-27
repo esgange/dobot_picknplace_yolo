@@ -54,6 +54,14 @@ configuration only. The RViz fixed frame is `base_link`; the RobotModel display
 shows the CR10 and the TF display shows the robot frames plus any additional TF
 published by other local ROS nodes.
 
+The bundled configuration also subscribes to Item Teach's optional 1 Hz
+`/item_teach/voxel_cloud` (colored 5 mm boxes) and `/item_teach/valid_items`
+(validated pose axes and snapshot-age labels). These displays stay empty until
+Item Teach has calibrated inputs; the viewer does not start a detector, load
+models or save images. Candidate frames use `item_teach_live_candidate_N`.
+TF frames expire after 2.5 seconds without updates. This is an intentional
+project integration patch to the vendored RViz configuration only.
+
 Useful read-only checks:
 
 ```bash

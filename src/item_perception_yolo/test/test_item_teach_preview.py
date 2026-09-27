@@ -25,6 +25,7 @@ def window(tmp_path, monkeypatch):
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "warning", MagicMock())
     node = SimpleNamespace(
         events=MagicMock(), disarm=MagicMock(), arm=MagicMock(), close_runtime=MagicMock(),
+        rviz=MagicMock(compute=MagicMock(return_value=None)),
         clear_selected_pose=MagicMock(), show_selected_pose=MagicMock(), clicked_pose=MagicMock(),
         show_simulated_poses=MagicMock(),
         pick_planning_context=MagicMock(return_value={"synthetic": "planning"}),
@@ -66,6 +67,54 @@ def test_single_view_starts_with_blank_dimensions_and_no_production_profile(wind
     assert window.node.preview_quality == gui.QUALITY_DEFAULTS
     window.node.arm.assert_not_called()
     assert window.node.service is None
+
+
+def test_live_preview_starts_at_most_once_per_second_without_backlog(window, monkeypatch):
+    now = [100.]
+    monkeypatch.setattr(gui.time, "monotonic", lambda: now[0])
+    frame = {"width": 2, "height": 2, "rgb": bytes(12), "sequence": 1,
+             "stamp_ns": 100_000_000_000}
+    window.node.camera_snapshot = lambda: (frame, "Synthetic camera")
+    window.node.preview_once = MagicMock(return_value=None)
+    window._job = MagicMock()
+    window.yolo_toggle.setChecked(True)
+    window._refresh_video()
+    assert window._job.call_count == 1
+    frame["sequence"] += 1
+    now[0] += .9
+    window._refresh_video()
+    assert window._job.call_count == 1
+    now[0] += .1
+    window._refresh_video()
+    assert window._job.call_count == 2
+    window.job_busy = True
+    frame["sequence"] += 1
+    now[0] += 10.
+    window._refresh_video()
+    assert window._job.call_count == 2
+    window.job_busy = False
+    window._refresh_video()
+    assert window._job.call_count == 3
+    frame["sequence"] += 1
+    window._refresh_video()
+    assert window._job.call_count == 3  # No catch-up queue after slow inference.
+    window.node.arm.assert_not_called()
+
+
+def test_default_preview_waits_for_connected_camera_and_respects_manual_off(window):
+    window.auto_preview_pending = True  # Set only by a completed, explicitly trusted load.
+    window.node.camera_prefix = None
+    window._start_automatic_preview()
+    assert window.auto_preview_pending and not window.node.yolo_enabled
+    assert "waiting" in window.preview_status
+    window.node.camera_prefix = "bin_camera"
+    window._start_automatic_preview()
+    assert window.node.yolo_enabled and window.yolo_toggle.isChecked()
+    assert not window.auto_preview_pending
+    window.yolo_toggle.setChecked(False)
+    window._start_automatic_preview()
+    assert not window.node.yolo_enabled
+    window.node.arm.assert_not_called()
 
 
 def test_teach_has_no_controller_validation_action_or_request_state(window):
@@ -660,13 +709,14 @@ def test_model_load_takes_next_slot_from_continuous_preview(window, monkeypatch,
         assert not window.model_load_reserved
         assert window.load_model_button.isEnabled() and window.yolo_toggle.isEnabled()
         assert window.classes.item(0).text() == "1: part"
-        assert not window.yolo_toggle.isChecked() and not node.yolo_enabled
-        # Drain the automatically resumed ROI job before enabling detection.
+        assert window.yolo_toggle.isChecked() and node.yolo_enabled
+        assert not window.armed_toggle.isChecked()
+        # The trusted load starts the 1 Hz preview automatically, with no arming.
         completed = window.job_results.get(timeout=3)
         window.job_results.put(completed)
         window._refresh_video()
-        node.roi_once.assert_called_once()
-        window.yolo_toggle.setChecked(True)
+        node.roi_once.assert_not_called()
+        node.preview_once.assert_called_once()
         assert node.yolo_enabled
         assert "Model load busy" not in window.status.toPlainText()
     finally:
@@ -805,7 +855,7 @@ def test_explicit_teach_load_automatically_loads_exact_pair(window, paired_teach
     assert window._selected_classes() == [1] and window.classes.item(0).text() == "1: part"
     assert window._settings() == settings
     assert window.saved_path == path
-    assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
+    assert window.node.yolo_enabled and not window.armed_toggle.isChecked()
     assert not window.model_load_reserved and window.load_teach_button.isEnabled()
     assert "Item teach and paired model loaded" in window.status.toPlainText()
 
@@ -985,7 +1035,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     with zipfile.ZipFile(path.with_name(f".{path.stem}.previous.zip")) as backup:
         assert backup.read(path.name) == original
         assert backup.read(path.with_suffix(".pt").name) == model_original
-    assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
+    assert window.node.yolo_enabled and not window.armed_toggle.isChecked()
 
 
 def test_partial_recovery_clears_previous_form_values_and_unknown_booleans(window, paired_teach):
@@ -1322,7 +1372,10 @@ def test_station_files_automatically_enable_roi_when_stream_arrives(window, monk
              "stamp_ns": 100_000_000_000, "sequence": 1}
     window.node.camera_snapshot = lambda: (frame, "RGB live")
     window._refresh_video()  # First image triggers ROI-only rendering without a button.
-    window._job.assert_called_once_with("roi", window.node.roi_once)
+    window._job.assert_called_once()
+    assert window._job.call_args.args[0] == "roi"
+    window._job.call_args.args[1]()
+    window.node.roi_once.assert_called_once()
     window._refresh_video()
     window.node.apply_station.assert_called_once()  # No timer-driven reapplication/reconnect.
     assert not window.node.yolo_enabled and not window.yolo_toggle.isChecked()
@@ -1354,7 +1407,10 @@ def test_platform_mismatch_warns_once_without_blocking_preview(window, monkeypat
         "stamp_ns": 100_000_000_000, "sequence": 1}, "RGB live")
     for _ in range(3):
         window._refresh_video()
-    window._job.assert_called_once_with("roi", window.node.roi_once)
+    window._job.assert_called_once()
+    assert window._job.call_args.args[0] == "roi"
+    window._job.call_args.args[1]()
+    window.node.roi_once.assert_called_once()
     assert window.bin_platform_warning.text() == displayed_warning  # Not transient feedback.
     records = [call for call in window.node.events.record.call_args_list
                if call.args[1] == "item_bin_platform_mismatch"]

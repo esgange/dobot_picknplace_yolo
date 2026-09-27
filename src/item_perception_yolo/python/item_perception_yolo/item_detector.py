@@ -789,7 +789,7 @@ class ItemDetectNode(Node):
                     raise
             if epoch != self.arm_epoch or self.yolo_enabled:
                 return None
-            view = {**rgb, "rgb": pixels, "preview_mode": "roi",
+            view = {**rgb, "rgb": pixels, "source_rgb": rgb, "preview_mode": "roi",
                     "metadata": {"roi_overlay": status}}
             self.last_view = view
             return view

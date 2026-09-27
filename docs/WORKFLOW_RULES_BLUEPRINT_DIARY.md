@@ -5578,6 +5578,65 @@ Never use a floating “latest” version in an issue, script, or deployment not
   source still disarms. No physical robot or camera launch, no live detector
   startup, and no offline-transfer milestone.
 
+### 2026-09-27 — Default 1 Hz Item Teach voxels and all valid poses
+
+- Rule 133 adds default read-only Item Teach visualization at 1 Hz. An explicit
+  trusted standalone-model or paired-teach load starts YOLO preview once its
+  camera/settings are ready. Startup form restoration remains weight-free,
+  the operator can stop/resume YOLO, and Armed is still explicit. This supersedes
+  the previous post-load YOLO-OFF and clicked-only pose-preview behavior; clicked
+  detail inspection and Simulate Trigger keep their existing snapshot contracts.
+- The existing single GUI worker job first obtains the displayed RGB/depth/TF
+  observation and its YOLO detections, then calls a private native visualization
+  operation over that exact data. No second prediction, executor/thread pool,
+  backlog, production request or automatic file saving is introduced. Starts and
+  publications are bounded to one per second; slow processing reduces the rate.
+  Existing model-load and production-request priority is preserved.
+- Publish `/item_teach/voxel_cloud` as best-effort depth-one `PointCloud2` in
+  `base_link`, retaining the source image timestamp. Use 5 mm occupied-cell
+  centroids with averaged original RGB. Include valid depth across the view,
+  including surrounding geometry outside the bin; retain configured depth-range
+  checks and exclude missing depth or rays outside the color image. Project each
+  native depth ray through its CameraInfo model and complete calibration, and
+  map its color through the separate RGB distortion model. Do not resize,
+  interpolate or voxelize the data used for pose sampling.
+- Reuse the existing full-resolution candidate generator for every displayed
+  detection, including class/size/quality, green/light-blue pick borders and
+  robot-camera-origin clearance. Require selected classes, geometry, recorded
+  Home and planning settings for valid poses. The cloud can run without those
+  pose settings or with YOLO OFF; show the missing prerequisites. Include all
+  valid candidates up to YOLO `max_detections`, without `pose_candidates`
+  truncation. Publish `item_teach_live_candidate_N` TF plus axis/class/confidence
+  markers on `/item_teach/valid_items`, and full candidate/rejection diagnostics
+  with timestamps/counts on `/item_teach/rviz_diagnostics` (`String` JSON).
+- Label results as snapshots and report their age; frozen views may retain their
+  snapshot while current inputs remain valid. Clear clouds/markers and stop TF
+  on source/settings/CameraInfo changes, stale inputs or failure. Preview ranks
+  are frame-local identities, not tracked objects or production results. The
+  existing clicked/simulated child frame names remain separate. Headless Item
+  Detect constructs none of these publishers, stays request-driven, and saves
+  the exact RGB/depth pair only on `save_debug_images=true`. Normal requests are
+  explicitly tested to make no image-writer call or image directory.
+- Intentional vendor integration patch: the canonical `dobot_rviz` configuration
+  enables the optional colored cloud and marker topics, with 5 mm boxes, matching
+  QoS and a 2.5-second TF expiry for stopped candidates. No vendor driver, launch
+  lifecycle, upstream revision, robot feedback or hardware behavior changes.
+  Item Teach adds ROS message dependencies only; no configuration key, artifact
+  schema, controller/FSM change or operator-data edit is needed.
+- Validation: Item Perception and Dobot RViz symlink builds pass. All 435 Item
+  Perception tests and five RViz actual-feedback monitor tests pass. A final
+  focused run passes 108 geometry/GUI/visualization tests after retaining the
+  complete depth scene. Coverage includes voxel centroids/colors/invalid depth,
+  independent distortion, full 3D transforms, all candidates and rejections,
+  unchanged full-resolution clicked-pose results, real private-worker protocol,
+  exact observation reuse, 1 Hz scheduling/publication without backlog,
+  explicit-load auto-preview without arming, service priority, malformed worker
+  replies and invalidation/expiry. Changed Python modules and new tests pass
+  ament_flake8; `git diff --check` passes. Runtime tests use temporary synthetic
+  models/data, with no operator model, physical camera/robot launch or command.
+  No offline-transfer milestone is claimed. Restart Item Teach and reload the
+  canonical RViz configuration (or restart the viewer) to use the new displays.
+
 ### Future entry template
 
 ```text

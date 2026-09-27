@@ -25,6 +25,7 @@ from .item_teach_core import (
     GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS,
     NEW_PROFILE_IMAGE_SIZE, SPEED_FIELDS, NEW_PROFILE_SPEED, NEW_PROFILE_ACCELERATION,
     NEW_PROFILE_PICK_ROTATION_DEG, BIN_CLEARANCE_FIELDS, inset_bin_roi,
+    validate_detection_settings, validate_quality,
 )
 from .platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, ui_state_path, workspace_root,
@@ -38,6 +39,7 @@ from .item_teach_recovery import recover_item_fields
 from .bin_teach_core import bin_platform_warning, load_bin_teach_calibration_context
 from .item_teach_calibration import (
     saved_calibration_paths, load_calibration_selection, save_calibration_selection)
+from .item_teach_rviz import PERIOD_SEC, TeachingRvizPreview
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -87,6 +89,7 @@ class ItemTeachNode(ItemDetectNode):
         self.selection_lock = threading.RLock()
         self.selected_pose = None
         self.selected_pose_broadcaster = TransformBroadcaster(self)
+        self.rviz = TeachingRvizPreview(self, build_selected_pose_transform)
         self.create_timer(0.1, self._broadcast_selected_pose)
         self.create_subscription(
             JointState, "/joint_states", self._on_joints, qos_profile_sensor_data,
@@ -166,6 +169,7 @@ class ItemTeachNode(ItemDetectNode):
             self.selected_pose_broadcaster.sendTransform(list(transforms))
 
     def close_runtime(self):
+        self.rviz.clear("Item Teach closed")
         self.clear_selected_pose()
         super().close_runtime()
 
@@ -221,7 +225,8 @@ def build_simulated_pose_transforms(base_from_platform, response, stamp):
     transforms, seen = [], set()
     for priority, candidate in enumerate(response.candidates, 1):
         if candidate.priority != priority or not candidate.id or candidate.id in seen:
-            raise ValueError("Simulated teaching TF requires distinct, priority-ordered candidates")
+            raise ValueError(
+                "Simulated teaching TF requires distinct, priority-ordered candidates")
         seen.add(candidate.id)
         point, rotation = candidate.pose.position, candidate.pose.orientation
         transform = build_selected_pose_transform(
@@ -260,6 +265,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.last_preview_sequence = None
         self.preview_status = "YOLO OFF"
         self.preview_error = ""
+        self.auto_preview_pending = False
+        self.next_preview_at = 0.
+        self.rviz_status = "RViz 1 Hz: waiting for calibrated RGB/depth"
         self.displayed_view = self.frozen_view = self.selected_detection = None
         self.setWindowTitle("Item Teach — visual pose inspection (no motion)")
         self.resize(1560, 960)
@@ -350,7 +358,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             field.setPlaceholderText("Select from calibration/")
             row = QtWidgets.QHBoxLayout()
             choose = QtWidgets.QPushButton("Browse…")
-            choose.clicked.connect(lambda _checked=False, f=field: self._choose_calibration_file(f))
+            choose.clicked.connect(
+                lambda _checked=False, f=field: self._choose_calibration_file(f))
             row.addWidget(field)
             row.addWidget(choose)
             station.addRow(QtWidgets.QLabel(label))
@@ -710,6 +719,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._error("Camera connection failed", exc)
 
     def _toggle_yolo(self, enabled):
+        self.auto_preview_pending = False
         self._resume_live()
         self.preview_error = ""
         self.preview_update_due = None
@@ -761,6 +771,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         )
 
     def _resume_live(self):
+        self.node.rviz.clear()
         if (self.frozen_view is not None or self.pending_pose is not None
                 or self.pending_simulation is not None or self.simulation_busy):
             self.preview_revision += 1
@@ -860,6 +871,46 @@ class ItemTeachWindow(QtWidgets.QWidget):
             except Exception as exc:
                 self.job_results.put((kind, None, exc))
         threading.Thread(target=run, daemon=True).start()
+
+    def _rviz_options(self):
+        options = {"settings": None, "planning": None, "pose_error": "Enable YOLO for item poses"}
+        try:
+            options["quality"] = self._quality_settings()
+            validate_quality(options["quality"])
+        except ValueError as exc:
+            return {"error": str(exc)}
+        if self.node.yolo_enabled:
+            try:
+                settings = self._inference_settings()
+                validate_detection_settings(settings, geometry_required=True)
+                if self.home is None:
+                    raise ValueError("Record or load Home for robot-camera clearance checks")
+                planning = self.node.pick_planning_context(
+                    self.home, self._number("pick_rotation"), self._number("standoff_height"))
+                options.update(settings=settings, planning=planning, pose_error="")
+            except (ValueError, OSError) as exc:
+                options["pose_error"] = str(exc)
+        return options
+
+    def _preview_with_rviz(self, action, options):
+        view = action()
+        if view is not None:
+            view["rviz"] = self.node.rviz.compute(view, options)
+        return view
+
+    def _start_automatic_preview(self):
+        if not self.auto_preview_pending or self.model_load_reserved:
+            return
+        if self.node.model_config is None:
+            return
+        try:
+            self._configure_preview()
+        except (ValueError, OSError) as exc:
+            self.node.yolo_enabled = False
+            self.preview_status = f"1 Hz preview waiting: {exc}"
+            return
+        self.auto_preview_pending = False
+        self.yolo_toggle.setChecked(True)
 
     def _load_model(self):
         if self.model_load_reserved or self.closing or self.node.native.failed:
@@ -1172,6 +1223,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             if kind == "model":
                 self._finish_model_load()
             if error is not None:
+                if kind in ("preview", "roi"):
+                    self.node.rviz.clear(str(error))
+                    self.rviz_status = f"RViz unavailable: {error}"
                 self.preview_status = str(error)
                 self.preview_error = str(error)
                 if kind == "simulate":
@@ -1208,7 +1262,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.geometry_source.setCurrentIndex(-1)
                     self._message("Recovered geometry output is unknown/incompatible; select it.")
                 self.preview_error = ""
-                self.preview_status = "Model loaded — enable YOLO Detect to preview"
+                self.preview_status = "Model loaded — starting 1 Hz teaching preview"
+                self.auto_preview_pending = True
                 self._message("Model loaded. Preview displays all model classes. "
                               "Select geometry when both mask and OBB are available.")
                 if pair is not None:
@@ -1216,7 +1271,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                         "Recovered draft and verified paired model loaded; review fields and "
                         "save the corrected profile before arming." if recovery else
                         "Item teach and paired model loaded. Saved classes/settings "
-                        "retained; YOLO Detect and Armed remain OFF.")
+                        "retained; 1 Hz preview starts when ready. Armed remains OFF.")
                     self.node.events.record("INFO", "item_pair_model_loaded",
                                             "Verified paired model loaded with item teach",
                                             profile=str(pair[0]), profile_sha256=pair[1])
@@ -1262,6 +1317,18 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                         source_stamp_ns=value["stamp_ns"])
                 self._message(self.selected_pose_status)
             elif value is not None:
+                snapshot = value.get("rviz")
+                self.node.rviz.publish(snapshot)
+                if snapshot is None or "error" in snapshot:
+                    reason = "waiting for RGB/depth" if snapshot is None else snapshot["error"]
+                    self.rviz_status = f"RViz unavailable: {reason}"
+                else:
+                    self.rviz_status = (
+                        f"RViz 1 Hz: {snapshot['point_count']} colored 5 mm voxels | "
+                        f"{len(snapshot['candidates'])} valid poses | "
+                        f"{len(snapshot['rejected'])} rejected")
+                    if snapshot["pose_error"]:
+                        self.rviz_status += " | Poses waiting: " + snapshot["pose_error"]
                 self.preview_error = ""
                 metadata = value["metadata"]
                 if value["preview_mode"] == "roi":
@@ -1285,6 +1352,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         # The explicitly trusted model takes the next free slot exactly once.
         # Never interrupt/restart the lifetime worker or retry a failed request.
         self._start_pending_model_load()
+        self._start_automatic_preview()
         if (self.preview_update_due is not None and not self.model_load_reserved
                 and time.monotonic() >= self.preview_update_due):
             self._apply_live_detection_settings()
@@ -1320,10 +1388,14 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 and not self.model_load_reserved and not self.job_busy and frame is not None
                 and self.pending_simulation is None and not self.simulation_busy
                 and self.frozen_view is None
+                and time.monotonic() >= self.next_preview_at
                 and frame["sequence"] != self.last_preview_sequence):
             self.last_preview_sequence = frame["sequence"]
+            self.next_preview_at = time.monotonic() + PERIOD_SEC
+            action = self.node.preview_once if self.node.yolo_enabled else self.node.roi_once
+            options = self._rviz_options()
             self._job("preview" if self.node.yolo_enabled else "roi",
-                      self.node.preview_once if self.node.yolo_enabled else self.node.roi_once)
+                      lambda: self._preview_with_rviz(action, options))
         view = self.node.last_view if self.node.last_view is not None else frame
         roi_note = ""
         if view is not None and self.frozen_view is None:
@@ -1389,7 +1461,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         timing = view.get("metadata", {}).get("inference_ms")
         suffix = "" if timing is None else f" | inference {timing:.1f}ms"
         frame_note = f"{'STALE ' if age > 0.5 else ''}Frame age {age:.2f}s{suffix}"
-        rgb_lines = [title, frame_note]
+        rgb_lines = [title, frame_note, self.rviz_status]
         batch_lines = []
         if mode == "simulated":
             batch_lines = [f"Frozen teaching batch | {batch.valid_count} valid / "
@@ -1700,7 +1772,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "pick_rotation": self._number("pick_rotation"),
             "motion": {key: self._number(key) for key in MOTION_FIELDS},
             "speed": {key: self._number(key, int) for key in SPEED_FIELDS},
-            "acceleration": {key: self._number(f"acceleration_{key}", int) for key in SPEED_FIELDS},
+            "acceleration": {
+                key: self._number(f"acceleration_{key}", int) for key in SPEED_FIELDS},
             "timing": {"pick_settling": self._number("pick_settling")},
             "gripper": {key: self.inputs[key].isChecked() for key in GRIPPER_FIELDS},
             "retry": {"pose_candidates": self._number("pose_candidates", int)},

@@ -335,8 +335,9 @@ are provenance, not a station restriction. Loading never replays joint positions
 **Load Item Teach** also loads its paired `.pt` and reads the model classes after
 one combined replacement/trust confirmation. Saved class selection, geometry and
 settings are preserved; no separate Load Model click is needed. Missing, changed
-or incompatible pairs are rejected. YOLO and Armed remain OFF, and startup
-prefill still does not execute model weights. Armed ON is highlighted red so
+or incompatible pairs are rejected. The 1 Hz teaching preview starts when ready;
+Armed remains OFF, and startup prefill still does not execute model weights.
+Armed ON is highlighted red so
 the advertised production pose-service state is conspicuous; validation and
 fresh-input rules remain unchanged.
 
@@ -413,7 +414,9 @@ deployment safety requirements.
 For a standalone `.pt`, select **Load Model / Read Classes** and confirm it is trusted. You can
 load while the automatic bin border is updating: the confirmed
 load takes the next worker slot, with queued/loading progress and no retry.
-YOLO and Armed remain OFF after loading. Use **Connect RGB**, then **YOLO Detect**.
+Connect RGB before or after loading; the 1 Hz YOLO preview starts automatically
+once its inputs/settings are ready. **YOLO Detect** can stop or resume it.
+Armed remains OFF until explicitly enabled.
 There is one detection view: no Detect All/Filtered controls or Resume Live button.
 The visual-first window keeps setup in one scrollable left column and gives
 most space to resizable, side-by-side RGB/depth panes. Result/frozen status,
@@ -437,7 +440,7 @@ Registered depth and RGB must share their optical frame, dimensions and K.
 Their lens-distortion coefficients may differ: the worker uses both CameraInfo
 models to map the physical sampling circle and RGB mask onto native depth pixels.
 Depth is not resized or interpolated; the original RGB pick center is unchanged.
-Click an item to freeze the exact RGB/depth observation and calculate only its pose.
+Click an item to freeze the exact RGB/depth observation and inspect its pose.
 Class, size, ROI, freshness and MAD depth checks must pass. No newer image/depth
 or TF is substituted. Once that exact pair passes acquisition checks it remains
 valid for the frozen click calculation. The top-left shows
@@ -454,12 +457,38 @@ It may appear elliptical under perspective; no fixed-pixel ring is substituted
 when calibration is unavailable. Edit the diameter, then click an item again.
 Depth mirrors RGB mask shading, size borders, long-X/short-Y axes, pick dots
 and bin ROI through its own calibrated pixel model. Both views freeze together
-on a click; only the selected pose is calculated from that exact pair, while
+on a click; the selected pose is inspected from that exact pair, while
 all item outlines remain visible. Both panes show selection/pose feedback;
 accepted depth points are black and rejected points red. The redundant help
 paragraph above the views is removed. Platform/Bin Teach use the same compact
 setup/large-video presentation, with Save/capture visible and extra calibration
 details expandable; their explicit Apply and capture/save workflow is unchanged.
+
+Item Teach also publishes a default **1 Hz RViz preview**: a colored **5 mm voxel
+cloud** of the valid depth view, including surroundings outside the bin,
+plus TF/axis/label markers for
+**all valid item poses**, up to the YOLO detection cap. The canonical Dobot RViz
+configuration includes both displays. Topics are `/item_teach/voxel_cloud`
+(`PointCloud2`), `/item_teach/valid_items` (`MarkerArray`) and
+`/item_teach/rviz_diagnostics` (JSON in `String`, including all candidates and
+rejection reasons). Frames are `base_link -> item_teach_live_candidate_N`.
+Cloud XYZ uses the complete calibrated transforms; colors come from the original
+RGB through the separate RGB/depth distortion models. Only the display cloud is
+voxelized; pose calculation uses the full-resolution registered depth and the
+existing class, size, bin, quality and robot-camera-clearance checks. Poses need
+selected classes, dimensions, Home and planning settings; the cloud can run with
+YOLO OFF. The view explains missing prerequisites. No `pose_candidates` truncation
+applies to this teaching preview.
+
+One existing worker job processes the latest pair at most once per second, with
+no extra YOLO inference, new executor, backlog or automatic image saving. Slow
+processing lowers the update rate. Each published result remains a labelled
+snapshot; a frozen teaching view retains that snapshot and reports its age.
+Input loss, source/settings changes or failure clear clouds/markers and stop
+candidate TF. RViz expires stopped frames after 2.5 seconds. These frame-local
+IDs are not tracked identities or production service results. Headless Item
+Detect stays request-driven, publishes none of these visualization topics and
+saves RGB/depth images only when `GetItemPoses.save_debug_images=true`.
 RGB keeps mask shading and one mask-derived rectangle (or the native oriented
 rectangle for OBB), with centered long-X/short-Y lines and a pick-point dot.
 No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the

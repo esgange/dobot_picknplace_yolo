@@ -106,10 +106,16 @@ def serve(input_stream, output_stream, runtime, manifest, scratch):
         while True:
             request, data = receive_packet(input_stream)
             if request.get("operation") not in (
-                    "detect", "inspect", "preview", "overlay_roi", "selected_pose"):
+                    "detect", "inspect", "preview", "overlay_roi", "selected_pose",
+                    "teaching_rviz"):
                 raise RuntimeError("Unsupported preview operation")
             if cv2.getNumThreads() != 1 or cv2.ocl.useOpenCL() or torch.get_num_threads() != 4:
                 raise RuntimeError("Native thread/OpenCL runtime drift")
+            if request["operation"] == "teaching_rviz":
+                from .item_rviz_native import teaching_rviz
+                header, pixels = teaching_rviz(request, data, cv2, np)
+                send_packet(output_stream, header, pixels)
+                continue
             if request["operation"] == "selected_pose":
                 from .item_geometry import selected_pose
                 from .item_teach_core import validate_detection_settings

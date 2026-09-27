@@ -20,12 +20,13 @@ enter the grouped settings, record six actual home joints from live bringup,
 and save a YAML/model copy pair under `offline_teach/item_teach/`. Home joints
 are portable; source IP is provenance only. Launch `robot_controller` separately
 to validate the saved pair. Neither profile validation nor loading moves the
-robot. For initial testing, Load Model and Connect RGB, then toggle YOLO ON.
+robot. For initial testing, Load Model and Connect RGB; the trusted model's
+1 Hz preview starts when ready. YOLO Detect stops/resumes it; Armed stays OFF.
 There is one view, without Detect All/Filtered controls or Resume Live button.
 Select station/bin files and mask/OBB, then click a detection to freeze it and
 read long X / height and short Y / width in mm at top-left. Enter dimensions and
 tolerance: green borders pass size, red fail size, gray means not checked.
-Clicking calculates only that item's RGB/depth pose with the strict class/ROI/size
+Clicking inspects that item's RGB/depth pose with the strict class/ROI/size
 and MAD depth checks. A valid pose shows platform XYZ/yaw and publishes teaching-only
 `base_link -> item_teach_selected_item` for RViz's TF display. No RViz launch or
 robot movement occurs. Failed or invalidated clicks show a reason without a new TF.
@@ -38,6 +39,13 @@ YOLO/model loading and re-arming remain explicit. Unsaved fields are not autosav
 Item overlays keep mask shading, one mask-derived rectangle (or native OBB),
 long-X/short-Y centered axes and a pick dot, with no extra axis-aligned YOLO box.
 The green bin border coexists with detections and also works with YOLO OFF.
+The canonical RViz viewer also displays Item Teach's default 1 Hz colored 5 mm
+scene voxel cloud and all valid detected-item pose frames/markers. Complete the
+class, geometry, Home and planning settings for poses; missing settings have a
+visible reason. Pose sampling uses full-resolution depth. Slow inference reduces
+the rate without queuing work; frozen views retain labelled snapshots. Headless
+Item Detect has no continuous RViz output and saves images only when a pose
+request sets `save_debug_images=true`.
 Use **Browse…** to select the platform, bin-camera and robot-camera calibration
 files from root `calibration/`, then **Load Calibration**. The platform fills its
 bound bin-camera filename; their hashes/mode/settings must match. Recalibrating

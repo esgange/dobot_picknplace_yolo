@@ -346,6 +346,20 @@ remain per-request. No config writes, watcher, hardware command or new key is
 added. Robot Controller's independent calibration selection and hash checks
 remain unchanged; controller and detector must still use matching artifacts.
 
+Rule 133 adds default 1 Hz read-only Item Teach colored 5 mm scene voxels and
+all valid detected-item poses/TF/markers with complete rejection diagnostics.
+Explicit trusted model loading starts preview when ready; startup prefill never
+executes weights and arming remains explicit. Use the same RGB/depth/TF snapshot
+and existing private worker, one YOLO prediction per tick, no backlog or extra
+executor. Keep original-resolution pose sampling and every existing pose gate;
+only cloud visualization is voxelized. Include all candidates up to the YOLO
+detection cap, without production pose_candidates truncation. Label snapshots
+and age; source/settings/CameraInfo invalidation or stale inputs clear displays
+and stop TF. Canonical RViz includes the optional cloud/marker displays and a
+2.5-second TF timeout. Headless remains request-driven, creates no visualization
+publishers, and saves images only on save_debug_images=true requests. No new
+configuration key, schema, hardware command or automatic image archive is added.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

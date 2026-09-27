@@ -36,8 +36,8 @@ ros2 launch item_perception_yolo item_teach.launch.py
    the current operation finishes, then the confirmed load runs once in the
    same worker. The button reports queued/loading progress; no repeated clicks
    or YOLO activation are needed. Cancelling the trust question resumes previews
-   without loading. Successful loading restores the bin preview but leaves YOLO
-   and Armed OFF until explicitly enabled. Worker failures remain terminal.
+   without loading. Successful loading automatically starts the 1 Hz YOLO
+   preview when ready; Armed stays OFF. Worker failures remain terminal.
    The locked native runtime is copied into the install prefix as ordinary
    files even for a workspace `--symlink-install`. Its `cv2` loader and binary
    must never be symlinks into `build/`; that layout recursively imports the
@@ -47,7 +47,8 @@ ros2 launch item_perception_yolo item_teach.launch.py
    If both outputs are observed, choose one explicitly. Box-only `detect` models
    can be previewed but cannot be armed as mask/OBB pose generators. There is no
    task conversion or alternate-model fallback.
-3. Enter a prefix, **Connect RGB**, then **YOLO Detect ON**. There is one view;
+3. Enter a prefix and **Connect RGB**. The explicitly loaded model's 1 Hz preview
+   starts when ready; **YOLO Detect** stops/resumes it. There is one view;
    the Detect All/Filtered controls, dropdown and Resume Live button are removed.
    It displays every model class, including size failures. Home and a saved item
    profile are not needed for preview. Visible confidence, IoU and detection cap
@@ -127,6 +128,43 @@ ros2 launch item_perception_yolo item_teach.launch.py
    to advertise `/item_detect/get_item_poses`. OFF removes the service. GUI and
    headless detector must not advertise it simultaneously. No robot motion is
    performed by either mode.
+
+### Default 1 Hz RViz preview
+
+After explicit trusted model loading, Item Teach enables YOLO preview when its
+camera/settings are ready. Startup prefill never executes weights, and arming
+remains explicit. At most once per second, one existing worker job runs YOLO,
+then reuses that exact RGB/depth/TF observation for a calibrated colored 5 mm
+voxel cloud and every valid candidate. Slow processing lowers the rate; jobs
+never accumulate or catch up. There is no second YOLO prediction, additional
+executor or automatic image saving.
+
+| Output | Topic or frame | Contents |
+| --- | --- | --- |
+| `PointCloud2` | `/item_teach/voxel_cloud` | Valid depth view including bin surroundings, 5 mm centroids with averaged original RGB, `base_link`, source stamp |
+| `MarkerArray` | `/item_teach/valid_items` | All valid pose XYZ axes, class/confidence and snapshot-age labels |
+| TF | `base_link -> item_teach_live_candidate_N` | Frame-local ranked item poses; 1 Hz, not tracked identities |
+| `String` JSON | `/item_teach/rviz_diagnostics` | Source timestamps/age, voxel count, every candidate and rejection reason |
+
+The canonical `dobot_rviz` configuration enables the cloud and marker displays.
+Cloud transport is best-effort, depth one; markers/diagnostics are reliable,
+depth one. Colors use both registered-depth and RGB distortion models. Complete
+platform/camera transforms preserve station tilt and height. Only visualization
+points are voxelized: pose depth sampling stays full resolution and retains
+class, dimensions, green/light-blue borders, MAD/quality and robot-camera
+clearance checks. All valid poses up to YOLO `max_detections` are included;
+production `pose_candidates` does not truncate this preview. Selected classes,
+dimensions, recorded Home, pick rotation and standoff are required for valid
+poses. With incomplete pose settings or YOLO OFF, the calibrated cloud can still
+run and the view explains which pose prerequisites are missing.
+
+These are labelled snapshots, also retained while the teaching view is frozen.
+Current RGB/depth loss, changed CameraInfo, source/settings changes or failure
+clear the cloud and markers and stop candidate TF. The canonical RViz TF timeout
+is 2.5 seconds; other TF consumers may keep historical transforms. No cloud or
+pose preview can satisfy a production request. Headless Item Detect publishes
+none of these topics, remains request-driven, and writes images only for an
+explicit `GetItemPoses.save_debug_images=true` request.
 
 For a valid clicked pose, the top-left shows dimensions and platform-relative
 XYZ/yaw. Item Teach broadcasts `base_link -> item_teach_selected_item` at 10 Hz,
@@ -333,7 +371,8 @@ worker finishes its current preview and gives the load the next slot. Overlappin
 loads are disabled. The pair's hash is checked before queuing/loading and after
 inspection, along with saved task, class IDs and geometry support. Keep the saved
 selection and fields; do not substitute classes, a task or another output.
-Failures are visible and never retried. YOLO Detect and Armed stay OFF.
+Failures are visible and never retried. Successful verified loading starts the
+1 Hz teaching preview when ready; Armed stays OFF.
 Startup form prefill remains weight-free; manually browsing a standalone model
 still requires the separate explicit Load Model/trust action.
 
@@ -422,8 +461,8 @@ splitter. Both carry mask shading, green/red/gray size borders, centered axes/do
 the loaded green bin ROI, and any configured light-blue pick clearance. Depth
 geometry is projected through its own CameraInfo;
 straight RGB edges are sampled before projection to handle differing distortion.
-Both views freeze on the exact displayed pair when clicked, and only that item
-gets a pose calculation (no second inference or newer depth). All other outlines
+Both views freeze on the exact displayed pair when clicked, and that item
+gets a detailed pose inspection (no second inference or newer depth). All other outlines
 stay visible on frozen depth; the sampling circle is cyan, accepted samples black,
 rejected red. Result/frozen status, inference settings, dimensions/pose and source
 ages appear in a wrapping black status band at the top of each pane, below its
