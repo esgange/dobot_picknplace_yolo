@@ -236,8 +236,6 @@ class TrayTeachNode(Node):
             raise ValueError("CameraInfo changed; acquire another frame")
 
     def freeze_for_plane(self):
-        if self.position is None:
-            raise ValueError("Copy Tray Teach Position from Item Teach before teaching a plane")
         # Snapshot validation intentionally ignores the previous plane. Keep
         # that plane active for live preview until a new one is actually created.
         view = self.snapshot(depth_required=True)

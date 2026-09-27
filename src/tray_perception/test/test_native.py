@@ -177,6 +177,9 @@ def exercise_tray_axis_overlays():
     result, data = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
     item = result["detections"][0]
     assert result["selected"] is None and not item["valid"]
+    assert "1 tray(s) measured" in result["reason"]
+    assert "Size filter inactive" in result["reason"]
+    assert item["reason"].startswith("Measured;")
     assert item["size_status"] == "unchecked"
     assert np.isclose(item["length_mm"], 200, atol=.01)
     assert np.isclose(item["width_mm"], 100, atol=.01)
@@ -205,6 +208,11 @@ def exercise_tray_axis_overlays():
     assert "rectangle" in result["detections"][0]
     result, data = native.predict_trays({**request, "plane": None}, None, rgb, {}, cv2, np)
     assert "rectangle" not in result["detections"][0] and result["selected"] is None
+    assert "Create the reference plane" in result["reason"]
+    assert "Create the reference plane" in result["detections"][0]["reason"]
+    result, _ = native.predict_trays({**request, "camera_context": None}, None, rgb, {}, cv2, np)
+    assert "RGB-time TF" in result["reason"]
+    assert "rectangle" not in result["detections"][0]
     # Every quadrant, tilt and rotation keeps inward short X / long Y and right-handed Z.
     tilt = cv2.Rodrigues(np.array([.4, .2, .1]))[0]
     for x in (-.4, .4):

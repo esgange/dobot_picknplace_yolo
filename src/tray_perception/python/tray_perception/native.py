@@ -164,8 +164,10 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
                      "size_status": "unchecked"}
         detections.append(detection)
         try:
-            if plane is None or context is None:
-                raise ValueError("Matching calibration and reference plane required for size")
+            if context is None:
+                raise ValueError("Measurement needs matching camera calibration and RGB-time TF")
+            if plane is None:
+                raise ValueError("Create the reference plane from four corners to measure trays")
             polygon = item["polygon"]
             if (np.any(polygon[:, 0] <= 0) or np.any(polygon[:, 0] >= width - 1)
                     or np.any(polygon[:, 1] <= 0) or np.any(polygon[:, 1] >= height - 1)):
@@ -191,7 +193,8 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
                 detection["depth_rectangle"] = project(
                     base[order], context["depth_camera"], optical, cv2, np).tolist()
             if expected is None:
-                raise ValueError("Enter valid expected length, width and tolerance")
+                raise ValueError("Measured; size filter inactive until length, width and "
+                                 "tolerance are entered")
             if (abs(length - expected["length_mm"]) > expected["tolerance_mm"]
                     or abs(short - expected["width_mm"]) > expected["tolerance_mm"]):
                 detection["size_status"] = "fail"
@@ -224,7 +227,19 @@ def predict_trays(request, result, rgb, names, cv2, np):
                                       settings["yolo"]["max_detections"], cv2, np)
         detections, selected = evaluate_objects(
             objects, settings, plane, context, rgb.shape[1], rgb.shape[0], cv2, np)
-        reason = "One valid tray selected" if selected is not None else "No eligible tray"
+        measured = sum("rectangle" in item for item in detections)
+        if selected is not None:
+            reason = "One valid tray selected"
+        elif context is None:
+            reason = "Measurement needs matching camera calibration and RGB-time TF"
+        elif plane is None:
+            reason = "Create the reference plane from four corners to measure trays"
+        elif measured:
+            reason = f"{measured} tray(s) measured — click a tray to read X/width and Y/length"
+            reason += (" | Size filter inactive" if settings["geometry"] is None else
+                       " | No accepted tray pose")
+        else:
+            reason = "No eligible tray"
         if plane is not None and context is not None:
             try:
                 draw_plane(overlay, plane, context, cv2, np)

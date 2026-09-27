@@ -493,6 +493,16 @@ Missing depth blocks only cloud refresh, not plane-based pose requests. Add a
 separate enabled canonical RViz display with reliable/transient-local depth-one
 QoS and zero decay. Keep strict deployment, schemas and controller behavior.
 
+Rule 145 permits reference-plane capture and tray measurement before copying
+Item Teach Home or entering size filters. Plane capture still requires matching
+calibration and one fresh synchronized RGB/depth/exact-time TF observation;
+there is no motion or assumed plane. Explain missing calibration/TF/plane in
+the preview and distinguish measured-but-unfiltered trays from accepted poses.
+Blank/invalid dimensions keep measurement and click inspection available on
+the taught plane. The copied Tray Teach Position and complete filters remain
+mandatory for Save, arming and deployed profiles. This supersedes the previous
+position-before-plane teaching order only; keep schema 1 and production gates.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

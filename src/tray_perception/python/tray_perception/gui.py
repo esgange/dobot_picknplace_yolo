@@ -225,7 +225,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         camera_form = group("1  Camera / calibration")
         identity = group("2  Tray / model")
         detection = group("3  Detection settings")
-        geometry = group("4  Tray dimensions — mm")
+        geometry = group("4  Tray size filter — mm")
         position_form = group("5  Teaching position — teach file")
         plane_form = group("6  Reference plane — teach file")
         self.camera_prefix = QtWidgets.QLineEdit()
@@ -255,7 +255,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         position_form.addRow(self.position_label)
         note = QtWidgets.QLabel(
             "Tray Teach Position is a copied teaching reference. This node sends no robot "
-            "commands. Controller Home remains in Item Teach.")
+            "commands. Required for saving, not for measuring. Controller Home remains "
+            "in Item Teach.")
         note.setWordWrap(True)
         position_form.addRow(note)
         self.dimensions = {}
@@ -266,6 +267,12 @@ class TrayTeachWindow(QtWidgets.QWidget):
             geometry.addRow(label, widget)
             self.dimensions[key] = widget
             widget.textChanged.connect(self._edited)
+        measurement_hint = QtWidgets.QLabel(
+            "Leave these fields blank to measure first. Create the reference plane, then "
+            "click a tray to read its width/X and length/Y. Enter these values and a "
+            "tolerance when ready to filter detections.")
+        measurement_hint.setWordWrap(True)
+        geometry.addRow(measurement_hint)
         self.classes = QtWidgets.QListWidget()
         self.classes.setMinimumHeight(60)
         self.classes.setMaximumHeight(100)
@@ -313,7 +320,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         plane_form.addRow(self.corner_status)
         instructions = QtWidgets.QLabel(
             "Capture the uncovered tray, then select four corners in the snapshot editor. "
-            "Create the plane and Save Tray Teach to keep it in the teach file. "
+            "Create the plane to enable measurements; dimensions and Item Teach position "
+            "are not needed yet. Save the complete Tray Teach profile to keep the plane. "
             "Main RGB/depth views remain live.\n\n"
             "Origin: corner nearest base_link. X = short edge; Y = long edge, both inward. "
             "Re-teach after changing tray support height or tilt.")
@@ -863,6 +871,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._discard_plane_draft()
             self._message(
                 f"Reference plane created; fit error {plane['max_error_mm']:.2f} mm. "
+                "Click a live tray to measure it, then enter your size filters. "
                 "Save Tray Teach to store it in the teach file.")
 
         def create():
@@ -996,7 +1005,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.camera_status.setToolTip("\n".join(f"/{prefix}/{topic}" for topic in (
             "color/image_raw", "depth/image_raw", "color/camera_info", "depth/camera_info"))
             if prefix else "Connect RGB first")
-        error = self.preview_error or self.geometry_error
+        error = self.preview_error or (
+            "Size filter inactive: " + self.geometry_error if self.geometry_error else "")
         mode = ("YOLO paused: " + self.preview_error if self.preview_error else
                 "YOLO ON" if self.preview_toggle.isChecked() else "YOLO OFF — raw RGB")
         metric = "" if self.last_view is None else self.last_view["metric_error"]

@@ -6150,6 +6150,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   clouds were not tested. No hardware commands, operator-model execution or
   operator artifact changes. Offline transfer remains unperformed.
 
+### 2026-09-27 — Measure trays before entering size filters
+
+- The operator's Tray Teach session log showed repeated plane-capture refusals
+  because the Item Teach position had not been copied. No plane was created in
+  that session, so calibrated detection polygons could not produce metric size.
+  Blank dimensions already permitted measurement on a taught plane, but the
+  separate position prerequisite and generic no-eligible-tray message obscured
+  the measurement workflow.
+- Rule 145 removes the copied-position requirement from read-only plane capture.
+  Allow teaching the four-corner plane and measuring trays before loading Item
+  Teach or entering dimension filters. Preserve matching calibration, one fresh
+  synchronized RGB/depth/exact-time TF observation, corner/depth/fit checks and
+  rejection of invalidated sources. No inferred plane or current-depth shortcut
+  is introduced. Copied position remains required to save the complete profile;
+  schema 1, deployment, arming and production pose gates are unchanged.
+- Label the sidebar fields Tray Size Filter and explain that they may remain
+  blank during measurement. Explain that copied position is required for saving,
+  and guide from Create Plane to clicking a live tray before entering filters.
+  Native preview distinguishes missing calibration/TF, missing plane and
+  measured-but-unfiltered detections. Display measured counts and an explicit
+  size-filter-inactive message; keep click X/width and Y/length values, overlays
+  and manual fields independent of acceptance. No view freezing or auto-fill.
+- Validation: all 117 Tray Perception tests pass, including plane capture with
+  no copied position, measurement inspection with blank/invalid dimensions,
+  explicit missing-plane/calibration messages and unchanged production refusal.
+  Existing real private-worker geometry, ROS requests, retained-cloud and Qt
+  tests pass. Symlink build, changed-file ament_flake8 and git diff --check pass.
+  Only operator session logs/process state were inspected; no operator-model execution,
+  process restart, robot command or operator artifact edit. Live physical
+  verification and offline transfer remain unperformed.
+
 ### Future entry template
 
 ```text

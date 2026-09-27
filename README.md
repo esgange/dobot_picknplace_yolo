@@ -611,11 +611,14 @@ RGB/depth views support click inspection with manually entered dimensions/tolera
 Form entries and file choices are remembered across relaunches, even with YOLO
 off or an incomplete form. Drafts save after a 300 ms pause and on orderly close;
 restoration leaves YOLO and Armed off and input loading explicit.
-Load matching camera calibration and Item Teach once to copy its Home into
-**Tray Teach Position**. The Item Teach-style sidebar separates camera/model
-settings from teaching position and reference-plane data. Use **Capture 4-corner
-snapshot…** in Reference Plane, select four surface corners in its captured-image
-editor, then Create and Save Tray Teach. Main RGB/depth views stay live throughout.
+Load matching camera calibration. You can leave size filters blank and copy
+Item Teach's Home into **Tray Teach Position** later, before saving. The sidebar
+separates camera/model settings from teaching position and reference-plane data.
+Use **Capture 4-corner snapshot…** in Reference Plane, select four surface corners
+in its captured-image
+editor, then Create. Click a live tray to read width/X and length/Y, enter the
+desired size filters, and Save Tray Teach when complete. Plane capture and
+measurement need no copied position. Main RGB/depth views stay live throughout.
 The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
 that plane, without live surface depth, and reject detections outside the taught

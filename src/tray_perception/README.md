@@ -21,7 +21,7 @@ lists both CameraInfo topics too. RGB/YOLO preview needs no calibration, depth,
 robot TF, Item Teach, name, dimensions or selected classes. The RGB and registered
 depth panes share a horizontal layout and show unavailable-input reasons.
 The Item Teach-style sidebar groups Camera/Calibration, Tray/Model, Detection
-Settings, Dimensions, Teaching Position and Reference Plane. Load/Save stay at
+Settings, Tray Size Filter, Teaching Position and Reference Plane. Load/Save stay at
 the top right, with YOLO/Simulate/Armed above the live views. Reference-plane
 controls edit the teach file's geometry, independently of camera setup.
 
@@ -43,8 +43,11 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    with an inline reason; correction resumes it, with no old-value fallback.
    Segmentation masks and OBB models support metric poses; box-only models remain
    detection previews and cannot produce a saved tray profile.
-2. Load an Item Teach YAML from `offline_teach/item_teach/` to copy its six Home
-   joints into **Tray Teach Position**. The paired Item model is verified but
+2. Leave **Length**, **Width** and **Tolerance** blank to measure first. Neither
+   these filters nor a copied teaching position is needed to capture the plane
+   or inspect measured trays. Before saving the complete profile, load an Item
+   Teach YAML from `offline_teach/item_teach/` to copy its six Home joints into
+   **Tray Teach Position**. The paired Item model is verified but
    never executed. Position copying does not move the robot. Position the robot
    with the existing authorized motion workflow if needed. Controller Home will
    continue to come from the controller's own Item Teach file.
@@ -74,6 +77,9 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    Y/length and corner XYZ in `base_link`, without changing your expected dimensions.
    Depth shows the same geometry projected with its own distortion model when
    available. Missing live depth does not block plane-based RGB measurements.
+   Preview status reports **measured / size filter inactive** when filters are
+   incomplete. If measurements are unavailable, it names the missing calibration,
+   timestamped TF or reference plane instead of only saying no tray was accepted.
    Main views stay live; the last clicked observation is labelled with its age.
    Its highlight disappears on the next frame, and settings changes invalidate
    the summary. There is no Resume Live button or persistent main-view freeze.

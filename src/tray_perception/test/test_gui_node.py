@@ -497,18 +497,42 @@ def test_plane_create_queues_original_snapshot_and_keeps_existing_plane_until_co
     assert window.canvas.image.pixelColor(0, 0).red() == 80
 
 
-def test_snapshot_acquisition_preserves_existing_plane_and_rejects_invalidated_sources():
+@pytest.mark.parametrize("copied_position", [None, position()])
+def test_snapshot_acquisition_preserves_existing_plane_and_rejects_invalidated_sources(
+        copied_position):
     original, view = plane(), live_view()
-    node = SimpleNamespace(position=position(), plane=original,
+    node = SimpleNamespace(position=copied_position, plane=original,
                            snapshot=MagicMock(return_value=view),
                            visuals=MagicMock(return_value={}), _check_snapshot=MagicMock())
     TrayTeachNode.freeze_for_plane(node)
+    node.snapshot.assert_called_once_with(depth_required=True)
     assert node.plane is original
     node._check_snapshot.assert_called_once_with(view)
     node._check_snapshot.side_effect = ValueError("source changed during snapshot")
     with pytest.raises(ValueError, match="source changed"):
         TrayTeachNode.freeze_for_plane(node)
     assert node.plane is original
+
+
+@pytest.mark.parametrize("dimension_text", ["", "invalid"])
+def test_measurement_inspection_needs_no_size_filter_or_copied_position(window, dimension_text):
+    enable_model(window)
+    for field in window.dimensions.values():
+        field.setText(dimension_text)
+    window._refresh_preview_settings()
+    assert window.preview_settings["geometry"] is None and window.node.position is None
+    item = {"polygon": [[10, 10], [100, 10], [100, 100], [10, 100]],
+            "source_index": 1, "confidence": .9, "class_name": "tray", "valid": False,
+            "length_mm": 200., "width_mm": 100., "reason": "Measured; size filter inactive"}
+    view = live_view()
+    view["result"].update(detections=[item], reason="1 tray(s) measured | Size filter inactive")
+    window._show_view(view)
+    window._click(50, 50)
+    assert "X/width 100.0 mm × Y/length 200.0 mm" in window.detail_label.text()
+    assert "measured" in window.result_label.text()
+    assert all(field.text() == dimension_text for field in window.dimensions.values())
+    with pytest.raises(ValueError, match="complete Tray Teach profile"):
+        window._trigger_settings()
 
 
 @pytest.mark.parametrize("terminal", [False, True])
