@@ -20,6 +20,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/TF
       Frame Timeout: 2.5
       Name: TF
+      Show Axes: false
       Value: true
     - Class: rviz_default_plugins/PointCloud2
       Name: Item Teach - 10 mm colored voxels

@@ -174,8 +174,10 @@ origin, X/Y extents, saved plane and controller placement coordinates are untouc
 The guides clear on invalidation/no selection, expire after 2.5 seconds and share
 the selected observation's timestamp. Missing depth or grey voxels do not clear
 fresh plane-based pose guides. Reload canonical RViz to add the display.
-Its separate TF display still shows the real axes, including downward Z; those
-axes can be hidden independently when viewing the guides. Headless Tray Detect
+Canonical **TF → Show Axes = false** hides the overlapping raw axes, including
+robot-frame axes, so the blue-UP guides are the visible pose axes. TF data and
+RobotModel remain unchanged. Uncheck Show Axes in an existing viewer or reload
+the configuration; enable it explicitly to inspect real frames. Headless Tray Detect
 retains its existing voxel-only visualization, with no added pose publisher or
 background inference.
 

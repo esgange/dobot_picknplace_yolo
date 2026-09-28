@@ -172,8 +172,10 @@ planning remain unchanged. Clicked and simulated poses use the same convention
 on `/item_teach/selected_pose_guides`; live poses retain `/item_teach/valid_items`.
 The selected guides follow their existing frozen-preview lifetime and clear with
 the selection. Every marker expires after 2.5 seconds without publication.
-Canonical RViz enables both guide displays. Its separate TF display still shows
-the real axes; hide that display's axes to inspect just the guides. No numeric
+Canonical RViz enables both guide displays and sets **TF → Show Axes = false**
+to hide overlapping raw axes, including robot-frame axes. The real TF data and
+RobotModel remain unchanged; enable Show Axes explicitly for frame inspection.
+Reload the configuration or uncheck Show Axes in an existing viewer. No numeric
 RViz labels, additional inference or headless publishers are introduced.
 RViz retains the latest cloud indefinitely. After five seconds without a new
 validated cloud, Item Teach replaces its colors with grey while keeping the

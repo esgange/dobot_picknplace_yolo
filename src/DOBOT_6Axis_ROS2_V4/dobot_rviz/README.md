@@ -90,11 +90,14 @@ The enabled **XY and blue UP guides** displays retain true red X/green Y and sho
 the blue reference-plane normal facing positive `base_link` Z. In addition to
 live `/item_teach/valid_items`, subscribe to `/item_teach/selected_pose_guides`
 for clicked/simulated items and `/tray_teach/pose_guides` for the selected tray.
-These arrows do not change any actual TF or controller pose. The TF display
-remains independent and may still show downward actual +Z; uncheck its Show Axes
-option when inspecting only the guides. No numeric labels are added. Guides
+These arrows do not change any actual TF or controller pose. The canonical TF
+display now sets **Show Axes = false** so its original downward axes do not
+overlap the upward guides. This also hides robot-frame axes; the RobotModel and
+TF data remain available. Enable **TF → Show Axes** explicitly to inspect the
+real coordinate frames. No numeric labels are added. Guides
 clear with invalidation and expire after 2.5 seconds without publication.
-Reload this installed configuration to add the new guide displays.
+For an already-open viewer, uncheck **TF → Show Axes**, or use **File → Open
+Config** to reload the installed canonical configuration; no node restart is needed.
 
 Useful read-only checks:
 

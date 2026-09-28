@@ -36,7 +36,7 @@ def test_tray_guides_are_separate_from_tf_and_clear_without_a_cloud(cloud):
     assert len(cleared) == 1 and cleared[0].action == Marker.DELETEALL
 
 
-def test_canonical_rviz_has_separate_guides_and_unchanged_tf():
+def test_canonical_rviz_shows_up_guides_without_duplicate_tf_axes():
     from pathlib import Path
     import yaml
     root = Path(__file__).parents[3]
@@ -44,7 +44,7 @@ def test_canonical_rviz_has_separate_guides_and_unchanged_tf():
     config = yaml.safe_load(path.read_text())
     displays = config["Visualization Manager"]["Displays"]
     tf = next(d for d in displays if d["Class"] == "rviz_default_plugins/TF")
-    assert tf["Value"] and tf["Frame Timeout"] == 2.5 and "Show Axes" not in tf
+    assert tf["Value"] and tf["Frame Timeout"] == 2.5 and tf["Show Axes"] is False
     for topic in ("/item_teach/valid_items", "/item_teach/selected_pose_guides",
                   "/tray_teach/pose_guides"):
         display = next(d for d in displays if d.get("Topic", {}).get("Value") == topic)

@@ -599,6 +599,14 @@ rendering and correct click mapping; live updates must not reset the divider.
 Preserve rule 147's same-name Load/edit/Save overwrite and previous-version backup
 for both drafts and complete profiles; a renamed tray creates a new pair.
 
+Rule 154 sets canonical RViz TF Show Axes false so original downward item/tray
+axes do not overlap the blue-UP marker guides. This hides all raw TF axes,
+including robot-frame axes, but preserves RobotModel, TF data/display, timeout,
+guide topics and every controller-facing pose. Raw axes remain an explicit viewer
+toggle; already-open viewers must uncheck Show Axes or reload the config. Record
+the intentional vendored viewer integration patch. This supersedes rule 149's
+default raw-axis visibility only; never reflect or rotate real frames for display.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

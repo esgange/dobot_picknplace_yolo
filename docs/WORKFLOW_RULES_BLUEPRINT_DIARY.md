@@ -6451,6 +6451,29 @@ Never use a floating “latest” version in an issue, script, or deployment not
   passed. Only temporary test files and synthetic images were used; no live node
   restart, operator-file edit, model execution or robot action.
 
+### 2026-09-28 — Show upward pose guides without duplicate raw TF axes
+
+- Read-only live audit found 44 item and two tray blue guide arrows all pointing
+  upward in base_link, while the corresponding real TF local Z pointed downward.
+  The running viewer subscribed to the new guide topics and still displayed raw
+  TF axes, explaining the duplicate downward arrows. The guide flip itself worked.
+- Rule 154 follows the request to correct the remaining display while preserving
+  pick/place coordinates. A Z-only flip with unchanged X/Y is not a valid
+  right-handed rotation. Keep all real TF, candidate quaternions and services
+  untouched; use the existing independent blue-UP markers for the visual result.
+- Intentional vendored integration patch: set Show Axes false in canonical
+  dobot_rviz/rviz/urdf.rviz, retaining the TF display and 2.5-second timeout, all
+  three guide displays and RobotModel. This also hides raw robot-frame axes.
+  Users can enable TF Show Axes to inspect actual frames. An existing RViz window
+  needs that checkbox changed or the canonical configuration reloaded; no live
+  process is restarted and no robot command is involved.
+- Validation: viewer symlink build and all viewer tests/lint passed (16 reported
+  results). All 42 focused item/tray guide, retained-display and configuration
+  tests passed, plus changed-test flake8 and git diff --check. Installed YAML
+  matches source with TF Show Axes false, all three UP displays and RobotModel
+  enabled. Actual pose/TF/controller code was untouched; no live viewer restart,
+  robot command, model execution or operator-file edit.
+
 ### Future entry template
 
 ```text

@@ -544,7 +544,8 @@ It works with Armed OFF and never advertises a service or commands the robot.
 Both views freeze with only the returned ranked P1…Pn overlays, capped by
 `pose_candidates`, and the green bin border. Every returned pose also publishes
 a teaching-only TF at 10 Hz: `base_link -> item_teach_candidate_1` through
-`item_teach_candidate_N`, matching the image priorities. Use RViz's TF display;
+`item_teach_candidate_N`, matching the image priorities. The blue-UP guide display
+visualizes these poses; enable **TF → Show Axes** to inspect their actual frames.
 Item Teach does not launch RViz. These frozen poses preserve the platform's full
 tilt/height, replace any clicked-item/batch preview, and stop publishing on resume,
 edits/source changes, arming changes, YOLO OFF or failure/exit. Empty batches
@@ -652,9 +653,10 @@ RViz's separate **XY and blue UP guides** show the same X/Y and a blue normal
 pointing toward positive `base_link` Z. Item Teach uses the same convention for
 live, clicked and simulated poses. These are display arrows only: actual TF,
 controller-facing poses, calibration and pick/place coordinates stay unchanged.
-The TF display may therefore still show a downward actual Z; its axes can be
-hidden independently when inspecting just the guides. Reload the installed
-canonical RViz configuration to add the selected-item and tray guide displays.
+Canonical RViz sets **TF → Show Axes = false** to hide the duplicate downward axes;
+this also hides robot-frame axes while keeping the RobotModel and TF data intact.
+For an already-open viewer, uncheck **TF → Show Axes** or reload the installed
+canonical configuration. Enable Show Axes explicitly to inspect the real frames.
 If an older RViz window has no Tray Teach display, reload the installed canonical
 `dobot_rviz/rviz/urdf.rviz` configuration to subscribe to `/tray_teach/voxel_cloud`.
 **Save Tray Teach** needs only a valid tray name. It writes a named YAML under
