@@ -1,5 +1,4 @@
 import copy
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -102,14 +101,6 @@ def test_corrupt_profile_refused(tmp_path, artifact, change):
         path.write_text(yaml.safe_dump(profile))
     with pytest.raises(ValueError):
         core.load_profile(path, tmp_path)
-
-
-def test_copy_position_does_not_retain_source_object(tmp_path, monkeypatch):
-    home = position()
-    monkeypatch.setattr(core, "load_item_profile", lambda *_a, **_k: ({"home": home}, "hash"))
-    copied = core.copy_teach_position(Path("synthetic.yaml"), tmp_path)
-    home["positions_rad"][0] = 10
-    assert copied == position()
 
 
 def test_ui_state_is_strict_and_atomic(tmp_path):

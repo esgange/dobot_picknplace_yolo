@@ -585,6 +585,14 @@ tray detection, not a Cartesian tray/TCP pose. Keep it optional for detection an
 arming. Headless reads saved metadata but never records joints or commands motion;
 no controller motion, new schema/key/configuration or automatic file write is added.
 
+Rule 152 removes Item Teach loading and Copy Home from Tray Teach. Tray Detect
+Pose is recorded independently from current joints or restored from its tray file;
+Home is a separate controller/Item Teach position. Remove the copy implementation
+as well as the controls. Existing session/draft item_filename fields remain inert
+for schema readability and new form saves leave them empty. Preserve recorded
+joint angles, saved artifacts, pose requests and read-only authority. This
+supersedes rules 137/151's Item Teach copy workflow only.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

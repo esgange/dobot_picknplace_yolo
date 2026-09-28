@@ -6413,6 +6413,23 @@ Never use a floating “latest” version in an issue, script, or deployment not
   temporary artifacts only; no robot action, live node restart, operator model
   execution, operator-file rewrite or offline-transfer milestone.
 
+### 2026-09-28 — Remove Item Teach Home copying from Tray Teach
+
+- Rule 152 follows the clarification that Home and Tray Detect Pose are different
+  robot positions. Remove the Item Teach path, Copy Home button, file dialog and
+  copying implementation. Tray Detect Pose is recorded from current joints or
+  restored from its own tray file, never filled from Item Teach.
+- Preserve existing profile joint angles and schema. Keep the old session/draft
+  item_filename member readable but unused; new form saves write it empty. No
+  operator-file rewrite, motion or controller change. Retain the recording,
+  replacement confirmation, degree display, radian save/load and optional pose
+  for perception arming.
+- Validation: package symlink build, all 176 Tray tests (177 reported with CTest),
+  changed-Python flake8 and git diff --check passed. Updated existing session and
+  dialog checks; removed the obsolete copy test. Joint recording/save/load and
+  arming regressions remain green. No live restart, robot command, operator model
+  execution or operator teach/calibration-file edit.
+
 ### Future entry template
 
 ```text

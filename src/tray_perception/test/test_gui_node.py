@@ -54,7 +54,6 @@ def test_record_detect_pose_displays_degrees_and_saves_joint_radians(window, mon
     pose["positions_rad"] = [0.1, -0.2, 0.3, -0.4, 0.5, -0.6]
     window.node.capture_detect_pose = MagicMock(return_value=pose)
     window.name.setText("tray")
-    window.item_path.setText("previous_item.yaml")
     question = MagicMock()
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
     window.node.invalidate.reset_mock()
@@ -65,7 +64,6 @@ def test_record_detect_pose_displays_degrees_and_saves_joint_radians(window, mon
     assert "J6: -34.377°" in window.position_label.text()
     assert "Saved in radians, joint1 through joint6" in window.position_label.text()
     assert "Save Tray Teach to store it" in window.status.text()
-    assert not window.item_path.text()
     question.assert_not_called()
     window.node.invalidate.assert_called_once()
     window.node.validate_sources = MagicMock(side_effect=ValueError("No calibration yet"))
@@ -255,7 +253,6 @@ def test_incomplete_draft_autosaves_during_busy_preview_and_restores_unapplied(w
     window.confidence.setText("0.")
     window.camera_path.setText("camera_to_hand_calibration_test.yaml")
     window.model_path.setText("/synthetic.pt")
-    window.item_path.setText("item_teach_test.yaml")
     # Neither a complete profile nor a loaded model/camera is needed to remember edits.
     assert window.session_due is not None
     assert gui.read_session(window.node.root) is None
@@ -274,7 +271,6 @@ def test_incomplete_draft_autosaves_during_busy_preview_and_restores_unapplied(w
         assert restored.confidence.text() == "0."
         assert restored.camera_path.text() == "camera_to_hand_calibration_test.yaml"
         assert restored.model_path.text() == "/synthetic.pt"
-        assert restored.item_path.text() == "item_teach_test.yaml"
         assert restored.settings is None and restored.preview_settings is None
         assert not restored.preview_toggle.isChecked() and not restored.armed_toggle.isChecked()
         assert restored.node.model is None and restored.node.camera is None
@@ -340,6 +336,7 @@ def test_legacy_complete_session_still_restores_without_executing_model(window):
         assert restored.profile_path is None and not restored.armed_toggle.isChecked()
         restored.close()
         assert gui.read_session(window.node.root)["schema_version"] == 2
+        assert gui.read_session(window.node.root)["item_filename"] == ""
     finally:
         restored.close()
 
@@ -485,12 +482,10 @@ def test_file_dialogs_remember_choices_and_cancel_preserves_draft(window, monkey
     chooser = MagicMock(return_value=("", ""))
     monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", chooser)
     window.camera_path.setText("camera.yaml")
-    window.item_path.setText("item.yaml")
     window.model_path.setText("/synthetic.pt")
     window.profile_filename = "tray_teach_saved.yaml"
     for action, expected in (
             (window._load_camera, window.node.root / "calibration/camera.yaml"),
-            (window._copy_position, window.node.root / "offline_teach/item_teach/item.yaml"),
             (window._load_model, Path("/synthetic.pt")),
             (window._load_tray,
              window.node.root / "offline_teach/tray_teach/tray_teach_saved.yaml")):

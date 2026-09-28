@@ -617,8 +617,8 @@ preview starts when ready. Armed stays OFF. The camera/model selectors use
 Browse matching camera calibration. Leave size filters blank to measure first.
 The **Tray Detect Pose** panel records all six current robot joint angles, just
 like Item Teach Home: displayed in degrees and saved in radians. It reads fresh
-canonical `/joint_states` only; recording never moves the robot. Optionally copy
-Item Teach Home instead. Save Tray Teach to persist the pose for future controller
+canonical `/joint_states` only; recording never moves the robot. Tray Detect Pose
+is recorded independently of Item Teach Home. Save it for future controller
 travel to the tray observation position. This pose is optional for detection and
 arming; controller motion integration remains separate. The sidebar separates
 camera/model settings from this pose and reference-plane data.
@@ -629,7 +629,7 @@ corner uses its remaining valid depth samples, even one. A created or loaded
 plane remains outlined green with P1–P4 on both live panes; the sidebar identifies
 whether it has been saved. Click a live tray to read width/X and length/Y, enter the
 desired size filters, and Save Tray Teach as you progress. Plane capture and
-measurement need no copied position. Streams and background preview keep running.
+measurement need no recorded robot pose. Streams and background preview keep running.
 The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
 that plane, without live surface depth, and reject detections outside the taught
@@ -659,7 +659,7 @@ If an older RViz window has no Tray Teach display, reload the installed canonica
 **Save Tray Teach** needs only a valid tray name. It writes a named YAML under
 `offline_teach/tray_teach/` and copies a loaded model unchanged to a same-stem `.pt`.
 Incomplete fields are saved as a draft, including any created plane and recorded
-or copied joint pose. Further saves update that loaded/saved file and retain one hidden
+joint pose. Further saves update that loaded/saved file and retain one hidden
 `.previous.zip` backup; changing the tray name creates a new file/pair. Once all
 required data validates, Save makes the same file a complete detection profile.
 Load Tray Teach restores either form; incomplete detection data cannot arm.

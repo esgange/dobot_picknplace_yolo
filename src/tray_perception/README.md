@@ -53,9 +53,9 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    ordered joint1 through joint6, with timestamp and publisher evidence. No
    Cartesian TCP pose or zero-joint default is created. Replacing a recorded pose
    requires confirmation; a failed reading or cancellation preserves the old one.
-   **Save Tray Teach** persists it in the same file. Alternatively **Copy Home…**
-   copies Item Teach Home from `offline_teach/item_teach/`; the paired Item model
-   is verified but never executed. Recording/copying never moves the robot.
+   **Save Tray Teach** persists it in the same file. Record Tray Detect Pose
+   independently of Item Teach Home; no Item Teach file is loaded or copied.
+   Recording never moves the robot.
    This is the observation position for future controller travel before tray
    detection; controller motion integration remains separate and controller Home
    still comes from Item Teach. The pose is optional for saving a complete
@@ -122,7 +122,7 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    model is copied byte-for-byte to a same-stem `.pt`, with SHA-256 verification;
    saving never executes or re-exports the model. Without a model only YAML is needed.
    Blank/unfinished fields are preserved as draft text alongside any created
-   reference plane, recorded/copied joint pose and bound calibration. Only created planes
+   reference plane, recorded joint pose and bound calibration. Only created planes
    are persisted; four corner clicks must still be committed with Create.
    Complete validated detection data saves the existing production schema-1 profile.
    The existing `tray_teach_position` key stores Tray Detect Pose as joint angles,

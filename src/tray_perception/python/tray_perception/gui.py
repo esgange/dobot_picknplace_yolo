@@ -15,7 +15,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.signals import SignalHandlerOptions
 
 from .core import (
-    copy_teach_position, read_session, tray_directory, validate_settings,
+    read_session, tray_directory, validate_settings,
     validate_geometry, validate_preview, write_session)
 from .documents import detection_profile, open_document, save_document, validate_name
 from item_perception_yolo.item_preview import validate_prefix
@@ -205,7 +205,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
         camera_form.addRow(self.camera_status)
         self.camera_path = QtWidgets.QLineEdit()
         self.model_path = QtWidgets.QLineEdit()
-        self.item_path = QtWidgets.QLineEdit()
         self._path_row(camera_form, "Calibration", self.camera_path, self._load_camera)
         self.name = QtWidgets.QLineEdit()
         self.name.setPlaceholderText("Tray name")
@@ -219,12 +218,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.position_button = self._button(
             "Record Current Joints as Tray Detect Pose", self._record_position)
         position_form.addRow(self.position_button)
-        self._path_row(position_form, "Item Teach", self.item_path, self._copy_position,
-                       button_text="Copy Home…")
         note = QtWidgets.QLabel(
             "Robot observation position for tray detection. Reads feedback only; never "
             "moves the robot. Save Tray Teach to store it. Optional for arming and pose "
-            "requests; controller motion is separate. Controller Home remains in Item Teach.")
+            "requests; controller motion is separate.")
         note.setWordWrap(True)
         position_form.addRow(note)
         self.dimensions = {}
@@ -348,7 +345,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
         state = read_session(node.root)
         if state is not None:
             self.camera_path.setText(state["camera_filename"])
-            self.item_path.setText(state["item_filename"])
             self.profile_filename = state["profile_filename"]
             self.model_path.setText(state["model_path"])
             if state["schema_version"] == 1:
@@ -373,7 +369,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                                 "load automatically; Armed stays OFF.")
         self.last_session = state
         self.session_ready = True
-        for widget in (self.camera_path, self.item_path, self.model_path):
+        for widget in (self.camera_path, self.model_path):
             widget.textChanged.connect(self._schedule_remember)
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -577,19 +573,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self._message(f"Loaded {metadata['task']} model. Preview shows all classes; "
                       "check classes to accept for tray poses.")
 
-    def _copy_position(self):
-        path = self._choose("Copy Item Teach Home", self.node.root / "offline_teach/item_teach",
-                            "YAML (*.yaml)", self.item_path.text())
-        if path is not None:
-            def loaded(position):
-                self.node.position = position
-                self._invalidate_preview()
-                self.item_path.setText(path.name)
-                self._show_position()
-                self._message("Copied Home as Tray Detect Pose. Save Tray Teach to store it; "
-                              "Item Teach is no longer needed.")
-            self._job(lambda: copy_teach_position(path, self.node.root), loaded, "position")
-
     def _record_position(self):
         try:
             position = self.node.capture_detect_pose()
@@ -604,7 +587,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
             return
         self._invalidate_preview()
         self.node.position = position
-        self.item_path.clear()
         self._show_position()
         self.node.events.record("INFO", "detect_pose_recorded", "Accepted six joints",
                                 position=position)
@@ -655,7 +637,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self._fill_settings(profile["settings"])
                 self.camera_path.setText(profile["camera_calibration"]["filename"])
                 self.camera_prefix.setText(self.node.camera_prefix)
-                self.item_path.clear()
                 self.draft_reason = ""
             self.profile_filename, self.profile_path = path.name, path
             self.profile_digest, self.save_target = target.yaml_sha256, target
@@ -682,7 +663,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _fill_draft(self, form):
         self.filling = True
         self.camera_path.setText(form["camera_filename"])
-        self.item_path.setText(form["item_filename"])
         self.model_path.setText(form["model_path"])
         for key, widget in self._draft_fields().items():
             widget.setText(form["draft"][key])
@@ -768,7 +748,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _form_state(self):
         state = {"schema_version": 2, "profile_filename": self.profile_filename,
                  "camera_filename": self.camera_path.text(),
-                 "item_filename": self.item_path.text(),
+                 "item_filename": "",  # Reserved field in existing session/draft schemas.
                  "model_path": self.model_path.text(),
                  "draft": {key: widget.text() for key, widget in self._draft_fields().items()}}
         state["draft"].update(image_size=self.image_size, class_ids=self._class_ids())

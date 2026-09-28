@@ -13,7 +13,7 @@ import numpy as np
 import yaml
 
 from item_perception_yolo.item_teach_core import (
-    _fields, _number, _timestamp, _UniqueKeyLoader, file_sha256, load_item_profile,
+    _fields, _number, _timestamp, _UniqueKeyLoader, file_sha256,
     utc_now, validate_home, validate_yolo_settings)
 from item_perception_yolo.platform_teach_core import _validate_rigid_transform
 
@@ -97,11 +97,6 @@ def validate_plane(plane):
                 or not np.isfinite(camera["k"] + camera["d"]).all()
                 or camera["k"][0] <= 0 or camera["k"][4] <= 0):
             raise ValueError("Invalid plane camera evidence")
-
-
-def copy_teach_position(path, root):
-    profile, _ = load_item_profile(path, root=root)
-    return copy.deepcopy(profile["home"])
 
 
 def validate_profile(profile):
