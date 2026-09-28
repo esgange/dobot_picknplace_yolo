@@ -19,6 +19,7 @@ from item_perception_yolo.item_teach_core import file_sha256
 from tray_perception_interfaces.srv import GetTrayPose
 
 from .core import load_profile, ORIGIN_CONVENTION
+from .documents import detection_profile, load_document
 
 
 SERVICE_NAME = "/tray_detect/get_tray_pose"
@@ -121,14 +122,23 @@ class TrayRequests:
         node = self.node
         if not node.yolo_enabled or node.native.failed or node.fatal_error:
             raise ValueError("Enable YOLO with valid saved settings before triggering or arming")
-        profile = load_profile(path, node.root, deployment=node.deployment)
+        if node.model is None:
+            raise ValueError("Load the saved tray model before triggering or arming")
+        if node.deployment:
+            profile = load_profile(path, node.root, deployment=True)
+        else:
+            document = load_document(path, node.root)
+            profile = detection_profile(document, node.model["task"])
+            if (document["artifact_type"] == "tray_teach_draft" and node.camera is not None
+                    and document["form"]["draft"]["camera_prefix"].strip() !=
+                    node.camera.settings.camera_prefix):
+                raise ValueError("Saved draft camera prefix does not match its calibration")
         digest = file_sha256(Path(path))
         if digest != expected_digest:
             raise ValueError("Saved Tray Teach YAML changed; explicitly reload it")
         node.validate_sources()
-        if (profile["settings"] != settings or profile["reference_plane"] != node.plane
-                or profile["tray_teach_position"] != node.position):
-            raise ValueError("Save or load the exact current tray settings, plane and position")
+        if profile["settings"] != settings or profile["reference_plane"] != node.plane:
+            raise ValueError("Save or load the exact current tray detection settings and plane")
         camera = {"filename": node.camera.path.name, "sha256": node.camera.sha256}
         if (profile["camera_calibration"] != camera or node.model is None
                 or node.model["sha256"] != profile["model"]["sha256"]

@@ -122,7 +122,8 @@ def validate_profile(profile):
     validate_settings(profile["settings"])
     if profile["settings"]["geometry_source"] == "none":
         raise ValueError("Saving a tray requires a segmentation or OBB model")
-    validate_home(profile["tray_teach_position"])
+    if profile["tray_teach_position"] is not None:
+        validate_home(profile["tray_teach_position"])
     validate_plane(profile["reference_plane"])
     for key, suffix in (("model", ".pt"), ("camera_calibration", ".yaml")):
         value = profile[key]
@@ -158,7 +159,8 @@ def load_profile(path, root, *, deployment=False):
 
 def save_profile(settings, position, plane, camera, model, expected_sha256, root):
     validate_settings(settings)
-    validate_home(position)
+    if position is not None:
+        validate_home(position)
     validate_plane(plane)
     stamp = utc_now()
     token = stamp.replace("-", "").replace(":", "").replace(".", "_")

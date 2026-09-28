@@ -11,7 +11,7 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, Image, JointState
 from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
 
 from camera_calibration_gui.calibration_core import workspace_root
@@ -19,9 +19,9 @@ from item_perception_yolo.item_detector import (
     stamp_ns, transform_matrix, validate_camera_info, validate_pair)
 from item_perception_yolo.item_native_client import NativeClient
 from item_perception_yolo.item_preview import frame_from_message, validate_prefix
-from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS, file_sha256
+from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS, file_sha256, record_home
 from item_perception_yolo.platform_teach_core import (
-    load_camera_calibration, load_robot_lan1_ip, resolve_base_from_camera_link)
+    _parse_env_file, load_camera_calibration, load_robot_lan1_ip, resolve_base_from_camera_link)
 
 from .core import EventLogger, load_profile, validate_plane, validate_preview
 from .rviz import TrayRvizPreview
@@ -33,7 +33,13 @@ class TrayTeachNode(Node):
         super().__init__("tray_detect" if deployment else "tray_teach")
         self.deployment = deployment
         self.root = workspace_root()
-        load_robot_lan1_ip(self.root)
+        self.robot_ip = load_robot_lan1_ip(self.root)
+        self.publisher_node = None
+        if not deployment:
+            name = _parse_env_file(self.root / ".env")["DOBOT_ROBOT_NODE_NAME"]
+            if not name or "/" in name:
+                raise ValueError("DOBOT_ROBOT_NODE_NAME must name one root-namespace node")
+            self.publisher_node = "/" + name
         self.events = EventLogger(self.root, self.get_name())
         self.native = NativeClient(self.events, worker_package="tray_perception",
                                    worker_executable="tray_worker")
@@ -45,7 +51,11 @@ class TrayTeachNode(Node):
         self.camera_prefix = None
         self.camera = self.model = self.model_metadata = self.position = self.plane = None
         self.rgb = self.depth = self.color_info = self.depth_info = None
+        self._joints = self._joint_receipt = None
         self.subscriptions_owned = []
+        if not deployment:
+            self.create_subscription(
+                JointState, "/joint_states", self._on_joints, qos_profile_sensor_data)
         self.selected = None
         self._published_key = None
         self.fatal_error = ""
@@ -58,6 +68,36 @@ class TrayTeachNode(Node):
         self.requests = TrayRequests(self)
         self.create_timer(.2, self._tick)
         self.events.record("INFO", "started", f"{self.get_name()} started; read-only, no commands")
+
+    def _on_joints(self, message):
+        with self.lock:
+            self._joints, self._joint_receipt = message, time.monotonic()
+
+    def capture_detect_pose(self):
+        """Read the same canonical feedback used by Item Teach's Home recorder."""
+        if self.deployment:
+            raise ValueError("Record Tray Detect Pose in Tray Teach, then save the teach file")
+        endpoints = self.get_publishers_info_by_topic("/joint_states")
+        publishers = [entry.node_namespace.rstrip("/") + "/" + entry.node_name
+                      for entry in endpoints]
+        if publishers != [self.publisher_node]:
+            raise ValueError(
+                f"Tray Detect Pose requires sole publisher {self.publisher_node}; "
+                f"found {publishers}")
+        with self.lock:
+            message, receipt = self._joints, self._joint_receipt
+        if message is None or receipt is None or time.monotonic() - receipt > 1.0:
+            raise ValueError("No fresh /joint_states feedback; Tray Detect Pose was not recorded")
+        try:
+            position = record_home(
+                list(message.name), list(message.position), int(message.header.stamp.sec),
+                int(message.header.stamp.nanosec), now_ns=self.get_clock().now().nanoseconds,
+                robot_ip=self.robot_ip, publisher=self.publisher_node)
+        except ValueError as exc:
+            raise ValueError(str(exc).replace("Home", "Tray Detect Pose")) from exc
+        self.events.record("INFO", "detect_pose_feedback_read", "Read six actual joints",
+                           position=position)
+        return position
 
     def invalidate(self, reason="Tray settings or sources changed"):
         with self.lock:

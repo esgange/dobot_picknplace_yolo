@@ -85,6 +85,45 @@ def load_document(path, root):
         raise ValueError(f"Invalid Tray Teach document: {exc}") from exc
 
 
+def detection_profile(document, model_task):
+    """Validate saved detection data, including old GUI drafts, without rewriting files.
+
+    The verified paired model supplies the task omitted from the draft format.
+    Unsaved GUI values must never fill missing fields in this saved-data view.
+    """
+    if document["artifact_type"] != "tray_teach_draft":
+        validate_profile(document)
+        return document
+    validate_draft(document)
+    for key, message in (("model", "Browse and save a segmentation or OBB model"),
+                         ("camera_calibration", "Browse and save matching calibration"),
+                         ("reference_plane", "Create and save a reference plane")):
+        if document[key] is None:
+            raise ValueError(message)
+    if model_task not in ("segment", "obb"):
+        raise ValueError("Tray pose requests require a verified segmentation or OBB model")
+    form = document["form"]["draft"]
+    try:
+        settings = {"name": form["name"].strip(), "model_task": model_task,
+                    "geometry_source": "mask" if model_task == "segment" else "obb",
+                    "geometry": {key: float(form[key]) for key in
+                                 ("length_mm", "width_mm", "tolerance_mm")},
+                    "yolo": {"confidence": float(form["confidence"]), "iou": float(form["iou"]),
+                             "max_detections": int(form["max_detections"]),
+                             "image_size": form["image_size"], "class_ids": form["class_ids"]}}
+    except ValueError as exc:
+        raise ValueError(
+            "Complete and save numeric size/confidence/IoU/detection settings") from exc
+    profile = {key: copy.deepcopy(document[key]) for key in (
+        "schema_version", "created_at_utc", "model", "camera_calibration",
+        "tray_teach_position", "reference_plane")}
+    profile.update(artifact_type="tray_teach", settings=settings,
+                   origin_convention=ORIGIN_CONVENTION, frame_id="base_link",
+                   units={"geometry": "mm", "plane": "m", "tray_teach_position": "rad"})
+    validate_profile(profile)
+    return profile
+
+
 @dataclass(frozen=True)
 class SaveTarget:
     path: Path
@@ -210,8 +249,6 @@ def save_document(form, settings, position, plane, camera, model, root, *, targe
         if settings is None:
             raise ValueError("Complete the model, selected classes and detection/size settings")
         validate_settings(settings)
-        if position is None:
-            raise ValueError("Copy a Tray Teach Position from Item Teach")
         if plane is None or camera is None:
             raise ValueError("Load matching calibration and create a reference plane")
         validate_profile(document)

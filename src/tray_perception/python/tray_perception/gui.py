@@ -17,7 +17,7 @@ from rclpy.signals import SignalHandlerOptions
 from .core import (
     copy_teach_position, read_session, tray_directory, validate_settings,
     validate_geometry, validate_preview, write_session)
-from .documents import open_document, save_document, validate_name
+from .documents import detection_profile, open_document, save_document, validate_name
 from item_perception_yolo.item_preview import validate_prefix
 from item_perception_yolo.item_teach_core import file_sha256
 from .node import TrayTeachNode
@@ -191,7 +191,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         identity = group("2  Tray / model")
         detection = group("3  Detection settings")
         geometry = group("4  Tray size filter — mm")
-        position_form = group("5  Teaching position — teach file")
+        position_form = group("5  Tray Detect Pose")
         plane_form = group("6  Reference plane — teach file")
         self.camera_prefix = QtWidgets.QLineEdit()
         self.camera_prefix.setPlaceholderText("Camera prefix, e.g. robot_camera")
@@ -213,15 +213,18 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self._path_row(identity, "YOLO model", self.model_path, self._load_model)
         self.model_status = QtWidgets.QLabel("No model loaded")
         identity.addRow("Verified task", self.model_status)
-        self._path_row(position_form, "Item Teach", self.item_path, self._copy_position,
-                       button_text="Copy Position…")
-        self.position_label = QtWidgets.QLabel("Tray Teach Position: not copied")
+        self.position_label = QtWidgets.QLabel("Not recorded. No zero-joint default.")
         self.position_label.setWordWrap(True)
         position_form.addRow(self.position_label)
+        self.position_button = self._button(
+            "Record Current Joints as Tray Detect Pose", self._record_position)
+        position_form.addRow(self.position_button)
+        self._path_row(position_form, "Item Teach", self.item_path, self._copy_position,
+                       button_text="Copy Home…")
         note = QtWidgets.QLabel(
-            "Tray Teach Position is a copied teaching reference. This node sends no robot "
-            "commands. Required for saving, not for measuring. Controller Home remains "
-            "in Item Teach.")
+            "Robot observation position for tray detection. Reads feedback only; never "
+            "moves the robot. Save Tray Teach to store it. Optional for arming and pose "
+            "requests; controller motion is separate. Controller Home remains in Item Teach.")
         note.setWordWrap(True)
         position_form.addRow(note)
         self.dimensions = {}
@@ -583,16 +586,40 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self._invalidate_preview()
                 self.item_path.setText(path.name)
                 self._show_position()
-                self._message("Copied Tray Teach Position. Item Teach is no longer needed.")
+                self._message("Copied Home as Tray Detect Pose. Save Tray Teach to store it; "
+                              "Item Teach is no longer needed.")
             self._job(lambda: copy_teach_position(path, self.node.root), loaded, "position")
+
+    def _record_position(self):
+        try:
+            position = self.node.capture_detect_pose()
+        except (ValueError, RuntimeError) as exc:
+            self._message(f"Tray Detect Pose not recorded: {exc}", error=True)
+            return
+        if self.node.position is not None and QtWidgets.QMessageBox.question(
+            self, "Replace Tray Detect Pose?",
+            "Replace all six saved Tray Detect Pose joints with this reading?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No,
+        ) != QtWidgets.QMessageBox.Yes:
+            return
+        self._invalidate_preview()
+        self.node.position = position
+        self.item_path.clear()
+        self._show_position()
+        self.node.events.record("INFO", "detect_pose_recorded", "Accepted six joints",
+                                position=position)
+        self._message("Recorded Tray Detect Pose. Save Tray Teach to store it. "
+                      "No robot movement was requested.")
 
     def _show_position(self):
         if self.node.position is not None:
-            joints = ", ".join(f"{math.degrees(q):.2f}°"
-                               for q in self.node.position["positions_rad"])
-            self.position_label.setText(f"Tray Teach Position — J1…J6:\n{joints}")
+            joints = "  ".join(f"J{i + 1}: {math.degrees(q):+.3f}°"
+                               for i, q in enumerate(self.node.position["positions_rad"]))
+            self.position_label.setText(
+                "Recorded on robot: " + self.node.position["robot_lan1_ip"] + "\n" + joints
+                + "\nSaved in radians, joint1 through joint6.")
         else:
-            self.position_label.setText("Tray Teach Position: not copied")
+            self.position_label.setText("Not recorded. No zero-joint default.")
 
     def _load_tray(self):
         path = self._choose("Load Tray Teach", tray_directory(self.node.root), "YAML (*.yaml)",
@@ -617,7 +644,12 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 if self.node.camera is not None:
                     self.camera_path.setText(self.node.camera.path.name)
                     self.camera_prefix.setText(self.node.camera_prefix)
-                self.draft_reason = "Complete missing fields and save again before detection"
+                try:
+                    task = self.node.model["task"] if self.node.model else None
+                    detection_profile(profile, task)
+                    self.draft_reason = ""
+                except ValueError as exc:
+                    self.draft_reason = str(exc)
             else:
                 self._model_loaded(self.node.model_metadata)
                 self._fill_settings(profile["settings"])
@@ -632,7 +664,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._refresh_preview_settings()
             self._remember()
             self._message(f"Loaded {'draft' if draft else 'complete profile'}: {path.name}. "
-                          "Save updates this file; renaming creates a new file.")
+                          + (f"Still needed for detection: {self.draft_reason}. "
+                             if self.draft_reason else
+                             "Detection data ready; Simulate or Arm without another Save. ")
+                          + "Save updates this file; renaming creates a new file.")
 
         def load():
             if file_sha256(path) != target.yaml_sha256:
@@ -778,8 +813,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.settings = None  # Session drafts never bypass complete-profile validation.
 
     def _trigger_settings(self):
-        if self.draft_reason:
-            raise ValueError(f"Saved Tray Teach is a draft: {self.draft_reason}")
         if self.profile_path is None or not self.profile_digest:
             raise ValueError("Save or load a complete Tray Teach profile first")
         if not self.preview_toggle.isChecked() or self.preview_settings is None:

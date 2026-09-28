@@ -24,6 +24,17 @@ def form():
     return value
 
 
+def ready_form(prefix="robot_camera"):
+    value, configured = form(), settings()
+    value["draft"].update(
+        name=configured["name"], camera_prefix=prefix,
+        **{key: str(number) for key, number in configured["geometry"].items()},
+        **{key: str(configured["yolo"][key]) for key in
+           ("confidence", "iou", "max_detections")},
+        image_size=configured["yolo"]["image_size"], class_ids=configured["yolo"]["class_ids"])
+    return value
+
+
 def test_name_only_and_invalid_edits_roundtrip_without_any_inputs(tmp_path):
     state = form()
     path, document, target, reason = documents.save_document(
@@ -48,7 +59,8 @@ def test_progressive_save_copies_model_preserves_plane_and_promotes_same_file(tm
     first = path.read_bytes()
     path2, draft, target, reason = documents.save_document(
         state, settings(), None, plane(), camera, model, tmp_path, target=target)
-    assert path2 == path and "Position" in reason
+    assert path2 == path and not reason
+    assert draft["artifact_type"] == "tray_teach" and draft["tray_teach_position"] is None
     assert draft["reference_plane"] == plane()
     assert draft["model"]["filename"] == path.with_suffix(".pt").name
     assert path.with_suffix(".pt").read_bytes() == Path(model["path"]).read_bytes()
@@ -67,6 +79,33 @@ def test_progressive_save_copies_model_preserves_plane_and_promotes_same_file(tm
         assert archive.read(path.name) == before
         assert archive.read(path.with_suffix(".pt").name) == Path(model["path"]).read_bytes()
     assert len(list(path.parent.glob("*.yaml"))) == 2  # Fixture plus the one edited file.
+
+
+def test_detection_complete_old_draft_needs_no_position_or_rewrite(tmp_path, sources):
+    _, camera, model = sources
+    path, draft, _, _ = documents.save_document(
+        ready_form(), None, None, plane(), camera, model, tmp_path)
+    before = path.read_bytes()
+    normalized = documents.detection_profile(documents.load_document(path, tmp_path), "segment")
+    assert normalized["settings"] == settings()
+    assert normalized["tray_teach_position"] is None and normalized["reference_plane"] == plane()
+    assert draft["artifact_type"] == "tray_teach_draft" and path.read_bytes() == before
+    with pytest.raises(ValueError, match="Incomplete Tray Teach draft"):
+        core.load_profile(path, tmp_path)  # Deployment still requires an explicit complete save.
+
+
+@pytest.mark.parametrize("missing", [
+    "model", "camera_calibration", "reference_plane", "width_mm", "class_ids", "confidence"])
+def test_draft_normalization_cannot_fill_missing_detection_fields(tmp_path, sources, missing):
+    _, camera, model = sources
+    _, draft, _, _ = documents.save_document(
+        ready_form(), None, None, plane(), camera, model, tmp_path)
+    if missing in ("model", "camera_calibration", "reference_plane"):
+        draft[missing] = None
+    else:
+        draft["form"]["draft"][missing] = [] if missing == "class_ids" else ""
+    with pytest.raises(ValueError):
+        documents.detection_profile(draft, "segment")
 
 
 def test_loaded_complete_profile_updates_in_place_renaming_creates_new_pair(tmp_path, sources):

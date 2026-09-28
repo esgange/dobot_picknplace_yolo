@@ -6349,6 +6349,70 @@ Never use a floating “latest” version in an issue, script, or deployment not
   independence. No live cameras, operator model execution, robot commands or
   operator artifact edits were used for testing; no offline-transfer milestone.
 
+### 2026-09-28 — Arm loaded Tray Teach detection data without a robot position
+
+- Audit found the running GUI's brown_tray YAML was a tray_teach_draft with valid
+  detection settings, paired model, bound calibration and plane, but a null
+  tray_teach_position. Logs explicitly reported Copy a Tray Teach Position from
+  Item Teach. The generic message after reloading obscured that sole blocker;
+  absence of a visible tray was unrelated. Read-only validation also found a
+  valid Item Teach Home available, but no copy or operator-file rewrite was made.
+- Rule 150 follows the request to make Load → Arm behave like Item Teach. A robot
+  teaching reference is optional metadata and is not used to calculate a tray
+  pose. Production schema 1 retains the field, allowing null or an otherwise
+  strictly validated position. Save now produces a complete detection profile
+  without that position, and request preparation compares settings/plane/sources
+  rather than unrelated robot-reference metadata.
+- GUI arming and simulation explicitly support older detection-complete drafts:
+  read and validate the saved form, derive the model task only from verified
+  paired weights, build an in-memory detection profile, and retain the exact
+  original YAML SHA-256. Require complete saved size/YOLO/class settings, a mask/OBB
+  model, matching camera prefix/binding and a valid reference plane. Never fill
+  missing saved fields from current edits; no automatic promotion/write/migration.
+  Headless deployment still rejects draft artifacts; explicit Save creates the
+  production profile, with no teaching position required.
+- Replace the GUI's blanket draft arming rejection with specific detection checks.
+  Mark the teaching-position panel optional and report detection readiness after
+  Load. YOLO/fresh RGB/exact-time TF, request-time observations, source hashes,
+  sole-provider and cancellation checks remain. No visible tray or inference is
+  needed to arm; requests may return NO_VALID_TRAY and remain armed. Controller,
+  robot motion, plane geometry, pose frames and service schema are unchanged.
+- Validation: all 160 Tray Perception tests passed (161 reported including the
+  CTest wrapper), plus the package symlink build, changed-Python flake8 and
+  git diff --check. Read-only validation of the actual operator draft confirmed
+  complete saved detection data, paired model hash and calibration binding, with
+  unchanged YAML bytes. No live process restart, model execution or robot action.
+
+### 2026-09-28 — Record Tray Detect Pose using Home's joint-angle contract
+
+- Rule 151 follows the request for Item Teach Home's recording workflow under
+  the name Tray Detect Pose. Add its sidebar panel and Record Current Joints
+  button, robot identity and six signed degree readouts. Keep optional Copy Home.
+  This position describes where the controller will observe the tray; controller
+  motion integration remains future work, independent of perception arming.
+- Read the canonical configured robot's sole /joint_states publisher only in
+  Tray Teach. Reuse Item Teach's record_home validator: fresh local receipt and
+  nonzero, nonfuture ROS timestamp within one second; six finite joint values;
+  normalize joint order. Capture has no model, calibration, camera or Item Teach
+  dependency. Missing/stale/ambiguous feedback refuses capture without replacing
+  the previous pose. Confirm replacement of an existing recorded pose.
+- Save all six joint angles in radians, never a Cartesian TCP pose, with robot
+  IP, canonical names, timestamp and source/publisher evidence. Reuse schema 1's
+  existing tray_teach_position and rad unit entry so old files load unchanged.
+  Explicit Save updates the teach file through its existing backup/model-pair
+  writer. Retain Rule 150's optional pose for saving complete detection data,
+  arming and simulation. Headless reads the saved field but adds no joint
+  subscription, recording service or motion. No hardware/client/controller change.
+- Validation: package symlink build and all 177 Tray tests passed (178 reported
+  including CTest), with changed-Python flake8 and git diff --check. Tests cover
+  canonical joint ordering/radian draft and production round trips, missing,
+  stale, future, malformed and nonfinite feedback, publisher ambiguity, GUI degree
+  display, replacement confirmation/failure preservation, and real ROS joint
+  transport in isolated domain 205 without a camera, model or command client.
+  The original load/arm/request regressions remain green. Synthetic feedback and
+  temporary artifacts only; no robot action, live node restart, operator model
+  execution, operator-file rewrite or offline-transfer milestone.
+
 ### Future entry template
 
 ```text

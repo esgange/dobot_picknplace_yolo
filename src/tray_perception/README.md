@@ -44,13 +44,22 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    Segmentation masks and OBB models support metric poses; box-only models remain
    detection previews and can be saved in drafts but cannot produce a detection profile.
 2. Leave **Length**, **Width** and **Tolerance** blank to measure first. Neither
-   these filters nor a copied teaching position is needed to capture the plane
-   or inspect measured trays. Before saving the complete profile, load an Item
-   Teach YAML from `offline_teach/item_teach/` to copy its six Home joints into
-   **Tray Teach Position**. The paired Item model is verified but
-   never executed. Position copying does not move the robot. Position the robot
-   with the existing authorized motion workflow if needed. Controller Home will
-   continue to come from the controller's own Item Teach file.
+   these filters nor a robot observation pose is needed to capture the plane or
+   inspect measured trays. **Tray Detect Pose** → **Record Current Joints as Tray
+   Detect Pose** records the six current joint angles, like Item Teach Home.
+   Requires a sole configured Dobot `/joint_states` publisher, receipt and nonzero
+   timestamp at most one second old, and exactly six finite canonical joints.
+   The display shows robot identity and J1–J6 in degrees; the file stores radians
+   ordered joint1 through joint6, with timestamp and publisher evidence. No
+   Cartesian TCP pose or zero-joint default is created. Replacing a recorded pose
+   requires confirmation; a failed reading or cancellation preserves the old one.
+   **Save Tray Teach** persists it in the same file. Alternatively **Copy Home…**
+   copies Item Teach Home from `offline_teach/item_teach/`; the paired Item model
+   is verified but never executed. Recording/copying never moves the robot.
+   This is the observation position for future controller travel before tray
+   detection; controller motion integration remains separate and controller Home
+   still comes from Item Teach. The pose is optional for saving a complete
+   detection profile, arming, simulation and pose requests.
 3. With the tray uncovered, select **Capture 4-corner snapshot…** in the sidebar's
    **Reference Plane — teach file** section. The existing RGB/depth panes hold
    that captured observation, labelled **CAPTURED** with its age; no new window
@@ -113,9 +122,11 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
    model is copied byte-for-byte to a same-stem `.pt`, with SHA-256 verification;
    saving never executes or re-exports the model. Without a model only YAML is needed.
    Blank/unfinished fields are preserved as draft text alongside any created
-   reference plane, copied position and bound calibration. Only created planes
+   reference plane, recorded/copied joint pose and bound calibration. Only created planes
    are persisted; four corner clicks must still be committed with Create.
-   Complete validated data saves the existing production schema-1 profile.
+   Complete validated detection data saves the existing production schema-1 profile.
+   The existing `tray_teach_position` key stores Tray Detect Pose as joint angles,
+   or null when unrecorded; its `units` entry remains `rad`. No schema change is needed.
    The status distinguishes **Saved draft** with the remaining requirement from
    **Saved complete profile**. Calibration stays in root `calibration/` and is
    referenced by filename/hash, as before; no camera file or live image is copied.
@@ -131,8 +142,11 @@ not RGB detection. No platform/bin artifacts or `.env` changes are needed.
 7. **Load Tray Teach…** restores complete profiles or partial drafts for further
    teaching. Model-containing documents verify and load the paired model plus any
    bound calibration automatically; there is no additional model trust prompt.
-   A saved plane or copied position needs no source Item Teach file/model to reopen.
-   Incomplete drafts cannot arm, simulate a production request or run headlessly.
+   A saved plane or joint pose needs no source Item Teach file/model to reopen.
+   Loading complete detection data allows Arm/Simulate immediately without another
+   Save, even for an older draft saved without a teaching position. Missing detection
+   data still blocks requests with the specific requirement. Headless accepts only
+   explicitly saved production profiles, not drafts.
    Loading a tray is optional when starting a new profile; Save does not deploy files
    into `runtime_teach/` or alter controller configuration.
 
@@ -171,7 +185,7 @@ controller target or production detection service. There are no placement
 areas, placement targets, controller Home, motion rates or I/O settings here.
 
 Strict tray schema 1 stores detection settings, same-stem model hash, camera
-calibration filename/hash, copied Tray Teach Position, the four base-frame
+calibration filename/hash, optional Tray Detect Pose joint angles, the four base-frame
 corner observations, plane transform/fit evidence, and `nearest_base_corner_v1`
 origin convention. Distances are mm for dimension settings, metres for plane/
 pose geometry and radians for taught joints. No images or live depth are saved.
@@ -201,9 +215,11 @@ Events are timestamped and capped at 1000 in the package's `events.jsonl`.
 An arbitrary preview prefix is session-only; loading calibration or a saved tray
 restores its calibrated prefix. Named incomplete saves use a distinct
 `tray_teach_draft` artifact (draft schema 1) in the same teaching directory.
-This is separate from automatic session prefill and preserves the strict production
-`tray_teach` schema 1: runtime readers reject drafts until they are completed and
-saved again. Model pairing remains same-stem.
+This is separate from automatic session prefill. Headless readers reject drafts
+until detection data is complete and saved again as production `tray_teach` schema 1.
+The GUI can validate a detection-complete older draft in memory from its saved form,
+plane/calibration and verified model task, keeping the original file/hash unchanged.
+Unsaved UI fields never fill missing saved data. Model pairing remains same-stem.
 
 ## RViz voxels
 
@@ -262,9 +278,10 @@ The top row follows Item Teach: **YOLO Detect**, **Simulate Trigger**, and
 Armed OFF; Armed ON is red and advertises `/tray_detect/get_tray_pose` using
 [`tray_perception_interfaces/srv/GetTrayPose`](../tray_perception_interfaces/README.md).
 Arming requires YOLO ON with valid settings, an explicitly saved/loaded unchanged
-profile whose geometry/plane/position match the form, its verified mask/OBB model,
+profile whose detection settings/plane match the form, its verified mask/OBB model,
 matching calibration and fresh RGB/CameraInfo/exact-time TF. It needs no live
-depth, Item Teach, controller process or motion. Settings/source changes and YOLO
+depth, a visible tray, Tray Detect Pose, Item Teach, controller process or
+motion. Arming does not run inference. Settings/source changes and YOLO
 OFF disarm immediately; changed files require explicit reload. Only one provider
 may advertise the canonical service. Logical revocation is immediate; retiring
 the ROS handle waits for an active callback's reply handoff to avoid destroying

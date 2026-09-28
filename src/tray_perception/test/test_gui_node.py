@@ -47,6 +47,60 @@ def test_gui_starts_unapplied_and_has_no_motion_client(window):
                        ("create_client", "create_service") for n in calls)
 
 
+def test_record_detect_pose_displays_degrees_and_saves_joint_radians(window, monkeypatch):
+    from tray_perception.documents import load_document
+
+    pose = position()
+    pose["positions_rad"] = [0.1, -0.2, 0.3, -0.4, 0.5, -0.6]
+    window.node.capture_detect_pose = MagicMock(return_value=pose)
+    window.name.setText("tray")
+    window.item_path.setText("previous_item.yaml")
+    question = MagicMock()
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
+    window.node.invalidate.reset_mock()
+    window.position_button.click()
+    assert window.node.position == pose
+    assert "Recorded on robot: 192.0.2.1" in window.position_label.text()
+    assert "J1: +5.730°" in window.position_label.text()
+    assert "J6: -34.377°" in window.position_label.text()
+    assert "Saved in radians, joint1 through joint6" in window.position_label.text()
+    assert "Save Tray Teach to store it" in window.status.text()
+    assert not window.item_path.text()
+    question.assert_not_called()
+    window.node.invalidate.assert_called_once()
+    window.node.validate_sources = MagicMock(side_effect=ValueError("No calibration yet"))
+    window._save()
+    finish_jobs(window)
+    assert load_document(window.profile_path, window.node.root)["tray_teach_position"] == pose
+
+
+def test_detect_pose_replacement_requires_confirmation_and_keeps_old_on_failure(
+        window, monkeypatch):
+    original, replacement = position(), position()
+    replacement["positions_rad"] = [.2] * 6
+    window.node.position = original
+    window.node.capture_detect_pose = MagicMock(return_value=replacement)
+    window._show_position()
+    label = window.position_label.text()
+    window.node.invalidate.reset_mock()
+    question = MagicMock(return_value=gui.QtWidgets.QMessageBox.No)
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "question", question)
+    window.position_button.click()
+    assert window.node.position == original and window.position_label.text() == label
+    window.node.invalidate.assert_not_called()
+    window.node.capture_detect_pose.side_effect = ValueError("No fresh /joint_states feedback")
+    window.position_button.click()
+    assert window.node.position == original and window.position_label.text() == label
+    assert "No fresh /joint_states feedback" in window.status.text()
+    assert question.call_count == 1
+    window.node.capture_detect_pose.side_effect = None
+    question.return_value = gui.QtWidgets.QMessageBox.Yes
+    window.position_button.click()
+    assert window.node.position == replacement
+    assert window.position_label.text() != label
+    window.node.invalidate.assert_called_once()
+
+
 def automatic_sources(window):
     camera = window.node.root / "calibration/camera_to_hand_calibration_test.yaml"
     camera.parent.mkdir(exist_ok=True)
@@ -343,12 +397,12 @@ def test_save_only_needs_name_and_reopens_partial_form_without_trusting_model(wi
     assert window.confidence.text() == "unfinished"
     assert window.save_target.path == path
     assert not window.preview_toggle.isChecked() and window.node.plane is None
-    with pytest.raises(ValueError, match="draft"):
+    with pytest.raises(ValueError, match="YOLO"):
         window._trigger_settings()
     window._trust.assert_not_called()
 
 
-def test_save_complete_form_without_position_preserves_plane_as_draft(window):
+def test_save_complete_form_without_position_preserves_plane_as_complete_profile(window):
     from test_documents import sources
     _, camera, model = sources.__wrapped__(window.node.root)
     window.node.camera = camera
@@ -360,9 +414,10 @@ def test_save_complete_form_without_position_preserves_plane_as_draft(window):
     window._model_loaded(window.node.model_metadata)
     window.camera_prefix.setText(camera.settings.camera_prefix)
     window._fill_settings(settings())
+    window.next_preview = float("inf")
     window._save()
     finish_jobs(window)
-    assert "Position" in window.draft_reason
+    assert not window.draft_reason and "Saved complete profile" in window.status.text()
     assert window.saved_plane == plane() and window.profile_path.exists()
     path = window.profile_path
     window.node.position = position()
@@ -373,6 +428,39 @@ def test_save_complete_form_without_position_preserves_plane_as_draft(window):
     window.preview_toggle.setChecked(True)
     window._refresh_preview_settings()
     assert window._trigger_settings() == settings()
+
+
+def test_loading_detection_complete_old_draft_allows_arm_without_save(window, monkeypatch):
+    from tray_perception import documents
+    from test_documents import ready_form, sources
+    _, camera, model = sources.__wrapped__(window.node.root)
+    path, document, _, _ = documents.save_document(
+        ready_form(), None, None, plane(), camera, model, window.node.root)
+    before = path.read_bytes()
+
+    def load(*_):
+        window.node.camera, window.node.plane = camera, plane()
+        window.node.camera_prefix = camera.settings.camera_prefix
+        window.node.model = {**model, "path": str(path.with_suffix(".pt"))}
+        window.node.model_metadata = {"task": "segment", "classes": {"0": "tray"}}
+        return document
+
+    window.node.load_draft = MagicMock(side_effect=load)
+    monkeypatch.setattr(window, "_choose", lambda *_: path)
+    window._load_tray()
+    window.next_preview = float("inf")
+    finish_jobs(window)
+    assert window.node.position is None and not window.draft_reason
+    assert window._trigger_settings() == settings()
+    assert "without another Save" in window.status.text()
+
+    def arm(*_):
+        window.node.requests.service = object()
+    window.node.requests.arm = MagicMock(side_effect=arm)
+    window.armed_toggle.setChecked(True)
+    finish_jobs(window)
+    assert window.armed_toggle.isChecked() and path.read_bytes() == before
+    window.node.requests.arm.assert_called_once_with(path, settings(), gui.file_sha256(path))
 
 
 def test_save_during_corner_capture_keeps_uncreated_corners(window):
@@ -1070,7 +1158,7 @@ def test_loaded_draft_restores_optional_sources_and_plane_without_position(tmp_p
     from test_documents import form, sources
     _, camera, model = sources.__wrapped__(tmp_path)
     path, _, target, _ = documents.save_document(
-        form(), settings(), None, plane(), camera, model, tmp_path)
+        form(), None, None, plane(), camera, model, tmp_path)
     monkeypatch.setattr(module, "load_camera_calibration", lambda *_a, **_k: camera)
     node = SimpleNamespace(root=tmp_path, lock=threading.RLock(), apply_camera=MagicMock(),
                            invalidate=MagicMock(), inspect_model=MagicMock())

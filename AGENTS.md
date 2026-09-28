@@ -558,6 +558,33 @@ remains unchanged and can still show downward pose Z. Keep headless publishers
 and request-driven inference unchanged; add no extra inference or numeric overlays.
 This supersedes the blue marker direction only, not rules 133/137/143's real frames.
 
+Rule 150 makes Tray Teach Position optional metadata, never an arming, simulation
+or pose-request prerequisite. Complete schema-1 profiles retain that key with null
+or a validated copied position. Loading saved detection data needs no extra Save
+to arm. Explicitly loaded older GUI drafts may serve in Tray Teach when their
+saved numeric settings, selected classes, verified paired mask/OBB model, camera
+binding and reference plane validate fully. Build that detection view only from
+saved fields and the verified model task; keep the original YAML/hash unchanged.
+Never fill missing detection data from unsaved UI values. Require exact saved
+settings/plane and sources, YOLO ON and fresh RGB/TF; no visible detection or robot
+is needed. Headless still requires an explicitly saved production profile and
+rejects draft artifacts. Preserve hashes, request freshness, single-provider and
+disarm checks. This supersedes rules 137/140/145/147's required position and blanket
+GUI draft rejection only; no controller behavior or hardware command changes.
+
+Rule 151 names the tray robot observation position Tray Detect Pose and adds
+Record Current Joints in Tray Teach, using Item Teach Home's feedback contract:
+sole configured canonical /joint_states publisher, fresh receipt and ROS stamp
+within one second, exactly six finite joints canonicalized to joint1 through
+joint6. Display degrees/robot identity; save joint angles in radians and original
+feedback/publisher evidence in schema 1's existing tray_teach_position field.
+Keep Copy Home as an optional shortcut, confirm replacing recorded joints and
+preserve the old pose on failure/cancel. Explicit Save persists the pose; loading
+restores it. This describes the robot position for future controller travel before
+tray detection, not a Cartesian tray/TCP pose. Keep it optional for detection and
+arming. Headless reads saved metadata but never records joints or commands motion;
+no controller motion, new schema/key/configuration or automatic file write is added.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

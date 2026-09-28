@@ -73,6 +73,15 @@ def test_pair_roundtrip_is_independent_of_item_teach(tmp_path, artifact):
     assert second != path and core.load_profile(second, tmp_path)
 
 
+def test_detection_profile_without_optional_teaching_position(tmp_path, artifact):
+    _, camera, model = artifact
+    path = core.save_profile(settings(), None, plane(), camera, model,
+                             core.file_sha256(model), tmp_path)
+    loaded = core.load_profile(path, tmp_path)
+    assert loaded["tray_teach_position"] is None
+    assert loaded["settings"] == settings() and loaded["reference_plane"] == plane()
+
+
 @pytest.mark.parametrize("change", ["model", "digest", "schema", "unknown", "plane", "duplicate"])
 def test_corrupt_profile_refused(tmp_path, artifact, change):
     path, _, _ = artifact

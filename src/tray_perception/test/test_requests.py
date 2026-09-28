@@ -16,6 +16,8 @@ from tray_perception_interfaces.srv import GetTrayPose
 
 from item_perception_yolo.runtime_teach import runtime_teach_catalog, runtime_tray_catalog
 from tray_perception import core, requests
+from tray_perception import documents
+from test_documents import ready_form
 from test_core import artifact as saved_artifact
 from test_core import camera_info, plane, position, settings
 
@@ -148,6 +150,44 @@ def test_no_detection_is_explicit_success_without_a_pose(backend):
     response = trigger(backend)
     assert response.success and not response.found and response.status == "NO_VALID_TRAY"
     assert not response.tray.id and response.valid_count == 0
+
+
+@pytest.mark.parametrize("old_draft", [False, True])
+def test_no_position_or_detection_needed_to_arm_loaded_file_and_simulate(backend, old_draft):
+    node, path, _ = backend
+    _, target = documents.open_document(path, node.root)
+    path, document, target, _ = documents.save_document(
+        ready_form("cam"), None if old_draft else settings(), None, node.plane,
+        node.camera, node.model, node.root, target=target)
+    original = path.read_bytes()
+    node.position = None
+    current = node, path, target.yaml_sha256
+    api = arm(current)
+    node.preview.assert_not_called()  # Arming needs no visible tray or inference.
+    assert api.service is not None
+    assert trigger(current).found
+    local = api.simulate(path, settings(), target.yaml_sha256,
+                         (100_000_000_000, time.monotonic()))
+    assert local["response"].found and path.read_bytes() == original
+    assert document["tray_teach_position"] is None
+
+
+@pytest.mark.parametrize("changed", ["width_mm", "class_ids", "prefix", "model", "plane"])
+def test_old_draft_detection_checks_still_bind_saved_fields_and_sources(backend, changed):
+    node, path, _ = backend
+    _, target = documents.open_document(path, node.root)
+    state = ready_form("other" if changed == "prefix" else "cam")
+    if changed in ("width_mm", "class_ids"):
+        state["draft"][changed] = [] if changed == "class_ids" else ""
+    path, _, target, _ = documents.save_document(
+        state, None, None, None if changed == "plane" else node.plane,
+        node.camera, node.model, node.root, target=target)
+    if changed == "model":
+        path.with_suffix(".pt").write_bytes(b"unexpected replacement")
+    with pytest.raises(ValueError):
+        arm((node, path, target.yaml_sha256))
+    node.create_service.assert_not_called()
+    node.preview.assert_not_called()
 
 
 @pytest.mark.parametrize("cause", ["hash", "disarm", "busy", "settings", "timeout"])

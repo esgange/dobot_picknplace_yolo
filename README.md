@@ -614,9 +614,14 @@ off or an incomplete form. Drafts save after a 300 ms pause and on orderly close
 available restored camera calibration/model files load automatically, and YOLO
 preview starts when ready. Armed stays OFF. The camera/model selectors use
 **Browse…** with no extra Load button or model confirmation.
-Browse matching camera calibration. You can leave size filters blank and copy
-Item Teach's Home into **Tray Teach Position** later, before detection. The sidebar
-separates camera/model settings from teaching position and reference-plane data.
+Browse matching camera calibration. Leave size filters blank to measure first.
+The **Tray Detect Pose** panel records all six current robot joint angles, just
+like Item Teach Home: displayed in degrees and saved in radians. It reads fresh
+canonical `/joint_states` only; recording never moves the robot. Optionally copy
+Item Teach Home instead. Save Tray Teach to persist the pose for future controller
+travel to the tray observation position. This pose is optional for detection and
+arming; controller motion integration remains separate. The sidebar separates
+camera/model settings from this pose and reference-plane data.
 Use **Capture 4-corner snapshot…** in Reference Plane, select four surface corners
 in the existing RGB pane, then Create. The RGB/depth panes hold one captured
 observation during selection; Create or Cancel restores live display. Each
@@ -653,11 +658,16 @@ If an older RViz window has no Tray Teach display, reload the installed canonica
 `dobot_rviz/rviz/urdf.rviz` configuration to subscribe to `/tray_teach/voxel_cloud`.
 **Save Tray Teach** needs only a valid tray name. It writes a named YAML under
 `offline_teach/tray_teach/` and copies a loaded model unchanged to a same-stem `.pt`.
-Incomplete fields are saved as a draft, including any created plane and copied
-position. Further saves update that loaded/saved file and retain one hidden
+Incomplete fields are saved as a draft, including any created plane and recorded
+or copied joint pose. Further saves update that loaded/saved file and retain one hidden
 `.previous.zip` backup; changing the tray name creates a new file/pair. Once all
 required data validates, Save makes the same file a complete detection profile.
-Load Tray Teach restores either form; incomplete drafts cannot arm or deploy.
+Load Tray Teach restores either form; incomplete detection data cannot arm.
+Tray Detect Pose is optional. Loading complete detection data can
+immediately Arm or Simulate without another Save, including an older GUI draft
+whose only missing data was that position. The original YAML/hash stays unchanged;
+missing detection settings, model, calibration or plane still block pose requests.
+Save produces a production profile for headless deployment even without a position.
 Reopening needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
 variables. **Simulate Trigger** runs the same fresh observation pipeline as the
