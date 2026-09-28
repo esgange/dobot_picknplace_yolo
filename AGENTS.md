@@ -593,6 +593,12 @@ for schema readability and new form saves leave them empty. Preserve recorded
 joint angles, saved artifacts, pose requests and read-only authority. This
 supersedes rules 137/151's Item Teach copy workflow only.
 
+Rule 153 makes Tray Teach's RGB/depth panes independently resizable with a
+horizontal splitter, matching Item Teach. Retain each pane's heading, aspect-fit
+rendering and correct click mapping; live updates must not reset the divider.
+Preserve rule 147's same-name Load/edit/Save overwrite and previous-version backup
+for both drafts and complete profiles; a renamed tray creates a new pair.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

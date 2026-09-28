@@ -609,6 +609,7 @@ Enter the setup's camera prefix and **Connect RGB**, then browse a YOLO model
 to load it automatically. RGB detection works independently of calibration and a
 completed profile; live settings update after a 300 ms typing pause. Side-by-side
 RGB/depth views support click inspection with manually entered dimensions/tolerance.
+Drag the center divider to resize the two camera panes, as in Item Teach.
 Form entries and file choices are remembered across relaunches, even with YOLO
 off or an incomplete form. Drafts save after a 300 ms pause and on orderly close;
 available restored camera calibration/model files load automatically, and YOLO

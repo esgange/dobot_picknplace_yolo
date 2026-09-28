@@ -34,6 +34,10 @@ RGB-time `base_link <- Link6` TF. A shared 100 ms background TF wait preserves
 the exact image timestamp and rechecks freshness. Missing TF blocks geometry,
 not RGB detection. No platform/bin artifacts or `.env` changes are needed.
 
+Drag the divider between RGB and registered depth to adjust their widths, just
+like Item Teach. Each pane keeps its own status heading and scales the image to
+fit; live updates preserve your chosen split.
+
 1. Browse a local YOLO `.pt` model to automatically load it and enable 1 Hz preview when RGB is
    ready. **YOLO Detect ON/OFF** controls inference; OFF retains RGB/depth/voxel
    preview. Show all model classes under the current confidence, IoU and detection

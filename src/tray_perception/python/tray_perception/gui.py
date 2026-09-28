@@ -33,7 +33,7 @@ class TrayCanvas(QtWidgets.QWidget):
         self.selecting = False
         self.highlight = []
         self.empty_text = "Connect RGB to begin"
-        self.setMinimumSize(480, 360)
+        self.setMinimumSize(400, 200)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
     def show_frame(self, rgb, width, height):
@@ -155,7 +155,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.load_teach_button = self._button("Load Tray Teach…", self._load_tray)
         self.load_teach_button.setToolTip("Reopen a saved tray profile for preview or teaching")
         self.save_button = self._button("Save Tray Teach…", self._save)
-        self.save_button.setToolTip("Save a new timestamped tray YAML and paired model")
+        self.save_button.setToolTip(
+            "Save edits to the loaded tray file; a new or renamed tray creates a new file")
         header.addWidget(self.load_teach_button)
         header.addWidget(self.save_button)
         root.addLayout(header)
@@ -310,23 +311,29 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.canvas.clicked.connect(self._click)
         self.depth_canvas = TrayCanvas()
         self.depth_canvas.empty_text = "Waiting for synchronized registered depth"
-        images = QtWidgets.QWidget()
-        layout = QtWidgets.QGridLayout(images)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        layout.setRowStretch(1, 1)
-        for index, (title, canvas) in enumerate((
-                ("RGB — LIVE", self.canvas), ("Registered depth — LIVE", self.depth_canvas))):
+        images = self.image_split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        images.setChildrenCollapsible(False)
+        images.setHandleWidth(6)
+        for title, canvas in (
+                ("RGB — LIVE", self.canvas), ("Registered depth — LIVE", self.depth_canvas)):
+            panel = QtWidgets.QWidget()
+            layout = QtWidgets.QVBoxLayout(panel)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
             label = QtWidgets.QLabel(title)
             label.setWordWrap(True)
             label.setObjectName("viewHeading")
-            layout.addWidget(label, 0, index)
-            layout.addWidget(canvas, 1, index)
-            layout.setColumnStretch(index, 1)
+            layout.addWidget(label)
+            layout.addWidget(canvas, 1)
+            images.addWidget(panel)
             if canvas is self.canvas:
                 self.rgb_status = label
             else:
                 self.depth_status = label
+        images.setStretchFactor(0, 1)
+        images.setStretchFactor(1, 1)
+        images.setSizes([560, 560])
+        images.handle(1).setToolTip("Drag to resize the RGB and depth views")
         column.addWidget(images, 1)
         self.result_label = QtWidgets.QLabel("No tray pose selected")
         self.result_label.setWordWrap(True)

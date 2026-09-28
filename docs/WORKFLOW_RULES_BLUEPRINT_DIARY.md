@@ -6430,6 +6430,27 @@ Never use a floating “latest” version in an issue, script, or deployment not
   arming regressions remain green. No live restart, robot command, operator model
   execution or operator teach/calibration-file edit.
 
+### 2026-09-28 — Resize Tray Teach camera panes and verify loaded-file overwrites
+
+- Rule 153 replaces Tray Teach's fixed equal-width RGB/depth grid with the same
+  horizontal splitter pattern as Item Teach: a visible six-pixel divider,
+  non-collapsing panes, independent headings, equal initial widths and 400-pixel
+  minimum image widths. Aspect-fit images and image-coordinate clicks continue
+  using each canvas's current dimensions; preview updates do not reset the split.
+- Confirmed that rule 147 already updates the loaded file for an unchanged tray
+  name, including partial drafts. Retain the existing file/hash checks, paired
+  model handling and previous-version backup. Clarify the initial Save tooltip
+  and extend the existing GUI load/edit/save check to verify the original path,
+  updated on-disk value/hash and absence of a second YAML. Renaming still creates
+  a new file, matching Item Teach.
+- Validation: package symlink build, all 176 Tray tests (177 with CTest), changed
+  Python flake8 and git diff --check passed. Offscreen Qt mouse dragging changed
+  pane widths from 565/565 to 675/455 pixels; subsequent frames retained those
+  widths and both resized image centers mapped correctly to source pixels.
+  Existing complete-profile overwrite, rename, backup and hash-guard checks also
+  passed. Only temporary test files and synthetic images were used; no live node
+  restart, operator-file edit, model execution or robot action.
+
 ### Future entry template
 
 ```text

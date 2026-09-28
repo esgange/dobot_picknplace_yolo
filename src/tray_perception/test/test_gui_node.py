@@ -397,6 +397,14 @@ def test_save_only_needs_name_and_reopens_partial_form_without_trusting_model(wi
     with pytest.raises(ValueError, match="YOLO"):
         window._trigger_settings()
     window._trust.assert_not_called()
+    window.dimensions["width_mm"].setText("205")
+    window._save()
+    finish_jobs(window)
+    assert window.profile_path == path
+    document, target = gui.open_document(path, window.node.root)
+    assert document["form"]["draft"]["width_mm"] == "205"
+    assert target.yaml_sha256 == window.profile_digest
+    assert len(list(path.parent.glob("*.yaml"))) == 1
 
 
 def test_save_complete_form_without_position_preserves_plane_as_complete_profile(window):
