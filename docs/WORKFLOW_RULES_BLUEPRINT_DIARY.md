@@ -6474,6 +6474,32 @@ Never use a floating “latest” version in an issue, script, or deployment not
   enabled. Actual pose/TF/controller code was untouched; no live viewer restart,
   robot command, model execution or operator-file edit.
 
+### 2026-09-28 — Reopen the last Tray Teach file on launch
+
+- Rule 155 follows the request to match Item Teach startup. Reopen the exact
+  last loaded/saved filename from the existing Tray Teach session, through the
+  same single-worker Load pipeline. Restore saved settings, bound calibration,
+  verified paired model, reference plane, optional joint pose and the original
+  overwrite target. Support complete profiles and incomplete drafts; keep Armed
+  OFF and start preview normally after loading. Saved file data takes precedence
+  over unsaved session fields; when no file is remembered, retain form restoration.
+- Attempt once and show missing/invalid file errors without scanning for a newer
+  file or bypassing model/calibration hashes through remembered source paths.
+  Explicit Load or Browse permits recovery. No schema/store, headless behavior,
+  worker/executor, controller change or automatic teach-file write is introduced.
+- Validation: Tray Perception symlink build, all 183 package tests (184 including
+  CTest), changed-Python flake8 and git diff --check passed. New offscreen tests
+  cover exact-file precedence, complete/draft and name-only restoration, plane/
+  joint pose, paired source verification, manual arming, unchanged artifact bytes,
+  subsequent overwrite, missing/invalid inputs and explicit recovery. Fixtures
+  use temporary files and mocked model inspection; no operator weights executed.
+- Read-only camera audit: the current process is tray_teach, subscribed to the
+  correct robot_camera topics. RGB/depth/CameraInfo and joints were fresh, RGB
+  validation passed, and its diagnostics reported a fresh cloud and a valid tray.
+  The prior process logged RGB waits until the operator restarted it; existing
+  logs do not establish that earlier interruption's root cause. No live process
+  restart, camera/robot command or operator artifact/config edit was performed.
+
 ### Future entry template
 
 ```text

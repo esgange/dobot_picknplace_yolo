@@ -611,10 +611,14 @@ to load it automatically. RGB detection works independently of calibration and a
 completed profile; live settings update after a 300 ms typing pause. Side-by-side
 RGB/depth views support click inspection with manually entered dimensions/tolerance.
 Drag the center divider to resize the two camera panes, as in Item Teach.
-Form entries and file choices are remembered across relaunches, even with YOLO
-off or an incomplete form. Drafts save after a 300 ms pause and on orderly close;
-available restored camera calibration/model files load automatically, and YOLO
-preview starts when ready. Armed stays OFF. The camera/model selectors use
+On relaunch, Tray Teach automatically reopens the last loaded or saved tray file,
+including its reference plane, recorded joint pose, settings, calibration and
+verified paired model, just like Item Teach. Save continues updating that file.
+With no remembered tray file, form entries and file choices restore instead,
+including incomplete text; available calibration/model files load automatically.
+Session edits are remembered after a 300 ms pause and on orderly close; a remembered
+tray file takes precedence over unsaved form edits. YOLO preview starts when ready.
+Armed stays OFF. The camera/model selectors use
 **Browse…** with no extra Load button or model confirmation.
 Browse matching camera calibration. Leave size filters blank to measure first.
 The **Tray Detect Pose** panel records all six current robot joint angles, just

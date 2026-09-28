@@ -607,6 +607,17 @@ toggle; already-open viewers must uncheck Show Axes or reload the config. Record
 the intentional vendored viewer integration patch. This supersedes rule 149's
 default raw-axis visibility only; never reflect or rotate real frames for display.
 
+Rule 155 makes Tray Teach reopen its exact last loaded/saved tray filename on
+startup, matching Item Teach. Use the existing session key and background Load
+pipeline, including paired model/calibration verification, saved plane, optional
+joint pose, settings and overwrite target. Support complete profiles and drafts;
+saved file data takes precedence over unsaved session fields. Keep Armed OFF.
+With no remembered file retain form/source restoration. Missing/invalid files
+report once without newest-file substitution or unchecked source fallback; explicit
+Load or Browse permits recovery. No artifact rewrite, headless change, new store,
+worker, executor or hardware command. Supersede prefill-only tray-file restoration
+in rules 137/139/141/148 only; retain all detection/request freshness checks.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

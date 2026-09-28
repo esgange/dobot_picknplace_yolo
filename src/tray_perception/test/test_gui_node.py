@@ -361,6 +361,154 @@ def finish_jobs(window):
         window._tick()
 
 
+def restorable_sources(window, monkeypatch):
+    from tray_perception import node as module
+    from test_documents import sources
+    path, camera, model = sources.__wrapped__(window.node.root)
+    node = window.node
+    node.lock, node.deployment = threading.RLock(), False
+
+    def read_camera(*_a, **_k):
+        return SimpleNamespace(**{**vars(camera), "sha256": gui.file_sha256(camera.path)})
+    monkeypatch.setattr(module, "load_camera_calibration", read_camera)
+
+    def inspect(path, expected_digest):
+        assert gui.file_sha256(path) == expected_digest
+        node.model = {**model, "path": str(path)}
+        node.model_metadata = {"task": "segment", "classes": {"0": "tray"}}
+        return node.model_metadata
+
+    def apply(path):
+        assert path == camera.path
+        node.camera, node.camera_prefix = camera, camera.settings.camera_prefix
+        node.plane = None
+        return camera
+
+    node.inspect_model = MagicMock(side_effect=inspect)
+    node.apply_camera = MagicMock(side_effect=apply)
+    node.load_saved = MagicMock(side_effect=lambda path: TrayTeachNode.load_saved(node, path))
+    node.load_draft = MagicMock(side_effect=lambda path, digest: TrayTeachNode.load_draft(
+        node, path, digest))
+    return path, camera, model
+
+
+@pytest.mark.parametrize("draft", [False, True])
+def test_startup_reopens_exact_saved_pair_plane_pose_and_save_target(window, monkeypatch, draft):
+    from tray_perception import documents
+    from test_documents import ready_form
+    _, camera, model = restorable_sources(window, monkeypatch)
+    path, _, target, _ = documents.save_document(
+        ready_form(), None if draft else settings(), position(), plane(), camera, model,
+        window.node.root)
+    # A later file and stale session form must not replace the remembered saved document.
+    documents.save_document(ready_form(), settings(), None, plane(), camera, model,
+                            window.node.root)
+    state = ready_form()
+    state.update(profile_filename=path.name, camera_filename="missing.yaml",
+                 model_path="/missing.pt")
+    state["draft"].update(name="unsaved_change", confidence="unfinished", class_ids=[])
+    gui.write_session(window.node.root, state)
+    before = path.read_bytes(), path.with_suffix(".pt").read_bytes()
+    restored = gui.TrayTeachWindow(window.node)
+    restored.timer.stop()
+    restored.next_preview = float("inf")
+    try:
+        assert not restored.name.isEnabled()  # Lock only while the saved file is reopening.
+        finish_jobs(restored)
+        assert restored.profile_path == path and restored.save_target == target
+        assert restored.profile_digest == target.yaml_sha256
+        assert restored.settings == settings() and restored._class_ids() == [0]
+        assert restored.node.plane == restored.saved_plane == plane()
+        assert restored.node.position == position()
+        assert restored.camera_prefix.text() == "robot_camera"
+        assert restored.preview_toggle.isChecked() and not restored.armed_toggle.isChecked()
+        assert restored.node.requests.service is None and restored.name.isEnabled()
+        assert restored._trigger_settings() == settings()
+        assert before == (path.read_bytes(), path.with_suffix(".pt").read_bytes())
+        assert not path.with_name(f".{path.stem}.previous.zip").exists()
+        assert gui.read_session(window.node.root)["profile_filename"] == path.name
+        for _ in range(3):
+            restored._tick()
+        window.node.inspect_model.assert_called_once_with(path.with_suffix(".pt"), model["sha256"])
+        window.node.apply_camera.assert_called_once_with(camera.path)
+        restored.node.validate_sources = MagicMock()
+        restored.dimensions["tolerance_mm"].setText("3")
+        restored._save()
+        finish_jobs(restored)
+        assert restored.profile_path == path
+        assert documents.load_document(path, window.node.root)["settings"]["geometry"][
+            "tolerance_mm"] == 3.
+    finally:
+        restored.close()
+
+
+def test_startup_reopens_name_only_draft_without_sources(window):
+    from tray_perception import documents
+    from test_documents import form
+    state = form()
+    state["draft"]["confidence"] = "unfinished"
+    path, _, target, _ = documents.save_document(
+        state, None, None, None, None, None, window.node.root)
+    state["profile_filename"] = path.name
+    gui.write_session(window.node.root, state)
+    window.node.lock = threading.RLock()
+    window.node.load_draft = lambda path, digest: TrayTeachNode.load_draft(
+        window.node, path, digest)
+    restored = gui.TrayTeachWindow(window.node)
+    restored.timer.stop()
+    try:
+        finish_jobs(restored)
+        assert restored.profile_path == path and restored.save_target == target
+        assert restored.name.text() == "tray" and restored.confidence.text() == "unfinished"
+        assert restored.node.model is None and restored.node.plane is None
+        assert not restored.preview_toggle.isChecked() and not restored.armed_toggle.isChecked()
+        assert "Loaded draft" in restored.status.text() and restored.save_button.isEnabled()
+    finally:
+        restored.close()
+
+
+@pytest.mark.parametrize("failure", ["missing_yaml", "invalid_yaml", "model_hash", "camera_hash"])
+def test_startup_rejects_bad_remembered_file_once_without_source_fallback(
+        window, monkeypatch, failure):
+    from test_documents import ready_form
+    path, camera, model = restorable_sources(window, monkeypatch)
+    state = ready_form()
+    state.update(profile_filename=path.name, camera_filename=camera.path.name,
+                 model_path=model["path"])
+    gui.write_session(window.node.root, state)
+    changed = path if failure.endswith("yaml") else (
+        path.with_suffix(".pt") if failure == "model_hash" else camera.path)
+    before = changed.read_bytes()
+    if failure == "missing_yaml":
+        changed.unlink()
+    else:
+        changed.write_bytes(b"invalid or changed source")
+    restored = gui.TrayTeachWindow(window.node)
+    restored.timer.stop()
+    restored.next_preview = float("inf")
+    try:
+        finish_jobs(restored)
+        assert restored.profile_path is None and restored.save_target is None
+        assert "Could not restore " + path.name in restored.status.text()
+        assert restored.node.model is None and restored.node.plane is None
+        assert not restored.node.fatal_error and restored.name.isEnabled()
+        for _ in range(3):
+            restored._tick()
+        restored.node.inspect_model.assert_not_called()
+        restored.node.apply_camera.assert_not_called()
+        # Correcting the source alone cannot silently retry or adopt another profile.
+        changed.write_bytes(before)
+        restored._tick()
+        assert restored.profile_path is None
+        monkeypatch.setattr(restored, "_choose", lambda *_: path)
+        restored._load_tray()
+        finish_jobs(restored)
+        assert restored.profile_path == path and restored.saved_plane == plane()
+        assert not restored.armed_toggle.isChecked()
+    finally:
+        restored.close()
+
+
 def test_save_only_needs_name_and_reopens_partial_form_without_trusting_model(window, monkeypatch):
     window.node.lock = threading.RLock()
     window.node.validate_sources = MagicMock(side_effect=ValueError("Load a camera calibration"))

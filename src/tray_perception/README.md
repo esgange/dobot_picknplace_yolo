@@ -197,6 +197,16 @@ origin convention. Distances are mm for dimension settings, metres for plane/
 pose geometry and radians for taught joints. No images or live depth are saved.
 Changing the camera calibration or intrinsics requires re-teaching the plane.
 
+On launch, Tray Teach automatically reopens the exact last loaded or saved YAML
+remembered in `logs/tray_perception/last_session.json`, just like Item Teach.
+This restores the saved settings, plane, optional joint pose, bound calibration
+and verified paired model through the same background Load workflow. Complete
+profiles and partial drafts both reopen; Armed stays OFF. The restored file remains
+the Save target, with the existing overwrite/backup and rename behavior. There is
+no newest-file search or automatic teach-file rewrite. Missing/invalid files report
+the error once; use Load Tray Teach or browse sources to continue after correcting
+it. Failed restoration never bypasses paired-file validation using remembered paths.
+
 GUI form drafts are remembered automatically after a 300 ms typing pause and
 flushed on orderly close to the single ignored `logs/tray_perception/last_session.json`.
 This includes camera prefix, file choices, tray name, dimensions/tolerance,
@@ -204,16 +214,15 @@ confidence/IoU/detection cap, selected classes and inference size. Saving the dr
 works with YOLO OFF, no loaded inputs, incomplete dimensions and invalid text;
 the restored text must still pass normal validation before use. File dialogs
 preselect remembered choices, and saved class IDs are checked against the model
-on loading. Available calibration/model paths restore automatically through the
+on loading. With no remembered tray file, available calibration/model paths restore through the
 existing worker, calibration first and model next. Both source selectors use
 **Browse…**, and choosing a file also loads it without another click or model
 confirmation. Selecting/restoring a model path authorizes that local load.
 Missing or invalid calibration cannot block RGB/model preview. Missing files can
 load once available; an invalid existing file is attempted once until browsed again.
 Already loaded files are never silently replaced. YOLO preview starts when inputs
-are ready; Armed stays OFF. No automatic teaching-position or reference-plane restoration
-is added to session prefill.
-Use **Load Tray Teach…** to restore a saved plane and teaching position.
+are ready; Armed stays OFF. A remembered tray file takes precedence over unsaved
+session form edits. Its saved plane and joint pose are restored from that file.
 Session schema 2 explicitly imports validated schema-1 sessions and replaces
 them on the next draft save. Malformed or unknown formats fail explicitly;
 write failures are reported and preserve the previous session.

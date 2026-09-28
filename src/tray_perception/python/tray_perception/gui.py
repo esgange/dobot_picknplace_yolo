@@ -115,6 +115,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.profile_path = None
         self.profile_digest = ""
         self.profile_filename = ""
+        self.restoring_profile = None
         self.save_target = None
         self.draft_reason = ""
         self.auto_source_attempts = {}
@@ -381,6 +382,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(100)
+        if self.profile_filename:
+            self.restoring_profile = tray_directory(node.root) / self.profile_filename
+            self._message(f"Restoring Tray Teach: {self.profile_filename}. Armed stays OFF.")
+            self._read_tray(self.restoring_profile)
 
     def _button(self, title, callback):
         button = QtWidgets.QPushButton(title)
@@ -503,6 +508,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._start_camera_load(path)
 
     def _start_camera_load(self, path):
+        self.restoring_profile = None
         self.auto_source_attempts["camera"] = str(path.absolute())
         self._edited()
         self.node.camera = self.node.plane = None
@@ -523,6 +529,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._start_model_load(path)
 
     def _start_model_load(self, path):
+        self.restoring_profile = None
         self.auto_source_attempts["model"] = str(path.absolute())
         self.model_path.setText(str(path.absolute()))
         self._edited()
@@ -533,7 +540,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _autoload_sources(self):
         if (self.closing or self.node.fatal_error or self.node.native.failed or
                 self.future is not None or self.pending_job is not None
-                or self.node.requests.busy):
+                or self.node.requests.busy or self.restoring_profile is not None):
             return
         for kind, field, directory, start in (
                 ("camera", self.camera_path, self.node.root / "calibration",
@@ -614,8 +621,12 @@ class TrayTeachWindow(QtWidgets.QWidget):
         path = self._choose("Load Tray Teach", tray_directory(self.node.root), "YAML (*.yaml)",
                             self.profile_filename)
         if path is not None:
-            self._job(lambda: open_document(path, self.node.root),
-                      lambda result: self._open_tray(path, *result), "read_profile")
+            self.restoring_profile = None
+            self._read_tray(path)
+
+    def _read_tray(self, path):
+        self._job(lambda: open_document(path, self.node.root),
+                  lambda result: self._open_tray(path, *result), "read_profile")
 
     def _open_tray(self, path, document, target):
         self._edited()
@@ -647,6 +658,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 self.draft_reason = ""
             self.profile_filename, self.profile_path = path.name, path
             self.profile_digest, self.save_target = target.yaml_sha256, target
+            self.restoring_profile = None
             self.saved_plane = copy.deepcopy(profile["reference_plane"])
             self._show_position()
             self._refresh_preview_settings()
@@ -1104,9 +1116,17 @@ class TrayTeachWindow(QtWidgets.QWidget):
                     callback(result)
             except Exception as exc:
                 terminal = self.node.native.failed or isinstance(exc, RuntimeError)
+                message = str(exc)
+                if self.restoring_profile is not None and kind in ("read_profile", "profile"):
+                    # Do not bypass a rejected pair by autoloading remembered source paths.
+                    self.node.invalidate("Tray Teach restoration failed")
+                    self.node.camera = self.node.model = self.node.model_metadata = None
+                    self.node.plane = self.node.position = None
+                    message = (f"Could not restore {self.restoring_profile.name}: {exc}. "
+                               "Use Load Tray Teach or browse sources to continue.")
                 if terminal or not obsolete:
                     self.node.selected = None
-                    self._message(str(exc), error=True)
+                    self._message(message, error=True)
                     if kind == "preview":
                         self.result_label.setText(f"No current tray pose: {exc}")
                 if terminal:
