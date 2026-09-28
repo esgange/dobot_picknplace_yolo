@@ -1,4 +1,5 @@
 # In-plane item heading, NOT a robot TCP attitude. Position/lengths in metres.
+# Local X follows the short side (width), local Y the long side (length).
 string id
 uint32 priority
 int32 class_id

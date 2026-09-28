@@ -63,6 +63,7 @@ class CandidateClient:
             request = GetItemPoses.Request(
                 max_candidates=configuration.pose_candidates,
                 profile_sha256=configuration.profile_sha256,
+                pose_convention=GetItemPoses.Request.POSE_CONVENTION,
                 save_debug_images=bool(save_debug_images))
             self.node.events.record(
                 "INFO", "candidate_request", "Requesting one fresh candidate batch",
@@ -98,6 +99,7 @@ class CandidateClient:
         if result.header.frame_id != "platform_reference":
             raise FeedbackFailure("Detector result frame is not platform_reference")
         expected_evidence = {
+            "pose_convention": GetItemPoses.Request.POSE_CONVENTION,
             "profile_sha256": configuration.profile_sha256,
             "model_sha256": profile["model"]["sha256"],
             "camera_sha256": selection.station.camera.sha256,

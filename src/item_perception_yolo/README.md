@@ -89,8 +89,8 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Selection changes stop YOLO, disarm and clear old overlays/TF. Use **Load
    Calibration** after correcting a file, or reselect the bin, to revalidate.
 5. **Click an item** to freeze that exact displayed RGB/depth result, highlight
-   its pick dot with a cyan ring and show its measured **X / height (long side)** and
-   **Y / width (short side)** in millimetres at the top-left. Mask uses its
+   its pick dot with a cyan ring and show its measured **X / width (short side)** and
+   **Y / height (long side)** in millimetres at the top-left. Mask uses its
    minimum-area pixel rectangle; OBB uses its oriented rectangle. Both use the
    same platform-Z=0 metric enclosing-rectangle calculation as production. No
    ROI, class, taught-size or depth filter excludes displayed measurements. The
@@ -280,8 +280,8 @@ Segmentation shows mask shading and exactly one size-colored minimum-area rectan
 derived from the mask. OBB shows its native oriented rectangle instead. Do not
 add the axis-aligned YOLO box or a second rectangle/per-box class label. Keep
 rectangle geometry for measurement/click selection: show red **X** along its
-long direction and green
-**Y** along its short direction, spanning opposite edge midpoints through the
+short direction and green
+**Y** along its long direction, spanning opposite edge midpoints through the
 same center. A white dot with a black rim marks that exact pick pixel; selecting
 it adds a cyan sampling ring, never another box. Its physical diameter is the
 current `pickdepth_radius` in millimetres (30 means diameter 30 mm, radius 15 mm),
@@ -517,7 +517,8 @@ and teaching TF behavior are unchanged. Invalid capture reasons remain visible
 on the video or waiting view and in the compact status line.
 
 The controller sends
-`GetItemPoses(max_candidates, profile_sha256, save_debug_images)`. One request
+`GetItemPoses(max_candidates, profile_sha256, save_debug_images, pose_convention)`.
+The required convention is `item_short_x_long_y_v1`. One request
 at a time is accepted; a concurrent request returns BUSY. Every request acquires
 a new RGB/depth pair after its arrival, not a cached prior result. Source frames
 must be tightly packed `rgb8` and registered little-endian `16UC1` millimetres,
@@ -585,13 +586,24 @@ blocking service request. All native operations are serialized in one worker.
 - Rank valid positions by XY distance to the bin polygon's area centroid;
   confidence descending then source index break exact distance ties. Return up
   to the requested number, explicitly reporting SHORTAGE or NO_VALID_ITEMS.
-  Heading is platform-normal and follows the rectangle's long axis with a
+  The right-handed frame has short X, long Y and platform-normal Z with a
   deterministic sign; it is not estimated surface tilt or a TCP command.
 - Replies carry metre poses/dimensions, timestamps, batch-local IDs, confidence,
   depth counts/spread and artifact/transform evidence. Disarm/config changes,
   source tampering, invalidated observations and malformed worker output never
   return usable targets. The controller checks frame/profile and timestamp
   validity again.
+
+The item frame stays centered on the same pick point. Short X is the former
+short Y; long Y is the negative of the former long X, retaining right-handedness
+and the same Z. The shared Link6 planner follows short X, preserving physical
+gripper attitudes, camera-clearance choices and motion routes. Schema-9 dimensions
+are unchanged: `geometry.height`/response `length` remain the long side, and
+`width` remains the short side. Existing teach files need no conversion.
+After upgrading, rebuild and restart Item Teach/Detect and Robot Controller
+(including TF preview) together. `GetItemPoses.pose_convention` and response
+evidence must both equal `item_short_x_long_y_v1`; older clients/providers are
+rejected before their candidate poses can be used for picking.
 
 Initial form values are explicit and saved in `quality`: input age 0.5 s,
 RGB/depth separation 0.1 s, robot TF age 1 s, request deadline 10 s, at least

@@ -32,6 +32,10 @@ def item_pose(x=0.1, y=0.2, z=0.3, yaw_deg=0.0):
     return value
 
 
+def detected_item_pose(x=0.1, y=0.2, z=0.3, long_yaw_deg=0.0):
+    return item_pose(x, y, z, yaw_deg=long_yaw_deg + 90.0)
+
+
 def settings(*, use_grip=True, close_on_pick=True):
     return {
         "pick_rotation": 0.0,
@@ -131,20 +135,20 @@ def test_pick_geometry_rates_and_real_timed_io():
 
 def test_pick_green_axis_follows_item_short_axis_through_every_waypoint():
     home = matrix(1.0)
-    item = item_pose(yaw_deg=30.0)
+    item = detected_item_pose(long_yaw_deg=30.0)
     rotation, delta_deg, direction = pick_attitude(home, item)
     plan = pick_targets(home, item, settings(), 1)
 
     assert delta_deg == pytest.approx(30.0)
     assert direction == "none"
-    assert np.allclose(rotation[:, 1], item[:3, 1])
+    assert np.allclose(rotation[:, 1], item[:3, 0])
     assert np.allclose(rotation[:, 2], home[:3, 2])
     assert all(np.allclose(target.matrix[:3, :3], rotation) for target in plan)
 
 
 def test_camera_safe_mirror_is_used_for_every_motion_waypoint():
     home = matrix(1.0)
-    candidate = item_pose(x=0.18, y=0.0)
+    candidate = detected_item_pose(x=0.18, y=0.0)
     robot_camera = np.eye(4)
     robot_camera[0, 3] = 0.05
     selected = select_pick_attitude(
@@ -161,17 +165,17 @@ def test_camera_safe_mirror_is_used_for_every_motion_waypoint():
 
 def test_rectangular_axis_uses_nearest_equivalent_tool_rotation():
     home = matrix(1.0)
-    item = item_pose(yaw_deg=170.0)
+    item = detected_item_pose(long_yaw_deg=170.0)
     rotation, delta_deg, _direction = pick_attitude(home, item)
 
     assert delta_deg == pytest.approx(-10.0)
-    assert abs(float(np.dot(rotation[:, 1], item[:3, 1]))) == pytest.approx(1.0)
+    assert abs(float(np.dot(rotation[:, 1], item[:3, 0]))) == pytest.approx(1.0)
     assert np.allclose(rotation[:, 2], home[:3, 2])
 
 
 def test_controller_waypoints_use_selected_camera_safe_mirror_without_moving_pick_point():
     home = matrix(1.0)
-    item = item_pose(x=0.18, y=0.0)
+    item = detected_item_pose(x=0.18, y=0.0)
     camera = np.eye(4)
     camera[0, 3] = 0.05
     roi = [[-0.2, -0.15], [-0.2, 0.15], [0.2, 0.15], [0.2, -0.15]]
@@ -193,13 +197,13 @@ def test_tilted_platform_short_axis_is_projected_while_tool_z_stays_fixed():
     platform[:3, :3] = [[1., 0., 0.],
                         [0., np.cos(tilt), -np.sin(tilt)],
                         [0., np.sin(tilt), np.cos(tilt)]]
-    yaw = np.deg2rad(25.0)
+    yaw = np.deg2rad(115.0)
     item = candidate_pose_in_base(
         platform, (0.1, 0.2, 0.3),
         (0., 0., np.sin(yaw / 2), np.cos(yaw / 2)))
     home = matrix(1.0)
     rotation, _delta_deg, _direction = pick_attitude(home, item)
-    projected = item[:3, 1].copy()
+    projected = item[:3, 0].copy()
     projected[2] = 0.0
     projected /= np.linalg.norm(projected)
 
@@ -215,10 +219,10 @@ def test_alignment_preserves_a_nonvertical_taught_tool_axis():
     home[:3, :3] = [[np.cos(pitch), 0., np.sin(pitch)],
                     [0., 1., 0.],
                     [-np.sin(pitch), 0., np.cos(pitch)]]
-    item = item_pose(yaw_deg=42.0)
+    item = detected_item_pose(long_yaw_deg=42.0)
     rotation, delta_deg, _direction = pick_attitude(home, item)
-    projected = item[:3, 1] - home[:3, 2] * float(
-        np.dot(item[:3, 1], home[:3, 2]))
+    projected = item[:3, 0] - home[:3, 2] * float(
+        np.dot(item[:3, 0], home[:3, 2]))
     projected /= np.linalg.norm(projected)
 
     assert abs(delta_deg) <= 90.0
@@ -233,7 +237,7 @@ def test_candidate_pose_rejects_nonplanar_heading_and_degenerate_projection():
         candidate_pose_in_base(np.eye(4), (0.1, 0.2, 0.3),
                                (np.sin(.1), 0., 0., np.cos(.1)))
     item = item_pose()
-    item[:3, :3] = [[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]]
+    item[:3, :3] = [[0., 1., 0.], [0., 0., 1.], [1., 0., 0.]]
     with pytest.raises(ValueError, match="cannot be projected"):
         pick_attitude(matrix(1.0), item)
 
@@ -516,13 +520,13 @@ def test_use_grip_false_still_opens_and_neutralizes_but_never_closes():
 
 def test_every_pick_rotation_selects_nearest_offset_from_home_independently():
     home = matrix(1.0)
-    first = item_pose(yaw_deg=80.0)
+    first = detected_item_pose(long_yaw_deg=80.0)
     rotation, travel, direction = pick_attitude(home, first, 20.0)
     assert direction == "cw"
     assert travel == pytest.approx(60.0)
     assert np.allclose(rotation[:, 1], item_pose(yaw_deg=60.0)[:3, 1])
 
-    second = item_pose(yaw_deg=100.0)
+    second = detected_item_pose(long_yaw_deg=100.0)
     next_rotation, next_travel, next_direction = pick_attitude(home, second, 20.0)
     assert next_direction == "ccw"
     assert next_travel == pytest.approx(-60.0)

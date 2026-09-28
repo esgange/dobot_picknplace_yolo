@@ -13,7 +13,7 @@ ROBOT_CAMERA_REJECTED_COLOR = (255, 0, 0)
 
 
 def rectangle_axes(rectangle, np):
-    """Full midpoint-to-midpoint pixel axes intersect at the immutable pick pixel."""
+    """Return long/short pixel midlines and their immutable pick-pixel intersection."""
     rect = np.asarray(rectangle, dtype=np.float64)
     if rect.shape != (4, 2) or not np.isfinite(rect).all():
         raise RuntimeError("Malformed pick rectangle")
@@ -27,7 +27,7 @@ def rectangle_axes(rectangle, np):
 
 
 def draw_pick_axes(overlay, rectangle, cv2, np):
-    x_axis, y_axis, center = rectangle_axes(rectangle, np)
+    y_axis, x_axis, center = rectangle_axes(rectangle, np)
     for axis, label, color in ((x_axis, "X", (255, 0, 0)), (y_axis, "Y", (0, 255, 0))):
         start, end = np.rint(axis).astype(int)
         cv2.line(overlay, tuple(start), tuple(end), color, 2, cv2.LINE_AA)
@@ -443,7 +443,7 @@ def draw_depth_geometry(view, detections, source, cameras, context, cv2, np,
         border = ((0, 255, 0) if valid is True else
                   (255, 0, 0) if valid is False else (180, 180, 180))
         cv2.polylines(view, [segments(item["rectangle"], True)], True, border, 2, cv2.LINE_AA)
-        x_axis, y_axis, center = rectangle_axes(item["rectangle"], np)
+        y_axis, x_axis, center = rectangle_axes(item["rectangle"], np)
         for axis, label, color in ((x_axis, "X", (255, 0, 0)), (y_axis, "Y", (0, 255, 0))):
             line = segments(axis, False)
             cv2.polylines(view, [line], False, color, 2, cv2.LINE_AA)
@@ -580,7 +580,9 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             axis = edges[axis_index] / length
             if axis[0] < 0 or (abs(axis[0]) < 1e-9 and axis[1] < 0):
                 axis = -axis
-            yaw = math.atan2(float(axis[1]), float(axis[0]))
+            # Keep the same measured rectangle and pick point. New +X is the
+            # previous +Y (short side); +Y is -previous +X, preserving handedness.
+            yaw = math.atan2(float(axis[1]), float(axis[0])) + math.pi / 2
             quaternion = [0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)]
             planning = context.get("pick_planning")
             if type(planning) is not dict or set(planning) != {

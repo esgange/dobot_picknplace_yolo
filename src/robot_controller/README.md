@@ -492,18 +492,28 @@ Pick is permitted only from `READY` with DI1 clear:
    and final pick without returning Home;
 7. after success, retract and return Home holding with suction on.
 
-The detector pose uses local X for the measured long axis and local Y for the
-short axis. It is an in-plane heading, not a TCP attitude. The controller
+The detector pose uses local X for the measured short axis and local Y for the
+long axis. It is an in-plane heading, not a TCP attitude. The controller
 composes that heading through the destination platform transform, projects the
-short axis perpendicular to the exact taught Home tool Z, then considers the
+short X axis perpendicular to the exact taught Home tool Z, then considers the
 taught unsigned 0–90° `pick_rotation` on either side of that line. Since a
 rectangle has no directed end, both modulo-180° directions are equivalent.
 Every candidate independently chooses the legal attitude with the least CW/CCW
-travel from taught Home. All candidate poses are therefore ready before execution
+travel from taught Home; travel ties within 1e-12 radians prefer the CCW offset
+so frame relabeling cannot magnify floating-point noise into a different turn.
+All candidate poses are therefore ready before execution
 and their rotations never accumulate across retries. Every candidate's
 transit/descent/retract targets share its selected attitude; exact
 joint Home restores the taught orientation. Platform tilt is not copied into
 TCP roll/pitch, and all waypoint heights remain referenced to base Z.
+
+Rule 157 changes item coordinates from long-X/short-Y to short-X/long-Y and
+updates this planner together, so the physical gripper orientation remains the
+same. Teach-file dimensions, pick points, Home and motion rates are unchanged.
+Rebuild/restart perception and all controller processes together. Pose requests
+send `pose_convention=item_short_x_long_y_v1`, and matching response evidence is
+mandatory before candidate planning; older or unspecified conventions fail
+visibly instead of being interpreted as a new item frame.
 
 The current station also requires the latest strict schema-7 robot-camera
 transform `Link6 <- robot_camera_link` (transform only). For every candidate,

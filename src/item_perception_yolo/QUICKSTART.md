@@ -24,7 +24,7 @@ robot. For initial testing, Load Model and Connect RGB; the trusted model's
 1 Hz preview starts when ready. YOLO Detect stops/resumes it; Armed stays OFF.
 There is one view, without Detect All/Filtered controls or Resume Live button.
 Select station/bin files and mask/OBB, then click a detection to freeze it and
-read long X / height and short Y / width in mm at top-left. Enter dimensions and
+read short X / width and long Y / height in mm at top-left. Enter dimensions and
 tolerance: green borders pass size, red fail size, gray means not checked.
 Clicking inspects that item's RGB/depth pose with the strict class/ROI/size
 and MAD depth checks. A valid pose shows platform XYZ/yaw and publishes teaching-only
@@ -37,7 +37,7 @@ YOLO/size/quality edits update an enabled preview after a 300 ms typing pause;
 invalid inputs pause it until corrected. Edits discard old results and disarm;
 YOLO/model loading and re-arming remain explicit. Unsaved fields are not autosaved.
 Item overlays keep mask shading, one mask-derived rectangle (or native OBB),
-long-X/short-Y centered axes and a pick dot, with no extra axis-aligned YOLO box.
+short-X/long-Y centered axes and a pick dot, with no extra axis-aligned YOLO box.
 The green bin border coexists with detections and also works with YOLO OFF.
 The canonical RViz viewer also displays Item Teach's default 1 Hz colored 10 mm
 scene voxel cloud and all valid detected-item pose frames/markers. Complete the

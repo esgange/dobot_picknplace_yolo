@@ -931,7 +931,8 @@ class ItemDetectNode(Node):
     def simulate_trigger(self, path, *, expected_digest, requested_at=None, cancelled=None):
         """Local-only equivalent of a service request; never advertises or calls a service."""
         response, view = self._pose_batch(
-            GetItemPoses.Request(), GetItemPoses.Response(), simulation_path=Path(path),
+            GetItemPoses.Request(pose_convention=GetItemPoses.Request.POSE_CONVENTION),
+            GetItemPoses.Response(), simulation_path=Path(path),
             requested_at=requested_at, cancelled=cancelled, expected_digest=expected_digest)
         return {"response": response, "view": view}
 
@@ -953,6 +954,8 @@ class ItemDetectNode(Node):
                 raise ValueError("Detector was disarmed or settings changed during request")
 
         try:
+            if request.pose_convention != GetItemPoses.Request.POSE_CONVENTION:
+                raise ValueError("Item pose convention mismatch; rebuild/restart the pose client")
             if not simulated and (self.service is None or not self.yolo_enabled):
                 raise ValueError("Detector is not armed")
             if simulated:
@@ -1055,7 +1058,8 @@ class ItemDetectNode(Node):
                     raise ValueError("Item profile changed while saving debug images")
                 if time.monotonic() > deadline:
                     raise ValueError("Request deadline exceeded while saving debug images")
-            evidence = {"profile_sha256": profile_digest,
+            evidence = {"pose_convention": GetItemPoses.Request.POSE_CONVENTION,
+                        "profile_sha256": profile_digest,
                         "model_sha256": self.model_config["sha256"],
                         "camera_sha256": self.applied.camera.sha256,
                         "robot_camera_sha256": self.robot_camera.sha256,

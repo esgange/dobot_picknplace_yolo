@@ -113,7 +113,7 @@ def _spin_about_axis(vector, axis, angle):
 
 
 def pick_attitude(home, item_in_base, pick_rotation_deg=0.0):
-    """Choose each candidate's nearest legal +/-offset attitude from taught Home."""
+    """Align tool Y to item short X with the nearest legal +/-offset from Home."""
     home = rigid_matrix(home, "Home")
     item = rigid_matrix(item_in_base, "Base-relative candidate pose")
     if (type(pick_rotation_deg) not in (int, float)
@@ -122,7 +122,7 @@ def pick_attitude(home, item_in_base, pick_rotation_deg=0.0):
         raise ValueError("pick_rotation must be a finite number from 0 to 90 degrees")
     home_rotation = home[:3, :3]
     tool_z = home_rotation[:, 2]
-    item_short = item[:3, 1]
+    item_short = item[:3, 0]
     projected = item_short - tool_z * float(np.dot(item_short, tool_z))
     norm = float(np.linalg.norm(projected))
     if norm <= 1e-6:
@@ -149,7 +149,12 @@ def pick_attitude(home, item_in_base, pick_rotation_deg=0.0):
         if abs(abs(float(np.dot(target_green, desired_line))) - 1.0) > 1e-6:
             raise ValueError("Failed to construct offset item pick attitude")
         candidates.append((abs(delta), priority, rotation, math.degrees(delta), direction))
-    _, _, rotation, travel_deg, direction = min(candidates, key=lambda value: value[:2])
+    # Equivalent frame labels can differ by roundoff. Preserve the explicit
+    # CCW-before-CW preference for travel ties rather than magnifying that noise.
+    minimum_travel = min(value[0] for value in candidates)
+    _, _, rotation, travel_deg, direction = min(
+        (value for value in candidates if value[0] <= minimum_travel + 1e-12),
+        key=lambda value: value[1])
     return rotation, travel_deg, direction
 
 

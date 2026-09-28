@@ -40,6 +40,7 @@ def valid_result(*, candidate_count=1):
     result.header.frame_id = "platform_reference"
     result.header.stamp.sec = result.depth_stamp.sec = 100
     result.diagnostics_json = json.dumps({
+        "pose_convention": GetItemPoses.Request.POSE_CONVENTION,
         "profile_sha256": "profile", "model_sha256": "model",
         "camera_sha256": "camera", "platform_sha256": "platform",
         "robot_camera_sha256": "robot_camera",
@@ -89,6 +90,19 @@ def test_every_detector_binding_hash_is_mandatory(tmp_path, key):
     evidence[key] = "changed"
     result.diagnostics_json = json.dumps(evidence)
     with pytest.raises(FeedbackFailure, match=key):
+        client(tmp_path)._validate_result(result, configuration(), False)
+
+
+@pytest.mark.parametrize("convention", [None, "", "item_long_x_short_y"])
+def test_detector_pose_convention_must_match_before_planning(tmp_path, convention):
+    result = valid_result()
+    evidence = json.loads(result.diagnostics_json)
+    if convention is None:
+        evidence.pop("pose_convention")
+    else:
+        evidence["pose_convention"] = convention
+    result.diagnostics_json = json.dumps(evidence)
+    with pytest.raises(FeedbackFailure, match="pose_convention"):
         client(tmp_path)._validate_result(result, configuration(), False)
 
 

@@ -436,8 +436,8 @@ results are discarded, and edits disarm without automatically saving or re-armin
 The view retains all model classes and size failures. Item borders are green
 within the taught size tolerance, red outside it, and gray if dimensions or
 plane measurement are unavailable. Green means size-valid, not a validated pose.
-Select the station platform/bin and mask/OBB to measure long-X/height and
-short-Y/width on platform Z=0. Registered depth is displayed alongside RGB;
+Select the station platform/bin and mask/OBB to measure short-X/width and
+long-Y/height on platform Z=0. Registered depth is displayed alongside RGB;
 missing/mismatched depth leaves RGB detections visible but blocks pose calculation.
 Registered depth and RGB must share their optical frame, dimensions and K.
 Their lens-distortion coefficients may differ: the worker uses both CameraInfo
@@ -458,7 +458,7 @@ The cyan selection ring follows `pickdepth_radius` (circle diameter in mm),
 projected from platform Z=0 with the same geometry used for depth sampling.
 It may appear elliptical under perspective; no fixed-pixel ring is substituted
 when calibration is unavailable. Edit the diameter, then click an item again.
-Depth mirrors RGB mask shading, size borders, long-X/short-Y axes, pick dots
+Depth mirrors RGB mask shading, size borders, short-X/long-Y axes, pick dots
 and bin ROI through its own calibrated pixel model. Both views freeze together
 on a click; the selected pose is inspected from that exact pair, while
 all item outlines remain visible. Both panes show selection/pose feedback;
@@ -500,7 +500,7 @@ These frame-local IDs are not tracked identities or production service results. 
 Detect stays request-driven, publishes none of these visualization topics and
 saves RGB/depth images only when `GetItemPoses.save_debug_images=true`.
 RGB keeps mask shading and one mask-derived rectangle (or the native oriented
-rectangle for OBB), with centered long-X/short-Y lines and a pick-point dot.
+rectangle for OBB), with centered short-X/long-Y lines and a pick-point dot.
 No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the
 same image, including with YOLO OFF. Item Teach provides **Browse…** selectors
 for platform, bin-camera and robot-camera calibration files inside root

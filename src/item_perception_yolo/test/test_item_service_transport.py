@@ -106,7 +106,9 @@ def exercise_service():
                                   "inference_ms": 1.}}
         detector.infer = infer
         start = sensor.get_clock().now().nanoseconds
-        future = client.call_async(GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64))
+        future = client.call_async(GetItemPoses.Request(
+            max_candidates=3, profile_sha256="a"*64,
+            pose_convention=GetItemPoses.Request.POSE_CONVENTION))
         done = threading.Event()
         future.add_done_callback(lambda _: done.set())
         assert done.wait(5)

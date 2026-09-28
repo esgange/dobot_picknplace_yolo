@@ -4,14 +4,15 @@ import numpy as np
 import pytest
 
 from item_perception_yolo.pick_planning import (
-    candidate_pose_in_base, point_in_polygon, select_pick_attitude)
+    candidate_pose_in_base, pick_attitude, point_in_polygon, rpy_matrix, select_pick_attitude)
 
 
 ROI = [[-0.2, -0.15], [-0.2, 0.15], [0.2, 0.15], [0.2, -0.15]]
 
 
 def item(x=0.0, y=0.0, yaw_deg=0.0):
-    yaw = np.deg2rad(yaw_deg)
+    # yaw_deg describes the physical long side; the pose's X is its short side.
+    yaw = np.deg2rad(yaw_deg + 90.0)
     return candidate_pose_in_base(
         np.eye(4), (x, y, 0.1),
         (0.0, 0.0, np.sin(yaw / 2), np.cos(yaw / 2)))
@@ -70,3 +71,17 @@ def test_each_candidate_is_planned_independently_from_home_with_offset():
     assert abs(first.rotation_from_home_deg) <= 90
     assert abs(second.rotation_from_home_deg) <= 90
     assert first.rotation_from_home_deg == pytest.approx(-second.rotation_from_home_deg)
+
+
+@pytest.mark.parametrize("home_yaw", [0, 30, 90, 180])
+@pytest.mark.parametrize("equivalent", [-180, 0, 180])
+@pytest.mark.parametrize("offset", [20, 45])
+def test_equal_travel_uses_same_ccw_choice_for_equivalent_axis_frames(home_yaw, equivalent, offset):
+    home = np.eye(4)
+    home[:3, :3] = rpy_matrix(0., 0., np.deg2rad(home_yaw))
+    candidate = item(yaw_deg=home_yaw + 90 + equivalent)
+    rotation, travel, direction = pick_attitude(home, candidate, offset)
+    expected_tool = rpy_matrix(0., 0., np.deg2rad(home_yaw - (90 - offset)))
+    assert direction == "ccw"
+    assert travel == pytest.approx(-(90 - offset))
+    assert np.allclose(rotation, expected_tool, atol=1e-12)

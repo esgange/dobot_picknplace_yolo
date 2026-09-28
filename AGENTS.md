@@ -625,6 +625,18 @@ tray; canonical TF Marker Scale is explicitly 1. Preserve blue-UP display
 direction, actual poses/TF, marker lifetime and rule 154's raw-axis visibility.
 This is display sizing only; no inference, controller or hardware change.
 
+Rule 157 makes actual Item Teach/Detect poses and all item overlays short X /
+long Y at the unchanged pick point, matching Tray's axis lengths. Rotate the
+former item frame +90 degrees about its unchanged Z: X becomes old Y and Y
+becomes negative old X. The shared controller/preview Link6 planner follows
+short X, preserving physical tool attitudes, pick_rotation, camera clearance
+and routes. Treat travel differences within 1e-12 radians as ties and keep the
+CCW-before-CW offset preference. Schema-9 height/length and width remain unchanged. Require
+GetItemPoses request pose_convention and response diagnostics to match
+item_short_x_long_y_v1; reject missing/old conventions before candidate use.
+Rebuild and restart perception/controller clients together. Preserve Tray's
+corner origin, blue-UP guide policy and all robot gates; no hardware testing.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

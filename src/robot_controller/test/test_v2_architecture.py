@@ -142,7 +142,7 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
     assert "candidate_pose_in_base(" in preview
     assert "plan = pick_targets(" in controller
     assert "plan = pick_targets(" in preview
-    assert "item[:3, 1]" in shared
+    assert "item[:3, 0]" in shared
     assert "select_pick_attitude(" in controller and "select_pick_attitude(" in preview
     assert "reference_rotation" not in controller + preview + motion + shared
     assert "selected_offset_direction" in controller

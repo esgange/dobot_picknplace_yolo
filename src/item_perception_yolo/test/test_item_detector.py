@@ -116,9 +116,21 @@ def service_node(monkeypatch, tmp_path):
     return node, candidate
 
 
-def call(node, count=3, digest="a"*64):
-    return detector.ItemDetectNode._request(node,
-                                            GetItemPoses.Request(max_candidates=count, profile_sha256=digest), GetItemPoses.Response())
+def call(node, count=3, digest="a"*64, convention=GetItemPoses.Request.POSE_CONVENTION):
+    return detector.ItemDetectNode._request(
+        node,
+        GetItemPoses.Request(max_candidates=count, profile_sha256=digest,
+                             pose_convention=convention), GetItemPoses.Response())
+
+
+@pytest.mark.parametrize("convention", ["", "item_long_x_short_y"])
+def test_old_or_unspecified_pose_convention_is_rejected_before_inference(service_node, convention):
+    node, _ = service_node
+    result = call(node, convention=convention)
+    assert not result.success and not result.candidates
+    assert "convention mismatch" in result.message
+    node._snapshot.assert_not_called()
+    node.infer.assert_not_called()
 
 
 def test_request_new_observation_shortage_identity_and_no_cache(service_node, monkeypatch):
@@ -132,6 +144,7 @@ def test_request_new_observation_shortage_identity_and_no_cache(service_node, mo
     assert result.candidates[0].id.startswith(result.batch_id + ":")
     evidence = json.loads(result.diagnostics_json)
     assert evidence["profile_sha256"] == "a"*64
+    assert evidence["pose_convention"] == GetItemPoses.Request.POSE_CONVENTION
     assert evidence["debug_capture"] == {
         "requested": False, "rgb_path": "", "depth_path": "", "error": ""}
     assert node._snapshot.call_args.args[0] == 100_200_000_000
@@ -148,7 +161,8 @@ def test_requested_debug_pair_is_exact_annotated_result_and_bounded_to_debug_dir
     depth = bytes([0, 0, 0, 255, 0, 0, 0, 0, 0, 255, 0, 0])
     node.infer.return_value.update(width=2, height=2, rgb=rgb, depth_rgb=depth)
     request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
-                                   save_debug_images=True)
+                                   save_debug_images=True,
+                                   pose_convention=GetItemPoses.Request.POSE_CONVENTION)
     result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
     assert result.success
     capture = json.loads(result.diagnostics_json)["debug_capture"]
@@ -177,7 +191,8 @@ def test_debug_image_failure_is_diagnostic_only(service_node, monkeypatch):
     monkeypatch.setattr(detector, "save_pick_debug_pair",
                         MagicMock(side_effect=OSError("synthetic disk failure")))
     request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
-                                   save_debug_images=True)
+                                   save_debug_images=True,
+                                   pose_convention=GetItemPoses.Request.POSE_CONVENTION)
     result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
     capture = json.loads(result.diagnostics_json)["debug_capture"]
     assert result.success and len(result.candidates) == 1
@@ -194,7 +209,8 @@ def test_debug_saving_cannot_return_invalidated_candidates(service_node, monkeyp
 
     monkeypatch.setattr(detector, "save_pick_debug_pair", saved)
     request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
-                                   save_debug_images=True)
+                                   save_debug_images=True,
+                                   pose_convention=GetItemPoses.Request.POSE_CONVENTION)
     result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
     assert not result.success and not result.candidates
 
@@ -210,7 +226,9 @@ def test_debug_saving_does_not_expire_an_accepted_batch(service_node, monkeypatc
     monkeypatch.setattr(detector, "save_pick_debug_pair", saved)
     result = detector.ItemDetectNode._request(
         node, GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
-                                   save_debug_images=True), GetItemPoses.Response())
+                                   save_debug_images=True,
+                                   pose_convention=GetItemPoses.Request.POSE_CONVENTION),
+        GetItemPoses.Response())
     assert result.success and len(result.candidates) == 1
 
 

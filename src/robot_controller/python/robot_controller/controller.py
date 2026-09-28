@@ -1026,7 +1026,7 @@ class RobotController(Node):
                                 "Applied the nearest legal offset from the item short-axis line",
                                 candidate_id=candidate.identifier, candidate_index=index,
                                 candidate_quaternion_xyzw=list(candidate.quaternion),
-                                item_short_axis_base=item_pose[:3, 1].tolist(),
+                                item_short_axis_base=item_pose[:3, 0].tolist(),
                                 target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
                                 configured_pick_rotation_deg=config.profile["pick_rotation"],
                                 selected_offset_direction=attitude.offset_direction,

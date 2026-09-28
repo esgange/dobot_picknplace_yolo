@@ -6520,6 +6520,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   camera/robot command, live node restart or operator artifact/config edit.
   Existing teaching nodes must be relaunched to publish the new guide dimensions.
 
+### 2026-09-28 — Use short X and long Y for item poses
+
+- Rule 157 changes actual Item Teach/Detect candidate poses, their TF and RGB/
+  depth/RViz item axes to short X / long Y. Rotate the former frame +90 degrees
+  about its unchanged platform-normal Z: new X is old Y and new Y is negative
+  old X. Retain the same pick point, dimension measurements, schema-9 artifacts,
+  saved Home and blue-UP visualization. Tray remains short X / long Y from its
+  nearest-base corner; its shared rectangle helper still returns long/short lines.
+- Change the shared detector/controller planner and its audit evidence to follow
+  item short X when aligning Link6 green/Y. Preserve the physical gripper line,
+  taught tool Z, pick_rotation offsets, camera-clearance mirror selection, routes,
+  rates and I/O. During equivalence checks, floating-point differences exposed
+  ambiguous equal-travel CW/CCW choices. Make the intended CCW-before-CW preference
+  deterministic within 1e-12 radians; a formerly roundoff-selected CW tie can now
+  choose CCW, while unequal choices retain the minimum-travel rule.
+- Require `GetItemPoses.pose_convention=item_short_x_long_y_v1` and matching
+  response diagnostics. Simulation sets it locally; Robot Controller sends and
+  validates it before candidate planning. Reject missing/old conventions so
+  mixed software cannot silently interpret a 90-degree-changed item frame.
+  Rebuild and restart perception/controller processes together; no teach-file
+  conversion, new configuration key or automatic live restart is introduced.
+- Update GUI labels, interface/package/root docs, quickstart and the controller
+  FSM contract/diagram/guard evidence; regenerate its six-page offline HTML/PDF.
+- Validation: all 1,053 Item Perception, Robot Controller and Tray Perception
+  tests passed after the final planner change. Synthetic native geometry covers
+  rotated rectangles, unchanged center/dimensions/tool attitude and overlay
+  colors; shared/controller checks cover tilted platforms/tools, camera mirrors,
+  independent offsets, 24 equal-travel cases and missing/old convention rejection.
+  Four affected/dependent packages passed symlink builds. All six changed runtime
+  Python files pass flake8; changed tests add no lint errors compared with HEAD
+  (65 pre-existing style findings). git diff --check passes. Both FSM exports
+  contain all six diagrams and the current source hash; the changed Pick page
+  was visually checked for clipping. No operator model execution, artifact/config
+  edit, live node restart or camera/robot command; physical testing remains separate.
+
 ### Future entry template
 
 ```text

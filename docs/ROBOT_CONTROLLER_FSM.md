@@ -9,6 +9,11 @@ Deployment catalog review: **2026-09-27**, against **`d301221`** plus diary rule
 **140**. Complete optional Tray Teach pairs may coexist with Item/Bin deployment;
 controller sequencing, states and motion remain unchanged.
 
+Item-axis contract review: **2026-09-28**, against **`c4294c1`** plus diary rule
+**157**. Item poses now use short X / long Y; Link6 green/Y follows short X,
+preserving physical pickup orientation. Require matching request/response pose
+conventions before planning. Lifecycle and motion sequencing are unchanged.
+
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
 them. The tables also describe the behavior without a diagram renderer.
@@ -102,7 +107,9 @@ later commands, including an unanswered best-effort StopMoveJog.
 flowchart TD
     Request["READY: PickItem accepted"] --> Home["Reach taught joint Home; validate sources"]
     Home --> Detect["Request one fresh candidate batch"]
-    Detect --> Any{"Any valid candidates?"}
+    Detect --> Validate["Validate sources and short-X / long-Y convention"]
+    Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
+    Validate -->|Valid| Any{"Any valid candidates?"}
     Any -->|No| Empty["READY / NO_PICK; remain Home"]
     Any -->|Yes| Plan["Save ordered plans and PENDING ledger"]
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
@@ -126,6 +133,16 @@ flowchart TD
   the batch; Pause/Continue and saved-batch recovery do not request replacement poses.
 - The accepted batch belongs to this Pick; there is no result-age expiry during
   its operation. Source/hash checks still apply before later work.
+- Both pose request and response evidence must declare
+  `item_short_x_long_y_v1`. A missing or mismatched convention rejects the batch
+  before candidate planning; it cannot produce a pick target. Detector and
+  controller processes must be rebuilt/restarted together after this change.
+  The shared planner projects item short X perpendicular to taught Home tool Z
+  when aligning Link6 green/Y. The unchanged physical short-side line preserves
+  tool attitude, pick_rotation choices and robot-camera clearance. Saved item
+  dimensions, pick-point origin, taught Home and all motion routes are unchanged.
+  Numerically equal offset travel (within 1e-12 radians) prefers CCW, preventing
+  frame relabeling roundoff from changing an otherwise equivalent choice.
 - Final approach uses taught approach speed/acceleration. DI1 acquisition is
   immediate once armed: it can stop before reaching the nominal final target.
   If there is no early pickup, taught `timing.pick_settling` is the single final
@@ -346,7 +363,7 @@ that ends an active Home/Pick reports CANCELED and final READY, not Pick success
 | `/joint_states` | Actual six robot joints, timestamp/freshness and joint Home confirmation |
 | `/dobot_msgs_v4/msg/RobotStatus` | Canonical connection and enabled status |
 | `/dobot_bringup_ros2/msg/FeedInfo` | Actual tool pose, queue/running flags, controller timer, modes/alarms/collision, DI/DO |
-| `/item_detect/get_item_poses` service response | Validated item candidates and their source binding |
+| `/item_detect/get_item_poses` service response | Validated item candidates, source binding and matching short-X/long-Y convention before planning |
 
 | I/O | Meaning |
 | --- | --- |

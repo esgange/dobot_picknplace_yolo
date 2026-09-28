@@ -607,7 +607,7 @@ def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, 
         assert "platform_reference XYZ" in window.video_status.text()
         for feedback in (window.rgb_feedback, window.depth_feedback):
             assert "FROZEN SELECTION" in feedback.text()
-            assert "X / height: 80.00 mm" in feedback.text()
+            assert "Y / height: 80.00 mm" in feedback.text()
             assert "platform_reference XYZ [mm]: +10.00, +20.00, +100.00" in feedback.text()
             assert "CAM normal" in feedback.text()
         assert "100 accepted / 2 rejected" in window.depth_feedback.text()

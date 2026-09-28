@@ -66,7 +66,31 @@ def exercise_geometry():
     result = candidates[0]
     assert np.allclose(result["position"], [0, 0, .1])
     assert np.allclose([result["length"], result["width"]], [.08, .032])
-    assert np.allclose(result["quaternion"], [0, 0, 0, 1])
+    assert np.allclose(result["quaternion"], [0, 0, np.sqrt(.5), np.sqrt(.5)])
+    # X is the short line; Y is the long line. Link6 keeps its old attitude.
+    assert np.allclose(np.asarray(result["planned_link6_matrix"])[:3, :3], np.eye(3))
+    from item_perception_yolo.pick_planning import candidate_pose_in_base
+    for angle_deg in (-80, -35, 0, 25, 80):
+        angle = np.deg2rad(angle_deg)
+        pixel_rotation = np.array([[np.cos(angle), -np.sin(angle)],
+                                   [np.sin(angle), np.cos(angle)]])
+        rotated = (polygon - [320., 240.]) @ pixel_rotation.T + [320., 240.]
+        observed = {**item, "polygon": rotated, "rectangle": rotated}
+        _, _, poses, reasons = generate_candidates(
+            [observed], rgb, depth, context, settings, cv2, np)
+        assert not reasons and len(poses) == 1
+        measured = poses[0]
+        pose = candidate_pose_in_base(np.eye(4), measured["position"], measured["quaternion"])
+        # Camera optical Y maps to negative platform Y in this fixture.
+        expected_tool = np.array([[np.cos(angle), np.sin(angle), 0.],
+                                  [-np.sin(angle), np.cos(angle), 0.], [0., 0., 1.]])
+        assert abs(np.dot(pose[:3, 0], expected_tool[:, 1])) > .99999
+        assert abs(np.dot(pose[:3, 1], expected_tool[:, 0])) > .99999
+        assert np.allclose(np.cross(pose[:3, 0], pose[:3, 1]), pose[:3, 2])
+        assert np.allclose(measured["position"], [0., 0., .1], atol=1e-6)
+        assert np.allclose([measured["length"], measured["width"]], [.08, .032])
+        assert np.allclose(np.asarray(measured["planned_link6_matrix"])[:3, :3],
+                           expected_tool, atol=1e-6)
     assert depth_view[240, 320].tolist() == [255, 0, 0]  # null rejected red
     assert depth_view[240, 321].tolist() == [255, 0, 0]  # outlier rejected red
     assert depth_view[240, 322].tolist() == [0, 0, 0]    # accepted black
@@ -284,8 +308,8 @@ def exercise_geometry():
     axes = rgb.copy()
     draw_pick_axes(axes, polygon, cv2, np)
     assert axes[240, 320].tolist() == [255, 255, 255]  # Exact pick point, not label-covered.
-    assert axes[240, 300].tolist() == [255, 0, 0]  # Long X red, through middle.
-    assert axes[230, 320].tolist() == [0, 255, 0]  # Short Y green, through middle.
+    assert axes[240, 300].tolist() == [0, 255, 0]  # Long Y green, through middle.
+    assert axes[230, 320].tolist() == [255, 0, 0]  # Short X red, through middle.
     assert axes[220, 270].tolist() == rgb[220, 270].tolist()  # No rectangle outline.
     from item_perception_yolo.yolo_worker_native import render_result
 

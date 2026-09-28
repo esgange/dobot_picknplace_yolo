@@ -621,11 +621,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 field.setText(str(DEFAULT_PICKDEPTH_DIAMETER_MM))
                 field.setToolTip("Sampling circle DIAMETER in mm, despite the variable name")
             self.inputs[key] = field
-            label = {"height": "Length X / height", "width": "Width Y",
+            label = {"height": "Length Y / height", "width": "Width X",
                      "tolerance": "Size tolerance ±"}
             geometry.addRow(label.get(key, key), field)
         geometry_help = QtWidgets.QLabel(
-            "Item X: long axis; item Y: short axis.\n"
+            "Item X: short axis; item Y: long axis.\n"
             "pickdepth_radius is the circle DIAMETER (default 30 mm).\n"
             "Length/width use platform Z=0; depth supplies the pick point."
         )
@@ -1558,8 +1558,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             rgb_lines.append(item_note)
             measurement = selected["measurement"]
             if measurement:
-                dimension_note = (f"X / height: {measurement['length_mm']:.2f} mm   "
-                                  f"Y / width: {measurement['width_mm']:.2f} mm")
+                dimension_note = (f"X / width: {measurement['width_mm']:.2f} mm   "
+                                  f"Y / height: {measurement['length_mm']:.2f} mm")
                 rgb_lines.extend([dimension_note, selected.get(
                     "size_reason", "Platform Z=0 projected size")])
             else:

@@ -1,6 +1,9 @@
 uint32 max_candidates
 string profile_sha256
 bool save_debug_images
+# Required convention handshake; reject older clients instead of rotating their picks.
+string POSE_CONVENTION=item_short_x_long_y_v1
+string pose_convention
 ---
 bool success
 string status
