@@ -37,9 +37,9 @@ def test_guides_point_up_without_changing_real_frame(roll, pitch, yaw):
         assert getattr(marker.color, ("r", "g", "b")[axis]) == 1.
         tip = marker.points[1]
         delta = rotation @ np.array([tip.x, tip.y, tip.z])
-        assert np.linalg.norm(delta) == pytest.approx(.04)
+        assert np.linalg.norm(delta) == pytest.approx(.2)
         if axis < 2:
-            assert np.allclose(delta, rotation[:, axis] * .04)
+            assert np.allclose(delta, rotation[:, axis] * .2)
         else:
             assert delta[2] >= -1e-12
             assert np.linalg.norm(np.cross(delta, rotation[:, 2])) < 1e-12

@@ -170,6 +170,8 @@ horizontal normal remains horizontal. This blue arrow is a visual guide, not
 necessarily the pose's +Z. Actual pose quaternions, TF, service responses and pick
 planning remain unchanged. Clicked and simulated poses use the same convention
 on `/item_teach/selected_pose_guides`; live poses retain `/item_teach/valid_items`.
+All pose-guide arrows are 200 mm long with 20 mm shafts and 40 mm heads (diameter
+and length), matching the robot-joint TF axis length/width at Marker Scale 1.
 The selected guides follow their existing frozen-preview lifetime and clear with
 the selection. Every marker expires after 2.5 seconds without publication.
 Canonical RViz enables both guide displays and sets **TF → Show Axes = false**

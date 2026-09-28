@@ -68,9 +68,9 @@ def test_live_markers_reverse_only_downward_blue_guide_not_candidates_or_tf(prev
     for index, frame in enumerate(frames):
         assert frame.transform.rotation.x == 1.  # The real TF still points down.
         blue = markers[3 * index + 2]
-        assert blue.points[1].z == -.04 and blue.ns.endswith("_up")
-        assert markers[3 * index].points[1].x == .04
-        assert markers[3 * index + 1].points[1].y == .04
+        assert blue.points[1].z == -.2 and blue.ns.endswith("_up")
+        assert markers[3 * index].points[1].x == .2
+        assert markers[3 * index + 1].points[1].y == .2
     diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
     assert diagnostic["candidates"] == original["candidates"]
     assert diagnostic["blue_guide"] == "upward_surface_normal_not_pose_z"

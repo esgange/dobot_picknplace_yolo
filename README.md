@@ -655,7 +655,9 @@ red/green axes labelled **2D**, without mm dimensions or a base-frame pose.
 Only the eligible center-prioritized tray is returned by the pose service.
 RViz's separate **XY and blue UP guides** show the same X/Y and a blue normal
 pointing toward positive `base_link` Z. Item Teach uses the same convention for
-live, clicked and simulated poses. These are display arrows only: actual TF,
+live, clicked and simulated poses. All guides are 200 mm long with 20 mm shafts,
+matching the canonical robot-joint TF axis length and width at Marker Scale 1.
+These are display arrows only: actual TF,
 controller-facing poses, calibration and pick/place coordinates stay unchanged.
 Canonical RViz sets **TF → Show Axes = false** to hide the duplicate downward axes;
 this also hides robot-frame axes while keeping the RobotModel and TF data intact.

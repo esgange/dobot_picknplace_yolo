@@ -7,6 +7,11 @@ from rclpy.duration import Duration
 from visualization_msgs.msg import Marker, MarkerArray
 
 
+# Match RViz Humble TF axes at Marker Scale 1: 0.2 m long, 0.02 m cylinder width.
+AXIS_LENGTH_M = .2
+AXIS_SHAFT_DIAMETER_M = .02
+
+
 def pose_guide_markers(transform, namespace, identifier=0):
     """Keep XY exact; choose the local Z sign with nonnegative base_link Z.
 
@@ -29,9 +34,10 @@ def pose_guide_markers(transform, namespace, identifier=0):
         marker.pose.position = Point(x=t.x, y=t.y, z=t.z)
         marker.pose.orientation = deepcopy(q)
         endpoint = [0., 0., 0.]
-        endpoint[axis] = .04 * (z_sign if axis == 2 else 1.)
+        endpoint[axis] = AXIS_LENGTH_M * (z_sign if axis == 2 else 1.)
         marker.points = [Point(), Point(x=endpoint[0], y=endpoint[1], z=endpoint[2])]
-        marker.scale.x, marker.scale.y, marker.scale.z = .002, .004, .008
+        marker.scale.x = AXIS_SHAFT_DIAMETER_M
+        marker.scale.y, marker.scale.z = .04, .04
         marker.color.a = 1.
         setattr(marker.color, ("r", "g", "b")[axis], 1.)
         marker.lifetime = Duration(seconds=2.5).to_msg()

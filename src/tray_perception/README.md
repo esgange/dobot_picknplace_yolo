@@ -169,6 +169,8 @@ RViz also shows a separate **XY and blue UP guides** marker display on
 `/tray_teach/pose_guides`. Red X and green Y follow that same actual pose. The blue
 arrow uses the reference-plane normal facing positive `base_link` Z; it may be
 opposite the actual pose's +Z. An exactly horizontal normal stays horizontal.
+Like Item Teach, all guides are 200 mm long with 20 mm shafts and 40 mm heads
+(diameter and length), matching robot-joint TF axis length/width at Marker Scale 1.
 Only the displayed arrow changes: TF, returned tray quaternions, nearest-base
 origin, X/Y extents, saved plane and controller placement coordinates are untouched.
 The guides clear on invalidation/no selection, expire after 2.5 seconds and share

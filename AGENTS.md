@@ -618,6 +618,13 @@ Load or Browse permits recovery. No artifact rewrite, headless change, new store
 worker, executor or hardware command. Supersede prefill-only tray-file restoration
 in rules 137/139/141/148 only; retain all detection/request freshness checks.
 
+Rule 156 sizes every Item/Tray RViz pose guide to robot-joint TF dimensions:
+200 mm total length, 20 mm shaft diameter and 40 mm head diameter/length. Use
+the shared marker helper for live, clicked, simulated items and the selected
+tray; canonical TF Marker Scale is explicitly 1. Preserve blue-UP display
+direction, actual poses/TF, marker lifetime and rule 154's raw-axis visibility.
+This is display sizing only; no inference, controller or hardware change.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

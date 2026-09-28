@@ -90,6 +90,10 @@ The enabled **XY and blue UP guides** displays retain true red X/green Y and sho
 the blue reference-plane normal facing positive `base_link` Z. In addition to
 live `/item_teach/valid_items`, subscribe to `/item_teach/selected_pose_guides`
 for clicked/simulated items and `/tray_teach/pose_guides` for the selected tray.
+All guides are 200 mm long with 20 mm shafts and 40 mm arrow heads (diameter and
+length). Their length and shaft width match RViz's robot-joint TF axes at the
+canonical **Marker Scale = 1**. Changing the TF display's scale manually affects
+only raw TF axes; it does not resize separately published guide markers.
 These arrows do not change any actual TF or controller pose. The canonical TF
 display now sets **Show Axes = false** so its original downward axes do not
 overlap the upward guides. This also hides robot-frame axes; the RobotModel and

@@ -6500,6 +6500,26 @@ Never use a floating “latest” version in an issue, script, or deployment not
   logs do not establish that earlier interruption's root cause. No live process
   restart, camera/robot command or operator artifact/config edit was performed.
 
+### 2026-09-28 — Match item and tray RViz guides to joint-axis size
+
+- Rule 156 enlarges the shared Item/Tray pose-guide helper from 40 mm to 200 mm
+  total length, with 20 mm shafts and 40 mm head diameter/length. This covers
+  live, clicked and simulated item poses and the selected tray without separate
+  sizing paths. Preserve colors, blue-UP direction, 2.5-second lifetime, original
+  TF/quaternions and every production pose and controller behavior.
+- Verified the size against upstream ROS 2 Humble RViz's
+  [TF display](https://github.com/ros2/rviz/blob/humble/rviz_default_plugins/src/rviz_default_plugins/displays/tf/tf_display.cpp)
+  and Axes renderer: default Marker Scale 1 uses 0.2 m length and 0.02 m cylinder
+  width. Intentional vendored viewer integration patch records Marker Scale 1
+  explicitly in canonical urdf.rviz; Show Axes remains false under rule 154.
+  Manually changing the TF scale does not resize the independent guide markers.
+- Validation: all 63 focused guide/Item TF/Item and Tray RViz checks passed;
+  Item Perception, Tray Perception and Dobot RViz symlink builds passed, as did
+  changed-Python flake8 and git diff --check. Inspected installed marker dimensions
+  and viewer settings using synthetic messages only. No operator model execution,
+  camera/robot command, live node restart or operator artifact/config edit.
+  Existing teaching nodes must be relaunched to publish the new guide dimensions.
+
 ### Future entry template
 
 ```text

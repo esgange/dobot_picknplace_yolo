@@ -27,8 +27,8 @@ def test_tray_guides_are_separate_from_tf_and_clear_without_a_cloud(cloud):
         assert preview.node.create_publisher.call_count == 2
         return
     markers = preview.pose_guides.publisher.publish.call_args.args[0].markers
-    assert len(markers) == 4 and markers[3].points[1].z == -.04
-    assert markers[1].points[1].x == .04 and markers[2].points[1].y == .04
+    assert len(markers) == 4 and markers[3].points[1].z == -.2
+    assert markers[1].points[1].x == .2 and markers[2].points[1].y == .2
     assert message.transform.rotation.x == 1. and message.transform.rotation.w == 0.
     assert all(m.header.stamp.sec == 100 for m in markers[1:])
     preview.invalidate("Source changed")
