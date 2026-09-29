@@ -7063,6 +7063,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   diagrams were regenerated to HTML/PDF. No physical commands, automatic live restarts or operator
   artifact edits. No physical commissioning or offline-transfer claim.
 
+### 2026-09-29 — Rule 171: tray approach matches the first item-pick approach
+
+- User requested tray approach approximately equal to item-pick approach, while
+  retaining item pre-pick as the tray drop target. Trace the executed first Pick
+  route: target X/Y at Home Z (`pN_transit`) → pre-pick → final pick. It skips
+  the lower `initial`/clearance waypoint on that first descent; merely adding
+  retract_height above the tray drop would not match the executed approach.
+- Set tray approach and vertical retract to placement X/Y at taught Home Z.
+  Keep drop Z = sampled tray surface Z + standoff_height + prepick_height and
+  the detect-relative orientation on all three tray points. The last queued Home
+  command restores Home's full XYZ/orientation. With the audited teach profile,
+  approach/retract changes from approximately Z 140.59 mm to Home Z 352.44 mm;
+  drop remains approximately Z 110.59 mm, depending on the fresh tray depth.
+- Require Home Z above drop Z before admitting any placement commands, retaining
+  a nonzero downward release and upward neutralization segment. No independent
+  height field, preliminary safety rise before Tray Detect, additional waypoint
+  or teach artifact rewrite. Item Pick remains unchanged. This supersedes rule
+  169's second prepick-height addition and the positive-prepick gate only.
+- Preserve the four-command queue and taught rates, 80% OPEN/exhaust on descent,
+  50% neutral on retract, no intermediate release gates, final Home/grip checks,
+  robot fault handling and Stop/Pause. Percentage I/O still occurs before the
+  nominal endpoint: the longer descent increases its distance above the drop
+  target at 80%; global CP(100) can blend intermediate targets.
+- Validation: all 556 controller tests pass with synthetic feedback. Compare tray
+  approach directly with the first Pick transit and drop with pre-pick across
+  different heights, tilted attitudes and rotation inputs; verify real command
+  encoding and block equal/above-Home drop geometry before placement admission.
+  Scoped lint, diff checks and the robot_controller symlink build pass; all seven
+  FSM diagrams were regenerated to HTML/PDF. No physical robot commands, live-node
+  restart or operator artifact changes. No physical commissioning/offline-transfer claim.
+
 ### Future entry template
 
 ```text

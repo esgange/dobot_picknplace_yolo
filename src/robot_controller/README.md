@@ -90,12 +90,16 @@ Item axes and pick rotation have no effect on placement orientation.
 Placement keeps requested X/Y and measures surface Z using the Item Teach depth
 sampling diameter and quality settings. Release Z is surface + standoff + prepick
 height: the equivalent of item pre-pick above the detected tray surface (rule 169).
-Pre-place/retract is release + prepick height, preserving the approach/retract
-distance as both targets rise. For example, surface Z 250 mm, standoff 10 mm and
-prepick 50 mm give release Z 310 mm and pre-place/retract Z 360 mm. All offsets
-are along robot base Z; no teach-file changes are needed.
-Positive prepick height is required for percentage
-I/O on both legs. Tray arrival uses fresh idle/empty-queue feedback and saved joint
+Pre-place/retract uses the placement X/Y and orientation at taught Home Z,
+matching the first Item Pick approach (`pN_transit`) before pre-pick (rule 171).
+That initial Pick route skips its lower clearance/initial point. For surface Z
+250 mm, standoff 10 mm, prepick 50 mm and Home Z 800 mm, release is Z 310 mm and
+approach/retract Z 800 mm. This is a Home-Z target over the tray, not a preliminary
+vertical rise before traveling to Tray Detect Pose. The tray attitude remains
+detect-relative until the final Home command restores Home's full pose.
+Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
+blocks the placement queue. No additional height field or teach-file changes.
+Tray arrival uses fresh idle/empty-queue feedback and saved joint
 angles within ±1°, with execution evidence and no added settling interval. Then
 request fresh tray/depth and queue exactly four Cartesian commands through Home:
 

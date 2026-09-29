@@ -52,8 +52,9 @@ Error; the controller verifies alarm clearance before enabling. See the
 Position and Place Item operations. Placement supports positive tray-local X/Y
 and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose, with
 live depth and Item Teach standoff/motion settings. The drop target is the tray
-surface Z + standoff + pre-pick height; pre-place/retract stays another pre-pick
-height above that target. Tray Detect Position is one
+surface Z + standoff + pre-pick height. Pre-place/retract uses the placement X/Y
+at taught Home Z, matching the first item-pick approach before pre-pick.
+Tray Detect Position is one
 direct queued MovL to its recorded joints, without a preliminary safety-Z rise or
 transit. After fast idle/joint arrival and fresh detection, placement queues pre-place → release
 (OPEN/exhaust at 80%) → pre-place (neutral at 50%) → Cartesian Home in one group.

@@ -15,8 +15,8 @@ preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
 
-Tray placement review: **2026-09-29**, baseline **`df294fe`** plus diary rule **170**
-and existing rules **158–163/169**. Controller configuration
+Tray placement review: **2026-09-29**, baseline **`a69434f`** plus diary rule **171**
+and existing rules **158–163/169–170**. Controller configuration
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
@@ -259,7 +259,7 @@ flowchart TD
     Observe --> Depth["Request fresh matched tray pose and placement depth"]
     Depth -->|Invalid| Stop["Stop and report failure; preserve item"]
     Depth -->|Valid| Queue["Admit one ordered CP100 motion group through Home"]
-    Queue --> Pre["MovL: pre-place = drop Z + pre-pick height"]
+    Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
     Pre --> Release["MovLIO: drop Z = tray surface + standoff + pre-pick height; 80% OPEN + exhaust"]
     Release --> Retract["MovLIO: pre-place; 50% fingers + vacuum neutral"]
     Retract --> Home["MovL: Cartesian Home; confirm idle, pose, neutral and DI1 LOW"]
@@ -294,10 +294,12 @@ checks, with samples restricted to the tray. Inadequate/clipped depth fails befo
 any placement command. Hash/provider/plane checks remain strict.
 
 Release Z = surface Z + standoff + prepick height, matching the item pre-pick
-height above the detected tray surface. Pre-place/retract Z = release Z + prepick
-height; raise both by the same offset and preserve the vertical approach/retract
-distance. All offsets use robot base Z, without changing tray X/Y or tool attitude.
-Require positive prepick height for timed travel. Queue exactly four commands,
+height above the detected tray surface. Pre-place/retract Z = taught Home Z,
+matching the first Item Pick's `pN_transit` height before pre-pick; that initial
+route skips the lower clearance point. Approach/drop/retract keep tray-target
+X/Y and detect-relative tool attitude; final Home restores full Home pose.
+Require Home Z above drop Z for timed descent/retract. No extra preliminary
+safety rise or additional height setting is added. Queue exactly four commands,
 with Item Teach travel/approach/retract/travel rates: MovL pre-place; MovLIO release
 with 80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
 50% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF; MovL Cartesian Home restoring taught

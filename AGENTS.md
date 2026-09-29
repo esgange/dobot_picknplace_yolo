@@ -834,6 +834,17 @@ is issued, Pause/Continue cannot reobserve/repeat it; unconfirmed interruption
 requires explicit cancel-and-Home Recover. No changes to Pick or teach artifacts.
 This supersedes rules 159/162's intermediate release gates and early PLACED state.
 
+Rule 171 matches tray approach/retract to the executed first Item Pick approach:
+placement X/Y at taught Home Z, like `pN_transit` before pre-pick. The initial Pick
+route skips its lower clearance/initial point. Keep drop Z = tray surface Z +
+standoff_height + prepick_height and detect-relative attitude through approach,
+drop and retract; final Home restores its full pose. Require Home Z above drop Z
+for nonzero timed descent/retract, otherwise block before any placement command.
+Do not add a preliminary safety rise before Tray Detect Position, another height
+setting or artifact rewrite. Supersede rule 169's second prepick_height addition
+and rules 159/169's positive-prepick requirement only. Preserve the four-command
+queue, 80%/50% I/O, no intermediate release gates, final Home checks and Item Pick.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

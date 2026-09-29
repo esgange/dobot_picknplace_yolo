@@ -41,7 +41,7 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
     home = pose_matrix([500, -150, 900, 170, 25, -60])
     plan = place_targets(detect, [.3, .2, .25], settings(), angle, home)
     assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract", "place_home"]
-    assert [p.matrix[2, 3] for p in plan] == pytest.approx([.36, .31, .36, .9])
+    assert [p.matrix[2, 3] for p in plan] == pytest.approx([.9, .31, .9, .9])
     assert all(np.allclose(p.matrix[:2, 3], [.3, .2]) for p in plan[:3])
     c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
     expected = detect[:3, :3] @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
@@ -58,9 +58,9 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
 
 
 @pytest.mark.parametrize("standoff,prepick,retract", [
-    (0., 30., 0.), (10., 50., 20.), (25., 80., 120.),
+    (0., 30., 0.), (10., 50., 20.), (25., 80., 120.), (10., 0., 40.),
 ])
-def test_tray_drop_matches_pick_prepick_height_with_vertical_approach_gap(
+def test_tray_drop_matches_pick_prepick_and_approach_matches_first_pick_transit(
         standoff, prepick, retract):
     profile = settings()
     profile["motion"] = {"standoff_height": standoff, "prepick_height": prepick,
@@ -72,9 +72,20 @@ def test_tray_drop_matches_pick_prepick_height_with_vertical_approach_gap(
     place = place_targets(detect, surface[:3, 3], profile, 0., home)
 
     assert np.allclose(place[1].matrix, pick[2].matrix)
-    assert place[1].matrix[2, 3] > pick[3].matrix[2, 3]
-    assert place[0].matrix[2, 3] - place[1].matrix[2, 3] == pytest.approx(prepick / 1000)
+    assert np.allclose(place[0].matrix, pick[0].matrix)
+    assert place[0].matrix[2, 3] == home[2, 3]
+    assert place[0].matrix[2, 3] > place[1].matrix[2, 3]
     assert np.array_equal(place[0].matrix, place[2].matrix)
+
+
+@pytest.mark.parametrize("surface_z", [.74, .75])
+def test_drop_at_or_above_home_rejects_before_any_placement_command(surface_z):
+    node = operation_node()
+    node.trays.request.return_value = np.array([.3, .2, surface_z])
+    with pytest.raises(ValueError, match="Home Z must be above the drop height"):
+        node.placement.run(node)
+    assert not node.hardware.calls
+    assert node.holding_item
 
 
 @pytest.mark.parametrize("values", [(0, 10, 0), (10, -1, 0), (10, 10, 181),

@@ -35,13 +35,14 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
     motion = settings["motion"]
     if any(not math.isfinite(v) or v < 0 for v in motion.values()):
         raise ValueError("Invalid taught placement heights")
-    # Drop at the item pre-pick equivalent above the tray, retaining the taught
-    # approach/retract distance above that release target for timed motion I/O.
+    # The first item-pick approach is its target XY at Home Z, then pre-pick.
+    # Mirror those heights over the tray, using pre-pick as the drop endpoint.
     release_z = (surface[2] + motion["standoff_height"] / 1000
                  + motion["prepick_height"] / 1000)
-    pre_z = release_z + motion["prepick_height"] / 1000
+    home = rigid_matrix(home_matrix, "Home")
+    pre_z = home[2, 3]
     if pre_z <= release_z:
-        raise ValueError("Placement requires positive prepick_height for timed release and retract")
+        raise ValueError("Placement approach at Home Z must be above the drop height")
     result = []
     for name, z, rate in (("place_pre", pre_z, "travel_percent"),
                           ("place_release", release_z, "approach_percent"),
@@ -55,7 +56,7 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
             events = gripper_neutral_events(50) + vacuum_neutral_events(50)
         result.append(Target(name, point, settings["speed"][rate],
                              settings["acceleration"][rate], motion_io=events))
-    result.append(Target("place_home", rigid_matrix(home_matrix, "Home").copy(),
+    result.append(Target("place_home", home.copy(),
                          settings["speed"]["travel_percent"],
                          settings["acceleration"]["travel_percent"]))
     return tuple(result)

@@ -104,7 +104,7 @@ def test_real_transport_queues_four_moves_with_exact_percentages_and_no_settling
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
     assert rig.order[:4] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
     assert all(not request.mode for _, request in rig.requests)
-    assert [request.c for _, request in rig.requests] == pytest.approx([360., 310., 360., 800.])
+    assert [request.c for _, request in rig.requests] == pytest.approx([800., 310., 800., 800.])
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])
     assert list(rig.requests[1][1].mdis) == [
