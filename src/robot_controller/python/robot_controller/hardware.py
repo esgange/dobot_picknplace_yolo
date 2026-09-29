@@ -314,7 +314,8 @@ class DobotTransport:
             progress(self.monitor.snapshot(require_enabled=False))
         return result
 
-    def call_group(self, calls, *, progress=None, outputs_by_call=None, admitted=None):
+    def call_group(self, calls, *, progress=None, outputs_by_call=None, admitted=None,
+                   issuing=None):
         """Admit motion in dashboard order, without intermediate arrival waits."""
         calls = tuple((name, dict(fields)) for name, fields in calls)
         if not calls or any(name not in MOTION_SERVICES for name, _fields in calls):
@@ -355,6 +356,8 @@ class DobotTransport:
                     if self.suction_interrupted:
                         break
                     audit = self._begin_service_audit(name, fields)
+                    if issuing is not None:
+                        issuing(len(group))
                     try:
                         future = self.clients[name].call_async(
                             self.types[name].Request(**fields))
@@ -503,12 +506,18 @@ class DobotTransport:
             planned_outputs.update(return_progress.pending_outputs)
         pulse_pending = bool(return_progress is not None
                              and return_progress.pending_outputs.get(1) is True)
+        placement = getattr(self.node, "placement", None)
 
         def stationary(snapshot):
             nonlocal anchor, anchor_sequence, held_violation, last_snapshot, suction_lost
             last_snapshot = snapshot
             feed = snapshot.feed
-            if (self.node.holding_item or getattr(self, "return_recovery", False)
+            if placement is not None and placement.observing:
+                try:
+                    placement.observe(self.node, snapshot)
+                except (FeedbackFailure, HeldUnknown) as exc:
+                    held_violation = str(exc)
+            elif (self.node.holding_item or getattr(self, "return_recovery", False)
                     or return_progress is not None):
                 releasing = return_progress is not None and return_progress.phase != "APPROACH"
                 if not snapshot.suction_present and not allow_suction_loss and not releasing:
@@ -532,14 +541,6 @@ class DobotTransport:
         try:
             self.monitor.wait(stationary, MODE_TRANSITION_TIMEOUT_SEC,
                               description="stationary, empty queue after Stop")
-            if (pulse_pending and getattr(self.node, "placement", None) is return_progress
-                    and last_snapshot.feed["digital_outputs"] & 1):
-                # A placement pulse can outlast stationary confirmation. Its
-                # automatic OFF must settle before parked-output/recovery guards.
-                self.monitor.wait(
-                    lambda sample: stationary(sample) and not sample.feed["digital_outputs"] & 1,
-                    OUTPUT_FEEDBACK_TIMEOUT_SEC,
-                    description="placement exhaust OFF after Stop")
         except FeedbackFailure as exc:
             raise StopUnconfirmed(str(exc)) from exc
         self.moving = False
@@ -971,10 +972,11 @@ class DobotTransport:
                    forbid_suction=False, stop_on_suction=False,
                    before_suction=None, pick_settling_sec=0.0,
                    require_suction_reset=False, return_terminal_pose=False,
-                   confirmed_start_pose=None, preserve_outputs=False):
+                   confirmed_start_pose=None, preserve_outputs=False, placement=None):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
-                or sum((require_suction, forbid_suction, stop_on_suction)) > 1
+                or sum((require_suction, forbid_suction, stop_on_suction,
+                        placement is not None)) > 1
                 or (type(pick_settling_sec) not in (int, float)
                     or not math.isfinite(pick_settling_sec) or pick_settling_sec < 0)
                 or (pick_settling_sec and not stop_on_suction)
@@ -1030,6 +1032,8 @@ class DobotTransport:
 
         def progress(snapshot):
             nonlocal suction_reset_seen, suction_clear_seen, suction_armed
+            if placement is not None:
+                placement.observe(self.node, snapshot)
             for channel, active in fixed_outputs.items():
                 actual = bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
                 if actual != active:
@@ -1050,7 +1054,7 @@ class DobotTransport:
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
                 stop_on_suction=stop_on_suction, before_suction=before_suction,
-                planned_outputs=self.pending_motion_outputs,
+                planned_outputs={} if placement is not None else self.pending_motion_outputs,
                 suction_armed=suction_armed)
 
         def finish_suction_interrupt():
@@ -1114,9 +1118,10 @@ class DobotTransport:
             self.node.operation_progress(
                 "MOTION", f"Dispatching {batch_name} as one command group",
                 waypoint=targets[-1].name)
+            extra = {"issuing": placement.issued} if placement is not None else {}
             replies = self.call_group(
                 calls, progress=progress, outputs_by_call=outputs_by_call,
-                admitted=lambda index: self._target_admitted(targets[index]))
+                admitted=lambda index: self._target_admitted(targets[index]), **extra)
             queued_targets.extend(
                 target.name for target, _events in target_records[0:len(replies)])
             expected_outputs = {}
@@ -1183,6 +1188,8 @@ class DobotTransport:
                     stable_since if idle else None)
                 if (stable_since is not None
                         and now - stable_since >= terminal_stable_sec):
+                    if placement is not None:
+                        placement.complete(self.node, snapshot)
                     break
                 if not waiting_outputs and now - last_progress >= MOTION_NO_PROGRESS_SEC:
                     raise FeedbackFailure("Motion made no measurable progress for three seconds")

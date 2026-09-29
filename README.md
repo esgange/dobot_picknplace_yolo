@@ -45,7 +45,11 @@ Stop clicks send a new Stop with a fresh physical confirmation.
 `robot_controller` is the production hardware authority for Home, Pick, Tray Detect
 Position and Place Item operations. Placement supports positive tray-local X/Y
 and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose, with
-live depth and Item Teach standoff/motion settings. See the
+live depth and Item Teach standoff/motion settings. After fast idle/joint arrival
+at Tray Detect Pose and fresh detection, placement queues pre-place → release
+(OPEN/exhaust at 80%) → pre-place (neutral at 50%) → Cartesian Home in one group.
+It has no pick settling or extra retract-height waypoint; release feedback is
+monitored during the queue. See the
 [placement workflow](src/robot_controller/README.md#tray-placement). Normal launch
 separates it into a headless controller,
 a TF-only preview process with no Dobot clients, and an API-only GUI. Headless

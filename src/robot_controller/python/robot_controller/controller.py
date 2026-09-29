@@ -223,7 +223,7 @@ class RobotController(Node):
     def _on_feed(self, message):
         try:
             self.monitor.update_feed(message.data)
-            if self.managed.kind == "pause":
+            if self.managed.kind == "pause" and self.placement is None:
                 self.managed.observe(self.monitor.snapshot(require_enabled=False))
         except FeedbackFailure as exc:
             self.events.record("WARNING", "invalid_feed_feedback", str(exc))
@@ -322,7 +322,8 @@ class RobotController(Node):
             "INFO", f"{operation.upper()} {phase}:{waypoint_text}{candidate_text} {message}")
         goal = self.active_goal
         if goal is not None:
-            kind = {"home": GoHome, "pick": PickItem, "tray_position": GoTrayDetectPosition, "place": PlaceItem}
+            kind = {"home": GoHome, "pick": PickItem,
+                    "tray_position": GoTrayDetectPosition, "place": PlaceItem}
             feedback = kind[self.active_action].Feedback()
             if self.active_action == "pick":
                 feedback.candidate_index = self.candidate_index
@@ -430,6 +431,10 @@ class RobotController(Node):
         self.managed.checkpoint()
 
     def observe_managed_feedback(self, sample):
+        placement = getattr(self, "placement", None)
+        if placement is not None:
+            placement.observe(self, sample)
+            return False
         return self.managed.observe(sample)
 
     def motion_admitted(self, target):
@@ -547,7 +552,7 @@ class RobotController(Node):
             if returning and placement is not None and placement.needs_recovery:
                 placement.run(self)
                 self.placement = None
-                self._transition("READY", "Placement release and retract recovery completed")
+                self._transition("READY", "Placement recovery completed at Home")
             elif returning:
                 self.managed.recover_item_and_continue()
             self.raise_if_cancelled()
@@ -793,8 +798,8 @@ class RobotController(Node):
             return GoalResponse.REJECT
         if action == "pick" and (config.selection is None or self.holding_item):
             return GoalResponse.REJECT
-        if action in ("tray_position", "place") and (config.tray is None
-                                           or config.tray.detect_joints is None):
+        if action in ("tray_position", "place") and (
+                config.tray is None or config.tray.detect_joints is None):
             return GoalResponse.REJECT
         if action == "place":
             session = self.managed.session
@@ -838,7 +843,7 @@ class RobotController(Node):
                     self.placement.run(self)
                     with self.managed.lock:
                         self.wait_for_resume()
-                        self._transition("READY", "Item placed; retract completed")
+                        self._transition("READY", "Item placed; Home completed")
                         result.outcome, result.message = result.SUCCESS, self.machine.message
                         result.final_state = self.machine.state
                         goal.succeed()

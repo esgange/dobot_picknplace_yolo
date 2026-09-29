@@ -3,7 +3,6 @@
 import pytest
 
 from robot_controller.errors import FeedbackFailure, OperationCanceled, StopUnconfirmed
-from robot_controller.placement import PlacementOperation
 from robot_controller.hardware import DobotTransport
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ReturnProgress
@@ -157,34 +156,6 @@ def test_exhaust_can_finish_after_an_interrupted_stop_confirmation():
         transport.monitor = StopMonitor(sample)
         transport.confirm_stop(CompletedFuture())
         assert rig.expected_outputs[1] is exhaust_on
-
-
-@pytest.mark.parametrize("pulse_ends", [True, False])
-def test_placement_stop_waits_for_issued_pulse_to_finish_before_recovery(pulse_ends):
-    rig = return_rig()
-    rig.holding_item = False
-    rig.expected_outputs = {1: False, 2: False, 13: False, 14: True}
-    rig.placement = PlacementOperation(10., 20., 0., phase="RELEASING",
-                                       pending_outputs={1: True}, pulse_dispatched=True)
-    sample = snapshot(di1=False, outputs=(1 << 13) | 1)
-    sample.feed["tool_vector_actual"] = [0.] * 6
-
-    class PulseMonitor(StopMonitor):
-        def wait(self, predicate, *args, **kwargs):
-            if kwargs.get("description") == "placement exhaust OFF after Stop":
-                if not pulse_ends:
-                    raise FeedbackFailure("Placement exhaust remained ON")
-                self.sample.feed["digital_outputs"] &= ~1
-            return super().wait(predicate, *args, **kwargs)
-
-    transport = object.__new__(DobotTransport)
-    transport.node, transport.monitor = rig, PulseMonitor(sample)
-    if pulse_ends:
-        transport.confirm_stop(CompletedFuture())
-        assert rig.expected_outputs[1] is False
-    else:
-        with pytest.raises(StopUnconfirmed, match="exhaust remained ON"):
-            transport.confirm_stop(CompletedFuture())
 
 
 def test_pause_skips_optional_rise_inside_existing_position_tolerance():

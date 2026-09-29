@@ -6635,6 +6635,52 @@ Never use a floating “latest” version in an issue, script, or deployment not
   unperformed. Exclude local RViz edits, calibration, teach/model files and logs
   from the source commit.
 
+### 2026-09-29 — Rule 159: queue timed tray placement through Home
+
+- Replace the rule-158 segmented placement route with the user-approved queue.
+  Keep the saved Tray Detect joint arrival gate: fresh idle/empty queue, ±1° actual
+  joint-topic tolerance and post-admission execution evidence, without added dwell
+  or GetPose. Immediately request the existing fresh tray/target-depth observation.
+- Queue exactly four Cartesian commands: MovL pre-place; MovLIO release with
+  80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
+  50% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF; MovL taught Home XYZ/attitude.
+  Use travel/approach/retract/travel rates, ordered service acceptance and global
+  CP(100). Only final Home gets endpoint confirmation. Preserve independent
+  tray-detect-relative Rotation, positive X/Y and existing depth/standoff geometry.
+  Require positive prepick height for percentage I/O. No extra retract-height
+  waypoint, placement settling, stationary DO release, fixed exhaust pulse, or
+  separate Home action. Pick settling/retries/return and bin avoidance are unchanged.
+- The real transport receives a placement-specific feedback policy. Authorize
+  only issued timed transitions and consume ordered raw output/input history so
+  fast execution during service replies remains visible. Require held suction
+  until commanded OFF; coherent OPEN/exhaust, DI12 HIGH and DI1 LOW confirm release
+  before neutralization. Final Home requires neutral outputs and DI1 LOW. Preserve
+  independent Stop and feedback/fault checks; never treat service acceptance as
+  physical completion. Confirmed release marks PLACED and clears the held source.
+- Pause/Stop preserve actual outputs and release progress in place. Continuous
+  exhaust does not have an automatic 50 ms OFF, so Stop no longer waits for one.
+  An intact interrupted approach can reobserve. Once release starts, never repeat
+  descent/release or infer a bin put-back. Confirmed release permits neutralization,
+  an upward-only recovery to at least pre-place height, then Home. Partial release
+  without sufficient evidence blocks further motion. Continue after completed
+  Home cannot accidentally begin a new observation/release.
+- Audit found a rule-158 integration defect: placement supplied unsupported
+  terminal_stable_sec to the real move_batch signature. Earlier permissive mocks
+  missed it. Remove that call with the settling-free queue; add regression tests
+  exercising real DobotTransport, generated ROS request types, actual feedback
+  validation, command encoding and queue completion using synthetic clients only.
+- Validation: controller software suite 436 passed; robot_controller symlink build
+  passed. Tests cover exact 80%/50% request fields/order, feedback during responses,
+  normal Home completion without dwell, missing/incoherent release evidence,
+  premature suction loss, output faults, Stop during admission and continuous
+  exhaust, interruption recovery, and all existing Pick/lifecycle behavior.
+  Changed runtime files/new integration tests pass flake8; git diff --check passes.
+  Regenerate seven-diagram FSM HTML/PDF. No ROS interface or teach schema changed.
+- No live robot/camera/teach process was restarted and no hardware command was
+  issued. No operator RViz/calibration/teach/model file changed. Rebuild/restart
+  Robot Controller to use the new sequence; physical commissioning and offline
+  transfer validation are not claimed. No upstream dependency change.
+
 ### Future entry template
 
 ```text

@@ -30,18 +30,43 @@ Item axes and pick rotation have no effect on placement orientation.
 
 Placement keeps requested X/Y and measures surface Z using the Item Teach depth
 sampling diameter and quality settings. Release Z is surface + standoff; pre-place
-is release + prepick height. The approach is pre-place → release without another
-initial waypoint above pre-place. Taught travel/approach/retract rates and settling
-apply. Confirm OPEN/DI12, exhaust for 50 ms and DI1 LOW, then retract vertically to
-pre-place and the extra taught retract height. Finish READY there, without an
-automatic Home or next Pick.
+is release + prepick height. Positive prepick height is required for percentage
+I/O on both legs. Tray arrival uses fresh idle/empty-queue feedback and saved joint
+angles within ±1°, with execution evidence and no added settling interval. Then
+request fresh tray/depth and queue exactly four Cartesian commands through Home:
 
-Placement Pause stops in place. Continue reobserves after an interrupted approach,
-or resumes retained release progress. Direct Stop requires Recover. During release
-recovery, changed tool position blocks further release; a dispatched pulse is not
-repeated. After release, recovery only retracts upward and never descends again.
-A failed tray/depth observation performs no placement or release. Existing Pick
-candidate filtering, camera/bin avoidance, rotation and Home paths remain intact.
+| Command | Target | Timed outputs |
+| --- | --- | --- |
+| MovL | Pre-place | Preserve held outputs |
+| MovLIO | Release height | At 80%: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON |
+| MovLIO | Back to pre-place | At 50%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
+| MovL | Taught Home XYZ/orientation | Neutral |
+
+Use taught travel, approach, retract and travel speed/acceleration respectively.
+There is no placement settling, separate release call, fixed-duration exhaust
+pulse, extra retract-height waypoint or separate Home action. The 80% trigger
+starts release before the nominal lower point; exhaust duration follows the
+motion until the 50% upward trigger. All commands inherit CP(100); control points
+can blend. Admit each service in order, without waiting for intermediate arrival.
+Physically confirm only final Cartesian Home before reporting READY/SUCCESS.
+
+Feedback remains active throughout admission and travel. Validate only issued,
+ordered output transitions; retain their history even if movement finishes during
+a service response. Suction is required until its commanded OFF transition.
+Observe OPEN/exhaust, DI12 HIGH and DI1 LOW before relaxation; missing release
+evidence, unexpected outputs or renewed suction cause Stop. These are monitoring
+guards, not a software pause between descent and return. Final Home requires
+neutral outputs and DI1 LOW. Confirmed release records PLACED and clears holding.
+
+Placement Pause stops in place and preserves outputs. Continue reobserves when
+no release output changed. Once release starts, never repeat descent or release.
+After confirmed release, Continue/Recover neutralizes outputs, retracts upward
+from actual position to at least pre-place height if needed, and returns Home.
+An interrupted partial release with insufficient confirmation remains blocked;
+no automatic release or bin put-back is inferred. Direct Stop requires explicit
+Recover and never waits for continuous exhaust to switch itself OFF. A failed
+tray/depth observation performs no placement or release. Existing Pick settling,
+retries, camera/bin avoidance, rotation and Home paths remain unchanged.
 
 The controller UI's strict schema-3 last-session store preserves Item/Bin/Tray
 filenames and the last validated X/Y/Rotation as unapplied prefill. Explicit

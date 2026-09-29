@@ -37,16 +37,22 @@ def settings():
 @pytest.mark.parametrize("angle", [-180., -90., 0., 90., 180.])
 def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
     detect = pose_matrix([300, 200, 800, 175, 12, 28])
-    plan = place_targets(detect, [.3, .2, .25], settings(), angle)
-    assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract", "place_clearance"]
-    assert [p.matrix[2, 3] for p in plan] == pytest.approx([.31, .26, .31, .33])
+    home = pose_matrix([500, -150, 900, 170, 25, -60])
+    plan = place_targets(detect, [.3, .2, .25], settings(), angle, home)
+    assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract", "place_home"]
+    assert [p.matrix[2, 3] for p in plan] == pytest.approx([.31, .26, .31, .9])
     c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
     expected = detect[:3, :3] @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    assert all(np.allclose(p.matrix[:3, :3], expected) for p in plan)
-    assert all(np.allclose(p.matrix[:3, 2], detect[:3, 2]) for p in plan)
+    assert all(np.allclose(p.matrix[:3, :3], expected) for p in plan[:3])
+    assert all(np.allclose(p.matrix[:3, 2], detect[:3, 2]) for p in plan[:3])
+    assert np.allclose(plan[-1].matrix, home)
     assert [p.speed_percent for p in plan] == [80, 10, 20, 80]
     assert [p.acceleration_percent for p in plan] == [70, 30, 40, 70]
-    assert not any(p.motion_io for p in plan[:2])
+    assert not plan[0].motion_io and not plan[3].motion_io
+    assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
+        (80, 2, False), (80, 14, True), (80, 13, False), (80, 1, True)]
+    assert [(e.percent, e.channel, e.active) for e in plan[2].motion_io] == [
+        (50, 2, False), (50, 14, False), (50, 1, False), (50, 13, False)]
 
 
 @pytest.mark.parametrize("values", [(0, 10, 0), (10, -1, 0), (10, 10, 181),
@@ -64,20 +70,23 @@ class Hardware:
         self.outputs = {1: False, 2: True, 13: True, 14: False}
         self.suction = True
         self.calls = []
-        self.interrupt_pulse = self.interrupt_retreat = False
-        self.pulse_count = 0
+        self.interrupt_at = None
+        self.sequence = 1
+        self.history = []
 
     def sample(self, **_kwargs):
-        return SimpleNamespace(suction_present=self.suction, sequence=10,
+        return SimpleNamespace(suction_present=self.suction, sequence=self.sequence,
                                feed={"digital_input_bits": int(self.suction) | (int(self.outputs[14]) << 11),
                                      "digital_outputs": sum(1 << (ch - 1) for ch, v in self.outputs.items() if v),
                                      "isRunQueuedCmd": 0, "RunningStatus": 0,
                                      "tool_vector_actual": pose_values(self.current)})
 
-    def wait(self, predicate, *_args, **_kwargs):
-        if not predicate(self.sample()):
-            raise FeedbackFailure("Required feedback absent")
-        return self.sample()
+    def emit(self):
+        self.sequence += 1
+        sample = self.sample()
+        self.history.append((self.sequence, self.sequence,
+                             sample.feed["digital_outputs"], sample.feed["digital_input_bits"]))
+        return sample
 
     def current_pose(self):
         return self.current.copy()
@@ -85,30 +94,30 @@ class Hardware:
     def home_already_reached(self, _joints):
         return np.allclose(self.current, self.node.configuration.tray.detect_matrix)
 
-    def move_batch(self, targets, **kwargs):
-        self.calls.append(("move", tuple(p.name for p in targets), kwargs))
-        for target in targets:
+    def move_batch(self, targets, *, batch_name, placement=None, forbid_suction=False,
+                   confirmed_start_pose=None):
+        self.calls.append(("move", tuple(p.name for p in targets), {"batch_name": batch_name}))
+        for i, target in enumerate(targets):
+            if placement:
+                placement.issued(i)
             for event in target.motion_io:
-                self.output(event.channel, event.active)
+                self.outputs[event.channel] = event.active
+                if event.channel == 13 and not event.active:
+                    self.suction = False
+                if placement:
+                    placement.observe(self.node, self.emit())
             self.current = target.matrix.copy()
-            if kwargs["batch_name"] == "place_retract" and self.interrupt_retreat:
-                self.interrupt_retreat = False
-                raise OperationCanceled("Stopped after first retract waypoint")
+            if self.interrupt_at == i:
+                self.interrupt_at = None
+                raise OperationCanceled("Stopped during placement queue")
+        if placement:
+            placement.complete(self.node, self.emit())
 
     def output(self, channel, active, **_kwargs):
         self.calls.append(("output", channel, active))
         self.outputs[channel] = active
-        assert not (self.outputs[1] and self.outputs[13])
-        assert not (self.outputs[2] and self.outputs[14])
         self.node.expected_outputs[channel] = active
-
-    def exhaust_pulse(self):
-        self.pulse_count += 1
-        self.node.placement.pulse_dispatched = True
-        self.suction = False
-        if self.interrupt_pulse:
-            self.interrupt_pulse = False
-            raise OperationCanceled("Stopped while pulse confirmation was pending")
+        self.emit()
 
     def ensure_no_pending_response(self):
         pass
@@ -123,7 +132,7 @@ class Hardware:
 def operation_node():
     detect = pose_matrix([300, 200, 800, 180, 0, 0])
     node = SimpleNamespace(configuration=SimpleNamespace(
-        profile=settings(), tray=SimpleNamespace(detect_matrix=detect, detect_joints=(0.,) * 6),
+        profile=settings(), home_matrix=detect.copy(), tray=SimpleNamespace(detect_matrix=detect, detect_joints=(0.,) * 6),
         validate_sources=Mock()), root=None, holding_item=True, expected_outputs={},
         events=Mock(), operation_progress=Mock(), wait_for_resume=Mock(),
         _preflight_item_state=Mock(), _execute_tray_position=Mock(),
@@ -135,7 +144,8 @@ def operation_node():
     node.placement = PlacementOperation(30., 40., 90.)
     node.trays = SimpleNamespace(request=Mock(return_value=np.array([.3, .2, .25])))
     node.hardware = Hardware(node)
-    node.monitor = SimpleNamespace(snapshot=node.hardware.sample, wait=node.hardware.wait)
+    node.monitor = SimpleNamespace(snapshot=node.hardware.sample,
+        output_history=lambda seq: tuple(v for v in node.hardware.history if v[0] > seq))
     node.expected_outputs.update(node.hardware.outputs)
     node.managed = ManagedControl(node)
     node.managed.session = PickSession(["bottle"], [()])
@@ -144,83 +154,51 @@ def operation_node():
     return node
 
 
-def test_place_sequence_releases_only_at_surface_standoff_and_clears_held_context():
+def test_place_sequence_queues_through_home_and_clears_held_context():
     node = operation_node()
     node.placement.run(node)
-    moves = [v for v in node.hardware.calls if v[0] == "move"]
-    assert [v[1] for v in moves] == [("place_pre", "place_release"),
-                                    ("place_retract", "place_clearance")]
-    assert moves[0][2]["require_suction"] is True
-    assert moves[0][2]["terminal_stable_sec"] == .2
-    assert moves[1][2]["forbid_suction"] is True
-    assert node.hardware.pulse_count == 1
+    assert node.hardware.calls == [("move", ("place_pre", "place_release", "place_retract", "place_home"),
+                                    {"batch_name": "place_to_home"})]
     assert not node.holding_item and node.managed.session.held_index is None
     assert node.managed.session.attempts[0].state == "PLACED"
     assert node.placement.phase == "DONE"
+    assert np.allclose(node.hardware.current, node.configuration.home_matrix)
+    assert not any(node.hardware.outputs.values())
 
 
 def test_missing_depth_never_admits_placement_or_releases_item():
     node = operation_node()
-    node.trays.request.side_effect = FeedbackFailure("No valid depth")
-    with pytest.raises(FeedbackFailure, match="depth"):
+    node.trays.request.side_effect = FeedbackFailure("No depth")
+    with pytest.raises(FeedbackFailure, match="No depth"):
         node.placement.run(node)
     assert not node.hardware.calls and node.holding_item
 
 
-def test_source_change_during_approach_blocks_release_and_preserves_grip():
+def test_source_change_after_detection_blocks_queue_and_preserves_grip():
     node = operation_node()
-    move = node.hardware.move_batch
-
-    def change_after_move(*args, **kwargs):
-        move(*args, **kwargs)
-        node.configuration.validate_sources.side_effect = ValueError("Teach file changed")
-
-    node.hardware.move_batch = change_after_move
+    node.configuration.validate_sources.side_effect = [None, ValueError("Teach file changed")]
     with pytest.raises(ValueError, match="Teach file changed"):
         node.placement.run(node)
-    assert node.holding_item and node.placement.phase == "APPROACH"
-    assert all(call[0] == "move" for call in node.hardware.calls)
+    assert node.holding_item and not node.hardware.calls
 
 
-def test_stopped_pulse_is_not_fired_again_on_recovery():
+@pytest.mark.parametrize("at", [1, 2])
+def test_interrupted_release_or_retract_resumes_upward_and_home_without_release(at):
     node = operation_node()
-    node.hardware.interrupt_pulse = True
+    node.hardware.interrupt_at = at
     with pytest.raises(OperationCanceled):
         node.placement.run(node)
-    assert node.placement.needs_recovery and node.placement.phase == "RELEASING"
-    assert node.managed.recovery_return_needed()
-    assert node.managed.session.held_index == 1
+    assert node.placement.release_confirmed and node.placement.needs_recovery
     node.placement.run(node)
-    assert node.hardware.pulse_count == 1 and node.placement.phase == "DONE"
+    expected = ("place_retract", "place_home") if at == 1 else ("place_home",)
+    assert node.hardware.calls[-1][1] == expected
+    assert all(call[2] is False for call in node.hardware.calls if call[0] == "output")
+    assert node.placement.phase == "DONE"
 
 
-def test_stopped_release_never_moves_back_to_a_changed_release_pose():
+def test_pause_after_release_stays_in_place_then_recovers_home():
     node = operation_node()
-    node.hardware.interrupt_pulse = True
-    with pytest.raises(OperationCanceled):
-        node.placement.run(node)
-    node.hardware.current[0, 3] += .02
-    before = len(node.hardware.calls)
-    with pytest.raises(FeedbackFailure, match="release pose changed"):
-        node.placement.run(node)
-    assert len(node.hardware.calls) == before
-
-
-def test_interrupted_retract_resumes_upward_without_releasing_or_descending_again():
-    node = operation_node()
-    node.hardware.interrupt_retreat = True
-    with pytest.raises(OperationCanceled):
-        node.placement.run(node)
-    assert node.placement.phase == "RELEASED" and node.hardware.current[2, 3] == pytest.approx(.31)
-    node.placement.run(node)
-    moves = [v[1] for v in node.hardware.calls if v[0] == "move"]
-    assert moves[-1] == ("place_clearance",)
-    assert node.hardware.pulse_count == 1
-
-
-def test_pause_during_release_stays_in_place_without_outputs_then_continues():
-    node = operation_node()
-    node.hardware.interrupt_pulse = True
+    node.hardware.interrupt_at = 1
     with pytest.raises(OperationCanceled):
         node.placement.run(node)
     node.machine.transition("PAUSING", "Pause")
@@ -229,9 +207,9 @@ def test_pause_during_release_stays_in_place_without_outputs_then_continues():
     before = len(node.hardware.calls)
     node.placement.handle_pause(node)
     assert len(node.hardware.calls) == before
-    assert node.machine.state == "PLACING" and node.placement.phase == "RELEASING"
+    assert node.machine.state == "PLACING" and node.placement.phase == "RELEASED"
     node.placement.run(node)
-    assert node.hardware.pulse_count == 1
+    assert node.hardware.calls[-1][1][-1] == "place_home"
 
 
 def test_ui_selection_migration_preserves_files_and_validated_placement(tmp_path):
@@ -338,7 +316,7 @@ def test_place_action_finishes_ready_with_a_typed_result():
 
 def test_controller_recovery_finishes_placement_without_bin_putback_or_next_pick():
     node = operation_node()
-    node.hardware.interrupt_pulse = True
+    node.hardware.interrupt_at = 1
     with pytest.raises(OperationCanceled):
         node.placement.run(node)
     node.machine = ControllerStateMachine(initial="RECOVERY_REQUIRED")
@@ -350,7 +328,7 @@ def test_controller_recovery_finishes_placement_without_bin_putback_or_next_pick
     response = RobotController._recover(node, Command.Request(), Command.Response())
     assert response.success and response.state == "READY"
     node.hardware.recover.assert_called_once_with(50, return_item=True)
-    assert node.placement is None and node.hardware.pulse_count == 1
+    assert node.placement is None and node.hardware.calls[-1][1][-1] == "place_home"
     node.managed.recover_item_and_continue.assert_not_called()
 
 
@@ -376,3 +354,13 @@ def test_paused_tray_request_retires_before_a_new_request_and_ignores_old_result
     point = observer.request(config, sampling["x_mm"], sampling["y_mm"])
     assert point == pytest.approx([.13, .24, .25])
     assert client.call_async.call_count == 2 and observer.pending is None
+
+
+def test_continue_after_completed_home_never_reobserves_or_releases_again():
+    node = operation_node()
+    node.placement.run(node)
+    calls = list(node.hardware.calls)
+    node.placement.run(node)
+    assert node.hardware.calls == calls
+    node.trays.request.assert_called_once()
+    assert node.placement.phase == 'DONE'

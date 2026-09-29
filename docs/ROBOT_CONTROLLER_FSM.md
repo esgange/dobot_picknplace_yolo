@@ -15,7 +15,7 @@ preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
 
-Tray placement review: **2026-09-29**, diary rule **158**. Controller configuration
+Tray placement review: **2026-09-29**, diary rules **158–159**. Controller configuration
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
@@ -74,7 +74,7 @@ flowchart TD
     TRAY_POSITIONING -->|Unheld| READY
     TRAY_POSITIONING -->|Held| HOLDING
     HOLDING -->|Place Item| PLACING
-    PLACING -->|Released and retracted| READY
+    PLACING -->|Released and Home confirmed| READY
     STARTING -->|Unknown suction| HELD_UNKNOWN
     STARTING -->|Failed| FAULT
 ```
@@ -107,7 +107,7 @@ later commands, including an unanswered best-effort StopMoveJog.
 | `READY` | Available and unheld; can Pick, Home, Pause, reload or change global speed. |
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
-| `PLACING` | Observing tray/depth, approaching, releasing or retracting. |
+| `PLACING` | Observing tray/depth or queueing placement through Home. |
 | `PICKING` | One accepted candidate batch is being planned/attempted/returned. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
@@ -187,9 +187,10 @@ flowchart TD
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
     HELD -->|Put-back release confirmed| RETURNED
+    HELD -->|Tray release confirmed| PLACED
 ```
 
-FAILED, DROPPED and RETURNED are terminal ledger states. A returned uncertain
+FAILED, DROPPED, RETURNED and PLACED are terminal ledger states. A returned uncertain
 item remains **DROPPED**, recording the loss; it does not change to RETURNED.
 Eligible candidates are PENDING or INTERRUPTED in saved order. Thus Continue
 retries the interrupted candidate before later candidates. The ledger and held
@@ -198,62 +199,71 @@ RETURNED confirms release feedback; retreat/Home may still be in progress.
 Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
 original destination until Home completes or next-candidate travel takes ownership.
 
-## 3a. Tray observation and placement
+## 3a. Tray observation and queued placement
 
 ```mermaid
 flowchart TD
-    Accept["HOLDING: PlaceItem accepted with config ID, X, Y, Rotation"] --> Observe["Reach saved Tray Detect Pose joints"]
-    Observe --> Depth["Request new tray RGB and registered depth after trigger"]
-    Depth --> Check{"Bound sources, fresh TF, valid tray and depth?"}
-    Check -->|No| Stop["Stop and report failure; retain held context"]
-    Check -->|Yes| Pre["Pre-place: sampled base Z + standoff + prepick height"]
-    Pre --> ReleasePose["Release pose: sampled base Z + standoff"]
-    ReleasePose --> Open["Confirm endpoint and settling; record release intent; OPEN"]
-    Open --> Sensor["Confirm DI12; one 50 ms exhaust pulse; confirm DI1 LOW"]
-    Sensor --> Placed["Mark PLACED; clear held source"]
-    Placed --> Retract["Vertical retract to pre-place then taught extra retract height"]
-    Retract --> Ready["READY at retract endpoint"]
-    Open -. Stop .-> Recover["Explicit Recover retains release progress; never repeat pulse"]
-    Placed -. Stop .-> Up["Explicit Recover resumes upward only; no new release"]
-    ReleasePose -. Pause .-> Paused["Stop in place; Continue reobserves before an interrupted approach"]
+    Request["HOLDING: PlaceItem with positive X/Y and Rotation"] --> Observe["Reach saved Tray Detect joints: fresh idle + joint tolerance; no dwell"]
+    Observe --> Depth["Request fresh matched tray pose and placement depth"]
+    Depth -->|Invalid| Stop["Stop and report failure; preserve item"]
+    Depth -->|Valid| Queue["Admit one ordered CP100 motion group through Home"]
+    Queue --> Pre["MovL: pre-place"]
+    Pre --> Release["MovLIO: release height; 80% OPEN + exhaust"]
+    Release --> Retract["MovLIO: pre-place; 50% fingers + vacuum neutral"]
+    Retract --> Home["MovL: Cartesian Home; confirm idle, pose, neutral and DI1 LOW"]
+    Home --> Ready["READY / SUCCESS"]
+    Queue -. "Monitor throughout" .-> Feedback["Require held suction until commanded OFF; observe OPEN/exhaust/DI12/DI1 release"]
+    Feedback -->|Fault| Stop
+    Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
+    Stopped -->|Release not started| Retry["Continue reobserves"]
+    Retry --> Observe
+    Stopped -->|Release confirmed| Recover["Continue/Recover: neutralize, upward retreat, Home; never release again"]
+    Stopped -->|Partial release unconfirmed| Block["Block further motion; no repeated descent/release"]
 ```
 
-X/Y are strictly positive millimetres along the **detected tray** inward short-X /
+X/Y are strictly positive millimetres along the detected tray inward short-X /
 long-Y axes from its nearest-base corner. Reject targets at or beyond either far
-edge. Rotation accepts **−180° to +180°**; zero is the saved **Tray Detect Pose tool
-orientation**, followed by the requested local tool-Z rotation. Item axes,
-`pick_rotation` and the detected tray quaternion do not determine tool attitude.
+edge. Rotation accepts −180° to +180°; zero is the saved Tray Detect Pose tool
+orientation, followed by the requested local tool-Z rotation. Item axes,
+pick_rotation and the detected tray quaternion do not determine tool attitude.
 
-Place reaches the saved observation joints if necessary. This observation travel
-uses an upward clearance before XY travel when needed. After depth is accepted,
-the placement approach has exactly **pre-place → release**, with no additional
-initial waypoint above pre-place. X/Y stay at the requested tray offset; only base
-Z comes from the target ray's filtered median depth. Use the Item Teach physical
-sampling diameter (`geometry.pickdepth_radius`), min/max depth, MAD filter, sample
-minimum and accepted fraction. Exclude samples outside the detected tray; a
-clipped image footprint or insufficient depth fails the observation. Both RGB and
-depth must be captured after the request, synchronized, with calibrated RGB-time
-TF. A bad depth observation leaves the read-only provider armed.
+Place reaches saved observation joints if necessary; observation travel can
+include an upward clearance before crossing. Arrival requires fresh idle/empty
+queue feedback, all six actual joint angles within ±1° and command execution
+evidence. There is no fixed settling interval and no GetPose service call.
 
-Use Item Teach travel/approach/retract speed and acceleration, standoff/prepick/
-retract heights and final-pose settling time. Confirm the release endpoint before
-opening fingers; suction and finger-close are OFF before exhaust/open respectively.
-Require DI12 open, the 50 ms exhaust pulse and released DI1 LOW before retract.
-Neutralize outputs on the first upward retract. Finish READY at the retract
-endpoint; there is no automatic return Home or automatic next Pick.
+Use a fresh after-trigger synchronized RGB/depth observation and calibrated
+RGB-time TF. Preserve requested base X/Y; obtain surface base Z from target-ray
+filtered median depth. Reuse Item Teach physical diameter, range/MAD/count/fraction
+checks, with samples restricted to the tray. Inadequate/clipped depth fails before
+any placement command. Hash/provider/plane checks remain strict.
 
-Placement Pause issues Stop, confirms an empty stationary queue, and waits **at
-that pose**. It sends no parking motion or release outputs. Continue after an
-interrupted approach returns to observation and measures again. During release,
-Continue retains output/pulse progress and requires the same release pose. A
-changed pose blocks release rather than moving back down. A pulse already issued
-is never fired twice. After confirmed release, recovery can only retract upward
-from the measured current pose; it cannot descend to the released item. New direct
-Stop always pre-empts the action/recovery. A still-active placement exhaust pulse
-must reach OFF before Stop finishes reconciling outputs for Pause/recovery.
-Return Item during active placement is
-rejected; Stop and Recover settle placement first. This leaves existing Pick and
-Home put-back behavior unchanged.
+Release Z = surface Z + standoff; pre-place Z = release Z + prepick height.
+Require positive prepick height for timed travel. Queue exactly four commands,
+with Item Teach travel/approach/retract/travel rates: MovL pre-place; MovLIO release
+with 80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
+50% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF; MovL Cartesian Home restoring taught
+Home attitude. There is no additional retract-height/clearance target. Exhaust
+lasts from descent's 80% trigger until ascent's 50% trigger, not a 50 ms pulse.
+
+Service replies are ordered admission barriers, not physical waypoint waits.
+All motion inherits CP(100), which may round intermediate control points. There
+is no pick settling, release-pose stop or blocking DI12 wait between these moves.
+Continuously validate issued output transitions and retain feedback history across
+response waits. Require held suction until commanded OFF, then OPEN/exhaust with
+DI12 HIGH and DI1 LOW before relaxation. Mark PLACED and clear held context on
+confirmed release. Invalid/missing release evidence, opposing/uncommanded outputs
+or renewed suction cause Stop. Final Home requires advancing idle feedback,
+Cartesian arrival, neutral outputs and DI1 LOW before READY/SUCCESS.
+
+Placement Pause stops in place; direct Stop requires Recover. Both retain output
+and release evidence without waiting for continuous exhaust to turn itself OFF.
+If release has not started and grip remains intact, Continue can reobserve. Once
+release starts, never descend/release again. Confirmed release permits neutralizing
+outputs and an upward-only recovery to at least pre-place Z, followed by Home.
+Unconfirmed partial release blocks further motion. Return Item cannot substitute
+bin put-back during placement. Pick settling/retries and its return paths are
+unchanged. Process restart cannot reconstruct retained placement progress.
 
 ## 4. Pause and Continue
 
@@ -536,7 +546,7 @@ Source map for the next review:
 | --- | --- |
 | [state_machine.py](../src/robot_controller/python/robot_controller/state_machine.py) | Lifecycle states and allowed edges |
 | [controller.py](../src/robot_controller/python/robot_controller/controller.py) | API guards, configuration, lifecycle, action ownership, Stop and supervision |
-| [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Placement targets, release progress, Pause and retract recovery |
+| [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Queued placement through Home, timed-release evidence and interruption recovery |
 | [tray_client.py](../src/robot_controller/python/robot_controller/tray_client.py) | Fresh tray/depth request, provider and source validation |
 | [managed_control.py](../src/robot_controller/python/robot_controller/managed_control.py) | Parking, Continue, put-back and held-loss recovery |
 | [pick_session.py](../src/robot_controller/python/robot_controller/pick_session.py) | Candidate ledger and put-back geometry |
