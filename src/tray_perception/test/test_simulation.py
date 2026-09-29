@@ -119,6 +119,32 @@ def test_empty_batch_removes_old_pose_and_emits_no_transform(simulated):
     node.broadcaster.sendTransform.assert_not_called()
 
 
+@pytest.mark.parametrize("empty", [False, True])
+def test_simulation_timer_expires_without_gui_and_replacement_restarts_hold(
+        simulated, monkeypatch, empty):
+    from tray_perception import simulation
+    now = [100.]
+    monkeypatch.setattr(simulation, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    node, value, _ = simulated
+    response, view = value["response"], value["view"]
+    if empty:
+        response.found, response.status, response.valid_count = False, "NO_VALID_TRAY", 0
+        response.tray.id = ""
+        view["result"].update(selected=None, detections=[])
+    node.simulation.install(response, view)
+    now[0] = 109.999
+    assert node.simulation.tick()
+    node.simulation.install(response, view)
+    now[0] = 110.
+    assert node.simulation.tick()
+    node.broadcaster.sendTransform.reset_mock()
+    now[0] = 119.999
+    assert not node.simulation.tick()
+    assert node.simulation.binding is None and node.simulation.expires_at is None
+    node.broadcaster.sendTransform.assert_not_called()
+    node.rviz.clear_pose.assert_called()
+
+
 def test_frozen_cloud_is_accepted_once_without_retaining_images_in_tf_state(simulated):
     node, value, _ = simulated
     cloud = {"point_count": 1, "data": bytes(16)}

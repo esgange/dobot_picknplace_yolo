@@ -32,7 +32,7 @@ from .platform_teach_core import (
     rotation_matrix_to_quaternion,
 )
 from .ui_state import load_package_ui_state, write_item_ui_state, write_item_preview_state
-from .item_preview import validate_prefix
+from .item_preview import SIMULATION_HOLD_SEC, validate_prefix
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
@@ -133,7 +133,8 @@ class ItemTeachNode(ItemDetectNode):
             self.applied.platform.base_from_platform, response, now.to_msg())
         # Keep only identity evidence in the timer state, never another image/depth snapshot.
         binding = {"simulation_epoch": epoch,
-                   "simulation_profile": tuple(view["simulation_profile"])}
+                   "simulation_profile": tuple(view["simulation_profile"]),
+                   "expires_at": time.monotonic() + SIMULATION_HOLD_SEC}
         with self.selection_lock:
             if (epoch != self.arm_epoch or not self.yolo_enabled
                     or self.native.failed or self.fatal_error):
@@ -152,6 +153,9 @@ class ItemTeachNode(ItemDetectNode):
                 self.pose_guides.clear()
                 return
             epoch, transforms, binding = self.selected_pose
+            if binding is not None and time.monotonic() >= binding["expires_at"]:
+                self.clear_selected_pose()
+                return
             if (epoch != self.arm_epoch or not self.yolo_enabled
                     or self.native.failed or self.fatal_error):
                 self.selected_pose = None
@@ -275,6 +279,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.pending_simulation = None
         self.simulation_busy = False
         self.simulation_response = None
+        self.simulation_expires_at = None
         self.selected_pose_result = None
         self.selected_pose_status = ""
         self.last_preview_sequence = None
@@ -414,7 +419,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         toggle_row.addWidget(self.yolo_toggle)
         self.simulate_button = QtWidgets.QPushButton("Simulate Trigger")
         self.simulate_button.setToolTip(
-            "Freeze a new RGB/depth pair with only the ranked service candidates. "
+            "Show a new RGB/depth pair with only the ranked service candidates for 10 seconds, "
+            "then resume live automatically. Click RGB to resume sooner. "
             "Requires a saved profile and YOLO ON; Armed may be OFF. No robot commands.")
         self.simulate_button.clicked.connect(self._simulate_trigger)
         toggle_row.addWidget(self.simulate_button)
@@ -786,7 +792,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if (self.frozen_view is not None or self.pending_pose is not None
                 or self.pending_simulation is not None or self.simulation_busy):
             self.preview_revision += 1
+        if self.simulation_response is not None:
+            self.node.last_view = None
+            self.next_preview_at = 0.
         self.pending_simulation = self.simulation_response = None
+        self.simulation_expires_at = None
         if not self.simulation_busy and not self.model_load_reserved:
             self.simulate_button.setEnabled(True)
             self.simulate_button.setText("Simulate Trigger")
@@ -1327,6 +1337,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                         self.node.show_simulated_poses(response, value["view"])
                         self.simulation_response = response
                         self.frozen_view = {**value["view"], "preview_mode": "simulated"}
+                        self.simulation_expires_at = time.monotonic() + SIMULATION_HOLD_SEC
                         self.preview_error = ""
                         self.preview_status = f"SIMULATED {response.status}: {response.message}"
                         for candidate in response.candidates:
@@ -1427,6 +1438,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 cancelled=lambda: self.closing or revision != self.preview_revision))
         if self.node.service is None and self.armed_toggle.isChecked():
             self.armed_toggle.setChecked(False)
+        if (self.simulation_expires_at is not None
+                and time.monotonic() >= self.simulation_expires_at):
+            self._resume_live()
+            self.preview_status = "Simulation preview finished after 10 seconds; live view resumed"
+            self._message(self.preview_status)
         if self.simulation_response is not None:
             try:
                 self.node.validate_simulation_view(self.frozen_view)
@@ -1494,7 +1510,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             title = "FROZEN SELECTION — click image to resume"
         elif mode == "simulated":
             batch = self.simulation_response
-            title = f"SIMULATED {batch.status} — {batch.message} | click RGB to resume"
+            remaining = max(0, math.ceil(self.simulation_expires_at - time.monotonic()))
+            title = (f"SIMULATED {batch.status} — {batch.message} | live in {remaining}s "
+                     "| click RGB to resume")
         elif self.pending_simulation is not None or self.simulation_busy:
             title = "SIMULATE TRIGGER — acquiring/processing | click RGB to cancel"
         elif mode == "all":

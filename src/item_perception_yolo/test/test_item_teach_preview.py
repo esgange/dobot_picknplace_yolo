@@ -181,6 +181,42 @@ def simulation_setup(window):
     return response, view
 
 
+@pytest.mark.parametrize("empty", [False, True])
+def test_simulated_view_resumes_ten_seconds_after_display(window, monkeypatch, empty):
+    response, view = simulation_setup(window)
+    if empty:
+        response.candidates = []
+        response.status = "NO_VALID_ITEMS"
+    now = [100.]
+    monkeypatch.setattr(gui, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    window._simulate_trigger()
+    window._refresh_video()
+    assert window.simulation_expires_at is None  # Inference is still pending for the GUI.
+    now[0] += 20.
+    finish_model_job(window)
+    assert window.simulation_expires_at == 130.
+    assert "live in 10s" in window.rgb_feedback.text()
+    window.node.clear_selected_pose.reset_mock()
+    window.node.disarm.reset_mock()
+    now[0] = 129.999
+    window._refresh_video()
+    assert window.frozen_view is not None
+    frame = {"width": 2, "height": 2, "rgb": bytes([70]) * 12,
+             "sequence": 11, "stamp_ns": 100_100_000_000}
+    window.node.camera_snapshot = lambda: (frame, "Live camera")
+    window.node.last_view = view  # Resume must not put an older annotation back on screen.
+    window.node.preview_once = MagicMock()
+    window._job = MagicMock()
+    now[0] = 130.
+    window._refresh_video()
+    assert window.frozen_view is None and window.simulation_response is None
+    assert window.simulation_expires_at is None and window.displayed_view is frame
+    assert window._job.call_args.args[0] == "preview"
+    window.node.clear_selected_pose.assert_called_once()
+    window.node.disarm.assert_not_called()
+    assert "SIMULATED" not in window.rgb_feedback.text()
+
+
 def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(window):
     response, view = simulation_setup(window)
     window.job_busy = True  # A running all-detection preview must yield the next slot.
@@ -216,6 +252,7 @@ def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(windo
     assert window.frozen_view is not None
     window._select_detection(gui.QtCore.QPointF(window.video.contentsRect().center()))
     assert window.frozen_view is None and window.simulation_response is None
+    assert window.simulation_expires_at is None
 
 
 @pytest.mark.parametrize("invalidate", ["field", "off", "arming", "resume"])

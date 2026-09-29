@@ -234,7 +234,12 @@ checks. One action queues behind the current GUI job, with progress shown on the
 button; no repeated clicks or automatic retry. The deadline includes queue time.
 Production/simulated requests are mutually exclusive and report BUSY on overlap.
 
-The successful pair freezes on both views with **only returned candidates**,
+The successful pair freezes on both views for **10 seconds after display**, then
+returns to live automatically. Queue/inference time does not consume this hold;
+the headings show a countdown. Click RGB to resume sooner. Each replacement
+simulation starts a new hold; the timer also applies to empty results. Ordinary
+clicked-item inspection keeps its click-to-resume lifetime.
+The frozen images contain **only returned candidates**,
 ranked P1…Pn and capped by `retry.pose_candidates`. Retain their mask shading,
 one green rectangle, X/Y axes, center dot, cyan metric sampling rings, black/red
 accepted/rejected depth pixels, the green loaded bin ROI and any configured
@@ -257,6 +262,9 @@ and snapshot identity before installing all TFs atomically. While frozen, only t
 broadcast timestamps refresh; their positions/orientations do not follow newer
 images or robot TF. The timer independently checks source/profile, arming epoch,
 YOLO and native/fatal state so invalidation stops publication even if Qt is busy.
+It also stops simulated TF/pose-guide publication after the same 10-second hold
+using monotonic time independently of Qt or ROS clock changes. Expiry clears only
+the teaching visualization, leaving armed services and real candidate batches valid.
 SHORTAGE and NO_VALID_ITEMS are explicit successful outcomes; zero items freezes
 just the pair/bin ROI and publishes no candidate frames. ROS/RViz can retain old
 TF frames in their buffers until timeout/reset after publication stops.

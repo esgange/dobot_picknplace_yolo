@@ -761,6 +761,17 @@ and keep all native processing inside the private worker. Preserve existing size
 class, confidence, freshness and source checks, OBB/item processing, teach schemas,
 placement depth, controller motion and I/O. No physical robot commands in tests.
 
+Rule 166 supersedes the indefinite simulated-preview hold in rules 45, 47 and 164:
+Item Teach and Tray Teach freeze successful Simulate Trigger results, including
+empty batches, for ten seconds after installation/display, then automatically
+resume live RGB/depth preview and clear simulated TF/pose guides. Use monotonic
+time and one shared hold constant; acquisition/inference time is excluded. Show
+a countdown, allow earlier RGB-click resume, and clear/restart deadlines with
+existing resume/invalidation/replacement paths. ROS teaching timers independently
+enforce simulated-pose expiry if Qt is busy. Preserve ordinary clicked-item and
+corner-capture lifetimes, arming, live inference settings, accepted robot-action
+batch lifetimes, freshness, schemas, hardware motion and I/O.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

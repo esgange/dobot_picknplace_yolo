@@ -83,7 +83,7 @@ def test_simulated_tf_matches_every_ranked_pose_and_preserves_platform_tilt(teac
     assert len(markers) == 15
     for index, message in enumerate(transforms):
         assert markers[index * 3].pose.orientation == message.transform.rotation
-    assert set(node.selected_pose[2]) == {"simulation_epoch", "simulation_profile"}
+    assert set(node.selected_pose[2]) == {"simulation_epoch", "simulation_profile", "expires_at"}
     assert node.service is None
     node.disarm.assert_not_called()
 
@@ -101,6 +101,31 @@ def test_frozen_batch_rebroadcasts_at_current_stamp_but_never_tracks_new_items(t
     for old, message in zip(before, transforms):
         assert message.header.stamp.sec == 200
         assert np.allclose(gui.transform_matrix(message), old)
+
+
+def test_simulated_tf_expires_without_gui_and_new_batch_gets_full_hold(teaching_node, monkeypatch):
+    now = [100.]
+    monkeypatch.setattr(gui, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    node = teaching_node
+    node.show_simulated_poses(*batch(3))
+    now[0] = 109.999
+    node._broadcast_selected_pose()
+    assert node.selected_pose is not None
+    node.show_simulated_poses(*batch(2, "replacement"))
+    now[0] = 110.
+    node._broadcast_selected_pose()
+    assert len(node.selected_pose[1]) == 2
+    node.selected_pose_broadcaster.sendTransform.reset_mock()
+    now[0] = 119.999
+    node._broadcast_selected_pose()
+    assert node.selected_pose is None
+    node.selected_pose_broadcaster.sendTransform.assert_not_called()
+    node.disarm.assert_not_called()
+    # A manual clicked-item inspection keeps its existing click-to-resume lifetime.
+    node.show_selected_pose({"position": [.1, .2, .3], "quaternion": [0., 0., 0., 1.]}, 1, 7)
+    now[0] += 20.
+    node._broadcast_selected_pose()
+    assert node.selected_pose is not None
 
 
 def test_batches_replace_clicked_tf_and_each_other_atomically(teaching_node):

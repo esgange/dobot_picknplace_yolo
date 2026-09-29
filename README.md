@@ -556,7 +556,10 @@ The main controls are **YOLO Detect | Simulate Trigger | Armed**. With a complet
 saved profile, matching loaded model, YOLO ON and a valid station, **Simulate
 Trigger** runs the same fresh RGB/depth/TF candidate pipeline as a real pose request.
 It works with Armed OFF and never advertises a service or commands the robot.
-Both views freeze with only the returned ranked P1…Pn overlays, capped by
+Both views freeze for **10 seconds after the result is displayed**, then return
+to live automatically. A countdown is shown; click RGB to resume sooner. This
+includes empty results and clears the simulated pose guides on expiry.
+The frozen views show only the returned ranked P1…Pn overlays, capped by
 `pose_candidates`, and the green bin border. Every returned pose also publishes
 a teaching-only TF at 10 Hz: `base_link -> item_teach_candidate_1` through
 `item_teach_candidate_N`, matching the image priorities. The blue-UP guide display
@@ -708,7 +711,10 @@ Save produces a production profile for headless deployment even without a positi
 Reopening needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
 variables. **Simulate Trigger** runs the same fresh observation pipeline as the
-controller-facing service and reports its result while preview continues. **Armed ON**
+controller-facing service and holds its exact returned RGB/depth result for
+**10 seconds after display**, including empty results. Then live preview resumes
+and the simulated pose clears. Click RGB to resume sooner; armed requests remain
+independent throughout. **Armed ON**
 advertises `/tray_detect/get_tray_pose_v2`; requests supply the saved YAML SHA-256
 and receive one tray or an explicit no-tray result. Settings changes disarm.
 The versioned endpoint carries the placement-depth contract; there is no fallback

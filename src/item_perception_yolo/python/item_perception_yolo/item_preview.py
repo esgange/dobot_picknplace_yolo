@@ -7,6 +7,7 @@ import time
 from .preview_protocol import MAX_IMAGE_BYTES
 
 FRAME_MAX_AGE_SEC = 0.5
+SIMULATION_HOLD_SEC = 10.0
 
 
 def validate_prefix(prefix):

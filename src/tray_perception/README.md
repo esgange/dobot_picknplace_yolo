@@ -343,25 +343,29 @@ endpoint before creating its replacement; old callbacks cannot use the new bindi
 single-tray selection and typed response logic locally, even while Armed OFF.
 It never enables the robot or requests controller motion. It requires the exact
 saved profile and YOLO ON. Like Item Teach, the exact RGB/depth observation freezes
-until **click RGB to resume**. Draw only the returned tray, plus the reference
+for **10 seconds after the result appears**, then returns to live automatically.
+Queue/inference time does not reduce this hold. The headings show a countdown;
+**click RGB to resume** sooner. Draw only the returned tray, plus the reference
 plane; rejected or nonselected detection axes never masquerade as returned poses.
 Both pane headings show SIMULATED/FROZEN, original frame age, inference time,
 returned/valid/detected counts, base XYZ in mm, quaternion XYZW, dimensions,
 confidence, batch ID and rejection reasons. An empty successful response freezes
-its empty result and clears the preceding pose. Missing optional depth is labelled.
+its empty result for the same 10 seconds and clears the preceding pose. Missing
+optional depth is labelled. Each replacement simulation starts its own hold.
 
 The teaching-only `base_link -> tray_teach_simulated_tray` TF and existing pose
 guides hold exactly the response geometry. They refresh their display timestamp
 at 10 Hz; this never recomputes geometry from live robot/camera TF or changes the
 observation timestamp shown in the UI/log. The normal live selected-tray TF stops
-while the result is held. RGB click, another simulation, edits, source/model/hash
+while the result is held. Ten-second expiry, RGB click, another simulation, edits, source/model/hash
 changes, YOLO/arming changes, failure and exit clear the simulated pose. The ROS
-timer independently validates its identity even if Qt is busy. Old TF history can
+timer independently validates its identity and monotonic expiry even if Qt is busy.
+Expiry clears only teaching visualization, preserving arming and request handling. Old TF history can
 remain briefly in RViz after publication stops.
 
 Camera callbacks and armed service requests remain active. A service call always
 uses independent fresh frames and cannot reuse or replace the frozen simulation.
-Automatic preview inference resumes on RGB click; retained scene voxels may grey
+Automatic preview inference resumes on expiry or RGB click; retained scene voxels may grey
 while the historical result is held. Ordinary inspection/corner teaching retain
 their existing live scheduling. No extra worker, camera subscription, robot command
 or teach schema is added. Pose-only simulation does not test placement depth at a

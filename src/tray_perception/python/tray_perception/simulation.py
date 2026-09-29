@@ -2,8 +2,10 @@
 
 import copy
 import math
+import time
 
 from geometry_msgs.msg import TransformStamped
+from item_perception_yolo.item_preview import SIMULATION_HOLD_SEC
 
 
 FRAME = "tray_teach_simulated_tray"
@@ -47,10 +49,12 @@ class TraySimulationPreview:
     def __init__(self, node):
         self.node = node
         self.binding = self.transform = None
+        self.expires_at = None
 
     def clear(self):
         with self.node.lock:
             self.binding = self.transform = None
+            self.expires_at = None
             self.node.selected = None
             self.node._published_key = None
             self.node.rviz.clear_pose()
@@ -64,6 +68,7 @@ class TraySimulationPreview:
             self.binding = {key: view[key] for key in (
                 "generation", "trigger_binding", "trigger_epoch", "camera_context")}
             self.transform = transform
+            self.expires_at = time.monotonic() + SIMULATION_HOLD_SEC
             if view["cloud"] is not None:
                 self.node.rviz.accept(view["cloud"])
             self.node.events.record(
@@ -76,6 +81,9 @@ class TraySimulationPreview:
     def tick(self):
         with self.node.lock:
             if self.binding is None:
+                return False
+            if time.monotonic() >= self.expires_at:
+                self.clear()
                 return False
             try:
                 self.node.requests.validate_view(self.binding)

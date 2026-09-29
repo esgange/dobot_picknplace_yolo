@@ -5,7 +5,7 @@ Robot Controller owns placement/picking motion and I/O.
 
 | Feature | Item Teach | Tray Teach |
 | --- | --- | --- |
-| Simulate Trigger result | Frozen returned RGB/depth batch; RGB click resumes | Same interaction; one returned tray or explicit empty result |
+| Simulate Trigger result | Frozen returned RGB/depth batch for 10 seconds after display, then automatic live view; RGB click resumes sooner | Same countdown/lifetime; one returned tray or explicit empty result |
 | Simulated RViz poses | `item_teach_candidate_1…N`, held teaching frames | `tray_teach_simulated_tray`, held teaching frame |
 | Result evidence | Counts, age, XYZ, yaw, sizes, depth evidence | Counts, age, XYZ, full quaternion, size, confidence, batch and rejection reasons |
 | Click-to-inspect | Frozen clicked item, depth footprint and selected-pose TF | Live size/rejection inspection; does not freeze or publish the clicked tray independently |

@@ -6887,6 +6887,30 @@ Never use a floating “latest” version in an issue, script, or deployment not
   diff checks and local tray_perception build pass. No upstream or offline-transfer
   validation claimed; preserve unrelated user RViz and operator artifacts.
 
+### 2026-09-29 — Rule 166: ten-second Simulate Trigger previews
+
+- User requests automatic live-view resume ten seconds after a simulated result
+  is displayed in both Item Teach and Tray Teach. Supersede the indefinite
+  simulated holds in rules 45/47/164, including successful empty results. Retain
+  earlier RGB-click resume and existing source/settings/arming invalidation.
+- Share a fixed ten-second constant and use monotonic deadlines installed only
+  with the returned result, excluding queue/inference delay. Show a live-resume
+  countdown. Resume clears deadlines, frozen images and simulated poses; replacing
+  a simulation gets a new full hold. Item Teach discards the preceding annotated
+  view and allows an immediate fresh preview, so expiry cannot redisplay old images.
+- Existing ROS teaching timers independently expire simulated TF/pose guides if
+  Qt is busy. Wall-clock and ROS-time changes cannot prolong the hold. Ordinary clicked-item
+  inspection and four-corner capture remain manual. Expiry does not disarm or
+  invalidate accepted service/action batches; headless detection and controller
+  motion/IO are unchanged. No schema or operator artifact changes.
+- Validation: 425 targeted offscreen GUI, teaching-TF, editor and service tests pass, including
+  delayed result installation, before/at deadline boundaries, empty batches,
+  early clicks, replacement holds, independent ROS expiry and preservation of
+  manual clicked-item inspection. Scoped lint and diff checks pass; local builds
+  of item_perception_yolo and tray_perception pass. No hardware commands or live
+  node restarts performed. Restart both teaching windows to activate the change;
+  no upstream or offline-transfer validation claimed.
+
 ### Future entry template
 
 ```text

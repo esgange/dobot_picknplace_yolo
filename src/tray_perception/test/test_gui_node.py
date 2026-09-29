@@ -1423,8 +1423,12 @@ def test_trigger_row_requires_saved_profile_and_arming_stays_explicit(window):
     assert not window.armed_toggle.isChecked() and not window.node.yolo_enabled
 
 
-def test_simulation_freezes_exact_empty_result_until_rgb_click_without_arming(window):
+@pytest.mark.parametrize("resume", ["click", "timeout"])
+def test_simulation_freezes_exact_empty_result_then_resumes_without_arming(
+        window, monkeypatch, resume):
     ready_trigger_window(window)
+    now = [100.]
+    monkeypatch.setattr(gui, "time", SimpleNamespace(monotonic=lambda: now[0]))
     view = {"generation": 1, "camera_context": None, "metric_error": "", "depth_error": "",
             "rgb": {"width": 2, "height": 2, "stamp_ns": 100_000_000_000},
             "overlay": bytes(12), "depth_overlay": b"", "cloud": None,
@@ -1437,7 +1441,11 @@ def test_simulation_freezes_exact_empty_result_until_rgb_click_without_arming(wi
     before = {key: field.text() for key, field in window.dimensions.items()}
     window._simulate_trigger()
     window.future.result(timeout=2)
+    assert window.simulation_expires_at is None
+    now[0] += 20.  # Queue/inference delay must not shorten the displayed hold.
     window._tick()
+    assert window.simulation_expires_at == 130.
+    assert "live in 10s" in window.rgb_status.text()
     assert window.last_view is view
     assert "Last simulated request: NO_VALID_TRAY" in window.detail_label.text()
     assert "SIMULATED NO_VALID_TRAY" in window.rgb_status.text()
@@ -1458,8 +1466,16 @@ def test_simulation_freezes_exact_empty_result_until_rgb_click_without_arming(wi
     window.node.preview.assert_not_called()
     window._show_view(live_view(80))
     assert window.last_view is view  # Late live results cannot replace the frozen pair.
-    window._click(1., 1.)
+    if resume == "click":
+        window._click(1., 1.)
+    else:
+        now[0] = 129.999
+        window._tick()
+        assert window.simulation_view is view and window.future is None
+        now[0] = 130.
+        window._tick()
     assert window.simulation_view is None
+    assert window.simulation_expires_at is None
     window.node.simulation.clear.assert_called()
     window._tick()
     window.future.result(timeout=2)

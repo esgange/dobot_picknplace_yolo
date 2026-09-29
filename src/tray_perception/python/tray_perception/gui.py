@@ -18,7 +18,7 @@ from .core import (
     read_session, tray_directory, validate_settings,
     validate_geometry, validate_preview, write_session)
 from .documents import detection_profile, open_document, save_document, validate_name
-from item_perception_yolo.item_preview import validate_prefix
+from item_perception_yolo.item_preview import SIMULATION_HOLD_SEC, validate_prefix
 from item_perception_yolo.item_teach_core import file_sha256
 from .node import TrayTeachNode
 from .contract import SERVICE_NAME
@@ -113,6 +113,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.settings = self.plane_view = None
         self.detail_sample = None
         self.simulation_view = self.simulation_response = None
+        self.simulation_expires_at = None
         self.preview_settings = self.last_view = None
         self.preview_due = None
         self.preview_error = self.geometry_error = ""
@@ -274,7 +275,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.simulate_button = self._button("Simulate Trigger", self._simulate_trigger)
         self.simulate_button.setToolTip(
             "Run the real fresh-frame pose pipeline locally. Requires a saved profile and "
-            "YOLO ON; Armed may be OFF. Hold returned images/pose until RGB is clicked. "
+            "YOLO ON; Armed may be OFF. Hold returned images/pose for 10 seconds, then "
+            "resume live automatically; click RGB to resume sooner. "
             "No robot commands.")
         toggle_row.addWidget(self.simulate_button, 1)
         self.armed_toggle = QtWidgets.QPushButton("Armed: OFF")
@@ -881,12 +883,13 @@ class TrayTeachWindow(QtWidgets.QWidget):
                     return
                 self.node.simulation.install(response, view)
                 self.simulation_view, self.simulation_response = view, response
+                self.simulation_expires_at = time.monotonic() + SIMULATION_HOLD_SEC
                 self._show_view(view)
                 self._show_detail(view, f"Last simulated request: {response.status} — "
                                   f"{response.message}", trigger=True)
                 self._show_simulation_status()
                 self._message(f"{response.status}: {response.message}. "
-                              "Frozen returned result; click RGB to resume.")
+                              "Frozen returned result for 10 seconds; click RGB to resume sooner.")
             self._job(lambda: self.node.requests.simulate(path, settings, digest, requested_at),
                       shown, "simulate")
         except (ValueError, OSError) as exc:
@@ -895,6 +898,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _resume_live(self):
         self.node.simulation.clear()
         self.simulation_view = self.simulation_response = None
+        self.simulation_expires_at = None
         self.detail_sample = self.last_view = None
         self.detail_label.setText("Click a tray to inspect its size; cameras stay live.")
         self.result_label.setText("Waiting for a fresh tray preview")
@@ -911,7 +915,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             return
         now = self.node.get_clock().now().nanoseconds
         age = max(0., (now - view["rgb"]["stamp_ns"]) / 1e9)
-        lines = [f"SIMULATED {response.status} — click RGB to resume",
+        remaining = max(0, math.ceil(self.simulation_expires_at - time.monotonic()))
+        lines = [f"SIMULATED {response.status} — live in {remaining}s | click RGB to resume",
                  f"FROZEN | frame age {age:.2f} s | inference "
                  f"{view['result']['inference_ms']:.1f} ms",
                  f"Returned {int(response.found)} tray | {response.valid_count} valid / "
@@ -1240,6 +1245,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Tray Teach stopped", self.node.fatal_error)
             self.close()
             return
+        if (self.simulation_expires_at is not None
+                and time.monotonic() >= self.simulation_expires_at):
+            self._resume_live()
+            self._message("Simulation preview finished after 10 seconds; live view resumed")
         self._update_detail()
         if self.plane_view is not None and self.plane_view["generation"] != self.node.generation:
             self._discard_plane_draft()
