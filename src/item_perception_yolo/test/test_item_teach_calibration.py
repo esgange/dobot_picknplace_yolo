@@ -49,15 +49,16 @@ def test_explicit_files_ignore_catalog_names_and_preserve_env_settings(files):
     assert not list(root.glob(".env.item_teach.*"))
 
 
-@pytest.mark.parametrize("failure", ["camera_pair", "robot_mode", "missing", "symlink",
+@pytest.mark.parametrize("failure", ["invalid_camera", "robot_mode", "missing", "symlink",
                                      "outside", "native_write", "env_changed"])
 def test_invalid_selection_or_write_preserves_previous_env(files, monkeypatch, failure):
     root, paths = files
     selection.save_calibration_selection(*paths, root=root)
     original = (root / ".env").read_bytes()
     attempted = list(paths)
-    if failure == "camera_pair":
+    if failure == "invalid_camera":
         attempted[1] = _camera(root, stamp="20260921T083036_133658Z").path
+        attempted[1].write_text("schema_version: 0\n")
     elif failure == "robot_mode":
         attempted[2] = paths[1]
     elif failure == "missing":

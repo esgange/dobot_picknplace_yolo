@@ -34,7 +34,7 @@ def _pose(degrees=0.0):
 
 
 def _camera(root, stamp="20260909T083036_133658Z", prefix="bin_camera",
-            mode=camera_core.CAMERA_TO_HAND):
+            mode=camera_core.CAMERA_TO_HAND, transform=None):
     settings = camera_core.CharucoSettings(prefix, "DICT_5X5_50", 5, 7, 30.0, 22.0)
     samples = [camera_core.CalibrationSample(f"C{i + 1}", _pose(i * 20), _pose(i * 20),
                                              tuple(j / 10 for j in range(6)))
@@ -49,7 +49,8 @@ def _camera(root, stamp="20260909T083036_133658Z", prefix="bin_camera",
         camera_core.PoseCoverageDiagnostics(100.0, 20.0),
         camera_core.AxXbDiagnostics(4, 0.0, 0.0))
     path = root / "calibration" / f"{mode}_calibration_{stamp}.yaml"
-    camera_core.write_calibration_yaml(path, mode, settings, _pose(), diagnostics,
+    camera_core.write_calibration_yaml(path, mode, settings,
+                                       _pose() if transform is None else transform, diagnostics,
                                        samples, created_at=_utc(stamp))
     return platform_core.load_camera_calibration(path, root=root)
 
@@ -102,17 +103,21 @@ def test_latest_pair_uses_current_robot_prefix_and_utc_not_mtime(root, mode):
 
 
 @pytest.mark.parametrize("mode", (camera_core.CAMERA_TO_HAND, camera_core.CAMERA_ON_HAND))
-def test_newer_same_prefix_camera_requires_new_platform_no_older_fallback(root, mode):
+def test_newer_same_prefix_camera_reuses_platform_without_source_camera(root, mode):
     old_camera = _camera(root)
-    _platform(root, old_camera)
+    original_platform = _platform(root, old_camera)
+    original = platform_core.load_platform_calibration(original_platform, root=root)
     latest_camera = _camera(root, stamp="20260911T120000_000000Z", mode=mode)
-    with pytest.raises(ValueError, match="Teach a new platform"):
-        station.latest_station_calibration(root)
+    old_camera.path.unlink()
+    selected = station.latest_station_calibration(root)
+    assert selected.platform.path == original_platform
+    assert selected.camera.path == latest_camera.path
+    np.testing.assert_array_equal(selected.platform.base_from_platform, original.base_from_platform)
     latest_platform = _platform(root, latest_camera, stamp="20260912T120000_000000Z")
     assert station.latest_station_calibration(root).platform.path == latest_platform
 
 
-@pytest.mark.parametrize("corruption", ("schema", "hash", "transform", "malformed", "missing"))
+@pytest.mark.parametrize("corruption", ("schema", "hash", "transform", "malformed", "filename"))
 def test_invalid_newest_platform_never_falls_back(root, corruption):
     camera = _camera(root)
     _platform(root, camera, stamp="20260909T120000_000000Z")
@@ -121,12 +126,11 @@ def test_invalid_newest_platform_never_falls_back(root, corruption):
     if corruption == "schema":
         payload["schema_version"] = 2
     elif corruption == "hash":
-        payload["camera_calibration"]["sha256"] = "0" * 64
+        payload["teaching_provenance"]["camera_calibration"]["sha256"] = "invalid hash"
     elif corruption == "transform":
         payload["transform"] = {}
-    elif corruption == "missing":
-        payload["camera_calibration"]["filename"] = (
-            "camera_to_hand_calibration_20260908T120000_000000Z.yaml")
+    elif corruption == "filename":
+        payload["teaching_provenance"]["camera_calibration"]["filename"] = "../escape.yaml"
     latest.write_text("[broken" if corruption == "malformed" else yaml.safe_dump(payload))
     with pytest.raises(ValueError):
         station.latest_station_calibration(root)
@@ -161,7 +165,7 @@ def test_filename_and_payload_timestamps_must_match(root, artifact):
         target = camera.path.with_name(camera.path.name.replace("20260909", "20260911"))
         camera.path.rename(target)
         payload = yaml.safe_load(platform.read_text())
-        payload["camera_calibration"]["filename"] = target.name
+        payload["teaching_provenance"]["camera_calibration"]["filename"] = target.name
         platform.write_text(yaml.safe_dump(payload))
     with pytest.raises(ValueError, match="filename timestamp conflicts|filename must be exactly"):
         station.latest_station_calibration(root)
@@ -242,7 +246,7 @@ def test_selected_hash_changes_before_application_cannot_replace_binding(
     current = SimpleNamespace(platform=expected.platform, camera=expected.camera)
     artifact = getattr(current, changed)
     setattr(current, changed, SimpleNamespace(path=artifact.path, sha256="0" * 64))
-    monkeypatch.setattr(detector, "load_bin_teach_calibration_context", lambda _: current)
+    monkeypatch.setattr(detector, "load_bin_teach_calibration_context", lambda *_a, **_k: current)
     reader = MagicMock()
     monkeypatch.setattr(detector, "load_bin_teach", reader)
     monkeypatch.setattr(detector, "latest_robot_camera_calibration",
@@ -264,8 +268,8 @@ def test_selected_hash_changes_before_application_cannot_replace_binding(
     ("missing_key", "missing"),
     ("outside", "filename"),
     ("missing_file", "regular local file"),
-    ("camera_pair", "bound"),
-    ("camera_hash", "SHA-256"),
+    ("camera_pair", None),
+    ("camera_hash", None),
     ("robot_mode", "Robot-camera calibration"),
     ("robot_invalid", "schema_version"),
     ("changed_before_application", "changed before application"),
@@ -338,7 +342,7 @@ def test_headless_main_uses_runtime_catalog_and_saved_calibrations(
     monkeypatch.setattr(detector, "load_item_profile", lambda *_args, **_kwargs: (profile, "c"))
     monkeypatch.setattr(detector, "settings_from_profile", lambda _: {})
     monkeypatch.setattr(detector, "detection_settings", lambda _: {})
-    if failure:
+    if reason:
         with pytest.raises(ValueError, match=reason):
             detector.main()
         if failure not in ("fresh_inputs", "changed_before_application"):
@@ -352,7 +356,8 @@ def test_headless_main_uses_runtime_catalog_and_saved_calibrations(
         assert node.apply_station.call_args.args == (platform_path, catalog.bin_yaml)
         selected = node.apply_station.call_args.kwargs["expected_station"]
         selected_robot = node.apply_station.call_args.kwargs["expected_robot_camera"]
-        assert selected.platform.path == platform_path and selected.camera.path == custom
+        expected_camera = newer.path if failure == "camera_pair" else custom
+        assert selected.platform.path == platform_path and selected.camera.path == expected_camera
         assert selected_robot.path == robot_camera.path
         assert node.apply_station.call_args.kwargs["robot_camera_path"] == robot_camera.path
         node.inspect_model.assert_called_once_with(

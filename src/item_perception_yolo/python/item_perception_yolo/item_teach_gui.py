@@ -36,7 +36,7 @@ from .item_preview import SIMULATION_HOLD_SEC, validate_prefix
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
-from .bin_teach_core import bin_platform_warning, load_bin_teach_calibration_context
+from .bin_teach_core import bin_platform_warning
 from .item_teach_calibration import (
     saved_calibration_paths, load_calibration_selection, save_calibration_selection)
 from .item_teach_rviz import PERIOD_SEC, TeachingRvizPreview
@@ -1097,16 +1097,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         field.setText(path)
         field.setToolTip(path)
         self._calibration_selection_changed()
-        if field is self.platform_path:
-            try:
-                applied = load_bin_teach_calibration_context(Path(path), root=workspace_root())
-                self.calibration_camera_path.setText(str(applied.camera.path))
-                self.calibration_camera_path.setToolTip(str(applied.camera.path))
-            except (ValueError, OSError) as exc:
-                self.station_status.setText(f"Selected platform is invalid: {exc}")
-                self._message(self.station_status.text())
-                self.calibration_due = None
-                return
         self._update_station_preview(persist=True)
 
     def _calibration_selection_changed(self, *_):

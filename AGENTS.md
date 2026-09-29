@@ -857,6 +857,24 @@ freshness from discarded frames: the existing one-second stale/nonadvancing
 timeout, connection/ownership checks, physical stationarity, capture freshness
 and operator Stop remain enforced. No teach/calibration artifact or vendor change.
 
+Rule 173 separates saved platform/bin geometry from the active camera calibration.
+Platform Teach shows a startup reminder to freshly calibrate the bin camera in its
+current position before teaching. New platform schema 4 keeps base/platform pose
+and reference definition separate from historical teaching_provenance; schema-3
+platforms remain readable with the same independent-camera semantics. Neither
+loader opens the original teaching-camera file. Bin schema 3 remains portable and
+may record source platform schema 3 or 4. Bin Teach selects its current camera
+explicitly, prefilled from the saved Item Teach camera choice. Item Teach/Detect
+use their explicit active camera; choosing a platform never replaces it. Controller
+latest selection combines the latest station platform with the latest camera of
+its prefix, without comparing to the platform's historical source filename/hash,
+board settings or mounting transform. Keep robot/frame checks, active source hashes,
+live TF/freshness and immutable geometry. Camera-only movement/recalibration does
+not change the platform transform, bin points or wall margins. Preserve original
+capture provenance on explicit migration; never substitute a new mounting transform
+into old capture evidence. Supersede historical source-camera binding and platform
+schema-3-only rules 22/23/26/50/131/132/148; no vendor or motion-sequence change.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -72,11 +72,7 @@ def load_calibration_selection(platform_path, camera_path, robot_camera_path, ro
     root = _root(root)
     paths = tuple(_selected_path(path, root)
                   for path in (platform_path, camera_path, robot_camera_path))
-    applied = load_bin_teach_calibration_context(paths[0], root=root)
-    if applied.camera.path != paths[1]:
-        raise ValueError(
-            f"Selected bin camera must be {applied.camera.path.name}, the calibration bound "
-            "to this platform. Teach a new platform to use a different camera calibration.")
+    applied = load_bin_teach_calibration_context(paths[0], root=root, camera_path=paths[1])
     return applied, selected_robot_camera(paths[2], root=root)
 
 

@@ -36,6 +36,7 @@ from .platform_teach_core import (
     TOOL_FRAME,
     AppliedCameraCalibration,
     PlatformCalibrationArtifact,
+    _parse_env_file,
     _canonical_utc_value,
     _transform_from_payload,
     _transform_payload,
@@ -186,9 +187,19 @@ def bin_border_in_optical(points, platform_from_optical: np.ndarray) -> np.ndarr
     )
 
 
+def active_bin_camera_path(root: Path | None = None) -> Path:
+    """Explicit saved live camera selection, independent of teaching provenance."""
+    project_root = workspace_root() if root is None else Path(root).resolve()
+    name = _parse_env_file(project_root / ".env").get("ITEM_TEACH_BIN_CAMERA_CALIBRATION", "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]*\.yaml", name):
+        raise ValueError("Select an active bin-camera calibration; no saved selection is available")
+    return calibration_directory(root) / name
+
+
 def load_bin_teach_calibration_context(
     platform_path: Path,
     root: Path | None = None,
+    *, camera_path: Path | None = None,
 ) -> AppliedBinTeachCalibration:
     platform = load_platform_calibration(platform_path, root=root)
     robot_lan1_ip = load_robot_lan1_ip(root)
@@ -197,27 +208,10 @@ def load_bin_teach_calibration_context(
             "Platform calibration robot identity conflicts with root .env: "
             f"artifact={platform.robot_lan1_ip}, configured={robot_lan1_ip}"
         )
-    camera_path = calibration_directory(root) / platform.camera_calibration_filename
+    camera_path = active_bin_camera_path(root) if camera_path is None else Path(camera_path)
+    if camera_path.is_symlink() or not camera_path.is_file():
+        raise ValueError(f"Active camera calibration must be a regular local file: {camera_path}")
     camera = load_camera_calibration(camera_path, root=root)
-    if camera.sha256 != platform.camera_calibration_sha256:
-        raise ValueError(
-            "Platform calibration references a camera calibration with a different "
-            "SHA-256"
-        )
-    if camera.calibration_mode != platform.camera_calibration_mode:
-        raise ValueError(
-            "Platform and camera calibration modes conflict: "
-            f"platform={platform.camera_calibration_mode}, "
-            f"camera={camera.calibration_mode}"
-        )
-    if camera.settings != platform.camera_settings:
-        raise ValueError("Platform and camera calibration settings conflict")
-    if not np.allclose(
-        camera.reference_from_camera_link,
-        platform.calibration_reference_from_camera_link,
-        atol=1e-9,
-    ):
-        raise ValueError("Platform and camera mounting transforms conflict")
     return AppliedBinTeachCalibration(platform=platform, camera=camera)
 
 
@@ -250,18 +244,6 @@ def validate_applied_sources(
             raise ValueError(
                 f"Selected {label} calibration changed after it was applied"
             )
-    if applied.camera.sha256 != applied.platform.camera_calibration_sha256:
-        raise ValueError("Platform and camera calibration SHA-256 values conflict")
-    if applied.camera.calibration_mode != applied.platform.camera_calibration_mode:
-        raise ValueError("Platform and camera calibration modes conflict")
-    if applied.camera.settings != applied.platform.camera_settings:
-        raise ValueError("Platform and camera calibration settings conflict")
-    if not np.allclose(
-        applied.camera.reference_from_camera_link,
-        applied.platform.calibration_reference_from_camera_link,
-        atol=1e-9,
-    ):
-        raise ValueError("Platform and camera mounting transforms conflict")
 
 
 def compose_platform_from_optical(
@@ -570,7 +552,7 @@ def write_bin_teach(
         "platform_calibration": {
             "filename": applied.platform.path.name,
             "sha256": applied.platform.sha256,
-            "schema_version": PLATFORM_ARTIFACT_SCHEMA_VERSION,
+            "schema_version": applied.platform.schema_version,
             "created_utc": applied.platform.created_at_utc,
             "platform_frame": PLATFORM_FRAME,
         },
@@ -773,7 +755,8 @@ def load_bin_teach(path: Path, root: Path | None = None, *, deployment=False) ->
         or Path(platform_filename).suffix != ".yaml"
     ):
         raise ValueError("Bin-teach platform-calibration filename is invalid")
-    if platform["schema_version"] != PLATFORM_ARTIFACT_SCHEMA_VERSION:
+    if type(platform["schema_version"]) is not int or platform["schema_version"] not in (
+            3, PLATFORM_ARTIFACT_SCHEMA_VERSION):
         raise ValueError("Bin-teach platform-calibration schema is invalid")
     if platform["platform_frame"] != PLATFORM_FRAME:
         raise ValueError("Bin-teach platform frame is invalid")

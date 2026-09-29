@@ -61,7 +61,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
    OFF stops inference and shows raw RGB; it also removes the pose service.
 4. Use **Browse…** beside **Platform calibration**, **Bin camera calibration**
    and **Robot camera calibration** to choose files directly inside root
-   `calibration/`. Choosing a platform fills its recorded bin-camera file.
+   `calibration/`. Changing the platform preserves the independent active camera choice.
    Browsing automatically validates the complete set and atomically saves only
    their basenames to root `.env` as `ITEM_TEACH_PLATFORM_CALIBRATION`,
    `ITEM_TEACH_BIN_CAMERA_CALIBRATION` and `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION`.
@@ -69,9 +69,10 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Descriptive camera filenames such as `camera_to_hand_calibration_station_2.yaml`
    work. Existing mode prefixes and strict schemas still apply, but Item Teach
    does not scan for newer files or reject unrelated catalog entries.
-   The bin camera must match the platform's exact recorded filename,
-   SHA-256/mode/settings/transform and current robot identity. To use a different
-   bin-camera calibration, teach a new platform with it. The robot-camera file
+   The platform must match the current robot identity. Its original camera is
+   historical teaching evidence, not a live filename/hash/mounting dependency.
+   Select a new bin-camera calibration after camera movement; retain the taught
+   platform and bin when the robot base, platform and bin stayed fixed. The robot-camera file
    must be strict schema 7, `camera_on_hand`, and exactly
    `Link6 <- robot_camera_link`. It supplies only the camera-origin offset for
    pick clearance; no robot-camera RGB/depth/CameraInfo/TF subscription is added.
@@ -79,10 +80,10 @@ ros2 launch item_perception_yolo item_teach.launch.py
    dialog changes nothing. Missing or changed files never select a replacement.
    Selecting the portable bin ROI also validates and saves the chosen calibration
    set, then connects the camera preview; no additional Connect RGB click is
-   needed. The prefix comes from the platform's hash-bound camera calibration.
+   needed. The prefix comes from the independently selected active camera calibration.
    Saved `.env` choices and the saved bin reconnect this read-only preview on
    startup. This narrow restoration exception never launches a camera, loads
-   weights, enables YOLO or arms the service. Platform schema 3, camera schema 7,
+   weights, enables YOLO or arms the service. Platform supports schema 3/4; camera schema 7,
    bin schema 3 and package UI-state schema 6 remain unchanged. Incomplete or
    invalid files leave the ROI hidden with a status reason. Requests recheck the
    exact selected files and hashes, regardless of other newer calibrations.
@@ -636,12 +637,13 @@ Use Item Teach's Browse selectors to automatically save a complete validated
 set before starting the detector. Values are filenames directly inside root
 `calibration/`. All empty is allowed for Item Teach's first run, but headless
 startup fails with an instruction to make a selection. Partial/missing keys,
-missing files, invalid schemas, camera/platform hash or mounting mismatches fail
+missing active files, invalid schemas or a platform/robot identity mismatch fail
 without a latest-file scan or fallback. Descriptive mode-prefixed camera names
 are supported, and unrelated or newer files cannot replace the chosen set.
 The detector reads `.env` once for selection and never writes it. Runtime source
 hash checks continue to protect the exact loaded files; changing `.env` choices
-requires a restart. The camera prefix comes from the platform's bound calibration.
+requires a restart. The camera prefix comes from the selected active camera calibration.
+Original teaching-camera files are not opened or compared to that active calibration.
 
 Populate flat root `runtime_teach/` with exactly these ordinary files:
 
@@ -781,18 +783,25 @@ calibration/platform_calibration_<UTC_TIMESTAMP>_<DOBOT_ROBOT_LAN1_IP>.yaml
 ```
 
 LAN1 is the stable robot identity; LAN2 remains diagnostic failover only. The
-strict schema-3 artifact stores:
+strict schema-4 artifact stores:
 
 - `base_link <- platform_reference`;
 - the exact `charuco_pick_corner_xy_v1` reference convention: ChArUco board
   origin at the shared pick-area corner, unchanged board axes, metre units,
   and platform-plane Z=0 for the bin footprint;
-- the selected schema-7 camera calibration filename and SHA-256;
-- the camera prefix, frames, and RGB topics;
-- the inherited ChArUco geometry and detector provenance;
-- the selected mounting mode and complete resolved transform chain;
-- for camera-on-hand, the exact `base_link <- Link6` transform/timestamp used;
-- the source frame sequence/timestamp and detected corner count.
+- historical `teaching_provenance`: the selected schema-7 camera filename/hash,
+  camera prefix/frames/topics, ChArUco settings, detector, mounting mode, original
+  transform chain, optional robot TF, source timestamp and detected corner count.
+
+Platform Teach shows a startup reminder to freshly calibrate the bin camera in
+its current position before teaching/re-teaching. Source calibration is validated
+during capture/save. Once saved, the platform is fixed geometry in robot-base
+coordinates; future camera movement does not move it. Runtime uses the independent
+active camera calibration for projection and detection. The recorded camera file
+need not exist, and its hash/mounting transform need not match the active camera.
+The embedded historical chain is still checked for internal consistency. Schema-3
+platforms are also read this way. Explicit schema-3→4 migration only relocates
+the historical fields under `teaching_provenance`; no pose is recalculated.
 
 For reusable bin templates, every station must reproduce the same board origin,
 axis directions, bin size, and bin offset from that reference. Keep the board
@@ -810,11 +819,13 @@ timestamps and the project-wide 1,000-record overwrite limit.
 
 ## Bin-teach contract
 
-`bin_teach` accepts only a strict schema-3
+`bin_teach` accepts a strict schema-3 or schema-4
 `platform_calibration_<timestamp>_<robot_ip>.yaml` selected directly from root
-`calibration/`. It validates the platform file, the camera calibration named
-inside it, their matching mode, both SHA-256 values, and the LAN1 robot
-identity from root `.env`. It inherits the camera prefix, RGB topic,
+`calibration/` plus an independently selected **Active camera calibration**.
+The camera selector prefills `ITEM_TEACH_BIN_CAMERA_CALIBRATION` from root `.env`;
+Browse permits an explicit teaching camera without rewriting the saved selection.
+It validates the platform, current camera and LAN1 robot identity, then pins the
+two active source hashes for the session. It inherits the active camera prefix, RGB topic,
 CameraInfo topic, frames, and calibrated mounting transform. Fixed-camera mode
 uses `base_link <- camera_link` directly. On-hand mode requires live
 `base_link <- Link6` no older than one second and composes it with calibrated
@@ -876,7 +887,7 @@ so `platform_teach` does not need to remain open. **Retake**, applying different
 settings, a terminal detection failure, or closing Bin Teach stops the preview.
 Bin Teach does not launch RViz.
 
-This planar teaching correction keeps platform/bin schema 3, camera schema 7,
+This planar teaching correction keeps bin schema 3, camera schema 7,
 shared UI schema 6 and all existing artifacts unchanged. Re-capture and save a
 new bin file to obtain corrected geometry; old XY is loaded as written, never
 automatically repaired. Station transfer retains the same local XY on the
@@ -910,7 +921,7 @@ chain without requiring the original robot `.env` or source calibration files.
 Recorded source hashes are provenance, not authentication of an absent file.
 
 In **Bin Teach**, explicitly select and Apply the destination station's own
-schema-3 platform calibration and current marker settings, then select
+schema-3/4 platform calibration, active camera and current marker settings, then select
 **Load Bin ROI**. The destination platform and its referenced camera file must
 still match the destination robot and their saved hashes. Confirm the same
 physical bin size, board origin/axes, and placement. This replaces the current
@@ -944,13 +955,15 @@ Saving remains disabled for loaded templates. Retake, re-Apply, terminal failure
 and exit clear the loaded preview and stop publication. Loaded templates are
 not restored from `last_session.json`.
 
-Both teaching artifacts now require schema 3. Existing schema-1/2 files remain
-untouched and are rejected; re-teach the platform and bin to produce the new
-files. Camera calibration remains strict schema 7. Shared UI prefill is now
+New platform artifacts use schema 4, and Bin Teach remains schema 3. Bin teaching
+provenance may name a schema-3 or schema-4 source platform; neither that platform
+file nor its teaching camera is required to load the portable bin geometry.
+Existing schema-1/2 files remain untouched and are rejected; re-teach them.
+Camera calibration remains strict schema 7. Shared UI prefill is now
 schema 6 to include Item Teach's profile, preview prefix and station/bin
 filenames; the existing platform
-and bin form fields are unchanged. No runtime migration or compatibility reader
-is provided. This workstation's validated schema-5 prefill was explicitly
+and bin form fields are unchanged. Schema-3 platform loading is supported without
+rewriting the file; migration to schema 4 is explicit. This workstation's validated schema-5 prefill was explicitly
 rewritten once for this update, preserving both existing teaching sections.
 
 Platform/bin nodes create teaching artifacts and provide operator previews only.

@@ -39,7 +39,9 @@ from .ui_state import (
 
 
 PLATFORM_FRAME = "platform_reference"
-PLATFORM_ARTIFACT_SCHEMA_VERSION = 3
+PLATFORM_ARTIFACT_SCHEMA_VERSION = 4
+PLATFORM_PROVENANCE_FIELDS = frozenset((
+    "camera_calibration", "camera", "charuco", "detector", "capture"))
 PLATFORM_REFERENCE_CONVENTION = "charuco_pick_corner_xy_v1"
 PLATFORM_REFERENCE_DEFINITION = {
     "convention": PLATFORM_REFERENCE_CONVENTION,
@@ -107,6 +109,7 @@ class PlatformCalibrationArtifact:
     camera_settings: CharucoSettings
     calibration_reference_from_camera_link: np.ndarray
     base_from_platform: np.ndarray
+    schema_version: int = PLATFORM_ARTIFACT_SCHEMA_VERSION
 
 
 def _canonical_utc_text(timestamp: datetime) -> str:
@@ -585,6 +588,7 @@ def write_platform_calibration(
             ),
         },
     }
+    payload = independent_platform_payload(payload)
     content = yaml.safe_dump(payload, sort_keys=False, allow_unicode=False)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
@@ -620,6 +624,22 @@ def _canonical_utc_value(value, label: str) -> str:
     return value
 
 
+def independent_platform_payload(payload):
+    """Keep teaching evidence historical; the saved base/platform pose stands alone.
+
+    Also used for explicit migration of already validated schema-3 artifacts.
+    Never substitute a new camera transform into the original capture evidence.
+    """
+    if "teaching_provenance" in payload:
+        return dict(payload)
+    geometry = {key: value for key, value in payload.items()
+                if key not in PLATFORM_PROVENANCE_FIELDS}
+    geometry["schema_version"] = PLATFORM_ARTIFACT_SCHEMA_VERSION
+    geometry["teaching_provenance"] = {
+        key: value for key, value in payload.items() if key in PLATFORM_PROVENANCE_FIELDS}
+    return geometry
+
+
 def load_platform_calibration(
     path: Path,
     root: Path | None = None,
@@ -634,6 +654,20 @@ def load_platform_calibration(
         payload = yaml.safe_load(content.decode("utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ValueError(f"Cannot read platform calibration {candidate}: {exc}") from exc
+    schema_version = payload.get("schema_version") if isinstance(payload, dict) else None
+    if type(schema_version) is not int or schema_version not in (
+            3, PLATFORM_ARTIFACT_SCHEMA_VERSION):
+        raise ValueError("Platform calibration schema_version must be 3 or 4")
+    if schema_version == PLATFORM_ARTIFACT_SCHEMA_VERSION:
+        required = {"schema_version", "artifact_type", "created_utc", "robot",
+                    "platform", "transform", "teaching_provenance"}
+        if set(payload) != required:
+            raise ValueError("Platform calibration has unsupported or missing root fields")
+        provenance = payload["teaching_provenance"]
+        if not isinstance(provenance, dict) or set(provenance) != PLATFORM_PROVENANCE_FIELDS:
+            raise ValueError("Platform calibration teaching_provenance fields are invalid")
+        payload = {key: value for key, value in payload.items() if key != "teaching_provenance"}
+        payload.update(provenance)
     required = {
         "schema_version",
         "artifact_type",
@@ -649,14 +683,6 @@ def load_platform_calibration(
     }
     if not isinstance(payload, dict) or set(payload) != required:
         raise ValueError("Platform calibration has unsupported or missing root fields")
-    if (
-        type(payload["schema_version"]) is not int
-        or payload["schema_version"] != PLATFORM_ARTIFACT_SCHEMA_VERSION
-    ):
-        raise ValueError(
-            "Platform calibration schema_version must be exactly "
-            f"{PLATFORM_ARTIFACT_SCHEMA_VERSION}"
-        )
     if payload["artifact_type"] != "platform_calibration":
         raise ValueError("Platform calibration artifact_type is invalid")
     created_at_utc = _canonical_utc_value(
@@ -938,6 +964,7 @@ def load_platform_calibration(
             calibration_reference_from_camera_link
         ),
         base_from_platform=base_from_platform,
+        schema_version=schema_version,
     )
 
 

@@ -42,6 +42,7 @@ from .bin_teach_core import (
     BinArucoSettings,
     BinTeachCapture,
     BinTeachArtifact,
+    active_bin_camera_path,
     bin_output_path,
     bin_border_in_optical,
     bin_teach_directory,
@@ -384,10 +385,11 @@ class BinTeachNode(Node):
         platform_path: Path,
         dictionary_name: str,
         marker_size_mm: float,
+        *, camera_path: Path | None = None,
     ) -> str:
         aruco_settings = BinArucoSettings(dictionary_name, marker_size_mm)
         aruco_settings.validate()
-        applied = load_bin_teach_calibration_context(platform_path)
+        applied = load_bin_teach_calibration_context(platform_path, camera_path=camera_path)
         self._destroy_camera_subscriptions()
         with self._lock:
             self._configuration_generation += 1
@@ -1296,6 +1298,9 @@ class BinTeachWindow(QtWidgets.QWidget):
             "Select platform_calibration_<timestamp>_<robot_ip>.yaml"
         )
         self.browse_button = QtWidgets.QPushButton("Browse")
+        self.camera_path = QtWidgets.QLineEdit()
+        self.camera_path.setPlaceholderText("Select the current camera calibration")
+        self.camera_browse_button = QtWidgets.QPushButton("Browse")
         self.dictionary = QtWidgets.QComboBox()
         self.dictionary.addItem("Select 5x5 dictionary", "")
         for dictionary_name in ARUCO_5X5_DICTIONARIES:
@@ -1332,6 +1337,11 @@ class BinTeachWindow(QtWidgets.QWidget):
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
         form.addRow(QtWidgets.QLabel("Platform calibration"))
         form.addRow(path_row)
+        camera_row = QtWidgets.QHBoxLayout()
+        camera_row.addWidget(self.camera_path, 1)
+        camera_row.addWidget(self.camera_browse_button)
+        form.addRow(QtWidgets.QLabel("Active camera calibration"))
+        form.addRow(camera_row)
         form.addRow("ArUco dictionary", self.dictionary)
         form.addRow("Marker size [mm]", self.marker_size)
         controls = QtWidgets.QVBoxLayout()
@@ -1355,6 +1365,10 @@ class BinTeachWindow(QtWidgets.QWidget):
                             "Markers must lie on the taught platform plane; preserve the "
                             "same origin, axes and bin offset at each station.")
 
+        try:
+            self.camera_path.setText(str(active_bin_camera_path()))
+        except (OSError, ValueError):
+            pass  # No saved active selection; require an explicit Browse choice.
         state = self._node.load_last_session()
         if state is not None:
             self.platform_path.setText(
@@ -1369,6 +1383,7 @@ class BinTeachWindow(QtWidgets.QWidget):
             )
 
         self.browse_button.clicked.connect(self._browse)
+        self.camera_browse_button.clicked.connect(self._browse_camera)
         self.apply_button.clicked.connect(self._apply)
         self.capture_button.clicked.connect(self._capture)
         self.load_button.clicked.connect(self._load)
@@ -1389,15 +1404,24 @@ class BinTeachWindow(QtWidgets.QWidget):
         if path:
             self.platform_path.setText(path)
 
+    def _browse_camera(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select current camera calibration", str(calibration_directory()),
+            "Camera calibration (camera_*_calibration_*.yaml)")
+        if path:
+            self.camera_path.setText(path)
+
     def _apply(self) -> None:
         path_text = self.platform_path.text().strip()
+        camera_text = self.camera_path.text().strip()
         dictionary_name = str(self.dictionary.currentData() or "")
         marker_size_text = self.marker_size.text().strip()
-        if not path_text or not dictionary_name or not marker_size_text:
+        if not path_text or not camera_text or not dictionary_name or not marker_size_text:
             QtWidgets.QMessageBox.warning(
                 self,
                 "Complete settings required",
-                "Select a platform calibration, a 5x5 dictionary, and enter marker size.",
+                "Select platform and active camera calibrations, a 5x5 dictionary, "
+                "and enter marker size.",
             )
             return
         try:
@@ -1424,6 +1448,7 @@ class BinTeachWindow(QtWidgets.QWidget):
                 Path(path_text),
                 dictionary_name,
                 marker_size_mm,
+                camera_path=Path(camera_text),
             )
         except (OSError, RuntimeError, ValueError) as exc:
             QtWidgets.QMessageBox.critical(self, "Settings rejected", str(exc))

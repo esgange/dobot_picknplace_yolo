@@ -34,6 +34,16 @@ Emergency-stop feedback review: **2026-09-29**, diary rule **167**. Startup quer
 GetErrorID before initialization; confirmed emergency stops have explicit operator
 feedback. Recover preserves alarm clearing after physical button release.
 
+Calibration selection review: **2026-09-29**, diary rule **173**. The controller
+combines the latest current-station platform geometry with the latest calibration
+of its camera prefix independently. The platform's teaching-camera filename/hash
+is historical provenance and need not match or exist. Platform schema 4 separates
+that provenance from the unchanged base/platform pose; schema 3 remains readable.
+Item Teach/Detect retain explicit active-camera selection. Exact active source
+hashes must still agree across controller and detector before a pick. Camera-only
+recalibration preserves taught platform/bin geometry and wall clearances; lifecycle,
+motion queues, safety gates and robot-camera clearance planning are unchanged.
+
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
 them. The tables also describe the behavior without a diagram renderer.

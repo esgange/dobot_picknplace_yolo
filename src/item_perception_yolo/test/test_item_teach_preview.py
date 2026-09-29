@@ -1650,12 +1650,10 @@ def test_platform_browse_prefills_bound_camera_and_loads_complete_selection(wind
     gui.save_calibration_selection.reset_mock()
     monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName",
                         lambda *_args: ("/selected/platform_calibration_other.yaml", "YAML"))
-    monkeypatch.setattr(gui, "load_bin_teach_calibration_context", lambda *_a, **_kw:
-                        SimpleNamespace(camera=SimpleNamespace(
-                            path=Path("/selected/camera_to_hand_calibration_station_2.yaml"))))
+    selected_camera = window.calibration_camera_path.text()
     window._choose_calibration_file(window.platform_path)
     assert window.node.applied is not None
-    assert gui.save_calibration_selection.call_args.args[1].endswith("station_2.yaml")
+    assert gui.save_calibration_selection.call_args.args[1] == selected_camera
     assert window.calibration_due is None  # Canonicalized fields cannot schedule another load.
     gui.save_calibration_selection.assert_called_once()
 

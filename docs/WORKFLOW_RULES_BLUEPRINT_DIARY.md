@@ -7128,6 +7128,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No physical robot commands, live-node restart or operator artifact changes;
   no physical commissioning/offline-transfer claim.
 
+### 2026-09-29 — Rule 173: independent platform/bin geometry and active camera
+
+- User requested a Platform Teach startup reminder to freshly calibrate the bin
+  camera before teaching, then remove saved platform/bin dependence on the old
+  eye-to-hand file. Implement an informational startup prompt; launch stays
+  read-only, and explicit Apply/Capture/Save still validates the selected camera.
+- New platform schema 4 keeps the fixed `base_link <- platform_reference` pose,
+  robot identity and reference convention outside historical `teaching_provenance`.
+  Preserve camera filename/hash, settings, original mounting transform and capture
+  chain as history, with internal consistency validation but no source-file lookup.
+  Schema-3 platforms remain readable with the same independent live-camera semantics;
+  explicit 3→4 migration reorganizes evidence only, without recalculating geometry.
+- Bin Teach remains schema 3 and already loads its platform-relative points
+  without original station files. Permit source platform schema 3/4 in provenance.
+  Add an independent Active camera calibration Browse selector, prefilled from
+  Item Teach's existing `.env` camera choice. Pin the selected platform/camera
+  hashes during teaching; write the actual active capture chain as history.
+- Remove platform-history camera equality from shared context validation and
+  Item Teach/Detect selection. Selecting a platform never changes the chosen
+  camera. GUI/headless continue using exact explicit `.env` choices; controller
+  discovery independently selects its latest station platform and latest camera
+  of that prefix. Preserve strict schemas, robot/frame checks, no invalid-file
+  fallback, immutable active source hashes, camera/TF freshness, wall margins
+  and controller/perception source agreement. No controller motion change.
+- Migrated the operator's existing 20260910 platform YAML to schema 4, keeping its
+  transform/reference/capture evidence exactly unchanged, and saved the explicitly
+  selected 20260929T113637_587047Z camera-to-hand file in root `.env`. Backed up
+  the platform and `.env` under ignored
+  `calibration/.independent_geometry_backup_20260929T115255Z/`. Both offline and
+  runtime Bin Teach files remain byte-identical; their placed base-frame points
+  compare exactly before/after. Verified controller and detector select matching
+  active platform/camera hashes. Local operator artifacts/config remain uncommitted.
+- Validation: 489 item-perception tests and 556 controller tests pass, including
+  moved-camera projection with unchanged platform/bin geometry, missing original
+  camera files, new Bin Teach creation with a replacement camera, geometry-only
+  migration, headless selection, startup reminder and retained active hash checks.
+  Updated two tests that intentionally required the superseded camera binding.
+  Full perception testing caught a Qt form-row overload error in the new camera
+  selector; fixed it and reran both teaching-window tests, including independent
+  camera dispatch on Apply, successfully. Scoped lint/diff checks and both package
+  symlink builds pass. Regenerated all seven FSM HTML/PDF diagrams, source hash
+  `03f97b14788e125d754abe28ebbddacbd459d9f3724b8167606758fa6397512a`.
+  No physical robot commands or automatic live-node restarts; no physical
+  commissioning/offline-transfer claim.
+
 ### Future entry template
 
 ```text

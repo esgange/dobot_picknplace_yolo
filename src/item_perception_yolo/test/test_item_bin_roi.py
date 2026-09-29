@@ -82,7 +82,7 @@ def transferred_node(tmp_path, monkeypatch, mode):
         return tf_message(robot)
 
     node.tf_buffer.lookup_transform.side_effect = lookup
-    monkeypatch.setattr(detector, "load_bin_teach_calibration_context", lambda _: applied)
+    monkeypatch.setattr(detector, "load_bin_teach_calibration_context", lambda *_a, **_k: applied)
     monkeypatch.setattr(detector, "load_bin_teach",
                         lambda path: core.load_bin_teach(path, root=destination_root))
     monkeypatch.setattr(detector, "latest_robot_camera_calibration", MagicMock(

@@ -854,6 +854,15 @@ class PlatformTeachNode(Node):
 
 
 class PlatformTeachWindow(QtWidgets.QWidget):
+    def show_calibration_reminder(self) -> None:
+        QtWidgets.QMessageBox.information(
+            self, "Calibrate the camera before teaching",
+            "Before teaching or re-teaching the platform, freshly calibrate the bin camera "
+            "in its current position and select that calibration here.\n\n"
+            "If only the camera moves later, recalibrate the camera and update the active "
+            "camera selection. The saved platform and bin geometry can be reused when "
+            "the robot base, platform and bin have not moved.")
+
     def __init__(self, node: PlatformTeachNode) -> None:
         super().__init__()
         self._node = node
@@ -1164,6 +1173,7 @@ def main(args=None) -> None:
         spin_thread.start()
         window = PlatformTeachWindow(node)
         window.show()
+        QtCore.QTimer.singleShot(0, window.show_calibration_reminder)
         application_exit_code = application.exec_()
         fatal_error = node.fatal_error()
         if fatal_error is not None:

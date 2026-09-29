@@ -214,17 +214,19 @@ def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
         root=tmp_path,
     )
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["platform"]["reference"] == core.PLATFORM_REFERENCE_DEFINITION
     assert payload["artifact_type"] == "platform_calibration"
     assert payload["transform"]["target_frame"] == "base_link"
     assert payload["transform"]["source_frame"] == "platform_reference"
-    assert payload["camera_calibration"]["schema_version"] == 7
-    assert payload["camera_calibration"]["calibration_mode"] == mode
-    assert payload["capture"]["robot_tf"]["required"] is (
+    provenance = payload["teaching_provenance"]
+    assert "camera_calibration" not in payload
+    assert provenance["camera_calibration"]["schema_version"] == 7
+    assert provenance["camera_calibration"]["calibration_mode"] == mode
+    assert provenance["capture"]["robot_tf"]["required"] is (
         mode == CAMERA_ON_HAND
     )
-    assert payload["charuco"]["dictionary"] == "DICT_5X5_50"
+    assert provenance["charuco"]["dictionary"] == "DICT_5X5_50"
     artifact_text = path.read_text(encoding="utf-8").lower()
     assert "image_data" not in artifact_text
     assert "overlay" not in artifact_text
@@ -246,9 +248,9 @@ def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
     for schema in (1, 2):
         payload["schema_version"] = schema
         path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
-        with pytest.raises(ValueError, match="schema_version must be exactly 3"):
+        with pytest.raises(ValueError, match="schema_version must be 3 or 4"):
             core.load_platform_calibration(path, root=tmp_path)
-    payload["schema_version"] = 3
+    payload["schema_version"] = 4
     payload["platform"]["reference"]["axes"] = "arbitrary_station_axes"
     path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="reference convention is invalid"):

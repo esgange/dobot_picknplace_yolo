@@ -421,7 +421,9 @@ class ItemDetectNode(Node):
     def apply_station(self, platform_path, bin_path, *, expected_station=None,
                       expected_robot_camera=None, robot_camera_path=None):
         self.disarm()
-        applied = load_bin_teach_calibration_context(Path(platform_path))
+        applied = load_bin_teach_calibration_context(
+            Path(platform_path), root=self.root,
+            camera_path=expected_station.camera.path if expected_station is not None else None)
         if expected_station is not None and (
                 applied.platform.path != expected_station.platform.path
                 or applied.platform.sha256 != expected_station.platform.sha256

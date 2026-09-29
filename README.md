@@ -525,13 +525,15 @@ rectangle for OBB), with centered short-X/long-Y lines and a pick-point dot.
 No extra axis-aligned YOLO box is drawn. The green loaded bin ROI appears on the
 same image, including with YOLO OFF. Item Teach provides **Browse…** selectors
 for platform, bin-camera and robot-camera calibration files inside root
-`calibration/`. Selecting a platform fills its exact bound bin-camera file.
+`calibration/`. Platform geometry and the active bin-camera file are independent.
 The complete selection automatically validates and remembers its filenames in root
 `.env`; descriptive mode-prefixed camera filenames are supported. Selection
 changes stop YOLO, disarm and clear old previews. Invalid selections leave the
-saved filenames unchanged. The bin camera must match the platform's recorded
-hash: after recalibrating that camera, re-teach the platform. There is no catalog
-scan, newer-file substitution or mixing of calibration transforms in Item Teach.
+saved filenames unchanged. After moving/recalibrating only the camera, select
+its new calibration while retaining the platform and bin geometry, provided the
+robot base, platform and bin stayed fixed. Historical teaching camera filenames
+and hashes are provenance, not runtime dependencies. There is no catalog scan
+or newer-file substitution in Item Teach.
 Select the portable bin file to connect its calibrated camera preview.
 The bin file records its teaching platform's filename, SHA-256 and transform.
 If the selected platform's SHA-256 differs, Item Teach shows an amber warning
@@ -1034,6 +1036,8 @@ Teach the platform origin after producing a valid camera calibration:
 ros2 launch item_perception_yolo platform_teach.launch.py
 ```
 
+At startup, Platform Teach reminds the operator to freshly calibrate the bin
+camera in its current position before teaching or re-teaching the platform.
 `platform_teach` explicitly loads one schema-7 camera-to-hand or camera-on-hand
 YAML directly from root `calibration/`, inherits its camera prefix and ChArUco
 geometry, and shows the same RGB marker/corner/board-axis feedback. A fixed
@@ -1045,10 +1049,13 @@ and board stationary, capture once, inspect the calculated
 `base_link <- platform_reference` XYZ/RPY and RViz TF preview, then confirm
 Save YAML. It performs no robot motion and does not subscribe to joint states.
 
-The strict schema-3 result is saved beside the camera artifacts as
+The strict schema-4 result is saved beside the camera artifacts as
 `calibration/platform_calibration_<UTC_TIMESTAMP>_<DOBOT_ROBOT_LAN1_IP>.yaml`.
-It records the selected camera calibration and SHA-256, inherited ChArUco
-settings, and exact transform chain, but no RGB frame or overlay. See
+It stores the fixed base/platform transform separately from `teaching_provenance`:
+the source camera calibration/hash, ChArUco settings and original capture chain.
+Loading the platform does not require that source camera file. It stores no RGB
+frame or overlay. Existing schema-3 platforms remain readable without a source-file
+dependency; explicit migration only reorganizes metadata, preserving geometry. See
 [`src/item_perception_yolo/README.md`](src/item_perception_yolo/README.md).
 
 After saving a platform calibration, teach a bin ROI with four 5x5 ArUco
@@ -1058,9 +1065,10 @@ markers (IDs 0–3):
 ros2 launch item_perception_yolo bin_teach.launch.py
 ```
 
-Select the platform calibration, choose the exact 5x5 dictionary, enter the
-measured common marker size, and apply. The node uses the same camera mode as
-the selected platform artifact: fixed-camera mode uses its static calibrated
+Select the platform calibration and an independent **Active camera calibration**,
+choose the exact 5x5 dictionary, enter the measured common marker size, and apply.
+The camera selector prefills the active Item Teach `.env` selection. The node uses
+that camera's mode: fixed-camera mode uses its static calibrated
 mount, while on-hand mode requires fresh `base_link <- Link6` TF. All four IDs
 must be visible; their ID order does not define bin-corner order. The private
 worker undistorts all detected image corners using color CameraInfo. Bin Teach
@@ -1080,7 +1088,7 @@ After a successful capture, it dynamically publishes the complete RViz preview
 use the exact saved clockwise P1–P4 XY coordinates, Z=0, and platform-aligned
 orientation. Retake, re-Apply, terminal failure, or node exit stops publication.
 Run `dobot_rviz` separately to inspect the frames.
-Platform and bin outputs now use strict schema 3. The platform file records the
+Platform outputs use schema 4; portable Bin Teach remains schema 3. The platform records the
 shared ChArUco-origin/axis convention; the bin file separates portable XY
 geometry from its original station's teaching evidence. Each station must
 reproduce the same origin, axes, bin size and bin offset. Platform and corner
@@ -1110,7 +1118,7 @@ station's robot configuration and
 calibration files are not required to load the template. Loaded templates are
 preview-only; Retake clears them before a fresh capture, and Save YAML writes
 only fresh captures. Older platform/bin schemas 1–2 are preserved but rejected;
-re-teach them to produce schema 3. Camera calibration remains schema 7.
+re-teach them to produce platform schema 4 and bin schema 3. Camera calibration remains schema 7.
 
 Teaching previews do not define the future item detector's behavior. Item
 detection and picking are outside this change, and will consume the files

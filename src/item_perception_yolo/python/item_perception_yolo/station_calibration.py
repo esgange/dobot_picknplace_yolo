@@ -1,4 +1,4 @@
-"""Deterministic latest station selection; never mix independently taught frames."""
+"""Deterministic platform geometry and independent active-camera selection."""
 
 from datetime import datetime, timezone
 import re
@@ -7,7 +7,8 @@ import yaml
 
 from .bin_teach_core import load_bin_teach_calibration_context
 from .item_teach_core import _UniqueKeyLoader
-from .platform_teach_core import calibration_directory, load_camera_calibration, load_robot_lan1_ip
+from .platform_teach_core import (
+    calibration_directory, load_camera_calibration, load_platform_calibration, load_robot_lan1_ip)
 
 
 ROBOT_CAMERA_PREFIX = "robot_camera"
@@ -42,11 +43,11 @@ def _newest(candidates, label):
 
 
 def latest_station_calibration(root=None):
-    """Latest current-robot platform and latest camera of its prefix, strictly bound.
+    """Latest current-robot platform and latest camera of its prefix, independently.
 
     Filename UTC timestamps, not mtimes, survive copying/transfer. Never skip an
     invalid selected artifact, substitute another station/prefix or load an older
-    compatible pair when a newer same-camera calibration needs platform reteaching.
+    calibration. The platform's capture camera is teaching history, not a live binding.
     Selection is performed at startup/reload, not while a request is in flight.
     """
     directory = calibration_directory(root).resolve()
@@ -55,12 +56,12 @@ def latest_station_calibration(root=None):
     platforms = [(_stamp(path, pattern), path) for path in
                  directory.glob(f"platform_calibration_*_{robot_ip}.yaml")]
     platform_path, platform_stamp = _newest(platforms, f"platform for robot {robot_ip}")
-    applied = load_bin_teach_calibration_context(platform_path, root=root)
-    if applied.platform.created_at_utc != platform_stamp.isoformat(
+    platform = load_platform_calibration(platform_path, root=root)
+    if platform.created_at_utc != platform_stamp.isoformat(
             timespec="microseconds").replace("+00:00", "Z"):
         raise ValueError(
             "Latest platform filename timestamp conflicts with its saved creation time")
-    prefix = applied.camera.settings.camera_prefix
+    prefix = platform.camera_settings.camera_prefix
     cameras = []
     for path in sorted(directory.glob("camera_*_calibration_*.yaml")):
         camera_stamp = _stamp(
@@ -79,13 +80,7 @@ def latest_station_calibration(root=None):
     if camera.created_at_utc != camera_stamp.isoformat(
             timespec="microseconds").replace("+00:00", "Z"):
         raise ValueError("Latest camera filename timestamp conflicts with its saved creation time")
-    if (camera.path != applied.camera.path or camera.sha256 != applied.camera.sha256
-            or camera.settings.camera_prefix != prefix):
-        raise ValueError(
-            f"Latest camera {camera.path.name} is not the camera bound to latest platform "
-            f"{platform_path.name}. Teach a new platform with that camera calibration; "
-            "older-camera fallback and mixing transforms are forbidden.")
-    return applied
+    return load_bin_teach_calibration_context(platform_path, root=root, camera_path=camera_path)
 
 
 def _validate_robot_camera_binding(camera):

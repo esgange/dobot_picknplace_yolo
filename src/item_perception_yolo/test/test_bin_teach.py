@@ -237,11 +237,14 @@ def test_bin_tf_preview_matches_saved_xy_points_and_platform_transform(tmp_path)
         assert message.transform.rotation.w == 1.0
 
 
-def test_bin_context_requires_matching_platform_camera_hash_and_robot(monkeypatch, tmp_path):
+def test_bin_context_uses_active_camera_independently_and_keeps_robot_identity(
+        monkeypatch, tmp_path):
     platform_path = tmp_path / "calibration" / (
         "platform_calibration_20260910T120000_000000Z_192.168.20.204.yaml"
     )
     camera_path = tmp_path / "calibration" / "camera_to_hand_calibration_test.yaml"
+    camera_path.parent.mkdir()
+    camera_path.write_text("synthetic active camera")
     camera = SimpleNamespace(
         path=camera_path,
         sha256="a" * 64,
@@ -265,16 +268,18 @@ def test_bin_context_requires_matching_platform_camera_hash_and_robot(monkeypatc
         "load_camera_calibration",
         lambda *_args, **_kwargs: camera,
     )
-    loaded = core.load_bin_teach_calibration_context(platform_path, root=tmp_path)
+    loaded = core.load_bin_teach_calibration_context(
+        platform_path, root=tmp_path, camera_path=camera_path)
     assert loaded.platform is platform and loaded.camera is camera
 
     camera.sha256 = "b" * 64
-    with pytest.raises(ValueError, match="different SHA-256"):
-        core.load_bin_teach_calibration_context(platform_path, root=tmp_path)
-    camera.sha256 = "a" * 64
+    loaded = core.load_bin_teach_calibration_context(
+        platform_path, root=tmp_path, camera_path=camera_path)
+    assert loaded.camera.sha256 == "b" * 64
     platform.robot_lan1_ip = "192.168.20.205"
     with pytest.raises(ValueError, match="robot identity"):
-        core.load_bin_teach_calibration_context(platform_path, root=tmp_path)
+        core.load_bin_teach_calibration_context(
+            platform_path, root=tmp_path, camera_path=camera_path)
 
 
 def test_shared_schema_three_ui_state_preserves_both_teach_forms(tmp_path):

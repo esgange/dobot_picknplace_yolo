@@ -1,5 +1,6 @@
 """Video-first platform/bin layout tests with synthetic state, never live nodes."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -21,7 +22,8 @@ def test_teach_layout_prioritizes_video_and_keeps_details_available(monkeypatch,
     node = SimpleNamespace(load_last_session=lambda: None, status_snapshot=lambda: snapshot,
                            latest_overlay=lambda: None, robot_lan1_ip="192.168.20.204",
                            capture=MagicMock(), save=MagicMock())
-    cls = platform_teach_gui.PlatformTeachWindow if kind == "platform" else bin_teach_gui.BinTeachWindow
+    cls = (platform_teach_gui.PlatformTeachWindow if kind == "platform"
+           else bin_teach_gui.BinTeachWindow)
     window = cls(node)
     window._timer.stop()
     window.show()
@@ -48,6 +50,17 @@ def test_teach_layout_prioritizes_video_and_keeps_details_available(monkeypatch,
         assert not window.video.pixmap().isNull()
         node.capture.assert_not_called()
         node.save.assert_not_called()
+        if kind == "bin":
+            # Apply uses the independently chosen camera, not platform provenance.
+            node.apply_settings = MagicMock(return_value="Applied independent sources")
+            window.platform_path.setText("/selected/platform_calibration_test.yaml")
+            window.camera_path.setText("/selected/camera_to_hand_calibration_new.yaml")
+            window.dictionary.setCurrentIndex(window.dictionary.findData("DICT_5X5_50"))
+            window.marker_size.setText("40")
+            window._apply()
+            node.apply_settings.assert_called_once_with(
+                Path(window.platform_path.text()), "DICT_5X5_50", 40.,
+                camera_path=Path(window.camera_path.text()))
     finally:
         window.close()
         app.processEvents()
