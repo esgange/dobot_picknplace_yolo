@@ -32,7 +32,7 @@ def settle_stop(rig):
 
 
 @pytest.mark.parametrize("boundary", ["before_release", 2, 13, 14, 1, "pulse"])
-def test_interrupted_release_recovery_preserves_io_and_never_finishes_release(boundary):
+def test_interrupted_release_recovery_preserves_io_to_home_then_neutralizes(boundary):
     rig = return_rig()
     output, pulse = rig.hardware.output, rig.hardware.exhaust_pulse
 
@@ -61,7 +61,6 @@ def test_interrupted_release_recovery_preserves_io_and_never_finishes_release(bo
     settle_stop(rig)
     rig.hardware.output, rig.hardware.exhaust_pulse = output, pulse
     offset = len(rig.log)
-    outputs = rig.feed["digital_outputs"]
     result = rig.recover()
     if boundary not in ("before_release", 2):
         # Suction still HIGH with vacuum OFF cannot authorize a carrying move.
@@ -70,14 +69,15 @@ def test_interrupted_release_recovery_preserves_io_and_never_finishes_release(bo
         result = rig.recover()
         assert result.state == "READY"
         assert rig.managed.session.attempts[0].state == "CANCELED"
-    else:
-        assert result.state == "HOLDING"
-        assert rig.managed.session.attempts[0].state == "HELD"
+    assert result.state == "READY"
+    assert rig.managed.session.attempts[0].state == "CANCELED"
     assert result.success
     assert rig.managed.return_progress is None
     assert rig.managed.session.attempts[1].state == "CANCELED"
-    assert rig.feed["digital_outputs"] == outputs
-    assert not any(x[0] in ("output", "pulse") for x in rig.log[offset:])
+    assert rig.feed["digital_outputs"] == 0
+    assert [row for row in rig.log[offset:] if row[0] == "output"] == [
+        ("output", channel, False) for channel in (1, 2, 13, 14)]
+    assert not any(row[0] == "pulse" for row in rig.log[offset:])
 
 
 def test_stop_after_release_resumes_upward_retreat_without_second_release():

@@ -40,7 +40,9 @@ Open the [visual HTML](docs/ROBOT_CONTROLLER_FSM.html) in a browser or the
 Motion groups retain CP(100) blending and confirm their final endpoint using
 fresh actual pose, queue/robot status and execution evidence after acceptance.
 Explicit Recover cancels the interrupted action, preserves current gripper
-outputs, confirms a vertical lift to Home height, then returns to taught Home.
+outputs during a confirmed vertical lift to Home height and return to taught Home.
+At Home, Recover / Clear Error relaxes both finger outputs and switches suction and
+exhaust OFF; confirmed neutral outputs and DI1 LOW finish READY.
 Later Stop clicks send a new Stop with a fresh physical confirmation.
 
 Confirmed emergency stops report **“Emergency stop pressed — cannot start or

@@ -128,7 +128,9 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
     for _ in range(8):
         rig.emit(outputs=outputs, inputs=inputs, running=0)
     recovery = node.recovery_home = HomeRecovery.cancel_action(node)
+    real_wait = rig.monitor.wait
     confirm_fresh_stop(rig, recovery, outputs=outputs, inputs=inputs)
+    rig.monitor.wait = real_wait
     rig.transport.current_pose = lambda: pose_matrix(
         rig.monitor.snapshot(require_enabled=True).feed['tool_vector_actual'])
     completions = []
@@ -153,3 +155,19 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
     assert all(list(request.param_value) == ['user=0', 'tool=0', 'v=80', 'a=70']
                for _name, request in rig.requests)
     assert node.monitor.snapshot().feed['digital_outputs'] == outputs
+
+    def reset_echo(*_args, **_kwargs):
+        name, request = rig.requests[-1]
+        assert name == 'DO' and request.status == 0 and request.time == 0
+        sample = rig.monitor.snapshot()
+        bits = sample.feed['digital_outputs'] & ~(1 << (request.index - 1))
+        inputs = 0 if request.index == 13 else sample.feed['digital_input_bits']
+        rig.emit(outputs=bits, inputs=inputs, home=True)
+        return rig.monitor.sequence
+
+    rig.on_request = reset_echo
+    recovery.relax(node)
+    assert [name for name, _ in rig.requests] == ['RelMovLUser', 'MovL'] + ['DO'] * 4
+    assert [request.index for _, request in rig.requests[-4:]] == [1, 2, 13, 14]
+    assert node.monitor.snapshot().feed['digital_outputs'] == 0
+    assert not node.holding_item and node.managed.session.held_index is None

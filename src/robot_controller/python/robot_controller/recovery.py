@@ -1,4 +1,4 @@
-"""Explicit cancel-and-Home recovery; never replays interrupted release I/O."""
+"""Cancel-and-Home recovery, followed by an explicit gripper reset at Home."""
 
 from dataclasses import dataclass, field
 
@@ -17,6 +17,8 @@ class HomeRecovery:
     outputs: dict = field(default_factory=dict)
     holding: bool = False
     motion_started: bool = False
+    relaxing: bool = False
+    pending_outputs: dict = field(default_factory=dict)
 
     @classmethod
     def cancel_action(cls, node):
@@ -38,7 +40,7 @@ class HomeRecovery:
                 session.cancel_remaining()
             node.events.record(
                 "WARNING", "recovery_action_cancelled",
-                "Interrupted action cancelled; Recover will preserve outputs and return Home",
+                "Interrupted action cancelled; preserve grip to Home, then relax gripper",
                 placement_release_confirmed=released, trusted_held_source=trusted)
             return cls(trusted, released)
 
@@ -57,6 +59,8 @@ class HomeRecovery:
         elif sample.suction_present:
             raise FeedbackFailure("Recovery blocked: DI1 LOW is not yet stable; retry Recover")
         self.holding = detected
+        self.relaxing = False
+        self.pending_outputs.clear()
         self.outputs = outputs
         node.expected_outputs.update(outputs)
         node.holding_item = detected
@@ -79,8 +83,12 @@ class HomeRecovery:
             raise FeedbackFailure("Recovery gripper state has not been confirmed after Stop")
         bits = sample.feed["digital_outputs"]
         for channel, expected in self.outputs.items():
-            if bool(bits & (1 << (channel - 1))) != expected:
+            actual = bool(bits & (1 << (channel - 1)))
+            allowed = (expected, self.pending_outputs.get(channel, expected))
+            if actual not in allowed:
                 raise FeedbackFailure(f"Recovery blocked: preserved DO{channel} changed")
+        if self.relaxing:
+            return sample  # Suction may decay while the explicitly requested reset runs.
         if self.holding and not sample.suction_present:
             self.trusted_held = False
             raise HeldSuctionLost("Recovery stopped: held-item suction was lost")
@@ -93,6 +101,7 @@ class HomeRecovery:
         config = node.configuration
         config.validate_sources(node.root)
         self.check(node.monitor.snapshot(require_enabled=True))
+
         current = node.hardware.current_pose()
         speed = config.profile["speed"]["travel_percent"]
         acceleration = config.profile["acceleration"]["travel_percent"]
@@ -121,3 +130,41 @@ class HomeRecovery:
             node.hardware.move_batch((home,), batch_name="recovery_home",
                                      confirmed_start_pose=current, **policy)
         self.check(node.monitor.snapshot(require_enabled=True))
+
+    def relax(self, node):
+        """Only neutralize after confirmed Home; never open fingers or pulse exhaust."""
+        from .hardware import OUTPUT_FEEDBACK_TIMEOUT_SEC
+
+        node.raise_if_cancelled()
+        self.check(node.monitor.snapshot(require_enabled=True))
+        if not node.hardware.home_already_reached(node.configuration.home_joints):
+            raise FeedbackFailure("Gripper reset requires confirmed stationary Home")
+        node.operation_progress("RECOVERY_RELAX", "At Home; relaxing gripper and clearing vacuum")
+        self.relaxing = True
+        self.trusted_held = False
+        node.holding_item = False
+        session = node.managed.session
+        if session is not None and session.held_index is not None:
+            index = session.held_index
+            if session.attempts[index - 1].state == "HELD":
+                session.set_state(index, "CANCELED")
+            session.held_index = None
+        for channel in GRIP_CHANNELS:
+            node.raise_if_cancelled()
+            self.pending_outputs[channel] = False
+            node.hardware.output(channel, False)
+            self.outputs[channel] = False
+            self.pending_outputs.pop(channel)
+            self.check(node.monitor.snapshot(require_enabled=True))
+        if not node.hardware.sensor(False, OUTPUT_FEEDBACK_TIMEOUT_SEC):
+            raise HeldUnknown("Gripper outputs relaxed at Home, but DI1 suction is still HIGH; "
+                              "clear the item or sensor obstruction, then Recover again")
+        sample = self.check(node.monitor.snapshot(require_enabled=True))
+        if sample.feed["digital_input_bits"] & 1:
+            raise HeldUnknown("Gripper outputs relaxed at Home, but DI1 suction is still HIGH")
+        if not node.hardware.home_already_reached(node.configuration.home_joints):
+            raise FeedbackFailure("Home position lost while resetting gripper")
+        self.holding = False
+        node.events.record("INFO", "recovery_gripper_relaxed", "Gripper reset confirmed at Home",
+                           digital_outputs=sample.feed["digital_outputs"],
+                           digital_input_bits=sample.feed["digital_input_bits"])

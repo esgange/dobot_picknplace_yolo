@@ -1,4 +1,4 @@
-"""Explicit Recover cancels the batch, preserves grip and lifts before Home."""
+"""Recover preserves grip through travel, then resets the gripper only at Home."""
 
 from types import SimpleNamespace
 import threading
@@ -43,6 +43,15 @@ class RecoveryRig(Rig):
             self.log.append(("recover", speed))
             home_recovery.capture(self, self.snapshot())
         self.hardware.recover = recover
+        self.clear_suction_on_reset = True
+        output = self.hardware.output
+
+        def reset_output(channel, active, **kwargs):
+            output(channel, active, **kwargs)
+            if (self.active_action == "recover" and channel == 13 and not active
+                    and self.clear_suction_on_reset):
+                self.lose_suction()
+        self.hardware.output = reset_output
 
     def recover(self):
         return RobotController._recover(self, None, SimpleNamespace())
@@ -50,7 +59,7 @@ class RecoveryRig(Rig):
 
 @pytest.mark.parametrize("held", [False, True])
 @pytest.mark.parametrize("height", [.3, .8, 1.])
-def test_recovery_preserves_io_cancels_batch_and_confirms_lift_before_home(held, height):
+def test_recovery_preserves_grip_during_travel_then_relaxes_at_home(held, height):
     rig = RecoveryRig(count=3)
     if not held:
         rig.lose_suction()
@@ -59,14 +68,21 @@ def test_recovery_preserves_io_cancels_batch_and_confirms_lift_before_home(held,
     rig.feed["tool_vector_actual"] = pose_values(current)
     outputs = rig.feed["digital_outputs"]
     batches = []
-    rig.hardware.on_move = lambda targets, kwargs: batches.append((targets, kwargs))
+
+    def travelling(targets, kwargs):
+        assert rig.feed["digital_outputs"] == outputs
+        assert not any(row[0] == "output" for row in rig.log)
+        batches.append((targets, kwargs))
+    rig.hardware.on_move = travelling
     result = rig.recover()
-    assert result.success and result.state == ("HOLDING" if held else "READY")
+    assert result.success and result.state == "READY"
     assert "at Home" in result.message and "cancelled" in result.message
-    assert rig.feed["digital_outputs"] == outputs
-    assert states(rig) == (["HELD"] if held else ["CANCELED"]) + ["CANCELED"] * 2
+    assert rig.feed["digital_outputs"] == 0 and not rig.holding_item
+    assert states(rig) == ["CANCELED"] * 3
     assert rig.managed.session.next_eligible is None and rig.recovery_home is None
-    assert not any(row[0] in ("output", "pulse") for row in rig.log)
+    assert [row for row in rig.log if row[0] == "output"] == [
+        ("output", channel, False) for channel in (1, 2, 13, 14)]
+    assert not any(row[0] == "pulse" for row in rig.log)
     assert [kwargs["batch_name"] for _, kwargs in batches] == (
         ["recovery_lift", "recovery_home"] if height < .8 else ["recovery_home"])
     if height < .8:
@@ -83,11 +99,60 @@ def test_recovery_preserves_io_cancels_batch_and_confirms_lift_before_home(held,
     assert not rig.operation_lock.locked()
 
 
-def test_already_home_recovery_never_sends_motion_or_output_commands():
+def test_already_home_recovery_relaxes_without_motion():
     rig = RecoveryRig()
     rig.feed["tool_vector_actual"] = pose_values(rig.configuration.home_matrix)
     assert rig.recover().success
-    assert not any(row[0] in ("move", "output", "pulse") for row in rig.log)
+    assert not any(row[0] in ("move", "pulse") for row in rig.log)
+    assert rig.feed["digital_outputs"] == 0
+
+
+def test_reset_refuses_to_run_before_confirmed_home():
+    from robot_controller.recovery import HomeRecovery
+
+    rig = RecoveryRig()
+    recovery = HomeRecovery.cancel_action(rig)
+    recovery.capture(rig, rig.snapshot())
+    with pytest.raises(FeedbackFailure, match="stationary Home"):
+        recovery.relax(rig)
+    assert not any(row[0] == "output" for row in rig.log)
+
+
+def test_stuck_suction_after_reset_keeps_ready_blocked_and_retry_waits_for_low():
+    rig = RecoveryRig()
+    rig.clear_suction_on_reset = False
+    result = rig.recover()
+    assert not result.success and result.state == "HELD_UNKNOWN"
+    assert "outputs relaxed at Home" in result.message and "still HIGH" in result.message
+    assert rig.feed["digital_outputs"] == 0 and not rig.startup_complete
+    assert states(rig) == ["CANCELED", "CANCELED"]
+    offset = len(rig.log)
+    assert not rig.recover().success
+    assert not any(row[0] in ("move", "output", "pulse") for row in rig.log[offset:])
+    rig.lose_suction()
+    assert rig.recover().success and rig.machine.state == "READY"
+
+
+@pytest.mark.parametrize("failure", ["cancel", "output_failure", "unexpected_output"])
+def test_reset_failure_or_stop_prevents_later_outputs_and_success(failure):
+    rig = RecoveryRig()
+    output = rig.hardware.output
+
+    def interrupted(channel, active, **kwargs):
+        if channel == 2 and failure == "output_failure":
+            raise FeedbackFailure("DO2 did not confirm OFF")
+        output(channel, active, **kwargs)
+        if channel == 1:
+            if failure == "cancel":
+                rig.cancel_event.set()
+            elif failure == "unexpected_output":
+                rig.feed["digital_outputs"] |= 1 << 13  # Unrequested finger OPEN.
+    rig.hardware.output = interrupted
+    result = rig.recover()
+    assert not result.success and result.state != "READY"
+    assert not rig.startup_complete
+    assert [row for row in rig.log if row[0] == "output"] == [("output", 1, False)]
+    assert not any(row[0] == "pulse" for row in rig.log)
 
 
 @pytest.mark.parametrize("phase", ["recovery_lift", "recovery_home"])
@@ -106,7 +171,7 @@ def test_stop_during_recovery_prevents_later_motion_and_retry_only_homes(phase):
     assert rig.managed.session.next_eligible is None
     rig.hardware.on_move = lambda *_args: None
     assert rig.recover().success
-    assert rig.machine.state == "HOLDING"
+    assert rig.machine.state == "READY" and rig.feed["digital_outputs"] == 0
 
 
 def test_failed_lift_does_not_dispatch_home():
@@ -142,19 +207,18 @@ def test_dropped_item_that_reappears_is_not_trusted_again():
     assert not any(row[0] in ("move", "output", "pulse") for row in rig.log)
 
 
-def test_unknown_high_blocks_until_fresh_low_then_returns_home_without_output_reset():
+def test_unknown_high_blocks_until_fresh_low_then_returns_home_and_relaxes():
     rig = RecoveryRig()
     rig.managed.session = None
     rig.holding_item = False
     rig.machine = ControllerStateMachine(initial="HELD_UNKNOWN")
-    outputs = rig.feed["digital_outputs"]
     result = rig.recover()
     assert not result.success and result.state == "HELD_UNKNOWN"
     assert "Recover again" in result.message
     assert not any(row[0] == "move" for row in rig.log)
     rig.lose_suction()
     assert rig.recover().success and rig.machine.state == "READY"
-    assert rig.feed["digital_outputs"] == outputs
+    assert rig.feed["digital_outputs"] == 0
 
 
 def test_recovery_rejects_stale_feedback_without_moving():
@@ -188,4 +252,7 @@ def test_real_lifecycle_preserves_unheld_outputs_through_clear_enable_and_settin
     rig.hardware.recover = transport.recover
     assert rig.recover().success
     assert ("EnableRobot",) in rig.log and ("settings", 60) in rig.log
-    assert not any(row[0] in ("output", "pulse") for row in rig.log)
+    assert rig.feed["digital_outputs"] == 0
+    first_reset = next(i for i, row in enumerate(rig.log) if row[0] == "output")
+    last_move = max(i for i, row in enumerate(rig.log) if row[0] == "move")
+    assert first_reset > last_move

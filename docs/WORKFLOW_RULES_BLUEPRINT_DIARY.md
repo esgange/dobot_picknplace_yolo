@@ -7240,6 +7240,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   3e4f9938cc03dd9ab79a48c8d188a9bb105b484ed483d89879ffa642f77f452b.
   No physical robot commands, live restart or commissioning/offline-transfer claim.
 
+### 2026-09-29 — Rule 176: Recover relaxes the gripper after Home
+
+- User requested that Clear also reset the gripper and explicitly confirmed the
+  timing: after reaching Home, preserving grip during recovery travel. Keep
+  cancel-and-Home admission, Stop, ClearError/Enable/settings, source checks,
+  upward lift and separate Home confirmation. Append a stationary-Home reset of
+  DO1, DO2, DO13 and DO14 to OFF through the existing acknowledged/feedback-checked
+  DO transport. No OPEN command or exhaust pulse, no reset before confirmed Home,
+  and no change to Direct Stop, Pick, Place or Return Item motion/IO.
+- During reset, allow only each dispatched OFF transition and intentional suction
+  decay. Cancel the former held source without claiming PLACED or RETURNED.
+  Confirm all four outputs neutral, raw DI1 LOW and continued Home before READY.
+  A stuck HIGH reports HELD_UNKNOWN with reset-specific guidance. Output failure,
+  stale feedback, unexpected changes or Stop prevents later reset commands and
+  success. Retried recovery adopts fresh stopped I/O; it cannot reuse the cancelled
+  holding source to carry an unknown object. Reset failures also take containment
+  even when no Home motion was needed. Update GUI tooltip and READY completion
+  message to the new relax-at-Home behavior.
+- Validation: all 561 controller tests pass. Extend real transport tests to cover
+  the two recovery movements followed by exactly four OFF commands with fresh
+  echoes, preserving grip until Home. Add already-Home reset, not-at-Home rejection,
+  stuck suction/retry, output failure, unexpected output and Stop cases; update
+  old preserve-forever expectations and UI assertions. The synthetic feedback
+  fixture needed to emit DO echoes on command dispatch instead of waiting on the
+  motion-only callback; no physical process was involved. Controller symlink
+  build and diff checks pass; lint compared with HEAD has no new findings (20
+  pre-existing formatting findings remain outside the changes). Regenerated seven
+  FSM HTML/PDF diagrams; source SHA-256
+  ef4a1bc106b0ecdec7e8b2b36906577ba5f9bc0fc9eed4ca5618797c5195ab5a.
+- Local operator artifacts, calibrations, global-speed setting and vendor edits
+  are untouched. No physical robot commands, automatic live restart, commissioning
+  or offline-transfer claim. Restart Robot Controller and its GUI to activate.
+
 ### Future entry template
 
 ```text

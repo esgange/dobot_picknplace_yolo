@@ -225,19 +225,20 @@ def test_unknown_held_state_allows_explicit_recovery_recheck(window, inputs):
     assert window.stop.isEnabled()
 
 
-def test_recover_response_shows_held_instructions_once_without_issuing_commands(
+def test_recover_response_shows_relaxed_gripper_once_without_issuing_commands(
         window, monkeypatch):
     prompts = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         lambda _parent, title, text: prompts.append((title, text)))
     window.pending["recover"] = SimpleNamespace(
         done=lambda: True,
-        result=lambda: SimpleNamespace(success=True, state="HOLDING"))
+        result=lambda: SimpleNamespace(success=True, state="READY"))
     window._refresh()
     window._refresh()
     assert len(prompts) == 1
-    assert "RETURN ITEM & STOP" in prompts[0][1]
-    assert "STOP NOW" in prompts[0][1] and "obstruction" in prompts[0][1]
+    assert "Fingers are relaxed" in prompts[0][1]
+    assert "suction and exhaust are OFF" in prompts[0][1]
+    assert "DI1 is LOW" in prompts[0][1] and "action was cancelled" in prompts[0][1]
 
 
 def test_recovery_unknown_suction_refusal_displays_server_clearing_instructions(

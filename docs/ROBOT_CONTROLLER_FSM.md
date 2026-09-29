@@ -21,14 +21,15 @@ now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
 retained Continue progress and never enters the bin put-back routine. Explicit
-Recover supersedes that progress with cancel-and-Home under rule 168.
+Recover supersedes that progress with cancel-and-Home-then-relax under rule 176.
 GUI-mode placement also permits an empty robot; headless placement retains its
 trusted held-item requirement.
 Tray service requests now use the versioned depth-capable endpoint; old provider
 processes cannot satisfy readiness. Executor failures in the provider are visible.
 
-Recovery behavior review: **2026-09-29**, diary rule **168**: explicit Recover
-cancels the old action and goes Home with current grip preserved.
+Recovery behavior review: **2026-09-29**, diary rule **176**: explicit Recover
+cancels the old action, preserves grip through lift/Home, then resets the gripper
+to relaxed/OFF at confirmed Home.
 
 Emergency-stop feedback review: **2026-09-29**, diary rule **167**. Startup queries
 GetErrorID before initialization; confirmed emergency stops have explicit operator
@@ -60,7 +61,8 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 - **Pause parks Home/Pick/tray-position operations. Placement Pause stops in place**,
   then waits for Continue or direct Stop without releasing or moving the item.
 - **Direct Stop stops motion and preserves the grip.** It does not put an item back.
-- **Recover cancels the old action and returns Home**, preserving gripper outputs.
+- **Recover cancels the old action, returns Home, then relaxes the gripper.**
+  Preserve outputs during travel; reset DO1/DO2/DO13/DO14 only at confirmed Home.
   It confirms a vertical lift to Home height before moving Home; it never resumes
   release or the old batch. Fresh gripper/robot checks must pass first.
 - One controller operation owns execution at a time. A managed Pause retains
@@ -249,7 +251,7 @@ flowchart TD
     PENDING -->|Explicit Recover| CANCELED
     ACTIVE -->|Explicit Recover| CANCELED
     INTERRUPTED -->|Explicit Recover| CANCELED
-    HELD -->|Recover with fresh clear suction and no release proof| CANCELED
+    HELD -->|Recover: clear suction or explicit reset at Home| CANCELED
 ```
 
 FAILED, DROPPED, RETURNED, PLACED and CANCELED are terminal ledger states. A returned uncertain
@@ -262,8 +264,9 @@ PLACED records the completed tray queue and clear final grip at Home, without
 requiring intermediate release evidence or proving the item landed on the tray.
 Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
 original destination until Home completes, next-candidate travel takes ownership,
-or explicit Recover cancels it. A trusted held source can remain HELD at Home;
-no cancelled item is reported as PLACED or RETURNED without release evidence.
+or explicit Recover cancels it. Preserve a trusted held source through recovery
+travel, then mark it CANCELED when resetting the gripper at Home. This does not
+claim PLACED or RETURNED.
 
 ## 3a. Tray observation and queued placement
 
@@ -285,7 +288,7 @@ flowchart TD
     Retry --> Observe
     Stopped -->|Release confirmed| Recover["Continue: neutralize, upward retreat, Home; never release again"]
     Stopped -->|Partial release unconfirmed| Block["Continue blocked; no repeated descent/release"]
-    Stopped -->|Explicit Recover| Cancel["Cancel placement; fresh Stop and grip checks; preserve I/O; lift to Home Z then Home"]
+    Stopped -->|Explicit Recover| Cancel["Cancel placement; fresh Stop and grip checks; preserve I/O; lift to Home Z then Home; relax gripper"]
 ```
 
 X/Y are strictly positive millimetres along the detected tray inward short-X /
@@ -350,8 +353,8 @@ across Pause/Continue. Startup/idle unknown-item and other action guards remain.
 Once release is issued, never descend/release again. Observed release permits neutralizing
 outputs and an upward-only recovery to at least pre-place Z, followed by Home.
 Unconfirmed partial release blocks Continue. Explicit Recover cancels placement,
-validates fresh stopped I/O, preserves outputs and lifts to Home Z before Home;
-it neither replays expired history nor declares successful placement. Return Item cannot substitute
+validates fresh stopped I/O, preserves outputs and lifts to Home Z before Home,
+then resets all four gripper outputs OFF. It neither replays expired history nor declares successful placement. Return Item cannot substitute
 bin put-back during placement. Pick settling/retries and its return paths are
 unchanged. Process restart cannot reconstruct retained placement progress.
 
@@ -418,8 +421,10 @@ flowchart TD
     Enable -->|Failure| Fault
     Enable --> Lift["Below Home Z: vertical lift at current XY/attitude; physically confirm"]
     Lift --> Home["Move to exact taught Home; preserve grip"]
-    Home -->|Unheld| Ready["READY at Home; old batch cancelled"]
-    Home -->|Trusted held item| Holding["HOLDING at Home; old batch cancelled"]
+    Home --> Relax["Stationary Home: DO1, DO2, DO13, DO14 OFF; confirm each"]
+    Relax -->|Neutral outputs and DI1 LOW| Ready["READY at Home; gripper relaxed; old batch cancelled"]
+    Relax -->|DI1 remains HIGH| Unknown
+    Relax -->|Output failure or Stop| Fault
 ```
 
 Direct Stop never automatically releases, Homes or resumes. It remains available
@@ -435,10 +440,10 @@ or overwrite a new operation. Operation startup cannot clear an in-progress Stop
 
 | Recovery situation | Operator path / controller result |
 | --- | --- |
-| Known item, suction intact | Recover lifts and returns Home in HOLDING; all grip outputs preserved. Separate PAUSE/Return Item remains available afterward. |
+| Known item, suction intact | Preserve grip while lifting and returning Home; then relax all outputs. READY requires neutral outputs and DI1 LOW. |
 | Saved item with latched loss | Fresh LOW permits lift/Home without release or new picks; HIGH does not erase the prior loss and blocks motion. |
 | Interrupted pick/place/put-back, release unconfirmed | Cancel it, validate fresh stopped grip, lift/Home; no repeated release and no fabricated placement success. |
-| Interrupted release confirmed | Preserve current outputs, lift/Home; new DI1 HIGH blocks this route. |
+| Interrupted release confirmed | Preserve current outputs through lift/Home, then relax. New DI1 HIGH before travel blocks this route. |
 | Unknown HIGH suction, no trusted source | Keep stopped; safely secure/clear item or inspect the sensor for obstruction. Once DI1 shows LOW, click Recover again; no extra Stop click required. No invented return location. |
 | Competing maintenance app | Close the named Gripper Diagnostics/motion-debug application, then retry Recover. |
 | Confirmed emergency stop (`res=-3` or alarm 1537) | Cannot start/recover while active. Release the physical button, then click Recover / Clear Error. Recover may clear a latched alarm; Enable remains blocked until clearance is verified. |
@@ -452,13 +457,20 @@ held suction must have a trusted source and active vacuum; sustained clear DI1
 permits empty recovery without asserting that an object left the fingers.
 
 Restore readiness with conditional ClearError, verified clearance, Enable and
-settings. Keep the last confirmed global speed (100% if unset). Do not reset or
-neutralize outputs. Below Home Z, issue and physically confirm an upward-only
+settings. Keep the last confirmed global speed (100% if unset). Preserve outputs
+during travel. Below Home Z, issue and physically confirm an upward-only
 RelMovLUser with unchanged XY/attitude; then a separate joint-target MovL to taught
 Home. Use taught travel rates. Already-high skips the rise; already-at-Home skips
 its move. Monitor unchanged outputs and held/clear suction throughout. Direct
 Stop pre-empts recovery; another Recover replans from a new Stop and current pose.
-Completion is READY/HOLDING at Home; no detector, release or next-candidate request.
+At confirmed stationary Home, issue DO1 OFF, DO2 OFF, DO13 OFF and DO14 OFF,
+confirming every response and fresh output echo. Accept only the pending OFF
+transition; unexpected output changes still fail. During this reset, intentional
+suction loss is allowed and the former held source becomes CANCELED. No finger
+OPEN command, exhaust pulse or replay of placement/put-back release is sent.
+Require neutral outputs, DI1 LOW and continued Home arrival before READY. A stuck
+HIGH DI1 remains HELD_UNKNOWN; stale feedback/output failure/Stop cannot report
+success or dispatch remaining reset commands. No detector or next-candidate request.
 
 If ClearError acknowledges but the alarm-clear feedback check fails, a read-only
 GetErrorID query provides the explicit emergency-stop reason for alarm 1537.
@@ -502,7 +514,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | --- | --- |
 | Explicit Return Item | Home → READY; ends the interrupted operation. |
 | Held suction loss during active Pick | Next eligible saved candidate, or Home → READY if exhausted. Original Pick stays active. |
-| Explicit Recover | Does not enter put-back; cancel, preserve grip, lift and Home. |
+| Explicit Recover | Does not enter put-back; cancel, preserve grip through lift/Home, then relax at Home. |
 | Held loss during Pause / while PAUSED | Home → PAUSED. Wait for explicit Continue or Stop. |
 
 ## 7. Home has two routes

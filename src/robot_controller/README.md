@@ -155,7 +155,8 @@ from actual position to at least pre-place height if needed, and returns Home.
 An interrupted partial release with insufficient confirmation remains blocked;
 no automatic release or bin put-back is inferred. Direct Stop requires explicit
 Recover, which cancels the placement and preserves current outputs while lifting
-to Home height and returning Home. It never replays the expired placement history
+to Home height and returning Home, then relaxes all four gripper outputs. It never
+replays the expired placement history
 or waits for continuous exhaust to switch itself OFF. A failed
 tray/depth observation performs no placement or release. Existing Pick settling,
 retries, camera/bin avoidance, rotation and Home paths remain unchanged.
@@ -238,7 +239,8 @@ Services:
 - `/robot_controller/startup` performs the deterministic cold Startup sequence.
 - `/robot_controller/recover` cancels the interrupted action and remaining batch,
   preserves gripper outputs, restores readiness, lifts vertically to Home height
-  and moves to taught Home. It accepts `FAULT`, `RECOVERY_REQUIRED` and
+  and moves to taught Home, then turns DO1/DO2/DO13/DO14 OFF. Confirmed neutral
+  outputs and DI1 LOW finish READY. It accepts `FAULT`, `RECOVERY_REQUIRED` and
   `HELD_UNKNOWN`; unknown DI1 HIGH still blocks enabling/motion.
 - `/robot_controller/pause` accepts a managed stop-and-park request. The service
   reports acceptance; status reaches `PAUSED` only after parking completes.
@@ -335,23 +337,30 @@ state. It does not replay old placement history. Opposing output pairs, unknown
 DI1 HIGH, DI1 HIGH after confirmed release, or a prior dropped source that merely
 regains suction block motion. Sustained fresh LOW permits empty recovery while
 preserving the outputs: LOW is not proof that an object physically left the fingers.
-A trusted HELD source with live suction and vacuum remains HOLDING.
+A trusted HELD source with live suction and vacuum stays held throughout recovery travel.
 
 After conditional ClearError, verified alarm clearance, Enable and readiness,
 Recover issues an upward-only RelMovLUser at unchanged XY/attitude if below Home Z.
 Confirm that lift before a separate queued joint-target MovL to taught Home.
 Use taught travel speed/acceleration and the last confirmed global factor (100%
 if unset). Already at/above Home height skips the lift; already at taught Home
-skips its move. No DO, MovLIO, exhaust, neutralization or output reset is sent.
-Current outputs and suction policy are monitored throughout. Stop/cancellation
-pre-empts either segment; a new Recover replans from fresh feedback. Completion
-is READY or HOLDING at Home, never an automatic next pick or resumed release.
+skips its move. Current outputs and suction policy are monitored throughout travel.
+After stationary Home is confirmed, reset DO1, DO2, DO13 and DO14 to OFF, in that
+order, confirming each response/output. Both finger outputs OFF means relaxed;
+there is no OPEN command or exhaust pulse. The intentional reset permits suction
+to decay. Require all four outputs OFF, DI1 LOW and continued Home arrival before
+reporting READY. Cancel the former held ledger entry without claiming PLACED or
+RETURNED. A still-HIGH DI1 reports HELD_UNKNOWN; clear the item/obstruction and retry.
+Stop/cancellation prevents remaining commands during travel or output reset; failures
+never report success. Another Recover replans from fresh stopped feedback. There is
+no automatic next pick or replay of an interrupted placement/put-back release.
 
 Recover remains available in HELD_UNKNOWN for a fresh check after the operator
 secures/clears the item or obstruction. Stale feedback, active E-stop/other alarms,
 changed teach sources, unexpected I/O or failed commands prevent movement.
-The HOLDING completion prompt explains how to request a separate deliberate
-Return Item via PAUSE → RETURN ITEM & STOP. Recover itself does not put an item back.
+The completion prompt reports Home reached, fingers relaxed, suction/exhaust OFF
+and DI1 LOW. Recover itself does not put an item back; use the separate Return Item
+operation for a deliberate return to the source.
 
 Native action cancellation and Stop invalidate the active command generation,
 use the independent Stop client, wait for acknowledgement and two distinct
@@ -436,7 +445,8 @@ Under rule 112, every put-back target uses
 taught pre-pick release, neutral clearance retreat, exit transit and
 exact joint Home. Put-back never inherits the slow approach/retract rates.
 This applies to explicit return, paused drop and automatic loss return.
-Explicit Recover instead preserves outputs and uses taught travel rates to Home.
+Explicit Recover instead preserves outputs and uses taught travel rates to Home,
+then neutralizes the gripper at Home.
 If another candidate follows, its normal travel and final-pick approach rates
 resume after the old item's exit transit. Global SpeedFactor still applies
 and is never automatically raised by a put-back.
@@ -457,7 +467,8 @@ intentionally OFF. A normal candidate becomes RETURNED only when release is
 confirmed; a candidate with latched loss stays DROPPED. Explicit Recover abandons
 that return progress and cancels remaining candidates. It uses fresh stopped I/O,
 never repeats the release/exhaust, and lifts to Home height before moving Home.
-New DI1 HIGH after confirmed release still blocks this recovery.
+Then it resets the gripper to neutral. New DI1 HIGH after confirmed release still
+blocks recovery travel.
 
 Direct `/stop`, action cancellation, shutdown, and another Stop during parking
 or return cancel all further host-side commands and require recovery. The
@@ -504,7 +515,7 @@ action cancellation and shutdown always pre-empt; pending Pause retains its
 existing put-back-and-remain-paused behavior. Idle HOLDING and standalone Home
 losses continue to require explicit Recovery.
 
-Explicit Recover is a separate cancel-and-Home operation under rule 168. It
+Explicit Recover is a separate cancel-and-Home-then-relax operation under rule 176. It
 never invokes the automatic put-back or next-candidate routine. A repeated
 Recover after interruption preserves the cancelled state and uses a new Stop,
 fresh gripper feedback and a newly measured motion origin. Output changes,

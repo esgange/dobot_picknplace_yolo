@@ -186,7 +186,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.startup.clicked.connect(self._start_or_continue)
         self.recover.clicked.connect(lambda: self._command("recover"))
         self.recover.setToolTip(
-            "Cancel the interrupted action, preserve gripper outputs, lift to Home height, then go Home")
+            "Cancel the action, preserve grip while lifting and returning Home, "
+            "then relax fingers and turn suction/exhaust OFF")
         self.stop.clicked.connect(self._pause_or_stop)
         for button in (self.startup, self.recover, self.stop):
             button.setMinimumHeight(58)
@@ -560,17 +561,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     self._sync_speed_slider(result.confirmed_percent)
                     self.speed_label.setText(
                         f"Global SpeedFactor: {result.confirmed_percent}% confirmed")
-                elif name == "recover" and result.state == "HOLDING":
+                elif name == "recover" and result.state == "READY":
                     QtWidgets.QMessageBox.information(
-                        self, "Recovered — item still held",
-                        "Recovery completed at Home in HOLDING; gripper outputs preserved. "
-                        "The interrupted action was cancelled.\n\n"
-                        "To put the item back: click PAUSE, wait until RETURN ITEM & STOP "
-                        "appears, then click it. Clicking STOP NOW during parking stops "
-                        "immediately and requires Recovery again.\n\n"
-                        "If the gripper should be empty, stop the robot and check for "
-                        "an item or suction-sensor obstruction. Recover never repeats "
-                        "the interrupted release or continues the old pick batch.")
+                        self, "Recovered — gripper relaxed",
+                        "Recovery completed at Home. Fingers are relaxed, suction and "
+                        "exhaust are OFF, and DI1 is LOW. The interrupted action was cancelled.")
             except Exception as exc:
                 if name == "speed":
                     self.speed_pending_percent = None

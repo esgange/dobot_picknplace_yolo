@@ -154,6 +154,9 @@ class Hardware:
         self.node.expected_outputs[channel] = active
         self.emit()
 
+    def sensor(self, active, _timeout):
+        return self.suction == active
+
     def ensure_no_pending_response(self):
         pass
 
@@ -351,7 +354,7 @@ def test_place_action_finishes_ready_with_a_typed_result():
     node._end_operation.assert_called_once()
 
 
-def test_controller_recovery_cancels_placement_and_lifts_home_without_output_changes():
+def test_controller_recovery_cancels_placement_then_relaxes_after_home():
     node = operation_node()
     node.hardware.interrupt_at = 1
     with pytest.raises(OperationCanceled):
@@ -363,12 +366,13 @@ def test_controller_recovery_cancels_placement_and_lifts_home_without_output_cha
     node.hardware.recover = Mock(side_effect=lambda _speed, **kw:
                                  kw["home_recovery"].capture(node, node.hardware.sample()))
     node.managed.recover_item_and_continue = Mock(side_effect=AssertionError("Wrong bin recovery"))
-    before = dict(node.hardware.outputs)
     response = RobotController._recover(node, Command.Request(), Command.Response())
     assert response.success and response.state == "READY"
     assert node.hardware.recover.call_count == 1
-    assert node.placement is None and node.hardware.calls[-1][1][-1] == "recovery_home"
-    assert node.hardware.outputs == before
+    assert node.placement is None
+    assert node.hardware.calls[-5][1][-1] == "recovery_home"
+    assert node.hardware.calls[-4:] == [("output", ch, False) for ch in (1, 2, 13, 14)]
+    assert not any(node.hardware.outputs.values())
     node.managed.recover_item_and_continue.assert_not_called()
 
 

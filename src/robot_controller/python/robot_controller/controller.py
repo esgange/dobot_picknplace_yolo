@@ -576,17 +576,19 @@ class RobotController(Node):
             if self.global_speed_percent is None:
                 self.global_speed_percent = 100
             recovery.run(self)
+            recovery.relax(self)
             self.raise_if_cancelled()
             self.recovery_home = None
             self.startup_complete = True
-            target = "HOLDING" if self.holding_item else "READY"
-            self._transition(target, "Recovery completed at Home; grip preserved; "
+            self._transition("READY", "Recovery completed at Home; gripper relaxed; "
                              "interrupted action cancelled")
             response.success = True
         except HeldUnknown as exc:
             self.startup_complete = False
-            if recovery is not None and recovery.motion_started:
+            if recovery is not None and (recovery.motion_started or recovery.relaxing):
                 self._contain_queue_control_failure("Home recovery", exc)
+                if recovery.relaxing and self.machine.state == "HELD_UNKNOWN":
+                    self._transition("HELD_UNKNOWN", str(exc))
             elif self.managed.session is not None and self.managed.session.held_index is not None:
                 self._transition("FAULT", f"Recovery blocked; held source retained: {exc}")
             else:
@@ -597,7 +599,7 @@ class RobotController(Node):
             self._settle_lifecycle_cancellation(str(exc))
         except Exception as exc:
             response.success = False
-            if recovery is not None and recovery.motion_started:
+            if recovery is not None and (recovery.motion_started or recovery.relaxing):
                 self._contain_queue_control_failure("Home recovery", exc)
                 if self.machine.state == "RECOVERY_REQUIRED":
                     self._transition("FAULT", f"Home recovery failed; robot stopped: {exc}")
