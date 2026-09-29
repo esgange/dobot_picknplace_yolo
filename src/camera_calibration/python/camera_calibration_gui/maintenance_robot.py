@@ -14,7 +14,7 @@ from dobot_msgs_v4.msg import RobotStatus
 from dobot_msgs_v4.srv import (
     CP, DisableRobot, EnableRobot, MovJ, SetTool, SpeedFactor, Stop, StopMoveJog, Tool)
 import numpy as np
-from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from std_msgs.msg import String
 
 from .calibration_core import JOINT_NAMES, workspace_root
@@ -154,11 +154,12 @@ def configured_bringup(root):
 
 
 class MaintenanceRobot:
-    """Responses/feedback use a reentrant group independent of serial RGB detection."""
+    """Serialize feedback independently of RGB detection, service replies and Stop."""
 
     def __init__(self, node):
         self.node = node
         self.group = ReentrantCallbackGroup()
+        self.feedback_group = MutuallyExclusiveCallbackGroup()
         self.condition = threading.Condition(threading.RLock())
         self.cancel = threading.Event()
         self.operator_cancel = threading.Event()
@@ -178,9 +179,9 @@ class MaintenanceRobot:
             for kind in (CP, MovJ, Stop, StopMoveJog, DisableRobot, EnableRobot,
                          SpeedFactor, Tool, SetTool)}
         node.create_subscription(String, FEED_TOPIC, self._on_feed, 10,
-                                 callback_group=self.group)
+                                 callback_group=self.feedback_group)
         node.create_subscription(RobotStatus, STATUS_TOPIC, self._on_status, 10,
-                                 callback_group=self.group)
+                                 callback_group=self.feedback_group)
         self.stop_timer = node.create_timer(.02, self._check_stop, callback_group=self.group)
 
     def _on_status(self, message):
@@ -213,9 +214,6 @@ class MaintenanceRobot:
         now = time.monotonic()
         with self.condition:
             if self.watching:
-                if (self.feed is not None
-                        and data["controller_timer"] < self.feed[0]["controller_timer"]):
-                    self.feedback_failure = "Robot controller timer restarted during capture"
                 state_invalid = (data["EnableStatus"] != 1
                                  or data["robot_mode"] not in (5, 7, 8)
                                  or data["ErrorStatus"] or data["CollisionStates"]
@@ -224,6 +222,22 @@ class MaintenanceRobot:
                 if ((not self.preparing and state_invalid)
                         or data["digital_outputs"] != self.output_bits):
                     self.feedback_failure = "Robot state or I/O changed during automatic capture"
+                if (self.feed is not None
+                        and data["controller_timer"] < self.feed[0]["controller_timer"]):
+                    # A delayed frame is not proof of a controller restart. Keep
+                    # the last accepted pose and clock; the next valid frame
+                    # retries feedback acquisition without stopping the route.
+                    # Do not refresh age/progress or hide a fault in this frame.
+                    previous_timer = self.feed[0]["controller_timer"]
+                    self.node._event_logger.record(
+                        "WARNING", "replay_feedback_discarded",
+                        "Robot feedback timestamp moved backwards; discarded frame, "
+                        "waiting for the next valid feedback sample",
+                        previous_controller_timer=previous_timer,
+                        received_controller_timer=data["controller_timer"],
+                        backwards_ms=previous_timer - data["controller_timer"])
+                    self.condition.notify_all()
+                    return
             if self.feed is None or data["controller_timer"] != self.feed[0]["controller_timer"]:
                 self.progress_time = now
             self.feed = data, now

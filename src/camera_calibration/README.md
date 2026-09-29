@@ -205,6 +205,20 @@ fresh within 1 second, with an advancing controller timer. Stationarity,
 enabled/idle state, DI1 LOW and unchanged outputs remain monitored during
 capture and solving; only a successful capture permits the next move.
 
+An isolated backward `controller_timer` is treated as delayed feedback. Discard
+that message, log the previous/received timestamps and backward delta in ms,
+and continue waiting for the next valid feedback. This does not send Stop,
+repeat a movement, clear accepted samples or consume a position attempt. The
+rejected message cannot replace the accepted pose/sequence or refresh receipt
+age/progress. If valid advancing feedback does not return within the existing
+one-second freshness limit, the normal failure/Stop path still applies; the
+clock is never rebased during replay. Fault, collision, disable, unexpected I/O
+and frame-selection changes remain checked and latched even in a discarded
+message. FeedInfo/RobotStatus callbacks run serially to prevent callback ordering
+races, independently of RGB processing, service replies and Stop, using the
+same two executor threads. Capture still requires fresh post-hold RGB/joints/TF
+and the unchanged stationary/idle checks.
+
 Robot readiness setup occurs only after confirmed Start, before any MovJ. It
 uses the same requests, order, values and best-effort policy as Motion Debug:
 

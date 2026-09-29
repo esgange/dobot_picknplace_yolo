@@ -100,7 +100,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_automatic_capture
     test/test_automatic_capture.py
-    TIMEOUT 60
+    TIMEOUT 90
     ENV
       "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python:$ENV{PYTHONPATH}"
       "ROS_DOMAIN_ID=232"

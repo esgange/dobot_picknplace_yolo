@@ -340,7 +340,8 @@ def test_motion_cannot_finish_on_old_queue_id_or_unchanged_feedback(robot, monke
 
 
 @pytest.mark.parametrize("scenario", ["normal", "stop_during_solve", "camera_gap", "disabled",
-                                      "optional_rejected", "drag", "settling"])
+                                      "optional_rejected", "drag", "settling",
+                                      "delayed_feedback"])
 def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, scenario):
     """Isolated fake Dobot services: no controller, camera hardware or robot connection."""
     import rclpy
@@ -410,6 +411,7 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
             self.cp = []
             self.moves = []
             self.stops = 0
+            self.delayed_feedback_phases = set()
             self.moving_until = 0.
             self.settle_at = 0.
             self.lock = threading.Lock()
@@ -484,6 +486,9 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
                     self.data.update(robot_mode=7, RunningStatus=1, isRunQueuedCmd=1)
                 if scenario == "settling" and len(self.moves) == 2:
                     self.settle_at = time.monotonic() + .2
+                if scenario == "delayed_feedback" and len(self.moves) == 2:
+                    self.moving_until = time.monotonic() + .15
+                    self.data.update(robot_mode=7, RunningStatus=1, isRunQueuedCmd=1)
                 response.res = 0
                 response.robot_return = "{" + str(len(self.moves)) + "}"
             return response
@@ -505,6 +510,14 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
                     self.data.update(robot_mode=5, RunningStatus=0, isRunQueuedCmd=0)
                     self.moving_until = 0.
                 self.data["controller_timer"] += 1
+                if scenario == "delayed_feedback":
+                    phase = ("moving" if self.moving_until else
+                             "solving" if camera.solving.is_set() else
+                             "holding" if len(self.moves) == 3 else None)
+                    if phase and phase not in self.delayed_feedback_phases:
+                        self.delayed_feedback_phases.add(phase)
+                        old = dict(self.data, controller_timer=self.data["controller_timer"] - 2)
+                        self.feed_pub.publish(String(data=json.dumps(old)))
                 self.feed_pub.publish(String(data=json.dumps(self.data)))
             self.status_pub.publish(RobotStatus(
                 is_connected=True, is_enable=self.data["robot_mode"] == 5))
@@ -555,6 +568,12 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
         else:
             assert len(camera._calibration_samples) == 6
             assert dobot.stops == (1 if scenario in ("camera_gap", "settling") else 0)
+            if scenario == "delayed_feedback":
+                assert dobot.delayed_feedback_phases == {"moving", "holding", "solving"}
+                warnings = [call for call in camera._event_logger.record.call_args_list
+                            if call.args[1] == "replay_feedback_discarded"]
+                assert len(warnings) == 3
+                assert camera.automatic.retry_prompt is None
     finally:
         camera.automatic.close()
         for executor in executors:
@@ -566,17 +585,87 @@ def test_real_ros_direct_replay_and_stop_with_two_camera_threads(monkeypatch, sc
         rclpy.shutdown(context=context)
 
 
-@pytest.mark.parametrize("bad_frame", ["malformed", "clock_reset", "transient_fault"])
+@pytest.mark.parametrize("bad_frame", ["malformed", "transient_fault"])
 def test_feedback_failure_stays_latched_until_another_explicit_start(robot, bad_frame):
     robot.watching = True
     if bad_frame == "malformed":
         message = "invalid JSON"
     else:
-        message = json.dumps(feedback(**(
-            {"controller_timer": 0} if bad_frame == "clock_reset" else {"ErrorStatus": 1})))
+        message = json.dumps(feedback(ErrorStatus=1))
     robot._on_feed(String(data=message))
     robot._on_feed(String(data=json.dumps(feedback(controller_timer=2))))
     with pytest.raises(RuntimeError):
+        robot.guard()
+
+
+def test_feedback_callbacks_cannot_overlap_but_stop_and_replies_remain_independent(robot):
+    subscriptions = robot.node.create_subscription.call_args_list
+    feed, status = [call.kwargs["callback_group"] for call in subscriptions]
+    assert feed is status
+    first, second = MagicMock(), MagicMock()
+    feed.add_entity(first)
+    feed.add_entity(second)
+    assert feed.beginning_execution(first)
+    try:
+        assert not feed.beginning_execution(second)
+        assert robot.stop_timer is not None
+        stop_group = robot.node.create_timer.call_args.kwargs["callback_group"]
+        stop_group.add_entity(second)
+        assert stop_group.beginning_execution(second)
+        stop_group.ending_execution(second)
+        for call in robot.node.create_client.call_args_list:
+            assert call.kwargs["callback_group"] is stop_group
+    finally:
+        feed.ending_execution(first)
+    assert feed.beginning_execution(second)
+    feed.ending_execution(second)
+
+
+def test_backward_feedback_is_discarded_then_next_good_frame_continues(robot):
+    robot.watching = True
+    before = robot.guard()
+    accepted_feed, progress_time = robot.feed, robot.progress_time
+    robot._on_feed(String(data=json.dumps(feedback(
+        controller_timer=0, q_actual=[90.] * 6, tool_vector_actual=[100.] * 6))))
+    assert robot.feed is accepted_feed and robot.progress_time == progress_time
+    assert robot.guard().sequence == before.sequence
+    assert robot.feedback_failure is None and not robot.cancel.is_set()
+    robot.node._event_logger.record.assert_called_once_with(
+        "WARNING", "replay_feedback_discarded",
+        "Robot feedback timestamp moved backwards; discarded frame, "
+        "waiting for the next valid feedback sample",
+        previous_controller_timer=1, received_controller_timer=0, backwards_ms=1)
+    robot._on_feed(String(data=json.dumps(feedback(controller_timer=2))))
+    after = robot.guard()
+    assert after.sequence == before.sequence + 1 and stationary(before, after)
+    for client in robot.clients.values():
+        client.call_async.assert_not_called()
+
+
+def test_repeated_backward_frames_do_not_extend_feedback_freshness(robot, monkeypatch):
+    clock = SimpleNamespace(now=100.)
+    monkeypatch.setattr(robot_module, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    robot.watching = True
+    robot._on_status(RobotStatus(is_connected=True, is_enable=True))
+    robot._on_feed(String(data=json.dumps(feedback(controller_timer=2))))
+    for timestamp in (100.2, 100.6, 101.1):
+        clock.now = timestamp
+        robot._on_status(RobotStatus(is_connected=True, is_enable=True))
+        robot._on_feed(String(data=json.dumps(feedback(controller_timer=1))))
+    assert robot.feed[1] == 100. and robot.progress_time == 100.
+    with pytest.raises(RuntimeError, match="stale or not advancing"):
+        robot.guard()
+
+
+@pytest.mark.parametrize("changes", [
+    {"ErrorStatus": 1}, {"CollisionStates": 1}, {"EnableStatus": 0},
+    {"robot_mode": 6}, {"userCoordinate": 1}, {"toolCoordinate": 1},
+    {"digital_input_bits": 1}, {"digital_outputs": 1}])
+def test_backward_timestamp_cannot_hide_transient_fault_or_io_change(robot, changes):
+    robot.watching = True
+    robot._on_feed(String(data=json.dumps(feedback(controller_timer=0, **changes))))
+    robot._on_feed(String(data=json.dumps(feedback(controller_timer=2))))
+    with pytest.raises(RuntimeError, match="state or I/O changed"):
         robot.guard()
 
 

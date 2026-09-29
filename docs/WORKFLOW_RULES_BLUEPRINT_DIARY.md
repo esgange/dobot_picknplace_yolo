@@ -7094,6 +7094,40 @@ Never use a floating “latest” version in an issue, script, or deployment not
   FSM diagrams were regenerated to HTML/PDF. No physical robot commands, live-node
   restart or operator artifact changes. No physical commissioning/offline-transfer claim.
 
+### 2026-09-29 — Rule 172: discard isolated backward calibration feedback
+
+- User requested that the controller-timer warning discard a frame and retry
+  instead of stopping automatic calibration. The audit found that any lower
+  FeedInfo timestamp latched a terminal restart diagnosis, and reentrant
+  callbacks could commit an older frame after a newer frame. A controlled
+  synthetic callback ordering reproduced the exact operator error.
+- Give FeedInfo and RobotStatus their own mutually exclusive callback group,
+  separate from serial RGB/capture and reentrant service replies/Stop. Keep the
+  existing two-thread executor. While watching a run, discard feedback with a
+  timestamp below the last accepted timestamp and log both values plus backward
+  milliseconds. Preserve the accepted feed/pose, sequence, receipt age and
+  progress time. Acquisition retries with the next message; the current route
+  continues without Stop, repeated motion, cleared samples or consumed attempts.
+- Check fault/disable/collision, frame selection and I/O before the discard, so
+  those failures still latch. Do not rebase a regressed clock or extend freshness
+  using dropped messages. Repeated regressions still reach the existing one-second
+  missing/stale/nonadvancing-feedback failure and containment Stop. Retain
+  physical hold, camera/joint/TF freshness, ownership, response and operator Stop
+  checks. No change to general Robot Controller, vendor driver or saved artifacts.
+- Validation: all 243 camera-calibration tests pass (184 automatic-capture,
+  55 calibration-core and four runtime-install tests), plus the package symlink
+  build, scoped flake8 and diff checks. An isolated ROS route injects backward
+  frames during motion, stationary hold and solving, completes all six samples
+  without Stop/repeated moves/prompts, and records each discard. Unit cases
+  preserve accepted data/age, enforce the stale timeout and latch transient
+  faults/I/O even in rejected messages. Callback-group tests retain independent
+  Stop/reply execution. The first new group fixture used unregistered objects;
+  corrected it to register weak-reference-capable mock entities before rerunning.
+  Increase only the automatic-test runner timeout from 60 to 90 seconds for the
+  additional timed integration route (full test file now takes about 63 seconds).
+  No physical robot commands, live-node restart or operator artifact changes;
+  no physical commissioning/offline-transfer claim.
+
 ### Future entry template
 
 ```text

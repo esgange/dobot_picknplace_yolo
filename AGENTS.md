@@ -845,6 +845,18 @@ setting or artifact rewrite. Supersede rule 169's second prepick_height addition
 and rules 159/169's positive-prepick requirement only. Preserve the four-command
 queue, 80%/50% I/O, no intermediate release gates, final Home checks and Item Pick.
 
+Rule 172 treats an isolated backward controller timestamp during automatic camera
+calibration as a discarded feedback frame, not a terminal restart diagnosis.
+Serialize FeedInfo/RobotStatus callbacks independently of RGB, service replies
+and Stop within the existing two executor threads. Log previous/received timers
+and the backward delta; preserve the last accepted pose, sequence, receipt age
+and progress clock, then continue with the next valid feedback without a Stop,
+repeated move or consumed position attempt. Check robot faults and I/O before
+discarding so they stay latched. Never rebase the clock during replay or refresh
+freshness from discarded frames: the existing one-second stale/nonadvancing
+timeout, connection/ownership checks, physical stationarity, capture freshness
+and operator Stop remain enforced. No teach/calibration artifact or vendor change.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -993,6 +993,10 @@ confirmed Stop before retrying a move interrupted by lost camera readiness.
 Loss of stationary hold also confirms Stop and retries the same saved joints,
 with a new one-second hold and fresh capture. Only the interrupted attempt's
 unconfirmed data is discarded; earlier accepted samples remain.
+An isolated backward robot timestamp logs a warning and discards only that
+feedback message. The next valid feedback continues the same route without
+Stop, a repeated move or a consumed capture attempt. Discarded messages cannot
+refresh the one-second feedback timeout or conceal a robot fault/I/O change.
 The robot stays at the final position on completion. The separate
 **Save as New Calibration** button opens an editable filename dialog with the
 existing timestamped naming rule as its default. It saves inside `calibration/`
