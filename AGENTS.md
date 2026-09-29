@@ -748,6 +748,19 @@ Simulation remains pose-only; controller placement-depth inputs are unchanged.
 Log exact returned geometry and rejection evidence for both request paths.
 Preserve teach schemas, native isolation, worker count and motion authority.
 
+Rule 165 adds Detection Mask Clean for tray segmentation only, before rectangle
+fitting. Use each raw binary mask, never Ultralytics' merged masks.xy. Apply one
+3×3 opening in native mask pixels; retain the largest 8-connected region by pixel
+area only when it keeps at least 80% of the original mask's foreground. Reject
+empty/ambiguous results without guessed polygons or poses. Use the pinned runtime's
+letterbox inverse. Preserve image-edge clipping evidence from the winning region's
+original connected component. Preview, Simulate Trigger, armed Tray Teach and
+headless Tray Detect share cleaned geometry and RGB/depth overlays. Expose cleanup
+status/area/rejections in UI and request diagnostics, validate worker evidence,
+and keep all native processing inside the private worker. Preserve existing size,
+class, confidence, freshness and source checks, OBB/item processing, teach schemas,
+placement depth, controller motion and I/O. No physical robot commands in tests.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -658,6 +658,16 @@ The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
 that plane, without live surface depth, and reject detections outside the taught
 length/width tolerance. Select one valid tray nearest the image center.
+**Detection Mask Clean** runs before tray measurement in preview, Simulate
+Trigger and both pose-service providers. It uses each raw binary segmentation
+mask, avoiding polygon conversion that joins disconnected blobs. A 3×3 opening
+at native mask resolution breaks thin bridges; only the largest region remains,
+and it must retain at least 80% of the original foreground pixels. Empty or
+ambiguous masks produce an explicit rejection. The cleaned outline supplies RGB
+and depth annotations, dimensions and poses. Original connected-region image-edge
+clipping still rejects the tray. Cleanup status is shown in inspection/simulation
+and request diagnostics. OBB models and Item Teach are unchanged; existing teach
+files need no migration.
 Calibrated synchronized RGB/depth also supplies 1 Hz colored 10 mm RViz voxels on
 `/tray_teach/voxel_cloud`, including with YOLO off. Retain the latest cloud until
 replaced; grey it after five seconds without fresh data or immediately on invalidation.

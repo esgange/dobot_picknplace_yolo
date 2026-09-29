@@ -27,6 +27,7 @@ from .core import EventLogger, load_profile, validate_plane, validate_preview
 from .rviz import TrayRvizPreview
 from .requests import pose_extents, TrayRequests
 from .simulation import TraySimulationPreview
+from .mask_clean import validate_evidence
 
 
 class TrayTeachNode(Node):
@@ -382,8 +383,18 @@ class TrayTeachNode(Node):
             try:
                 identities = []
                 for detection in result["detections"]:
+                    if "mask_clean" in detection:
+                        validate_evidence(detection["mask_clean"])
+                        if detection["mask_clean"]["status"] == "rejected" and detection["valid"]:
+                            raise ValueError("Rejected mask cannot have a valid pose")
                     polygon = np.asarray(detection["polygon"], dtype=float)
-                    if (polygon.ndim != 2 or polygon.shape[1] != 2 or len(polygon) < 3
+                    empty_rejection = (
+                        detection["polygon"] == [] and not detection["valid"]
+                        and detection.get("mask_clean", {}).get("status") == "rejected"
+                        and detection["reason"] == "Detection Mask Clean: " +
+                        detection["mask_clean"]["reason"])
+                    if ((not empty_rejection and (
+                            polygon.ndim != 2 or polygon.shape[1] != 2 or len(polygon) < 3))
                             or not np.isfinite(polygon).all()
                             or type(detection["source_index"]) is not int
                             or type(detection["class_name"]) is not str

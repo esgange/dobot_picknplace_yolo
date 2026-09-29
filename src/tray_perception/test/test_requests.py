@@ -93,6 +93,32 @@ def trigger(backend, digest=None, debug=False):
         GetTrayPose.Response())
 
 
+@pytest.mark.parametrize("simulated", [False, True])
+def test_cleanup_evidence_survives_request_and_event_log(backend, simulated):
+    node, path, digest = backend
+    preview = node.preview.side_effect
+    cleaning = {"status": "cleaned", "retained_fraction": .95, "removed_pixels": 50}
+
+    def cleaned(*args, **kwargs):
+        view = preview(*args, **kwargs)
+        view["result"]["selected"]["mask_clean"] = cleaning
+        view["result"]["detections"][0]["mask_clean"] = cleaning
+        return view
+
+    node.preview.side_effect = cleaned
+    arm(backend)
+    if simulated:
+        requested_at = (node.get_clock().now().nanoseconds, time.monotonic())
+        response = node.requests.simulate(path, settings(), digest, requested_at)["response"]
+    else:
+        response = trigger(backend)
+    assert response.success and response.found
+    assert json.loads(response.diagnostics_json)["detections"][0]["mask_clean"] == cleaning
+    event = "tray_simulated" if simulated else "tray_pose_response"
+    logged = next(call for call in node.events.record.call_args_list if call.args[1] == event)
+    assert logged.kwargs["returned_tray"]["mask_clean"] == cleaning
+
+
 @pytest.mark.parametrize("usable", [True, False])
 def test_placement_request_uses_one_fresh_observation_and_reports_depth(backend, usable):
     node, path, digest = backend

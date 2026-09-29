@@ -24,6 +24,7 @@ from .node import TrayTeachNode
 from .contract import SERVICE_NAME
 from .execution import spin_checked
 from .simulation import FRAME as SIMULATED_FRAME
+from .mask_clean import summary as mask_clean_summary
 
 
 class TrayCanvas(QtWidgets.QWidget):
@@ -257,6 +258,13 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.maximum = QtWidgets.QLineEdit("100")
         detection.addRow("Max detections", self.maximum)
         self.maximum.textChanged.connect(self._edited)
+        self.mask_clean_label = QtWidgets.QLabel("Detection Mask Clean: ON for segmentation")
+        self.mask_clean_label.setWordWrap(True)
+        self.mask_clean_label.setToolTip(
+            "Remove thin bridges with a 3×3 mask-pixel opening, then retain the largest "
+            "region only if it contains at least 80% of the original mask pixels. "
+            "Ambiguous splits are rejected. Tray size and image-edge checks still apply.")
+        detection.addRow(self.mask_clean_label)
         self.name.textChanged.connect(self._edited)
         self.classes.itemChanged.connect(self._edited)
         self.preview_toggle = QtWidgets.QPushButton("YOLO Detect: OFF")
@@ -919,6 +927,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 f"RViz: base_link → {SIMULATED_FRAME} (frozen)"])
         else:
             lines.append("RViz: no returned tray pose")
+        cleaned = mask_clean_summary(view["result"].get("selected"))
+        if cleaned:
+            lines.append(cleaned)
         rejected = [f"#{d['source_index']}: {d['reason']}" for d in view["result"]["detections"]
                     if not d["valid"]]
         lines.extend(rejected[:3])
@@ -996,7 +1007,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 if "position" in item else "")
             self._show_detail(self.last_view,
                               f"Last clicked tray: {item['class_name']} | {measured} | "
-                              f"{item['reason']}{origin}")
+                              f"{item['reason']}{origin}" + (
+                                  " | " + mask_clean_summary(item) if "mask_clean" in item else ""))
 
     def _show_detail(self, view, summary, *, trigger=False):
         sample = view if trigger else {
@@ -1171,7 +1183,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             xyz = ", ".join(f"{v * 1000:.1f}" for v in selected["position"])
             self.result_label.setText(
                 f"Selected tray: {selected['length_mm']:.1f} × {selected['width_mm']:.1f} mm | "
-                f"base_link origin XYZ: {xyz} mm | snapshot age {age:.2f} s")
+                f"base_link origin XYZ: {xyz} mm | snapshot age {age:.2f} s" + (
+                    "\n" + mask_clean_summary(selected) if "mask_clean" in selected else ""))
         rejected = [f"{d['source_index']}: {d['reason']}" for d in result.get("detections", [])
                     if not d["valid"]]
         self.result_label.setToolTip("\n".join(rejected))

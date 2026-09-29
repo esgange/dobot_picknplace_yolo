@@ -1242,6 +1242,39 @@ def preview_node(view, response):
         _check_snapshot=MagicMock())
 
 
+@pytest.mark.parametrize("fault", [None, "missing", "malformed", "area", "reason"])
+def test_rejected_mask_without_polygon_is_explicit_and_validated(fault):
+    cleaning = {"kernel_px": 3, "minimum_retained_fraction": .8,
+                "raw_pixels": 800, "kept_pixels": 400, "removed_pixels": 400,
+                "components_before": 2, "components_after": 2, "retained_fraction": .5,
+                "source_touches_image_edge": False, "status": "rejected",
+                "reason": "No dominant region after splitting blobs"}
+    detection = {"valid": False, "polygon": [], "source_index": 0,
+                 "class_name": "tray", "confidence": .9, "size_status": "unchecked",
+                 "reason": "Detection Mask Clean: " + cleaning["reason"], "mask_clean": cleaning}
+    if fault == "missing":
+        del detection["mask_clean"]
+    elif fault == "malformed":
+        detection["mask_clean"] = None
+    elif fault == "area":
+        cleaning["kept_pixels"] = 800
+    elif fault == "reason":
+        detection["reason"] = "Unknown"
+    view = {"generation": 4, "camera_context": None,
+            "rgb": {"width": 2, "height": 2, "rgb": bytes(12), "stamp_ns": 100}}
+    response = {"state": "ok", "width": 2, "height": 2, "count": 1,
+                "selected": None, "detections": [detection], "reason": "No tray",
+                "inference_ms": 1.}
+    node = preview_node(view, response)
+    if fault is not None:
+        with pytest.raises(RuntimeError, match="Invalid native tray detections"):
+            TrayTeachNode.preview(node, preview_settings(), generation=4)
+    else:
+        result = TrayTeachNode.preview(node, preview_settings(), generation=4)
+        assert result["result"]["selected"] is None
+        assert result["result"]["detections"] == [detection]
+
+
 @pytest.mark.parametrize("missing", ["calibration", "TF", "depth"])
 def test_missing_geometry_inputs_do_not_stop_rgb_yolo(missing):
     from tf2_ros import TransformException

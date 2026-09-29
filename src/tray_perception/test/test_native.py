@@ -191,6 +191,7 @@ def exercise_tray_axis_overlays():
     rgb = np.zeros((480, 640, 3), np.uint8)
     native.render_result = lambda *_: (rgb.copy(), 1)
     native.objects_from_result = lambda *_: objects
+    native.clean_objects = lambda *_: objects
     result, data = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
     item = result["detections"][0]
     assert result["selected"] is None and not item["valid"]

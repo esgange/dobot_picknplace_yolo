@@ -414,9 +414,11 @@ class TrayRequests:
                                     returned_tray=None if selected is None else {
                                         key: selected[key] for key in (
                                             "source_index", "class_name", "confidence",
-                                            "position", "quaternion", "length_mm", "width_mm")},
+                                            "position", "quaternion", "length_mm", "width_mm",
+                                            "mask_clean") if key in selected},
                                     rejections=[{key: d[key] for key in (
-                                        "source_index", "reason", "length_mm", "width_mm")
+                                        "source_index", "reason", "length_mm", "width_mm",
+                                        "mask_clean")
                                         if key in d} for d in result["detections"]
                                         if not d["valid"]],
                                     elapsed_sec=time.monotonic() - started)

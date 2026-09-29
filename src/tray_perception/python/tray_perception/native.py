@@ -4,13 +4,14 @@ from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternio
 from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
 from item_perception_yolo.item_geometry import (
     objects_from_result, on_plane, project, rays, reproject_pixels, filter_depth, rectangle_axes,
-    depth_sampling_circle)
+    depth_sampling_circle, shade_masks)
 from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
 from item_perception_yolo.item_rviz_native import colored_voxels
 from item_perception_yolo.yolo_worker_native import render_result
 
 from .core import MAX_PLANE_ERROR_MM, validate_plane, validate_preview
 from .placement import validate_sampling
+from .mask_clean import clean_objects
 
 
 def placement_depth(request, data, cv2, np):
@@ -281,13 +282,19 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
                      "polygon": item["polygon"].tolist(), "valid": False, "reason": "",
                      "size_status": "unchecked"}
         detections.append(detection)
+        if "mask_clean" in item:
+            detection["mask_clean"] = item["mask_clean"]
         try:
+            cleaning = item.get("mask_clean")
+            if cleaning is not None and cleaning["status"] == "rejected":
+                raise ValueError("Detection Mask Clean: " + cleaning["reason"])
             if context is None:
                 raise ValueError("Measurement needs matching camera calibration and RGB-time TF")
             if plane is None:
                 raise ValueError("Create the reference plane from four corners to measure trays")
             polygon = item["polygon"]
-            if (np.any(polygon[:, 0] <= 0) or np.any(polygon[:, 0] >= width - 1)
+            if ((cleaning is not None and cleaning["source_touches_image_edge"])
+                    or np.any(polygon[:, 0] <= 0) or np.any(polygon[:, 0] >= width - 1)
                     or np.any(polygon[:, 1] <= 0) or np.any(polygon[:, 1] >= height - 1)):
                 raise ValueError("Tray touches image edge; full dimensions unavailable")
             flat = on_plane(polygon, context["camera"], plane_from_optical, cv2, np)
@@ -334,9 +341,14 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
 def predict_trays(request, result, rgb, names, cv2, np):
     settings, plane, context = request["settings"], request["plane"], request["camera_context"]
     validate_preview(settings)
-    overlay, count = render_result(result, rgb, names, settings["model_task"],
-                                   settings["yolo"]["max_detections"], cv2, np)
     returned_only = request.get("returned_only", False)
+    if settings["geometry_source"] == "mask":
+        objects = clean_objects(result, names, settings["yolo"]["max_detections"], cv2, np)
+        count = len(objects)
+        overlay = rgb.copy()
+    else:
+        overlay, count = render_result(result, rgb, names, settings["model_task"],
+                                       settings["yolo"]["max_detections"], cv2, np)
     if returned_only:
         overlay = rgb.copy()
     detections, selected = [], None
@@ -344,8 +356,9 @@ def predict_trays(request, result, rgb, names, cv2, np):
     if settings["geometry_source"] == "none":
         reason = "Box-only model: load a segmentation or OBB model for tray poses"
     else:
-        objects = objects_from_result(result, settings["geometry_source"], names,
-                                      settings["yolo"]["max_detections"], cv2, np)
+        if settings["geometry_source"] != "mask":
+            objects = objects_from_result(result, settings["geometry_source"], names,
+                                          settings["yolo"]["max_detections"], cv2, np)
         detections, selected = evaluate_objects(
             objects, settings, plane, context, rgb.shape[1], rgb.shape[0], cv2, np)
         measured = sum("rectangle" in item for item in detections)
@@ -361,13 +374,23 @@ def predict_trays(request, result, rgb, names, cv2, np):
                        " | No accepted tray pose")
         else:
             reason = "No eligible tray"
+        rejected_masks = [d for d in detections
+                          if d.get("mask_clean", {}).get("status") == "rejected"]
+        if rejected_masks:
+            reason += (f" | Detection Mask Clean rejected {len(rejected_masks)} "
+                       "ambiguous/empty mask(s)")
+        displayed = ([selected] if selected is not None else []) if returned_only else detections
+        if settings["geometry_source"] == "mask":
+            overlay = shade_masks(rgb, [d["polygon"] for d in displayed if len(d["polygon"]) >= 3],
+                                  cv2, np)
         if plane is not None and context is not None:
             try:
                 draw_plane(overlay, plane, context, cv2, np)
             except ValueError as exc:
                 reason += f" | Reference plane outline unavailable: {exc}"
-        displayed = ([selected] if selected is not None else []) if returned_only else detections
         for detection in displayed:
+            if len(detection["polygon"]) < 3:
+                continue
             polygon = np.rint(detection["polygon"]).astype(np.int32)
             color = {"pass": (0, 220, 0), "fail": (255, 50, 50),
                      "unchecked": (160, 160, 160)}[detection["size_status"]]
@@ -398,6 +421,8 @@ def tray_visuals(request, data, cv2, np):
             except ValueError:
                 pass  # An off-camera taught plane cannot suppress the available depth scene.
         for detection in request["detections"]:
+            if len(detection["polygon"]) < 3:
+                continue
             pixels = reproject_pixels(np.asarray(detection["polygon"]),
                                       color_info, depth_info, cv2, np)
             color = {"pass": (0, 220, 0), "fail": (255, 50, 50),

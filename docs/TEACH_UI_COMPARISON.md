@@ -15,6 +15,7 @@ Robot Controller owns placement/picking motion and I/O.
 | Returned count | Ranked candidate batch capped by `pose_candidates` | Exactly one eligible tray nearest image centre |
 | Live RViz | All valid item candidates and scene voxels | One selected tray and scene voxels |
 | Workspace constraints | Bin ROI, per-wall pick clearance and camera-origin clearance/mirror diagnostics | Tray dimensions/class/confidence and image-edge checks; no bin-specific pick rules |
+| Detection Mask Clean | Existing item mask processing unchanged | Raw per-instance mask, 3×3 opening and largest region with at least 80% original area; ambiguous splits rejected |
 | Taught robot posture | Home | Tray Detect Pose |
 | Motion/gripper profile | Heights, speeds, acceleration, settling, pick rotation, retries and gripper settings | Detect joints only; placement uses Item Teach movement settings and controller X/Y/rotation |
 | Source artifacts | Item/model, bin/platform and station/robot camera calibration | Tray/model, camera calibration and its own four-corner reference plane |

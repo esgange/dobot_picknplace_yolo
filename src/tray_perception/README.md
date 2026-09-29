@@ -46,6 +46,21 @@ fit; live updates preserve your chosen split.
    with an inline reason; correction resumes it, with no old-value fallback.
    Segmentation masks and OBB models support metric poses; box-only models remain
    detection previews and can be saved in drafts but cannot produce a detection profile.
+   **Detection Mask Clean** is always on for tray segmentation. Read each model
+   instance's raw binary mask, apply a 3×3 opening in native mask pixels to remove
+   thin bridges, then keep its largest connected region by pixel area. That region
+   must retain at least 80% of the original foreground; empty or ambiguous splits
+   are rejected before fitting a rectangle. This also avoids artificial lines
+   added when YOLO converts disconnected mask regions into one polygon. RGB/depth
+   outlines, dimensions and poses all use the cleaned region. Opening can adjust
+   fine corners; expected-size/tolerance checks still apply. A source connected
+   region touching the image edge remains clipped even if its thin tail is removed.
+   A detached small satellite can be discarded without marking the main tray clipped.
+   Live inspection, frozen simulation and request logs show retained/removed mask
+   evidence; rejection tooltips explain failures. Live preview, Simulate Trigger,
+   armed Tray Teach and headless Tray Detect use this same stage. OBB detection,
+   Item Teach, placement depth and file schemas are unchanged. Restart the tray
+   node after rebuilding to activate it; no teach-file edit is required.
 2. Leave **Length**, **Width** and **Tolerance** blank to measure first. Neither
    these filters nor a robot observation pose is needed to capture the plane or
    inspect measured trays. **Tray Detect Pose** → **Record Current Joints as Tray

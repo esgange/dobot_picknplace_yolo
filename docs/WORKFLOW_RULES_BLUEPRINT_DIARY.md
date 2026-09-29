@@ -6848,6 +6848,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   teach/calibration/model migration is required. Preserve unrelated local files;
   no upstream or offline-transfer validation claimed.
 
+### 2026-09-29 — Rule 165: Detection Mask Clean for trays
+
+- User requests removal of narrow connections between tray blobs and names the
+  stage Detection Mask Clean. The pinned Ultralytics masks.xy converter merges
+  disconnected segments with artificial connecting lines; real raw masks can also
+  contain thin bridges. Read masks.data independently per detection instead.
+- Before fitting, open the binary mask once with a 3×3 square in native mask
+  pixels and keep the largest 8-connected region by pixel area. Require at least
+  80% of the original foreground to remain. Reject ambiguous/empty/degenerate
+  masks with an explicit reason and no guessed polygon, dimensions or pose.
+  Use the pinned library's inverse letterbox mapping to original RGB coordinates.
+  Do not alter vendored code or move native imports into ROS/Qt.
+- Preserve clipping evidence from the retained region's original connected
+  component, so removing an edge-reaching tail cannot authorize a clipped tray.
+  Disconnected small satellites can be discarded. Existing measured-size,
+  class/confidence, image-edge, calibration and freshness gates remain active.
+  Opening may change fine corners; it does not promise identical dimensions for
+  every shape. Independent YOLO instances are never joined.
+- Live preview, Simulate Trigger, armed Tray Teach and headless Tray Detect share
+  the cleaned contour before measurement/ranking. Both image overlays use that
+  contour. Add a Detection Settings indicator, inspection/frozen-result cleanup
+  summary, native-reply validation and retained/removed area/component diagnostics
+  in pose responses and package events. Rejected cleanup is an ordinary no-tray
+  outcome, not a terminal worker failure.
+- OBB and item geometry, teach/calibration/model files, controller queue/IO and
+  placement-depth sampling remain unchanged. No schema migration. Rebuild the
+  tray package and restart the tray provider to load the feature; do not restart
+  active user nodes or issue physical robot commands during verification.
+- Validation: all 224 applicable tray tests verified across the broad suite and
+  targeted rerun after correcting the new simulation test's request-time fixture.
+  Two existing exact-float RViz checks pass against the committed file using a
+  read-only substitution; the user's local RViz file remains untouched. Synthetic
+  pinned-runtime checks cover bridge/satellite removal, ambiguity and empty masks,
+  letterboxing, metric geometry, original-edge rejection, RGB/depth and
+  live/simulated parity, and unchanged OBB behavior. Source/ROS tests cover rejected
+  mask evidence and cleanup diagnostics through both request paths. Scoped lint,
+  diff checks and local tray_perception build pass. No upstream or offline-transfer
+  validation claimed; preserve unrelated user RViz and operator artifacts.
+
 ### Future entry template
 
 ```text
