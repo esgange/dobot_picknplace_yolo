@@ -152,7 +152,8 @@ def load_profile(path, root, *, deployment=False):
     return profile
 
 
-def save_profile(settings, position, plane, camera, model, expected_sha256, root):
+def save_profile(settings, position, plane, camera, model, expected_sha256, root, *,
+                 plane_camera_calibration=None):
     validate_settings(settings)
     if position is not None:
         validate_home(position)
@@ -172,7 +173,8 @@ def save_profile(settings, position, plane, camera, model, expected_sha256, root
     profile = copy.deepcopy({
         "schema_version": 1, "artifact_type": "tray_teach", "created_at_utc": stamp,
         "settings": settings, "tray_teach_position": position, "reference_plane": plane,
-        "camera_calibration": {"filename": camera.path.name, "sha256": camera.sha256},
+        "camera_calibration": (plane_camera_calibration if plane_camera_calibration is not None
+                               else {"filename": camera.path.name, "sha256": camera.sha256}),
         "model": {"filename": output.with_suffix(".pt").name, "sha256": expected_sha256},
         "origin_convention": ORIGIN_CONVENTION, "frame_id": "base_link",
         "units": {"geometry": "mm", "plane": "m", "tray_teach_position": "rad"}})

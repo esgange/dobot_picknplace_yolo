@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from item_perception_yolo.item_teach_core import file_sha256
-from item_perception_yolo.platform_teach_core import load_camera_calibration
+from tray_perception.calibration import active_robot_camera
 from tray_perception.core import load_profile
 
 
@@ -35,10 +35,7 @@ def load_tray_configuration(path, root, kinematics, *, deployment=False):
         return None
     profile = load_profile(path, root, deployment=deployment)
     path = Path(path).expanduser().resolve()
-    camera = load_camera_calibration(
-        Path(root) / "calibration" / profile["camera_calibration"]["filename"], root=root)
-    if camera.sha256 != profile["camera_calibration"]["sha256"]:
-        raise ValueError("Tray Teach camera calibration hash does not match")
+    camera = active_robot_camera(root)
     position = profile["tray_teach_position"]
     joints = tuple(position["positions_rad"]) if position is not None else None
     matrix = kinematics.forward(joints) if joints is not None else None

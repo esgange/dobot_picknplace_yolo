@@ -86,6 +86,11 @@ A complete optional `tray_teach_` YAML/model pair may coexist for the independen
 headless Tray Detect consumer. Robot Controller also binds that optional pair
 for Tray Detect Position and Place Item; Item Detect still selects only Item/Bin.
 
+Tray reference planes and Tray Detect joints can also survive camera-only
+recalibration. Tray Teach, headless Tray Detect and controller tray configuration
+use the active robot-camera selection independently of the teach-time camera.
+Saved capture history stays unchanged; see the [tray calibration workflow](src/tray_perception/README.md).
+
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
 Pick requests one fresh hash-matched batch from the sole canonical provider:

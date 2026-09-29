@@ -38,6 +38,19 @@ def exercise_geometry():
     assert np.allclose(selected["position"], [.2, .15, .2], atol=1e-6)
     assert abs(selected["length_mm"] - 200) < .001
     assert abs(selected["width_mm"] - 100) < .001
+    # Recalibrating/moving the camera changes image pixels, not the taught base plane.
+    moved_optical = optical.copy()
+    moved_optical[:3, 3] += [.03, -.02, .1]
+    new_camera = {**camera, "k": [450., 0., 320., 0., 450., 240., 0., 0., 1.]}
+    physical = np.asarray(selected["corners_base_m"])
+    replacement_object = {**objects[1], "polygon": project(
+        physical, new_camera, moved_optical, cv2, np).astype(np.float32)}
+    current_context = {**context, "camera": new_camera,
+                       "base_from_optical": moved_optical.tolist()}
+    recovered = evaluate_objects([replacement_object], settings, plane,
+                                 current_context, 640, 480, cv2, np)[1]
+    assert np.allclose(recovered["position"], selected["position"], atol=1e-6)
+    assert np.allclose(recovered["quaternion"], selected["quaternion"], atol=1e-6)
     # Dimensions can be inspected before typing a size or accepting any class.
     draft = {**settings, "geometry": None, "accepted_class_ids": []}
     measured, winner = evaluate_objects(objects, draft, plane, context, 640, 480, cv2, np)

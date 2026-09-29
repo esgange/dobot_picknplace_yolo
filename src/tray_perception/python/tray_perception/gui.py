@@ -402,6 +402,15 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._message(f"Restoring Tray Teach: {self.profile_filename}. Armed stays OFF.")
             self._read_tray(self.restoring_profile)
 
+    def show_calibration_reminder(self):
+        QtWidgets.QMessageBox.information(
+            self, "Tray reference-plane calibration",
+            "Before creating or re-teaching the tray reference plane, calibrate the "
+            "robot camera in its current mounting position and select that calibration.\n\n"
+            "Camera-only movement/recalibration can reuse the saved base-frame plane "
+            "and Tray Detect Pose when the robot base and physical reference surface "
+            "have not moved. Verify that the tray remains visible from that pose.")
+
     def _button(self, title, callback):
         button = QtWidgets.QPushButton(title)
         button.clicked.connect(callback)
@@ -536,12 +545,13 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.restoring_profile = None
         self.auto_source_attempts["camera"] = str(path.absolute())
         self._edited()
-        self.node.camera = self.node.plane = None
+        self.node.camera = None
 
         def loaded(camera):
             self.camera_path.setText(camera.path.name)
             self.camera_prefix.setText(camera.settings.camera_prefix)
-            self._message(f"Loaded camera calibration: {camera.path.name}")
+            self._message(f"Loaded active camera calibration: {camera.path.name}. "
+                          "Saved reference plane and Tray Detect Pose preserved.")
         self._job(lambda: self.node.apply_camera(path), loaded, "camera")
 
     def _load_model(self):
@@ -678,7 +688,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             else:
                 self._model_loaded(self.node.model_metadata)
                 self._fill_settings(profile["settings"])
-                self.camera_path.setText(profile["camera_calibration"]["filename"])
+                self.camera_path.setText(self.node.camera.path.name)
                 self.camera_prefix.setText(self.node.camera_prefix)
                 self.draft_reason = ""
             self.profile_filename, self.profile_path = path.name, path
@@ -1133,6 +1143,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 settings = None
             position, plane = copy.deepcopy(self.node.position), copy.deepcopy(self.node.plane)
             camera, model = self.node.camera, copy.deepcopy(self.node.model)
+            plane_camera = copy.deepcopy(getattr(self.node, "plane_camera_calibration", None))
             self.node.requests.disarm("Saving Tray Teach")
 
             def saved(result):
@@ -1156,7 +1167,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 except ValueError as exc:
                     reason = str(exc)
                 return save_document(form, settings, position, plane, camera, model,
-                                     self.node.root, target=target, readiness_error=reason)
+                                     self.node.root, target=target, readiness_error=reason,
+                                     plane_camera_calibration=plane_camera)
             self._job(save, saved, "save")
         except (ValueError, OSError, RuntimeError) as exc:
             self._message(str(exc), error=True)
@@ -1344,6 +1356,7 @@ def main(args=None):
         thread.start()
         window = TrayTeachWindow(node)
         window.show()
+        QtCore.QTimer.singleShot(0, window.show_calibration_reminder)
         app.exec_()
         if node.fatal_error:
             raise RuntimeError(node.fatal_error)

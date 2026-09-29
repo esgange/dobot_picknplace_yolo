@@ -210,7 +210,7 @@ def _replace(target, artifact, weights, digest, root):
 
 
 def save_document(form, settings, position, plane, camera, model, root, *, target=None,
-                  readiness_error=""):
+                  readiness_error="", plane_camera_calibration=None):
     """Save any named form; only fully validated data becomes a runtime profile."""
     validate_session(form)
     name = form["draft"]["name"].strip()
@@ -236,8 +236,11 @@ def save_document(form, settings, position, plane, camera, model, root, *, targe
     common = {"schema_version": 1, "created_at_utc": stamp,
               "model": {"filename": output.with_suffix(".pt").name, "sha256": digest}
               if source is not None else None,
-              "camera_calibration": {"filename": camera.path.name, "sha256": camera.sha256}
-              if camera is not None else None,
+              "camera_calibration": (
+                  copy.deepcopy(plane_camera_calibration)
+                  if plane is not None and plane_camera_calibration is not None else
+                  {"filename": camera.path.name, "sha256": camera.sha256}
+                  if camera is not None else None),
               "tray_teach_position": copy.deepcopy(position),
               "reference_plane": copy.deepcopy(plane)}
     document = {**common, "artifact_type": "tray_teach", "settings": copy.deepcopy(settings),

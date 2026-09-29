@@ -53,6 +53,14 @@ Z rise or elevated transit; the bin routes retain their existing clearance logic
 requests one fresh tray/depth observation from Armed Tray Teach or headless Tray
 Detect. Run exactly one provider. All hardware commands remain controller-owned.
 
+Tray configuration uses the active eye-on-hand calibration saved in the shared
+`ITEM_TEACH_ROBOT_CAMERA_CALIBRATION` selection, independently of the camera
+recorded when the tray plane was taught. Use the same active camera in Tray Teach
+or headless Tray Detect; returned camera hashes must still match. Recalibration
+preserves the saved plane and detect joints. Reload controller configuration and
+restart headless detection after changing calibration; GUI Tray Teach can load
+the replacement explicitly and must be armed again. Loading never moves the robot.
+
 Pick Item is enabled only in idle READY with its Item Teach/Detect service
 available. Place Item needs a recorded Tray Detect Pose and its Tray Teach/Detect
 service. The normal GUI launch (`headless=false`) is attended debug mode: Place

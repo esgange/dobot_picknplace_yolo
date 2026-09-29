@@ -111,8 +111,12 @@ is immutable until restart. GUI configuration can be replaced from idle,
 unheld UNCONFIGURED, INACTIVE or READY; invalid replacement preserves the old one.
 
 The catalog permits a complete optional Tray Teach YAML/model pair. Controller
-configuration binds that pair, its camera calibration and optional recorded detect
-joints. Tray operations require those joints. Place requires an armed canonical
+configuration binds that pair, the active eye-on-hand calibration selected in
+`ITEM_TEACH_ROBOT_CAMERA_CALIBRATION`, and optional recorded detect joints. The
+tray YAML’s original camera filename/hash is teaching history, not a source-file
+dependency. Tray Teach/Detect use current intrinsics and image-time TF with the
+unchanged saved base-frame plane. Camera replacement requires explicit reload;
+active hashes remain pinned and returned camera evidence must match the controller. Tray operations require those joints. Place requires an armed canonical
 `tray_teach` or headless `tray_detect` provider. Headless Place additionally requires
 a trusted HELD item; normal GUI-mode Place permits READY or HOLDING without a Pick.
 Configuration hashes include Tray Teach and its camera; reload still requires Startup.

@@ -1,6 +1,7 @@
 """Camera replacement preserves taught robot/platform/bin geometry and provenance."""
 
 from datetime import datetime, timezone
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -112,6 +113,13 @@ def test_explicit_legacy_platform_migration_preserves_transform_and_teaching_his
     assert new.schema_version == 4
     np.testing.assert_array_equal(new.base_from_platform, old.base_from_platform)
     assert new.camera_calibration_filename == old.camera_calibration_filename
+    template = bin_core.load_bin_teach(_bin_path, root=root)
+    assert template.source_platform_calibration_sha256 != new.sha256
+    assert bin_core.bin_platform_warning(template, new) is None
+    moved = new.base_from_platform.copy()
+    moved[0, 3] += .001
+    assert bin_core.bin_platform_warning(template, replace(new, base_from_platform=moved))
+    assert bin_core.bin_platform_warning(template, replace(new, robot_lan1_ip="192.0.2.99"))
 
 
 def test_platform_startup_reminder_explains_fresh_calibration_and_reuse(monkeypatch):

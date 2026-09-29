@@ -141,14 +141,13 @@ class TrayRequests:
         node.validate_sources()
         if profile["settings"] != settings or profile["reference_plane"] != node.plane:
             raise ValueError("Save or load the exact current tray detection settings and plane")
-        camera = {"filename": node.camera.path.name, "sha256": node.camera.sha256}
-        if (profile["camera_calibration"] != camera or node.model is None
+        if (node.model is None
                 or node.model["sha256"] != profile["model"]["sha256"]
                 or file_sha256(Path(node.model["path"])) != profile["model"]["sha256"]
                 or node.model["task"] != settings["model_task"]
                 or any(str(i) not in node.model_metadata["classes"]
                        for i in settings["yolo"]["class_ids"])):
-            raise ValueError("Saved tray model or camera does not match the loaded sources")
+            raise ValueError("Saved tray model does not match the loaded source")
         paths = (Path(path), Path(path).with_suffix(".pt"),
                  Path(node.model["path"]), node.camera.path)
         return {"path": Path(path), "digest": digest, "profile": profile,
@@ -236,8 +235,6 @@ class TrayRequests:
                         time.sleep(.01)
                         continue
                     self.node._check_snapshot(view)
-                    if view["camera_context"]["camera"] != self.node.plane["camera"]:
-                        raise ValueError("CameraInfo differs from saved reference plane")
                     return view
             except (ValueError, TransformException) as exc:
                 reason = str(exc)

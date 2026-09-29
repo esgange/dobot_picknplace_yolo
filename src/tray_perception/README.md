@@ -27,11 +27,19 @@ controls edit the teach file's geometry, independently of camera setup.
 Browse the camera's schema-7 calibration from `calibration/` to enable metric
 geometry; this also fills/connects its recorded prefix. A different manually
 connected prefix permits detection but cannot reuse that calibration. Reconnecting
-to another prefix invalidates the plane and pose; no calibration remapping occurs.
+to another prefix clears observations and disarms requests, while preserving the
+saved base-frame plane. Metric detection still requires the connected prefix to
+match the active calibration.
 Fixed and on-hand cameras are supported. On-hand measurements require fresh
 RGB-time `base_link <- Link6` TF. A shared 100 ms background TF wait preserves
 the exact image timestamp and rechecks freshness. Missing TF blocks geometry,
-not RGB detection. No platform/bin artifacts or `.env` changes are needed.
+not RGB detection. No platform/bin artifacts are needed. Loading a profile with
+no camera explicitly loaded uses the robot-camera selection saved by Item Teach
+in `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION`. Headless Tray Detect and controller tray
+configuration use that same selection. No new `.env` key is introduced. For
+controller placement, select the same active file in Tray Teach, then reload the
+controller configuration after changing that choice. GUI Browse also supports
+standalone inspection with another explicitly selected calibrated camera.
 
 Drag the divider between RGB and registered depth to adjust their widths, just
 like Item Teach. Each pane keeps its own status heading and scales the image to
@@ -211,16 +219,24 @@ controller target or production detection service. There are no placement
 areas, placement targets, controller Home, motion rates or I/O settings here.
 
 Strict tray schema 1 stores detection settings, same-stem model hash, camera
-calibration filename/hash, optional Tray Detect Pose joint angles, the four base-frame
+calibration filename/hash as historical plane-capture provenance, optional Tray Detect Pose joints, the four base-frame
 corner observations, plane transform/fit evidence, and `nearest_base_corner_v1`
 origin convention. Distances are mm for dimension settings, metres for plane/
 pose geometry and radians for taught joints. No images or live depth are saved.
-Changing the camera calibration or intrinsics requires re-teaching the plane.
+Camera-only recalibration or changed live intrinsics preserves the saved plane
+and joint pose. Detection uses current intrinsics and image-time calibrated TF.
+The original camera file may be absent; Save preserves its recorded filename/hash
+while the plane is reused, and a newly captured plane records its current camera.
+Neither loading nor recalibration rewrites existing teach files. A startup reminder
+asks for current camera calibration before creating a new plane. Re-teach if the
+robot base or physical reference surface moves; after moving the camera, verify
+that the saved observation pose still sees the tray. Active file hashes, exact-time
+TF, synchronized depth and model validation remain enforced.
 
 On launch, Tray Teach automatically reopens the exact last loaded or saved YAML
 remembered in `logs/tray_perception/last_session.json`, just like Item Teach.
-This restores the saved settings, plane, optional joint pose, bound calibration
-and verified paired model through the same background Load workflow. Complete
+This restores the saved settings, plane, optional joint pose, independently selected
+active calibration and verified paired model through the same background Load workflow. Complete
 profiles and partial drafts both reopen; Armed stays OFF. The restored file remains
 the Save target, with the existing overwrite/backup and rename behavior. There is
 no newest-file search or automatic teach-file rewrite. Missing/invalid files report
@@ -330,7 +346,7 @@ the existing 1,000-event limit. Normal shutdown does not report an executor faul
 
 Arming requires YOLO ON with valid settings, an explicitly saved/loaded unchanged
 profile whose detection settings/plane match the form, its verified mask/OBB model,
-matching calibration and fresh RGB/CameraInfo/exact-time TF. It needs no live
+an unchanged active calibration and fresh RGB/CameraInfo/exact-time TF. It needs no live
 depth, a visible tray, Tray Detect Pose, Item Teach, controller process or
 motion. Arming does not run inference. Settings/source changes and YOLO
 OFF disarm immediately; changed files require explicit reload. Only one provider
@@ -401,8 +417,9 @@ discarding an otherwise valid tray pose. Simulate Trigger does not archive image
 ## Headless Tray Detect
 
 Manually deploy exactly one `tray_teach_*.yaml` and its same-stem `.pt` into flat
-root `runtime_teach/`. Keep the exact camera calibration named/hash-bound by the
-YAML under root `calibration/`. No Item/Bin Teach file is needed by Tray Detect;
+root `runtime_teach/`. Keep the active eye-on-hand calibration selected by
+`ITEM_TEACH_ROBOT_CAMERA_CALIBRATION` under root `calibration/`. Its strict binding
+is `Link6 <- robot_camera_link`; the YAML's teaching-camera filename/hash is history. No Item/Bin Teach file is needed by Tray Detect;
 its complete pair may coexist with their files in the shared deployment folder.
 The Item/controller catalog still requires its own Item pair and Bin YAML, and
 now allows a complete optional tray pair. Missing/duplicate tray files, mismatched
@@ -414,9 +431,9 @@ ros2 launch tray_perception tray_detect.launch.py
 ```
 
 Starting this dedicated read-only process explicitly trusts the deployed model.
-It loads the pair once, connects the profile's calibrated prefix, waits boundedly
+It loads the pair once, connects the active camera’s calibrated prefix, waits boundedly
 for fresh calibrated RGB/TF, and arms automatically. There are no file/trust/arming
-launch arguments, latest-calibration search, `.env` keys or automatic deployment.
+launch arguments, latest-calibration search, new `.env` keys or automatic deployment.
 Headless YOLO inference is request-driven only; there is no GUI, selected-TF
 publication or continuous image saving. Scene voxels refresh at up to 1 Hz from
 fresh calibrated synchronized RGB/depth/exact-time TF, independently of pose

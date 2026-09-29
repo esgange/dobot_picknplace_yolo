@@ -7173,6 +7173,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No physical robot commands or automatic live-node restarts; no physical
   commissioning/offline-transfer claim.
 
+### 2026-09-29 — Rule 174: independent tray camera and geometry-aware bin warning
+
+- The operator saw a Bin/platform mismatch with identical filenames after Rule
+  173 migrated the platform file. The old/new file hashes differ, but both local
+  and runtime bins contain a source base/platform transform numerically identical
+  to the selected platform (maximum element difference zero). Expose that already
+  validated capture matrix in the bin artifact and suppress metadata-only warnings
+  only when robot identity, reference convention and transform agree (absolute
+  1e-9, zero relative tolerance). Changed geometry/stations still warn; retain the
+  original hashes and independent active-source integrity checks.
+- User explicitly confirmed applying independent calibration to Tray Teach too.
+  Preserve tray schema 1, base-frame plane/corners, detect joints and all original
+  capture evidence. Treat its camera filename/hash as history. GUI may keep its
+  explicitly loaded camera; startup/default loading, headless Tray Detect and
+  controller tray configuration use the existing shared explicit robot-camera
+  selection. The default camera remains strictly Link6 <- robot_camera_link.
+  Never open the original camera file or fall back to it. Standalone GUI Browse
+  still supports another explicitly selected calibrated camera.
+- Replacing calibration/reconnecting invalidates observations and disarms, without
+  discarding the plane. Remove three saved-CameraInfo equality checks from live,
+  request and source validation; native geometry already projects the base plane
+  with current validated intrinsics and image-time calibrated TF. Model pairing,
+  active camera hashes, source/frame/freshness, in-flight cancellation and controller
+  response-camera checks remain. New plane captures record the current camera;
+  Save preserves the previous plane-camera evidence when reusing geometry.
+  Add a Tray Teach startup reminder about calibrating before teaching and keeping
+  the robot base/reference surface unchanged when reusing the plane.
+- Validation: 140 bin/independent-calibration/Item Teach preview tests, 233 tray
+  tests and 556 controller tests pass. Six new tray regression cases cover active
+  selection, absent historical files, source pinning, current intrinsics, unchanged
+  plane/joints, save provenance and controller binding. Native geometry test moves
+  the camera and changes intrinsics, then recovers the same physical tray pose.
+  Two existing RViz file assertions fail against unrelated operator RViz edits
+  (saved float 0.009999999776482582 versus exact 0.01); leave those edits untouched
+  and exclude only those assertions from the tray rerun. Initial regression mock
+  bypassed real source validation; corrected the fixture to call the actual validator.
+  All three package builds, scoped lint and diff checks pass. FSM HTML/PDF exports
+  contain seven diagrams, source SHA-256
+  d8c965293d27bcd2dc8e01e6ef27ebea593b179eb89c87a5d502463440268cc2.
+- Local calibration transforms, teach YAML/model files and .env were not rewritten.
+  Current active robot camera remains the September 9 eye-on-hand file. The current
+  September 29 tray YAML/model pair validates; the older September 28 YAML has no
+  paired model and cannot load independently of calibration. No physical robot
+  commands, live-node restart or commissioning/offline-transfer claim.
+
 ### Future entry template
 
 ```text

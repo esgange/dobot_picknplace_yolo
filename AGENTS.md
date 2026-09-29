@@ -876,6 +876,30 @@ into old capture evidence. Supersede historical source-camera binding and platfo
 schema-3-only rules 22/23/26/50/131/132/148; no vendor or motion-sequence change.
 
 
+Rule 174 makes tray base-frame reference geometry independent of its teaching-camera
+file. Keep tray/draft schema 1; camera_calibration filename/hash and the plane's
+pixels/intrinsics are original capture history, never a required live source.
+Loading and camera-only changes preserve plane corners/transform and detect joints;
+new captures record their current camera, and later saves preserve old provenance
+for an unchanged plane. Use current validated intrinsics and exact-image-time TF
+for live, simulated and armed detection. Remove saved-intrinsics equality gates,
+not active camera/frame/hash/freshness or model/plane validation. Tray GUI retains
+an explicitly loaded camera; otherwise load the strict eye-on-hand file from the
+existing ITEM_TEACH_ROBOT_CAMERA_CALIBRATION selection. Headless Tray Detect and
+controller tray configuration use that same explicit choice, with no historical
+file fallback. Keep active hashes pinned until reload and require controller/provider
+camera evidence agreement. Standalone GUI camera browsing remains available.
+Camera changes disarm and discard observations, never issue hardware commands.
+Show the fresh-camera reminder before teaching a new reference plane; reuse assumes
+an unchanged robot base/reference surface and a still-visible observation pose.
+For Bin/platform warnings, differing hashes alone are insufficient when validated
+saved/current base/platform transforms agree within absolute 1e-9 (rtol=0) and robot
+identity/reference convention match. Preserve warnings for changed geometry/station,
+original provenance and active hash guards. This supersedes rule 46's hash-only
+warning and earlier tray teaching-camera/intrinsics binding rules only. No numerical
+calibration conversion, automatic teach-file rewrite or motion-sequence change.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

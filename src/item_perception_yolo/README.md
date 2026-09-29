@@ -327,8 +327,11 @@ and bin offset at each station. Previously saved XY remains unchanged; select th
 newly re-taught bin file explicitly to replace an older ROI selection.
 
 Item Teach compares the selected platform's SHA-256 with
-`teaching_provenance.platform_calibration.sha256` in the bin file. A difference
-shows a persistent amber **Bin/platform mismatch** warning below the selectors,
+`teaching_provenance.platform_calibration.sha256` in the bin file. Different hashes
+with identical source/selected robot identity, reference convention and recorded
+base/platform transform (absolute tolerance 1e-9, no relative tolerance) produce
+no warning: a metadata-only schema migration preserves geometry. Otherwise a
+difference shows a persistent amber **Bin/platform mismatch** warning below the selectors,
 including the original and selected filenames; hover for the full hashes.
 It also records one bounded warning event per selected/restored binding, not
 per video frame. The warning clears when matching files are selected or the

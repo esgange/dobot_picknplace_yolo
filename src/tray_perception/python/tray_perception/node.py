@@ -24,6 +24,7 @@ from item_perception_yolo.platform_teach_core import (
     _parse_env_file, load_camera_calibration, load_robot_lan1_ip, resolve_base_from_camera_link)
 
 from .core import EventLogger, load_profile, validate_plane, validate_preview
+from .calibration import active_robot_camera, camera_provenance
 from .rviz import TrayRvizPreview
 from .requests import pose_extents, TrayRequests
 from .simulation import TraySimulationPreview
@@ -52,6 +53,7 @@ class TrayTeachNode(Node):
         self.connection = 0
         self.camera_prefix = None
         self.camera = self.model = self.model_metadata = self.position = self.plane = None
+        self.plane_camera_calibration = None
         self.rgb = self.depth = self.color_info = self.depth_info = None
         self._joints = self._joint_receipt = None
         self.subscriptions_owned = []
@@ -117,7 +119,7 @@ class TrayTeachNode(Node):
         camera = load_camera_calibration(Path(path), root=self.root)
         with self.lock:
             self.invalidate()
-            self.camera, self.plane = camera, None
+            self.camera = camera
             generation = self.generation
         self.connect_camera(camera.settings.camera_prefix)
         self.events.record("INFO", "camera_loaded", str(camera.path), generation=generation)
@@ -127,8 +129,6 @@ class TrayTeachNode(Node):
         validate_prefix(prefix)
         with self.lock:
             self.invalidate("Camera reconnected")
-            if self.camera_prefix != prefix:
-                self.plane = None
             self.camera_prefix = prefix
             self.connection += 1
             connection = self.connection
@@ -203,7 +203,7 @@ class TrayTeachNode(Node):
         self.events.record("INFO", "model_loaded", str(path), sha256=config["sha256"])
         return result
 
-    def validate_sources(self, *, check_plane=True):
+    def validate_sources(self):
         if self.fatal_error or self.native.failed:
             raise RuntimeError(self.fatal_error or "Native tray worker failed")
         if self.camera is None:
@@ -211,11 +211,7 @@ class TrayTeachNode(Node):
         if self.camera_prefix != self.camera.settings.camera_prefix:
             raise ValueError("Connected prefix does not match camera calibration")
         if file_sha256(self.camera.path) != self.camera.sha256:
-            raise ValueError("Camera calibration changed; reload it and re-teach the plane")
-        if (check_plane and self.plane is not None and self.color_info is not None
-                and self.plane["camera"] != self.color_info):
-            self.selected = None
-            raise ValueError("CameraInfo differs from taught plane; re-teach the plane")
+            raise ValueError("Camera calibration changed; explicitly reload it")
 
     def raw_snapshot(self, *, input_max_age_sec=.5):
         with self.lock:
@@ -231,7 +227,7 @@ class TrayTeachNode(Node):
                 "metric_error": "", "depth_error": ""}
 
     def snapshot(self, *, depth_required=False, view=None, quality=None):
-        self.validate_sources(check_plane=False)
+        self.validate_sources()
         quality = QUALITY_DEFAULTS if quality is None else quality
         view = (self.raw_snapshot(input_max_age_sec=quality["input_max_age_sec"])
                 if view is None else view)
@@ -277,7 +273,7 @@ class TrayTeachNode(Node):
 
     def _check_snapshot(self, view, *, calibrated=True):
         if calibrated:
-            self.validate_sources(check_plane=False)
+            self.validate_sources()
         if view["generation"] != self.generation:
             raise ValueError("Tray observation was invalidated; acquire another frame")
         if calibrated and view["camera_context"]["camera"] != self.color_info:
@@ -312,6 +308,7 @@ class TrayTeachNode(Node):
         self._check_snapshot(view)
         with self.lock:
             self.plane = result["plane"]
+            self.plane_camera_calibration = camera_provenance(self.camera)
             self.invalidate()
         self.events.record("INFO", "plane_taught", "Four corners captured in base_link",
                            max_error_mm=self.plane["max_error_mm"])
@@ -339,9 +336,6 @@ class TrayTeachNode(Node):
             plane, model = copy.deepcopy(self.plane), copy.deepcopy(self.model)
         if context is None:
             plane = None
-        elif plane is not None and plane["camera"] != context["camera"]:
-            plane = None
-            view["metric_error"] = "CameraInfo differs from taught plane; re-teach the plane"
         request = {"width": rgb["width"], "height": rgb["height"], "plane": plane,
                    "camera_context": context}
         if settings is None:
@@ -495,10 +489,8 @@ class TrayTeachNode(Node):
 
     def load_saved(self, path):
         profile = load_profile(path, self.root, deployment=self.deployment)
-        camera_path = self.root / "calibration" / profile["camera_calibration"]["filename"]
-        camera = load_camera_calibration(camera_path, root=self.root)
-        if camera.sha256 != profile["camera_calibration"]["sha256"]:
-            raise ValueError("Tray profile's camera calibration hash changed")
+        camera = (load_camera_calibration(self.camera.path, root=self.root)
+                  if self.camera is not None else active_robot_camera(self.root))
         metadata = self.inspect_model(Path(path).with_suffix(".pt"), profile["model"]["sha256"])
         settings = profile["settings"]
         if metadata["task"] != settings["model_task"] or any(
@@ -508,6 +500,7 @@ class TrayTeachNode(Node):
         with self.lock:
             self.position = copy.deepcopy(profile["tray_teach_position"])
             self.plane = copy.deepcopy(profile["reference_plane"])
+            self.plane_camera_calibration = copy.deepcopy(profile["camera_calibration"])
         return profile
 
     def load_draft(self, path, expected_digest):
@@ -518,11 +511,8 @@ class TrayTeachNode(Node):
             raise ValueError("Tray Teach draft changed; load it again")
         camera = None
         if profile["camera_calibration"] is not None:
-            camera = load_camera_calibration(
-                self.root / "calibration" / profile["camera_calibration"]["filename"],
-                root=self.root)
-            if camera.sha256 != profile["camera_calibration"]["sha256"]:
-                raise ValueError("Draft camera calibration changed; cannot restore its plane")
+            camera = (load_camera_calibration(self.camera.path, root=self.root)
+                      if self.camera is not None else active_robot_camera(self.root))
         self.invalidate("Loading Tray Teach draft")
         if profile["model"] is not None:
             self.inspect_model(Path(path).with_suffix(".pt"), profile["model"]["sha256"])
@@ -535,6 +525,7 @@ class TrayTeachNode(Node):
         with self.lock:
             self.position = copy.deepcopy(profile["tray_teach_position"])
             self.plane = copy.deepcopy(profile["reference_plane"])
+            self.plane_camera_calibration = copy.deepcopy(profile["camera_calibration"])
         return profile
 
     def _tick(self):
@@ -551,7 +542,7 @@ class TrayTeachNode(Node):
             self.rviz.invalidate("Tray native worker failed")
         elif self.rviz.displayed is not None:
             try:
-                self.validate_sources(check_plane=False)
+                self.validate_sources()
             except (ValueError, OSError, RuntimeError) as exc:
                 self.rviz.invalidate(str(exc))
         self.rviz.tick()

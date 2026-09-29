@@ -368,10 +368,14 @@ def restorable_sources(window, monkeypatch):
     path, camera, model = sources.__wrapped__(window.node.root)
     node = window.node
     node.lock, node.deployment = threading.RLock(), False
+    camera_bytes = camera.path.read_bytes()
 
     def read_camera(*_a, **_k):
+        if camera.path.read_bytes() != camera_bytes:
+            raise ValueError("Invalid selected camera calibration")
         return SimpleNamespace(**{**vars(camera), "sha256": gui.file_sha256(camera.path)})
     monkeypatch.setattr(module, "load_camera_calibration", read_camera)
+    monkeypatch.setattr(module, "active_robot_camera", read_camera)
 
     def inspect(path, expected_digest):
         assert gui.file_sha256(path) == expected_digest
@@ -1167,7 +1171,7 @@ def test_reconnecting_changes_exact_topics_and_rejects_retired_callbacks():
     node.invalidate = MagicMock()
     node._receive = lambda *args: TrayTeachNode._receive(node, *args)
     TrayTeachNode.connect_camera(node, "new")
-    assert node.plane is None and node.rgb is None and node.connection == 2
+    assert node.plane == plane() and node.rgb is None and node.connection == 2
     assert [call.args[1] for call in node.create_subscription.call_args_list] == [
         "/new/color/image_raw", "/new/depth/image_raw",
         "/new/color/camera_info", "/new/depth/camera_info"]
@@ -1344,10 +1348,10 @@ def test_loaded_profile_restores_position_without_opening_item_file(tmp_path, mo
               "camera_calibration": {"filename": "camera.yaml", "sha256": "2" * 64},
               "tray_teach_position": position(), "reference_plane": plane()}
     monkeypatch.setattr(module, "load_profile", lambda *_a, **_k: copy.deepcopy(source))
-    monkeypatch.setattr(module, "load_camera_calibration", lambda *_a, **_k: SimpleNamespace(
-        path=tmp_path / "calibration/camera.yaml", sha256="2" * 64))
+    monkeypatch.setattr(module, "active_robot_camera", lambda *_a, **_k: SimpleNamespace(
+        path=tmp_path / "calibration/current.yaml", sha256="3" * 64))
     node = SimpleNamespace(root=tmp_path, lock=threading.RLock(), apply_camera=MagicMock(),
-                           deployment=False,
+                           deployment=False, camera=None,
                            inspect_model=MagicMock(return_value={"task": "segment",
                                                                  "classes": {"0": "tray"}}))
     result = TrayTeachNode.load_saved(node, tmp_path / "tray.yaml")
@@ -1361,9 +1365,9 @@ def test_loaded_draft_restores_optional_sources_and_plane_without_position(tmp_p
     _, camera, model = sources.__wrapped__(tmp_path)
     path, _, target, _ = documents.save_document(
         form(), None, None, plane(), camera, model, tmp_path)
-    monkeypatch.setattr(module, "load_camera_calibration", lambda *_a, **_k: camera)
+    monkeypatch.setattr(module, "active_robot_camera", lambda *_a, **_k: camera)
     node = SimpleNamespace(root=tmp_path, lock=threading.RLock(), apply_camera=MagicMock(),
-                           invalidate=MagicMock(), inspect_model=MagicMock())
+                           camera=None, invalidate=MagicMock(), inspect_model=MagicMock())
     profile = TrayTeachNode.load_draft(node, path, target.yaml_sha256)
     assert profile["artifact_type"] == "tray_teach_draft"
     assert node.position is None and node.plane == plane()
@@ -1371,9 +1375,9 @@ def test_loaded_draft_restores_optional_sources_and_plane_without_position(tmp_p
     node.apply_camera.assert_called_once_with(camera.path)
     camera.sha256 = "0" * 64
     node.inspect_model.reset_mock()
-    with pytest.raises(ValueError, match="calibration changed"):
-        TrayTeachNode.load_draft(node, path, target.yaml_sha256)
-    node.inspect_model.assert_not_called()
+    TrayTeachNode.load_draft(node, path, target.yaml_sha256)
+    assert node.plane_camera_calibration == profile["camera_calibration"]
+    node.inspect_model.assert_called_once()
 
 
 def test_launch_is_local_only_and_does_not_launch_dependencies(monkeypatch):

@@ -135,14 +135,21 @@ class BinTeachArtifact:
     dictionary_name: str
     marker_size_mm: float
     points: tuple[BinRoiPoint, BinRoiPoint, BinRoiPoint, BinRoiPoint]
+    source_base_from_platform: np.ndarray
 
 
 def bin_platform_warning(
     template: BinTeachArtifact,
     platform: PlatformCalibrationArtifact,
 ) -> str | None:
-    """Compare recorded file identity, not physical alignment or deployment eligibility."""
+    """Warn on a different reference, not a metadata-only platform file change."""
     if template.source_platform_calibration_sha256 == platform.sha256:
+        return None
+    source_pose = getattr(template, "source_base_from_platform", None)
+    if (source_pose is not None
+            and template.source_robot_lan1_ip == getattr(platform, "robot_lan1_ip", None)
+            and template.reference_convention == getattr(platform, "reference_convention", None)
+            and np.allclose(source_pose, platform.base_from_platform, rtol=0., atol=1e-9)):
         return None
     return (
         "WARNING: Bin/platform mismatch — different platform calibration.\n"
@@ -988,4 +995,5 @@ def load_bin_teach(path: Path, root: Path | None = None, *, deployment=False) ->
         dictionary_name=settings.dictionary_name,
         marker_size_mm=float(settings.marker_size_mm),
         points=points_tuple,
+        source_base_from_platform=source_base_from_platform.copy(),
     )
