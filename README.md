@@ -42,6 +42,11 @@ fresh actual pose, queue/robot status and execution evidence after acceptance.
 Interrupted put-back retains release progress for explicit Recovery, and later
 Stop clicks send a new Stop with a fresh physical confirmation.
 
+Confirmed emergency stops report **“Emergency stop pressed — cannot start or
+recover.”** Release the physical button, then explicitly use Recover / Clear
+Error; the controller verifies alarm clearance before enabling. See the
+[emergency-stop feedback details](src/robot_controller/README.md#emergency-stop-feedback).
+
 `robot_controller` is the production hardware authority for Home, Pick, Tray Detect
 Position and Place Item operations. Placement supports positive tray-local X/Y
 and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose, with

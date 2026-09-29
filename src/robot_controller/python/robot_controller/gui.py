@@ -22,6 +22,7 @@ from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlob
 
 from .ui_state import load_state, save_state
 from .feedback import FEEDBACK_MAX_AGE_SEC
+from .errors import EMERGENCY_STOP_MESSAGE
 from .placement import validate_target
 
 
@@ -305,11 +306,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _refresh_status(self, state):
         current = state.state if state is not None else "UNAVAILABLE"
-        self.status.setText(current)
+        emergency = (state is not None and current == "FAULT"
+                     and EMERGENCY_STOP_MESSAGE in state.message)
+        self.status.setText("EMERGENCY STOP\nPRESSED\nCannot start / recover" if emergency else current)
         color = ("#61dfa5" if current == "READY" else
                  "#ff9393" if current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN") else
                  "#ffd077" if current in ("PAUSED", "UNAVAILABLE") else "#edf3f8")
-        size = 19 if len(current) > 14 else 26
+        size = 17 if emergency else 19 if len(current) > 14 else 26
         self.status.setStyleSheet(f"font-size:{size}px;font-weight:700;color:{color}")
         if state is None:
             self.status.setToolTip("/robot_controller/status is missing or older than 1 second")

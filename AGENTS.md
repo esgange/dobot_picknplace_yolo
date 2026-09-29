@@ -772,6 +772,20 @@ enforce simulated-pose expiry if Qt is busy. Preserve ordinary clicked-item and
 corner-capture lifetimes, arming, live inference settings, accepted robot-action
 batch lifetimes, freshness, schemas, hardware motion and I/O.
 
+Rule 167 requires explicit Robot Controller emergency-stop feedback for confirmed
+Dobot command `res=-3` or V4.6.5 GetErrorID alarm 1537: “Emergency stop pressed —
+cannot start or recover.” Include physical-release and explicit Recover guidance
+in status, service failures and operator diagnostics, and visibly in the GUI FAULT
+panel. Startup queries canonical GetErrorID before initialization; absent, invalid
+or failed diagnostics block startup. StopMoveJog's -3 must not be swallowed as
+best effort. Preserve Recover's Stop/conditional ClearError and verified clearance
+before Enable; if clearing times out, query current alarms for the specific reason.
+Do not block that explicit clear attempt with a cached/latched E-stop label or
+disable Recover permanently. Never infer E-stop from generic mode 9, ErrorStatus,
+disabled state or collision. Keep five-second response/cancellation/ownership
+guards, held-item protection, Stop-unconfirmed and motion containment semantics.
+No automatic retries, resets, physical tests or live node restarts.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

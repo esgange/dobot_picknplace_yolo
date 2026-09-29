@@ -947,6 +947,7 @@ def test_startup_sequence_is_explicit_and_never_calls_home():
     transport.wait_services = lambda **kwargs: order.append(
         ("services", tuple(kwargs.get("optional", ()))))
     transport._call_startup = lambda name, **_kwargs: order.append(("call", name))
+    transport._check_emergency_stop = lambda: order.append(("alarm_check",))
     transport.request_stop = lambda reason: order.append(("stop", reason)) or object()
     transport.confirm_stop = lambda _future: order.append(("stop_confirmed",))
     transport._check_held_context = lambda known, expected: order.append(
@@ -961,6 +962,7 @@ def test_startup_sequence_is_explicit_and_never_calls_home():
 
     calls = [entry[1] for entry in order if entry[0] == "call"]
     assert calls == ["StopMoveJog", "DisableRobot", "EnableRobot"]
+    assert order.index(("alarm_check",)) < order.index(("call", "StopMoveJog"))
     assert order.index(("stop_confirmed",)) < order.index(("call", "DisableRobot"))
     assert order.index(("call", "EnableRobot")) < order.index(("settings", 100))
     assert order.count(("enabled",)) == 1

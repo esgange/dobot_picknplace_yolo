@@ -9,6 +9,7 @@ import pytest
 
 from robot_controller.controller import RobotController
 from robot_controller.errors import FeedbackFailure
+from robot_controller.errors import EMERGENCY_STOP_GUIDANCE
 from robot_controller.gui import ControllerWindow, GuiNode
 import robot_controller.gui as gui_module
 from robot_controller_interfaces.msg import ControllerStatus
@@ -158,6 +159,23 @@ def test_unavailable_feedback_never_displays_old_io_as_live_or_off(window):
     assert all(value.text() == "UNKNOWN" for value in window.gripper_values.values())
     assert not window.hardware_home.isEnabled() and not window.hardware_pick.isEnabled()
     assert window.stop.isEnabled() and window.stop.text() == "STOP"
+
+
+def test_confirmed_estop_has_visible_feedback_without_latching_recover_disabled(window):
+    window.node.status = status(state="FAULT", message="Recovery failed: " + EMERGENCY_STOP_GUIDANCE)
+    window._refresh()
+    assert window.status.text() == "EMERGENCY STOP\nPRESSED\nCannot start / recover"
+    assert EMERGENCY_STOP_GUIDANCE in window.status.toolTip()
+    assert not window.startup.isEnabled() and not window.hardware_home.isEnabled()
+    # The alarm may latch until clear: keep explicit Recover available after the
+    # physical button is released. Only the controller can establish readiness.
+    assert window.recover.isEnabled()
+    window.node.status = status(state="FAULT", message="Unrelated alarm")
+    window._refresh()
+    assert window.status.text() == "FAULT"
+    window.node.status = status()
+    window._refresh()
+    assert window.status.text() == "READY"
 
 
 def test_pause_button_matches_direct_stop_until_both_status_and_reply_arrive(window):

@@ -10,7 +10,8 @@ import numpy as np
 
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldSuctionLost, HeldUnknown, OperationCanceled, StopUnconfirmed,
-                     UNKNOWN_ITEM_GUIDANCE)
+                     UNKNOWN_ITEM_GUIDANCE, EmergencyStopPressed, EMERGENCY_STOP_GUIDANCE,
+                     alarm_ids, command_failure_message, command_rejection)
 from .feedback import enabled_blockers
 from .kinematics import pose_matrix, pose_values
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, pose_reached
@@ -43,12 +44,12 @@ class DobotTransport:
 
     def __init__(self, node, monitor):
         from dobot_msgs_v4.srv import (CP, ClearError, DO, DisableRobot,
-                                       EnableRobot, MovL, MovLIO,
+                                       EnableRobot, GetErrorID, MovL, MovLIO,
                                        RelMovLUser, SetTool, SpeedFactor, Stop,
                                        StopMoveJog, Tool, User)
         self.node = node
         self.monitor = monitor
-        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, MovL, MovLIO,
+        kinds = (CP, ClearError, DO, DisableRobot, EnableRobot, GetErrorID, MovL, MovLIO,
                  RelMovLUser, SetTool, SpeedFactor, StopMoveJog, Tool, User)
         self.types = {kind.__name__: kind for kind in kinds}
         self.clients = {
@@ -307,8 +308,8 @@ class DobotTransport:
         if result is None or result.res != 0:
             self._finish_service_audit(
                 audit, "rejected", result=result,
-                detail="canonical service returned nonzero/empty result", level="ERROR")
-            raise CommandRejected(f"{name} failed: {None if result is None else result.res}")
+                detail=command_failure_message(name, result), level="ERROR")
+            raise command_rejection(name, result)
         self._finish_service_audit(audit, "accepted", result=result)
         if progress is not None:
             progress(self.monitor.snapshot(require_enabled=False))
@@ -410,10 +411,9 @@ class DobotTransport:
                     if result is None or result.res != 0:
                         self._finish_service_audit(
                             audit, "rejected", result=result,
-                            detail="canonical service returned nonzero/empty result",
+                            detail=command_failure_message(name, result),
                             level="ERROR")
-                        raise CommandRejected(
-                            f"{name} failed: {None if result is None else result.res}")
+                        raise command_rejection(name, result)
                     if name == "MovL":
                         self._motion_command_id(result)
                     self._finish_service_audit(audit, "accepted", result=result)
@@ -489,11 +489,13 @@ class DobotTransport:
                 audit, "response_error", detail=str(exc), level="ERROR")
             raise StopUnconfirmed(f"Stop response failed: {exc}") from exc
         if result is None or result.res != 0:
+            detail = (command_failure_message("Stop", result) if result is not None
+                      and result.res == -3 else
+                      f"Stop rejected: {None if result is None else result.res}")
             self._finish_service_audit(
                 audit, "rejected", result=result,
-                detail="canonical Stop returned nonzero/empty result", level="ERROR")
-            raise StopUnconfirmed(
-                f"Stop rejected: {None if result is None else result.res}")
+                detail=detail, level="ERROR")
+            raise StopUnconfirmed(detail)
         self._finish_service_audit(audit, "accepted", result=result)
         anchor = None
         anchor_sequence = None
@@ -675,6 +677,17 @@ class DobotTransport:
                 snapshot, known_holding=True, expected_outputs=expected_outputs)
         return snapshot
 
+    def _check_emergency_stop(self):
+        # A read-only canonical query, with the normal ownership, feedback,
+        # cancellation and five-second response guards. Never infer this alarm
+        # from generic ErrorStatus/mode 9 or the driver's safety_status double.
+        progress = self._validate_held_snapshot if self.node.holding_item else None
+        result = self.call("GetErrorID", progress=progress)
+        codes = alarm_ids(result.robot_return)
+        self.node.events.record("INFO", "robot_alarm_check", "GetErrorID", alarm_ids=list(codes))
+        if 1537 in codes:
+            raise EmergencyStopPressed(f"{EMERGENCY_STOP_GUIDANCE} (Robot alarm 1537.)")
+
     def _clear_errors_if_needed(self):
         current = self._validate_held_snapshot(
             self.monitor.snapshot(require_enabled=False))
@@ -702,13 +715,22 @@ class DobotTransport:
                 return
             raise
         self._call_startup("ClearError")
-        self.monitor.wait_samples(
-            self._held_predicate(
-                lambda sample: sample.feed["robot_mode"] != 9
-                and not sample.feed["ErrorStatus"]
-                and not sample.feed["CollisionStates"]),
-            CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
-            cancel=self.node.cancel_requested, description="cleared error/collision feedback")
+        try:
+            self.monitor.wait_samples(
+                self._held_predicate(
+                    lambda sample: sample.feed["robot_mode"] != 9
+                    and not sample.feed["ErrorStatus"]
+                    and not sample.feed["CollisionStates"]),
+                CONSISTENT_FLAG_SAMPLES, MODE_TRANSITION_TIMEOUT_SEC,
+                cancel=self.node.cancel_requested, description="cleared error/collision feedback")
+        except HeldSuctionLost:
+            raise
+        except FeedbackFailure:
+            # ClearError may acknowledge an alarm that is still physically active.
+            # Diagnose after the explicit clear attempt, so a latched E-stop does
+            # not permanently block recovery once the operator releases it.
+            self._check_emergency_stop()
+            raise
 
     def _apply_settings(self, speed_percent):
         for name, fields in (
@@ -756,8 +778,11 @@ class DobotTransport:
         self.node.check_all_command_owners(strict)
         self.node.check_feedback_owners()
         self.monitor.snapshot(require_enabled=False)
+        self._check_emergency_stop()
         try:
             self._call_startup("StopMoveJog")
+        except EmergencyStopPressed:
+            raise
         except (CommandRejected, CommandResponseTimeout) as exc:
             self.node.events.record("WARNING", "startup_best_effort", str(exc),
                                     service="StopMoveJog")

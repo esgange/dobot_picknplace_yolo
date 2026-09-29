@@ -6911,6 +6911,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   node restarts performed. Restart both teaching windows to activate the change;
   no upstream or offline-transfer validation claimed.
 
+### 2026-09-29 — Rule 167: confirmed emergency-stop feedback
+
+- User pressed the physical emergency stop and requested explicit “Emergency stop
+  pressed, cannot start/recover” feedback. The audit found command replies -3,
+  read-only GetErrorID `{[1537]}`, and ClearError acknowledgements followed by
+  generic alarm-clear timeouts. Decode only proven E-stop evidence; never infer it
+  from generic mode 9, ErrorStatus, disabled state, collision or the driver's
+  untrustworthy safety_status floating-point field.
+- The bundled Dobot TCP/IP V4.6.5 protocol (PDF page 157, general error codes)
+  defines -3 as emergency-stop status, and page 40 describes the flat alarm-ID
+  payload. The [official Dobot V4 alarm reference](https://github.com/Dobot-Arm/TCP-IP-Python-V4/blob/feature/v4-optimization/assets/error_controller_README.md)
+  identifies 1537 as the emergency-stop button alarm. No vendor code or upstream
+  revisions change.
+- Startup performs a canonical read-only GetErrorID check before initialization;
+  malformed/missing/failed diagnostics cannot authorize startup. A -3 returned
+  later by StopMoveJog is fatal despite its ordinary best-effort policy. Single
+  and grouped commands decode -3 in both failure details and operator logs. Stop
+  -3 retains StopUnconfirmed semantics and group failures retain Stop containment.
+- Preserve explicit Recover's Stop, conditional ClearError, verified clearance
+  and then Enable/settings sequence. If ClearError acknowledges but the alarm
+  persists, query GetErrorID to name E-stop instead of a generic timeout. A latched
+  E-stop must not prevent the explicit clear attempt after physical release;
+  Recover stays available in FAULT. No Enable, settings, output reset or motion
+  after failed clearance. Held-suction-loss failures retain their existing path;
+  read-only queries preserve ownership, feedback, cancellation, five-second
+  response and held-item guards. No automatic retries or reset.
+- Failed service responses and status carry physical-release/Recover guidance.
+  GUI FAULT displays EMERGENCY STOP / PRESSED / Cannot start / recover for this
+  confirmed cause; other faults remain FAULT. Source docs and all FSM exports are
+  updated. No ROS schema, teach/calibration/model, detection or motion-plan changes.
+- Validation: all 529 controller tests pass, including malformed/empty/non-E-stop
+  alarm replies, pressed startup with no initialization calls, acknowledged clear
+  while pressed, successful clear after release, -3 between preflight and
+  StopMoveJog, single/group/Stop rejection containment, held-suction failures,
+  lifecycle service results and offscreen GUI feedback. The local robot_controller
+  build, scoped lint and diff checks pass; all seven FSM diagrams were regenerated
+  into HTML/PDF. Tests use synthetic feedback only; no physical
+  robot commands or live-node restarts. Preserve unrelated RViz/operator files.
+  No offline-transfer milestone or hardware validation claimed.
+
 ### Future entry template
 
 ```text

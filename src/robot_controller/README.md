@@ -14,6 +14,33 @@ Launching the package never enables, recovers, homes, or moves the robot. An
 operator or supervisor must load configuration and make an explicit Startup
 service call before a hardware action can be accepted.
 
+## Emergency-stop feedback
+
+The controller translates a Dobot command response `res=-3` or confirmed robot
+alarm **1537** into **“Emergency stop pressed — cannot start or recover. Release
+the emergency-stop button, then click Recover / Clear Error.”** The failed service
+response, operator log and FAULT status carry this explanation; the GUI shows
+EMERGENCY STOP / PRESSED / Cannot start / recover in its status panel.
+Generic mode 9, ErrorStatus, collision, disabled state and unrelated alarms are
+not enough to label an emergency stop.
+
+Startup first makes a read-only canonical `GetErrorID` query before any hardware
+initialization commands. Its V4.6.5 payload must be `{[integer alarm IDs]}` (`{[]}`
+when clear); missing/malformed/failed responses block startup. An emergency stop
+reported by StopMoveJog is fatal even though ordinary StopMoveJog rejections are
+best effort. Stop rejection still means Stop is unconfirmed.
+
+Recover retains its explicit Stop → conditional ClearError → verified alarm
+clearance → Enable sequence. An acknowledged ClearError alone is not success.
+If the alarm persists, GetErrorID distinguishes an emergency stop from the old
+generic clearance timeout. Recover remains clickable in FAULT so it can clear a
+latched alarm after physical release; no stale UI flag blocks that attempt. It
+cannot reach Enable, settings, output reset or motion unless clearance passes.
+All queries use canonical ownership, feedback/cancellation and five-second
+response checks, with no retries. Held-item and independent Stop guards remain.
+Restart the controller and GUI after rebuilding `robot_controller` to load this
+change; detection/teach files and ROS interfaces are unchanged.
+
 
 ## Tray placement
 

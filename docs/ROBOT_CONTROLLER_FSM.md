@@ -25,6 +25,10 @@ trusted held-item requirement.
 Tray service requests now use the versioned depth-capable endpoint; old provider
 processes cannot satisfy readiness. Executor failures in the provider are visible.
 
+Emergency-stop feedback review: **2026-09-29**, diary rule **167**. Startup queries
+GetErrorID before initialization; confirmed emergency stops have explicit operator
+feedback. Recover preserves alarm clearing after physical button release.
+
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
 them. The tables also describe the behavior without a diagram renderer.
@@ -81,7 +85,7 @@ flowchart TD
     READY -->|GUI Place: tray detector ready| PLACING
     PLACING -->|Released and Home confirmed| READY
     STARTING -->|Unknown suction| HELD_UNKNOWN
-    STARTING -->|Failed| FAULT
+    STARTING -->|Emergency stop confirmed or other failure| FAULT
 ```
 
 Headless launch loads the strict `runtime_teach/` catalog during construction,
@@ -119,11 +123,17 @@ report a terminal error with traceback, rather than retaining a silent frozen
 preview. An unanswered in-flight request still has its existing bounded timeout
 and controller Stop/recovery path; no automatic retry or motion change is added.
 
-Startup order: validate ownership/feedback → best-effort StopMoveJog → strict
+Startup order: validate ownership/feedback → read-only GetErrorID E-stop check → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →
 Enable/confirmation → SpeedFactor 100, User 0, Tool 0, Tool 1 TCP zero, CP 100 →
 unheld output reset → 200 ms coherent readiness. An unanswered service blocks
 later commands, including an unanswered best-effort StopMoveJog.
+GetErrorID must return a valid V4.6.5 alarm-ID list. Alarm 1537 or a command
+response -3 reports **Emergency stop pressed — cannot start or recover**, with
+instructions to release the physical button then use Recover / Clear Error.
+StopMoveJog's -3 is fatal, not best effort. Other robot faults are not relabeled
+as emergency stops. The GUI displays this confirmed cause in its FAULT panel;
+typed status and failed service responses include the complete guidance.
 
 ### Every lifecycle state
 
@@ -388,6 +398,7 @@ or overwrite a new operation. Operation startup cannot clear an in-progress Stop
 | Interrupted put-back, release confirmed | Recover skips release/descent, retreats upward from actual stopped pose and finishes the saved destination. New DI1 HIGH blocks this route. |
 | Unknown HIGH suction, no trusted source | Keep stopped; safely secure/clear item or inspect the sensor for obstruction. Once DI1 shows LOW, click Recover again; no extra Stop click required. No invented return location. |
 | Competing maintenance app | Close the named Gripper Diagnostics/motion-debug application, then retry Recover. |
+| Confirmed emergency stop (`res=-3` or alarm 1537) | Cannot start/recover while active. Release the physical button, then click Recover / Clear Error. Recover may clear a latched alarm; Enable remains blocked until clearance is verified. |
 | Stale feedback, alarm, output mismatch, changed source or failed command | Resolve the reported cause, then Recover. A click does not bypass the check. |
 
 Normal Recover repeats Stop, conditional ClearError, Enable and readiness
@@ -396,6 +407,12 @@ none was established. It resets outputs only for an unheld, clear gripper.
 Unknown HIGH at its item check blocks enable/reset. In uncertain-item recovery,
 outputs are protected until the planned release. Its service response may wait
 for put-back and the remaining saved Pick operation to finish.
+If ClearError acknowledges but the alarm-clear feedback check fails, a read-only
+GetErrorID query provides the explicit emergency-stop reason for alarm 1537.
+Unrelated alarms retain their clearance failure; malformed/unavailable diagnostics
+also fail without enabling. Held-suction loss retains its existing failure path.
+No automatic reset, retry or enabling is added. Recover remains available in FAULT
+to recheck after physical release, avoiding a latch that prevents clearing alarms.
 
 ## 6. The common put-back route
 
