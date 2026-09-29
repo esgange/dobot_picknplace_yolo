@@ -41,7 +41,7 @@ from .kinematics import Cr10Kinematics, pose_values
 from .motion import (candidate_pose_in_base, cartesian_home_targets,
                      home_targets, pick_targets, pose_reached, tray_detect_targets)
 from .managed_control import ManagedControl
-from .placement import PlacementOperation, validate_target
+from .placement import PlacementOperation, TRAY_SPEED_PERCENT, validate_target
 from .recovery import HomeRecovery
 from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
@@ -1094,7 +1094,7 @@ class RobotController(Node):
         current = self.hardware.current_pose()
         targets = tray_detect_targets(
             tray.detect_matrix, tray.detect_joints,
-            speed_percent=config.profile["speed"]["travel_percent"],
+            speed_percent=TRAY_SPEED_PERCENT,
             acceleration_percent=config.profile["acceleration"]["travel_percent"])
         self.operation_progress("TRAY_POSITION", "Queueing direct move to Tray Detect Pose",
                                 waypoint=targets[-1].name)

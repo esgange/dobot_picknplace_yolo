@@ -104,6 +104,9 @@ def test_real_transport_queues_four_moves_with_exact_percentages_and_no_settling
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
     assert rig.order[:4] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
     assert all(not request.mode for _, request in rig.requests)
+    assert [list(request.param_value) for _, request in rig.requests] == [
+        ['user=0', 'tool=0', 'v=100', f'a={acceleration}']
+        for acceleration in (70, 30, 40, 70)]
     assert [request.c for _, request in rig.requests] == pytest.approx([800., 310., 800., 800.])
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])
@@ -345,7 +348,7 @@ def test_controller_queues_direct_tray_position_without_safety_z(start_z, holdin
     request = rig.requests[0][1]
     assert request.mode  # Linear move to the exact recorded joint target.
     assert [request.a, request.b, request.c, request.d, request.e, request.f] == [0.] * 6
-    assert list(request.param_value) == ['user=0', 'tool=0', 'v=80', 'a=70']
+    assert list(request.param_value) == ['user=0', 'tool=0', 'v=100', 'a=70']
     node.configuration.validate_sources.assert_called()
     assert node.expected_outputs == {ch: bool(outputs & (1 << (ch - 1)))
                                      for ch in (1, 2, 13, 14)}

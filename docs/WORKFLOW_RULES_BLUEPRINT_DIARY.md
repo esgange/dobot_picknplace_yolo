@@ -7218,6 +7218,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   paired model and cannot load independently of calibration. No physical robot
   commands, live-node restart or commissioning/offline-transfer claim.
 
+### 2026-09-29 — Rule 175: full-speed tray placement
+
+- User requested 100% speed on every tray-placement movement after reviewing the
+  previous Water profile's inherited 100/3/6/100 percentages. Set one fixed tray
+  speed of 100 for observation-pose travel and all four approach/drop/retract/Home
+  targets. Apply equally to standalone Tray Detect Position and Place Item in
+  GUI/headless modes. Keep global SpeedFactor scaling, with no slider changes or
+  additional hardware calls.
+- Preserve Item Teach acceleration per phase, placement geometry, 80% release and
+  50% neutral motion I/O, queue blending and final Home/feedback checks. Item Pick
+  and explicit cancel-and-Home Recover retain their taught rates. No settings,
+  schema, operator YAML/model/calibration or vendor changes.
+- Validation: all 556 controller tests pass. Geometry cases use deliberately
+  slower taught speeds and assert placement stays at 100 while Pick retains its
+  original values. Real transport tests verify v=100 on all four queued requests
+  and direct Tray Detect travel, with unchanged accelerations and motion I/O.
+  Controller symlink build and diff checks pass. Flake8 reports 14 pre-existing
+  formatting findings outside the edits; comparison against HEAD confirms no new
+  findings. Updated controller workflow documentation and regenerated seven HTML/PDF FSM diagrams; source hash
+  3e4f9938cc03dd9ab79a48c8d188a9bb105b484ed483d89879ffa642f77f452b.
+  No physical robot commands, live restart or commissioning/offline-transfer claim.
+
 ### Future entry template
 
 ```text

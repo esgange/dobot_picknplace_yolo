@@ -11,6 +11,9 @@ from .motion import (Target, gripper_neutral_events, pose_reached, rigid_matrix,
                      vacuum_neutral_events, gripper_open_events, vacuum_exhaust_events)
 
 
+TRAY_SPEED_PERCENT = 100
+
+
 def validate_target(x_mm, y_mm, rotation_deg):
     values = (x_mm, y_mm, rotation_deg)
     if any(type(v) not in (float, int) or not math.isfinite(v) for v in values):
@@ -54,10 +57,10 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
             events = gripper_open_events(80) + vacuum_exhaust_events(80)
         elif name == "place_retract":
             events = gripper_neutral_events(50) + vacuum_neutral_events(50)
-        result.append(Target(name, point, settings["speed"][rate],
+        result.append(Target(name, point, TRAY_SPEED_PERCENT,
                              settings["acceleration"][rate], motion_io=events))
     result.append(Target("place_home", home.copy(),
-                         settings["speed"]["travel_percent"],
+                         TRAY_SPEED_PERCENT,
                          settings["acceleration"]["travel_percent"]))
     return tuple(result)
 

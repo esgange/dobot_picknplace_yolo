@@ -314,7 +314,11 @@ route skips the lower clearance point. Approach/drop/retract keep tray-target
 X/Y and detect-relative tool attitude; final Home restores full Home pose.
 Require Home Z above drop Z for timed descent/retract. No extra preliminary
 safety rise or additional height setting is added. Queue exactly four commands,
-with Item Teach travel/approach/retract/travel rates: MovL pre-place; MovLIO release
+at speed 100% for every segment, also including travel to Tray Detect Position.
+Global SpeedFactor still scales those speeds and is never changed by placement.
+Retain Item Teach travel/approach/retract/travel acceleration for the queue and
+travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
+Commands are MovL pre-place; MovLIO release
 with 80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
 50% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF; MovL Cartesian Home restoring taught
 Home attitude. There is no additional retract-height/clearance target. Exhaust

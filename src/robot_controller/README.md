@@ -118,7 +118,11 @@ request fresh tray/depth and queue exactly four Cartesian commands through Home:
 | MovLIO | Back to pre-place | At 50%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 | MovL | Taught Home XYZ/orientation | Neutral |
 
-Use taught travel, approach, retract and travel speed/acceleration respectively.
+Tray Detect Position and all four placement commands use **speed 100%**,
+independent of Item Teach speed settings. Global SpeedFactor still scales them;
+placement never changes that slider. Acceleration remains Item Teach travel for
+Tray Detect Position, then travel / approach / retract / travel for the four-command
+queue. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust
 pulse, extra retract-height waypoint or separate Home action. The 80% trigger
 starts release before the nominal lower point; exhaust duration follows the

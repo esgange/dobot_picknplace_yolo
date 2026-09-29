@@ -900,6 +900,18 @@ warning and earlier tray teaching-camera/intrinsics binding rules only. No numer
 calibration conversion, automatic teach-file rewrite or motion-sequence change.
 
 
+Rule 175 fixes the commanded speed of Tray Detect Position and every normal tray
+placement segment (approach, drop, retract and Home) at 100%, independent of Item
+Teach speeds. Retain Item Teach travel acceleration for observation travel and
+travel/approach/retract/travel acceleration for placement. Keep the operator's
+global SpeedFactor scaling; never issue SpeedFactor from the placement path.
+Item Pick and explicit cancel-and-Home Recover retain their existing rates.
+Preserve geometry, the four-command queue, 80%/50% motion I/O, CP blending,
+source/depth checks and final Home confirmation. Do not rewrite teach artifacts
+or add speed fields. This supersedes only earlier placement/observation speed
+inheritance; no physical robot commands or automatic controller restart for tests.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.
