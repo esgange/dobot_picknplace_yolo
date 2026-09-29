@@ -1060,20 +1060,10 @@ class RobotController(Node):
             return
         current = self.hardware.current_pose()
         targets = tray_detect_targets(
-            current, config.home_matrix, tray.detect_matrix, tray.detect_joints,
+            tray.detect_matrix, tray.detect_joints,
             speed_percent=config.profile["speed"]["travel_percent"],
             acceleration_percent=config.profile["acceleration"]["travel_percent"])
-        if targets[0].relative_z:
-            self.operation_progress("TRAY_CLEARANCE", "Rising before tray travel",
-                                    waypoint=targets[0].name)
-            self.hardware.move_batch(
-                (targets[0],), batch_name="tray_clearance", require_suction=holding,
-                forbid_suction=not holding, confirmed_start_pose=current)
-            self.wait_for_resume()
-            config.validate_sources(self.root)
-            self._preflight_item_state(holding)
-            current, targets = None, targets[1:]
-        self.operation_progress("TRAY_POSITION", "Moving to recorded Tray Detect Pose",
+        self.operation_progress("TRAY_POSITION", "Queueing direct move to Tray Detect Pose",
                                 waypoint=targets[-1].name)
         self.hardware.move_batch(
             targets, batch_name="tray_position", require_suction=holding,

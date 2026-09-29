@@ -15,7 +15,7 @@ preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
 
-Tray placement review: **2026-09-29**, diary rules **158–159**. Controller configuration
+Tray placement review: **2026-09-29**, diary rules **158–160**. Controller configuration
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
@@ -203,7 +203,7 @@ original destination until Home completes or next-candidate travel takes ownersh
 
 ```mermaid
 flowchart TD
-    Request["HOLDING: PlaceItem with positive X/Y and Rotation"] --> Observe["Reach saved Tray Detect joints: fresh idle + joint tolerance; no dwell"]
+    Request["HOLDING: PlaceItem with positive X/Y and Rotation"] --> Observe["Queue direct MovL to saved Tray Detect joints; confirm idle + joints; no dwell"]
     Observe --> Depth["Request fresh matched tray pose and placement depth"]
     Depth -->|Invalid| Stop["Stop and report failure; preserve item"]
     Depth -->|Valid| Queue["Admit one ordered CP100 motion group through Home"]
@@ -227,8 +227,10 @@ edge. Rotation accepts −180° to +180°; zero is the saved Tray Detect Pose to
 orientation, followed by the requested local tool-Z rotation. Item axes,
 pick_rotation and the detected tray quaternion do not determine tool attitude.
 
-Place reaches saved observation joints if necessary; observation travel can
-include an upward clearance before crossing. Arrival requires fresh idle/empty
+Place queues one direct joint-target MovL to the saved observation pose if
+necessary, without a preliminary Z rise or elevated XY transit. The standalone
+Tray Detect Position action uses this same path. Bin routes retain their existing
+clearance logic. Arrival requires fresh idle/empty
 queue feedback, all six actual joint angles within ±1° and command execution
 evidence. There is no fixed settling interval and no GetPose service call.
 

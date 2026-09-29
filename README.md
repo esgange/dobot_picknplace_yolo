@@ -45,8 +45,9 @@ Stop clicks send a new Stop with a fresh physical confirmation.
 `robot_controller` is the production hardware authority for Home, Pick, Tray Detect
 Position and Place Item operations. Placement supports positive tray-local X/Y
 and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose, with
-live depth and Item Teach standoff/motion settings. After fast idle/joint arrival
-at Tray Detect Pose and fresh detection, placement queues pre-place → release
+live depth and Item Teach standoff/motion settings. Tray Detect Position is one
+direct queued MovL to its recorded joints, without a preliminary safety-Z rise or
+transit. After fast idle/joint arrival and fresh detection, placement queues pre-place → release
 (OPEN/exhaust at 80%) → pre-place (neutral at 50%) → Cartesian Home in one group.
 It has no pick settling or extra retract-height waypoint; release feedback is
 monitored during the queue. See the

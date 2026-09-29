@@ -19,7 +19,9 @@ service call before a hardware action can be accepted.
 
 Load **Item Teach**, **Bin Teach** and a complete **Tray Teach** in the controller,
 then Startup and Pick Item. **Tray Detect Position** moves to the joints recorded
-in Tray Teach. **Place Item** also reaches that observation pose when needed and
+in Tray Teach using one direct queued joint-target MovL. There is no preliminary
+Z rise or elevated transit; the bin routes retain their existing clearance logic.
+**Place Item** also reaches that observation pose when needed and
 requests one fresh tray/depth observation from Armed Tray Teach or headless Tray
 Detect. Run exactly one provider. All hardware commands remain controller-owned.
 

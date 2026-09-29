@@ -245,3 +245,43 @@ def test_tray_arrival_requires_both_idle_and_actual_joint_tolerance(busy, wrong_
     rig.monitor.update_joints(joints)
     assert not rig.transport.home_already_reached((0.,) * 6)
     assert not rig.requests
+
+
+@pytest.mark.parametrize('start_z', [.1, .8, 1.2])
+@pytest.mark.parametrize('holding', [False, True])
+def test_controller_queues_direct_tray_position_without_safety_z(start_z, holding):
+    rig = QueueRig()
+    node = rig.node
+    node.holding_item = holding
+    outputs, inputs = (HELD, 1) if holding else (0, 0)
+    node.expected_outputs = {ch: bool(outputs & (1 << (ch - 1))) for ch in (1, 2, 13, 14)}
+    rig.emit(outputs=outputs, inputs=inputs, running=0)
+    joints = joint_message()
+    joints.position[0] = .2  # Not already at the saved joints.
+    rig.monitor.update_joints(joints)
+    current = node.configuration.tray.detect_matrix.copy()
+    current[:3, 3] = [.1, -.1, start_z]
+    rig.transport.current_pose = lambda: current.copy()
+    node.kinematics = SimpleNamespace(forward=lambda _j: node.configuration.tray.detect_matrix)
+    rig.steps = iter([dict(outputs=outputs, inputs=inputs, home=True)])
+
+    def arrived(*args, **kwargs):
+        rig.monitor.update_joints(joint_message())
+        return rig.next_sample(*args, **kwargs)
+
+    rig.monitor.wait_next = arrived
+    RobotController._execute_tray_position(node)
+    assert [name for name, _ in rig.requests] == ['MovL']
+    request = rig.requests[0][1]
+    assert request.mode  # Linear move to the exact recorded joint target.
+    assert [request.a, request.b, request.c, request.d, request.e, request.f] == [0.] * 6
+    assert list(request.param_value) == ['user=0', 'tool=0', 'v=80', 'a=70']
+    node.configuration.validate_sources.assert_called()
+    assert node.expected_outputs == {ch: bool(outputs & (1 << (ch - 1)))
+                                     for ch in (1, 2, 13, 14)}
+
+
+def test_controller_skips_tray_move_when_idle_at_saved_joints():
+    rig = QueueRig()
+    RobotController._execute_tray_position(rig.node)
+    assert not rig.requests

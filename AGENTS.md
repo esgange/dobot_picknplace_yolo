@@ -676,6 +676,16 @@ two-phase settling/retry behavior. Test the real transport/feedback contract wit
 synthetic services, including execution during responses and Stop boundaries.
 
 
+Rule 160 makes Tray Detect Position one direct queued MovL to the saved joint
+pose, for both its button/action and Place Item observation travel. Remove the
+preliminary Z rise and elevated XY transit; bin safety-clearance geometry remains
+in the existing bin routes only. Preserve travel rates, exact recorded-joint
+arrival with fresh idle/empty queue and execution evidence, held/unheld I/O
+checks, no added dwell, and the fresh perception barrier before placement.
+Already-arrived stationary joints skip the command. Do not change Pick/Home/bin
+motion or the four-command placement-through-Home queue.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

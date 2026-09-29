@@ -6681,6 +6681,29 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Robot Controller to use the new sequence; physical commissioning and offline
   transfer validation are not claimed. No upstream dependency change.
 
+### 2026-09-29 — Rule 160: direct queued travel to Tray Detect Position
+
+- User restricts safety-Z clearance to bin travel. Remove the preliminary
+  RelMovLUser rise, its confirmation barrier and elevated Cartesian transit from
+  controller tray observation travel. Queue one joint-target MovL directly to the
+  recorded Tray Detect Pose with taught travel speed/acceleration. The explicit
+  Tray Detect Position action and Place Item share this path.
+- Preserve already-arrived skip, fresh stationary motion origin, saved joint/FK
+  validation, held/unheld output monitoring and fast idle/empty-queue plus actual
+  joint-angle completion. Fresh tray/depth detection still starts only after
+  observation arrival. No dwell, I/O change, Pick/Home/bin safety change or change
+  to the four-command placement-through-Home queue.
+- Validate with the real transport and synthetic services/feedback for starting
+  below, at and above the observation height, both held and unheld. Assert exactly
+  one queued MovL with the saved joints and travel rates, unchanged outputs, and
+  no command when already arrived. Full controller suite: 443 passed. Controller
+  symlink build, changed-runtime/new-test flake8 and git diff --check pass.
+  Update root/package docs and regenerate the seven-diagram FSM HTML/PDF.
+- No live process restart, physical robot command, teach/calibration/model or
+  local RViz edit. No interface/schema/upstream change. Restart Robot Controller
+  after rebuilding to use this route; no physical commissioning or offline
+  transfer validation claimed.
+
 ### Future entry template
 
 ```text
