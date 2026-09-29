@@ -154,12 +154,29 @@ def draw_plane(overlay, plane, context, cv2, np):
     border = np.concatenate([np.linspace(corners[i], corners[(i + 1) % 4], 32)
                              for i in range(4)])
     image_points = project(border, context["camera"], optical, cv2, np)
-    cv2.polylines(overlay, [np.rint(image_points).astype(np.int32)], True,
-                  (0, 255, 0), 5, cv2.LINE_AA)
     corner_pixels = project(corners, context["camera"], optical, cv2, np)
+    # Forward-facing points can still explode near the camera plane, especially
+    # with distortion. Validate both projections before casting or painting:
+    # OpenCV reports out-of-int32 circle centers as a misleading "wrong type".
+    for pixels in (image_points, corner_pixels):
+        if not np.isfinite(pixels).all() or np.any(np.abs(pixels) > 2_000_000_000):
+            raise ValueError("Reference plane projection exceeds safe drawing range")
+    image_height, image_width = overlay.shape[:2]
+    border_pixels = np.rint(image_points).astype(int)
+    visible = False
+    for start, end in zip(border_pixels, np.roll(border_pixels, -1, axis=0)):
+        intersects, clipped_start, clipped_end = cv2.clipLine(
+            (0, 0, image_width, image_height), tuple(start), tuple(end))
+        if intersects:
+            cv2.line(overlay, clipped_start, clipped_end, (0, 255, 0), 5, cv2.LINE_AA)
+            visible = True
+    if not visible:
+        raise ValueError("Reference plane outline is outside the image")
     center = corner_pixels.mean(axis=0)
     for index, point in enumerate(corner_pixels, 1):
         point = tuple(np.rint(point).astype(int))
+        if not (0 <= point[0] < image_width and 0 <= point[1] < image_height):
+            continue
         cv2.circle(overlay, point, 6, (0, 0, 0), -1, cv2.LINE_AA)
         cv2.circle(overlay, point, 4, (0, 255, 0), -1, cv2.LINE_AA)
         label = f"P{index}"

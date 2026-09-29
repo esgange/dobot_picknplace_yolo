@@ -87,7 +87,11 @@ fit; live updates preserve your chosen split.
    mapped with each pane's distortion model.
    Once created or loaded, the plane's green border and P1–P4 corners remain on
    both live panes, independently of YOLO or tray acceptance. Their projection
-   follows the current timestamped calibrated view. Green means a plane is
+   follows the current timestamped calibrated view. Visible border segments are
+   clipped to the image; only on-screen corners receive markers. Behind-camera,
+   off-screen or numerically unsafe outlines are omitted without stopping the
+   preview or changing the saved plane or tray-pose calculations. RGB preview
+   reports why the outline is unavailable. Green means a plane is
    available in this session; the sidebar explicitly says **not saved — Save
    Tray Teach** until the plane is written to a profile or loaded from one.
 4. Click a displayed tray to inspect its measured size and acceptance reason.

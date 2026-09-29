@@ -633,7 +633,10 @@ in the existing RGB pane, then Create. The RGB/depth panes hold one captured
 observation during selection; Create or Cancel restores live display. Each
 corner uses its remaining valid depth samples, even one. A created or loaded
 plane remains outlined green with P1–P4 on both live panes; the sidebar identifies
-whether it has been saved. Click a live tray to read width/X and length/Y, enter the
+whether it has been saved. Visible edges are clipped to the image; off-screen
+corners and unsafe plane projections are omitted without stopping preview or
+changing the saved geometry. RGB preview reports an unavailable outline.
+Click a live tray to read width/X and length/Y, enter the
 desired size filters, and Save Tray Teach as you progress. Plane capture and
 measurement need no recorded robot pose. Streams and background preview keep running.
 The saved plane and

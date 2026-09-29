@@ -6555,6 +6555,32 @@ Never use a floating “latest” version in an issue, script, or deployment not
   was visually checked for clipping. No operator model execution, artifact/config
   edit, live node restart or camera/robot command; physical testing remains separate.
 
+### 2026-09-29 — Keep Tray Teach alive when the reference-plane outline leaves view
+
+- A live `tray_preview` failed while drawing a saved P1–P4 marker: finite forward
+  3D corners can project beyond OpenCV's signed integer range near the camera
+  plane, especially with lens distortion. OpenCV reports the oversized circle
+  center as a wrong type; the native failure then terminates Tray Teach.
+- Validate both sampled-border and corner projections for finite coordinates
+  within the existing 2,000,000,000-pixel drawing limit before casting or painting.
+  Clip each visible border segment to the image and omit off-screen corner marks.
+  Report unsafe or completely off-screen outlines through the existing recoverable
+  observation error path. RGB, YOLO and depth previews keep the same worker alive.
+- Preserve saved plane/calibration/teach artifacts, metric tray measurements,
+  pose eligibility, ranking and all controller behavior. Unexpected native/runtime/
+  protocol failures remain terminal; there is no broad OpenCV exception bypass.
+- Validation: the Tray Perception symlink build, changed-file flake8 and
+  `git diff --check` pass. The new private-runtime regression failed before the
+  fix and passes afterward; four native tests pass, including real worker
+  recovery across all three preview operations. Full package testing reports
+  182 passed and two unrelated canonical-RViz checks failed: the existing local
+  RViz edit stores voxel size 0.009999999776482582 rather than exactly 0.01.
+  Those two checks pass against isolated copies of the committed test/config;
+  preserve the user's local RViz file. Tests use synthetic geometry/model weights
+  and issue no camera or robot commands. No live processes were restarted.
+- No upstream dependency, schema or configuration change; no offline transfer
+  milestone or hardware validation is claimed.
+
 ### Future entry template
 
 ```text
