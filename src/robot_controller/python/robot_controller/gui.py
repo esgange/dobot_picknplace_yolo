@@ -185,6 +185,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.stop = QtWidgets.QPushButton("PAUSE")
         self.startup.clicked.connect(self._start_or_continue)
         self.recover.clicked.connect(lambda: self._command("recover"))
+        self.recover.setToolTip(
+            "Cancel the interrupted action, preserve gripper outputs, lift to Home height, then go Home")
         self.stop.clicked.connect(self._pause_or_stop)
         for button in (self.startup, self.recover, self.stop):
             button.setMinimumHeight(58)
@@ -561,14 +563,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 elif name == "recover" and result.state == "HOLDING":
                     QtWidgets.QMessageBox.information(
                         self, "Recovered — item still held",
-                        "Recovery completed in HOLDING and preserved the gripper outputs.\n\n"
+                        "Recovery completed at Home in HOLDING; gripper outputs preserved. "
+                        "The interrupted action was cancelled.\n\n"
                         "To put the item back: click PAUSE, wait until RETURN ITEM & STOP "
                         "appears, then click it. Clicking STOP NOW during parking stops "
                         "immediately and requires Recovery again.\n\n"
                         "If the gripper should be empty, stop the robot and check for "
-                        "an item or suction-sensor obstruction. A confirmed DI1 loss "
-                        "with a saved pick location makes the next Recovery put the item "
-                        "back and continue remaining candidates, or Home if exhausted.")
+                        "an item or suction-sensor obstruction. Recover never repeats "
+                        "the interrupted release or continues the old pick batch.")
             except Exception as exc:
                 if name == "speed":
                     self.speed_pending_percent = None

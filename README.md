@@ -39,8 +39,9 @@ Open the [visual HTML](docs/ROBOT_CONTROLLER_FSM.html) in a browser or the
 
 Motion groups retain CP(100) blending and confirm their final endpoint using
 fresh actual pose, queue/robot status and execution evidence after acceptance.
-Interrupted put-back retains release progress for explicit Recovery, and later
-Stop clicks send a new Stop with a fresh physical confirmation.
+Explicit Recover cancels the interrupted action, preserves current gripper
+outputs, confirms a vertical lift to Home height, then returns to taught Home.
+Later Stop clicks send a new Stop with a fresh physical confirmation.
 
 Confirmed emergency stops report **“Emergency stop pressed — cannot start or
 recover.”** Release the physical button, then explicitly use Recover / Clear
@@ -115,12 +116,11 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 
 Startup performs strict Stop/queue confirmation, DI1 protection,
 disable/conditional-clear/enable, SpeedFactor 100/User 0/Tool 0/Tool-1-zero/CP
-100, unheld output reset, and coherent READY confirmation. Recover performs the
-same guarded readiness recovery. During an active Pick, confirmed held-item
-suction loss automatically puts the saved item back and continues the next
-eligible candidate, or Homes when exhausted. For losses outside active Pick or
-an interrupted put-back, explicit Recovery puts the uncertain item back and
-continues the next eligible saved candidate, or returns Home if none remain.
+100, unheld output reset, and coherent READY confirmation. Recover cancels the
+interrupted action and remaining candidates, confirms Stop with fresh gripper
+feedback, clears alarms/enables, then lifts vertically to Home height and returns
+Home with every gripper output preserved. It never repeats release or resumes
+the old batch. Active Pick's automatic loss-return behavior remains unchanged.
 Pause discards the current queue and
 parks through the operation executor. Unheld Pick parks at `park_transit`, above
 the interrupted candidate at safety Z (the higher of stopped Z and Home Z), or
@@ -138,7 +138,7 @@ supervision sees an unexpected running/nonempty queue, it pre-empts that motion
 with the independent Stop path before requiring recovery.
 
 After Stop with a trusted held item and no confirmed suction loss, Recover
-restores `HOLDING` and preserves the grip. The GUI then explains the return
+returns Home in `HOLDING` and preserves the grip. The GUI then explains the return
 path: **PAUSE**, wait for **RETURN ITEM & STOP**, then click it. **STOP NOW**
 appears immediately while Pause/return is pending and always pre-empts without
 put-back. Unknown suction instead produces an instruction to keep the robot
@@ -183,7 +183,7 @@ taught final-pick settling interval.
 The complete put-back route uses commanded speed 100% with taught travel
 acceleration: safety rise, entry transit, taught pre-pick release, neutral
 retreat, exit transit and Home. This applies to explicit return, paused drop,
-Recovery and automatic suction-loss return. The global SpeedFactor still scales
+and automatic suction-loss return. Explicit Recover uses taught travel rates. The global SpeedFactor still scales
 these movements; returning an item does not change the slider setting.
 
 During an active Pick's held retract/Home, confirmed suction loss immediately
@@ -203,15 +203,10 @@ immediately, that reply must still return `res=0` within its existing five-secon
 deadline, and later commands in that old group are withheld. Put-back begins
 only after a final confirmed Stop. DI1 confirms vacuum, so LOW does not prove
 that an item has physically left the fingers. Outside active Pick, or after an
-interrupted put-back, explicit Recovery with the saved source preserves outputs
-during Stop/clear/enable/settings, uses
-the same taught pre-pick release and confirmed 50 ms exhaust pulse, and excludes that
-`DROPPED` candidate. If another saved candidate is eligible, neutral retreat,
-the old item's exit transit, and the next item's entry transit/clearance/pre-pick/pick
-form one group without visiting Home first. Both transits share safety Z.
-Otherwise the retreat finishes at Home. Loss remains latched after DI1 returns
-HIGH; missing source context, changed files or failed feedback/output/service
-checks block motion. Cold unknown items never gain a fabricated source pose.
+interrupted put-back, explicit Recover cancels the previous operation and goes
+Home while preserving the current outputs. Fresh unknown DI1 HIGH, opposing
+outputs, stale feedback and active alarms block it. A confirmed prior loss is
+not erased by later DI1 HIGH; no unknown item gains a fabricated source pose.
 During parking/return, **STOP NOW**, direct Stop, cancellation and shutdown
 pre-empt immediately. Software verification does not validate physical clearance,
 actual pulse width, or successful physical placement.

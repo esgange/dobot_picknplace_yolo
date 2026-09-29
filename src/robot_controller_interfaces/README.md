@@ -11,6 +11,9 @@ the other lifecycle states. Pause/return service success acknowledges the reques
 status reports parking/return completion. Continue rebuilds commands after a
 confirmed Stop; no vendor paused queue is resumed. `candidate_ids` and
 `candidate_states` are parallel arrays for the retained candidate ledger;
+explicit Recover marks unfinished candidates `CANCELED` and returns Home with
+gripper outputs preserved. It never resumes the old batch. A trusted held item
+remains `HELD`; an unconfirmed release is never relabeled `PLACED` or `RETURNED`.
 `can_return_item` reports availability of trusted held source context. Rebuild
 this interface package and restart all clients after updating these fields.
 

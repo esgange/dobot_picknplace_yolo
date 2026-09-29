@@ -164,7 +164,7 @@ class FakeTransport:
         self.on_move(targets, kwargs)
         node.log.append(("move", tuple(target.name for target in targets), kwargs))
         for target in targets:
-            if not node.managed.executing:
+            if not node.managed.executing and node.managed.session is not None:
                 node.managed.motion_admitted(target)
             for event in target.motion_io:
                 self.output(event.channel, event.active)

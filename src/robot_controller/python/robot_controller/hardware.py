@@ -15,6 +15,7 @@ from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
 from .feedback import enabled_blockers
 from .kinematics import pose_matrix, pose_values
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, pose_reached
+from .recovery import GRIP_MASK
 
 
 SERVICE_DISCOVERY_TIMEOUT_SEC = 5.0
@@ -465,7 +466,7 @@ class DobotTransport:
             self.node.events.record("WARNING", "stop_requested", reason)
             return future
 
-    def confirm_stop(self, future=None, *, allow_suction_loss=False):
+    def confirm_stop(self, future=None, *, allow_suction_loss=False, recovery_home=None):
         future = future or self.stop_future
         if future is None:
             raise StopUnconfirmed("No Stop request exists to confirm")
@@ -499,6 +500,8 @@ class DobotTransport:
         self._finish_service_audit(audit, "accepted", result=result)
         anchor = None
         anchor_sequence = None
+        anchor_io = None
+        anchor_stopped = False
         held_violation = None
         suction_lost = False
         last_snapshot = None
@@ -513,10 +516,15 @@ class DobotTransport:
             allow_suction_loss = True
 
         def stationary(snapshot):
-            nonlocal anchor, anchor_sequence, held_violation, last_snapshot, suction_lost
+            nonlocal anchor, anchor_sequence, anchor_io, anchor_stopped
+            nonlocal held_violation, last_snapshot, suction_lost
             last_snapshot = snapshot
             feed = snapshot.feed
-            if placement is not None and placement.observing:
+            if recovery_home is not None:
+                # Explicit cancel-and-Home uses newly stopped I/O, never the
+                # interrupted placement/put-back history. No outputs are sent.
+                pass
+            elif placement is not None and placement.observing:
                 try:
                     placement.observe(self.node, snapshot)
                 except (FeedbackFailure, HeldUnknown) as exc:
@@ -538,16 +546,28 @@ class DobotTransport:
             pose = np.asarray(feed["tool_vector_actual"], dtype=float)
             unmoved = (anchor is not None and snapshot.sequence != anchor_sequence
                        and np.max(np.abs(pose - anchor)) <= 0.05)
+            current_io = (feed["digital_outputs"] & GRIP_MASK, feed["digital_input_bits"] & 1)
+            stopped = (not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
+                       and feed["robot_mode"] in (4, 5, 9, 10))
+            if recovery_home is not None:
+                unmoved = unmoved and anchor_io == current_io and anchor_stopped
             anchor = pose
             anchor_sequence = snapshot.sequence
-            return (not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
-                    and feed["robot_mode"] in (4, 5, 9, 10) and unmoved)
+            anchor_io = current_io
+            anchor_stopped = stopped
+            return stopped and unmoved
         try:
             self.monitor.wait(stationary, MODE_TRANSITION_TIMEOUT_SEC,
                               description="stationary, empty queue after Stop")
         except FeedbackFailure as exc:
             raise StopUnconfirmed(str(exc)) from exc
         self.moving = False
+        if recovery_home is not None:
+            self.pending_motion_outputs = {}
+            self.node.events.record(
+                "INFO", "stop_confirmed", "Stationary empty queue and current gripper I/O confirmed")
+            recovery_home.capture(self.node, last_snapshot)
+            return
         if held_violation is not None:
             raise StopUnconfirmed(
                 "Stop completed but held-item integrity was not preserved: "
@@ -598,6 +618,9 @@ class DobotTransport:
 
     def _validate_held_snapshot(self, snapshot, *, known_holding=None,
                                 expected_outputs=None):
+        recovery = getattr(self, "home_recovery", None)
+        if recovery is not None:
+            return recovery.check(snapshot)
         returning = getattr(self, "return_recovery", False)
         placement = getattr(self.node, "placement", None)
         manual_placement = placement is not None and not placement.require_held_item
@@ -632,7 +655,8 @@ class DobotTransport:
 
     def _call_startup(self, name, **fields):
         self._phase("STARTUP_COMMAND", f"{name}: waiting for response", name)
-        progress = self._validate_held_snapshot if self.node.holding_item else None
+        progress = (self._validate_held_snapshot if self.node.holding_item
+                    or getattr(self, "home_recovery", None) is not None else None)
         return self.call(name, progress=progress, **fields)
 
     @staticmethod
@@ -668,6 +692,8 @@ class DobotTransport:
 
     def _check_held_context(self, known_holding, expected_outputs):
         snapshot = self.monitor.snapshot(require_enabled=False)
+        if getattr(self, "home_recovery", None) is not None:
+            return self.home_recovery.check(snapshot)
         suction = bool(snapshot.feed["digital_input_bits"] & 1)
         returning = getattr(self, "return_recovery", False)
         if suction and not known_holding and not returning:
@@ -681,7 +707,8 @@ class DobotTransport:
         # A read-only canonical query, with the normal ownership, feedback,
         # cancellation and five-second response guards. Never infer this alarm
         # from generic ErrorStatus/mode 9 or the driver's safety_status double.
-        progress = self._validate_held_snapshot if self.node.holding_item else None
+        progress = (self._validate_held_snapshot if self.node.holding_item
+                    or getattr(self, "home_recovery", None) is not None else None)
         result = self.call("GetErrorID", progress=progress)
         codes = alarm_ids(result.robot_return)
         self.node.events.record("INFO", "robot_alarm_check", "GetErrorID", alarm_ids=list(codes))
@@ -804,16 +831,18 @@ class DobotTransport:
         self._reset_outputs_if_unheld()
         self._confirm_ready()
 
-    def recover(self, speed_percent, *, return_item=False):
+    def recover(self, speed_percent, *, return_item=False, home_recovery=None):
         """Restore readiness; uncertain-item recovery preserves every output."""
         if return_item and not self.node.managed.recovery_return_needed():
             raise CommandRejected(
                 "Item recovery requires a retained source with loss or return progress")
         self.return_recovery = return_item
+        self.home_recovery = home_recovery
         try:
             self._recover(speed_percent)
         finally:
             self.return_recovery = False
+            self.home_recovery = None
 
     def _recover(self, speed_percent):
         self.wait_services(optional=("StopMoveJog",))
@@ -822,14 +851,17 @@ class DobotTransport:
         self.node.check_feedback_owners()
         self.ensure_no_pending_response()
         self._phase("QUEUE_RESET", "Stopping and discarding any queued motion", "Stop")
+        extra = ({"recovery_home": self.home_recovery}
+                 if self.home_recovery is not None else {})
         self.confirm_stop(self.request_stop("explicit Recover queue reset"),
-                          allow_suction_loss=self.return_recovery)
+                          allow_suction_loss=self.return_recovery, **extra)
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
         self._wait_enabled()
         self._apply_settings(speed_percent if speed_percent is not None else 100)
-        self._reset_outputs_if_unheld()
+        if self.home_recovery is None:
+            self._reset_outputs_if_unheld()
         self._confirm_ready()
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 

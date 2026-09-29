@@ -26,11 +26,11 @@ class PickSession:
     def set_state(self, index, state):
         attempt = self.attempts[index - 1]
         allowed = {
-            "PENDING": {"ACTIVE"},
-            "ACTIVE": {"FAILED", "INTERRUPTED", "HELD"},
-            "HELD": {"DROPPED", "RETURNED", "PLACED"},
-            "FAILED": set(), "INTERRUPTED": {"ACTIVE"},
-            "DROPPED": set(), "RETURNED": set(), "PLACED": set(),
+            "PENDING": {"ACTIVE", "CANCELED"},
+            "ACTIVE": {"FAILED", "INTERRUPTED", "HELD", "CANCELED"},
+            "HELD": {"DROPPED", "RETURNED", "PLACED", "CANCELED"},
+            "FAILED": set(), "INTERRUPTED": {"ACTIVE", "CANCELED"},
+            "DROPPED": set(), "RETURNED": set(), "PLACED": set(), "CANCELED": set(),
         }
         if state == attempt.state:
             return
@@ -53,6 +53,13 @@ class PickSession:
         for index, attempt in enumerate(self.attempts, 1):
             if attempt.state == "ACTIVE":
                 self.set_state(index, "INTERRUPTED")
+
+    def cancel_remaining(self):
+        for index, attempt in enumerate(self.attempts, 1):
+            if attempt.state in ("PENDING", "ACTIVE", "INTERRUPTED"):
+                self.set_state(index, "CANCELED")
+        self.parked_index = None
+        self.resuming = False
 
     @property
     def next_eligible(self):

@@ -95,7 +95,7 @@ class Hardware:
         return np.allclose(self.current, self.node.configuration.tray.detect_matrix)
 
     def move_batch(self, targets, *, batch_name, placement=None, forbid_suction=False,
-                   confirmed_start_pose=None):
+                   confirmed_start_pose=None, require_suction=False, preserve_outputs=False):
         self.calls.append(("move", tuple(p.name for p in targets), {"batch_name": batch_name}))
         for i, target in enumerate(targets):
             if placement:
@@ -132,7 +132,8 @@ class Hardware:
 def operation_node():
     detect = pose_matrix([300, 200, 800, 180, 0, 0])
     node = SimpleNamespace(configuration=SimpleNamespace(
-        profile=settings(), home_matrix=detect.copy(), tray=SimpleNamespace(detect_matrix=detect, detect_joints=(0.,) * 6),
+        profile=settings(), home_matrix=detect.copy(), home_joints=(0.,) * 6,
+        tray=SimpleNamespace(detect_matrix=detect, detect_joints=(0.,) * 6),
         validate_sources=Mock()), root=None, headless=True, holding_item=True, expected_outputs={},
         events=Mock(), operation_progress=Mock(), wait_for_resume=Mock(),
         _preflight_item_state=Mock(), _execute_tray_position=Mock(),
@@ -315,7 +316,7 @@ def test_place_action_finishes_ready_with_a_typed_result():
     node._end_operation.assert_called_once()
 
 
-def test_controller_recovery_finishes_placement_without_bin_putback_or_next_pick():
+def test_controller_recovery_cancels_placement_and_lifts_home_without_output_changes():
     node = operation_node()
     node.hardware.interrupt_at = 1
     with pytest.raises(OperationCanceled):
@@ -324,12 +325,15 @@ def test_controller_recovery_finishes_placement_without_bin_putback_or_next_pick
     node.global_speed_percent = 50
     node._begin_operation = Mock()
     node._end_operation = Mock()
-    node.hardware.recover = Mock()
+    node.hardware.recover = Mock(side_effect=lambda _speed, **kw:
+                                 kw["home_recovery"].capture(node, node.hardware.sample()))
     node.managed.recover_item_and_continue = Mock(side_effect=AssertionError("Wrong bin recovery"))
+    before = dict(node.hardware.outputs)
     response = RobotController._recover(node, Command.Request(), Command.Response())
     assert response.success and response.state == "READY"
-    node.hardware.recover.assert_called_once_with(50, return_item=True)
-    assert node.placement is None and node.hardware.calls[-1][1][-1] == "place_home"
+    assert node.hardware.recover.call_count == 1
+    assert node.placement is None and node.hardware.calls[-1][1][-1] == "recovery_home"
+    assert node.hardware.outputs == before
     node.managed.recover_item_and_continue.assert_not_called()
 
 

@@ -1,4 +1,4 @@
-"""Explicit uncertain-item recovery uses the saved source and remaining batch."""
+"""Explicit Recover cancels the batch, preserves grip and lifts before Home."""
 
 from types import SimpleNamespace
 import threading
@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from robot_controller.controller import RobotController
-from robot_controller.errors import FeedbackFailure, ManagedInterruption, OperationCanceled
+from robot_controller.errors import FeedbackFailure, OperationCanceled
 from robot_controller.hardware import DobotTransport
+from robot_controller.kinematics import pose_values
 from robot_controller.state_machine import ControllerStateMachine
-
 from test_managed_control import Rig, states
 
 
@@ -28,233 +28,164 @@ class RecoveryRig(Rig):
         self.cancel_requested = self.cancel_event.is_set
         self._begin_operation = lambda name: RobotController._begin_operation(self, name)
         self._end_operation = lambda: RobotController._end_operation(self)
-        self._request_stop = lambda reason, **kwargs: RobotController._request_stop(
-            self, reason, **kwargs)
-        self._confirm_shared_stop = lambda future: (
-            RobotController._confirm_shared_stop(self, future))
+        self._request_stop = lambda reason, **kwargs: RobotController._request_stop(self, reason, **kwargs)
+        self._confirm_shared_stop = lambda future: RobotController._confirm_shared_stop(self, future)
         self._finish_stop_state = lambda attempt: RobotController._finish_stop_state(self, attempt)
-        self._settle_lifecycle_cancellation = lambda message: (
-            RobotController._settle_lifecycle_cancellation(self, message))
-        self._contain_queue_control_failure = lambda operation, error: (
-            RobotController._contain_queue_control_failure(self, operation, error))
+        self._settle_lifecycle_cancellation = lambda message: RobotController._settle_lifecycle_cancellation(self, message)
+        self._contain_queue_control_failure = lambda operation, error: RobotController._contain_queue_control_failure(self, operation, error)
         self._candidate_progress = lambda *_args: None
-        self.hardware.recover = lambda speed, **kwargs: self.log.append(("recover", speed, kwargs))
+        self.configuration.home_joints = (0.,) * 6
+        self.feed["tool_vector_actual"][0] = 100.
+        self.hardware.home_already_reached = lambda _joints: np.allclose(
+            self.hardware.current_pose(), self.configuration.home_matrix)
+
+        def recover(speed, *, home_recovery):
+            self.log.append(("recover", speed))
+            home_recovery.capture(self, self.snapshot())
+        self.hardware.recover = recover
 
     def recover(self):
         return RobotController._recover(self, None, SimpleNamespace())
 
 
-@pytest.mark.parametrize("di1_recovers", [False, True])
-@pytest.mark.parametrize("count", [1, 2])
-@pytest.mark.parametrize("prepick", [20., 80.])
-def test_recovery_puts_back_then_next_candidate_or_home(count, di1_recovers, prepick):
-    rig = RecoveryRig(count=count, prepick=prepick)
-    rig.lose_suction()
-    rig.managed.observe(rig.snapshot())
-    assert states(rig)[0] == "DROPPED"
-    assert not any(entry[0] in ("move", "output", "pulse") for entry in rig.log)
-    if di1_recovers:
-        rig.set_di1(True)
-    rig.hardware.acquisitions = iter((True,))
+@pytest.mark.parametrize("held", [False, True])
+@pytest.mark.parametrize("height", [.3, .8, 1.])
+def test_recovery_preserves_io_cancels_batch_and_confirms_lift_before_home(held, height):
+    rig = RecoveryRig(count=3)
+    if not held:
+        rig.lose_suction()
+    current = rig.hardware.current_pose()
+    current[:3, 3] = [.13, .17, height]
+    rig.feed["tool_vector_actual"] = pose_values(current)
+    outputs = rig.feed["digital_outputs"]
     batches = []
     rig.hardware.on_move = lambda targets, kwargs: batches.append((targets, kwargs))
     result = rig.recover()
-
-    assert result.success
-    assert result.state == ("READY" if count == 1 else "HOLDING")
-    assert ("recover", 60, {"return_item": True}) in rig.log
-    assert states(rig) == (["DROPPED"] if count == 1 else ["DROPPED", "HELD"])
-    pulse = next(i for i, entry in enumerate(rig.log) if entry[0] == "pulse")
-    approach = next(i for i, entry in enumerate(rig.log)
-                    if entry[0] == "move" and entry[2]["batch_name"] == "return_item_to_release")
-    outputs = [entry[1:] for entry in rig.log[:pulse] if entry[0] == "output"]
-    assert outputs == [(2, False), (13, False), (14, True), (1, False)]
-    assert approach < pulse
-    first_output = next(i for i, entry in enumerate(rig.log) if entry[0] == "output")
-    assert first_output > approach
-    release = next(targets[-1] for targets, kwargs in batches
-                   if kwargs["batch_name"] == "return_item_to_release")
-    assert release.matrix[2, 3] == pytest.approx(.3 + prepick / 1000)
-    if count == 2:
-        next_pick = next(i for i, entry in enumerate(rig.log)
-                         if entry[0] == "move" and entry[2].get("stop_on_suction"))
-        assert next_pick > pulse
-        assert not any(entry[0] == "home" for entry in rig.log[:next_pick])
-        group = rig.log[next_pick]
-        assert group[1] == ("return_clearance", "return_park_transit",
-                            "p2_transit", "p2_initial", "p2_prepick", "p2_pick")
-        assert group[2]["pick_settling_sec"] == 0.1
-        assert np.array_equal(group[2]["confirmed_start_pose"], release.matrix)
-        targets = next(targets for targets, kwargs in batches if kwargs.get("stop_on_suction"))
-        old_exit, next_entry = targets[1:3]
-        assert old_exit.matrix[2, 3] == next_entry.matrix[2, 3] == .8
-        assert np.array_equal(old_exit.matrix[:2, 3], targets[0].matrix[:2, 3])
-        assert not np.array_equal(old_exit.matrix[:2, 3], next_entry.matrix[:2, 3])
-        assert not old_exit.motion_io
-    else:
-        assert not any(entry[0] == "move" and entry[2].get("stop_on_suction")
-                       for entry in rig.log)
-        assert any(entry[0] == "home" for entry in rig.log[pulse + 1:])
-        home = next(entry[1] for entry in rig.log if entry[0] == "home")
-        assert home["preceding"][-1].name == "return_park_transit"
-    assert rig.managed.session.held_index == (None if count == 1 else 2)
+    assert result.success and result.state == ("HOLDING" if held else "READY")
+    assert "at Home" in result.message and "cancelled" in result.message
+    assert rig.feed["digital_outputs"] == outputs
+    assert states(rig) == (["HELD"] if held else ["CANCELED"]) + ["CANCELED"] * 2
+    assert rig.managed.session.next_eligible is None and rig.recovery_home is None
+    assert not any(row[0] in ("output", "pulse") for row in rig.log)
+    assert [kwargs["batch_name"] for _, kwargs in batches] == (
+        ["recovery_lift", "recovery_home"] if height < .8 else ["recovery_home"])
+    if height < .8:
+        rise = batches[0][0][0]
+        assert rise.relative_z
+        assert rise.matrix[:2, 3] == pytest.approx(current[:2, 3])
+        assert rise.matrix[:3, :3] == pytest.approx(current[:3, :3])
+        assert rise.matrix[2, 3] == .8
+    assert batches[-1][0][0].joints_rad == rig.configuration.home_joints
+    for targets, policy in batches:
+        assert policy["preserve_outputs"]
+        assert policy["require_suction"] is held and policy["forbid_suction"] is not held
+        assert all(not target.motion_io for target in targets)
     assert not rig.operation_lock.locked()
 
 
-def test_recovery_skips_failed_candidates_and_homes_if_remaining_attempt_misses():
-    rig = RecoveryRig(count=3)
-    rig.managed.session.set_state(2, "ACTIVE")
-    rig.managed.session.set_state(2, "FAILED")
-    rig.lose_suction()
-    result = rig.recover()
-    assert result.success and result.state == "READY"
-    assert states(rig) == ["DROPPED", "FAILED", "FAILED"]
-    approaches = [entry for entry in rig.log if entry[0] == "move"
-                  and entry[2].get("stop_on_suction")]
-    assert len(approaches) == 1
-    assert approaches[0][1][-1] == "p3_pick"
-    assert rig.log[-1] == ("state", "READY")
-
-
-@pytest.mark.parametrize("stop_phase", [
-    "return_item_to_release", "return_item_to_candidate_2_pick"])
-@pytest.mark.parametrize("di1_recovers", [False, True])
-def test_direct_stop_preempts_recovery_without_later_commands(stop_phase, di1_recovers):
+def test_already_home_recovery_never_sends_motion_or_output_commands():
     rig = RecoveryRig()
-    rig.lose_suction()
-    rig.managed.observe(rig.snapshot())
-    if di1_recovers:
-        rig.set_di1(True)
+    rig.feed["tool_vector_actual"] = pose_values(rig.configuration.home_matrix)
+    assert rig.recover().success
+    assert not any(row[0] in ("move", "output", "pulse") for row in rig.log)
 
-    def stop(_targets, kwargs):
-        if kwargs["batch_name"] == stop_phase:
+
+@pytest.mark.parametrize("phase", ["recovery_lift", "recovery_home"])
+def test_stop_during_recovery_prevents_later_motion_and_retry_only_homes(phase):
+    rig = RecoveryRig()
+
+    def stop(_targets, policy):
+        if policy["batch_name"] == phase:
             rig.cancel_event.set()
             raise OperationCanceled("explicit Stop")
     rig.hardware.on_move = stop
     result = rig.recover()
     assert not result.success and result.state == "RECOVERY_REQUIRED"
     assert not rig.operation_lock.locked()
-    if stop_phase == "return_item_to_release":
-        assert not any(entry[0] in ("output", "pulse", "home") for entry in rig.log)
-        assert rig.managed.session.held_index == 1
-        rig.hardware.on_move = lambda *_args: None
-        rig.hardware.acquisitions = iter((True,))
-        resumed = rig.recover()
-        assert resumed.success and resumed.state == "HOLDING"
-        assert sum(entry[0] == "pulse" for entry in rig.log) == 1
-    else:
-        assert any(entry[0] == "pulse" for entry in rig.log)
-        assert not any(entry[0] == "home" for entry in rig.log)
+    assert not any(row[0] in ("output", "pulse") for row in rig.log)
+    assert rig.managed.session.next_eligible is None
+    rig.hardware.on_move = lambda *_args: None
+    assert rig.recover().success
+    assert rig.machine.state == "HOLDING"
 
 
-def test_release_failure_prevents_next_candidate_and_retains_return_source():
+def test_failed_lift_does_not_dispatch_home():
     rig = RecoveryRig()
-    rig.lose_suction()
+    visited = []
 
-    def fail_release():
-        raise FeedbackFailure("exhaust pulse not confirmed")
-    rig.hardware.exhaust_pulse = fail_release
+    def fail(_targets, policy):
+        visited.append(policy["batch_name"])
+        raise FeedbackFailure("Lift not confirmed")
+    rig.hardware.on_move = fail
     result = rig.recover()
-    assert not result.success
-    assert rig.machine.state == "RECOVERY_REQUIRED"
-    assert rig.managed.session.held_index == 1
-    assert not any(entry[0] == "move" and entry[2].get("stop_on_suction")
-                   for entry in rig.log)
-    assert not any(entry[0] == "home" for entry in rig.log)
-
-
-def test_pause_during_recovery_next_attempt_replans_without_repeating_release():
-    rig = RecoveryRig()
-    rig.lose_suction()
-    rig.hardware.acquisitions = iter((True,))
-
-    def pause(_targets, kwargs):
-        if kwargs.get("stop_on_suction"):
-            rig.hardware.on_move = lambda *_args: None
-            rig.managed.request("pause")
-            raise ManagedInterruption("Pause during next approach")
-    rig.hardware.on_move = pause
-    result = rig.recover()
-    assert result.success and result.state == "HOLDING"
-    assert sum(entry[0] == "pulse" for entry in rig.log) == 1
-    assert ("state", "PAUSED") in rig.log
-    assert states(rig) == ["DROPPED", "HELD"]
+    assert not result.success and visited == ["recovery_lift"]
+    assert "Lift not confirmed" in result.message and "stopped" in result.message
 
 
 def test_source_change_blocks_recovery_before_robot_commands():
     rig = RecoveryRig()
-    rig.lose_suction()
 
     def changed(_root):
         raise FeedbackFailure("Source changed")
     rig.configuration.validate_sources = changed
     assert not rig.recover().success
-    assert not any(entry[0] in ("recover", "move", "output", "pulse") for entry in rig.log)
+    assert not any(row[0] in ("recover", "move", "output", "pulse") for row in rig.log)
 
 
-def test_no_loss_keeps_existing_held_recovery_and_does_not_put_back():
+def test_dropped_item_that_reappears_is_not_trusted_again():
     rig = RecoveryRig()
+    rig.lose_suction()
+    rig.managed.observe(rig.snapshot())
+    rig.set_di1(True)
     result = rig.recover()
-    assert result.success and result.state == "HOLDING"
-    assert ("recover", 60, {"return_item": False}) in rig.log
-    assert not any(entry[0] in ("move", "output", "pulse") for entry in rig.log)
+    assert not result.success and "DI1 suction is HIGH" in result.message
+    assert not any(row[0] in ("move", "output", "pulse") for row in rig.log)
 
 
-def unknown_recovery_rig():
+def test_unknown_high_blocks_until_fresh_low_then_returns_home_without_output_reset():
     rig = RecoveryRig()
-    rig.machine = ControllerStateMachine(initial="HELD_UNKNOWN")
-    rig.holding_item = False
     rig.managed.session = None
-    # Exercise the real controller/transport recovery gates with command stages
-    # recorded in place of a robot. No ROS clients or hardware calls are created.
+    rig.holding_item = False
+    rig.machine = ControllerStateMachine(initial="HELD_UNKNOWN")
+    outputs = rig.feed["digital_outputs"]
+    result = rig.recover()
+    assert not result.success and result.state == "HELD_UNKNOWN"
+    assert "Recover again" in result.message
+    assert not any(row[0] == "move" for row in rig.log)
+    rig.lose_suction()
+    assert rig.recover().success and rig.machine.state == "READY"
+    assert rig.feed["digital_outputs"] == outputs
+
+
+def test_recovery_rejects_stale_feedback_without_moving():
+    rig = RecoveryRig()
+
+    def stale(**_kwargs):
+        raise FeedbackFailure("Canonical feedback is stale")
+    rig.monitor.snapshot = stale
+    result = rig.recover()
+    assert not result.success and "stale" in result.message
+    assert not any(row[0] in ("move", "output", "pulse") for row in rig.log)
+
+
+def test_real_lifecycle_preserves_unheld_outputs_through_clear_enable_and_settings():
+    rig = RecoveryRig()
+    rig.lose_suction()
     transport = object.__new__(DobotTransport)
     transport.node, transport.monitor = rig, rig.monitor
     transport.clients = {}
     transport.wait_services = lambda **_kwargs: None
     transport.ensure_no_pending_response = lambda: None
     transport.request_stop = rig.hardware.request_stop
-    transport.confirm_stop = rig.hardware.confirm_stop
-    transport._phase = lambda *_args: None
-    transport._clear_errors_if_needed = lambda: rig.log.append(("clear_error",))
+    transport.confirm_stop = lambda _future, **kw: kw["recovery_home"].capture(rig, rig.snapshot())
+    transport._clear_errors_if_needed = lambda: rig.log.append(("clear",))
     transport._call_startup = lambda name: rig.log.append((name,))
     transport._wait_enabled = lambda: None
     transport._apply_settings = lambda speed: rig.log.append(("settings", speed))
-    transport._reset_outputs_if_unheld = lambda: rig.log.append(("reset_outputs",))
+    transport._reset_outputs_if_unheld = lambda: pytest.fail("Recovery reset outputs")
     transport._confirm_ready = lambda: None
-    rig.check_all_command_owners = lambda _names: None
-    rig.check_feedback_owners = lambda: None
-    rig.hardware = transport
-    return rig
-
-
-def test_unknown_suction_can_retry_recover_after_clear_without_an_extra_stop_click():
-    rig = unknown_recovery_rig()
-    outputs = rig.expected_outputs.copy()
-    for _ in range(2):
-        result = rig.recover()
-        assert not result.success and result.state == "HELD_UNKNOWN"
-        assert "clear any item" in result.message and "obstruction" in result.message
-        assert "DI1 shows LOW" in result.message and "Recover again" in result.message
-        assert not rig.operation_lock.locked()
-    assert not any(entry[0] in ("EnableRobot", "reset_outputs", "move", "pulse")
-                   for entry in rig.log)
-    assert rig.expected_outputs == outputs
-    rig.set_di1(False)
-    result = rig.recover()
-    assert result.success and result.state == "READY"
-    assert ("EnableRobot",) in rig.log and ("reset_outputs",) in rig.log
-    assert sum(entry[0] == "stop" for entry in rig.log) == 3
-    assert not any(entry[0] in ("move", "pulse") for entry in rig.log)
-
-
-def test_unknown_suction_recovery_cannot_treat_stale_input_as_clear():
-    rig = unknown_recovery_rig()
-
-    def stale(**_kwargs):
-        raise FeedbackFailure("Canonical feedback is stale")
-    rig.monitor.snapshot = stale
-    result = rig.recover()
-    assert not result.success and result.state == "FAULT"
-    assert "stale" in result.message
-    assert not any(entry[0] in ("EnableRobot", "reset_outputs", "move", "pulse")
-                   for entry in rig.log)
+    rig.check_all_command_owners = rig.check_feedback_owners = lambda *_args: None
+    rig.hardware.recover = transport.recover
+    assert rig.recover().success
+    assert ("EnableRobot",) in rig.log and ("settings", 60) in rig.log
+    assert not any(row[0] in ("output", "pulse") for row in rig.log)

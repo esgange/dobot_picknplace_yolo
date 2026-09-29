@@ -1,4 +1,4 @@
-"""Stop at release boundaries retains enough evidence for explicit Recovery."""
+"""Explicit Recover abandons interrupted release; Stop still protects I/O."""
 
 import pytest
 
@@ -18,18 +18,12 @@ def return_rig():
     rig._begin_operation("pick")
     rig.managed.executing = True
 
-    def recover(speed, *, return_item):
-        rig.log.append(("recover", speed, {"return_item": return_item}))
-        # Exercise the real unknown/known item gates without any ROS clients.
-        transport = object.__new__(DobotTransport)
-        transport.node, transport.monitor = rig, rig.monitor
-        transport.return_recovery = return_item
-        transport._check_held_context(rig.holding_item, rig.expected_outputs)
-    rig.hardware.recover = recover
     return rig
 
 
 def settle_stop(rig):
+    if not rig.feed["digital_input_bits"] & 1:
+        rig.set_di1(False, .05)
     rig.managed._clear_request()
     rig._settle_lifecycle_cancellation("Stop during return")
     rig._end_operation()
@@ -38,7 +32,7 @@ def settle_stop(rig):
 
 
 @pytest.mark.parametrize("boundary", ["before_release", 2, 13, 14, 1, "pulse"])
-def test_interrupted_unconfirmed_release_is_recoverable_with_saved_source(boundary):
+def test_interrupted_release_recovery_preserves_io_and_never_finishes_release(boundary):
     rig = return_rig()
     output, pulse = rig.hardware.output, rig.hardware.exhaust_pulse
 
@@ -66,13 +60,24 @@ def test_interrupted_unconfirmed_release_is_recoverable_with_saved_source(bounda
     assert rig.managed.session.attempts[0].state == "HELD"
     settle_stop(rig)
     rig.hardware.output, rig.hardware.exhaust_pulse = output, pulse
+    offset = len(rig.log)
+    outputs = rig.feed["digital_outputs"]
     result = rig.recover()
-    assert result.success and result.state == "READY"
+    if boundary not in ("before_release", 2):
+        # Suction still HIGH with vacuum OFF cannot authorize a carrying move.
+        assert not result.success
+        rig.lose_suction()
+        result = rig.recover()
+        assert result.state == "READY"
+        assert rig.managed.session.attempts[0].state == "CANCELED"
+    else:
+        assert result.state == "HOLDING"
+        assert rig.managed.session.attempts[0].state == "HELD"
+    assert result.success
     assert rig.managed.return_progress is None
-    assert rig.managed.session.held_index is None
-    assert rig.managed.session.attempts[0].state == "RETURNED"
-    assert rig.managed.session.attempts[1].state == "PENDING"
-    assert sum(x[0] == "pulse" for x in rig.log) == 1
+    assert rig.managed.session.attempts[1].state == "CANCELED"
+    assert rig.feed["digital_outputs"] == outputs
+    assert not any(x[0] in ("output", "pulse") for x in rig.log[offset:])
 
 
 def test_stop_after_release_resumes_upward_retreat_without_second_release():
@@ -98,8 +103,9 @@ def test_stop_after_release_resumes_upward_retreat_without_second_release():
     assert sum(x[0] == "pulse" for x in rig.log) == 1
     assert len(resumed) == 1
     targets, kwargs = resumed[0]
-    assert kwargs["batch_name"] == "return_item_to_home"
-    assert targets[-2].name == "return_park_transit"
+    assert kwargs["batch_name"] == "recovery_home"
+    assert kwargs["preserve_outputs"]
+    assert targets[-1].joints_rad == rig.configuration.home_joints
     for target in targets[:-1]:
         assert target.matrix[2, 3] >= stopped[2, 3]
         assert target.matrix[0, 3] == stopped[0, 3]
@@ -114,9 +120,10 @@ def test_new_high_after_confirmed_release_blocks_recovery_without_releasing_agai
     rig._end_operation()
     result = rig.recover()
     assert not result.success
-    assert any("DI1 HIGH after confirmed release" in str(entry) for entry in rig.log)
+    assert "DI1 HIGH after confirmed release" in result.message
     assert not any(x[0] == "pulse" for x in rig.log)
-    assert rig.managed.return_progress.phase == "RELEASED"
+    assert rig.managed.return_progress is None
+    assert rig.recovery_home.release_confirmed
 
 
 @pytest.mark.parametrize("unrelated_change", [False, True])
@@ -168,23 +175,17 @@ def test_pause_skips_optional_rise_inside_existing_position_tolerance():
     assert pose_matrix(pose_values(actual))[2, 3] == current[2, 3]
 
 
-def test_stop_during_release_to_next_candidate_handover_retains_completed_release():
-    rig = RecoveryRig(count=2)
+def test_recover_after_completed_release_cancels_next_candidate_instead_of_handover():
+    rig = return_rig()
     rig.lose_suction()
-
-    def stop_before_next_entry(_targets, kwargs):
-        if kwargs.get("stop_on_suction"):
-            rig.cancel_event.set()
-            raise OperationCanceled("Stop before next entry acceptance")
-    rig.hardware.on_move = stop_before_next_entry
-    assert not rig.recover().success
+    rig.managed._put_back(dropped=True, continue_candidates=True)
     assert rig.managed.return_progress.phase == "RELEASED"
-    assert rig.managed.session.held_index == 1
+    settle_stop(rig)
     assert sum(x[0] == "pulse" for x in rig.log) == 1
-    rig.hardware.on_move = lambda *_args: None
-    rig.hardware.acquisitions = iter((True,))
     result = rig.recover()
-    assert result.success and result.state == "HOLDING"
-    assert rig.managed.session.held_index == 2
+    assert result.success and result.state == "READY"
+    assert rig.managed.session.held_index is None
+    assert rig.managed.session.attempts[1].state == "CANCELED"
     assert rig.managed.return_progress is None
     assert sum(x[0] == "pulse" for x in rig.log) == 1
+    assert not any(x[0] == "move" and x[2].get("stop_on_suction") for x in rig.log)

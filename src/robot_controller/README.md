@@ -121,11 +121,13 @@ candidate and clears holding; an empty test never creates a candidate record.
 
 Placement Pause stops in place and preserves outputs. Continue reobserves when
 no release output changed. Once release starts, never repeat descent or release.
-After confirmed release, Continue/Recover neutralizes outputs, retracts upward
+After confirmed release, Continue neutralizes outputs, retracts upward
 from actual position to at least pre-place height if needed, and returns Home.
 An interrupted partial release with insufficient confirmation remains blocked;
 no automatic release or bin put-back is inferred. Direct Stop requires explicit
-Recover and never waits for continuous exhaust to switch itself OFF. A failed
+Recover, which cancels the placement and preserves current outputs while lifting
+to Home height and returning Home. It never replays the expired placement history
+or waits for continuous exhaust to switch itself OFF. A failed
 tray/depth observation performs no placement or release. Existing Pick settling,
 retries, camera/bin avoidance, rotation and Home paths remain unchanged.
 
@@ -205,11 +207,10 @@ Services:
   success performs no robot command, returns to `INACTIVE`, and requires Startup
   again. A rejected replacement preserves the current configuration and state.
 - `/robot_controller/startup` performs the deterministic cold Startup sequence.
-- `/robot_controller/recover` restores readiness. After a confirmed held-item
-  suction loss with retained source, it also puts back the uncertain item and
-  continues eligible saved candidates, or Homes when none remain. It accepts
-  `FAULT`, `RECOVERY_REQUIRED` and `HELD_UNKNOWN`; unknown DI1 HIGH still blocks
-  enable and output reset, with item-clearing/obstruction instructions.
+- `/robot_controller/recover` cancels the interrupted action and remaining batch,
+  preserves gripper outputs, restores readiness, lifts vertically to Home height
+  and moves to taught Home. It accepts `FAULT`, `RECOVERY_REQUIRED` and
+  `HELD_UNKNOWN`; unknown DI1 HIGH still blocks enabling/motion.
 - `/robot_controller/pause` accepts a managed stop-and-park request. The service
   reports acceptance; status reaches `PAUSED` only after parking completes.
 - `/robot_controller/continue` accepts replanning from confirmed `PAUSED`.
@@ -298,21 +299,30 @@ Startup validates sole canonical services and publishers, then performs:
 7. DO1/DO2/DO13/DO14 reset only when no item is held;
 8. 200 ms of coherent `READY` feedback.
 
-Recover repeats Stop/error-clear/enable/settings/readiness, retaining the last
-confirmed global factor. Without confirmed suction loss, trusted holding
-recovery preserves suction/finger outputs and verifies DI1. With confirmed loss
-and a retained source, the explicit click also owns the put-back/continuation
-described below. Cold-start DI1 remains `HELD_UNKNOWN`. The response instructs
-the operator to keep the robot stopped, safely secure/clear the item or check
-the suction sensor for obstruction. Recover stays available in this state and
-rechecks fresh raw DI1 after its strict Stop. HIGH preserves outputs and blocks
-enable/reset; LOW allows normal recovery without another separate Stop click.
-Missing/stale feedback still fails. Close Gripper Diagnostics or other competing
-maintenance applications before recovery; command ownership remains exclusive.
-Successful recovery to `HOLDING` displays a one-time instruction: click **PAUSE**,
-wait for **RETURN ITEM & STOP**, then click that button to put the item back.
-The instruction sends no motion or I/O commands. A trusted source with confirmed
-loss keeps the existing put-back/next-candidate path, even if DI1 rises again.
+Recover cancels the interrupted pick/place/put-back and marks unfinished
+candidates CANCELED. It confirms Stop with two distinct stationary, queue-empty
+samples with unchanged gripper outputs and raw DI1, then adopts that fresh I/O
+state. It does not replay old placement history. Opposing output pairs, unknown
+DI1 HIGH, DI1 HIGH after confirmed release, or a prior dropped source that merely
+regains suction block motion. Sustained fresh LOW permits empty recovery while
+preserving the outputs: LOW is not proof that an object physically left the fingers.
+A trusted HELD source with live suction and vacuum remains HOLDING.
+
+After conditional ClearError, verified alarm clearance, Enable and readiness,
+Recover issues an upward-only RelMovLUser at unchanged XY/attitude if below Home Z.
+Confirm that lift before a separate queued joint-target MovL to taught Home.
+Use taught travel speed/acceleration and the last confirmed global factor (100%
+if unset). Already at/above Home height skips the lift; already at taught Home
+skips its move. No DO, MovLIO, exhaust, neutralization or output reset is sent.
+Current outputs and suction policy are monitored throughout. Stop/cancellation
+pre-empts either segment; a new Recover replans from fresh feedback. Completion
+is READY or HOLDING at Home, never an automatic next pick or resumed release.
+
+Recover remains available in HELD_UNKNOWN for a fresh check after the operator
+secures/clears the item or obstruction. Stale feedback, active E-stop/other alarms,
+changed teach sources, unexpected I/O or failed commands prevent movement.
+The HOLDING completion prompt explains how to request a separate deliberate
+Return Item via PAUSE → RETURN ITEM & STOP. Recover itself does not put an item back.
 
 Native action cancellation and Stop invalidate the active command generation,
 use the independent Stop client, wait for acknowledgement and two distinct
@@ -396,7 +406,8 @@ Under rule 112, every put-back target uses
 `v=100` and taught travel acceleration: initial safety rise, entry transit,
 taught pre-pick release, neutral clearance retreat, exit transit and
 exact joint Home. Put-back never inherits the slow approach/retract rates.
-This applies to explicit return, paused drop, Recovery and automatic loss return.
+This applies to explicit return, paused drop and automatic loss return.
+Explicit Recover instead preserves outputs and uses taught travel rates to Home.
 If another candidate follows, its normal travel and final-pick approach rates
 resume after the old item's exit transit. Global SpeedFactor still applies
 and is never automatically raised by a put-back.
@@ -413,15 +424,11 @@ The source context is not restored after a process restart.
 Put-back also retains its destination and `APPROACH`, `RELEASING` or `RELEASED`
 progress until Home completes or the next-candidate route takes ownership.
 Stop before/during release preserves the source even when suction is already
-intentionally OFF. Explicit Recovery finishes the saved return route. After
-confirmed release, Recovery skips descent and exhaust, replans retreat upward
-from the actual stopped pose, and queues the exit before Home. Neutral I/O moves
-to the first remaining upward segment; if already at safety height, neutralize
-while stationary with raw DI1 LOW before queuing the exit/Home. Only issued,
-unconfirmed output changes may be reconciled; the timed exhaust may finish OFF
-after Stop. Unexpected output changes or new DI1 HIGH after confirmed release
-remain blocking faults. A normal candidate becomes RETURNED when release is
-confirmed; a candidate with latched loss remains DROPPED.
+intentionally OFF. A normal candidate becomes RETURNED only when release is
+confirmed; a candidate with latched loss stays DROPPED. Explicit Recover abandons
+that return progress and cancels remaining candidates. It uses fresh stopped I/O,
+never repeats the release/exhaust, and lifts to Home height before moving Home.
+New DI1 HIGH after confirmed release still blocks this recovery.
 
 Direct `/stop`, action cancellation, shutdown, and another Stop during parking
 or return cancel all further host-side commands and require recovery. The
@@ -455,7 +462,7 @@ Repeated losses advance through the finite retained batch without new detection.
 The action completes normally with SUCCESS or NO_PICK, so this loss alone does
 not open the GUI's Action ended dialog and needs no Recovery click. No automatic
 disable, enable, ClearError or settings sequence is issued. This also applies
-to active picking resumed through Continue or explicit Recovery.
+to active picking resumed through Continue. Explicit Recover cancels the batch.
 
 The dedicated held-suction-loss condition cannot turn output/readiness faults,
 invalid feedback, service failures or missing source context into automatic
@@ -468,30 +475,11 @@ action cancellation and shutdown always pre-empt; pending Pause retains its
 existing put-back-and-remain-paused behavior. Idle HOLDING and standalone Home
 losses continue to require explicit Recovery.
 
-An explicit Recovery click with that retained source confirms Stop, conditional
-ClearError, Enable, settings and READY feedback while preserving all outputs.
-Only this scoped readiness step permits uncertain DI1; every output check stays
-strict and normal suction validation is restored on success or exception. Then
-it uses the existing put-back route with outputs preserved until the taught
-pre-pick release pose, followed by finger OPEN and the confirmed native 50 ms EXHAUST
-pulse. Do not proceed until pulse OFF and raw DI1 LOW are confirmed.
-
-If the same retained batch has an eligible PENDING or INTERRUPTED candidate,
-queue neutral retreat through old clearance, the old item's exit transit,
-then the next candidate's entry transit, clearance, pre-pick and final pick in
-one ordered group. Both transits share safety Z. No intervening
-Home or new detector request occurs; only final pick uses taught settling and
-normal acquisition monitoring. FAILED, DROPPED and RETURNED stay excluded.
-The subsequent successful or exhausted return uses rules 108 and 110. With no eligible
-candidate after release, queue the retreat through Home and finish READY.
-The recovery service completes when this operation completes; status reports
-RECOVERING, RETURNING_ITEM, then PICKING when applicable, and HOLDING/READY.
-Pause/Continue remains available during the resumed Pick. Direct Stop pre-empts
-recovery, release and subsequent picking. An interrupted pre-release put-back
-retains its source for another explicit Recovery, including after DI1 bounces
-HIGH. Failed/ambiguous services, changed sources, invalid feedback or changed
-outputs prevent later commands and invoke Stop containment. No automatic retry,
-source reconstruction or process-restart restoration is permitted.
+Explicit Recover is a separate cancel-and-Home operation under rule 168. It
+never invokes the automatic put-back or next-candidate routine. A repeated
+Recover after interruption preserves the cancelled state and uses a new Stop,
+fresh gripper feedback and a newly measured motion origin. Output changes,
+unknown suction, stale feedback or failed commands stop further motion.
 
 The GUI SpeedFactor slider tracks the handle position and sends it once on
 release. Keyboard and groove changes are debounced for 350 ms. Controller status

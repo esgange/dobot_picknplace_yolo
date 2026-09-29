@@ -19,11 +19,15 @@ Tray placement review: **2026-09-29**, diary rules **158–163**. Controller con
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
-retained recovery and never enters the bin put-back routine.
+retained Continue progress and never enters the bin put-back routine. Explicit
+Recover supersedes that progress with cancel-and-Home under rule 168.
 GUI-mode placement also permits an empty robot; headless placement retains its
 trusted held-item requirement.
 Tray service requests now use the versioned depth-capable endpoint; old provider
 processes cannot satisfy readiness. Executor failures in the provider are visible.
+
+Recovery behavior review: **2026-09-29**, diary rule **168**: explicit Recover
+cancels the old action and goes Home with current grip preserved.
 
 Emergency-stop feedback review: **2026-09-29**, diary rule **167**. Startup queries
 GetErrorID before initialization; confirmed emergency stops have explicit operator
@@ -45,8 +49,9 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 - **Pause parks Home/Pick/tray-position operations. Placement Pause stops in place**,
   then waits for Continue or direct Stop without releasing or moving the item.
 - **Direct Stop stops motion and preserves the grip.** It does not put an item back.
-- **Recover can move the robot** when a saved item needs put-back; it can also
-  continue the batch. Recovery with an intact grip normally restores HOLDING instead.
+- **Recover cancels the old action and returns Home**, preserving gripper outputs.
+  It confirms a vertical lift to Home height before moving Home; it never resumes
+  release or the old batch. Fresh gripper/robot checks must pass first.
 - One controller operation owns execution at a time. A managed Pause retains
   that ownership while waiting. Direct Stop can pre-empt it.
 
@@ -153,7 +158,7 @@ typed status and failed service responses include the complete guidance.
 | `RETURNING_ITEM` | Saved item's put-back is executing; destination afterward depends on why it started. |
 | `STOPPING` | Direct Stop/cancellation/fault containment is being confirmed. |
 | `RECOVERY_REQUIRED` | Stop confirmed; previous operation cannot simply Continue. Explicit Recover required. |
-| `RECOVERING` | Explicit readiness recovery, potentially followed by saved-item return and more picks. |
+| `RECOVERING` | Cancel interrupted action, validate fresh stopped grip, restore readiness, lift and return Home with outputs preserved. |
 | `HELD_UNKNOWN` | Suction detected without trusted pickup context; keep stopped and resolve the item/sensor condition. Recover can recheck. |
 | `FAULT` | Initialization, recovery, supervision or containment failed. Read the cause and explicitly Recover or Stop. |
 
@@ -186,7 +191,7 @@ flowchart TD
 
 - The pose provider is exactly one of headless `item_detect` or explicitly armed
   `item_teach`, through `/item_detect/get_item_poses`. Inference is requested for
-  the batch; Pause/Continue and saved-batch recovery do not request replacement poses.
+  the batch; Pause/Continue does not request replacement poses. Recover cancels it.
 - The accepted batch belongs to this Pick; there is no result-age expiry during
   its operation. Source/hash checks still apply before later work.
 - Both pose request and response evidence must declare
@@ -226,16 +231,22 @@ flowchart TD
     HELD -->|Suction loss confirmed| DROPPED
     HELD -->|Put-back release confirmed| RETURNED
     HELD -->|Tray release confirmed| PLACED
+    PENDING -->|Explicit Recover| CANCELED
+    ACTIVE -->|Explicit Recover| CANCELED
+    INTERRUPTED -->|Explicit Recover| CANCELED
+    HELD -->|Recover with fresh clear suction and no release proof| CANCELED
 ```
 
-FAILED, DROPPED, RETURNED and PLACED are terminal ledger states. A returned uncertain
+FAILED, DROPPED, RETURNED, PLACED and CANCELED are terminal ledger states. A returned uncertain
 item remains **DROPPED**, recording the loss; it does not change to RETURNED.
 Eligible candidates are PENDING or INTERRUPTED in saved order. Thus Continue
 retries the interrupted candidate before later candidates. The ledger and held
 source exist only in memory; process restart does not reconstruct them.
 RETURNED confirms release feedback; retreat/Home may still be in progress.
 Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
-original destination until Home completes or next-candidate travel takes ownership.
+original destination until Home completes, next-candidate travel takes ownership,
+or explicit Recover cancels it. A trusted held source can remain HELD at Home;
+no cancelled item is reported as PLACED or RETURNED without release evidence.
 
 ## 3a. Tray observation and queued placement
 
@@ -255,8 +266,9 @@ flowchart TD
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
     Stopped -->|Release not started| Retry["Continue reobserves"]
     Retry --> Observe
-    Stopped -->|Release confirmed| Recover["Continue/Recover: neutralize, upward retreat, Home; never release again"]
-    Stopped -->|Partial release unconfirmed| Block["Block further motion; no repeated descent/release"]
+    Stopped -->|Release confirmed| Recover["Continue: neutralize, upward retreat, Home; never release again"]
+    Stopped -->|Partial release unconfirmed| Block["Continue blocked; no repeated descent/release"]
+    Stopped -->|Explicit Recover| Cancel["Cancel placement; fresh Stop and grip checks; preserve I/O; lift to Home Z then Home"]
 ```
 
 X/Y are strictly positive millimetres along the detected tray inward short-X /
@@ -305,7 +317,9 @@ headless mode also requires an intact grip. Retain the original placement mode
 across Pause/Continue. Startup/idle unknown-item and other action guards remain.
 Once release starts, never descend/release again. Confirmed release permits neutralizing
 outputs and an upward-only recovery to at least pre-place Z, followed by Home.
-Unconfirmed partial release blocks further motion. Return Item cannot substitute
+Unconfirmed partial release blocks Continue. Explicit Recover cancels placement,
+validates fresh stopped I/O, preserves outputs and lifts to Home Z before Home;
+it neither replays expired history nor declares successful placement. Return Item cannot substitute
 bin put-back during placement. Pick settling/retries and its return paths are
 unchanged. Process restart cannot reconstruct retained placement progress.
 
@@ -364,19 +378,16 @@ flowchart TD
     Required --> Recover["RECOVERING: explicit Recover"]
     Fault --> Recover
     Unknown --> Recover
-    Recover --> Guard{"Ownership, fresh feedback, Stop and item context valid?"}
+    Recover --> Cancel["Cancel old action and remaining candidates"]
+    Cancel --> Guard{"Fresh Stop, stable I/O, known suction and ownership valid?"}
     Guard -->|Unknown DI1 HIGH| Unknown
     Guard -->|Other failure| Fault
-    Guard -->|Unheld and clear| Ready["READY after readiness recovery"]
-    Guard -->|Trusted grip intact| Holding["HOLDING after readiness recovery; outputs preserved"]
-    Guard -->|Confirmed loss with saved source| Return["RETURNING_ITEM: put back, then remaining candidates or Home"]
-    Guard -->|Interrupted return with saved progress| ResumeReturn["RETURNING_ITEM: finish saved return destination"]
-    ResumeReturn -->|Home destination completed| Ready
-    ResumeReturn -->|Remaining candidates destination| Next["PICKING remaining saved candidates"]
-    Next -->|Picked| Holding
-    Next -->|Exhausted| Ready
-    Return -->|Next candidate picked| Holding
-    Return -->|No candidates left / none picked| Ready
+    Guard -->|Valid| Enable["Conditional clear; verified alarm clearance; Enable/settings; preserve I/O"]
+    Enable -->|Failure| Fault
+    Enable --> Lift["Below Home Z: vertical lift at current XY/attitude; physically confirm"]
+    Lift --> Home["Move to exact taught Home; preserve grip"]
+    Home -->|Unheld| Ready["READY at Home; old batch cancelled"]
+    Home -->|Trusted held item| Holding["HOLDING at Home; old batch cancelled"]
 ```
 
 Direct Stop never automatically releases, Homes or resumes. It remains available
@@ -392,21 +403,31 @@ or overwrite a new operation. Operation startup cannot clear an in-progress Stop
 
 | Recovery situation | Operator path / controller result |
 | --- | --- |
-| Known item, suction intact | Recover → HOLDING. To put back: PAUSE → wait for RETURN ITEM & STOP → click it. |
-| Saved item with latched suction loss | Recover puts back, then attempts remaining eligible candidates or Homes. A subsequent DI1 HIGH does not erase the latched loss. |
-| Interrupted put-back, release unconfirmed | Recover uses the saved source and return destination; finish release, then retreat. Intentional suction OFF does not discard source context. |
-| Interrupted put-back, release confirmed | Recover skips release/descent, retreats upward from actual stopped pose and finishes the saved destination. New DI1 HIGH blocks this route. |
+| Known item, suction intact | Recover lifts and returns Home in HOLDING; all grip outputs preserved. Separate PAUSE/Return Item remains available afterward. |
+| Saved item with latched loss | Fresh LOW permits lift/Home without release or new picks; HIGH does not erase the prior loss and blocks motion. |
+| Interrupted pick/place/put-back, release unconfirmed | Cancel it, validate fresh stopped grip, lift/Home; no repeated release and no fabricated placement success. |
+| Interrupted release confirmed | Preserve current outputs, lift/Home; new DI1 HIGH blocks this route. |
 | Unknown HIGH suction, no trusted source | Keep stopped; safely secure/clear item or inspect the sensor for obstruction. Once DI1 shows LOW, click Recover again; no extra Stop click required. No invented return location. |
 | Competing maintenance app | Close the named Gripper Diagnostics/motion-debug application, then retry Recover. |
 | Confirmed emergency stop (`res=-3` or alarm 1537) | Cannot start/recover while active. Release the physical button, then click Recover / Clear Error. Recover may clear a latched alarm; Enable remains blocked until clearance is verified. |
 | Stale feedback, alarm, output mismatch, changed source or failed command | Resolve the reported cause, then Recover. A click does not bypass the check. |
 
-Normal Recover repeats Stop, conditional ClearError, Enable and readiness
-settings; it keeps the last confirmed global speed, or uses Startup's 100% if
-none was established. It resets outputs only for an unheld, clear gripper.
-Unknown HIGH at its item check blocks enable/reset. In uncertain-item recovery,
-outputs are protected until the planned release. Its service response may wait
-for put-back and the remaining saved Pick operation to finish.
+Normal Recover cancels the old operation and remaining candidates, then confirms
+a stationary empty queue and stable gripper outputs/raw DI1 across two distinct
+fresh samples. Adopt those current outputs only after validation; never replay
+expired placement history. Reject opposing outputs and unknown suction. Known
+held suction must have a trusted source and active vacuum; sustained clear DI1
+permits empty recovery without asserting that an object left the fingers.
+
+Restore readiness with conditional ClearError, verified clearance, Enable and
+settings. Keep the last confirmed global speed (100% if unset). Do not reset or
+neutralize outputs. Below Home Z, issue and physically confirm an upward-only
+RelMovLUser with unchanged XY/attitude; then a separate joint-target MovL to taught
+Home. Use taught travel rates. Already-high skips the rise; already-at-Home skips
+its move. Monitor unchanged outputs and held/clear suction throughout. Direct
+Stop pre-empts recovery; another Recover replans from a new Stop and current pose.
+Completion is READY/HOLDING at Home; no detector, release or next-candidate request.
+
 If ClearError acknowledges but the alarm-clear feedback check fails, a read-only
 GetErrorID query provides the explicit emergency-stop reason for alarm 1537.
 Unrelated alarms retain their clearance failure; malformed/unavailable diagnostics
@@ -440,19 +461,16 @@ scaled by global SpeedFactor. If clearance equals pre-pick, the rise to exit
 transit carries the neutral events. A real upward retreat must exist. Both entry
 and exit transits are queued, with CP blending permitted. Physical item placement
 is not measured; the controller confirms release feedback and motion completion.
-Stop preserves the source, return destination and release progress. Recovery
-from RELEASING at the saved release pose can finish its I/O directly. After
-RELEASED, it never descends to release again or repeats confirmed exhaust. Neutral
-I/O moves to the first remaining upward segment; if already at safety height,
-neutralization uses stationary guarded commands with raw DI1 LOW. Only issued
-output transitions are reconciled after Stop, including the exhaust timer's OFF.
+Stop preserves progress for diagnosis. Explicit Recover cancels it and takes the
+fresh-feedback lift/Home path above, without release or neutralization. The
+automatic/managed put-back paths still require issued-output and release evidence.
 Unexpected I/O changes remain faults. None of this context survives restart.
 
 | Why put-back started | After release and retreat |
 | --- | --- |
 | Explicit Return Item | Home → READY; ends the interrupted operation. |
 | Held suction loss during active Pick | Next eligible saved candidate, or Home → READY if exhausted. Original Pick stays active. |
-| Explicit Recover of uncertain saved item | Next eligible saved candidate, or Home → READY if exhausted. |
+| Explicit Recover | Does not enter put-back; cancel, preserve grip, lift and Home. |
 | Held loss during Pause / while PAUSED | Home → PAUSED. Wait for explicit Continue or Stop. |
 
 ## 7. Home has two routes

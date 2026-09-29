@@ -12,6 +12,7 @@ from robot_controller.errors import (
 from robot_controller.hardware import DobotTransport
 from robot_controller.controller import RobotController
 from robot_controller.state_machine import ControllerStateMachine
+from robot_controller.recovery import HomeRecovery
 
 
 @pytest.mark.parametrize("payload,expected", [
@@ -127,6 +128,7 @@ def test_lifecycle_service_returns_explicit_estop_failure(operation, initial):
         raise EmergencyStopPressed(EMERGENCY_STOP_MESSAGE)
     node = SimpleNamespace(
         machine=machine, root=object(), global_speed_percent=100,
+        recovery_home=HomeRecovery(False, False),
         configuration=SimpleNamespace(validate_sources=lambda _root: None),
         managed=SimpleNamespace(recovery_return_needed=lambda: False),
         _begin_operation=lambda _name: None, _end_operation=lambda: None,

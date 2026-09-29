@@ -6951,6 +6951,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   robot commands or live-node restarts. Preserve unrelated RViz/operator files.
   No offline-transfer milestone or hardware validation claimed.
 
+### 2026-09-29 — Rule 168: explicit Recover cancels and returns Home
+
+- User reported “Stop completed but held-item integrity was not preserved:
+  Placement output history is incomplete” and explicitly selected: cancel the
+  interrupted action, lift to Home height, return Home and preserve current grip.
+  This supersedes explicit Recover's old put-back/release/next-candidate workflow,
+  including retained placement recovery. Normal active Pick automatic loss return
+  and Pause/Continue remain unchanged.
+- Local events show the first placement failure at 10:24:05 UTC: outputs reached
+  neutral before OPEN/exhaust/DI12 HIGH/DI1 LOW release confirmation. Stop itself
+  acknowledged and satisfied physical stopping; placement integrity failed. Later
+  Recover/Stop attempts reused the failed placement observer after its bounded
+  1,000-sample output history had expired, producing the reported loop. The new
+  explicit recovery cancels that observer instead of claiming successful release
+  or replaying missing evidence. The original queued-placement release guard stays.
+- Cancel unfinished candidates as terminal CANCELED, retire placement/put-back
+  progress and preserve trusted held-source identity. Confirm Stop with two
+  distinct fresh samples: stationary pose, empty queue, stable gripper outputs
+  and raw DI1. Validate and adopt those current outputs only after physical Stop.
+  Reject opposing outputs, unknown HIGH, HIGH after confirmed release, a known
+  dropped source that regains HIGH, stale feedback and active alarms. Stable LOW
+  permits an empty-suction return without asserting physical item release; an
+  unconfirmed prior HELD candidate becomes CANCELED, never PLACED/RETURNED.
+- Preserve DO1/DO2/DO13/DO14 through conditional ClearError, verified clearance,
+  Enable, settings and all recovery motion; omit output resets, neutralization,
+  release/pulse commands and detector requests. Keep trusted live suction as
+  HOLDING. Fresh unknown HIGH still requires operator resolution. Keep the last
+  confirmed global factor, or 100% if none, and taught travel speed/acceleration.
+- Below taught Home Z, send upward-only RelMovLUser at current XY/attitude and
+  physically confirm it before a separate joint-target MovL to exact taught Home.
+  Skip a redundant lift or already-arrived Home. Monitor unchanged outputs and
+  held/clear suction; direct Stop/cancellation and late-ack containment remain.
+  A new Recover uses fresh Stop feedback and a new motion origin, never the old
+  release or remaining pick candidates. Finish READY/HOLDING at Home. UI tooltip
+  and HOLDING guidance describe the new behavior; update FSM and visual exports.
+- Validation: the controller suite passes 535 tests plus two additional real-
+  transport encoding tests, including the reproduced
+  expired placement history, fresh Stop/I/O adoption, no fabricated release,
+  lift-before-Home ordering/geometry, held/unheld preserved outputs, unknown and
+  returned suction, conflicting outputs, stale sources/feedback, E-stop handling,
+  direct Stop on either segment and repeated Recover. Real transport encoding
+  proves RelMovLUser completes before joint-target MovL admission, with taught
+  rates and no DO/MovLIO requests. Tests use synthetic robot feedback only.
+  The robot_controller symlink build, scoped lint and diff checks pass; all seven
+  FSM diagrams were exported to HTML/PDF. No physical robot commands, live-node restarts, vendor changes or
+  operator artifact edits. No physical commissioning/offline-transfer claim.
+
 ### Future entry template
 
 ```text

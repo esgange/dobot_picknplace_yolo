@@ -786,6 +786,28 @@ disabled state or collision. Keep five-second response/cancellation/ownership
 guards, held-item protection, Stop-unconfirmed and motion containment semantics.
 No automatic retries, resets, physical tests or live node restarts.
 
+Rule 168 supersedes earlier explicit Recover put-back, placement continuation and
+next-candidate behavior. Recover cancels the interrupted action and unfinished
+batch, validates sources/ownership, confirms Stop with two distinct stationary,
+empty-queue samples and stable gripper outputs/raw DI1, then adopts fresh I/O.
+Do not replay expired placement history or fabricate release success. Preserve
+DO1/DO2/DO13/DO14 unchanged through conditional ClearError, verified alarm clearance,
+Enable/settings and motion; send no release, neutralization or output reset.
+Reject opposing outputs, stale feedback, unknown DI1 HIGH, HIGH after confirmed
+release, and a dropped source that merely regains DI1. Retain trusted held context
+only with fresh suction and active vacuum. Stable LOW permits recovery without
+asserting physical item release. Below Home Z, lift vertically at unchanged XY
+and attitude using RelMovLUser; physically confirm before a separate joint-target
+MovL to taught Home, using taught travel rates and the existing global factor.
+Already-high/at-Home skips redundant segments. Monitor grip/output integrity and
+preserve direct Stop/cancellation, response/late-ack containment and source checks.
+Finish READY/HOLDING at Home. Pending/active/interrupted candidates become terminal
+CANCELED; an unconfirmed held release with fresh clear suction also becomes
+CANCELED, never PLACED/RETURNED. Retain the source of a still-held item for later
+explicit placement/Return Item. Another Recover replans from a fresh Stop/pose.
+Active Pick automatic loss return and Pause/Continue remain separate and unchanged.
+No physical robot commands or live-node restart during software verification.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

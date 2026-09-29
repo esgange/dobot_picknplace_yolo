@@ -42,6 +42,7 @@ from .motion import (candidate_pose_in_base, cartesian_home_targets,
                      home_targets, pick_targets, pose_reached, tray_detect_targets)
 from .managed_control import ManagedControl
 from .placement import PlacementOperation, validate_target
+from .recovery import HomeRecovery
 from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
 from .state_machine import ControllerStateMachine
@@ -127,6 +128,7 @@ class RobotController(Node):
         self.pause_event = threading.Event()
         self.managed = ManagedControl(self)
         self.placement = None
+        self.recovery_home = None
 
         self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
@@ -447,6 +449,10 @@ class RobotController(Node):
         self.managed.checkpoint()
 
     def observe_managed_feedback(self, sample):
+        recovery = getattr(self, "recovery_home", None)
+        if recovery is not None and self.active_action == "recover":
+            recovery.check(sample)
+            return False
         placement = getattr(self, "placement", None)
         if placement is not None:
             placement.observe(self, sample)
@@ -549,37 +555,38 @@ class RobotController(Node):
 
     def _recover(self, _request, response):
         acquired = False
-        returning = False
+        recovery = None
         try:
             if self.machine.state not in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN"):
                 raise CommandRejected(
                     "Recover requires FAULT, RECOVERY_REQUIRED or HELD_UNKNOWN state")
             self._begin_operation("recover")
             acquired = True
-            if self.configuration is not None:
-                self.configuration.validate_sources(self.root)
-            self._transition("RECOVERING", "Explicit recovery accepted")
-            returning = self.managed.recovery_return_needed()
-            self.hardware.recover(self.global_speed_percent, return_item=returning)
-            self.startup_complete = True
+            if self.configuration is None:
+                raise CommandRejected("Recover to Home requires a loaded teach configuration")
+            self.configuration.validate_sources(self.root)
+            recovery = getattr(self, "recovery_home", None)
+            if recovery is None:
+                recovery = self.recovery_home = HomeRecovery.cancel_action(self)
+            recovery.motion_started = False
+            recovery.outputs.clear()
+            self.startup_complete = False
+            self._transition("RECOVERING", "Cancelling interrupted action; recover to Home")
+            self.hardware.recover(self.global_speed_percent, home_recovery=recovery)
             if self.global_speed_percent is None:
                 self.global_speed_percent = 100
-            placement = getattr(self, "placement", None)
-            if returning and placement is not None and placement.needs_recovery:
-                placement.run(self)
-                self.placement = None
-                self._transition("READY", "Placement recovery completed at Home")
-            elif returning:
-                self.managed.recover_item_and_continue()
+            recovery.run(self)
             self.raise_if_cancelled()
-            if not returning:
-                target = "HOLDING" if self.holding_item else "READY"
-                self._transition(target, "Recovery completed; robot is " + target)
+            self.recovery_home = None
+            self.startup_complete = True
+            target = "HOLDING" if self.holding_item else "READY"
+            self._transition(target, "Recovery completed at Home; grip preserved; "
+                             "interrupted action cancelled")
             response.success = True
         except HeldUnknown as exc:
             self.startup_complete = False
-            if returning:
-                self._contain_queue_control_failure("Item recovery", exc)
+            if recovery is not None and recovery.motion_started:
+                self._contain_queue_control_failure("Home recovery", exc)
             elif self.managed.session is not None and self.managed.session.held_index is not None:
                 self._transition("FAULT", f"Recovery blocked; held source retained: {exc}")
             else:
@@ -590,8 +597,10 @@ class RobotController(Node):
             self._settle_lifecycle_cancellation(str(exc))
         except Exception as exc:
             response.success = False
-            if returning:
-                self._contain_queue_control_failure("Item recovery", exc)
+            if recovery is not None and recovery.motion_started:
+                self._contain_queue_control_failure("Home recovery", exc)
+                if self.machine.state == "RECOVERY_REQUIRED":
+                    self._transition("FAULT", f"Home recovery failed; robot stopped: {exc}")
                 event, level = "recovery_failed", "ERROR"
             elif acquired and self.machine.state != "STOPPING":
                 self._transition("FAULT", f"Recovery failed: {exc}")
