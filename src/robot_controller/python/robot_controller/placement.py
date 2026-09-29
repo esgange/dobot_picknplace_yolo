@@ -56,7 +56,7 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
         if name == "place_release":
             events = gripper_open_events(80) + vacuum_exhaust_events(80)
         elif name == "place_retract":
-            events = gripper_neutral_events(50) + vacuum_neutral_events(50)
+            events = gripper_neutral_events(20) + vacuum_neutral_events(20)
         result.append(Target(name, point, TRAY_SPEED_PERCENT,
                              settings["acceleration"][rate], motion_io=events))
     result.append(Target("place_home", home.copy(),

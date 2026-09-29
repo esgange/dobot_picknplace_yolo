@@ -7273,6 +7273,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   are untouched. No physical robot commands, automatic live restart, commissioning
   or offline-transfer claim. Restart Robot Controller and its GUI to activate.
 
+### 2026-09-29 — Rule 177: relax placement gripper at 20% of retract
+
+- User requested moving the normal tray-placement retract's neutral-output
+  trigger from 50% to 20% of ascent. Keep the same placement X/Y and Home-Z target;
+  dispatch DO2 OFF, DO14 OFF, DO1 OFF and DO13 OFF at 20%. Fingers relax and
+  suction/exhaust are OFF earlier on the return leg. Descent still starts
+  OPEN/exhaust at 80%; geometry, 100% speeds/global scaling, acceleration,
+  four-command queue, blending and final Home/grip confirmation are unchanged.
+  This supersedes earlier placement 50% neutral timing only; Item Pick and explicit
+  Recover are unchanged. No teach schema or operator artifact edits.
+- Update existing geometry and real transport regression assertions to require
+  all four retract MovLIO tuples at 20%, retaining checks for exact release I/O,
+  waypoint geometry, rates, command ordering and final completion. All 561
+  controller tests pass; robot_controller symlink build and diff checks pass.
+  Changed Python lint has no new findings against HEAD; 14 existing findings
+  remain. Update current READMEs and FSM, and regenerate seven HTML/PDF diagrams.
+  FSM source SHA-256:
+  6033b19feb0d9f354717b09dfae8d1839bfcfb54fe1ba1945c3e7d4d43c7f149.
+- No live robot command or automatic process restart. Restart Robot Controller
+  to activate the locally built change. Operator calibration, teach/model files
+  and unrelated vendor RViz edits remain excluded from the source commit.
+
 ### Future entry template
 
 ```text

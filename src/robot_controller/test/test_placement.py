@@ -54,7 +54,7 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
     assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
         (80, 2, False), (80, 14, True), (80, 13, False), (80, 1, True)]
     assert [(e.percent, e.channel, e.active) for e in plan[2].motion_io] == [
-        (50, 2, False), (50, 14, False), (50, 1, False), (50, 13, False)]
+        (20, 2, False), (20, 14, False), (20, 1, False), (20, 13, False)]
 
 
 @pytest.mark.parametrize("standoff,prepick,retract", [

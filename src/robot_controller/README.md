@@ -115,7 +115,7 @@ request fresh tray/depth and queue exactly four Cartesian commands through Home:
 | --- | --- | --- |
 | MovL | Pre-place | Preserve existing outputs |
 | MovLIO | Release height | At 80%: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON |
-| MovLIO | Back to pre-place | At 50%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
+| MovLIO | Back to pre-place | At 20%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 | MovL | Taught Home XYZ/orientation | Neutral |
 
 Tray Detect Position and all four placement commands use **speed 100%**,
@@ -126,7 +126,7 @@ queue. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust
 pulse, extra retract-height waypoint or separate Home action. The 80% trigger
 starts release before the nominal lower point; exhaust duration follows the
-motion until the 50% upward trigger. All commands inherit CP(100); control points
+motion until the 20% upward trigger. All commands inherit CP(100); control points
 can blend. Admit each service in order, without waiting for intermediate arrival.
 Physically confirm only final Cartesian Home before reporting READY/SUCCESS.
 

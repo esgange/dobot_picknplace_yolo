@@ -59,7 +59,7 @@ at taught Home Z, matching the first item-pick approach before pre-pick.
 Tray Detect Position is one
 direct queued MovL to its recorded joints, without a preliminary safety-Z rise or
 transit. After fast idle/joint arrival and fresh detection, placement queues pre-place → release
-(OPEN/exhaust at 80%) → pre-place (neutral at 50%) → Cartesian Home in one group.
+(OPEN/exhaust at 80%) → pre-place (neutral at 20%) → Cartesian Home in one group.
 Tray Detect Position and every placement segment use speed 100%, scaled by the
 operator's global SpeedFactor. Item Teach acceleration settings and Item Pick
 speeds remain unchanged.

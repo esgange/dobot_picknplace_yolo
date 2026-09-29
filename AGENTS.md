@@ -928,6 +928,16 @@ completion only; Direct Stop still preserves outputs, and Pick/Place/Return Item
 sequences and motion rates remain unchanged. No live commands or automatic restart.
 
 
+Rule 177 moves the normal tray-placement retract's neutral-output trigger from
+50% to 20% of ascent at the same target X/Y back to Home Z. At 20%, command DO2,
+DO14, DO1 and DO13 OFF in order to relax fingers and disable exhaust/vacuum.
+This supersedes earlier placement 50% neutral timing only. Keep descent's 80%
+OPEN/exhaust trigger, all geometry, 100% speeds/global scaling, accelerations,
+queue blending, final Home/grip checks and interruption behavior. Pick and explicit
+Recover sequences are unchanged. Verify encoded MovLIO requests with synthetic
+clients; do not issue live robot commands or automatically restart the controller.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

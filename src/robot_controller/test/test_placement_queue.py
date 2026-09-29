@@ -113,7 +113,7 @@ def test_real_transport_queues_four_moves_with_exact_percentages_and_no_settling
     assert list(rig.requests[1][1].mdis) == [
         '{0,80,2,0}', '{0,80,14,1}', '{0,80,13,0}', '{0,80,1,1}']
     assert list(rig.requests[2][1].mdis) == [
-        '{0,50,2,0}', '{0,50,14,0}', '{0,50,1,0}', '{0,50,13,0}']
+        '{0,20,2,0}', '{0,20,14,0}', '{0,20,1,0}', '{0,20,13,0}']
     assert all(not any(v.startswith(('cp=', 'r=')) for v in request.param_value)
                for _, request in rig.requests)
     assert rig.node.placement.phase == 'DONE'

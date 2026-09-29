@@ -278,7 +278,7 @@ flowchart TD
     Depth -->|Valid| Queue["Admit one ordered CP100 motion group through Home"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
     Pre --> Release["MovLIO: drop Z = tray surface + standoff + pre-pick height; 80% OPEN + exhaust"]
-    Release --> Retract["MovLIO: pre-place; 50% fingers + vacuum neutral"]
+    Release --> Retract["MovLIO: pre-place; 20% fingers + vacuum neutral"]
     Retract --> Home["MovL: Cartesian Home; confirm idle, pose, neutral and DI1 LOW"]
     Home --> Ready["READY / SUCCESS"]
     Queue -. "Monitor throughout" .-> Feedback["Command acceptance, fresh enabled feedback, robot faults, opposing outputs and motion watchdogs; no release-confirmation gate"]
@@ -323,9 +323,9 @@ Retain Item Teach travel/approach/retract/travel acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
 Commands are MovL pre-place; MovLIO release
 with 80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
-50% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF; MovL Cartesian Home restoring taught
+20% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF; MovL Cartesian Home restoring taught
 Home attitude. There is no additional retract-height/clearance target. Exhaust
-lasts from descent's 80% trigger until ascent's 50% trigger, not a 50 ms pulse.
+lasts from descent's 80% trigger until ascent's 20% trigger, not a 50 ms pulse.
 
 Service replies are ordered admission barriers, not physical waypoint waits.
 All motion inherits CP(100), which may round intermediate control points. There
