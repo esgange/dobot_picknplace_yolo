@@ -260,6 +260,7 @@ class TrayRequests:
     def validate_view(self, view):
         binding = view["trigger_binding"]
         if (view["trigger_epoch"] != self.epoch or not self.node.yolo_enabled
+                or self.node.native.failed or self.node.native.closed or self.node.fatal_error
                 or fingerprints(binding["paths"]) != binding["fingerprints"]
                 or file_sha256(binding["path"]) != binding["digest"]):
             raise ValueError("Simulated tray profile or source identity changed")
@@ -316,6 +317,7 @@ class TrayRequests:
             result_view = self.node.preview(
                 preview_settings(settings, self.node.model_metadata), generation=generation,
                 view=view, visualize=simulated or request.save_debug_images, deadline=deadline,
+                returned_only=simulated,
                 **({"depth_quality": sampling} if sampling is not None else {}))
             check()
             self.prepare(path, settings, request.profile_sha256)
@@ -406,6 +408,17 @@ class TrayRequests:
             self.node.events.record("INFO", event,
                                     self.status, profile_sha256=request.profile_sha256,
                                     request_id=request_id,
+                                    source_stamp_ns=view["rgb"]["stamp_ns"],
+                                    detected_count=response.detected_count,
+                                    valid_count=response.valid_count,
+                                    returned_tray=None if selected is None else {
+                                        key: selected[key] for key in (
+                                            "source_index", "class_name", "confidence",
+                                            "position", "quaternion", "length_mm", "width_mm")},
+                                    rejections=[{key: d[key] for key in (
+                                        "source_index", "reason", "length_mm", "width_mm")
+                                        if key in d} for d in result["detections"]
+                                        if not d["valid"]],
                                     elapsed_sec=time.monotonic() - started)
         except Exception as exc:
             response = GetTrayPose.Response(success=False, found=False,

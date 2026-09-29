@@ -6805,6 +6805,49 @@ Never use a floating “latest” version in an issue, script, or deployment not
   arming, calibration/teach/model edits or unrelated RViz changes. No upstream or
   offline-transfer validation claimed.
 
+### 2026-09-29 — Rule 164: frozen Tray Teach simulated response
+
+- User requests Item Teach-style momentary visualization of the exact returned
+  tray result. Supersede rule 142's automatic main-view resume after simulation:
+  hold the request's RGB/depth images until RGB click. Regular click inspection
+  and reference-plane capture keep their existing workflows. No schema changes.
+- Reuse the same fresh single-inference request pipeline and eligibility rules.
+  Simulation rendering shows only its returned tray plus the saved plane, never
+  rejected or nonselected pose axes. Keep full detection evidence for diagnostics.
+  Both pane headings identify historical SIMULATED/FROZEN output with frame age,
+  counts, inference duration, XYZ/quaternion, dimensions/confidence, batch ID and
+  rejection reasons. An empty response freezes its empty result; a failed request
+  never restores an older pose. Missing optional depth stays explicit.
+- Hold the exact response in teaching-only tray_teach_simulated_tray TF and the
+  existing pose-guide topic at 10 Hz. Validate response/observation correspondence
+  before installation. Refresh display timestamps only; never recompute geometry
+  with newer robot TF. The ROS timer checks source hashes, generation, arming epoch,
+  camera identity, YOLO and native/executor health independently of Qt. TF state
+  retains only transform and identity evidence, not image/depth snapshots.
+- Resume, replacement simulation, source/settings/arming/YOLO changes, failure or
+  exit remove held poses. Suppress live pose publication and automatic preview
+  jobs while frozen. Camera callbacks and armed services remain independent and
+  active; a service uses a new observation and cannot reuse or replace this batch.
+  Retained cloud may turn grey while frozen. Pose-only simulation still does not
+  sample controller placement X/Y; Item Teach sampling settings remain in that
+  separate request payload. Controller motion, depth selection and I/O unchanged.
+- Log source timestamp, returned geometry and compact per-detection rejection
+  evidence for simulated and real requests. Add docs/TEACH_UI_COMPARISON.md:
+  remaining UI opportunities are activity history, frozen clicked-tray inspection
+  and an explicit placement-depth test. Multi-candidate picking, bin borders and
+  gripper settings remain task-specific differences, not missing tray defaults.
+- Validation: 215 tray tests pass directly, including real ROS service/camera
+  transport, private OpenCV overlays, frozen GUI/resume/empty/failure and independent
+  source invalidation. Two pre-existing exact-float RViz-file checks fail only on
+  the user's saved 0.009999999776 voxel size versus 0.01; both pass against the
+  committed RViz file through a read-only test substitution. The local file is
+  untouched. Scoped runtime/new-test lint and diff checks pass. Build the tray
+  package locally and inspect an offscreen synthetic frozen-result UI render;
+  no physical robot command or automatic live-node restart.
+- Restart Tray Teach to use the new display. No interface/controller rebuild or
+  teach/calibration/model migration is required. Preserve unrelated local files;
+  no upstream or offline-transfer validation claimed.
+
 ### Future entry template
 
 ```text

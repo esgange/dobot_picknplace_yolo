@@ -211,6 +211,22 @@ def exercise_tray_axis_overlays():
     overlay = np.frombuffer(data, np.uint8).reshape(rgb.shape)
     assert np.any(np.all(overlay == [255, 0, 0], axis=2))
     assert np.any(np.all(overlay == [0, 255, 0], axis=2))
+    # Simulation keeps the exact detection evidence but draws no rejected pose.
+    frozen_result, frozen = native.predict_trays(
+        {**request, "returned_only": True}, None, rgb, {1: "tray"}, cv2, np)
+    assert frozen_result == result
+    _, plane_only = native.overlay_plane(
+        {"width": 640, "height": 480, "plane": plane, "camera_context": context},
+        rgb.tobytes(), cv2, np)
+    assert frozen == plane_only
+    accepted_settings = {**settings, "accepted_class_ids": [1],
+                         "geometry": {"length_mm": 200., "width_mm": 100., "tolerance_mm": 1.}}
+    accepted_request = {**request, "settings": accepted_settings}
+    accepted_result, _ = native.predict_trays(accepted_request, None, rgb, {1: "tray"}, cv2, np)
+    returned_result, returned_pixels = native.predict_trays(
+        {**accepted_request, "returned_only": True}, None, rgb, {1: "tray"}, cv2, np)
+    assert returned_result == accepted_result and returned_result["selected"] is not None
+    assert returned_pixels != plane_only
     _, data = native.tray_visuals(
         {"width": 640, "height": 480, "camera_context": context,
          "detections": [item], "pixels": [], "cloud": False},

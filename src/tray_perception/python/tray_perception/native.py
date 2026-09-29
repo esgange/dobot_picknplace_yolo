@@ -336,6 +336,9 @@ def predict_trays(request, result, rgb, names, cv2, np):
     validate_preview(settings)
     overlay, count = render_result(result, rgb, names, settings["model_task"],
                                    settings["yolo"]["max_detections"], cv2, np)
+    returned_only = request.get("returned_only", False)
+    if returned_only:
+        overlay = rgb.copy()
     detections, selected = [], None
     reason = "Teach the reference plane before measuring trays"
     if settings["geometry_source"] == "none":
@@ -363,7 +366,8 @@ def predict_trays(request, result, rgb, names, cv2, np):
                 draw_plane(overlay, plane, context, cv2, np)
             except ValueError as exc:
                 reason += f" | Reference plane outline unavailable: {exc}"
-        for detection in detections:
+        displayed = ([selected] if selected is not None else []) if returned_only else detections
+        for detection in displayed:
             polygon = np.rint(detection["polygon"]).astype(np.int32)
             color = {"pass": (0, 220, 0), "fail": (255, 50, 50),
                      "unchecked": (160, 160, 160)}[detection["size_status"]]

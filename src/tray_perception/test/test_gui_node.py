@@ -30,6 +30,7 @@ def window(tmp_path):
                                now=lambda: Time(seconds=100)), rviz=SimpleNamespace(
                                status=lambda: {"status": "waiting", "point_count": 0,
                                                "reason": "No camera"}))
+    node.simulation = SimpleNamespace(clear=MagicMock(), install=MagicMock())
     widget = gui.TrayTeachWindow(node)
     widget.timer.stop()
     yield widget
@@ -1201,6 +1202,7 @@ def test_teaching_tf_keeps_source_stamp_without_republishing_old_poses():
                            selected=(4, pose, 100_000_000_000, time.monotonic()),
                            fatal_error="", validate_sources=MagicMock(), broadcaster=MagicMock(),
                            requests=SimpleNamespace(tick=MagicMock()),
+                           simulation=SimpleNamespace(tick=lambda: False),
                            rviz=SimpleNamespace(displayed=None, tick=MagicMock(),
                                                 show_pose=MagicMock(), clear_pose=MagicMock()))
     TrayTeachNode._tick(node)
@@ -1388,13 +1390,16 @@ def test_trigger_row_requires_saved_profile_and_arming_stays_explicit(window):
     assert not window.armed_toggle.isChecked() and not window.node.yolo_enabled
 
 
-def test_simulation_shows_shared_result_and_continues_live_without_arming(window):
+def test_simulation_freezes_exact_empty_result_until_rgb_click_without_arming(window):
     ready_trigger_window(window)
     view = {"generation": 1, "camera_context": None, "metric_error": "", "depth_error": "",
             "rgb": {"width": 2, "height": 2, "stamp_ns": 100_000_000_000},
             "overlay": bytes(12), "depth_overlay": b"", "cloud": None,
-            "result": {"selected": None, "reason": "No eligible tray", "detections": []}}
-    response = SimpleNamespace(success=True, status="NO_VALID_TRAY", message="No eligible tray")
+            "depth": None,
+            "result": {"selected": None, "reason": "No eligible tray", "detections": [],
+                       "inference_ms": 12.}}
+    response = SimpleNamespace(success=True, status="NO_VALID_TRAY", message="No eligible tray",
+                               found=False, detected_count=0, valid_count=0, batch_id="batch")
     window.node.requests.simulate = MagicMock(return_value={"response": response, "view": view})
     before = {key: field.text() for key, field in window.dimensions.items()}
     window._simulate_trigger()
@@ -1402,6 +1407,11 @@ def test_simulation_shows_shared_result_and_continues_live_without_arming(window
     window._tick()
     assert window.last_view is view
     assert "Last simulated request: NO_VALID_TRAY" in window.detail_label.text()
+    assert "SIMULATED NO_VALID_TRAY" in window.rgb_status.text()
+    assert "FROZEN" in window.depth_status.text()
+    assert "no returned tray pose" in window.rgb_status.text()
+    window.node.accept_view.assert_not_called()
+    window.node.simulation.install.assert_called_once_with(response, view)
     assert not window.armed_toggle.isChecked()
     assert before == {key: field.text() for key, field in window.dimensions.items()}
     window.camera_prefix.blockSignals(True)
@@ -1411,11 +1421,19 @@ def test_simulation_shows_shared_result_and_continues_live_without_arming(window
     window.node.preview = MagicMock(return_value=live_view(60))
     window.next_preview = 0
     window._tick()
+    assert window.future is None and window.simulation_view is view
+    window.node.preview.assert_not_called()
+    window._show_view(live_view(80))
+    assert window.last_view is view  # Late live results cannot replace the frozen pair.
+    window._click(1., 1.)
+    assert window.simulation_view is None
+    window.node.simulation.clear.assert_called()
+    window._tick()
     window.future.result(timeout=2)
     window._tick()
     assert window.canvas.image.pixelColor(0, 0).red() == 60
     assert window.node.preview.call_count == 1
-    assert "Last simulated request" in window.detail_label.text()
+    assert "SIMULATED" not in window.rgb_status.text()
 
 
 def test_simulated_detail_source_change_revokes_old_target_without_stopping_preview(window):
@@ -1430,3 +1448,45 @@ def test_simulated_detail_source_change_revokes_old_target_without_stopping_prev
     replacement = live_view(70)
     window._show_view(replacement)
     assert window.last_view is replacement and window.canvas.image.pixelColor(0, 0).red() == 70
+
+
+def test_simulation_displays_exact_pose_and_source_edit_resumes_live(window):
+    from tray_perception_interfaces.srv import GetTrayPose
+    ready_trigger_window(window)
+    response = GetTrayPose.Response(success=True, found=True, status="OK", batch_id="returned",
+                                    detected_count=3, valid_count=2)
+    p, q = response.tray.pose.position, response.tray.pose.orientation
+    p.x, p.y, p.z = .25, -.4, .012
+    q.x, q.w = 1., 0.
+    response.tray.length, response.tray.width, response.tray.confidence = .285, .2, .95
+    view = {**live_view(80), "depth": None, "trigger_binding": {}, "trigger_epoch": 1,
+            "result": {"selected": None, "detections": [], "inference_ms": 100., "reason": ""}}
+    window.node.requests.simulate = MagicMock(return_value={"response": response, "view": view})
+    window._simulate_trigger()
+    finish_jobs(window)
+    assert window.simulation_view is view
+    text = window.rgb_status.text()
+    for expected in ("Returned 1 tray", "2 valid / 3", "+250.0, -400.0, +12.0",
+                     "+1.00000, +0.00000, +0.00000, +0.00000", "285.0 × 200.0",
+                     "tray_teach_simulated_tray", "controller"):
+        assert expected in text
+    assert "Depth unavailable" in window.depth_status.text()
+    window.node.requests.validate_view.side_effect = ValueError("saved model changed")
+    window._tick()
+    assert window.simulation_view is None and window.canvas.image is None
+    window.node.simulation.clear.assert_called()
+    assert "saved model changed" in window.detail_label.text()
+
+
+def test_failed_simulation_clears_previous_result_without_restoring_a_pose(window):
+    ready_trigger_window(window)
+    window.simulation_view = live_view(90)
+    window.node.requests.simulate = MagicMock(return_value={
+        "response": SimpleNamespace(success=False, message="No fresh calibrated observation"),
+        "view": None})
+    window._simulate_trigger()
+    finish_jobs(window)
+    assert window.simulation_view is None
+    window.node.simulation.install.assert_not_called()
+    window.node.simulation.clear.assert_called()
+    assert "No fresh calibrated observation" in window.status.text()

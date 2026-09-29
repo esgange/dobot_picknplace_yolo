@@ -26,6 +26,7 @@ from item_perception_yolo.platform_teach_core import (
 from .core import EventLogger, load_profile, validate_plane, validate_preview
 from .rviz import TrayRvizPreview
 from .requests import pose_extents, TrayRequests
+from .simulation import TraySimulationPreview
 
 
 class TrayTeachNode(Node):
@@ -67,7 +68,8 @@ class TrayTeachNode(Node):
         self.rviz = TrayRvizPreview(
             self, topic_prefix="/tray_detect" if deployment else "/tray_teach")
         self.requests = TrayRequests(self)
-        self.create_timer(.2, self._tick)
+        self.simulation = TraySimulationPreview(self)
+        self.create_timer(.1, self._tick)
         self.events.record("INFO", "started", f"{self.get_name()} started; read-only, no commands")
 
     def _on_joints(self, message):
@@ -106,6 +108,7 @@ class TrayTeachNode(Node):
             self.selected = None
             self._published_key = None
         self.requests.disarm(reason)
+        self.simulation.clear()
         if self.rviz is not None:
             self.rviz.invalidate(reason)
 
@@ -219,7 +222,8 @@ class TrayTeachNode(Node):
             info, depth_info = copy.deepcopy(self.color_info), copy.deepcopy(self.depth_info)
             generation, connection = self.generation, self.connection
         if (rgb is None or not 0 <= (self.get_clock().now().nanoseconds - rgb["stamp_ns"]) /
-                1e9 <= input_max_age_sec or time.monotonic() - rgb["received_at"] > input_max_age_sec):
+                1e9 <= input_max_age_sec
+                or time.monotonic() - rgb["received_at"] > input_max_age_sec):
             raise ValueError("Waiting for fresh RGB on the connected prefix")
         return {"rgb": rgb, "depth": depth, "info": info, "depth_info": depth_info,
                 "generation": generation, "connection": connection, "camera_context": None,
@@ -313,7 +317,7 @@ class TrayTeachNode(Node):
         return self.plane
 
     def preview(self, settings=None, *, generation, view=None, visualize=True, deadline=None,
-                depth_quality=None):
+                depth_quality=None, returned_only=False):
         supplied = view is not None
         view = self.raw_snapshot() if view is None else view
         if view["generation"] != generation:
@@ -347,6 +351,8 @@ class TrayTeachNode(Node):
                 raise ValueError("Load a matching YOLO model first")
             request.update(operation="tray_preview", settings=settings,
                            model={**model, "yolo": settings["yolo"]})
+            if returned_only:
+                request["returned_only"] = True
         remaining = 10 if deadline is None else max(.001, deadline - time.monotonic())
         result, pixels = self.native.call(request, rgb["rgb"], timeout=remaining)
         fields = {"state", "width", "height", "error"} if settings is None else {
@@ -404,7 +410,9 @@ class TrayTeachNode(Node):
                     raise ValueError("Duplicate or excess detections")
             except (ValueError, TypeError, KeyError) as exc:
                 raise RuntimeError(f"Invalid native tray detections: {exc}") from exc
-        visuals = (self.visuals(view, result.get("detections", []),
+        displayed = ([selected] if selected is not None else []) if returned_only else \
+            result.get("detections", [])
+        visuals = (self.visuals(view, displayed,
                                 cloud=context is not None and not self.deployment,
                                 deadline=deadline, plane=plane) if visualize else
                    {"depth_overlay": b"", "samples": [], "cloud": None})
@@ -536,6 +544,8 @@ class TrayTeachNode(Node):
             except (ValueError, OSError, RuntimeError) as exc:
                 self.rviz.invalidate(str(exc))
         self.rviz.tick()
+        if self.simulation.tick():
+            return
         with self.lock:
             selected = self.selected
         if selected is None:

@@ -735,6 +735,19 @@ source validation, controller motion/IO and teach files. Verify with real ROS in
 an isolated domain, repeated depth requests/errors, and injected executor failure;
 no physical robot commands or automatic live-process restarts during testing.
 
+Rule 164 supersedes rule 142 only for Tray Teach Simulate Trigger: hold its exact
+RGB/depth result until RGB click, like Item Teach. Show only the returned tray
+and reference plane, with explicit empty/error outcomes and original frame age,
+counts, XYZ/quaternion, dimensions, confidence and batch identity. Publish the
+response pose as teaching-only tray_teach_simulated_tray at 10 Hz while held;
+refresh display timestamps only, never pose geometry. Clear on resume, replacement,
+edits, source/epoch changes, YOLO/arming changes, failure and exit. Independently
+validate from the ROS timer and never retain images in TF state. Camera callbacks
+and armed requests continue; each service still acquires independent fresh inputs.
+Simulation remains pose-only; controller placement-depth inputs are unchanged.
+Log exact returned geometry and rejection evidence for both request paths.
+Preserve teach schemas, native isolation, worker count and motion authority.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

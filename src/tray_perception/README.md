@@ -105,9 +105,9 @@ fit; live updates preserve your chosen split.
    Preview status reports **measured / size filter inactive** when filters are
    incomplete. If measurements are unavailable, it names the missing calibration,
    timestamped TF or reference plane instead of only saying no tray was accepted.
-   Main views stay live; the last clicked observation is labelled with its age.
+   Ordinary inspection stays live; the last clicked observation is labelled with its age.
    Its highlight disappears on the next frame, and settings changes invalidate
-   the summary. Only explicit corner capture holds the displayed observation;
+   the summary. Corner capture and Simulate Trigger hold the displayed observation;
    there is no Resume Live button for ordinary inspection.
    Enter long-side **Length**, short-side **Width**, and one **Tolerance ± (mm)**
    manually. Clicking never overwrites those fields. Missing/invalid dimensions
@@ -274,8 +274,8 @@ and restores color; duplicate/frozen observations never reset the refresh age.
 Input gaps and empty results never publish intermediate empty clouds. Source or
 settings changes, CameraInfo changes, terminal failure and orderly exit grey the
 retained cloud immediately. A late RViz subscriber receives the current cached
-cloud while the node runs. The existing single selected-tray TF remains; no
-additional tray targets or numeric RViz overlays are published.
+cloud while the node runs. Live preview publishes the single selected-tray TF;
+Simulate Trigger instead holds its separately named historical response frame.
 
 The package reuses Item Perception's existing pinned private CPU runtime via
 one lifetime native worker, without another wheel extraction, global install,
@@ -327,12 +327,35 @@ endpoint before creating its replacement; old callbacks cannot use the new bindi
 **Simulate Trigger** runs the same acquisition, inference, size/class filtering,
 single-tray selection and typed response logic locally, even while Armed OFF.
 It never enables the robot or requests controller motion. It requires the exact
-saved profile and YOLO ON. The exact request result is displayed and preview
-continues automatically, with a separate age-labelled last-request summary.
-Invalidated simulations cannot restore or retain old targets. Inspection and
-corner teaching also leave the main preview scheduled. The existing single
-worker serializes inference and explicit actions, so processing can briefly
-delay a refresh; no extra inference worker or camera subscription is added.
+saved profile and YOLO ON. Like Item Teach, the exact RGB/depth observation freezes
+until **click RGB to resume**. Draw only the returned tray, plus the reference
+plane; rejected or nonselected detection axes never masquerade as returned poses.
+Both pane headings show SIMULATED/FROZEN, original frame age, inference time,
+returned/valid/detected counts, base XYZ in mm, quaternion XYZW, dimensions,
+confidence, batch ID and rejection reasons. An empty successful response freezes
+its empty result and clears the preceding pose. Missing optional depth is labelled.
+
+The teaching-only `base_link -> tray_teach_simulated_tray` TF and existing pose
+guides hold exactly the response geometry. They refresh their display timestamp
+at 10 Hz; this never recomputes geometry from live robot/camera TF or changes the
+observation timestamp shown in the UI/log. The normal live selected-tray TF stops
+while the result is held. RGB click, another simulation, edits, source/model/hash
+changes, YOLO/arming changes, failure and exit clear the simulated pose. The ROS
+timer independently validates its identity even if Qt is busy. Old TF history can
+remain briefly in RViz after publication stops.
+
+Camera callbacks and armed service requests remain active. A service call always
+uses independent fresh frames and cannot reuse or replace the frozen simulation.
+Automatic preview inference resumes on RGB click; retained scene voxels may grey
+while the historical result is held. Ordinary inspection/corner teaching retain
+their existing live scheduling. No extra worker, camera subscription, robot command
+or teach schema is added. Pose-only simulation does not test placement depth at a
+controller X/Y; those requests still carry Item Teach sampling settings separately.
+Request event logs include source timestamp, returned pose and per-detection
+rejections, so a past response can be compared with a displayed simulated batch.
+
+See [Item/Tray feature comparison](../../docs/TEACH_UI_COMPARISON.md) for the
+remaining inspection, depth, logging and task-specific differences.
 
 Each request supplies `profile_sha256`, the SHA-256 of the saved tray YAML. It
 waits for RGB both captured and received after the trigger, resolves TF at that
