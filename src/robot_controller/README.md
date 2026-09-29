@@ -49,6 +49,11 @@ available under their usual guards even when detection is disarmed.
 Rebuild `robot_controller_interfaces` and `robot_controller`, then restart all
 controller/GUI clients together for these status fields.
 
+Tray requests use `/tray_detect/get_tray_pose_v2`, the depth-capable contract.
+The earlier endpoint is never used as a fallback. Restart Tray Teach/Detect and
+Robot Controller together after rebuilding; an old provider leaves Place disabled
+instead of accepting an incompatible request. No robot motion is sent by detection.
+
 Enter positive **X (mm)** and **Y (mm)** from the detected tray origin along its
 inward short-X and long-Y axes, and **Rotation (−180° to +180°)**. At 0° the tool uses
 the recorded Tray Detect Pose attitude; the offset rotates about that tool's Z.

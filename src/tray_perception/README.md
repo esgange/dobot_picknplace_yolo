@@ -2,8 +2,7 @@
 
 `tray_teach` is a read-only GUI for teaching one tray profile and inspecting the
 best detected tray pose in `base_link`. Headless `tray_detect` shares its fresh
-pose-request pipeline. Controller placement and placement GUI integration remain
-subsequent work. No camera/robot process is launched and no
+pose-request pipeline, including controller-requested placement depth. No camera/robot process is launched and no
 motion, enable, gripper or controller command is sent.
 
 Build and launch from the workspace root:
@@ -296,8 +295,24 @@ invalidated. See [NOTICE.md](NOTICE.md) for attribution.
 
 The top row follows Item Teach: **YOLO Detect**, **Simulate Trigger**, and
 **Armed**. Preview and arming are separate. GUI startup and profile loading leave
-Armed OFF; Armed ON is red and advertises `/tray_detect/get_tray_pose` using
+Armed OFF; Armed ON is red and advertises `/tray_detect/get_tray_pose_v2` using
 [`tray_perception_interfaces/srv/GetTrayPose`](../tray_perception_interfaces/README.md).
+The versioned endpoint separates this depth-capable layout from the earlier
+pose-only service. No legacy endpoint is advertised or tried. Rebuild and restart
+Tray Teach/Detect and Robot Controller together; an older process can remain open
+with old Python/typesupport code even after an on-disk rebuild. A missing v2
+provider keeps Place disabled before any observation travel.
+
+The GUI and headless node supervise their ROS executor thread. An unexpected
+exit or callback exception sets a terminal error, revokes arming and records
+`tray_executor_failed` with the Python traceback. The GUI displays the failure;
+headless exits. There is no silent thread restart or inference retry. Ordinary
+no-tray/depth failures remain request results, keeping reception and preview live.
+Each request logs its start, completion duration or failing phase and traceback
+in `logs/tray_perception/events.jsonl`. Repeated identical GUI messages update the
+display but are logged at most every 30 seconds, preserving useful history within
+the existing 1,000-event limit. Normal shutdown does not report an executor fault.
+
 Arming requires YOLO ON with valid settings, an explicitly saved/loaded unchanged
 profile whose detection settings/plane match the form, its verified mask/OBB model,
 matching calibration and fresh RGB/CameraInfo/exact-time TF. It needs no live

@@ -21,6 +21,8 @@ from .documents import detection_profile, open_document, save_document, validate
 from item_perception_yolo.item_preview import validate_prefix
 from item_perception_yolo.item_teach_core import file_sha256
 from .node import TrayTeachNode
+from .contract import SERVICE_NAME
+from .execution import spin_checked
 
 
 class TrayCanvas(QtWidgets.QWidget):
@@ -267,7 +269,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.armed_toggle = QtWidgets.QPushButton("Armed: OFF")
         self.armed_toggle.setCheckable(True)
         self.armed_toggle.setToolTip(
-            "Expose /tray_detect/get_tray_pose for controller requests. No robot motion.")
+            f"Expose {SERVICE_NAME} for controller requests. No robot motion.")
         self.armed_toggle.toggled.connect(self._toggle_armed)
         toggle_row.addWidget(self.armed_toggle, 1)
         self.form_fields = [self.camera_prefix, self.name, self.classes,
@@ -402,6 +404,14 @@ class TrayTeachWindow(QtWidgets.QWidget):
 
     def _message(self, text, *, error=False):
         self.status.setText(text)
+        # A stopped input should not erase the initiating fault with one warning
+        # per preview attempt. Keep the UI current; repeat an identical log at 30 s.
+        current = (text, error)
+        previous, when = getattr(self, "_last_message_log", (None, 0.))
+        now = time.monotonic()
+        if current == previous and now - when < 30.:
+            return
+        self._last_message_log = (current, now)
         self.node.events.record("WARNING" if error else "INFO", "gui", text)
 
     def _edited(self, *_args):
@@ -835,7 +845,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             settings = self._trigger_settings()
             path, digest = self.profile_path, self.profile_digest
             self._job(lambda: self.node.requests.arm(path, settings, digest),
-                      lambda _: self._message("Armed: /tray_detect/get_tray_pose"), "arm")
+                      lambda _: self._message(f"Armed: {SERVICE_NAME}"), "arm")
         except (ValueError, OSError) as exc:
             self._style_armed(False)
             self._message(str(exc), error=True)
@@ -1226,7 +1236,7 @@ def main(args=None):
         node = TrayTeachNode()
         executor = MultiThreadedExecutor(num_threads=2)
         executor.add_node(node)
-        thread = threading.Thread(target=executor.spin, daemon=True)
+        thread = threading.Thread(target=spin_checked, args=(node, executor), daemon=True)
         thread.start()
         window = TrayTeachWindow(node)
         window.show()

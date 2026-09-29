@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import threading
 import time
+import traceback
 import uuid
 
 import numpy as np
@@ -21,9 +22,9 @@ from tray_perception_interfaces.srv import GetTrayPose
 from .core import load_profile, ORIGIN_CONVENTION
 from .documents import detection_profile, load_document
 from .placement import sampling_from_message
+from .contract import SERVICE_NAME
 
 
-SERVICE_NAME = "/tray_detect/get_tray_pose"
 REQUEST_TIMEOUT = 10.0
 
 
@@ -164,7 +165,7 @@ class TrayRequests:
             if (name, namespace) != own and any(
                     service == SERVICE_NAME for service, _ in
                     node.get_service_names_and_types_by_node(name, namespace)):
-                raise ValueError("Another node already provides /tray_detect/get_tray_pose")
+                raise ValueError(f"Another node already provides {SERVICE_NAME}")
 
     def arm(self, path, settings, expected_digest):
         self.disarm()
@@ -280,11 +281,17 @@ class TrayRequests:
         epoch, generation = self.epoch, self.node.generation
         acquired, view = False, None
         simulated = simulation is not None
+        request_id = uuid.uuid4().hex
+        phase = "validate_request"
 
         def check():
             self._check(epoch, generation, deadline, simulated=simulated)
 
         try:
+            self.node.events.record(
+                "INFO", "tray_request_started", "Simulated" if simulated else SERVICE_NAME,
+                request_id=request_id, profile_sha256=request.profile_sha256,
+                sample_placement_depth=bool(request.sample_placement_depth))
             sampling = (sampling_from_message(request.placement)
                         if request.sample_placement_depth else None)
             if sampling is not None:
@@ -293,15 +300,19 @@ class TrayRequests:
             binding = self.binding
             if not simulated and (binding is None or request.profile_sha256 != binding["digest"]):
                 raise ValueError("Requested Tray Teach profile SHA-256 mismatch")
+            phase = "wait_for_preview"
             while not acquired:
                 check()
                 acquired = self.node.work_lock.acquire(
                     timeout=min(.02, max(.001, deadline - time.monotonic())))
             check()
             path, settings = simulation if simulated else (binding["path"], binding["settings"])
+            phase = "validate_sources"
             verified = self.prepare(path, settings, request.profile_sha256)
             check()
+            phase = "fresh_observation"
             view = self._fresh_view(start_ns, started, deadline, check, sampling)
+            phase = "inference"
             result_view = self.node.preview(
                 preview_settings(settings, self.node.model_metadata), generation=generation,
                 view=view, visualize=simulated or request.save_debug_images, deadline=deadline,
@@ -332,6 +343,7 @@ class TrayRequests:
                 pose.extent_x, pose.extent_y = pose_extents(selected)
                 pose.center_distance_px = float(selected["center_distance_px"])
                 if sampling is not None:
+                    phase = "placement_depth"
                     if view["depth"] is None:
                         raise ValueError("Placement requires synchronized registered depth")
                     measured, data = self.node.native.call({
@@ -343,8 +355,9 @@ class TrayRequests:
                     if (not data and set(measured) == {"state", "error"}
                             and type(measured["error"]) is str and measured["error"]):
                         raise ValueError(measured["error"])
-                    if (data or set(measured) != {"state", "surface_base", "accepted_samples",
-                                                 "total_samples", "median_mm", "sigma_mm"}
+                    if (data or set(measured) != {
+                            "state", "surface_base", "accepted_samples",
+                            "total_samples", "median_mm", "sigma_mm"}
                             or len(measured["surface_base"]) != 3
                             or not np.isfinite(measured["surface_base"] + [
                                 measured["median_mm"], measured["sigma_mm"]]).all()
@@ -391,13 +404,17 @@ class TrayRequests:
             self.status = f"{response.status}: {response.message} | {response.batch_id}"
             event = "tray_simulated" if simulated else "tray_pose_response"
             self.node.events.record("INFO", event,
-                                    self.status, profile_sha256=request.profile_sha256)
+                                    self.status, profile_sha256=request.profile_sha256,
+                                    request_id=request_id,
+                                    elapsed_sec=time.monotonic() - started)
         except Exception as exc:
             response = GetTrayPose.Response(success=False, found=False,
                                             status="ERROR", message=str(exc))
             view = None
             self.status = f"ERROR: {exc}"
-            self.node.events.record("ERROR", "tray_request_failed", str(exc))
+            self.node.events.record(
+                "ERROR", "tray_request_failed", str(exc), request_id=request_id, phase=phase,
+                elapsed_sec=time.monotonic() - started, traceback=traceback.format_exc())
             terminal = isinstance(exc, RuntimeError) and not self.node.native.closed
             if self.node.native.failed or terminal:
                 self.node.fatal_error = str(exc)

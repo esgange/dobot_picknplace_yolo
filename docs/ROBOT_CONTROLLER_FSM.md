@@ -15,13 +15,15 @@ preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
 
-Tray placement review: **2026-09-29**, diary rules **158–162**. Controller configuration
+Tray placement review: **2026-09-29**, diary rules **158–163**. Controller configuration
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
 retained recovery and never enters the bin put-back routine.
 GUI-mode placement also permits an empty robot; headless placement retains its
 trusted held-item requirement.
+Tray service requests now use the versioned depth-capable endpoint; old provider
+processes cannot satisfy readiness. Executor failures in the provider are visible.
 
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
@@ -108,6 +110,14 @@ hardware. A GUI client cannot override a headless controller's held-source guard
 Tooltips explain the applicable prerequisites. Home and Tray
 Detect Position have no perception-readiness requirement. Keep request-time source
 and fresh-pose validation. Rebuild/restart status publishers and clients together.
+
+Tray readiness and requests use `/tray_detect/get_tray_pose_v2` exclusively. The
+unversioned endpoint used before placement-depth integration cannot satisfy a new
+Place goal; there is no mixed-layout fallback. Restart Tray Teach/Detect and
+Robot Controller after updating. Provider executor failures revoke arming and
+report a terminal error with traceback, rather than retaining a silent frozen
+preview. An unanswered in-flight request still has its existing bounded timeout
+and controller Stop/recovery path; no automatic retry or motion change is added.
 
 Startup order: validate ownership/feedback → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →

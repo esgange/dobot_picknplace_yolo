@@ -983,6 +983,22 @@ def test_measurement_inspection_needs_no_size_filter_or_copied_position(window, 
         window._trigger_settings()
 
 
+def test_repeated_stale_preview_warning_is_throttled_but_still_visible(window, monkeypatch):
+    now = [100.]
+    monkeypatch.setattr(gui.time, 'monotonic', lambda: now[0])
+    window.node.events.reset_mock()
+    for _ in range(20):
+        window._message('Waiting for fresh RGB', error=True)
+        now[0] += 1.
+    assert window.status.text() == 'Waiting for fresh RGB'
+    assert window.node.events.record.call_count == 1
+    now[0] = 130.
+    window._message('Waiting for fresh RGB', error=True)
+    assert window.node.events.record.call_count == 2
+    window._message('Different failure', error=True)
+    assert window.node.events.record.call_count == 3
+
+
 @pytest.mark.parametrize("terminal", [False, True])
 def test_obsolete_preview_errors_do_not_hide_worker_failures(window, monkeypatch, terminal):
     window.future = failed = Future()

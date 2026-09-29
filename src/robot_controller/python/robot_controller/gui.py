@@ -671,7 +671,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_item.setToolTip(
             "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude"
             if state and state.tray_detector_ready else
-            "Arm Tray Teach or start Tray Detect with exactly one provider")
+            "Arm Tray Teach or start Tray Detect with exactly one provider; "
+            "restart both tray and controller applications after updating")
         if state and state.manual_placement_enabled and state.tray_detector_ready:
             self.place_item.setToolTip(
                 "GUI debug placement: run the real placement sequence with or without an item")

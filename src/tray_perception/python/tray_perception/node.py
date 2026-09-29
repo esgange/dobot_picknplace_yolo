@@ -59,6 +59,7 @@ class TrayTeachNode(Node):
         self.selected = None
         self._published_key = None
         self.fatal_error = ""
+        self.shutdown_requested = threading.Event()
         self.camera_status = "Enter a camera prefix and Connect RGB"
         self.tf_buffer = Buffer(cache_time=Duration(seconds=15))
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=False)
@@ -565,5 +566,6 @@ class TrayTeachNode(Node):
         self._published_key = (generation, source_stamp)
 
     def close(self):
+        self.shutdown_requested.set()
         self.invalidate(f"{self.get_name()} closed")
         self.native.close()

@@ -1,6 +1,12 @@
 # Tray Perception Interfaces
 
-`GetTrayPose` is the shared read-only `/tray_detect/get_tray_pose` service exposed
+The current depth-capable contract uses a versioned endpoint so an older process
+with the same ROS type name but a different serialized layout cannot receive the
+request. There is no unversioned fallback. Restart the provider and controller
+together after rebuilding; incompatible future layout changes must bump the
+endpoint again. YAML teach schemas are independent of this wire version.
+
+`GetTrayPose` is the shared read-only `/tray_detect/get_tray_pose_v2` service exposed
 by Armed Tray Teach or headless Tray Detect, with only one provider at a time.
 The caller supplies the exact saved tray YAML SHA-256. Each request acquires a
 new RGB observation after request arrival, with matching calibration and exact

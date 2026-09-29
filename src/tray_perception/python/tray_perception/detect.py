@@ -12,6 +12,7 @@ from item_perception_yolo.item_teach_core import file_sha256
 from item_perception_yolo.runtime_teach import runtime_tray_catalog
 from .node import TrayTeachNode
 from .requests import REQUEST_TIMEOUT
+from .execution import spin_checked
 
 
 class TrayVoxelLoop:
@@ -73,7 +74,7 @@ def main(args=None):
         node = TrayTeachNode(deployment=True)
         executor = MultiThreadedExecutor(num_threads=2)
         executor.add_node(node)
-        thread = threading.Thread(target=executor.spin, daemon=True)
+        thread = threading.Thread(target=spin_checked, args=(node, executor), daemon=True)
         thread.start()
         configure(node)
         voxels = TrayVoxelLoop(node)

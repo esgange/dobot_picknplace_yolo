@@ -8,6 +8,7 @@ import numpy as np
 from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
 from tray_perception.core import ORIGIN_CONVENTION
 from tray_perception.placement import sampling_from_item
+from tray_perception.contract import SERVICE_NAME as SERVICE
 from tray_perception_interfaces.msg import PlacementDepthRequest
 from tray_perception_interfaces.srv import GetTrayPose
 
@@ -15,7 +16,6 @@ from .errors import FeedbackFailure
 from .motion import rigid_matrix
 
 
-SERVICE = "/tray_detect/get_tray_pose"
 PROVIDERS = {("tray_teach", "/"), ("tray_detect", "/")}
 
 
@@ -116,7 +116,9 @@ class TrayClient:
             self.pending = None
         self.check_owner()
         if not self.client.service_is_ready():
-            raise FeedbackFailure("Tray pose service is unavailable; arm Tray Teach first")
+            raise FeedbackFailure(
+                "Tray pose v2 service is unavailable; restart tray and controller applications "
+                "after updating, then arm Tray Teach or start Tray Detect")
         sampling = sampling_from_item(config.profile, x_mm, y_mm)
         request = GetTrayPose.Request(profile_sha256=config.tray.sha256,
                                       sample_placement_depth=True,

@@ -124,6 +124,15 @@ def test_placement_request_uses_one_fresh_observation_and_reports_depth(backend,
     else:
         assert "Insufficient" in response.message and not node.native.failed
         assert node.requests.service is not None  # Bad depth must not disarm the provider.
+    records = node.events.record.call_args_list
+    started = next(call for call in records if call.args[1] == 'tray_request_started')
+    finished = next(call for call in records if call.args[1] == (
+        'tray_pose_response' if usable else 'tray_request_failed'))
+    assert started.kwargs['request_id'] == finished.kwargs['request_id']
+    assert finished.kwargs['elapsed_sec'] >= 0
+    if not usable:
+        assert finished.kwargs['phase'] == 'placement_depth'
+        assert 'Insufficient placement depth' in finished.kwargs['traceback']
 
 
 def test_armed_and_simulated_requests_share_fresh_single_pose_pipeline(backend):
@@ -355,6 +364,7 @@ def exercise_ros_transport(root):
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import Image
     from tray_perception import node as module
+    from tray_perception.execution import spin_checked
 
     repository = Path(__file__).parents[3]
     for filename in (".env", ".env.example"):
@@ -373,7 +383,7 @@ def exercise_ros_transport(root):
     executor = MultiThreadedExecutor(num_threads=2)
     executor.add_node(node)
     executor.add_node(peer)
-    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread = threading.Thread(target=spin_checked, args=(node, executor), daemon=True)
     thread.start()
     try:
         node.connect_camera("cam")
@@ -382,8 +392,10 @@ def exercise_ros_transport(root):
         node.model["path"] = str(path.with_suffix(".pt"))
         node.color_info = camera_info()
 
-        def snapshot():
+        def snapshot(**_kwargs):
             view = node.raw_snapshot()
+            if _kwargs.get('depth_required') and view['depth'] is None:
+                raise ValueError('Waiting for registered depth')
             view["camera_context"] = {"camera": camera_info(), "depth_camera": None,
                                       "base_from_optical": np.eye(4).tolist()}
             return view
@@ -406,8 +418,14 @@ def exercise_ros_transport(root):
             time.sleep(.03)
         assert node.rgb is not None
         digest = core.file_sha256(path)
-        node.requests.arm(path, settings(), digest)
         client = peer.create_client(GetTrayPose, requests.SERVICE_NAME)
+        assert requests.SERVICE_NAME == '/tray_detect/get_tray_pose_v2'
+        legacy_calls = []
+        peer.create_service(GetTrayPose, '/tray_detect/get_tray_pose',
+                            lambda req, reply: legacy_calls.append(req) or reply)
+        assert not client.wait_for_service(timeout_sec=.2)
+        publish()
+        node.requests.arm(path, settings(), digest)
         assert client.wait_for_service(timeout_sec=3)
         first = client.call_async(GetTrayPose.Request(profile_sha256=digest))
         deadline = time.monotonic() + 3
@@ -435,6 +453,48 @@ def exercise_ros_transport(root):
             time.sleep(.01)
         assert cancelled.done() and not cancelled.result().success
         assert "cancelled" in cancelled.result().message and thread.is_alive()
+        # Re-arm and exercise the controller's depth-bearing wire request after
+        # ordinary errors and no detection. RGB callbacks must keep advancing.
+        publish()
+        node.requests.arm(path, settings(), digest)
+        depth = peer.create_publisher(Image, '/cam/depth/image_raw', qos_profile_sensor_data)
+        node.native.call = MagicMock()
+        original_preview = node.preview.side_effect
+        for outcome in ('bad_depth', 'no_tray', 'valid', 'valid'):
+            def preview(*args, **kwargs):
+                value = original_preview(*args, **kwargs)
+                if outcome == 'no_tray':
+                    value['result'].update(selected=None, detections=[])
+                return value
+            node.preview.side_effect = preview
+            node.native.call.return_value = (
+                {'state': 'ok', 'error': 'Insufficient placement depth'} if outcome == 'bad_depth'
+                else {'state': 'ok', 'surface_base': [.12, .13, .24],
+                      'accepted_samples': 50, 'total_samples': 60,
+                      'median_mm': 700., 'sigma_mm': 1.}, b'')
+            placement = client.call_async(GetTrayPose.Request(
+                profile_sha256=digest, sample_placement_depth=True,
+                placement=PlacementDepthRequest(
+                    x_mm=20., y_mm=30., diameter_mm=30., **QUALITY_DEFAULTS)))
+            deadline = time.monotonic() + 4
+            while not placement.done() and time.monotonic() < deadline:
+                fresh = publish()
+                image = Image(header=fresh.header, width=640, height=480,
+                              encoding='16UC1', step=1280, data=bytes(640 * 480 * 2))
+                depth.publish(image)
+                time.sleep(.03)
+            assert placement.done(), node.fatal_error
+            response = placement.result()
+            assert response.success is (outcome != 'bad_depth'), response.message
+            assert response.placement.valid is (outcome == 'valid')
+            assert thread.is_alive() and not node.fatal_error
+            before = node.rgb['stamp_ns']
+            deadline = time.monotonic() + 1
+            while node.rgb['stamp_ns'] <= before and time.monotonic() < deadline:
+                publish()
+                time.sleep(.03)
+            assert node.rgb['stamp_ns'] > before
+        assert not legacy_calls
         assert node.rviz.publisher.topic_name == "/tray_detect/voxel_cloud"
         assert node.rviz.diagnostics.topic_name == "/tray_detect/rviz_diagnostics"
         assert node.rviz.pose_guides is None
@@ -455,7 +515,7 @@ def test_real_ros_requests_keep_rgb_callbacks_live_with_two_executor_threads(tmp
                "from test_requests import exercise_ros_transport; "
                "exercise_ros_transport(Path(sys.argv[2]))")
     result = subprocess.run([sys.executable, "-c", command, str(Path(__file__).parent),
-                             str(tmp_path)], capture_output=True, text=True, timeout=20,
+                             str(tmp_path)], capture_output=True, text=True, timeout=35,
                             env={**os.environ, "ROS_DOMAIN_ID": "203", "ROS_LOCALHOST_ONLY": "1"})
     assert result.returncode == 0, result.stdout + result.stderr
 

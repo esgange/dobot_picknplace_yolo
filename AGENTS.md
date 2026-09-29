@@ -718,6 +718,24 @@ unchanged. Rebuild controller interfaces/controller and restart clients together
 Validate with synthetic feedback and real transport; no hardware movement in tests.
 
 
+Rule 163 supersedes earlier unversioned tray-service endpoint references. Use
+`/tray_detect/get_tray_pose_v2` exclusively for the current GetTrayPose layout with
+placement depth, sharing its endpoint constant between provider and controller.
+No legacy fallback; bump the endpoint for future incompatible wire-layout changes.
+An old provider cannot satisfy readiness or receive the new request. Rebuild and
+restart tray/controller processes together. Supervise GUI/headless tray executor
+termination: unexpected return/exception revokes arming, records a full traceback
+and becomes a visible terminal error; intentional shutdown is excluded. Never
+restart the thread/worker silently. Record request starts, elapsed time and failing
+phase/traceback; throttle repeated identical GUI messages to 30 seconds while
+preserving every status update and the existing 1,000-event package log bound.
+Keep ordinary no-tray/insufficient-depth results recoverable with live camera
+callbacks. Preserve the single native worker, two ROS executor threads, freshness,
+source validation, controller motion/IO and teach files. Verify with real ROS in
+an isolated domain, repeated depth requests/errors, and injected executor failure;
+no physical robot commands or automatic live-process restarts during testing.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

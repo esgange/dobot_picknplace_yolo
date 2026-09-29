@@ -6768,6 +6768,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   or teach schema change, no upstream update, no physical commissioning or
   offline-transfer validation claimed. Preserve unrelated user artifacts.
 
+### 2026-09-29 — Rule 163: isolate tray wire versions and expose executor failures
+
+- Investigated live Tray Teach showing stale RGB despite healthy camera topics.
+  Its original process predated the depth-capable GetTrayPose interface change.
+  After the user's restart, an equivalent read-only placement-depth request at
+  X/Y 100 mm and diameter 60 mm succeeded in 4.168 s and preview continued.
+  Mixed interface versions are the strongest explanation, not a captured proof:
+  no executor traceback survived, and repeated GUI warnings had rolled the
+  bounded package event file. No camera or robot command was issued in that audit.
+- Move this depth-capable contract to /tray_detect/get_tray_pose_v2, shared by
+  Tray Teach, Tray Detect and Robot Controller through one constant. Do not
+  advertise or fall back to the old endpoint. Old providers cannot satisfy
+  readiness or deserialize new requests. Future incompatible layouts must bump
+  the endpoint. Keep the current typed payload, teach schema and motion unchanged.
+- Wrap both tray executor threads with failure reporting. Unexpected termination
+  sets fatal_error, logically disarms and logs a full traceback; the existing GUI
+  error/exit and headless failure paths handle it. Intentional shutdown is excluded.
+  No automatic thread/worker restart, inference retry or extra executor is added.
+- Log request start, correlated completion duration and failure phase/traceback.
+  Throttle identical GUI messages to one log entry per 30 seconds while always
+  updating visible status. Keep the existing 1,000-event overwrite rule.
+- Validation: real ROS tests in an isolated domain cover legacy-endpoint rejection,
+  repeated placement-depth requests, insufficient depth, no tray, cancellation,
+  fresh RGB after every response and two-thread responsiveness. Inject a real
+  executor callback exception and assert terminal reporting, disarm and traceback;
+  normal shutdown remains clean. Controller motion tests remain in the suite.
+  Full tray/controller results: 693 passed using committed canonical RViz content
+  for the two display-file checks. The first run had 691 pass and two failures
+  caused only by the user's RViz float serialization (0.009999999776 versus 0.01).
+  Read-only test substitution leaves that user file untouched. Build tray_perception
+  and robot_controller; focused runtime/new-test lint and diff checks pass.
+  Update the FSM and regenerate its seven-diagram HTML/PDF exports.
+- Rebuild and restart Tray Teach/Detect plus Robot Controller/GUI together to use
+  v2. Existing live processes were left running; no hardware commands, automatic
+  arming, calibration/teach/model edits or unrelated RViz changes. No upstream or
+  offline-transfer validation claimed.
+
 ### Future entry template
 
 ```text

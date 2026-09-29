@@ -699,8 +699,12 @@ Reopening needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
 variables. **Simulate Trigger** runs the same fresh observation pipeline as the
 controller-facing service and reports its result while preview continues. **Armed ON**
-advertises `/tray_detect/get_tray_pose`; requests supply the saved YAML SHA-256
+advertises `/tray_detect/get_tray_pose_v2`; requests supply the saved YAML SHA-256
 and receive one tray or an explicit no-tray result. Settings changes disarm.
+The versioned endpoint carries the placement-depth contract; there is no fallback
+to the old endpoint. Restart Tray Teach/Detect and Robot Controller together after
+updating. Tray executor failures disarm and report a traceback in the package log
+instead of silently leaving an open preview without ROS reception.
 
 For request-driven headless use, deploy one tray YAML/model pair to `runtime_teach/`
 and run `ros2 launch tray_perception tray_detect.launch.py`. It loads the bound
