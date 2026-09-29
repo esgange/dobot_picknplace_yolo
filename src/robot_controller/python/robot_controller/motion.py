@@ -116,6 +116,23 @@ def cartesian_home_targets(current, home, *, speed_percent, acceleration_percent
             Target("home", home.copy(), speed_percent, acceleration_percent))
 
 
+def tray_detect_targets(current, home, destination, joints, *, speed_percent, acceleration_percent):
+    """Rise to travel clearance, cross above the tray, then reach recorded joints."""
+    clearance_z = max(current[2, 3], home[2, 3], destination[2, 3])
+    rise = current.copy()
+    rise[2, 3] = clearance_z
+    transit = destination.copy()
+    transit[2, 3] = clearance_z
+    targets = []
+    if clearance_z > current[2, 3] + CARTESIAN_POSITION_TOLERANCE_M:
+        targets.append(Target("tray_clearance", rise, speed_percent, acceleration_percent,
+                              relative_z=True))
+    targets.extend((Target("tray_transit", transit, speed_percent, acceleration_percent),
+                    Target("tray_detect_position", destination.copy(), speed_percent,
+                           acceleration_percent, tuple(joints))))
+    return tuple(targets)
+
+
 def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
     return (np.linalg.norm(actual[:3, 3] - goal[:3, 3]) <= translation_m
             and rotation_angle_deg(actual[:3, :3].T @ goal[:3, :3]) <= rotation_deg)

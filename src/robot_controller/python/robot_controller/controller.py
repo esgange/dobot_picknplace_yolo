@@ -24,7 +24,7 @@ from item_perception_yolo.item_teach_core import utc_now
 from item_perception_yolo.pick_planning import select_pick_attitude
 from item_perception_yolo.platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, workspace_root)
-from robot_controller_interfaces.action import GoHome, PickItem
+from robot_controller_interfaces.action import GoHome, GoTrayDetectPosition, PickItem, PlaceItem
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, SetGlobalSpeed
 
@@ -39,8 +39,10 @@ from .hardware import (CARTESIAN_ORIENTATION_TOLERANCE_DEG,
                        CARTESIAN_POSITION_TOLERANCE_M, DobotTransport)
 from .kinematics import Cr10Kinematics, pose_values
 from .motion import (candidate_pose_in_base, cartesian_home_targets,
-                     home_targets, pick_targets, pose_reached)
+                     home_targets, pick_targets, pose_reached, tray_detect_targets)
 from .managed_control import ManagedControl
+from .placement import PlacementOperation, validate_target
+from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
 from .state_machine import ControllerStateMachine
 
@@ -124,6 +126,7 @@ class RobotController(Node):
         self.supervision_stop_thread = None
         self.pause_event = threading.Event()
         self.managed = ManagedControl(self)
+        self.placement = None
 
         self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
@@ -133,6 +136,7 @@ class RobotController(Node):
             String, "/dobot_bringup_ros2/msg/FeedInfo", self._on_feed, 10)
         self.hardware = DobotTransport(self, self.monitor)
         self.candidates = CandidateClient(self, self.root)
+        self.trays = TrayClient(self)
 
         status_qos = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -177,6 +181,17 @@ class RobotController(Node):
             self, PickItem, "/robot_controller/pick_item",
             execute_callback=self._execute_pick_action,
             goal_callback=self._pick_goal, cancel_callback=self._cancel_goal,
+            callback_group=self.control_group)
+        self.tray_position_server = ActionServer(
+            self, GoTrayDetectPosition, "/robot_controller/go_tray_detect_position",
+            execute_callback=self._execute_tray_position_action,
+            goal_callback=self._tray_position_goal, cancel_callback=self._cancel_goal,
+            callback_group=self.control_group)
+
+        self.place_server = ActionServer(
+            self, PlaceItem, "/robot_controller/place_item",
+            execute_callback=self._execute_place_action,
+            goal_callback=self._place_goal, cancel_callback=self._cancel_goal,
             callback_group=self.control_group)
 
         if self.headless:
@@ -286,7 +301,7 @@ class RobotController(Node):
 
     def operation_progress(self, phase, message, *, waypoint="", candidate_index=None,
                            candidate_total=None):
-        if self.active_action in ("home", "pick"):
+        if self.active_action in ("home", "pick", "tray_position", "place"):
             self.wait_for_resume()
         self.phase, self.waypoint = phase, waypoint
         if candidate_index is not None:
@@ -307,7 +322,8 @@ class RobotController(Node):
             "INFO", f"{operation.upper()} {phase}:{waypoint_text}{candidate_text} {message}")
         goal = self.active_goal
         if goal is not None:
-            feedback = GoHome.Feedback() if self.active_action == "home" else PickItem.Feedback()
+            kind = {"home": GoHome, "pick": PickItem, "tray_position": GoTrayDetectPosition, "place": PlaceItem}
+            feedback = kind[self.active_action].Feedback()
             if self.active_action == "pick":
                 feedback.candidate_index = self.candidate_index
                 feedback.candidate_total = self.candidate_total
@@ -325,6 +341,9 @@ class RobotController(Node):
         status.configuration_id = (
             self.configuration.configuration_id if self.configuration else "")
         status.configured = self.configuration is not None
+        tray = self.configuration.tray if self.configuration else None
+        status.tray_configured = tray is not None
+        status.tray_position_recorded = tray is not None and tray.detect_joints is not None
         status.holding_item = self.holding_item
         status.operation_active = self.operation_lock.locked()
         status.operation, status.phase, status.waypoint = (
@@ -336,7 +355,8 @@ class RobotController(Node):
             status.candidate_ids = [attempt.identifier for attempt in session.attempts]
             status.candidate_states = [attempt.state for attempt in session.attempts]
         status.can_return_item = bool(self.holding_item and session is not None
-                                      and session.held_index is not None)
+                                      and session.held_index is not None
+                                      and self.active_action != "place")
         status.global_speed_percent = (
             self.global_speed_percent if self.global_speed_percent is not None else -1)
         status.startup_complete = self.startup_complete
@@ -376,7 +396,8 @@ class RobotController(Node):
         with self.managed.lock:
             self.active_goal = None
             if (self.managed.kind is not None and not self.managed.executing
-                    and self.active_action in ("home", "pick") and not self.cancel_requested()):
+                    and self.active_action in ("home", "pick", "tray_position", "place")
+                    and not self.cancel_requested()):
                 # A request can arrive after the action result is committed but
                 # before this finally block. Transfer the still-held operation
                 # lock to its parking owner rather than abandoning the request.
@@ -431,6 +452,7 @@ class RobotController(Node):
             configuration_id=config.configuration_id,
             item_teach_file=str(config.item_path),
             bin_teach_file=str(config.bin_path) if config.bin_path else "",
+            tray_teach_file=str(config.tray.path) if config.tray else "",
             profile_sha256=config.profile_sha256,
             pose_candidates=config.pose_candidates,
             warning=config.selection.warning() if config.selection else "")
@@ -449,7 +471,7 @@ class RobotController(Node):
             acquired = True
             config = load_configuration(
                 request.item_teach_file, request.bin_teach_file, self.root,
-                self.kinematics, deployment=False)
+                self.kinematics, deployment=False, tray_path=request.tray_teach_file)
             self.configuration = config
             self.startup_complete = False
             self.global_speed_percent = None
@@ -521,7 +543,12 @@ class RobotController(Node):
             self.startup_complete = True
             if self.global_speed_percent is None:
                 self.global_speed_percent = 100
-            if returning:
+            placement = getattr(self, "placement", None)
+            if returning and placement is not None and placement.needs_recovery:
+                placement.run(self)
+                self.placement = None
+                self._transition("READY", "Placement release and retract recovery completed")
+            elif returning:
                 self.managed.recover_item_and_continue()
             self.raise_if_cancelled()
             if not returning:
@@ -693,6 +720,8 @@ class RobotController(Node):
         return_source = bool(session is not None and session.held_index is not None
                              and (session.attempts[session.held_index - 1].state == "DROPPED"
                                   or getattr(self.managed, "return_progress", None) is not None))
+        placement = getattr(self, "placement", None)
+        return_source |= bool(placement is not None and placement.needs_recovery)
         try:
             suction = bool(self.monitor.snapshot(
                 require_enabled=False).feed["digital_input_bits"] & 1)
@@ -757,12 +786,21 @@ class RobotController(Node):
 
     def _reserve_goal(self, action, requested_id):
         config = self.configuration
-        allowed = ("READY", "HOLDING") if action == "home" else ("READY",)
+        allowed = (("HOLDING",) if action == "place" else
+                   ("READY", "HOLDING") if action in ("home", "tray_position") else ("READY",))
         if (not self.startup_complete or config is None or self.machine.state not in allowed
                 or requested_id != config.configuration_id):
             return GoalResponse.REJECT
         if action == "pick" and (config.selection is None or self.holding_item):
             return GoalResponse.REJECT
+        if action in ("tray_position", "place") and (config.tray is None
+                                           or config.tray.detect_joints is None):
+            return GoalResponse.REJECT
+        if action == "place":
+            session = self.managed.session
+            if (not self.holding_item or session is None or session.held_index is None
+                    or session.attempts[session.held_index - 1].state != "HELD"):
+                return GoalResponse.REJECT
         try:
             self._begin_operation(action)
         except CommandRejected:
@@ -774,6 +812,48 @@ class RobotController(Node):
 
     def _pick_goal(self, request):
         return self._reserve_goal("pick", request.configuration_id)
+
+    def _tray_position_goal(self, request):
+        return self._reserve_goal("tray_position", request.configuration_id)
+
+    def _place_goal(self, request):
+        try:
+            validate_target(request.x_mm, request.y_mm, request.rotation_deg)
+        except ValueError:
+            return GoalResponse.REJECT
+        return self._reserve_goal("place", request.configuration_id)
+
+    def _execute_place_action(self, goal):
+        self.active_goal = goal
+        request = goal.request
+        self.placement = PlacementOperation(*validate_target(
+            request.x_mm, request.y_mm, request.rotation_deg))
+        result = PlaceItem.Result()
+        try:
+            while True:
+                try:
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        self._transition("PLACING", "Tray placement started")
+                    self.placement.run(self)
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        self._transition("READY", "Item placed; retract completed")
+                        result.outcome, result.message = result.SUCCESS, self.machine.message
+                        result.final_state = self.machine.state
+                        goal.succeed()
+                    self.events.record("INFO", "action_result", result.message,
+                                       operation="place", outcome=int(result.outcome),
+                                       state=result.final_state)
+                    return result
+                except ManagedInterruption:
+                    self.placement.handle_pause(self)
+        except Exception as exc:
+            return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
+        finally:
+            if self.placement is not None and not self.placement.needs_recovery:
+                self.placement = None
+            self._end_operation()
 
     def _preflight_item_state(self, expected_holding=None):
         snapshot = self.monitor.snapshot(require_enabled=True)
@@ -953,6 +1033,72 @@ class RobotController(Node):
         except ReturnedToHome as exc:
             result.outcome = result.CANCELED
             result.message = str(exc)
+            result.final_state = self.machine.state
+            goal.abort()
+            return result
+        except Exception as exc:
+            return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
+        finally:
+            self._end_operation()
+
+    def _execute_tray_position(self):
+        self.wait_for_resume()
+        config = self.configuration
+        config.validate_sources(self.root)
+        tray = config.tray
+        if tray is None or tray.detect_joints is None:
+            raise CommandRejected("Load a Tray Teach with a recorded Tray Detect Pose")
+        holding = self.holding_item
+        self._preflight_item_state(holding)
+        if self.hardware.home_already_reached(tray.detect_joints):
+            self.operation_progress("TRAY_POSITION", "Already at recorded Tray Detect Pose")
+            return
+        current = self.hardware.current_pose()
+        targets = tray_detect_targets(
+            current, config.home_matrix, tray.detect_matrix, tray.detect_joints,
+            speed_percent=config.profile["speed"]["travel_percent"],
+            acceleration_percent=config.profile["acceleration"]["travel_percent"])
+        if targets[0].relative_z:
+            self.operation_progress("TRAY_CLEARANCE", "Rising before tray travel",
+                                    waypoint=targets[0].name)
+            self.hardware.move_batch(
+                (targets[0],), batch_name="tray_clearance", require_suction=holding,
+                forbid_suction=not holding, confirmed_start_pose=current)
+            self.wait_for_resume()
+            config.validate_sources(self.root)
+            self._preflight_item_state(holding)
+            current, targets = None, targets[1:]
+        self.operation_progress("TRAY_POSITION", "Moving to recorded Tray Detect Pose",
+                                waypoint=targets[-1].name)
+        self.hardware.move_batch(
+            targets, batch_name="tray_position", require_suction=holding,
+            forbid_suction=not holding, confirmed_start_pose=current)
+
+    def _execute_tray_position_action(self, goal):
+        self.active_goal = goal
+        result = GoTrayDetectPosition.Result()
+        try:
+            while True:
+                try:
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        self._transition("TRAY_POSITIONING", "Tray position action started")
+                    self._execute_tray_position()
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        state = "HOLDING" if self.holding_item else "READY"
+                        self._transition(state, "Recorded Tray Detect Pose reached")
+                        result.outcome, result.message = result.SUCCESS, self.machine.message
+                        result.final_state = state
+                        goal.succeed()
+                    self.events.record("INFO", "action_result", result.message,
+                                       operation="tray_position", outcome=int(result.outcome),
+                                       state=state)
+                    return result
+                except ManagedInterruption:
+                    self.managed.handle()
+        except ReturnedToHome as exc:
+            result.outcome, result.message = result.CANCELED, str(exc)
             result.final_state = self.machine.state
             goal.abort()
             return result
@@ -1175,6 +1321,7 @@ class RobotController(Node):
         if self.managed.thread is not None:
             self.managed.thread.join(timeout=2.0)
         self.candidates.close()
+        self.trays.close()
         self.hardware.close()
 
 

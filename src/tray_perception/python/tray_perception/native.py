@@ -1,13 +1,78 @@
 """Tray geometry executed only in the pinned private YOLO/OpenCV worker."""
 
 from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternion
+from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
 from item_perception_yolo.item_geometry import (
-    objects_from_result, on_plane, project, rays, reproject_pixels, filter_depth, rectangle_axes)
+    objects_from_result, on_plane, project, rays, reproject_pixels, filter_depth, rectangle_axes,
+    depth_sampling_circle)
 from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
 from item_perception_yolo.item_rviz_native import colored_voxels
 from item_perception_yolo.yolo_worker_native import render_result
 
 from .core import MAX_PLANE_ERROR_MM, validate_plane, validate_preview
+from .placement import validate_sampling
+
+
+def placement_depth(request, data, cv2, np):
+    try:
+        return _placement_depth(request, data, cv2, np)
+    except ValueError as exc:
+        # Missing/insufficient depth is a failed observation, not a dead worker.
+        return {"state": "ok", "error": str(exc)}, b""
+
+
+def _placement_depth(request, data, cv2, np):
+    """Sample original registered pixels in the Item Pick metric footprint."""
+    settings = validate_sampling(request["sampling"])
+    width, height = request["width"], request["height"]
+    if len(data) != width * height * 2:
+        raise RuntimeError("Malformed placement depth frame")
+    depth = np.frombuffer(data, "<u2").reshape(height, width)
+    selected, context = request["selected"], request["camera_context"]
+    tray = np.eye(4)
+    tray[:3, :3] = quaternion_to_rotation_matrix(*selected["quaternion"])
+    tray[:3, 3] = selected["position"]
+    x, y = settings["x_mm"] / 1000, settings["y_mm"] / 1000
+    extent_x, extent_y = selected["width_mm"] / 1000, selected["length_mm"] / 1000
+    if x >= extent_x or y >= extent_y:
+        raise ValueError("Placement X/Y falls outside the detected tray")
+    optical = np.asarray(context["base_from_optical"], dtype=float)
+    tray_from_optical = np.linalg.inv(tray) @ optical
+    target = tray[:3, 3] + tray[:3, 0] * x + tray[:3, 1] * y
+    center = project([target], context["camera"], optical, cv2, np)[0]
+    sample_context = {**context, "platform_from_optical": tray_from_optical.tolist()}
+    flat_center, radius, circle = depth_sampling_circle(
+        center, settings["diameter_mm"], sample_context, cv2, np,
+        output_camera=context["depth_camera"])
+    if (np.any(circle < 0) or np.any(circle[:, 0] >= width)
+            or np.any(circle[:, 1] >= height)):
+        raise ValueError("Placement sampling circle is clipped by image edge")
+    xmin, ymin = np.floor(circle.min(axis=0)).astype(int)
+    xmax, ymax = np.ceil(circle.max(axis=0)).astype(int)
+    yy, xx = np.mgrid[ymin:min(ymax + 1, height), xmin:min(xmax + 1, width)]
+    pixels = np.column_stack((xx.ravel(), yy.ravel()))
+    flat = on_plane(pixels, context["depth_camera"], tray_from_optical, cv2, np)
+    in_circle = np.linalg.norm(flat[:, :2] - flat_center[:2], axis=1) <= radius
+    pixels, flat = pixels[in_circle], flat[in_circle]
+    values = depth[pixels[:, 1], pixels[:, 0]].astype(float)
+    # As Item Pick excludes samples outside the item, exclude outside-tray samples.
+    inside = ((flat[:, 0] >= 0) & (flat[:, 0] <= extent_x)
+              & (flat[:, 1] >= 0) & (flat[:, 1] <= extent_y))
+    values[~inside] = np.nan
+    accepted, median, sigma = filter_depth(
+        values, settings["depth_min_mm"], settings["depth_max_mm"], cv2, np)
+    good, total = int(accepted.sum()), len(pixels)
+    if (good < settings["minimum_depth_samples"] or not total
+            or good / total < settings["minimum_depth_fraction"]):
+        raise ValueError("Insufficient accepted placement depth samples/fraction")
+    measured = optical[:3, :3] @ (rays([center], context["camera"], cv2, np)[0]
+                                  * median / 1000) + optical[:3, 3]
+    # X/Y are the requested tray coordinates. Only height comes from depth.
+    target[2] = measured[2]
+    if not np.isfinite(target).all():
+        raise ValueError("Nonfinite placement surface")
+    return {"state": "ok", "surface_base": target.tolist(), "accepted_samples": good,
+            "total_samples": total, "median_mm": median, "sigma_mm": sigma}, b""
 
 
 def corner_frame(corners, normal, np, *, short_x=False):

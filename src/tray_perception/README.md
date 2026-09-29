@@ -373,3 +373,25 @@ the blocking input, and advancing valid RGB/depth restore color. Files are pinne
 until restart; source
 changes/fatal worker failure stop the process, with no reload/retry/restart loop.
 Do not run it while Tray Teach is Armed. An unarmed teaching GUI may still preview.
+
+
+## Placement depth requests
+
+`GetTrayPose.sample_placement_depth=true` enables a `PlacementDepthRequest` containing
+positive tray-local X/Y in mm, the physical Item Teach depth sampling **diameter**,
+and its exact quality settings. The provider takes fresh synchronized RGB/depth
+after the trigger, performs the usual single tray inference, and samples the
+requested target using original registered-depth pixels and their own intrinsics.
+It uses the same median/MAD acceptance as Item Pick, excludes outside-tray samples,
+and rejects invalid targets, clipped footprints or insufficient depth. The saved
+plane remains unchanged. A depth failure returns ERROR without killing/disarming
+the native worker/provider. Ordinary pose requests keep depth optional.
+
+`PlacementDepthResult` contains validity, base-frame target X/Y with measured
+surface Z, the depth timestamp, accepted/total counts, median and MAD sigma.
+Diagnostics echo `placement_sampling` alongside bound profile/model/camera/plane
+evidence. The controller checks every requested setting, source identity, result
+frame, synchronization and after-trigger timestamps before motion. An invalid
+response never becomes a placement target. Perception issues no robot or I/O calls.
+Rebuild these interfaces and restart all tray providers and controller clients
+together; `GetTrayPose`'s wire definition changed.

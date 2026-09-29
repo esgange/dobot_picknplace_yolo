@@ -6581,6 +6581,60 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - No upstream dependency, schema or configuration change; no offline transfer
   milestone or hardware validation is claimed.
 
+### 2026-09-29 — Rule 158: complete controller tray placement
+
+- Complete the previously partial Tray Teach controller integration. GUI adds Tray
+  Teach loading, Home/Pick Item labels, Tray Detect Position, Place Item and positive
+  X/Y (mm) plus Rotation −180°…+180°. Configuration and headless catalog bind the
+  optional complete tray/model/camera, recorded observation joints and FK pose.
+  New typed actions retain configuration-ID admission, hardware ownership, Stop
+  and feedback guards. UI state schema 3 explicitly imports schema 1/2 selections
+  as unapplied prefill and persists validated placement values without changing
+  teach artifacts; first-use X/Y remain empty.
+- Placement tool orientation is saved Tray Detect Pose followed by a local tool-Z
+  rotation. It ignores item axes and pick_rotation. XYZ comes from detected tray
+  corner-local positive X/Y, preserving their base XY, with surface base Z from
+  fresh depth. GetTrayPose has an explicit optional typed placement-depth request
+  and result. One calibrated post-trigger synchronized RGB/depth snapshot feeds
+  one inference and the existing private native worker. Reuse Item Teach's physical
+  sampling diameter, original registered-depth model, range/MAD/count/fraction
+  checks; reject outside-tray targets or inadequate/clipped depth. Validate source
+  hashes, plane, provider identity, settings and timestamps independently in the
+  controller. Ordinary pose requests remain depth-optional; depth failures leave
+  the provider alive/armed. Interrupted RPCs retire before a new observation.
+- The controller first reaches saved tray observation joints if necessary, then
+  queues only pre-place and release. Release Z = sampled Z + standoff; pre-place
+  adds prepick height. Reuse taught rates/accelerations and settling. At the
+  confirmed release pose, OPEN/finger-close and suction/exhaust remain mutually
+  exclusive. Confirm DI12 open, one 50 ms exhaust pulse and DI1 LOW, then retract
+  vertically through pre-place to the additional taught retract height. Record
+  PLACED, clear the held source, and finish READY there; no automatic Home/next Pick.
+- Placement Pause stops in place. Continue reobserves an interrupted approach;
+  during release it retains progress and refuses release if the pose changed.
+  Direct Stop/Recover retain uncertain release and never repeat an issued pulse.
+  Placement Stop waits for pending timed exhaust OFF before reconciling outputs.
+  After release, recovery is upward-only and cannot reenter release or bin put-back.
+  Existing Home/Pick behavior, bin-camera clearance and gripper wiring are preserved.
+- Rebuilt robot_controller_interfaces, tray_perception_interfaces, tray_perception
+  and robot_controller successfully. Full software run: 621 passed; two existing
+  RViz checks fail against the user's local rounded voxel size. Both pass with an
+  isolated copy of the committed RViz file, which remains untouched locally.
+  Final focused placement/request/interrupted-release tests: 86 passed, including
+  source change before release, Stop during pulse/retract and pending-RPC retirement.
+  Native tests exercise the real private worker surviving unusable depth.
+- Canonical three-process controller launch passed in isolated ROS domain 91.
+  Real local Item/Bin/complete Tray Teach configuration reached INACTIVE with saved
+  tray joints; PlaceItem was advertised. GUI/control layout rendered separately
+  with synthetic HOLDING status. Launch shut down cleanly; no Startup, motion or
+  robot I/O was requested and existing robot/camera/teach processes were preserved.
+- Updated FSM Markdown and regenerated seven-diagram offline HTML/PDF using the
+  installed VS Code Mermaid renderer and local Playwright/Chromium. Update package
+  and root guides plus AGENTS. Rebuild/restart tray providers and controller clients
+  together because GetTrayPose, Configure and ControllerStatus definitions changed.
+  No upstream update or offline-transfer milestone; physical commissioning remains
+  unperformed. Exclude local RViz edits, calibration, teach/model files and logs
+  from the source commit.
+
 ### Future entry template
 
 ```text

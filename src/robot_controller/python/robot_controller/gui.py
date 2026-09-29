@@ -16,12 +16,13 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 
 from item_perception_yolo.platform_teach_core import workspace_root
-from robot_controller_interfaces.action import GoHome, PickItem
+from robot_controller_interfaces.action import GoHome, GoTrayDetectPosition, PickItem, PlaceItem
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalSpeed
 
 from .ui_state import load_state, save_state
 from .feedback import FEEDBACK_MAX_AGE_SEC
+from .placement import validate_target
 
 
 class GuiNode(rclpy.node.Node):
@@ -53,8 +54,11 @@ class GuiNode(rclpy.node.Node):
             "preview": self.create_client(Preview, "/robot_controller/preview"),
         }
         self.action_clients = {
+            "place": ActionClient(self, PlaceItem, "/robot_controller/place_item"),
             "home": ActionClient(self, GoHome, "/robot_controller/go_home"),
             "pick": ActionClient(self, PickItem, "/robot_controller/pick_item"),
+            "tray_position": ActionClient(
+                self, GoTrayDetectPosition, "/robot_controller/go_tray_detect_position"),
         }
 
     def _status(self, message):
@@ -143,15 +147,20 @@ class ControllerWindow(QtWidgets.QMainWindow):
         teach = QtWidgets.QGridLayout(self.teach_panel)
         self.item_path = QtWidgets.QLineEdit()
         self.bin_path = QtWidgets.QLineEdit()
+        self.tray_path = QtWidgets.QLineEdit()
         if node.prefill:
             self.item_path.setText(str(
                 node.root / "offline_teach/item_teach" / node.prefill["item"]))
             if node.prefill["bin"]:
                 self.bin_path.setText(str(
                     node.root / "offline_teach/bin_teach" / node.prefill["bin"]))
+            if node.prefill["tray"]:
+                self.tray_path.setText(str(
+                    node.root / "offline_teach/tray_teach" / node.prefill["tray"]))
         for index, (label, edit, directory) in enumerate((
                 ("Item Teach", self.item_path, "offline_teach/item_teach"),
-                ("Bin Teach", self.bin_path, "offline_teach/bin_teach"))):
+                ("Bin Teach", self.bin_path, "offline_teach/bin_teach"),
+                ("Tray Teach", self.tray_path, "offline_teach/tray_teach"))):
             teach.addWidget(QtWidgets.QLabel(label), index, 0)
             edit.setMinimumWidth(0)
             edit.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
@@ -164,7 +173,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             teach.addWidget(button, index, 2)
         self.configure = QtWidgets.QPushButton("Load Teach Configuration")
         self.configure.clicked.connect(self._configure)
-        teach.addWidget(self.configure, 2, 0, 1, 3)
+        teach.addWidget(self.configure, 3, 0, 1, 3)
         teach.setColumnStretch(1, 1)
         header.addWidget(self.teach_panel, 4, QtCore.Qt.AlignTop)
         layout.addLayout(header)
@@ -184,21 +193,50 @@ class ControllerWindow(QtWidgets.QMainWindow):
         operations = QtWidgets.QGridLayout()
         self.preview_home = QtWidgets.QPushButton("Preview Home TF")
         self.preview_pick = QtWidgets.QPushButton("Preview Pick TFs")
-        self.hardware_home = QtWidgets.QPushButton("Hardware Home")
-        self.hardware_pick = QtWidgets.QPushButton("Hardware Pick Item")
+        self.hardware_home = QtWidgets.QPushButton("Home")
+        self.hardware_pick = QtWidgets.QPushButton("Pick Item")
+        self.tray_position = QtWidgets.QPushButton("Tray Detect Position")
+        self.place_item = QtWidgets.QPushButton("Place Item")
+        self.place_item.setToolTip(
+            "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude")
         self.debug_images = QtWidgets.QCheckBox("Save Pick debug RGB/depth")
         self.preview_home.clicked.connect(lambda: self._preview(Preview.Request.HOME))
         self.preview_pick.clicked.connect(lambda: self._preview(Preview.Request.PICK))
         self.hardware_home.clicked.connect(lambda: self._action("home"))
         self.hardware_pick.clicked.connect(lambda: self._action("pick"))
+        self.place_item.clicked.connect(lambda: self._action("place"))
+        self.tray_position.clicked.connect(lambda: self._action("tray_position"))
         for button in (self.preview_home, self.preview_pick,
-                       self.hardware_home, self.hardware_pick):
+                       self.hardware_home, self.hardware_pick, self.tray_position, self.place_item):
             button.setMinimumHeight(52)
         operations.addWidget(self.preview_home, 0, 0)
         operations.addWidget(self.preview_pick, 0, 1)
         operations.addWidget(self.hardware_home, 1, 0)
         operations.addWidget(self.hardware_pick, 1, 1)
-        operations.addWidget(self.debug_images, 2, 1)
+        operations.addWidget(self.tray_position, 2, 0)
+        operations.addWidget(self.place_item, 2, 1)
+        self.place_x = QtWidgets.QLineEdit()
+        self.place_y = QtWidgets.QLineEdit()
+        self.place_x.setPlaceholderText("Positive mm")
+        self.place_y.setPlaceholderText("Positive mm")
+        self.place_rotation = QtWidgets.QDoubleSpinBox()
+        self.place_rotation.setRange(-180., 180.)
+        self.place_rotation.setDecimals(1)
+        self.place_rotation.setValue(0.)
+        self.place_rotation.setSuffix("°")
+        self.place_rotation.setToolTip("0° = recorded Tray Detect Pose; rotate about its tool Z")
+        target_row = QtWidgets.QHBoxLayout()
+        for label, field in (("X (mm)", self.place_x), ("Y (mm)", self.place_y),
+                             ("Rotation", self.place_rotation)):
+            target_row.addWidget(QtWidgets.QLabel(label))
+            target_row.addWidget(field)
+        if node.prefill and node.prefill["placement"] is not None:
+            x, y, rotation = node.prefill["placement"]
+            self.place_x.setText(str(x))
+            self.place_y.setText(str(y))
+            self.place_rotation.setValue(rotation)
+        operations.addLayout(target_row, 3, 0, 1, 2)
+        operations.addWidget(self.debug_images, 4, 1)
         layout.addLayout(operations)
 
         speed = QtWidgets.QHBoxLayout()
@@ -245,6 +283,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         layout.setAlignment(QtCore.Qt.AlignTop)
         self.item_path.textEdited.connect(self._selection_changed)
         self.bin_path.textEdited.connect(self._selection_changed)
+        self.tray_path.textEdited.connect(self._selection_changed)
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh)
         self.timer.start(100)
@@ -359,7 +398,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         request = Configure.Request()
         request.item_teach_file = self.item_path.text().strip()
         request.bin_teach_file = self.bin_path.text().strip()
-        self.saved_selection = (request.item_teach_file, request.bin_teach_file)
+        request.tray_teach_file = self.tray_path.text().strip()
+        self.saved_selection = (request.item_teach_file, request.bin_teach_file,
+                                request.tray_teach_file)
         if not self._call("configure", request):
             self.saved_selection = None
 
@@ -379,7 +420,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _pause_or_stop(self):
         state = self.node.status
         current = state.state if state is not None else "UNREACHABLE"
-        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING")
+        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
         if (self.pause_requested_locally or self.return_requested_locally
                 or "pause" in self.pending or "return_item" in self.pending
                 or current in ("PAUSING", "RETURNING_ITEM")):
@@ -459,8 +500,22 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if not client.server_is_ready():
             QtWidgets.QMessageBox.warning(self, "Unavailable", "Action server unavailable")
             return
-        goal = GoHome.Goal() if name == "home" else PickItem.Goal()
+        kind = {"home": GoHome, "pick": PickItem, "tray_position": GoTrayDetectPosition, "place": PlaceItem}
+        goal = kind[name].Goal()
         goal.configuration_id = status.configuration_id
+        if name == "place":
+            try:
+                values = validate_target(float(self.place_x.text()), float(self.place_y.text()),
+                                         self.place_rotation.value())
+                goal.x_mm, goal.y_mm, goal.rotation_deg = values
+                previous = load_state(self.node.root / "logs/robot_controller/last_session.json")
+                if previous is not None:
+                    save_state(self.node.root / "logs/robot_controller/last_session.json",
+                               previous["item"], previous["bin"], previous["tray"],
+                               placement=values)
+            except (ValueError, OSError) as exc:
+                QtWidgets.QMessageBox.warning(self, "Placement target", str(exc))
+                return
         if name == "pick":
             goal.save_debug_images = self.debug_images.isChecked()
         self.pending_goal = client.send_goal_async(goal, feedback_callback=self._feedback)
@@ -544,7 +599,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         reachable = state is not None
         active = bool(state and state.operation_active)
         current = state.state if state else "UNREACHABLE"
-        if current not in ("READY", "HOLDING", "HOMING", "PICKING"):
+        if current not in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING"):
             self.pause_requested_locally = False
         if current != "PAUSED":
             self.return_requested_locally = False
@@ -566,7 +621,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.recover.setEnabled(
             reachable and current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN")
             and not active and "recover" not in self.pending)
-        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING")
+        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
         if pause_pending or self.return_requested_locally or "return_item" in self.pending:
             self.stop.setText("STOP NOW")
         elif current == "PAUSED" and getattr(state, "can_return_item", False):
@@ -592,6 +647,18 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.hardware_home.setEnabled(reachable and current in ("READY", "HOLDING")
                                       and not active)
         self.hardware_pick.setEnabled(reachable and current == "READY" and not active)
+        self.tray_position.setEnabled(
+            reachable and state.tray_position_recorded
+            and current in ("READY", "HOLDING") and not active)
+        self.place_item.setEnabled(
+            reachable and state.tray_position_recorded and state.holding_item
+            and current == "HOLDING" and not active)
+        for field in (self.place_x, self.place_y, self.place_rotation):
+            field.setEnabled(not active)
+        self.tray_position.setToolTip(
+            "Move to the observation joints recorded in the loaded Tray Teach"
+            if state and state.tray_position_recorded else
+            "Load a Tray Teach file with a recorded Tray Detect Pose")
         self.preview_home.setEnabled(
             self.node.service_clients["preview"].service_is_ready())
         self.preview_pick.setEnabled(

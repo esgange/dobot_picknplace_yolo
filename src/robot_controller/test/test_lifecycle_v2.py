@@ -133,7 +133,7 @@ def test_ready_configuration_reload_replaces_snapshot_and_requires_startup(monke
     node, old, calls = configuration_node()
     new = SimpleNamespace(configuration_id="new")
     monkeypatch.setattr(controller_module, "load_configuration", lambda *_args, **_kwargs: new)
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=False, message="", configuration_id="")
 
     RobotController._configure(node, request, response)
@@ -155,7 +155,7 @@ def test_failed_ready_reload_preserves_active_configuration(monkeypatch):
         raise ValueError("invalid replacement")
 
     monkeypatch.setattr(controller_module, "load_configuration", reject)
-    request = SimpleNamespace(item_teach_file="bad.yaml", bin_teach_file="bin.yaml")
+    request = SimpleNamespace(item_teach_file="bad.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)
@@ -176,7 +176,7 @@ def test_failed_ready_reload_preserves_active_configuration(monkeypatch):
 ])
 def test_configuration_reload_rejects_nonidle_or_held_states(state):
     node, old, calls = configuration_node(state)
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)
@@ -190,7 +190,7 @@ def test_configuration_reload_rejects_nonidle_or_held_states(state):
 
 def test_headless_configuration_remains_immutable():
     node, old, calls = configuration_node("INACTIVE", headless=True)
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)
@@ -205,7 +205,7 @@ def test_headless_configuration_remains_immutable():
 def test_ready_configuration_reload_rejects_inconsistent_holding_context():
     node, old, calls = configuration_node("READY")
     node.holding_item = True
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml")
+    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)

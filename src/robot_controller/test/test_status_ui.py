@@ -99,6 +99,32 @@ def window(tmp_path):
     app.processEvents()
 
 
+def test_placement_controls_send_typed_offsets_and_rotation_only_when_held(window):
+    sent = []
+    window.node.action_clients = {"place": SimpleNamespace(
+        server_is_ready=lambda: True,
+        send_goal_async=lambda goal, **kwargs: sent.append(goal) or object())}
+    window.node.status = status(state="HOLDING", holding_item=True, tray_position_recorded=True)
+    window._refresh()
+    assert window.place_item.isEnabled()
+    assert window.place_rotation.minimum() == -180 and window.place_rotation.maximum() == 180
+    window.place_x.setText("30")
+    window.place_y.setText("40")
+    window.place_rotation.setValue(-90)
+    window._action("place")
+    assert len(sent) == 1
+    assert (sent[0].x_mm, sent[0].y_mm, sent[0].rotation_deg) == (30., 40., -90.)
+    assert sent[0].configuration_id == "test-configuration"
+    window.pending_goal = None
+    window.node.status = status(state="READY", holding_item=False, tray_position_recorded=True)
+    window._refresh()
+    assert not window.place_item.isEnabled()
+    window.node.status = status(state="PLACING", holding_item=True, tray_position_recorded=True,
+                                operation_active=True, operation="place")
+    window._refresh()
+    assert not window.place_x.isEnabled() and window.stop.text() == "PAUSE"
+
+
 @pytest.mark.parametrize("inputs", [0, 1, 1 << 11, (1 << 11) | 1])
 def test_gripper_leds_follow_two_raw_inputs_not_outputs_or_holding(window, inputs):
     window.node.status = status(digital_outputs=(1 << 12) | (1 << 13), digital_input_bits=inputs,

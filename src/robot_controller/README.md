@@ -7,12 +7,58 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 [visual PDF](../../docs/ROBOT_CONTROLLER_FSM.pdf), generated from that document.
 
 `robot_controller` is the sole production application-level authority for the
-physical CR10. It provides two deterministic operations: Home and Pick Item.
+physical CR10. It provides Home, Pick Item, Tray Detect Position and Place Item.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.
 
 Launching the package never enables, recovers, homes, or moves the robot. An
 operator or supervisor must load configuration and make an explicit Startup
 service call before a hardware action can be accepted.
+
+
+## Tray placement
+
+Load **Item Teach**, **Bin Teach** and a complete **Tray Teach** in the controller,
+then Startup and Pick Item. **Tray Detect Position** moves to the joints recorded
+in Tray Teach. **Place Item** also reaches that observation pose when needed and
+requests one fresh tray/depth observation from Armed Tray Teach or headless Tray
+Detect. Run exactly one provider. All hardware commands remain controller-owned.
+
+Enter positive **X (mm)** and **Y (mm)** from the detected tray origin along its
+inward short-X and long-Y axes, and **Rotation (−180° to +180°)**. At 0° the tool uses
+the recorded Tray Detect Pose attitude; the offset rotates about that tool's Z.
+Item axes and pick rotation have no effect on placement orientation.
+
+Placement keeps requested X/Y and measures surface Z using the Item Teach depth
+sampling diameter and quality settings. Release Z is surface + standoff; pre-place
+is release + prepick height. The approach is pre-place → release without another
+initial waypoint above pre-place. Taught travel/approach/retract rates and settling
+apply. Confirm OPEN/DI12, exhaust for 50 ms and DI1 LOW, then retract vertically to
+pre-place and the extra taught retract height. Finish READY there, without an
+automatic Home or next Pick.
+
+Placement Pause stops in place. Continue reobserves after an interrupted approach,
+or resumes retained release progress. Direct Stop requires Recover. During release
+recovery, changed tool position blocks further release; a dispatched pulse is not
+repeated. After release, recovery only retracts upward and never descends again.
+A failed tray/depth observation performs no placement or release. Existing Pick
+candidate filtering, camera/bin avoidance, rotation and Home paths remain intact.
+
+The controller UI's strict schema-3 last-session store preserves Item/Bin/Tray
+filenames and the last validated X/Y/Rotation as unapplied prefill. Explicit
+in-memory import of schema 1/2 preserves their selections; disk changes only on
+configuration save or a valid Place request. First-use X/Y remain empty.
+
+New APIs are `GoTrayDetectPosition` at `/robot_controller/go_tray_detect_position`
+and `PlaceItem` at `/robot_controller/place_item`, both with the active configuration
+ID. Configure accepts `tray_teach_file`; status includes `tray_configured`,
+`tray_position_recorded`, `TRAY_POSITIONING` and `PLACING`. Only a trusted HELD
+candidate can be placed; a completed release records PLACED.
+
+Rebuild `tray_perception_interfaces`, `robot_controller_interfaces`,
+`tray_perception` and `robot_controller`, then restart the tray provider and
+controller/GUI together. Launch alone still sends no robot commands. Software
+validation uses synthetic feedback and isolated ROS; physical placement requires
+separate commissioning.
 
 ## Processes
 
@@ -36,8 +82,8 @@ by `item_teach_` and `bin_teach_` filename prefix; Item YAML/PT must have the
 same stem. It still remains `INACTIVE` until Startup:
 
 A complete optional `tray_teach_*.yaml`/same-stem `.pt` pair may coexist in the
-catalog for Tray Detect. The controller still loads only Item/Bin inputs and has
-no tray-placement action or tray-service client in this change.
+catalog for Tray Detect and controller placement. Its profile/camera hashes and
+recorded observation joints become part of the controller configuration.
 
 Missing Item YAML, Item model and Bin YAML inputs are reported separately.
 Duplicate errors list the conflicting filenames. Manual or external deployment
@@ -440,7 +486,7 @@ actions/services, or `events.jsonl`.
 
 ## Home and Pick
 
-The explicit Hardware Home action is permitted from `READY` and trusted
+The explicit Home action is permitted from `READY` and trusted
 `HOLDING`. It obtains current Link6 XYZ/RPY from fresh, stationary FeedInfo.
 Unless that Cartesian pose is already within 5 mm/1° of the FK-derived taught
 Home pose, it sends exactly two Cartesian-mode `MovL` targets in one named

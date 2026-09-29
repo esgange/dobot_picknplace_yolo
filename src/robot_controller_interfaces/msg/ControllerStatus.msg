@@ -3,6 +3,8 @@ string state
 string message
 string configuration_id
 bool configured
+bool tray_configured
+bool tray_position_recorded
 bool holding_item
 bool operation_active
 string operation

@@ -1036,7 +1036,7 @@ def snapshot_node():
                            depth=None, color_info=info, depth_info=None, camera=camera,
                            generation=4, connection=1, tf_buffer=MagicMock(),
                            get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=100)))
-    node.raw_snapshot = lambda: TrayTeachNode.raw_snapshot(node)
+    node.raw_snapshot = lambda **kwargs: TrayTeachNode.raw_snapshot(node, **kwargs)
     return node
 
 

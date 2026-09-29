@@ -31,6 +31,13 @@ MOTION_SERVICES = ("MovL", "MovLIO", "RelMovLUser")
 LATE_RESPONSE_OUTCOMES = ("timeout", "wait_canceled", "wait_aborted")
 
 
+def retained_release_progress(node):
+    placement = getattr(node, "placement", None)
+    if placement is not None and placement.needs_recovery:
+        return placement
+    return getattr(getattr(node, "managed", None), "return_progress", None)
+
+
 class DobotTransport:
     """Serialized normal commands plus an independent pre-emptive Stop path."""
 
@@ -259,11 +266,13 @@ class DobotTransport:
             self.pending_response = (name, future, audit)
             if name == "DO" and fields.get("time", 0) == 0:
                 self.pending_motion_outputs[fields["index"]] = bool(fields["status"])
-            return_progress = getattr(
-                getattr(self.node, "managed", None), "return_progress", None)
+            return_progress = retained_release_progress(self.node)
             if (name == "DO" and return_progress is not None
                     and return_progress.phase == "RELEASING"):
                 return_progress.pending_outputs[fields["index"]] = bool(fields["status"])
+                if (fields["index"] == 1 and fields.get("time") == 50
+                        and hasattr(return_progress, "pulse_dispatched")):
+                    return_progress.pulse_dispatched = True
             future.add_done_callback(
                 lambda done, service=name, record=audit: self._pending_completed(
                     service, done, record))
@@ -489,7 +498,7 @@ class DobotTransport:
         suction_lost = False
         last_snapshot = None
         planned_outputs = dict(getattr(self, "pending_motion_outputs", {}))
-        return_progress = getattr(getattr(self.node, "managed", None), "return_progress", None)
+        return_progress = retained_release_progress(self.node)
         if return_progress is not None:
             planned_outputs.update(return_progress.pending_outputs)
         pulse_pending = bool(return_progress is not None
@@ -523,6 +532,14 @@ class DobotTransport:
         try:
             self.monitor.wait(stationary, MODE_TRANSITION_TIMEOUT_SEC,
                               description="stationary, empty queue after Stop")
+            if (pulse_pending and getattr(self.node, "placement", None) is return_progress
+                    and last_snapshot.feed["digital_outputs"] & 1):
+                # A placement pulse can outlast stationary confirmation. Its
+                # automatic OFF must settle before parked-output/recovery guards.
+                self.monitor.wait(
+                    lambda sample: stationary(sample) and not sample.feed["digital_outputs"] & 1,
+                    OUTPUT_FEEDBACK_TIMEOUT_SEC,
+                    description="placement exhaust OFF after Stop")
         except FeedbackFailure as exc:
             raise StopUnconfirmed(str(exc)) from exc
         self.moving = False
@@ -583,7 +600,7 @@ class DobotTransport:
         if not holding:
             return snapshot
         feed = snapshot.feed
-        progress = getattr(getattr(self.node, "managed", None), "return_progress", None)
+        progress = retained_release_progress(self.node)
         if returning and progress is not None and progress.phase == "RELEASED":
             if feed["digital_input_bits"] & 1:
                 raise HeldUnknown("DI1 HIGH after confirmed release; clear item or obstruction")

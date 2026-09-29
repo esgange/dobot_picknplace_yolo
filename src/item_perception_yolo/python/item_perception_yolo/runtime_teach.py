@@ -17,6 +17,8 @@ class RuntimeTeachCatalog:
     item_yaml: Path
     item_model: Path
     bin_yaml: Path
+    tray_yaml: Path | None = None
+    tray_model: Path | None = None
 
 
 def _artifact_kind(name):
@@ -76,8 +78,9 @@ def runtime_tray_catalog(root):
 def runtime_teach_catalog(root):
     """One Item pair and Bin YAML; a complete optional tray pair may coexist."""
     directory, artifacts = _scan(root)
+    tray_yaml = tray_model = None
     if any(artifacts["tray_teach"].values()):
-        _tray_pair(artifacts)
+        tray_yaml, tray_model = _tray_pair(artifacts)
     item_yaml = _require_one(
         artifacts["item_teach"][".yaml"], "item_teach_ YAML")
     item_model = _require_one(
@@ -86,4 +89,5 @@ def runtime_teach_catalog(root):
         artifacts["bin_teach"][".yaml"], "bin_teach_ YAML")
     if item_yaml.stem != item_model.stem:
         raise ValueError("runtime_teach/ Item Teach YAML/PT must have the same filename stem")
-    return RuntimeTeachCatalog(directory.resolve(), item_yaml, item_model, bin_yaml)
+    return RuntimeTeachCatalog(directory.resolve(), item_yaml, item_model, bin_yaml,
+                               tray_yaml, tray_model)

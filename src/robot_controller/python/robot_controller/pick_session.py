@@ -28,9 +28,9 @@ class PickSession:
         allowed = {
             "PENDING": {"ACTIVE"},
             "ACTIVE": {"FAILED", "INTERRUPTED", "HELD"},
-            "HELD": {"DROPPED", "RETURNED"},
+            "HELD": {"DROPPED", "RETURNED", "PLACED"},
             "FAILED": set(), "INTERRUPTED": {"ACTIVE"},
-            "DROPPED": set(), "RETURNED": set(),
+            "DROPPED": set(), "RETURNED": set(), "PLACED": set(),
         }
         if state == attempt.state:
             return

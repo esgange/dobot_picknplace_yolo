@@ -11,6 +11,8 @@
   <depend>robot_controller_interfaces</depend>
   <depend>rclpy</depend>
   <depend>item_perception_interfaces</depend>
+  <depend>tray_perception</depend>
+  <depend>tray_perception_interfaces</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>

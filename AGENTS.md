@@ -638,6 +638,25 @@ Rebuild and restart perception/controller clients together. Preserve Tray's
 corner origin, blue-UP guide policy and all robot gates; no hardware testing.
 
 
+Rule 158 adds controller-owned Tray Detect Position and depth-based Place Item.
+Configure binds an optional complete Tray Teach/model/camera and saved detect
+joints. Positive tray-local X/Y and Rotation −180°…+180° are controller inputs;
+zero attitude is the saved detect-pose tool frame with a local Z offset, independent
+of item axes/pick rotation. One armed tray_teach or headless tray_detect provider
+returns fresh after-trigger synchronized RGB/depth, bound sources and Item Teach
+sampling diameter/quality. After observation travel, approach only pre-place →
+release at sampled base Z + standoff; use taught rates/settling and retract heights.
+Confirm OPEN/DI12, a single 50 ms exhaust pulse and DI1 LOW before upward retract;
+record PLACED and finish READY there. Placement Pause stops in place. Continue
+reobserves an interrupted approach, while release/retract recovery retains progress,
+never repeats an issued pulse and never descends after release or returns to the
+bin. Direct Stop remains pre-emptive. UI schema 3 explicitly imports old schema
+1/2 filename selections as unapplied prefill and saves validated placement inputs.
+Rebuild/restart changed tray/controller interfaces and clients together. Preserve
+existing Pick/bin-camera avoidance and all teach/calibration artifacts. Verify
+with synthetic services/feedback and isolated launches; no physical commissioning.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

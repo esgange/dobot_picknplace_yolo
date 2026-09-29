@@ -42,8 +42,12 @@ fresh actual pose, queue/robot status and execution evidence after acceptance.
 Interrupted put-back retains release progress for explicit Recovery, and later
 Stop clicks send a new Stop with a fresh physical confirmation.
 
-`robot_controller` is now the production hardware authority for deterministic
-Home and Pick operations. Normal launch separates it into a headless controller,
+`robot_controller` is the production hardware authority for Home, Pick, Tray Detect
+Position and Place Item operations. Placement supports positive tray-local X/Y
+and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose, with
+live depth and Item Teach standoff/motion settings. See the
+[placement workflow](src/robot_controller/README.md#tray-placement). Normal launch
+separates it into a headless controller,
 a TF-only preview process with no Dobot clients, and an API-only GUI. Headless
 launch starts only the controller and strictly loads the flat `runtime_teach/`
 catalog. Crucially, neither launch mode enables or moves the robot: both require
@@ -56,8 +60,8 @@ exactly one `item_teach_*.yaml` with its same-stem `item_teach_*.pt`, and one
 that dedicated read-only process loads the deployed model once, validates fresh
 camera/TF inputs and advertises the pose service; inference remains request-driven.
 A complete optional `tray_teach_` YAML/model pair may coexist for the independent
-headless Tray Detect consumer. Item Detect and Robot Controller still select only
-their Item/Bin inputs.
+headless Tray Detect consumer. Robot Controller also binds that optional pair
+for Tray Detect Position and Place Item; Item Detect still selects only Item/Bin.
 
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
@@ -74,7 +78,7 @@ In the non-headless GUI, **Load Teach Configuration** becomes **Reload Teach
 Configuration** after the first successful load. Reload is available only while
 the controller is idle and unheld in `READY` (or already `INACTIVE`), performs no
 robot command, and returns the controller to `INACTIVE`; press **START** again
-before Hardware Home or Pick. An invalid replacement leaves the current
+before Home or Pick. An invalid replacement leaves the current
 configuration and state unchanged. Headless `runtime_teach/` configuration is
 immutable until the process is restarted.
 
@@ -216,7 +220,7 @@ The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.
 
-The explicit Hardware Home action reads the actual `tool_vector_actual` pose
+The explicit Home action reads the actual `tool_vector_actual` pose
 from a fresh, stationary 100 Hz FeedInfo sample. Unless already within
 5 mm/1° of taught Home, it queues two Cartesian `MovL` targets in one
 CP(100)-blended group: current X/Y with taught Home Z/attitude, then full taught
@@ -304,10 +308,10 @@ prevents any later group command from being sent.
 
 Pick's initial and return Home arrival means every actual joint is within ±1°
 of its taught value in one fresh enabled, fault-free, stationary, empty-queue
-feedback sample. The terminal Hardware Home target uses 5 mm Euclidean
+feedback sample. The terminal Home target uses 5 mm Euclidean
 translation and 1° orientation with the same one-sample final feedback gates;
 its first alignment target is a CP-blended control point and is not separately
-confirmed. Hardware Home skips motion when its fresh stationary Cartesian pose
+confirmed. Home skips motion when its fresh stationary Cartesian pose
 is already within that tolerance; Pick's initial shared-Home step instead
 applies the joint Home gate. Queued return-to-Home paths after a pick attempt
 are not skipped. Each independently acquired motion-origin pose waits up to two
@@ -697,7 +701,7 @@ runs only on requests. The canonical RViz **Tray Detect - 10 mm colored voxels**
 display uses the same retention/greying behavior as Tray Teach. Reload the
 installed RViz configuration in an existing viewer to add this display.
 Run only one armed tray provider. Debug images are saved only when a request asks;
-controller placement remains future work. See [Tray Perception](src/tray_perception/README.md)
+Robot Controller now consumes fresh tray/depth observations for placement. See [Tray Perception](src/tray_perception/README.md)
 for the complete
 workflow, source checks, plane sampling limits and frame convention.
 

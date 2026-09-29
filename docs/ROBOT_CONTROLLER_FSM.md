@@ -14,12 +14,19 @@ Item-axis contract review: **2026-09-28**, against **`c4294c1`** plus diary rule
 preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
+
+Tray placement review: **2026-09-29**, diary rule **158**. Controller configuration
+now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
+`TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
+tool-Z rotation. Placement Pause stops in place; interrupted release has its own
+retained recovery and never enters the bin put-back routine.
+
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
 them. The tables also describe the behavior without a diagram renderer.
 
 Ready-to-view exports in this folder: [interactive visual FSM](ROBOT_CONTROLLER_FSM.html)
-and [six-page visual PDF](ROBOT_CONTROLLER_FSM.pdf). The HTML opens directly in
+and [visual PDF](ROBOT_CONTROLLER_FSM.pdf). The HTML opens directly in
 a browser with diagram selection, zoom and dragging; both exports work offline.
 
 ## 1. Read this first
@@ -27,7 +34,8 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 - **Launch does not enable or move the robot.** Load configuration, then Startup.
 - **READY** means available for an operation; it does not always mean at Home.
 - **HOLDING** means trusted held-item context; it does not always mean at Home.
-- **Pause moves to a parking position**, then waits for Continue or Return Item.
+- **Pause parks Home/Pick/tray-position operations. Placement Pause stops in place**,
+  then waits for Continue or direct Stop without releasing or moving the item.
 - **Direct Stop stops motion and preserves the grip.** It does not put an item back.
 - **Recover can move the robot** when a saved item needs put-back; it can also
   continue the batch. Recovery with an intact grip normally restores HOLDING instead.
@@ -61,6 +69,12 @@ flowchart TD
     READY -->|Pick| PICKING
     PICKING -->|Picked| HOLDING
     PICKING -->|No pick| READY
+    READY -->|Tray Detect Position| TRAY_POSITIONING
+    HOLDING -->|Tray Detect Position| TRAY_POSITIONING
+    TRAY_POSITIONING -->|Unheld| READY
+    TRAY_POSITIONING -->|Held| HOLDING
+    HOLDING -->|Place Item| PLACING
+    PLACING -->|Released and retracted| READY
     STARTING -->|Unknown suction| HELD_UNKNOWN
     STARTING -->|Failed| FAULT
 ```
@@ -71,9 +85,11 @@ invent a usable configuration or start an indefinite retry. Headless selection
 is immutable until restart. GUI configuration can be replaced from idle,
 unheld UNCONFIGURED, INACTIVE or READY; invalid replacement preserves the old one.
 
-The catalog permits a complete optional Tray Teach YAML/model pair for the
-separate Tray Detect consumer. Controller configuration still selects the Item
-pair and Bin YAML only; it has no tray request client or placement action yet.
+The catalog permits a complete optional Tray Teach YAML/model pair. Controller
+configuration binds that pair, its camera calibration and optional recorded detect
+joints. Tray operations require those joints. Place additionally requires a trusted
+HELD item and an armed canonical `tray_teach` or headless `tray_detect` provider.
+Configuration hashes include Tray Teach and its camera; reload still requires Startup.
 
 Startup order: validate ownership/feedback → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →
@@ -90,8 +106,10 @@ later commands, including an unanswered best-effort StopMoveJog.
 | `STARTING` | Startup initialization in progress; READY, HELD_UNKNOWN or FAULT follows. |
 | `READY` | Available and unheld; can Pick, Home, Pause, reload or change global speed. |
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
+| `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
+| `PLACING` | Observing tray/depth, approaching, releasing or retracting. |
 | `PICKING` | One accepted candidate batch is being planned/attempted/returned. |
-| `HOLDING` | Trusted item held; Home, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
+| `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
 | `PAUSED` | Managed parking confirmed; controller continues checking pose, queue, outputs and held suction. |
 | `RETURNING_ITEM` | Saved item's put-back is executing; destination afterward depends on why it started. |
@@ -179,6 +197,63 @@ source exist only in memory; process restart does not reconstruct them.
 RETURNED confirms release feedback; retreat/Home may still be in progress.
 Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
 original destination until Home completes or next-candidate travel takes ownership.
+
+## 3a. Tray observation and placement
+
+```mermaid
+flowchart TD
+    Accept["HOLDING: PlaceItem accepted with config ID, X, Y, Rotation"] --> Observe["Reach saved Tray Detect Pose joints"]
+    Observe --> Depth["Request new tray RGB and registered depth after trigger"]
+    Depth --> Check{"Bound sources, fresh TF, valid tray and depth?"}
+    Check -->|No| Stop["Stop and report failure; retain held context"]
+    Check -->|Yes| Pre["Pre-place: sampled base Z + standoff + prepick height"]
+    Pre --> ReleasePose["Release pose: sampled base Z + standoff"]
+    ReleasePose --> Open["Confirm endpoint and settling; record release intent; OPEN"]
+    Open --> Sensor["Confirm DI12; one 50 ms exhaust pulse; confirm DI1 LOW"]
+    Sensor --> Placed["Mark PLACED; clear held source"]
+    Placed --> Retract["Vertical retract to pre-place then taught extra retract height"]
+    Retract --> Ready["READY at retract endpoint"]
+    Open -. Stop .-> Recover["Explicit Recover retains release progress; never repeat pulse"]
+    Placed -. Stop .-> Up["Explicit Recover resumes upward only; no new release"]
+    ReleasePose -. Pause .-> Paused["Stop in place; Continue reobserves before an interrupted approach"]
+```
+
+X/Y are strictly positive millimetres along the **detected tray** inward short-X /
+long-Y axes from its nearest-base corner. Reject targets at or beyond either far
+edge. Rotation accepts **−180° to +180°**; zero is the saved **Tray Detect Pose tool
+orientation**, followed by the requested local tool-Z rotation. Item axes,
+`pick_rotation` and the detected tray quaternion do not determine tool attitude.
+
+Place reaches the saved observation joints if necessary. This observation travel
+uses an upward clearance before XY travel when needed. After depth is accepted,
+the placement approach has exactly **pre-place → release**, with no additional
+initial waypoint above pre-place. X/Y stay at the requested tray offset; only base
+Z comes from the target ray's filtered median depth. Use the Item Teach physical
+sampling diameter (`geometry.pickdepth_radius`), min/max depth, MAD filter, sample
+minimum and accepted fraction. Exclude samples outside the detected tray; a
+clipped image footprint or insufficient depth fails the observation. Both RGB and
+depth must be captured after the request, synchronized, with calibrated RGB-time
+TF. A bad depth observation leaves the read-only provider armed.
+
+Use Item Teach travel/approach/retract speed and acceleration, standoff/prepick/
+retract heights and final-pose settling time. Confirm the release endpoint before
+opening fingers; suction and finger-close are OFF before exhaust/open respectively.
+Require DI12 open, the 50 ms exhaust pulse and released DI1 LOW before retract.
+Neutralize outputs on the first upward retract. Finish READY at the retract
+endpoint; there is no automatic return Home or automatic next Pick.
+
+Placement Pause issues Stop, confirms an empty stationary queue, and waits **at
+that pose**. It sends no parking motion or release outputs. Continue after an
+interrupted approach returns to observation and measures again. During release,
+Continue retains output/pulse progress and requires the same release pose. A
+changed pose blocks release rather than moving back down. A pulse already issued
+is never fired twice. After confirmed release, recovery can only retract upward
+from the measured current pose; it cannot descend to the released item. New direct
+Stop always pre-empts the action/recovery. A still-active placement exhaust pulse
+must reach OFF before Stop finishes reconciling outputs for Pause/recovery.
+Return Item during active placement is
+rejected; Stop and Recover settle placement first. This leaves existing Pick and
+Home put-back behavior unchanged.
 
 ## 4. Pause and Continue
 
@@ -415,11 +490,11 @@ Updating a message without changing state is allowed in every state.
 | `UNCONFIGURED` | `FAULT`, `INACTIVE`, `STOPPING` |
 | `INACTIVE` | `FAULT`, `STARTING`, `STOPPING`, `UNCONFIGURED` |
 | `STARTING` | `FAULT`, `HELD_UNKNOWN`, `READY`, `STOPPING` |
-| `READY` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `INACTIVE`, `PAUSED`, `PAUSING`, `PICKING`, `RECOVERING`, `STOPPING` |
+| `READY` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `INACTIVE`, `PAUSED`, `PAUSING`, `PICKING`, `RECOVERING`, `STOPPING`, `TRAY_POSITIONING` |
 | `HOMING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
 | `PICKING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `RETURNING_ITEM`, `STOPPING` |
-| `HOLDING` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `PAUSED`, `PAUSING`, `RECOVERING`, `STOPPING` |
-| `PAUSED` | `FAULT`, `HOLDING`, `HOMING`, `PAUSING`, `PICKING`, `READY`, `RETURNING_ITEM`, `STOPPING` |
+| `HOLDING` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `PAUSED`, `PAUSING`, `PLACING`, `RECOVERING`, `STOPPING`, `TRAY_POSITIONING` |
+| `PAUSED` | `FAULT`, `HOLDING`, `HOMING`, `PAUSING`, `PICKING`, `PLACING`, `READY`, `RETURNING_ITEM`, `STOPPING`, `TRAY_POSITIONING` |
 | `STOPPING` | `FAULT`, `HELD_UNKNOWN`, `INACTIVE`, `RECOVERY_REQUIRED`, `UNCONFIGURED` |
 | `RECOVERY_REQUIRED` | `FAULT`, `RECOVERING`, `STOPPING` |
 | `RECOVERING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `READY`, `RETURNING_ITEM`, `STOPPING` |
@@ -427,6 +502,8 @@ Updating a message without changing state is allowed in every state.
 | `FAULT` | `RECOVERING`, `STOPPING` |
 | `PAUSING` | `FAULT`, `PAUSED`, `RETURNING_ITEM`, `STOPPING` |
 | `RETURNING_ITEM` | `FAULT`, `PAUSED`, `PICKING`, `READY`, `STOPPING` |
+| `TRAY_POSITIONING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
+| `PLACING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
 
 ## 10. Maintaining this document
 
@@ -458,7 +535,9 @@ Source map for the next review:
 | Source | Responsibility |
 | --- | --- |
 | [state_machine.py](../src/robot_controller/python/robot_controller/state_machine.py) | Lifecycle states and allowed edges |
-| [controller.py](../src/robot_controller/python/robot_controller/controller.py) | API guards, configuration, lifecycle, Home/Pick ownership, Stop and supervision |
+| [controller.py](../src/robot_controller/python/robot_controller/controller.py) | API guards, configuration, lifecycle, action ownership, Stop and supervision |
+| [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Placement targets, release progress, Pause and retract recovery |
+| [tray_client.py](../src/robot_controller/python/robot_controller/tray_client.py) | Fresh tray/depth request, provider and source validation |
 | [managed_control.py](../src/robot_controller/python/robot_controller/managed_control.py) | Parking, Continue, put-back and held-loss recovery |
 | [pick_session.py](../src/robot_controller/python/robot_controller/pick_session.py) | Candidate ledger and put-back geometry |
 | [motion.py](../src/robot_controller/python/robot_controller/motion.py) | Motion targets, timed I/O and candidate execution |

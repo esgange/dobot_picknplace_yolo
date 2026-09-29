@@ -1,6 +1,6 @@
 # robot_controller_interfaces
 
-Typed ROS 2 interfaces for `robot_controller` v2. Long-running Home and Pick
+Typed ROS 2 interfaces for `robot_controller` v2. Long-running Home, Pick, Tray Detect Position and Place
 operations are actions; bounded lifecycle, configuration, Stop, preview, and
 speed operations are services. The shared `Command` service type is also used
 for the controller-owned `/robot_controller/pause` and
@@ -26,3 +26,13 @@ cannot guarantee display of every short pulse.
 
 This package contains definitions only. It never connects to or commands the
 robot.
+
+`GoTrayDetectPosition` carries the configuration ID and uses the saved Tray Teach
+observation joints. `PlaceItem` carries that ID plus positive `x_mm`, `y_mm` and
+`rotation_deg` in [−180, +180]. Rotation zero is the saved observation tool attitude,
+with a local tool-Z offset. It is independent of detected item/tray axes.
+`Configure.tray_teach_file` is optional for Home/Pick and required for tray actions.
+Status includes `tray_configured`, `tray_position_recorded`, `TRAY_POSITIONING` and
+`PLACING`. Place requires HOLDING with a trusted HELD candidate; confirmed release
+records PLACED. Placement Pause stops in place; Continue and Recover preserve
+release progress. Neither interface nor launch automatically starts motion.

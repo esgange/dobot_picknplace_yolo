@@ -1,5 +1,7 @@
 string profile_sha256
 bool save_debug_images
+bool sample_placement_depth
+tray_perception_interfaces/PlacementDepthRequest placement
 ---
 bool success
 string status
@@ -11,4 +13,5 @@ uint32 valid_count
 # Use tray only when success AND found are true. NO_VALID_TRAY is a successful observation.
 bool found
 tray_perception_interfaces/TrayPose tray
+tray_perception_interfaces/PlacementDepthResult placement
 string diagnostics_json

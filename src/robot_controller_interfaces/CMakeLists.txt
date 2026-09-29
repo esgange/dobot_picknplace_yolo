@@ -9,6 +9,8 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/GoHome.action"
   "action/PickItem.action"
+  "action/GoTrayDetectPosition.action"
+  "action/PlaceItem.action"
   "msg/ControllerStatus.msg"
   "srv/Command.srv"
   "srv/Configure.srv"

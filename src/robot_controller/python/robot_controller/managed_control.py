@@ -47,9 +47,11 @@ class ManagedControl:
         node = self.node
         with self.lock:
             if not node.startup_complete or node.machine.state not in (
-                    "READY", "HOLDING", "HOMING", "PICKING", "PAUSED"):
+                    "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING", "PAUSED"):
                 raise CommandRejected(
-                    "Pause/return requires a started idle, Home or Pick controller")
+                    "Pause/return requires a started idle or motion controller")
+            if kind == "return" and node.active_action == "place":
+                raise CommandRejected("Stop and Recover placement before requesting an item return")
             if kind == "return" and (self.session is None
                                      or self.session.held_index is None
                                      or not node.holding_item):
@@ -59,7 +61,8 @@ class ManagedControl:
                     self.kind = kind
                     return
                 raise CommandRejected("Pause/return is already pending")
-            if node.operation_lock.locked() and node.active_action not in ("home", "pick"):
+            if node.operation_lock.locked() and node.active_action not in (
+                    "home", "pick", "tray_position", "place"):
                 raise CommandRejected("Cannot interrupt lifecycle/settings operation")
             idle = not node.operation_lock.locked()
             previous = node.machine.state
@@ -94,7 +97,10 @@ class ManagedControl:
                 raise CommandRejected("Continue requires completed Pause parking")
             self.node.configuration.validate_sources(self.node.root)
             sample = self.node.monitor.snapshot(require_enabled=True)
-            self._check_parked(sample)
+            if node_placement := getattr(self.node, "placement", None):
+                node_placement.check_paused(self.node, sample)
+            else:
+                self._check_parked(sample)
             if self.drop_pending or (
                     self.node.holding_item and not sample.suction_present):
                 raise CommandRejected("Suction lost; item return must finish before Continue")
@@ -131,6 +137,9 @@ class ManagedControl:
                     digital_outputs=sample.feed["digital_outputs"])
 
     def recovery_return_needed(self):
+        placement = getattr(self.node, "placement", None)
+        if placement is not None and placement.needs_recovery:
+            return True
         self.note_suction_loss(self.node.monitor.snapshot(require_enabled=False))
         with self.lock:
             return bool(self.return_progress is not None or (
@@ -478,6 +487,7 @@ class ManagedControl:
                                 self.session.resuming = True
                             restored = ("PICKING" if node.active_action == "pick" else
                                         "HOMING" if node.active_action == "home" else
+                                        "TRAY_POSITIONING" if node.active_action == "tray_position" else
                                         "HOLDING" if node.holding_item else "READY")
                             # Clear before exposing the resumed state. A new
                             # request after this lock releases belongs to the

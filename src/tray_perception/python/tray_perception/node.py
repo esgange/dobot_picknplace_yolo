@@ -212,27 +212,29 @@ class TrayTeachNode(Node):
             self.selected = None
             raise ValueError("CameraInfo differs from taught plane; re-teach the plane")
 
-    def raw_snapshot(self):
+    def raw_snapshot(self, *, input_max_age_sec=.5):
         with self.lock:
             rgb, depth = copy.copy(self.rgb), copy.copy(self.depth)
             info, depth_info = copy.deepcopy(self.color_info), copy.deepcopy(self.depth_info)
             generation, connection = self.generation, self.connection
         if (rgb is None or not 0 <= (self.get_clock().now().nanoseconds - rgb["stamp_ns"]) /
-                1e9 <= .5 or time.monotonic() - rgb["received_at"] > .5):
+                1e9 <= input_max_age_sec or time.monotonic() - rgb["received_at"] > input_max_age_sec):
             raise ValueError("Waiting for fresh RGB on the connected prefix")
         return {"rgb": rgb, "depth": depth, "info": info, "depth_info": depth_info,
                 "generation": generation, "connection": connection, "camera_context": None,
                 "metric_error": "", "depth_error": ""}
 
-    def snapshot(self, *, depth_required=False, view=None):
+    def snapshot(self, *, depth_required=False, view=None, quality=None):
         self.validate_sources(check_plane=False)
-        view = self.raw_snapshot() if view is None else view
+        quality = QUALITY_DEFAULTS if quality is None else quality
+        view = (self.raw_snapshot(input_max_age_sec=quality["input_max_age_sec"])
+                if view is None else view)
         rgb, depth, info, depth_info = (
             view[key] for key in ("rgb", "depth", "info", "depth_info"))
         camera = self.camera
         now = self.get_clock().now().nanoseconds
         if depth_required:
-            validate_pair(rgb, depth, info, depth_info, now, QUALITY_DEFAULTS)
+            validate_pair(rgb, depth, info, depth_info, now, quality)
         elif (rgb is None or info is None
               or not 0 <= (now - rgb["stamp_ns"]) / 1e9 <= .5
               or time.monotonic() - rgb["received_at"] > .5
@@ -252,12 +254,12 @@ class TrayTeachNode(Node):
                 timeout=Duration(seconds=max(0., tf_deadline - time.monotonic())))
             now = self.get_clock().now().nanoseconds
             age = (now - stamp_ns(observed.header.stamp)) / 1e9
-            if not 0 <= age <= 1.0:
+            if not 0 <= age <= quality["robot_tf_max_age_sec"]:
                 raise ValueError("Camera-on-hand requires fresh RGB-time robot TF")
             robot = transform_matrix(observed)
         now = self.get_clock().now().nanoseconds
         if depth_required:
-            validate_pair(rgb, depth, info, depth_info, now, QUALITY_DEFAULTS)
+            validate_pair(rgb, depth, info, depth_info, now, quality)
         elif (not 0 <= (now - rgb["stamp_ns"]) / 1e9 <= .5
               or time.monotonic() - rgb["received_at"] > .5):
             raise ValueError("RGB expired while waiting for its timestamped TF")
@@ -309,7 +311,8 @@ class TrayTeachNode(Node):
                            max_error_mm=self.plane["max_error_mm"])
         return self.plane
 
-    def preview(self, settings=None, *, generation, view=None, visualize=True, deadline=None):
+    def preview(self, settings=None, *, generation, view=None, visualize=True, deadline=None,
+                depth_quality=None):
         supplied = view is not None
         view = self.raw_snapshot() if view is None else view
         if view["generation"] != generation:
@@ -321,7 +324,8 @@ class TrayTeachNode(Node):
             view["metric_error"] = str(exc)
         try:
             validate_pair(view["rgb"], view["depth"], view["info"], view["depth_info"],
-                          self.get_clock().now().nanoseconds, QUALITY_DEFAULTS)
+                          self.get_clock().now().nanoseconds,
+                          QUALITY_DEFAULTS if depth_quality is None else depth_quality)
         except ValueError as exc:
             view["depth"], view["depth_error"] = None, str(exc)
         rgb, context = view["rgb"], view["camera_context"]

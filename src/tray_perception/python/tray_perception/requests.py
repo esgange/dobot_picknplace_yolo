@@ -20,6 +20,7 @@ from tray_perception_interfaces.srv import GetTrayPose
 
 from .core import load_profile, ORIGIN_CONVENTION
 from .documents import detection_profile, load_document
+from .placement import sampling_from_message
 
 
 SERVICE_NAME = "/tray_detect/get_tray_pose"
@@ -216,16 +217,23 @@ class TrayRequests:
                 or (not simulated and self.service is None)):
             raise ValueError("Tray request cancelled by disarming, source/settings change or exit")
         if time.monotonic() >= deadline:
-            raise TimeoutError("Tray request exceeded its ten-second deadline")
+            raise TimeoutError("Tray request exceeded its configured deadline")
 
-    def _fresh_view(self, start_ns, started, deadline, check):
+    def _fresh_view(self, start_ns, started, deadline, check, sampling=None):
         reason = "Waiting for RGB captured after this trigger"
         while time.monotonic() < deadline:
             check()
             try:
-                view = self.node.snapshot()
+                view = (self.node.snapshot() if sampling is None else
+                        self.node.snapshot(depth_required=True, quality=sampling))
                 rgb = view["rgb"]
                 if rgb["stamp_ns"] > start_ns and rgb["received_at"] >= started:
+                    if sampling is not None and (
+                            view["depth"]["stamp_ns"] <= start_ns
+                            or view["depth"]["received_at"] < started):
+                        reason = "Waiting for registered depth captured after this trigger"
+                        time.sleep(.01)
+                        continue
                     self.node._check_snapshot(view)
                     if view["camera_context"]["camera"] != self.node.plane["camera"]:
                         raise ValueError("CameraInfo differs from saved reference plane")
@@ -277,6 +285,10 @@ class TrayRequests:
             self._check(epoch, generation, deadline, simulated=simulated)
 
         try:
+            sampling = (sampling_from_message(request.placement)
+                        if request.sample_placement_depth else None)
+            if sampling is not None:
+                deadline = started + sampling["request_timeout_sec"]
             check()
             binding = self.binding
             if not simulated and (binding is None or request.profile_sha256 != binding["digest"]):
@@ -289,10 +301,11 @@ class TrayRequests:
             path, settings = simulation if simulated else (binding["path"], binding["settings"])
             verified = self.prepare(path, settings, request.profile_sha256)
             check()
-            view = self._fresh_view(start_ns, started, deadline, check)
+            view = self._fresh_view(start_ns, started, deadline, check, sampling)
             result_view = self.node.preview(
                 preview_settings(settings, self.node.model_metadata), generation=generation,
-                view=view, visualize=simulated or request.save_debug_images, deadline=deadline)
+                view=view, visualize=simulated or request.save_debug_images, deadline=deadline,
+                **({"depth_quality": sampling} if sampling is not None else {}))
             check()
             self.prepare(path, settings, request.profile_sha256)
             if not simulated:
@@ -318,6 +331,41 @@ class TrayRequests:
                 pose.length, pose.width = selected["length_mm"] / 1000, selected["width_mm"] / 1000
                 pose.extent_x, pose.extent_y = pose_extents(selected)
                 pose.center_distance_px = float(selected["center_distance_px"])
+                if sampling is not None:
+                    if view["depth"] is None:
+                        raise ValueError("Placement requires synchronized registered depth")
+                    measured, data = self.node.native.call({
+                        "operation": "tray_placement_depth", "width": view["rgb"]["width"],
+                        "height": view["rgb"]["height"], "selected": selected,
+                        "camera_context": view["camera_context"], "sampling": sampling},
+                        view["depth"]["depth"], timeout=max(.001, deadline - time.monotonic()))
+                    check()
+                    if (not data and set(measured) == {"state", "error"}
+                            and type(measured["error"]) is str and measured["error"]):
+                        raise ValueError(measured["error"])
+                    if (data or set(measured) != {"state", "surface_base", "accepted_samples",
+                                                 "total_samples", "median_mm", "sigma_mm"}
+                            or len(measured["surface_base"]) != 3
+                            or not np.isfinite(measured["surface_base"] + [
+                                measured["median_mm"], measured["sigma_mm"]]).all()
+                            or not sampling["depth_min_mm"] <= measured["median_mm"]
+                            <= sampling["depth_max_mm"] or measured["sigma_mm"] < 0
+                            or not measured["total_samples"] >= measured["accepted_samples"]
+                            >= sampling["minimum_depth_samples"]
+                            or measured["accepted_samples"] / measured["total_samples"]
+                            < sampling["minimum_depth_fraction"]):
+                        raise RuntimeError("Invalid native placement-depth reply")
+                    sampled = response.placement
+                    sampled.surface_base.x, sampled.surface_base.y, sampled.surface_base.z = map(
+                        float, measured["surface_base"])
+                    for key in ("accepted_samples", "total_samples", "median_mm", "sigma_mm"):
+                        setattr(sampled, key, measured[key])
+                    sampled.depth_header.frame_id = "base_link"
+                    sampled.depth_header.stamp = Time(
+                        nanoseconds=view["depth"]["stamp_ns"]).to_msg()
+                    sampled.valid = True
+                    self.prepare(path, settings, request.profile_sha256)
+                    self._sole_provider()
             debug = {"requested": bool(request.save_debug_images), "rgb_path": "",
                      "depth_path": "", "error": ""}
             if request.save_debug_images:
@@ -332,6 +380,7 @@ class TrayRequests:
                 "camera_sha256": self.node.camera.sha256, "origin_convention": ORIGIN_CONVENTION,
                 "snapshot_context": view["camera_context"],
                 "reference_plane": verified["profile"]["reference_plane"],
+                "placement_sampling": sampling,
                 "inference_ms": result["inference_ms"], "detections": result["detections"],
                 "debug_capture": debug}, allow_nan=False)
             check()
