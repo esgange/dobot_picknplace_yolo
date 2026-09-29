@@ -701,6 +701,23 @@ Rebuild robot_controller_interfaces/robot_controller and restart controller clie
 together after the status change. Existing pose validation and motion remain.
 
 
+Rule 162 supersedes rules 158–161's held-item prerequisite for attended placement
+only. Normal GUI launch (`headless=false`) is real-hardware debug mode: accept
+Place from idle READY or HOLDING without requiring a prior Pick, candidate ledger
+or suction presence during observation/approach. Publish manual_placement_enabled
+from controller mode and use it in GUI gating; attaching a GUI cannot override a
+headless controller. Headless Place still requires HOLDING, a trusted HELD source
+and suction until commanded OFF. Retain the operation's policy through Pause and
+reobservation; no synthetic candidate or automatic suction command for empty tests.
+Both modes keep Startup, exact configuration, saved tray joints, provider readiness,
+fresh tray/depth/robot feedback, unchanged output monitoring, queued 80% release /
+50% neutral / Home, confirmed OPEN/exhaust/DI12 and DI1 LOW release, neutral final
+Home, direct Stop and retained release recovery. Mark PLACED only for an existing
+held source. Other actions, startup/idle fault handling and bin avoidance are
+unchanged. Rebuild controller interfaces/controller and restart clients together.
+Validate with synthetic feedback and real transport; no hardware movement in tests.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

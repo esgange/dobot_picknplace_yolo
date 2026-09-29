@@ -52,11 +52,13 @@ transit. After fast idle/joint arrival and fresh detection, placement queues pre
 It has no pick settling or extra retract-height waypoint; release feedback is
 monitored during the queue. Pick Item requires an available armed Item Teach or
 headless Item Detect provider; Place Item requires an available armed Tray Teach
-or headless Tray Detect provider **and a successfully picked, held item**. Reaching
-Tray Detect Position alone leaves an empty robot READY and does not enable Place.
+or headless Tray Detect provider. **GUI mode permits placement with or without an
+item**, from idle READY or HOLDING; no successful Pick is required. This is real
+hardware debug operation with unchanged tray/depth, release I/O and motion checks.
+Headless mode still requires a successfully picked, trusted held item.
 See the
 [placement workflow](src/robot_controller/README.md#tray-placement). Normal launch
-separates it into a headless controller,
+separates it into a background controller,
 a TF-only preview process with no Dobot clients, and an API-only GUI. Headless
 launch starts only the controller and strictly loads the flat `runtime_teach/`
 catalog. Crucially, neither launch mode enables or moves the robot: both require

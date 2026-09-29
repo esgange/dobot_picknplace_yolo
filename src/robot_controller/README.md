@@ -18,7 +18,8 @@ service call before a hardware action can be accepted.
 ## Tray placement
 
 Load **Item Teach**, **Bin Teach** and a complete **Tray Teach** in the controller,
-then Startup and Pick Item. **Tray Detect Position** moves to the joints recorded
+then Startup. In GUI mode, Pick Item is optional before placement; headless Place
+requires a successful Pick. **Tray Detect Position** moves to the joints recorded
 in Tray Teach using one direct queued joint-target MovL. There is no preliminary
 Z rise or elevated transit; the bin routes retain their existing clearance logic.
 **Place Item** also reaches that observation pose when needed and
@@ -26,11 +27,14 @@ requests one fresh tray/depth observation from Armed Tray Teach or headless Tray
 Detect. Run exactly one provider. All hardware commands remain controller-owned.
 
 Pick Item is enabled only in idle READY with its Item Teach/Detect service
-available; Place Item additionally needs HOLDING, a trusted picked-item source,
-a recorded Tray Detect Pose, and its Tray Teach/Detect service. Arming Tray Teach
-makes detection available; it does not declare an item held. Merely moving to
-Tray Detect Position with an empty gripper leaves READY and Place disabled.
-Tooltips identify missing arming or held-item/tray-pose prerequisites.
+available. Place Item needs a recorded Tray Detect Pose and its Tray Teach/Detect
+service. The normal GUI launch (`headless=false`) is attended debug mode: Place
+is available from idle READY or HOLDING, with or without an item or picked-item
+record. No suction-presence prerequisite applies during observation or approach.
+The sequence still commands real hardware and verifies release/neutral I/O.
+Headless mode retains HOLDING, trusted picked-item source and held-suction guards.
+The controller owns this policy; merely attaching a GUI to a headless controller
+does not relax it. Status reports `manual_placement_enabled`; tooltips explain it.
 
 The controller reports `item_detector_ready` and `tray_detector_ready` in typed
 status at 5 Hz. It checks service availability and exactly one allowed provider:
@@ -59,7 +63,7 @@ request fresh tray/depth and queue exactly four Cartesian commands through Home:
 
 | Command | Target | Timed outputs |
 | --- | --- | --- |
-| MovL | Pre-place | Preserve held outputs |
+| MovL | Pre-place | Preserve existing outputs |
 | MovLIO | Release height | At 80%: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON |
 | MovLIO | Back to pre-place | At 50%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 | MovL | Taught Home XYZ/orientation | Neutral |
@@ -74,11 +78,14 @@ Physically confirm only final Cartesian Home before reporting READY/SUCCESS.
 
 Feedback remains active throughout admission and travel. Validate only issued,
 ordered output transitions; retain their history even if movement finishes during
-a service response. Suction is required until its commanded OFF transition.
+a service response. Headless mode requires suction until its commanded OFF transition.
+GUI debug mode does not require an item/suction before release, including after
+Pause/Continue. Both modes retain fresh enabled feedback and output validation.
 Observe OPEN/exhaust, DI12 HIGH and DI1 LOW before relaxation; missing release
 evidence, unexpected outputs or renewed suction cause Stop. These are monitoring
 guards, not a software pause between descent and return. Final Home requires
-neutral outputs and DI1 LOW. Confirmed release records PLACED and clears holding.
+neutral outputs and DI1 LOW. Confirmed release records PLACED for an existing held
+candidate and clears holding; an empty test never creates a candidate record.
 
 Placement Pause stops in place and preserves outputs. Continue reobserves when
 no release output changed. Once release starts, never repeat descent or release.
@@ -98,8 +105,8 @@ configuration save or a valid Place request. First-use X/Y remain empty.
 New APIs are `GoTrayDetectPosition` at `/robot_controller/go_tray_detect_position`
 and `PlaceItem` at `/robot_controller/place_item`, both with the active configuration
 ID. Configure accepts `tray_teach_file`; status includes `tray_configured`,
-`tray_position_recorded`, `TRAY_POSITIONING` and `PLACING`. Only a trusted HELD
-candidate can be placed; a completed release records PLACED.
+`tray_position_recorded`, `manual_placement_enabled`, `TRAY_POSITIONING` and `PLACING`.
+Only headless placement requires a trusted HELD candidate.
 
 Rebuild `tray_perception_interfaces`, `robot_controller_interfaces`,
 `tray_perception` and `robot_controller`, then restart the tray provider and
@@ -109,7 +116,7 @@ separate commissioning.
 
 ## Processes
 
-- `robot_controller` is headless hardware authority. It alone creates Dobot
+- `robot_controller` is the background hardware authority. It alone creates Dobot
   motion, Pause/Continue/Stop, robot-setting, and gripper-output clients.
 - `robot_controller_preview` calculates and broadcasts TF-only Home/Pick plans.
   It has no Dobot command client and cannot actuate the robot.

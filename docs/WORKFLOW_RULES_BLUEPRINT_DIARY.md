@@ -6736,6 +6736,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   no physical robot command or live process restart. Preserve unrelated local
   RViz/model/calibration/teach files. No upstream/offline-transfer change claimed.
 
+### 2026-09-29 — Rule 162: GUI placement with or without an item
+
+- User defines the normal controller UI launch as attended debug mode. Supersede
+  the held-source prerequisite from rule 161 for non-headless Place only. Accept
+  idle READY or HOLDING without requiring a successful Pick, session or suction
+  presence during tray observation/approach. Keep headless Place restricted to
+  trusted HOLDING with held-suction monitoring until the release output.
+- Publish manual_placement_enabled from the controller's existing headless flag;
+  GUI button/tooltip follow this controller-owned policy. A client cannot request
+  an override. Add READY to PLACING while preserving Startup, matching config,
+  saved tray pose and canonical armed-provider admission. Preserve the policy in
+  tray-request waits, queue supervision, Pause, reobservation and release recovery.
+- Execute the same real queued movement and 80% OPEN/exhaust, 50% neutral and
+  Home sequence. Do not enable suction for an empty test. Preserve actual outputs
+  during observation travel; retain fresh enabled feedback, sources/depth checks,
+  issued-output history, coherent OPEN/exhaust/DI12/DI1 LOW release, final neutral
+  Home and independent Stop. Update an existing held candidate to PLACED only;
+  an empty test creates no candidate. Startup/idle fault handling and all other
+  actions, bin avoidance and calibration/teach files remain unchanged.
+- Validation: 499 controller software tests passed. New cases exercise the real
+  transport with empty, held and mismatched logical/sensor states, including
+  feedback during replies and DI1 LOW beyond debounce; direct observation travel,
+  release failures, empty action lifecycle, Pause/reobservation/recovery, request
+  retirement, preservation of earlier terminal candidate states and UI/status
+  mode gating. Controller/interfaces symlink build,
+  changed-runtime/new-test flake8 and git diff --check pass. Regenerate seven
+  FSM diagrams in HTML/PDF. No hardware command or live process restart.
+- ControllerStatus changed: rebuild robot_controller_interfaces/robot_controller
+  and restart controller/GUI and other status clients together. No pose-service
+  or teach schema change, no upstream update, no physical commissioning or
+  offline-transfer validation claimed. Preserve unrelated user artifacts.
+
 ### Future entry template
 
 ```text

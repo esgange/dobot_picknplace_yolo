@@ -662,8 +662,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
             reachable and state.tray_position_recorded
             and current in ("READY", "HOLDING") and not active)
         self.place_item.setEnabled(
-            reachable and state.tray_position_recorded and state.holding_item
-            and state.tray_detector_ready and current == "HOLDING" and not active)
+            reachable and state.tray_position_recorded and state.tray_detector_ready
+            and current in ("READY", "HOLDING") and not active
+            and (state.manual_placement_enabled or (state.holding_item and current == "HOLDING")))
         self.hardware_pick.setToolTip(
             "Request fresh item poses and pick an item" if state and state.item_detector_ready
             else "Arm Item Teach or start Item Detect with exactly one provider")
@@ -671,7 +672,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude"
             if state and state.tray_detector_ready else
             "Arm Tray Teach or start Tray Detect with exactly one provider")
-        if state and not state.holding_item:
+        if state and state.manual_placement_enabled and state.tray_detector_ready:
+            self.place_item.setToolTip(
+                "GUI debug placement: run the real placement sequence with or without an item")
+        if state and not state.manual_placement_enabled and not state.holding_item:
             self.place_item.setToolTip(
                 "Pick an item successfully first; Place Item requires the HOLDING state")
         if state and not state.tray_position_recorded:

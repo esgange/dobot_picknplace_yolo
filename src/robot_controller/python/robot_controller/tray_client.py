@@ -92,8 +92,15 @@ class TrayClient:
             raise FeedbackFailure("Placement requires exactly one armed tray_teach or "
                                   "headless tray_detect provider in the root namespace")
 
-    def request(self, config, x_mm, y_mm):
+    def request(self, config, x_mm, y_mm, *, require_held_item=True):
         node = self.node
+
+        def check_item():
+            if require_held_item:
+                node._preflight_item_state(True)
+            else:
+                node.monitor.snapshot(require_enabled=True)
+
         config.validate_sources(node.root)
         # ROS services cannot cancel server execution. Drain an interrupted
         # request before asking for another observation, discarding its old result.
@@ -101,9 +108,10 @@ class TrayClient:
             retiring, deadline = self.pending
             while not retiring.done():
                 node.wait_for_resume()
-                node._preflight_item_state(True)
+                check_item()
                 if time.monotonic() > deadline:
-                    raise FeedbackFailure("Previous tray request has not finished; retry after it retires")
+                    raise FeedbackFailure(
+                        "Previous tray request has not finished; retry after it retires")
                 node.wait_control(.02)
             self.pending = None
         self.check_owner()
@@ -111,8 +119,8 @@ class TrayClient:
             raise FeedbackFailure("Tray pose service is unavailable; arm Tray Teach first")
         sampling = sampling_from_item(config.profile, x_mm, y_mm)
         request = GetTrayPose.Request(profile_sha256=config.tray.sha256,
-                                     sample_placement_depth=True,
-                                     placement=PlacementDepthRequest(**sampling))
+                                      sample_placement_depth=True,
+                                      placement=PlacementDepthRequest(**sampling))
         start = node.get_clock().now().nanoseconds
         deadline = time.monotonic() + sampling["request_timeout_sec"] + 1
         node.operation_progress("TRAY_DEPTH", "Requesting fresh tray pose and placement depth")
@@ -121,11 +129,12 @@ class TrayClient:
         try:
             while not future.done():
                 node.wait_for_resume()
-                node._preflight_item_state(True)
+                check_item()
                 if time.monotonic() > deadline:
                     raise FeedbackFailure("Tray depth request timed out; no automatic retry")
                 node.wait_control(.02)
             node.wait_for_resume()
+            check_item()
             config.validate_sources(node.root)
             self.check_owner()
             point, evidence = validate_result(

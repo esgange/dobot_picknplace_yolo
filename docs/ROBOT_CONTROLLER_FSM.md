@@ -15,11 +15,13 @@ preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
 
-Tray placement review: **2026-09-29**, diary rules **158–161**. Controller configuration
+Tray placement review: **2026-09-29**, diary rules **158–162**. Controller configuration
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
 retained recovery and never enters the bin put-back routine.
+GUI-mode placement also permits an empty robot; headless placement retains its
+trusted held-item requirement.
 
 This describes the implemented `robot_controller` node. Diagrams use Mermaid;
 open a Mermaid-capable Markdown preview or view this file on GitHub to render
@@ -74,6 +76,7 @@ flowchart TD
     TRAY_POSITIONING -->|Unheld| READY
     TRAY_POSITIONING -->|Held| HOLDING
     HOLDING -->|Place: tray detector ready| PLACING
+    READY -->|GUI Place: tray detector ready| PLACING
     PLACING -->|Released and Home confirmed| READY
     STARTING -->|Unknown suction| HELD_UNKNOWN
     STARTING -->|Failed| FAULT
@@ -87,8 +90,9 @@ unheld UNCONFIGURED, INACTIVE or READY; invalid replacement preserves the old on
 
 The catalog permits a complete optional Tray Teach YAML/model pair. Controller
 configuration binds that pair, its camera calibration and optional recorded detect
-joints. Tray operations require those joints. Place additionally requires a trusted
-HELD item and an armed canonical `tray_teach` or headless `tray_detect` provider.
+joints. Tray operations require those joints. Place requires an armed canonical
+`tray_teach` or headless `tray_detect` provider. Headless Place additionally requires
+a trusted HELD item; normal GUI-mode Place permits READY or HOLDING without a Pick.
 Configuration hashes include Tray Teach and its camera; reload still requires Startup.
 
 New Pick and Place goals require a currently available pose service from exactly
@@ -97,8 +101,11 @@ one allowed root provider. Typed status exposes `item_detector_ready` and
 status, and action admission rechecks the service/owner before reserving work.
 Teaching disarm removes its service. Missing, unknown, namespaced or duplicate
 providers disable admission; neither check triggers detection nor arms a provider.
-Armed Tray Teach does not imply HOLDING: an empty robot at Tray Detect Position
-remains READY and cannot Place. Tooltips explain this prerequisite. Home and Tray
+Armed Tray Teach does not imply HOLDING. `manual_placement_enabled` reports the
+controller's non-headless mode: GUI debug placement accepts an empty READY robot
+and does not require suction during observation/approach. It still controls real
+hardware. A GUI client cannot override a headless controller's held-source guard.
+Tooltips explain the applicable prerequisites. Home and Tray
 Detect Position have no perception-readiness requirement. Keep request-time source
 and fresh-pose validation. Rebuild/restart status publishers and clients together.
 
@@ -115,7 +122,7 @@ later commands, including an unanswered best-effort StopMoveJog.
 | `UNCONFIGURED` | No active teach configuration; Configure loads it. |
 | `INACTIVE` | Configuration loaded; explicit Startup required. |
 | `STARTING` | Startup initialization in progress; READY, HELD_UNKNOWN or FAULT follows. |
-| `READY` | Available and unheld; can Pick, Home, Pause, reload or change global speed. |
+| `READY` | Available and unheld; can Pick, Home, Tray Detect Position, GUI-mode Place, Pause, reload or change global speed. |
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
 | `PLACING` | Observing tray/depth or queueing placement through Home. |
@@ -214,7 +221,7 @@ original destination until Home completes or next-candidate travel takes ownersh
 
 ```mermaid
 flowchart TD
-    Request["HOLDING: PlaceItem with positive X/Y and Rotation"] --> Observe["Queue direct MovL to saved Tray Detect joints; confirm idle + joints; no dwell"]
+    Request["PlaceItem: GUI READY/HOLDING or headless trusted HOLDING; positive X/Y and Rotation"] --> Observe["Queue direct MovL to saved Tray Detect joints; confirm idle + joints; no dwell"]
     Observe --> Depth["Request fresh matched tray pose and placement depth"]
     Depth -->|Invalid| Stop["Stop and report failure; preserve item"]
     Depth -->|Valid| Queue["Admit one ordered CP100 motion group through Home"]
@@ -223,7 +230,7 @@ flowchart TD
     Release --> Retract["MovLIO: pre-place; 50% fingers + vacuum neutral"]
     Retract --> Home["MovL: Cartesian Home; confirm idle, pose, neutral and DI1 LOW"]
     Home --> Ready["READY / SUCCESS"]
-    Queue -. "Monitor throughout" .-> Feedback["Require held suction until commanded OFF; observe OPEN/exhaust/DI12/DI1 release"]
+    Queue -. "Monitor throughout" .-> Feedback["Headless requires held suction until OFF; both modes verify outputs and OPEN/exhaust/DI12/DI1 release"]
     Feedback -->|Fault| Stop
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
     Stopped -->|Release not started| Retry["Continue reobserves"]
@@ -263,16 +270,20 @@ Service replies are ordered admission barriers, not physical waypoint waits.
 All motion inherits CP(100), which may round intermediate control points. There
 is no pick settling, release-pose stop or blocking DI12 wait between these moves.
 Continuously validate issued output transitions and retain feedback history across
-response waits. Require held suction until commanded OFF, then OPEN/exhaust with
-DI12 HIGH and DI1 LOW before relaxation. Mark PLACED and clear held context on
-confirmed release. Invalid/missing release evidence, opposing/uncommanded outputs
+response waits. Headless mode requires held suction until commanded OFF; GUI debug
+mode permits either initial item/suction state without inventing held context or
+enabling suction. Both require OPEN/exhaust with DI12 HIGH and DI1 LOW before
+relaxation. Mark PLACED only for an existing held candidate and clear held context
+on confirmed release. Invalid/missing release evidence, opposing/uncommanded outputs
 or renewed suction cause Stop. Final Home requires advancing idle feedback,
 Cartesian arrival, neutral outputs and DI1 LOW before READY/SUCCESS.
 
 Placement Pause stops in place; direct Stop requires Recover. Both retain output
 and release evidence without waiting for continuous exhaust to turn itself OFF.
-If release has not started and grip remains intact, Continue can reobserve. Once
-release starts, never descend/release again. Confirmed release permits neutralizing
+If release has not started and outputs remain unchanged, Continue can reobserve;
+headless mode also requires an intact grip. Retain the original placement mode
+across Pause/Continue. Startup/idle unknown-item and other action guards remain.
+Once release starts, never descend/release again. Confirmed release permits neutralizing
 outputs and an upward-only recovery to at least pre-place Z, followed by Home.
 Unconfirmed partial release blocks further motion. Return Item cannot substitute
 bin put-back during placement. Pick settling/retries and its return paths are
@@ -442,7 +453,7 @@ Names below are relative to `/robot_controller/`.
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; item detector ready; operation slot free |
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
-| `place_item` action | Started HOLDING with trusted HELD source; saved tray joints; tray detector ready; exact configuration ID; operation slot free |
+| `place_item` action | Started GUI READY/HOLDING, or headless HOLDING with trusted HELD source; saved tray joints; tray detector ready; exact configuration ID; operation slot free |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
 | `return_item` service | Started eligible managed state and trusted held source; no conflicting request |
@@ -515,7 +526,7 @@ Updating a message without changing state is allowed in every state.
 | `UNCONFIGURED` | `FAULT`, `INACTIVE`, `STOPPING` |
 | `INACTIVE` | `FAULT`, `STARTING`, `STOPPING`, `UNCONFIGURED` |
 | `STARTING` | `FAULT`, `HELD_UNKNOWN`, `READY`, `STOPPING` |
-| `READY` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `INACTIVE`, `PAUSED`, `PAUSING`, `PICKING`, `RECOVERING`, `STOPPING`, `TRAY_POSITIONING` |
+| `READY` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `INACTIVE`, `PAUSED`, `PAUSING`, `PICKING`, `PLACING`, `RECOVERING`, `STOPPING`, `TRAY_POSITIONING` |
 | `HOMING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
 | `PICKING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `RETURNING_ITEM`, `STOPPING` |
 | `HOLDING` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `PAUSED`, `PAUSING`, `PLACING`, `RECOVERING`, `STOPPING`, `TRAY_POSITIONING` |

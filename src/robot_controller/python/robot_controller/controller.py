@@ -360,6 +360,7 @@ class RobotController(Node):
         status.tray_position_recorded = tray is not None and tray.detect_joints is not None
         status.item_detector_ready = self._perception_ready("pick")
         status.tray_detector_ready = self._perception_ready("place")
+        status.manual_placement_enabled = not self.headless
         status.holding_item = self.holding_item
         status.operation_active = self.operation_lock.locked()
         status.operation, status.phase, status.waypoint = (
@@ -806,7 +807,8 @@ class RobotController(Node):
 
     def _reserve_goal(self, action, requested_id):
         config = self.configuration
-        allowed = (("HOLDING",) if action == "place" else
+        allowed = (("HOLDING",) if action == "place" and self.headless else
+                   ("READY", "HOLDING") if action == "place" else
                    ("READY", "HOLDING") if action in ("home", "tray_position") else ("READY",))
         if (not self.startup_complete or config is None or self.machine.state not in allowed
                 or requested_id != config.configuration_id):
@@ -816,7 +818,7 @@ class RobotController(Node):
         if action in ("tray_position", "place") and (
                 config.tray is None or config.tray.detect_joints is None):
             return GoalResponse.REJECT
-        if action == "place":
+        if action == "place" and self.headless:
             session = self.managed.session
             if (not self.holding_item or session is None or session.held_index is None
                     or session.attempts[session.held_index - 1].state != "HELD"):
@@ -849,7 +851,7 @@ class RobotController(Node):
         self.active_goal = goal
         request = goal.request
         self.placement = PlacementOperation(*validate_target(
-            request.x_mm, request.y_mm, request.rotation_deg))
+            request.x_mm, request.y_mm, request.rotation_deg), require_held_item=self.headless)
         result = PlaceItem.Result()
         try:
             while True:
@@ -860,7 +862,7 @@ class RobotController(Node):
                     self.placement.run(self)
                     with self.managed.lock:
                         self.wait_for_resume()
-                        self._transition("READY", "Item placed; Home completed")
+                        self._transition("READY", "Placement sequence and Home completed")
                         result.outcome, result.message = result.SUCCESS, self.machine.message
                         result.final_state = self.machine.state
                         goal.succeed()
@@ -1071,7 +1073,12 @@ class RobotController(Node):
         if tray is None or tray.detect_joints is None:
             raise CommandRejected("Load a Tray Teach with a recorded Tray Detect Pose")
         holding = self.holding_item
-        self._preflight_item_state(holding)
+        placement = self.placement
+        if placement is not None:
+            placement.preflight(self)
+        else:
+            self._preflight_item_state(holding)
+        check_item = placement is None or placement.require_held_item
         if self.hardware.home_already_reached(tray.detect_joints):
             self.operation_progress("TRAY_POSITION", "Already at recorded Tray Detect Pose")
             return
@@ -1083,8 +1090,9 @@ class RobotController(Node):
         self.operation_progress("TRAY_POSITION", "Queueing direct move to Tray Detect Pose",
                                 waypoint=targets[-1].name)
         self.hardware.move_batch(
-            targets, batch_name="tray_position", require_suction=holding,
-            forbid_suction=not holding, confirmed_start_pose=current)
+            targets, batch_name="tray_position", require_suction=check_item and holding,
+            forbid_suction=check_item and not holding, preserve_outputs=True,
+            confirmed_start_pose=current)
 
     def _execute_tray_position_action(self, goal):
         self.active_goal = goal

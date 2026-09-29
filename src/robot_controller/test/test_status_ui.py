@@ -19,13 +19,14 @@ def status(**fields):
         state="READY", message="Ready to pick", configured=True,
         configuration_id="test-configuration", startup_complete=True,
         feedback_fresh=True, robot_enabled=True, global_speed_percent=60,
-        item_detector_ready=True, tray_detector_ready=True)
+        item_detector_ready=True, tray_detector_ready=True, manual_placement_enabled=False)
     for name, value in fields.items():
         setattr(message, name, value)
     return message
 
 
-def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry():
+@pytest.mark.parametrize('headless', [False, True])
+def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(headless):
     feed = {
         "EnableStatus": 1, "RunningStatus": 1, "isRunQueuedCmd": 1,
         "ErrorStatus": 1, "CollisionStates": 1,
@@ -37,7 +38,7 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry():
         get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(
             to_msg=lambda: Time(sec=100))),
         machine=SimpleNamespace(state="HOLDING", message="Holding"),
-        configuration=None, holding_item=True, operation_lock=threading.Lock(),
+        configuration=None, headless=headless, holding_item=True, operation_lock=threading.Lock(),
         active_action="", phase="", waypoint="", candidate_index=1, candidate_total=2,
         managed=SimpleNamespace(session=None), global_speed_percent=60,
         startup_complete=True, expected_outputs={13: False, 14: False},
@@ -52,6 +53,7 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry():
     assert message.digital_input_bits == 1 << 11  # Raw DI1 LOW despite debounced holding.
     assert message.holding_item
     assert message.item_detector_ready and not message.tray_detector_ready
+    assert message.manual_placement_enabled is not headless
 
     def stale(**_kwargs):
         raise FeedbackFailure("stale")
@@ -261,6 +263,25 @@ def test_place_button_requires_tray_arming_and_a_held_item(window, ready):
     window._refresh()
     assert not window.place_item.isEnabled()
     assert 'Pick an item successfully first' in window.place_item.toolTip()
+
+
+@pytest.mark.parametrize('ready', [False, True])
+@pytest.mark.parametrize('holding', [False, True])
+def test_gui_debug_place_allows_empty_but_still_requires_tray_readiness(window, ready, holding):
+    window.node.status = status(
+        state='HOLDING' if holding else 'READY', holding_item=holding,
+        manual_placement_enabled=True, tray_position_recorded=True, tray_detector_ready=ready)
+    window._refresh()
+    assert window.place_item.isEnabled() is ready
+    if ready:
+        assert 'with or without an item' in window.place_item.toolTip()
+    window.node.status.operation_active = True
+    window._refresh()
+    assert not window.place_item.isEnabled()
+    window.node.status.operation_active = False
+    window.node.status.tray_position_recorded = False
+    window._refresh()
+    assert not window.place_item.isEnabled()
 
 
 @pytest.mark.parametrize('action', ['pick', 'place'])

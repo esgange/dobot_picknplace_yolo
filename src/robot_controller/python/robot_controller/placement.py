@@ -63,6 +63,7 @@ class PlacementOperation:
     x_mm: float
     y_mm: float
     rotation_deg: float
+    require_held_item: bool = True
     phase: str = "OBSERVE"
     plan: tuple = ()
     pending_outputs: dict = field(default_factory=dict)
@@ -77,6 +78,13 @@ class PlacementOperation:
     @property
     def needs_recovery(self):
         return self.release_issued and self.phase != "DONE"
+
+    def preflight(self, node):
+        if self.require_held_item:
+            node._preflight_item_state(True)
+        else:
+            # Attended placement still requires healthy, enabled robot feedback.
+            node.monitor.snapshot(require_enabled=True)
 
     def begin_queue(self, node):
         sample = node.monitor.snapshot(require_enabled=True)
@@ -134,7 +142,8 @@ class PlacementOperation:
                         self.phase = "RELEASED"
                         session = node.managed.session
                         if session is not None and session.held_index is not None:
-                            session.set_state(session.held_index, "PLACED")
+                            if session.attempts[session.held_index - 1].state == "HELD":
+                                session.set_state(session.held_index, "PLACED")
                             session.held_index = None
                         node.events.record(
                             "INFO", "item_placed", "Queued placement release confirmed")
@@ -142,7 +151,7 @@ class PlacementOperation:
                     raise HeldUnknown("DI1 HIGH after placement release")
                 node.expected_outputs.update({ch: bool(bits & (1 << (ch - 1)))
                                               for ch in (1, 2, 13, 14)})
-            if self.output_step < 3 and not sample.suction_present:
+            if self.require_held_item and self.output_step < 3 and not sample.suction_present:
                 raise HeldSuctionLost("Suction lost before queued placement release")
 
     def complete(self, node, sample):
@@ -163,17 +172,18 @@ class PlacementOperation:
         if self.phase in ("RELEASING", "RELEASED"):
             self.recover(node)
             return
-        # An interrupted queue with unchanged held outputs can be reobserved.
+        # An interrupted queue with unchanged outputs can be reobserved.
         self.observing = False
-        node._preflight_item_state(True)
+        self.preflight(node)
         node._execute_tray_position()
-        surface = node.trays.request(config, self.x_mm, self.y_mm)
+        surface = node.trays.request(config, self.x_mm, self.y_mm,
+                                     require_held_item=self.require_held_item)
         if not node.hardware.home_already_reached(config.tray.detect_joints):
             raise FeedbackFailure("Robot moved away from Tray Detect Pose during observation")
         self.plan = place_targets(config.tray.detect_matrix, surface,
                                   config.profile, self.rotation_deg, config.home_matrix)
         config.validate_sources(node.root)
-        node._preflight_item_state(True)
+        self.preflight(node)
         self.phase = "APPROACH"
         self.begin_queue(node)
         node.operation_progress("PLACE_QUEUE", "Queueing pre-place, release, retract and Home",
@@ -216,7 +226,7 @@ class PlacementOperation:
             raise FeedbackFailure("Placement outputs changed while paused")
         self.observe(node, sample)
         if self.phase in ("OBSERVE", "APPROACH"):
-            node._preflight_item_state(True)
+            self.preflight(node)
         elif self.phase in ("RELEASED", "DONE") and sample.feed["digital_input_bits"] & 1:
             raise HeldUnknown("Unexpected suction after confirmed placement release")
 

@@ -133,7 +133,7 @@ def operation_node():
     detect = pose_matrix([300, 200, 800, 180, 0, 0])
     node = SimpleNamespace(configuration=SimpleNamespace(
         profile=settings(), home_matrix=detect.copy(), tray=SimpleNamespace(detect_matrix=detect, detect_joints=(0.,) * 6),
-        validate_sources=Mock()), root=None, holding_item=True, expected_outputs={},
+        validate_sources=Mock()), root=None, headless=True, holding_item=True, expected_outputs={},
         events=Mock(), operation_progress=Mock(), wait_for_resume=Mock(),
         _preflight_item_state=Mock(), _execute_tray_position=Mock(),
         raise_if_cancelled=Mock(), cancel_requested=lambda: False,
@@ -333,7 +333,8 @@ def test_controller_recovery_finishes_placement_without_bin_putback_or_next_pick
     node.managed.recover_item_and_continue.assert_not_called()
 
 
-def test_paused_tray_request_retires_before_a_new_request_and_ignores_old_result():
+@pytest.mark.parametrize('require_held_item', [True, False])
+def test_paused_tray_request_retires_before_a_new_request_and_ignores_old_result(require_held_item):
     result, config, sampling = response_fixture()
     config.validate_sources = Mock()
     first, second = Future(), Future()
@@ -344,17 +345,24 @@ def test_paused_tray_request_retires_before_a_new_request_and_ignores_old_result
     node = SimpleNamespace(root=None, create_client=lambda *_: client,
         _service_providers=lambda _: [("tray_teach", "/")], events=Mock(),
         get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=next(times))),
-        operation_progress=Mock(), _preflight_item_state=Mock(),
+        operation_progress=Mock(), _preflight_item_state=Mock(), monitor=Mock(),
         wait_for_resume=Mock(side_effect=ManagedInterruption("Pause")),
         wait_control=lambda _: first.set_result(GetTrayPose.Response(success=False)))
     observer = TrayClient(node)
     with pytest.raises(ManagedInterruption):
-        observer.request(config, sampling["x_mm"], sampling["y_mm"])
+        observer.request(config, sampling["x_mm"], sampling["y_mm"],
+                         require_held_item=require_held_item)
     assert not first.done() and client.call_async.call_count == 1
     node.wait_for_resume = Mock()
-    point = observer.request(config, sampling["x_mm"], sampling["y_mm"])
+    point = observer.request(config, sampling["x_mm"], sampling["y_mm"],
+                             require_held_item=require_held_item)
     assert point == pytest.approx([.13, .24, .25])
     assert client.call_async.call_count == 2 and observer.pending is None
+    if require_held_item:
+        node._preflight_item_state.assert_called_with(True)
+    else:
+        node._preflight_item_state.assert_not_called()
+        node.monitor.snapshot.assert_called_with(require_enabled=True)
 
 
 def test_continue_after_completed_home_never_reobserves_or_releases_again():

@@ -507,6 +507,8 @@ class DobotTransport:
         pulse_pending = bool(return_progress is not None
                              and return_progress.pending_outputs.get(1) is True)
         placement = getattr(self.node, "placement", None)
+        if placement is not None and not placement.require_held_item:
+            allow_suction_loss = True
 
         def stationary(snapshot):
             nonlocal anchor, anchor_sequence, held_violation, last_snapshot, suction_lost
@@ -595,10 +597,12 @@ class DobotTransport:
     def _validate_held_snapshot(self, snapshot, *, known_holding=None,
                                 expected_outputs=None):
         returning = getattr(self, "return_recovery", False)
+        placement = getattr(self.node, "placement", None)
+        manual_placement = placement is not None and not placement.require_held_item
         holding = returning or (self.node.holding_item if known_holding is None else known_holding)
         outputs = (self.node.expected_outputs
                    if expected_outputs is None else expected_outputs)
-        if not holding:
+        if not holding and not manual_placement:
             return snapshot
         feed = snapshot.feed
         progress = retained_release_progress(self.node)
@@ -611,7 +615,7 @@ class DobotTransport:
                 raise HeldUnknown(
                     f"Known held-item output DO{channel}={int(actual)}; "
                     f"expected {int(active)}")
-        if not snapshot.suction_present and not returning:
+        if not snapshot.suction_present and not returning and not manual_placement:
             managed = getattr(self.node, "managed", None)
             if managed is not None:
                 managed.note_suction_loss(snapshot)

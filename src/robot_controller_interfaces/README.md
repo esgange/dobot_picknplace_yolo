@@ -33,8 +33,12 @@ observation joints. `PlaceItem` carries that ID plus positive `x_mm`, `y_mm` and
 with a local tool-Z offset. It is independent of detected item/tray axes.
 `Configure.tray_teach_file` is optional for Home/Pick and required for tray actions.
 Status includes `tray_configured`, `tray_position_recorded`, `TRAY_POSITIONING` and
-`PLACING`. Place requires HOLDING with a trusted HELD candidate; confirmed release
-records PLACED. Placement Pause stops in place; Continue and Recover preserve
+`PLACING`. Headless Place requires HOLDING with a trusted HELD candidate.
+`manual_placement_enabled` is true only for a non-headless controller: attended
+Place may start from READY or HOLDING without a picked item, and does not require
+suction before release. It still executes real hardware commands and validates
+tray/depth, release I/O and final Home. Confirmed release records PLACED only when
+a held candidate exists. Placement Pause stops in place; Continue and Recover preserve
 release progress. Neither interface nor launch automatically starts motion.
 
 `ControllerStatus.item_detector_ready` and `tray_detector_ready` report availability
