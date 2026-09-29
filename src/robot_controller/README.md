@@ -58,8 +58,9 @@ available. Place Item needs a recorded Tray Detect Pose and its Tray Teach/Detec
 service. The normal GUI launch (`headless=false`) is attended debug mode: Place
 is available from idle READY or HOLDING, with or without an item or picked-item
 record. No suction-presence prerequisite applies during observation or approach.
-The sequence still commands real hardware and verifies release/neutral I/O.
-Headless mode retains HOLDING, trusted picked-item source and held-suction guards.
+The sequence still commands real hardware; final neutral I/O and DI1 are checked
+at Home. Headless mode retains HOLDING, trusted picked-item source and held-suction
+guards before the placement queue begins, including travel to Tray Detect Pose.
 The controller owns this policy; merely attaching a GUI to a headless controller
 does not relax it. Status reports `manual_placement_enabled`; tooltips explain it.
 
@@ -113,19 +114,26 @@ motion until the 50% upward trigger. All commands inherit CP(100); control point
 can blend. Admit each service in order, without waiting for intermediate arrival.
 Physically confirm only final Cartesian Home before reporting READY/SUCCESS.
 
-Feedback remains active throughout admission and travel. Validate only issued,
-ordered output transitions; retain their history even if movement finishes during
-a service response. Headless mode requires suction until its commanded OFF transition.
-GUI debug mode does not require an item/suction before release, including after
-Pause/Continue. Both modes retain fresh enabled feedback and output validation.
-Observe OPEN/exhaust, DI12 HIGH and DI1 LOW before relaxation; missing release
-evidence, unexpected outputs or renewed suction cause Stop. These are monitoring
-guards, not a software pause between descent and return. Final Home requires
-neutral outputs and DI1 LOW. Confirmed release records PLACED for an existing held
-candidate and clears holding; an empty test never creates a candidate record.
+Rule 170 removes intermediate release-confirmation gates in both modes. Send the
+entire approach → pre-pick-equivalent drop → approach → Home queue without waiting
+for OPEN/exhaust, DI12 or DI1 transitions. Missing/late release evidence, suction
+changes and gaps in output history do not interrupt this queue. Any observed
+coherent release feedback is retained as diagnostic/recovery evidence only.
+Keep command acceptance/order, live enabled/error/collision/freshness checks,
+opposing-output protection, motion watchdogs and direct Stop/Pause. These are
+hardware/transport checks, not intermediate arrival or release confirmations.
+
+Only at physically confirmed idle Home, require neutral DO1/DO2/DO13/DO14 and
+DI1 LOW before READY/SUCCESS; DI12 need not be HIGH. A bad final grip reports a
+specific Home-reached fault without trying to release again. Successful Home
+completion records PLACED for an existing held candidate and clears holding;
+the placement_home_completed event separately records release_feedback_observed.
+PLACED now describes the completed queue and clear final grip, not proof that
+the item was physically deposited on the tray. An empty test creates no candidate.
 
 Placement Pause stops in place and preserves outputs. Continue reobserves when
-no release output changed. Once release starts, never repeat descent or release.
+the release command has not been issued. Once issued, never repeat descent or
+release, even when its feedback was missed.
 After confirmed release, Continue neutralizes outputs, retracts upward
 from actual position to at least pre-place height if needed, and returns Home.
 An interrupted partial release with insufficient confirmation remains blocked;

@@ -818,6 +818,22 @@ guards. No new setting, teach-file migration, item-pick change or extra waypoint
 This supersedes rules 158/159's lower release height only. Validate geometry and
 real transport encoding with synthetic feedback; do not command physical hardware.
 
+Rule 170 removes intermediate gripper/suction release-confirmation gates from the
+normal tray placement queue in both modes. After valid tray/depth observation,
+queue approach → pre-pick-equivalent drop → approach → Home with the existing
+80% OPEN/exhaust and 50% neutral commands. Missing/late DI12/DI1 evidence, suction
+changes and output-history gaps cannot interrupt that queue. Retain any observed
+coherent release as diagnostic/recovery evidence, without requiring it. Keep
+ordered accepted service replies, fresh enabled/fault-free robot feedback, opposing
+output protection, motion watchdogs and direct Stop/Pause. Check physical final
+Home before reconciling neutral outputs and DI1 LOW; a bad final grip fails there.
+Only successful Home completion marks an existing HELD source PLACED; this means
+queue completion, not verified physical deposition. Log release_feedback_observed.
+Before queue start, retain source/depth and headless held-item checks. Once release
+is issued, Pause/Continue cannot reobserve/repeat it; unconfirmed interruption
+requires explicit cancel-and-Home Recover. No changes to Pick or teach artifacts.
+This supersedes rules 159/162's intermediate release gates and early PLACED state.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

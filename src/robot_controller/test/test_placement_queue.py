@@ -1,5 +1,6 @@
 """Placement exercises the real transport and feedback; no ROS/hardware calls."""
 
+from collections import deque
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -8,7 +9,7 @@ import pytest
 from rclpy.task import Future
 
 from robot_controller.controller import RobotController
-from robot_controller.errors import FeedbackFailure, HeldSuctionLost, OperationCanceled
+from robot_controller.errors import FeedbackFailure, OperationCanceled
 from robot_controller.hardware import DobotTransport
 from robot_controller.kinematics import pose_values
 from robot_controller.motion import Target
@@ -54,15 +55,17 @@ class QueueRig:
             dict(outputs=0, inputs=OPEN, home=True),
         ]
 
-    def emit(self, *, outputs, inputs, home=False, running=1):
+    def emit(self, *, outputs, inputs, home=False, running=1, **feedback):
         self.timer += 1
         self.clock += .01
         matrix = (self.node.configuration.home_matrix if home
                   else self.node.configuration.tray.detect_matrix)
-        self.monitor.update_feed(feed(
+        fields = dict(
             controller_timer=self.timer, digital_outputs=outputs, digital_input_bits=inputs,
             currentCommandId=4 if home else 2, RunningStatus=0 if home else running,
-            isRunQueuedCmd=0 if home else running, tool_vector_actual=pose_values(matrix)))
+            isRunQueuedCmd=0 if home else running, tool_vector_actual=pose_values(matrix))
+        fields.update(feedback)
+        self.monitor.update_feed(feed(**fields))
         self.order.append('feedback')
         return self.monitor.snapshot(require_enabled=True)
 
@@ -120,35 +123,94 @@ def test_real_transport_queues_four_moves_with_exact_percentages_and_no_settling
 
 
 @pytest.mark.parametrize('inputs', [0, OPEN | 1])
-def test_missing_open_or_released_suction_fails_without_separate_release_commands(inputs):
-    rig = QueueRig()
+@pytest.mark.parametrize('during_reply', [False, True])
+def test_missing_open_or_released_suction_does_not_block_home(inputs, during_reply):
+    rig = QueueRig(during_reply=during_reply)
     rig.script[1]['inputs'] = inputs
-    with pytest.raises(FeedbackFailure, match='relaxed before'):
-        rig.run()
+    rig.run()
     assert all(name != 'DO' for name, _ in rig.requests)
-    assert rig.node.placement.needs_recovery
-    assert rig.node.managed.session.held_index == 1
+    assert rig.node.placement.phase == 'DONE'
+    assert not rig.node.placement.release_confirmed
+    assert rig.node.managed.session.held_index is None
+    assert rig.node.managed.session.attempts[0].state == 'PLACED'
+    finished = [c for c in rig.node.events.record.call_args_list
+                if c.args[1] == 'placement_home_completed']
+    assert finished[-1].kwargs['release_feedback_observed'] is False
 
 
-def test_skipped_exhaust_evidence_cannot_report_a_success():
+def test_skipped_exhaust_evidence_does_not_block_home():
     rig = QueueRig()
     rig.script.pop(1)
-    with pytest.raises(FeedbackFailure, match='relaxed before'):
+    rig.run()
+    assert rig.node.placement.phase == 'DONE'
+    assert not rig.node.placement.release_confirmed
+
+
+def test_expired_output_history_during_admission_does_not_block_home():
+    rig = QueueRig(during_reply=True)
+    rig.monitor._outputs = deque(maxlen=1)
+    rig.run()
+    assert rig.node.placement.phase == 'DONE'
+    assert not rig.node.placement.release_confirmed
+
+
+@pytest.mark.parametrize('fault', [
+    {'ErrorStatus': 1}, {'CollisionStates': 1}, {'EnableStatus': 0},
+])
+def test_robot_faults_still_interrupt_placement(fault):
+    rig = QueueRig()
+    rig.script[1].update(fault)
+    with pytest.raises(FeedbackFailure):
         rig.run()
+    assert rig.node.placement.phase != 'DONE'
+    assert rig.node.managed.session.attempts[0].state == 'HELD'
 
 
 def test_opposing_outputs_fail_during_queue():
     rig = QueueRig()
     rig.script[1]['outputs'] = HELD | RELEASE
-    with pytest.raises(FeedbackFailure, match='Unexpected placement output'):
+    with pytest.raises(FeedbackFailure, match='Invalid vacuum state'):
         rig.run()
 
 
-def test_drop_before_release_is_not_treated_as_intentional_release():
+def test_suction_loss_during_queue_does_not_block_home_or_claim_release_evidence():
     rig = QueueRig()
-    rig.script = [dict(outputs=HELD, inputs=0)] * 8
-    with pytest.raises(HeldSuctionLost, match='before queued placement release'):
+    rig.script = ([dict(outputs=HELD, inputs=0)] * 8
+                  + [dict(outputs=0, inputs=0, home=True)])
+    rig.run()
+    assert rig.node.placement.phase == 'DONE'
+    assert not rig.node.placement.release_confirmed
+
+
+def test_renewed_suction_after_release_is_checked_only_at_home():
+    rig = QueueRig()
+    rig.script[2]['inputs'] = 1
+    rig.run()
+    assert rig.node.placement.phase == 'DONE'
+
+
+@pytest.mark.parametrize('outputs,inputs', [(0, 1), (RELEASE, 0), (HELD, 1)])
+def test_bad_final_grip_is_reported_at_home_without_an_intermediate_stop(outputs, inputs):
+    rig = QueueRig()
+    rig.script[-1].update(outputs=outputs, inputs=inputs)
+    with pytest.raises(FeedbackFailure, match='Home reached; final placement'):
         rig.run()
+    assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
+    assert rig.monitor.snapshot().feed['tool_vector_actual'] == pose_values(
+        rig.node.configuration.home_matrix)
+    assert rig.node.managed.session.attempts[0].state == 'HELD'
+
+
+@pytest.mark.parametrize('feedback', [
+    {'tool_vector_actual': [0.] * 6}, {'isRunQueuedCmd': 1, 'RunningStatus': 1},
+    {'currentCommandId': 3},
+])
+def test_placement_still_requires_physical_idle_home_and_terminal_command(feedback):
+    rig = QueueRig()
+    rig.script.insert(-1, dict(outputs=0, inputs=0, home=True, **feedback))
+    rig.run()
+    assert next(rig.steps, None) is None  # Must consume the later genuine Home sample.
+    assert rig.node.placement.phase == 'DONE'
 
 
 def test_stop_during_admission_prevents_later_requests_and_retains_context():
@@ -162,6 +224,11 @@ def test_stop_during_admission_prevents_later_requests_and_retains_context():
         rig.run()
     assert [name for name, _ in rig.requests if name != 'Stop'] == ['MovL', 'MovLIO']
     assert rig.node.placement.needs_recovery
+    assert rig.node.placement.phase == 'RELEASING'
+    # An issued-but-unobserved release is never automatically repeated.
+    with pytest.raises(FeedbackFailure, match='release unconfirmed'):
+        rig.node.placement.run(rig.node)
+    assert [name for name, _ in rig.requests if name != 'Stop'] == ['MovL', 'MovLIO']
 
 
 def test_idle_joint_arrival_completes_on_first_new_sample_without_pose_service():
@@ -226,14 +293,14 @@ def test_ambiguous_partial_release_blocks_recovery_without_releasing_or_descendi
     assert not rig.requests
 
 
-def test_release_requires_coherent_open_exhaust_and_sensor_evidence():
+def test_incoherent_release_evidence_is_diagnostic_only_until_home():
     rig = QueueRig()
     rig.script = [dict(outputs=1 << 13, inputs=OPEN),
                   dict(outputs=RELEASE, inputs=OPEN | 1),
-                  dict(outputs=0, inputs=OPEN)]
-    with pytest.raises(FeedbackFailure, match='relaxed before'):
-        rig.run()
-    assert rig.node.managed.session.attempts[0].state == 'HELD'
+                  dict(outputs=0, inputs=OPEN),
+                  dict(outputs=0, inputs=0, home=True)]
+    rig.run()
+    assert rig.node.managed.session.attempts[0].state == 'PLACED'
     assert not rig.node.placement.release_confirmed
 
 

@@ -15,8 +15,8 @@ preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
 
-Tray placement review: **2026-09-29**, baseline **`8ac8617`** plus diary rule **169**
-and existing rules **158–163**. Controller configuration
+Tray placement review: **2026-09-29**, baseline **`df294fe`** plus diary rule **170**
+and existing rules **158–163/169**. Controller configuration
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
@@ -231,7 +231,7 @@ flowchart TD
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
     HELD -->|Put-back release confirmed| RETURNED
-    HELD -->|Tray release confirmed| PLACED
+    HELD -->|Tray queue completed at Home with neutral outputs and DI1 LOW| PLACED
     PENDING -->|Explicit Recover| CANCELED
     ACTIVE -->|Explicit Recover| CANCELED
     INTERRUPTED -->|Explicit Recover| CANCELED
@@ -244,6 +244,8 @@ Eligible candidates are PENDING or INTERRUPTED in saved order. Thus Continue
 retries the interrupted candidate before later candidates. The ledger and held
 source exist only in memory; process restart does not reconstruct them.
 RETURNED confirms release feedback; retreat/Home may still be in progress.
+PLACED records the completed tray queue and clear final grip at Home, without
+requiring intermediate release evidence or proving the item landed on the tray.
 Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
 original destination until Home completes, next-candidate travel takes ownership,
 or explicit Recover cancels it. A trusted held source can remain HELD at Home;
@@ -262,10 +264,10 @@ flowchart TD
     Release --> Retract["MovLIO: pre-place; 50% fingers + vacuum neutral"]
     Retract --> Home["MovL: Cartesian Home; confirm idle, pose, neutral and DI1 LOW"]
     Home --> Ready["READY / SUCCESS"]
-    Queue -. "Monitor throughout" .-> Feedback["Headless requires held suction until OFF; both modes verify outputs and OPEN/exhaust/DI12/DI1 release"]
+    Queue -. "Monitor throughout" .-> Feedback["Command acceptance, fresh enabled feedback, robot faults, opposing outputs and motion watchdogs; no release-confirmation gate"]
     Feedback -->|Fault| Stop
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
-    Stopped -->|Release not started| Retry["Continue reobserves"]
+    Stopped -->|Release command not issued| Retry["Continue reobserves"]
     Retry --> Observe
     Stopped -->|Release confirmed| Recover["Continue: neutralize, upward retreat, Home; never release again"]
     Stopped -->|Partial release unconfirmed| Block["Continue blocked; no repeated descent/release"]
@@ -305,21 +307,27 @@ lasts from descent's 80% trigger until ascent's 50% trigger, not a 50 ms pulse.
 Service replies are ordered admission barriers, not physical waypoint waits.
 All motion inherits CP(100), which may round intermediate control points. There
 is no pick settling, release-pose stop or blocking DI12 wait between these moves.
-Continuously validate issued output transitions and retain feedback history across
-response waits. Headless mode requires held suction until commanded OFF; GUI debug
-mode permits either initial item/suction state without inventing held context or
-enabling suction. Both require OPEN/exhaust with DI12 HIGH and DI1 LOW before
-relaxation. Mark PLACED only for an existing held candidate and clear held context
-on confirmed release. Invalid/missing release evidence, opposing/uncommanded outputs
-or renewed suction cause Stop. Final Home requires advancing idle feedback,
-Cartesian arrival, neutral outputs and DI1 LOW before READY/SUCCESS.
+There is no intermediate OPEN/exhaust/DI12/DI1 confirmation gate in either mode.
+Missing/late release feedback, suction changes and bounded-history gaps do not
+stop the queue. Retain any coherent release evidence for diagnostics and explicit
+interruption recovery only. Headless still requires a trusted held item before
+queue start; GUI mode accepts either initial item state. Preserve ordered command
+acceptance, enabled/fresh/fault-free robot feedback, opposing-output protection,
+motion watchdogs and direct Stop/Pause throughout.
+
+Only after advancing idle feedback, terminal execution and Cartesian Home arrival,
+check neutral outputs and DI1 LOW before READY/SUCCESS. Missing final grip state
+reports a Home-reached fault; DI12 and prior release evidence are not required.
+Record PLACED for an existing HELD candidate only at successful Home completion,
+clear held context and log release_feedback_observed separately. This confirms
+the queue completed, not physical item deposition. No candidate is invented.
 
 Placement Pause stops in place; direct Stop requires Recover. Both retain output
 and release evidence without waiting for continuous exhaust to turn itself OFF.
-If release has not started and outputs remain unchanged, Continue can reobserve;
+If the release command was not issued, Continue can reobserve;
 headless mode also requires an intact grip. Retain the original placement mode
 across Pause/Continue. Startup/idle unknown-item and other action guards remain.
-Once release starts, never descend/release again. Confirmed release permits neutralizing
+Once release is issued, never descend/release again. Observed release permits neutralizing
 outputs and an upward-only recovery to at least pre-place Z, followed by Home.
 Unconfirmed partial release blocks Continue. Explicit Recover cancels placement,
 validates fresh stopped I/O, preserves outputs and lifts to Home Z before Home;

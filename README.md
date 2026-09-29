@@ -57,8 +57,11 @@ height above that target. Tray Detect Position is one
 direct queued MovL to its recorded joints, without a preliminary safety-Z rise or
 transit. After fast idle/joint arrival and fresh detection, placement queues pre-place → release
 (OPEN/exhaust at 80%) → pre-place (neutral at 50%) → Cartesian Home in one group.
-It has no pick settling or extra retract-height waypoint; release feedback is
-monitored during the queue. Pick Item requires an available armed Item Teach or
+It has no pick settling, extra retract-height waypoint or intermediate release
+confirmation gate. Missing DI12/DI1 release evidence cannot stop the queue before
+Home; final Home arrival, neutral outputs and DI1 LOW are checked there. Stop,
+robot faults, command responses and feedback freshness remain supervised.
+Pick Item requires an available armed Item Teach or
 headless Item Detect provider; Place Item requires an available armed Tray Teach
 or headless Tray Detect provider. **GUI mode permits placement with or without an
 item**, from idle READY or HOLDING; no successful Pick is required. This is real

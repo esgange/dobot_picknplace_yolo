@@ -8,7 +8,7 @@ from rclpy.action import GoalResponse
 from robot_controller_interfaces.action import PlaceItem
 
 from robot_controller.controller import RobotController
-from robot_controller.errors import FeedbackFailure, OperationCanceled
+from robot_controller.errors import OperationCanceled
 from robot_controller.state_machine import ControllerStateMachine
 from test_feedback_v2 import joint_message
 from test_placement import operation_node
@@ -91,13 +91,13 @@ def test_manual_observation_move_has_no_item_presence_gate(held_context, inputs)
 
 
 @pytest.mark.parametrize('bad_inputs', [0, OPEN | 1])
-def test_manual_mode_still_requires_open_and_clear_release_feedback(bad_inputs):
+def test_manual_mode_runs_home_without_intermediate_release_confirmation(bad_inputs):
     rig = QueueRig()
     rig.node.placement.require_held_item = False
     rig.script[1]['inputs'] = bad_inputs
-    with pytest.raises(FeedbackFailure, match='relaxed before'):
-        rig.run()
-    assert rig.node.placement.needs_recovery
+    rig.run()
+    assert rig.node.placement.phase == 'DONE'
+    assert not rig.node.placement.release_confirmed
 
 
 def empty_node():

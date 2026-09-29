@@ -5,7 +5,7 @@ import math
 
 import numpy as np
 
-from .errors import FeedbackFailure, HeldUnknown, HeldSuctionLost
+from .errors import FeedbackFailure, HeldUnknown
 from .kinematics import pose_matrix
 from .motion import (Target, gripper_neutral_events, pose_reached, rigid_matrix,
                      vacuum_neutral_events, gripper_open_events, vacuum_exhaust_events)
@@ -74,8 +74,7 @@ class PlacementOperation:
     neutral_issued: bool = False
     release_confirmed: bool = False
     history_sequence: int = 0
-    output_step: int = 0
-    output_states: tuple = ()
+    initial_outputs: int = 0
     observing: bool = False
 
     @property
@@ -92,15 +91,8 @@ class PlacementOperation:
     def begin_queue(self, node):
         sample = node.monitor.snapshot(require_enabled=True)
         mask = (1 << 13) | (1 << 12) | 3
-        bits = sample.feed["digital_outputs"] & mask
-        states = [bits]
-        for event in self.plan[1].motion_io + self.plan[2].motion_io:
-            bit = 1 << (event.channel - 1)
-            bits = bits | bit if event.active else bits & ~bit
-            states.append(bits)
-        self.output_states = tuple(states)
+        self.initial_outputs = sample.feed["digital_outputs"] & mask
         self.history_sequence = sample.sequence
-        self.output_step = 0
         self.release_issued = self.neutral_issued = False
         self.release_confirmed = False
         self.observing = True
@@ -110,59 +102,57 @@ class PlacementOperation:
         # have executed. Never assume it is safe to repeat its release.
         if index == 1:
             self.release_issued = True
+            self.phase = "RELEASING"
         elif index == 2:
             self.neutral_issued = True
 
     def observe(self, node, sample):
+        """Record available release evidence; never gate the queue on DI1/DI12."""
         if not self.observing:
             return
         with node.managed.lock:
             mask = (1 << 13) | (1 << 12) | 3
-            maximum = 8 if self.neutral_issued else (4 if self.release_issued else 0)
+            # History is diagnostic only. A gap or unobserved release interval
+            # must not interrupt the admitted approach/drop/retract/Home queue.
             for sequence, _timer, outputs, inputs in node.monitor.output_history(
                     self.history_sequence):
                 if sequence > sample.sequence:
                     break
-                if sequence != self.history_sequence + 1:
-                    raise FeedbackFailure("Placement output history is incomplete")
                 bits = outputs & mask
-                matches = [i for i in range(self.output_step, maximum + 1)
-                           if self.output_states[i] == bits]
-                if not matches:
-                    raise FeedbackFailure("Unexpected placement output transition")
-                self.output_step = matches[0]
                 self.history_sequence = sequence
-                if bits != self.output_states[0]:
+                if self.release_issued and bits != self.initial_outputs:
                     node.holding_item = False
                     if not self.release_confirmed:
                         self.phase = "RELEASING"
-                if self.output_step > 4 and not self.release_confirmed:
-                    raise FeedbackFailure(
-                        "Placement relaxed before OPEN/exhaust/DI1 release confirmation")
-                if self.output_step == 4 and inputs & (1 << 11) and not inputs & 1:
+                if (self.release_issued and bits == ((1 << 13) | 1)
+                        and bits != self.initial_outputs
+                        and inputs & (1 << 11) and not inputs & 1):
                     if not self.release_confirmed:
                         self.release_confirmed = True
                         self.phase = "RELEASED"
-                        session = node.managed.session
-                        if session is not None and session.held_index is not None:
-                            if session.attempts[session.held_index - 1].state == "HELD":
-                                session.set_state(session.held_index, "PLACED")
-                            session.held_index = None
                         node.events.record(
-                            "INFO", "item_placed", "Queued placement release confirmed")
-                if self.release_confirmed and inputs & 1:
-                    raise HeldUnknown("DI1 HIGH after placement release")
+                            "INFO", "placement_release_observed", "Queued release feedback observed")
                 node.expected_outputs.update({ch: bool(bits & (1 << (ch - 1)))
                                               for ch in (1, 2, 13, 14)})
-            if self.require_held_item and self.output_step < 3 and not sample.suction_present:
-                raise HeldSuctionLost("Suction lost before queued placement release")
 
     def complete(self, node, sample):
+        # The transport calls this only after physical arrival at final Home.
+        # No intermediate release state or full-open sensor is a success gate.
         self.observe(node, sample)
-        if (not self.release_confirmed or sample.feed["digital_input_bits"] & 1
+        if (sample.feed["digital_input_bits"] & 1
                 or sample.feed["digital_outputs"] & ((1 << 13) | (1 << 12) | 3)):
             raise FeedbackFailure(
-                "Home reached without confirmed placement release and neutral outputs")
+                "Home reached; final placement outputs must be neutral and DI1 LOW")
+        node.holding_item = False
+        node.expected_outputs.update(dict.fromkeys((1, 2, 13, 14), False))
+        session = node.managed.session
+        if session is not None and session.held_index is not None:
+            if session.attempts[session.held_index - 1].state == "HELD":
+                session.set_state(session.held_index, "PLACED")
+            session.held_index = None
+        node.events.record(
+            "INFO", "placement_home_completed", "Placement queue completed at Home",
+            release_feedback_observed=self.release_confirmed)
         self.phase = "DONE"
         self.observing = False
 
@@ -215,7 +205,7 @@ class PlacementOperation:
         retreat.append(self.plan[3])
         node.hardware.move_batch(tuple(retreat), batch_name="place_recovery_home",
                                  forbid_suction=True, confirmed_start_pose=current)
-        self.phase = "DONE"
+        self.complete(node, node.monitor.snapshot(require_enabled=True))
 
     def check_paused(self, node, sample):
         if sample.feed["isRunQueuedCmd"] or sample.feed["RunningStatus"]:

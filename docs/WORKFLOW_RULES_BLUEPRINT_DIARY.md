@@ -7025,6 +7025,44 @@ Never use a floating “latest” version in an issue, script, or deployment not
   FSM diagrams were regenerated as HTML/PDF. No physical robot commands or live-node restarts, and no
   operator artifact changes. No offline-transfer or physical commissioning claim.
 
+### 2026-09-29 — Rule 170: run tray placement through Home without release gates
+
+- User explicitly requested the whole approach → item-pre-pick-equivalent drop →
+  approach → Home queue without intermediate confirmation after another placement
+  stopped on “relaxed before OPEN/exhaust/DI1 release confirmation.” Latest live
+  read-only audit found a stationary, enabled, fault-free robot with empty queue
+  while the application retained FAULT; all four motion commands were accepted.
+- Remove the placement observer's intermediate release, suction and strict
+  output-history gates. Optional coherent OPEN/exhaust/DI12 HIGH/DI1 LOW samples
+  remain diagnostic/recovery evidence; missing intervals, history gaps, early
+  suction loss or later HIGH cannot stop the normal queue. Preserve the same
+  geometry, rates, 80% release / 50% neutral events, ordered accepted requests,
+  CP(100), source/depth checks and no intermediate arrival waits.
+- Only after fresh idle Cartesian Home arrival and terminal execution evidence,
+  reconcile final neutral DO1/DO2/DO13/DO14 and DI1 LOW. No prior release proof or
+  DI12 HIGH is required. Bad final I/O reports “Home reached” before its fault
+  reason, without a release retry. Shared robot enabled/error/collision/freshness,
+  opposing-output and motion watchdog checks, direct Stop and Pause still apply.
+  Headless held-item checks remain before queue start, including observation travel.
+- Mark an existing HELD candidate PLACED only at successful Home completion;
+  separately log release_feedback_observed. PLACED describes the completed queue
+  and clear final grip, not verified physical deposition. Empty debug placement
+  creates no source. Once the release command is issued, an interrupted action
+  cannot reobserve/repeat release even when no transient evidence was captured;
+  optional observed release permits existing upward-only Continue, otherwise
+  explicit Recover cancels and lifts/Home with current outputs preserved.
+- Supersedes rules 159/162's intermediate release gates and early PLACED update.
+  Item Pick, automatic loss-return, explicit Recover motion and operator teach/
+  calibration artifacts remain unchanged. Update both READMEs and the FSM/exports.
+- Validation: all 553 controller tests pass with synthetic feedback, including
+  missing/late DI12 and DI1, skipped release samples, expired history during
+  responses, early/later suction changes, final-grip faults only at Home, actual
+  Home/idle/command-ID requirements, Stop during admission, uncertain-release
+  non-repetition, robot faults and existing Pick/recovery tests. Scoped lint and
+  diff checks pass. The robot_controller symlink build passes; all seven FSM
+  diagrams were regenerated to HTML/PDF. No physical commands, automatic live restarts or operator
+  artifact edits. No physical commissioning or offline-transfer claim.
+
 ### Future entry template
 
 ```text

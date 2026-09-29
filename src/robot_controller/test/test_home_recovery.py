@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from robot_controller.errors import FeedbackFailure, HeldSuctionLost, HeldUnknown
+from robot_controller.errors import FeedbackFailure, HeldSuctionLost, HeldUnknown, OperationCanceled
 from robot_controller.recovery import HomeRecovery
 from robot_controller.kinematics import pose_matrix
 from test_feedback_v2 import joint_message
@@ -26,15 +26,24 @@ def confirm_fresh_stop(rig, recovery, *, outputs=0, inputs=0):
 def test_expired_placement_history_does_not_trap_explicit_recovery_or_claim_placed():
     rig = QueueRig()
     rig.script[1]['inputs'] = 0  # Reproduce original missing full-open evidence.
-    with pytest.raises(FeedbackFailure, match='relaxed before'):
+    advance = rig.next_sample
+
+    def stop_after_neutral(*args, **kwargs):
+        result = advance(*args, **kwargs)
+        if not rig.monitor.snapshot().feed['digital_outputs']:
+            raise OperationCanceled('Operator Stop before Home')
+        return result
+
+    rig.monitor.wait_next = stop_after_neutral
+    with pytest.raises(OperationCanceled, match='Operator Stop'):
         rig.run()
     operation = rig.node.placement
     for _ in range(1002):
         rig.monitor.update_joints(joint_message())
         rig.monitor.update_status(SimpleNamespace(is_connected=True, is_enable=True))
         rig.emit(outputs=0, inputs=0, running=0)
-    with pytest.raises(FeedbackFailure, match='history is incomplete'):
-        operation.observe(rig.node, rig.monitor.snapshot(require_enabled=False))
+    operation.observe(rig.node, rig.monitor.snapshot(require_enabled=False))
+    assert operation.phase != 'DONE'  # Expired telemetry cannot prove arrival.
     sent = len(rig.requests)
     recovery = HomeRecovery.cancel_action(rig.node)
     confirm_fresh_stop(rig, recovery)

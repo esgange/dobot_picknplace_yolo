@@ -1229,7 +1229,9 @@ class DobotTransport:
                 if np.max(np.abs(vector - last_vector)) > 0.05:
                     last_progress, last_vector = now, vector
                 reached = self._target_reached(tail, snapshot)
-                outputs_ready = all(
+                # Placement runs through Home without release/I/O completion
+                # gates en route; complete() reconciles its final grip there.
+                outputs_ready = placement is not None or all(
                     bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
                     == active for channel, active in expected_outputs.items())
                 executed = (snapshot.feed["currentCommandId"] == terminal_command_id
