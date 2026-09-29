@@ -18,7 +18,8 @@ def status(**fields):
     message = ControllerStatus(
         state="READY", message="Ready to pick", configured=True,
         configuration_id="test-configuration", startup_complete=True,
-        feedback_fresh=True, robot_enabled=True, global_speed_percent=60)
+        feedback_fresh=True, robot_enabled=True, global_speed_percent=60,
+        item_detector_ready=True, tray_detector_ready=True)
     for name, value in fields.items():
         setattr(message, name, value)
     return message
@@ -40,6 +41,7 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry():
         active_action="", phase="", waypoint="", candidate_index=1, candidate_total=2,
         managed=SimpleNamespace(session=None), global_speed_percent=60,
         startup_complete=True, expected_outputs={13: False, 14: False},
+        _perception_ready=lambda action: action == "pick",
         monitor=SimpleNamespace(snapshot=lambda **_kwargs: sample))
     RobotController.publish_status(node)
     message = messages[-1]
@@ -49,6 +51,7 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry():
     assert message.digital_outputs == feed["digital_outputs"]
     assert message.digital_input_bits == 1 << 11  # Raw DI1 LOW despite debounced holding.
     assert message.holding_item
+    assert message.item_detector_ready and not message.tray_detector_ready
 
     def stale(**_kwargs):
         raise FeedbackFailure("stale")
@@ -230,3 +233,42 @@ def test_recovery_unknown_suction_refusal_displays_server_clearing_instructions(
                                        message=UNKNOWN_ITEM_GUIDANCE))
     window._refresh()
     assert prompts == [UNKNOWN_ITEM_GUIDANCE]
+
+
+@pytest.mark.parametrize('ready', [False, True])
+def test_pick_button_tracks_item_arming_independently_of_tray(window, ready):
+    window.node.status = status(item_detector_ready=ready, tray_detector_ready=False)
+    window._refresh()
+    assert window.hardware_pick.isEnabled() is ready
+    assert window.hardware_home.isEnabled()
+    if not ready:
+        assert 'Arm Item Teach' in window.hardware_pick.toolTip()
+    window.node.status.item_detector_ready = not ready
+    window._refresh()
+    assert window.hardware_pick.isEnabled() is not ready
+
+
+@pytest.mark.parametrize('ready', [False, True])
+def test_place_button_requires_tray_arming_and_a_held_item(window, ready):
+    window.node.status = status(state='HOLDING', holding_item=True,
+                                tray_position_recorded=True, tray_detector_ready=ready,
+                                item_detector_ready=False)
+    window._refresh()
+    assert window.place_item.isEnabled() is ready
+    assert window.tray_position.isEnabled()
+    window.node.status.holding_item = False
+    window.node.status.state = 'READY'
+    window._refresh()
+    assert not window.place_item.isEnabled()
+    assert 'Pick an item successfully first' in window.place_item.toolTip()
+
+
+@pytest.mark.parametrize('action', ['pick', 'place'])
+def test_gui_rechecks_provider_status_before_sending_goal(window, action, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, 'warning', lambda *_args: warnings.append(_args))
+    window.node.status = status(item_detector_ready=False, tray_detector_ready=False)
+    window.node.action_clients = {}  # Must return before accessing/sending any action.
+    window._action(action)
+    assert len(warnings) == 1 and warnings[0][1] == 'Detection unavailable'
+    assert window.pending_goal is None

@@ -285,6 +285,19 @@ class RobotController(Node):
                 "Pose service requires exactly one canonical root provider "
                 f"(/item_detect or /item_teach); got {providers}")
 
+    def _perception_ready(self, action):
+        """Read-only availability check; teaching advertises poses only while armed."""
+        client, check_owner = ((self.candidates.client, self.check_detector_owner)
+                               if action == "pick" else
+                               (self.trays.client, self.trays.check_owner))
+        try:
+            if not client.service_is_ready():
+                return False
+            check_owner()
+        except (FeedbackFailure, RuntimeError):
+            return False
+        return True
+
     # ---------- state/status ----------
 
     def _transition(self, state, message):
@@ -345,6 +358,8 @@ class RobotController(Node):
         tray = self.configuration.tray if self.configuration else None
         status.tray_configured = tray is not None
         status.tray_position_recorded = tray is not None and tray.detect_joints is not None
+        status.item_detector_ready = self._perception_ready("pick")
+        status.tray_detector_ready = self._perception_ready("place")
         status.holding_item = self.holding_item
         status.operation_active = self.operation_lock.locked()
         status.operation, status.phase, status.waypoint = (
@@ -806,6 +821,8 @@ class RobotController(Node):
             if (not self.holding_item or session is None or session.held_index is None
                     or session.attempts[session.held_index - 1].state != "HELD"):
                 return GoalResponse.REJECT
+        if action in ("pick", "place") and not self._perception_ready(action):
+            return GoalResponse.REJECT
         try:
             self._begin_operation(action)
         except CommandRejected:

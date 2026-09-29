@@ -286,6 +286,7 @@ def test_tray_depth_response_rejects_invalid_evidence(damage):
 
 def test_place_goal_requires_startup_matching_configuration_and_held_source():
     node = operation_node()
+    node._perception_ready = Mock(return_value=True)
     node.configuration.configuration_id = "bound"
     node._begin_operation = Mock()
     node.machine = ControllerStateMachine(initial="HOLDING")

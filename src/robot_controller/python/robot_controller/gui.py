@@ -420,7 +420,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _pause_or_stop(self):
         state = self.node.status
         current = state.state if state is not None else "UNREACHABLE"
-        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
+        pausable = current in (
+            "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
         if (self.pause_requested_locally or self.return_requested_locally
                 or "pause" in self.pending or "return_item" in self.pending
                 or current in ("PAUSING", "RETURNING_ITEM")):
@@ -496,11 +497,19 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if status is None or not status.configuration_id:
             QtWidgets.QMessageBox.warning(self, "Not configured", "Load teach files first")
             return
+        if ((name == "pick" and not status.item_detector_ready)
+                or (name == "place" and not status.tray_detector_ready)):
+            provider = "Item" if name == "pick" else "Tray"
+            QtWidgets.QMessageBox.warning(
+                self, "Detection unavailable",
+                f"Arm {provider} Teach or start {provider} Detect with exactly one provider.")
+            return
         client = self.node.action_clients[name]
         if not client.server_is_ready():
             QtWidgets.QMessageBox.warning(self, "Unavailable", "Action server unavailable")
             return
-        kind = {"home": GoHome, "pick": PickItem, "tray_position": GoTrayDetectPosition, "place": PlaceItem}
+        kind = {"home": GoHome, "pick": PickItem,
+                "tray_position": GoTrayDetectPosition, "place": PlaceItem}
         goal = kind[name].Goal()
         goal.configuration_id = status.configuration_id
         if name == "place":
@@ -621,7 +630,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.recover.setEnabled(
             reachable and current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN")
             and not active and "recover" not in self.pending)
-        pausable = current in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
+        pausable = current in (
+            "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
         if pause_pending or self.return_requested_locally or "return_item" in self.pending:
             self.stop.setText("STOP NOW")
         elif current == "PAUSED" and getattr(state, "can_return_item", False):
@@ -646,13 +656,26 @@ class ControllerWindow(QtWidgets.QMainWindow):
                                  and (service != "return_item" or service not in self.pending))
         self.hardware_home.setEnabled(reachable and current in ("READY", "HOLDING")
                                       and not active)
-        self.hardware_pick.setEnabled(reachable and current == "READY" and not active)
+        self.hardware_pick.setEnabled(
+            reachable and state.item_detector_ready and current == "READY" and not active)
         self.tray_position.setEnabled(
             reachable and state.tray_position_recorded
             and current in ("READY", "HOLDING") and not active)
         self.place_item.setEnabled(
             reachable and state.tray_position_recorded and state.holding_item
-            and current == "HOLDING" and not active)
+            and state.tray_detector_ready and current == "HOLDING" and not active)
+        self.hardware_pick.setToolTip(
+            "Request fresh item poses and pick an item" if state and state.item_detector_ready
+            else "Arm Item Teach or start Item Detect with exactly one provider")
+        self.place_item.setToolTip(
+            "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude"
+            if state and state.tray_detector_ready else
+            "Arm Tray Teach or start Tray Detect with exactly one provider")
+        if state and not state.holding_item:
+            self.place_item.setToolTip(
+                "Pick an item successfully first; Place Item requires the HOLDING state")
+        if state and not state.tray_position_recorded:
+            self.place_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
         for field in (self.place_x, self.place_y, self.place_rotation):
             field.setEnabled(not active)
         self.tray_position.setToolTip(

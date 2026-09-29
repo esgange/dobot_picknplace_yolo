@@ -49,6 +49,7 @@ def reservation(state, *, startup=True, holding=False, selection=True):
     node = SimpleNamespace(
         configuration=config, startup_complete=startup,
         machine=ControllerStateMachine(initial=state), holding_item=holding,
+        _perception_ready=lambda _action: True,
         _begin_operation=lambda action: calls.append(action))
     return node, calls
 

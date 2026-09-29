@@ -25,6 +25,26 @@ Z rise or elevated transit; the bin routes retain their existing clearance logic
 requests one fresh tray/depth observation from Armed Tray Teach or headless Tray
 Detect. Run exactly one provider. All hardware commands remain controller-owned.
 
+Pick Item is enabled only in idle READY with its Item Teach/Detect service
+available; Place Item additionally needs HOLDING, a trusted picked-item source,
+a recorded Tray Detect Pose, and its Tray Teach/Detect service. Arming Tray Teach
+makes detection available; it does not declare an item held. Merely moving to
+Tray Detect Position with an empty gripper leaves READY and Place disabled.
+Tooltips identify missing arming or held-item/tray-pose prerequisites.
+
+The controller reports `item_detector_ready` and `tray_detector_ready` in typed
+status at 5 Hz. It checks service availability and exactly one allowed provider:
+root Item Teach or Item Detect for Pick; root Tray Teach or Tray Detect for Place.
+Teaching disarm removes the service. Missing, foreign, namespaced or duplicate
+providers disable the corresponding button. The controller checks again at action
+admission, so stale GUI readiness cannot bypass it. These are read-only checks;
+no detector trigger, model inference or automatic arming occurs. Fresh request-time
+source/pose/depth validation still applies. Home and Tray Detect Position remain
+available under their usual guards even when detection is disarmed.
+
+Rebuild `robot_controller_interfaces` and `robot_controller`, then restart all
+controller/GUI clients together for these status fields.
+
 Enter positive **X (mm)** and **Y (mm)** from the detected tray origin along its
 inward short-X and long-Y axes, and **Rotation (−180° to +180°)**. At 0° the tool uses
 the recorded Tray Detect Pose attitude; the offset rotates about that tool's Z.

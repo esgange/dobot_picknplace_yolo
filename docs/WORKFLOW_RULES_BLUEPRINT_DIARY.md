@@ -6704,6 +6704,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   after rebuilding to use this route; no physical commissioning or offline
   transfer validation claimed.
 
+### 2026-09-29 — Rule 161: match Pick and Place perception readiness gates
+
+- Audit found neither operation button checked arming: Pick used idle READY;
+  Place added HOLDING and saved tray position. Read-only live status explained the
+  reported disabled Place despite Armed ON: READY, holding_item=false, no picked
+  candidate, valid recorded tray pose, no active operation and DI1 LOW. Moving to
+  Tray Detect Position alone does not supply the trusted HELD source required by
+  Place. Preserve that guard and explain it in the tooltip.
+- Publish item_detector_ready/tray_detector_ready in ControllerStatus. Require
+  the corresponding typed service available from exactly one canonical root
+  provider: Item Teach/Item Detect or Tray Teach/Tray Detect. Teaching arming
+  advertises the service and disarming removes it. Missing, unknown, namespaced,
+  duplicate providers and transient graph errors report unavailable without
+  probing inference, issuing robot commands or automatically arming anything.
+- Gate each GUI button and direct GUI send using the typed status flag; independently
+  recheck current readiness before controller action reservation. Keep the GUI a
+  controller-only client. Preserve all lifecycle, held-source, configuration,
+  fresh-response, Stop and motion rules. Home and Tray Detect Position do not
+  require an armed provider. New readiness checks do not alter an acquired Pick
+  candidate batch or the placement queue.
+- Validation: 468 controller software tests passed, including readiness for armed
+  teaching/headless providers, missing/ambiguous/foreign service owners, graph
+  failure, rejection before operation reservation, independent button updates,
+  the still-required held-item state, and click-time checks. Both interface and
+  controller symlink builds passed. Changed runtime/new readiness tests pass
+  flake8 and git diff --check. Update guides/FSM and regenerate HTML/PDF.
+- ControllerStatus changed: rebuild robot_controller_interfaces/robot_controller
+  and restart controller, GUI and other status clients together. No pose-service
+  interface or teach/calibration artifact change. Live diagnostics were read-only;
+  no physical robot command or live process restart. Preserve unrelated local
+  RViz/model/calibration/teach files. No upstream/offline-transfer change claimed.
+
 ### Future entry template
 
 ```text

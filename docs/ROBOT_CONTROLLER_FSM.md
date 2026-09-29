@@ -15,7 +15,7 @@ preserving physical pickup orientation. Require matching request/response pose
 conventions before planning. Lifecycle and motion sequencing are unchanged.
 
 
-Tray placement review: **2026-09-29**, diary rules **158–160**. Controller configuration
+Tray placement review: **2026-09-29**, diary rules **158–161**. Controller configuration
 now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
@@ -66,14 +66,14 @@ flowchart TD
     HOMING -->|Unheld| READY
     HOLDING -->|Home| HOMING
     HOMING -->|Held| HOLDING
-    READY -->|Pick| PICKING
+    READY -->|Pick: item detector ready| PICKING
     PICKING -->|Picked| HOLDING
     PICKING -->|No pick| READY
     READY -->|Tray Detect Position| TRAY_POSITIONING
     HOLDING -->|Tray Detect Position| TRAY_POSITIONING
     TRAY_POSITIONING -->|Unheld| READY
     TRAY_POSITIONING -->|Held| HOLDING
-    HOLDING -->|Place Item| PLACING
+    HOLDING -->|Place: tray detector ready| PLACING
     PLACING -->|Released and Home confirmed| READY
     STARTING -->|Unknown suction| HELD_UNKNOWN
     STARTING -->|Failed| FAULT
@@ -90,6 +90,17 @@ configuration binds that pair, its camera calibration and optional recorded dete
 joints. Tray operations require those joints. Place additionally requires a trusted
 HELD item and an armed canonical `tray_teach` or headless `tray_detect` provider.
 Configuration hashes include Tray Teach and its camera; reload still requires Startup.
+
+New Pick and Place goals require a currently available pose service from exactly
+one allowed root provider. Typed status exposes `item_detector_ready` and
+`tray_detector_ready`; buttons update from these flags, direct GUI sends recheck
+status, and action admission rechecks the service/owner before reserving work.
+Teaching disarm removes its service. Missing, unknown, namespaced or duplicate
+providers disable admission; neither check triggers detection nor arms a provider.
+Armed Tray Teach does not imply HOLDING: an empty robot at Tray Detect Position
+remains READY and cannot Place. Tooltips explain this prerequisite. Home and Tray
+Detect Position have no perception-readiness requirement. Keep request-time source
+and fresh-pose validation. Rebuild/restart status publishers and clients together.
 
 Startup order: validate ownership/feedback → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →
@@ -429,7 +440,9 @@ Names below are relative to `/robot_controller/`.
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; operation slot free |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
-| `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; operation slot free |
+| `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; item detector ready; operation slot free |
+| `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
+| `place_item` action | Started HOLDING with trusted HELD source; saved tray joints; tray detector ready; exact configuration ID; operation slot free |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
 | `return_item` service | Started eligible managed state and trusted held source; no conflicting request |

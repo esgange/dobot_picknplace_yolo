@@ -5,6 +5,9 @@ string configuration_id
 bool configured
 bool tray_configured
 bool tray_position_recorded
+# Exactly one canonical provider advertises the corresponding pose service.
+bool item_detector_ready
+bool tray_detector_ready
 bool holding_item
 bool operation_active
 string operation

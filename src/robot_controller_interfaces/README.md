@@ -36,3 +36,13 @@ Status includes `tray_configured`, `tray_position_recorded`, `TRAY_POSITIONING` 
 `PLACING`. Place requires HOLDING with a trusted HELD candidate; confirmed release
 records PLACED. Placement Pause stops in place; Continue and Recover preserve
 release progress. Neither interface nor launch automatically starts motion.
+
+`ControllerStatus.item_detector_ready` and `tray_detector_ready` report availability
+of the corresponding pose service from exactly one canonical root provider. They
+are refreshed at 5 Hz; unavailable, ambiguous or foreign providers report false.
+Item Teach/Tray Teach advertise while Armed; Item Detect/Tray Detect are the
+headless equivalents. These flags do not mean a pose has already been captured,
+that sources match, or that an item is held. The GUI combines them with lifecycle,
+held-item and tray-position guards; action admission independently rechecks current
+availability. Rebuild this package and Robot Controller and restart all status
+clients together; do not mix old/new ControllerStatus definitions.

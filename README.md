@@ -50,7 +50,11 @@ direct queued MovL to its recorded joints, without a preliminary safety-Z rise o
 transit. After fast idle/joint arrival and fresh detection, placement queues pre-place → release
 (OPEN/exhaust at 80%) → pre-place (neutral at 50%) → Cartesian Home in one group.
 It has no pick settling or extra retract-height waypoint; release feedback is
-monitored during the queue. See the
+monitored during the queue. Pick Item requires an available armed Item Teach or
+headless Item Detect provider; Place Item requires an available armed Tray Teach
+or headless Tray Detect provider **and a successfully picked, held item**. Reaching
+Tray Detect Position alone leaves an empty robot READY and does not enable Place.
+See the
 [placement workflow](src/robot_controller/README.md#tray-placement). Normal launch
 separates it into a headless controller,
 a TF-only preview process with no Dobot clients, and an API-only GUI. Headless

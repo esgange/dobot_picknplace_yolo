@@ -686,6 +686,21 @@ Already-arrived stationary joints skip the command. Do not change Pick/Home/bin
 motion or the four-command placement-through-Home queue.
 
 
+Rule 161 gates new Pick/Place requests on the corresponding canonical perception
+service being available from exactly one allowed root provider. Item Teach/Tray
+Teach advertise only while Armed; their headless Detect equivalents are also
+valid. Publish item_detector_ready/tray_detector_ready in ControllerStatus; GUI
+buttons and direct GUI sends use them, and the controller rechecks live readiness
+before reserving either action. Missing, foreign, namespaced, duplicate or
+unavailable providers fail closed without triggering inference or motion. Keep
+GUI controller-only; no direct detector clients, automatic arming or hidden
+inference. Preserve READY/unheld Pick and HOLDING/trusted-source/tray-pose Place
+guards; Armed alone never implies holding. Show the unmet prerequisite in button
+tooltips. Home and Tray Detect Position do not require perception availability.
+Rebuild robot_controller_interfaces/robot_controller and restart controller clients
+together after the status change. Existing pose validation and motion remain.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.
