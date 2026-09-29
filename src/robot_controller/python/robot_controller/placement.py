@@ -23,7 +23,7 @@ def validate_target(x_mm, y_mm, rotation_deg):
 
 
 def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
-    """Saved tool attitude plus local Z spin; base-Z standoff and vertical retract."""
+    """Saved tool attitude plus local Z spin; drop at the tray-relative pre-pick Z."""
     validate_target(1., 1., rotation_deg)
     matrix = rigid_matrix(detect_matrix, "Recorded Tray Detect Pose").copy()
     angle = math.radians(rotation_deg)
@@ -35,7 +35,10 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
     motion = settings["motion"]
     if any(not math.isfinite(v) or v < 0 for v in motion.values()):
         raise ValueError("Invalid taught placement heights")
-    release_z = surface[2] + motion["standoff_height"] / 1000
+    # Drop at the item pre-pick equivalent above the tray, retaining the taught
+    # approach/retract distance above that release target for timed motion I/O.
+    release_z = (surface[2] + motion["standoff_height"] / 1000
+                 + motion["prepick_height"] / 1000)
     pre_z = release_z + motion["prepick_height"] / 1000
     if pre_z <= release_z:
         raise ValueError("Placement requires positive prepick_height for timed release and retract")

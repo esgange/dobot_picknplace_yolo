@@ -6998,6 +6998,33 @@ Never use a floating “latest” version in an issue, script, or deployment not
   FSM diagrams were exported to HTML/PDF. No physical robot commands, live-node restarts, vendor changes or
   operator artifact edits. No physical commissioning/offline-transfer claim.
 
+### 2026-09-29 — Rule 169: tray drop uses the item pre-pick height
+
+- User confirmed tray release should use the equivalent of item pre-pick above
+  the detected tray surface. Set nominal drop base Z to sampled surface Z +
+  Item Teach standoff_height + prepick_height, using the existing millimetre fields.
+  This supersedes the lower release height in rules 158/159; no new field or
+  teach artifact migration is required.
+- Keep pre-place/retract one additional prepick_height above the drop target,
+  raising both ends by the same offset to preserve the positive approach/retract
+  distance used by timed I/O. For surface Z 250 mm, standoff 10 mm and prepick
+  50 mm, the drop is Z 310 mm and pre-place/retract Z 360 mm. The offsets remain
+  along base Z, independent of tray/tool attitude.
+- Preserve the four-command MovL → MovLIO → MovLIO → MovL queue through Home,
+  travel/approach/retract/travel rates, 80% OPEN/exhaust and 50% neutral, CP(100),
+  exact X/Y and detect-relative rotation, depth/source checks, release evidence,
+  Pause/Continue and explicit Recover. Release I/O still starts at 80% of descent
+  before the nominal drop target; this change does not introduce a stationary
+  release or an extra waypoint. Item Pick and bin clearance are unchanged.
+- Validation: ten targeted geometry/real-transport cases first reproduced the
+  old lower drop and then the full controller suite passed all 540 tests with
+  synthetic feedback. Coverage includes pre-pick equivalence across taught
+  offsets, tilted attitudes, requested rotations, unchanged X/Y and exact mm
+  command encoding while retaining the existing timed-I/O checks. Scoped lint
+  and diff checks pass. The robot_controller symlink build passes and all seven
+  FSM diagrams were regenerated as HTML/PDF. No physical robot commands or live-node restarts, and no
+  operator artifact changes. No offline-transfer or physical commissioning claim.
+
 ### Future entry template
 
 ```text

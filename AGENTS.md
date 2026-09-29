@@ -808,6 +808,16 @@ explicit placement/Return Item. Another Recover replans from a fresh Stop/pose.
 Active Pick automatic loss return and Pause/Continue remain separate and unchanged.
 No physical robot commands or live-node restart during software verification.
 
+Rule 169 raises tray placement's nominal drop target to the item pre-pick
+equivalent: sampled tray surface base Z + Item Teach standoff_height +
+prepick_height. Pre-place/retract remains one additional prepick_height above
+release, preserving positive vertical travel for queued 80% OPEN/exhaust and
+50% neutral events. Keep the same four-command queue through Home, base-Z offsets,
+requested X/Y, detect-relative rotation, rates, source/depth and release-feedback
+guards. No new setting, teach-file migration, item-pick change or extra waypoint.
+This supersedes rules 158/159's lower release height only. Validate geometry and
+real transport encoding with synthetic feedback; do not command physical hardware.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
