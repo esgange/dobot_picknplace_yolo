@@ -237,7 +237,7 @@ retreat, exit transit and Home. This applies to explicit return, paused drop,
 and automatic suction-loss return. Explicit Recover uses taught travel rates. The global SpeedFactor still scales
 these movements; returning an item does not change the slider setting.
 
-During an active Pick's held retract/Home, confirmed suction loss immediately
+During an active Pick's held lift/tray travel, confirmed suction loss immediately
 requests Stop and automatically starts put-back after stationary/empty-queue
 confirmation. The same Pick action stays active; no error popup or Recovery
 click is needed for this loss alone. It uses the saved source, taught pre-pick release,
@@ -292,13 +292,15 @@ Home is physically confirmed. The same fresh stationary pose is used both to
 plan the group and as its confirmed motion origin, without a duplicate origin
 acquisition. The first control point can be rounded, rotate or descend at
 current XY and is not collision-checked for an arbitrary starting pose. A
-successful held-item Pick return now uses the same single queued route as an
-exhausted miss: actual stopped pose through pre-pick, clearance, explicit exit
-`park_transit` and exact taught-joint Home. Always queue that exit, including
-when clearance is at or near Home Z. Only final Home is physically
-confirmed; suction and holding outputs remain supervised throughout. Pick runs
-Home, transforms platform-relative poses, applies schema-9 vertical/rotation geometry
-and timed gripper behavior, and returns Home after success or final exhaustion.
+successful Pick queues actual stopped pose → pre-pick lift → clearance lift →
+saved Tray Detect joints in one CP(100) group. It omits the Home-height exit
+transit and final Home, confirms only Tray Detect and finishes HOLDING there.
+Pick requires a loaded Tray Teach with recorded detect joints, but does not
+request tray detection or placement. Its initial Home check uses one fresh idle
+RobotStatus and all six `/joint_states` within ±1°: skip the entire Home queue
+immediately when matched, without an extra feedback tick, service query or dwell.
+Otherwise use the existing conditional rise and joint Home before detection.
+Missed retries, exhausted-batch Home and three-batch limits are unchanged.
 Finger states are OPEN (DO2 OFF then DO14 ON), CLOSE (DO14 OFF then DO2 ON),
 or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST
 (DO13 OFF then DO1 ON), or NEUTRAL (both OFF). Opposing outputs are never
@@ -338,7 +340,7 @@ of transit and SUCK at 20% of final descent. DI1 is eligible only after SUCK and
 is evaluated while the final pose, queue-idle state and commanded outputs remain
 coherent for the taught `pick_settling` time. This one profile-driven interval
 replaces the fixed 300 ms final-pick gate and has no later suction wait.
-Every pick and put-back queues an entry and an exit `park_transit`. On an
+Missed picks and put-back queue entry and exit `park_transit` targets. On an
 intermediate miss, one group rises through the old item's pre-pick and clearance
 at `v=100`, then queues the old item's exit transit followed by the next item's
 entry transit before descending through its clearance and pre-pick to final pick.
@@ -351,11 +353,11 @@ finger/vacuum NEUTRAL at the start of the second rise, OPEN at 50% of transfer,
 and SUCK at 20% of the new final descent. A final miss queues the same
 EXHAUST/NEUTRAL rise, explicit exit transit and exact joint Home in one
 ordered group. Clearance and transits remain blended control points; only exact
-joint Home is physically confirmed. A confirmed pickup returns through
-pre-pick, clearance, exit transit and exact joint Home in one group while holding
-SUCK. Held Continue also queues an exit transit before Home. Unheld Continue
-reuses the entry transit already confirmed by Pause. Motion services are admitted
-in order: each response must be `res=0`
+joint Home is physically confirmed. A confirmed pickup lifts through
+pre-pick and clearance, then moves directly to saved Tray Detect in one group
+while holding SUCK. Held Continue moves directly from its parked pose to Tray
+Detect. Unheld Continue reuses the entry transit already confirmed by Pause.
+Motion services are admitted in order: each response must be `res=0`
 before the next request is sent, with no extra inter-command delay. This
 prevents independent ROS services
 from reversing the dashboard queue, as observed in a failed Home return.
@@ -369,16 +371,17 @@ DI1 is ignored, and the next item is armed only after DO13 OFF and DI1 clear are
 observed before the new SUCK. A Stop or cancellation during group admission
 prevents any later group command from being sent.
 
-Pick's initial and return Home arrival means every actual joint is within ±1°
-of its taught value in one fresh enabled, fault-free, stationary, empty-queue
-feedback sample. The terminal Home target uses 5 mm Euclidean
+Pick's initial Home skip uses fresh idle RobotStatus and every actual joint within
+±1° of its taught value, with no added wait. Queued joint Home and Tray Detect
+arrivals additionally require post-acceptance advancing position feedback and
+empty-queue/execution evidence. Explicit Cartesian Home uses 5 mm Euclidean
 translation and 1° orientation with the same one-sample final feedback gates;
 its first alignment target is a CP-blended control point and is not separately
 confirmed. Home skips motion when its fresh stationary Cartesian pose
 is already within that tolerance; Pick's initial shared-Home step instead
 applies the joint Home gate. Queued return-to-Home paths after a pick attempt
 are not skipped. Each independently acquired motion-origin pose waits up to two
-seconds for stationary idle feedback with an advancing `controller_timer`, with
+seconds for stationary idle feedback with advancing joint/status streams, with
 no added dwell; stale or frozen feedback cannot supply a motion origin. The
 final-pick confirmation sample is reused for its immediate retract/return. The
 controller no longer calls the Dobot `GetPose` service or subscribes to the
@@ -453,9 +456,9 @@ speed 6% and retract speed 6%. Final pick uses taught approach rates. After a
 successful pickup, the first lift from final pick to pre-pick uses taught retract
 speed and acceleration. Without a picked item, that retract uses speed 100% and
 taught travel acceleration. The following clearance rise also uses speed 100%
-and travel acceleration in both cases. Subsequent normal pick exit-transit/Home
-moves use taught travel rates. Every put-back motion, including its release
-approach, empty retreat and Home, uses speed 100% with taught travel acceleration.
+and travel acceleration in both cases. Successful Pick travel to Tray Detect and
+missed-pick exit-transit/Home moves use taught travel rates. Every put-back motion,
+including its release approach, empty retreat and Home, uses speed 100% with taught travel acceleration.
 Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
@@ -469,10 +472,10 @@ clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.
 Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
 applied by Startup/Recover governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
-the terminal pick/stopped pose and exact taught-joint Home are physically
-confirmed. Successful and exhausted Pick returns queue their entire return
-through exact Home, with only exact Home physically confirmed. Successful
-returns preserve SUCK and grip behavior; exhausted returns use EXHAUST then
+the terminal pick/stopped pose and final saved-joint destination are physically
+confirmed. Successful Pick ends directly at Tray Detect after its two lifts;
+exhausted Pick keeps its exit transit and exact Home. Successful travel preserves
+SUCK and grip behavior; exhausted returns use EXHAUST then
 NEUTRAL. Deferred finger CLOSE occurs at 100% of the successful clearance rise.
 Motion requests wait for
 queue-admission responses in order but not intermediate physical arrival;

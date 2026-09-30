@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from robot_controller.errors import FeedbackFailure, OperationCanceled
+from robot_controller.controller import RobotController
 from robot_controller.hardware import DobotTransport
 from robot_controller.kinematics import Cr10Kinematics
 from robot_controller.motion import Target
@@ -54,6 +55,45 @@ class PositionRig:
             raise FeedbackFailure('No fresh joint/status evidence')
         self.publish(**step)
         return self.monitor.revision
+
+
+def test_pick_initial_home_skips_queue_immediately_from_idle_and_joint_topics():
+    rig = PositionRig()
+    # Deliberately contradictory TCP telemetry must not cause a Home command/FK query.
+    rig.monitor.update_feed(feed(tool_vector_actual=[999.] * 6))
+    joints = (.1, -.2, .3, -.4, .5, -.6)
+    rig.publish(joints=joints)
+    node = SimpleNamespace(
+        hardware=rig.transport, holding_item=False,
+        configuration=SimpleNamespace(home_joints=joints),
+        raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
+        _preflight_item_state=lambda _holding: None,
+        operation_progress=lambda *_args, **_kwargs: None)
+    assert RobotController._execute_home(node) == ()
+    assert rig.waits == 0
+    assert rig.monitor.sequence == 2  # No additional FeedInfo or service round trip.
+
+
+@pytest.mark.parametrize('joint', range(6))
+def test_home_skip_observes_each_joint_immediately_without_new_feed(joint):
+    rig = PositionRig()
+    joints = [0.] * 6
+    joints[joint] = np.deg2rad(1.01)
+    rig.publish(joints=joints)
+    assert not rig.transport.home_already_reached((0.,) * 6)
+    joints[joint] = np.deg2rad(.99)
+    rig.publish(joints=joints)
+    assert rig.transport.home_already_reached((0.,) * 6)
+    rig.publish(joint_update=False, idle=False)
+    assert not rig.transport.home_already_reached((0.,) * 6)
+    assert rig.waits == 0 and rig.monitor.sequence == 1
+
+
+def test_stale_feedback_cannot_skip_home():
+    rig = PositionRig()
+    rig.monitor._monotonic = lambda: time.monotonic() + 2.
+    with pytest.raises(FeedbackFailure, match='stale'):
+        rig.transport.home_already_reached((0.,) * 6)
 
 
 def test_origin_uses_joint_fk_and_next_idle_status_without_another_feed_tick():

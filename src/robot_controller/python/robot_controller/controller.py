@@ -38,7 +38,8 @@ from .hardware import (CARTESIAN_ORIENTATION_TOLERANCE_DEG,
                        CARTESIAN_POSITION_TOLERANCE_M, DobotTransport)
 from .kinematics import Cr10Kinematics, pose_values
 from .motion import (candidate_pose_in_base, cartesian_home_targets,
-                     home_targets, pick_targets, pose_reached, tray_detect_targets)
+                     home_targets, pick_targets, pick_tray_target, pose_reached,
+                     tray_detect_targets)
 from .managed_control import ManagedControl
 from .placement import PlacementOperation, TRAY_SPEED_PERCENT, validate_target
 from .recovery import HomeRecovery
@@ -795,7 +796,7 @@ class RobotController(Node):
             return GoalResponse.REJECT
         if action == "pick" and (config.selection is None or self.holding_item):
             return GoalResponse.REJECT
-        if action in ("tray_position", "place") and (
+        if action in ("pick", "tray_position", "place") and (
                 config.tray is None or config.tray.detect_joints is None):
             return GoalResponse.REJECT
         if action == "place" and self.headless:
@@ -1119,6 +1120,7 @@ class RobotController(Node):
         try:
             config = self.configuration
             config.validate_sources(self.root)
+            pick_tray_target(config.tray, config.profile)
             batch = None
             completed_batches = 0
             seen_batches = set()
@@ -1200,7 +1202,7 @@ class RobotController(Node):
                         if outcome["picked"]:
                             candidate = batch.candidates[outcome["candidate"] - 1]
                             result.selected_candidate_id = candidate.identifier
-                            self._transition("HOLDING", "Pick completed; item held at Home")
+                            self._transition("HOLDING", "Pick completed; item held at Tray Detect")
                             result.outcome = result.SUCCESS
                         else:
                             completed_batches += 1

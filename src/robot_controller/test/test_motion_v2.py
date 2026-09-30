@@ -13,7 +13,7 @@ from robot_controller.hardware import (
 from robot_controller.motion import (
     MotionIO, PickExecutor, Target, candidate_pose_in_base, cartesian_home_targets,
     gripper_close_events, gripper_neutral_events, gripper_open_events, home_targets,
-    pick_attitude, pick_targets, pose_reached, vacuum_exhaust_events,
+    pick_attitude, pick_targets, pick_tray_target, pose_reached, vacuum_exhaust_events,
     vacuum_neutral_events, vacuum_suck_events)
 
 
@@ -30,6 +30,12 @@ def item_pose(x=0.1, y=0.2, z=0.3, yaw_deg=0.0):
                      [np.sin(yaw), np.cos(yaw), 0.], [0., 0., 1.]]
     value[:2, 3] = [x, y]
     return value
+
+
+def tray_target(taught=None):
+    tray = SimpleNamespace(detect_matrix=item_pose(x=-.4, y=.5, z=.6, yaw_deg=30),
+                           detect_joints=(.2,) * 6)
+    return pick_tray_target(tray, taught or settings())
 
 
 def detected_item_pose(x=0.1, y=0.2, z=0.3, long_yaw_deg=0.0):
@@ -280,12 +286,13 @@ class FakeHardware:
         pytest.fail("Pick must reuse the final-pick terminal feedback pose")
 
 
-def test_success_closes_only_after_suction_and_returns_home_holding():
+def test_success_closes_only_after_suction_and_finishes_at_tray_holding():
     hardware = FakeHardware([True])
     plan = pick_targets(matrix(1.0), item_pose(), settings(), 1)
     returned = []
     outcome = PickExecutor(hardware, finish_home=True).run(
-        [plan], settings(), check=lambda _index: None,
+        [plan], settings(), tray_target=tray_target(),
+        check=lambda _index: None,
         return_home=lambda **kwargs: returned.append(kwargs))
     assert outcome == {"picked": True, "candidate": 1, "holding_item": True}
     forward = next(entry for entry in hardware.log if entry[0] == "move")
@@ -295,13 +302,14 @@ def test_success_closes_only_after_suction_and_returns_home_holding():
     assert forward[1] == ("p1_transit", "p1_prepick", "p1_pick")
     assert ("output", 14, False) in hardware.log
     assert ("output", 2, True) in hardware.log
-    assert returned[0]["batch_name"] == "candidate_1_pick_to_home"
-    assert returned[0]["require_suction"] is True
-    assert returned[0]["forbid_suction"] is False
-    assert returned[0]["queue_through_home"] is True
-    assert np.allclose(returned[0]["confirmed_start_pose"], hardware.pose)
-    assert [target.name for target in returned[0]["preceding"]] == [
-        "p1_retract", "p1_final", "p1_transit_exit"]
+    assert not returned
+    finish = [entry for entry in hardware.log if entry[0] == "move"][-1]
+    assert finish[2]["batch_name"] == "candidate_1_pick_to_tray"
+    assert finish[2]["require_suction"] is True
+    assert finish[2]["forbid_suction"] is False
+    assert np.allclose(finish[2]["confirmed_start_pose"], hardware.pose)
+    assert finish[1] == ("p1_retract", "p1_final", "tray_detect_position")
+    assert hardware.targets[-1][-1].joints_rad == tray_target().joints_rad
 
 
 def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
@@ -311,30 +319,31 @@ def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
     returned = []
 
     outcome = PickExecutor(hardware, finish_home=True).run(
-        [plan], taught, check=lambda _index: None,
+        [plan], taught, tray_target=tray_target(),
+        check=lambda _index: None,
         return_home=lambda **kwargs: returned.append(kwargs))
 
     assert outcome["picked"]
     assert not any(entry[0] == "output" and entry[1] in (2, 14)
                    for entry in hardware.log)
-    retract, clearance, exit_transit = returned[0]["preceding"]
+    assert not returned
+    retract, clearance, destination = hardware.targets[-1]
     assert not retract.motion_io
     assert clearance.motion_io == gripper_close_events(100)
-    assert not exit_transit.motion_io
+    assert not destination.motion_io
 
 
 @pytest.mark.parametrize("use_grip, close_on_pick", [
     (False, False), (True, True), (True, False)])
 @pytest.mark.parametrize("home_z, stopped_z", [
     (1.0, 0.3), (0.454, 0.3), (0.45, 0.3), (1.0, 0.5), (1.0, 1.1)])
-def test_success_matches_exhausted_route_but_uses_taught_held_retract_rates(
+def test_success_goes_directly_to_tray_while_exhaustion_keeps_home_route(
         use_grip, close_on_pick, home_z, stopped_z):
     taught = settings(use_grip=use_grip, close_on_pick=close_on_pick)
     taught["speed"].update(travel_percent=80, retract_percent=6)
     taught["acceleration"].update(travel_percent=70, retract_percent=40)
     home = matrix(home_z)
     plans = [pick_targets(home, item_pose(), taught, 1)]
-    returns = []
     for acquired in (False, True):
         hardware = FakeHardware([acquired])
         hardware.pose = item_pose(x=0.102, y=0.198, z=stopped_z, yaw_deg=1)
@@ -349,19 +358,22 @@ def test_success_matches_exhausted_route_but_uses_taught_held_retract_rates(
             operation_progress=lambda *_args, **_kwargs: None)
         node._home_plan = lambda origin: RobotController._home_plan(node, origin)
         outcome = PickExecutor(hardware, finish_home=True).run(
-            plans, taught, check=lambda _index: None,
+            plans, taught, tray_target=tray_target(taught),
+            check=lambda _index: None,
             return_home=lambda **kwargs: RobotController._execute_home(node, **kwargs))
 
         assert outcome["picked"] is acquired
         assert outcome["holding_item"] is acquired
-        assert checks == ([("holding", True)] if acquired else []) + ["sources"]
-        assert len(hardware.targets) == 2  # One approach and one complete Home return.
+        assert checks == ([] if acquired else ["sources"])
+        assert len(hardware.targets) == 2  # Approach, then one complete finish group.
         group = hardware.targets[-1]
-        assert [target.name for target in group] == [
-            "p1_retract", "p1_final", "p1_transit_exit", "home"]
-        assert group[-2].matrix[2, 3] == pytest.approx(max(home_z, stopped_z))
-        assert not group[-2].motion_io
-        assert not group[-2].relative_z
+        assert [target.name for target in group] == ([
+            "p1_retract", "p1_final", "tray_detect_position"] if acquired else [
+            "p1_retract", "p1_final", "p1_transit_exit", "home"])
+        if not acquired:
+            assert group[-2].matrix[2, 3] == pytest.approx(max(home_z, stopped_z))
+            assert not group[-2].motion_io
+            assert not group[-2].relative_z
         first_rates = (6, 40) if acquired else (100, 70)
         assert [(target.speed_percent, target.acceleration_percent)
                 for target in group] == [first_rates, (100, 70)] + [(80, 70)] * (
@@ -370,7 +382,9 @@ def test_success_matches_exhausted_route_but_uses_taught_held_retract_rates(
             assert np.array_equal(target.matrix[:2, 3], hardware.pose[:2, 3])
             assert np.array_equal(target.matrix[:3, :3], hardware.pose[:3, :3])
             assert target.matrix[2, 3] >= stopped_z
-        assert group[-1].joints_rad == (0.1,) * 6
+        assert group[-1].joints_rad == ((0.2,) * 6 if acquired else (0.1,) * 6)
+        if acquired:
+            assert np.array_equal(group[-1].matrix, tray_target(taught).matrix)
         returned = [entry for entry in hardware.log if entry[0] == "move"][-1]
         assert returned[2]["require_suction"] is acquired
         assert returned[2]["forbid_suction"] is False
@@ -384,10 +398,6 @@ def test_success_matches_exhausted_route_but_uses_taught_held_retract_rates(
             assert group[0].motion_io == vacuum_exhaust_events(80)
             assert group[1].motion_io == (
                 gripper_neutral_events(0) + vacuum_neutral_events(0))
-        returns.append(group)
-    for missed, held in zip(*returns):
-        assert np.array_equal(missed.matrix, held.matrix)
-        assert missed.relative_z == held.relative_z
 
 
 @pytest.mark.parametrize("stopped_z", [0.3, 0.997, 1.1])
@@ -412,7 +422,8 @@ def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_
                       kwargs["batch_name"]))
 
     outcome = PickExecutor(hardware, finish_home=True).run(
-        plans, taught, check=check, return_home=return_home)
+        plans, taught, tray_target=tray_target(),
+        check=check, return_home=return_home)
     assert not outcome["picked"]
     assert order == [
         ("candidate", 1), ("candidate", 2),
@@ -477,21 +488,22 @@ def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_
                    for entry in hardware.log)
 
 
-def test_second_candidate_success_returns_home_only_after_acquisition():
+def test_second_candidate_success_finishes_at_tray_without_home():
     hardware = FakeHardware([False, True])
     plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), settings(), index)
              for index in (1, 2)]
     returned = []
     outcome = PickExecutor(hardware, finish_home=True).run(
-        plans, settings(), check=lambda _index: None,
+        plans, settings(), tray_target=tray_target(),
+        check=lambda _index: None,
         return_home=lambda **kwargs: returned.append(kwargs))
 
     assert outcome == {"picked": True, "candidate": 2, "holding_item": True}
     batches = [entry[2]["batch_name"] for entry in hardware.log if entry[0] == "move"]
     assert batches == ["candidate_1_home_to_pick",
-                       "candidate_1_pick_to_retry_2_pick"]
-    assert [entry["batch_name"] for entry in returned] == ["candidate_2_pick_to_home"]
-    assert returned[0]["require_suction"] is True
+                       "candidate_1_pick_to_retry_2_pick", "candidate_2_pick_to_tray"]
+    assert not returned
+    assert hardware.targets[-1][-1].name == "tray_detect_position"
 
 
 def test_use_grip_false_still_opens_and_neutralizes_but_never_closes():
@@ -501,7 +513,8 @@ def test_use_grip_false_still_opens_and_neutralizes_but_never_closes():
              for index in (1, 2)]
 
     PickExecutor(hardware, finish_home=False).run(
-        plans, taught, check=lambda _index: None,
+        plans, taught, tray_target=tray_target(),
+        check=lambda _index: None,
         return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
 
     (retract, old_clearance, old_exit, transit, next_approach,

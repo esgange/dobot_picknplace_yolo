@@ -83,7 +83,7 @@ def test_home_preview_skips_motion_when_already_at_cartesian_home(preview):
     assert "Already at Home" in result.message
 
 
-def test_pick_preview_includes_each_candidate_entry_exit_and_home_return(preview):
+def test_pick_preview_includes_success_tray_and_missed_or_put_back_home_branches(preview):
     result = preview.run(Preview.Request.PICK)
     assert result.success
     targets = {t.name: t for t in preview.targets}
@@ -99,9 +99,31 @@ def test_pick_preview_includes_each_candidate_entry_exit_and_home_return(preview
                             index, rotation=preview.config.home_matrix[:3, :3])
         assert np.allclose(targets[f"p{index}_pick"].matrix, plan[3].matrix)
         assert targets[f"p{index}_return_home"].joints_rad == preview.config.home_joints
+        destination = targets[f"p{index}_success_tray_detect"]
+        assert destination.joints_rad == preview.config.tray.detect_joints
+        assert np.array_equal(destination.matrix, preview.config.tray.detect_matrix)
+        assert destination.speed_percent == preview.config.profile["speed"]["travel_percent"]
     assert len(set(result.tf_frames)) == len(preview.targets)
     assert "one fresh batch" in result.message
     preview.client.request.assert_called_once()
+    preview.trays.request.assert_not_called()
+    assert preview_module.load_configuration.call_args.kwargs['tray_path'] == 'tray'
+
+
+@pytest.mark.parametrize('tray', [None, SimpleNamespace(detect_joints=None)])
+def test_pick_preview_rejects_missing_tray_destination_before_detection(preview, tray):
+    preview.config.tray = tray
+    result = preview.run(Preview.Request.PICK)
+    assert not result.success and 'Tray Detect Pose' in result.message
+    assert not preview.targets
+    preview.client.request.assert_not_called()
+
+
+def test_pick_preview_skips_initial_home_when_joint_feedback_is_at_home(preview):
+    preview.config.home_joints = (0.,) * 6
+    result = preview.run(Preview.Request.PICK)
+    assert result.success
+    assert not {'home_height', 'home'} & {t.name for t in preview.targets}
 
 
 def test_pick_preview_empty_observation_never_invents_candidates(preview):

@@ -44,6 +44,10 @@ def test_pick_success_ends_retries_and_counts_all_previous_candidates(
     assert result.attempted_candidates == (successful_attempt - 1) * 2 + 1
     assert len(rig.requests) == successful_attempt
     assert rig.finished == ["success"]
+    final = [row for row in rig.log if row[0] == "move"][-1]
+    assert final[1] == ("p1_retract", "p1_final", "tray_detect_position")
+    assert np.array_equal(rig.hardware.current_pose(), rig.configuration.tray.detect_matrix)
+    assert "Tray Detect" in result.message
 
 
 @pytest.mark.parametrize("counts", [[2, 1, 3], [0, 0, 0], [2, 0, 1]])
@@ -114,6 +118,56 @@ def test_pick_refuses_replayed_batch_without_retrying_its_old_poses(monkeypatch)
     assert result.outcome == result.FEEDBACK_FAILURE
     assert "reused" in result.message and result.attempted_candidates == 1
     assert len(rig.requests) == 2
+
+
+@pytest.mark.parametrize('tray', [None, SimpleNamespace(detect_joints=None)])
+def test_pick_execution_rechecks_tray_before_home_or_detection(monkeypatch, tray):
+    rig = pick_rig(monkeypatch, [1], [True])
+    rig.configuration.tray = tray
+    result = rig.execute()
+    assert result.outcome != result.SUCCESS
+    assert 'Tray Detect Pose' in result.message
+    assert not rig.requests
+    assert not any(row[0] == 'move' for row in rig.log)
+
+
+def test_stop_during_successful_tray_group_cannot_report_success(monkeypatch):
+    rig = pick_rig(monkeypatch, [1], [True])
+    original = rig.hardware.on_move
+
+    def stop(targets, kwargs):
+        original(targets, kwargs)
+        if kwargs['batch_name'] == 'candidate_1_pick_to_tray':
+            rig.cancel_event.set()
+            raise OperationCanceled('Stop during tray travel')
+    rig.hardware.on_move = stop
+    result = rig.execute()
+    assert result.outcome == result.CANCELED
+    assert result.final_state == 'RECOVERY_REQUIRED'
+    assert rig.finished == ['abort'] and len(rig.requests) == 1
+    assert rig.managed.session.attempts[0].state == 'HELD'
+
+
+def test_held_pause_during_successful_route_continues_directly_to_tray(monkeypatch):
+    rig = pick_rig(monkeypatch, [1], [True])
+    original = rig.hardware.on_move
+    paused = []
+
+    def pause(targets, kwargs):
+        original(targets, kwargs)
+        if kwargs['batch_name'] == 'candidate_1_pick_to_tray' and not paused:
+            paused.append(True)
+            rig.managed.request('pause')
+            rig.managed.checkpoint()
+    rig.hardware.on_move = pause
+    result = rig.execute()
+    assert result.outcome == result.SUCCESS and result.final_state == 'HOLDING'
+    assert paused and ('state', 'PAUSED') in rig.log
+    assert len(rig.requests) == 1
+    final = [row for row in rig.log if row[0] == 'move'][-1]
+    assert final[1] == ('tray_detect_position',)
+    assert final[2]['require_suction']
+    assert np.array_equal(rig.hardware.current_pose(), rig.configuration.tray.detect_matrix)
 
 
 class TrayRig:

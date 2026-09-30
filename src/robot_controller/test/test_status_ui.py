@@ -26,6 +26,18 @@ def status(**fields):
     return message
 
 
+def test_pick_requires_recorded_tray_position_even_with_item_detector_ready(window, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, 'warning', lambda *_args: warnings.append(_args))
+    window.node.status = status(tray_position_recorded=False)
+    window.node.action_clients = {}
+    window._refresh()
+    assert not window.pick_item.isEnabled()
+    assert 'recorded Tray Detect Pose' in window.pick_item.toolTip()
+    window._action('pick')
+    assert len(warnings) == 1 and warnings[0][1] == 'Tray Detect required'
+
+
 @pytest.mark.parametrize('headless', [False, True])
 def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(headless):
     feed = {
@@ -258,7 +270,8 @@ def test_recovery_unknown_suction_refusal_displays_server_clearing_instructions(
 
 @pytest.mark.parametrize('ready', [False, True])
 def test_pick_button_tracks_item_arming_independently_of_tray(window, ready):
-    window.node.status = status(item_detector_ready=ready, tray_detector_ready=False)
+    window.node.status = status(item_detector_ready=ready, tray_detector_ready=False,
+                                tray_position_recorded=True)
     window._refresh()
     assert window.pick_item.isEnabled() is ready
     assert window.home_button.isEnabled()
@@ -307,7 +320,8 @@ def test_gui_debug_place_allows_empty_but_still_requires_tray_readiness(window, 
 def test_gui_rechecks_provider_status_before_sending_goal(window, action, monkeypatch):
     warnings = []
     monkeypatch.setattr(QtWidgets.QMessageBox, 'warning', lambda *_args: warnings.append(_args))
-    window.node.status = status(item_detector_ready=False, tray_detector_ready=False)
+    window.node.status = status(item_detector_ready=False, tray_detector_ready=False,
+                                tray_position_recorded=True)
     window.node.action_clients = {}  # Must return before accessing/sending any action.
     window._action(action)
     assert len(warnings) == 1 and warnings[0][1] == 'Detection unavailable'

@@ -46,8 +46,9 @@ change; detection/teach files and ROS interfaces are unchanged.
 
 Load **Item Teach**, **Bin Teach** and a complete **Tray Teach** in the controller,
 then Startup. In GUI mode, Pick Item is optional before placement; headless Place
-requires a successful Pick. Place first moves to the joints recorded in Tray Teach
-using one direct queued joint-target MovL. There is no separate observation-position
+requires a successful Pick. Pick finishes at the recorded Tray Detect joints.
+Place skips observation travel when already there; otherwise it uses one direct
+queued joint-target MovL. There is no separate observation-position
 button; the typed Tray Detect Position action remains available to external clients.
 There is no preliminary
 Z rise or elevated transit; the bin routes retain their existing clearance logic.
@@ -73,7 +74,8 @@ restart headless detection after changing calibration; GUI Tray Teach can load
 the replacement explicitly and must be armed again. Loading never moves the robot.
 
 Pick Item is enabled only in idle READY with its Item Teach/Detect service
-available. Place Item needs a recorded Tray Detect Pose and its Tray Teach/Detect
+available and a loaded Tray Teach with recorded Tray Detect joints. Pick does
+not require tray detection to be armed. Place Item needs a recorded Tray Detect Pose and its Tray Teach/Detect
 service. The normal GUI launch (`headless=false`) is attended debug mode: Place
 is available from idle READY or HOLDING, with or without an item or picked-item
 record. No suction-presence prerequisite applies during observation or approach.
@@ -292,9 +294,9 @@ robot feedback streams, requires fresh stationary/empty-queue inputs, and obtain
 the current Link6 pose from joint FK. It can preview while the robot is disabled;
 it never enables it. Shared planners supply Cartesian Home alignment/final targets,
 Pick's conditional initial rise/joint Home, every candidate's approach/retract,
-entry/exit transits and possible Home/put-back targets, and Place's saved Tray
-Detect joints followed by approach/drop/retract/Cartesian Home. Targets already
-skipped by Home/Tray arrival checks are omitted. Each target is broadcast under
+successful Tray Detect, missed entry/exit transits and Home/put-back targets, and
+Place's saved Tray Detect joints followed by approach/drop/retract/Cartesian Home.
+Targets already skipped by Home/Tray arrival checks are omitted. Each target is broadcast under
 `base_link` as a distinct `robot_controller_preview_*` frame.
 
 Pick preview shows one fresh candidate batch and its possible nominal branches,
@@ -686,23 +688,26 @@ so the operator must verify that the complete blended path is clear.
 
 Pick's initial Home and standalone shared Home calls use the joint-Home rule. The
 initial step skips if all six fresh actual joints are within ±1° of the taught
-tuple in one feedback sample with idle mode 5, RobotStatus enabled,
-`EnableStatus=1`, fault/collision clear, user/tool zero, queue empty/not
-running, and held-item I/O intact where applicable. Otherwise, more than 5 mm
-below taught Home Z, `RelMovLUser` first rises at current XY/attitude and confirms
+tuple in fresh canonical joint feedback with RobotStatus idle,
+`EnableStatus=1`, fault/collision clear, user/tool zero and held-item I/O intact
+where applicable. Queue/execution confirmation remains required for sent moves.
+Otherwise, more than 5 mm below taught Home Z, `RelMovLUser` first rises at current XY/attitude and confirms
 5 mm/1° Cartesian arrival plus stationary/empty-queue feedback. Within 5 mm
 below Home Z or anywhere above it, skip that preliminary rise and send exact
 taught Home joints directly using joint-mode `MovL` and ±1° joint confirmation.
 The planner and first dispatch share one fresh confirmed joint-derived pose, so a
 second origin reading cannot turn a planned upward correction into a rejected
 downward move. When a rise is needed, final joint Home acquires its origin after
-that rise finishes. Successful/final-miss/put-back returns always queue an
-explicit Cartesian exit transit, even within 5 mm of Home Z or at an identical
-clearance position. Successful and exhausted Pick returns queue pre-pick,
-clearance, exit transit and joint Home together, using the confirmed stopped
-pick pose as the group origin. Only final Home is physically confirmed.
+that rise finishes. The initial Home skip reads one fresh idle RobotStatus and
+canonical joint sample immediately; it waits for no extra sample, dwell, FK or
+service query. FeedInfo remains the fresh fault/frame/I/O guard. Exhausted and
+put-back returns retain an explicit Cartesian exit transit, even at Home Z.
+Exhausted Pick queues pre-pick, clearance, exit transit and joint Home together,
+using the confirmed stopped pose as origin and confirming only final Home.
+Successful Pick instead finishes directly at Tray Detect after its two lifts.
 
-Pick is permitted only from `READY` with DI1 clear:
+Pick requires `READY`, DI1 clear and a loaded Tray Teach with recorded detect
+joints. Its tray detector need not be armed; Pick only travels to the saved pose:
 
 1. run the same Home function;
 2. request one fresh profile/model/camera/platform/bin-hash-matched batch from
@@ -715,7 +720,8 @@ Pick is permitted only from `READY` with DI1 clear:
 6. after an intermediate miss, retract to that candidate's final clearance and
    proceed through the next candidate's safety-Z transit, clearance, pre-pick
    and final pick without returning Home;
-7. after success, retract and return Home holding with suction on;
+7. after success, lift to pre-pick, lift to clearance, then move directly to saved
+   Tray Detect joints and finish HOLDING there with suction on;
 8. after full exhaustion, confirm Home and repeat from a fresh batch, up to three
    complete attempts total; three exhausted/empty batches finish READY/NO_PICK.
 
@@ -805,18 +811,22 @@ exhaust pulse; it introduces no teach setting, launch argument or schema change.
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
 confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 100%
 of the clearance rise (DO14 OFF before DO2 ON). `use_grip=false` never enters
-CLOSE. The held return uses the exhausted-miss route: actual stopped
-pose to pre-pick, clearance, exit transit and exact joint Home, in one
-`candidate_N_pick_to_home` group. Both initial rises preserve stopped X/Y and
-attitude and never descend. The first held lift uses taught retract rates;
-the clearance rise uses `v=100` with taught travel acceleration.
-Exit `pN_transit_exit` keeps that X/Y/attitude and
-uses `max(stopped Z, taught Home Z)` with taught travel rates and no I/O.
-It is always queued, including when no further rise is needed. No intermediate
-arrival wait is added. SUCK stays ON without reissuing it; no EXHAUST or NEUTRAL release
-events are sent. Continuous holding checks, including the 50 ms DI1 loss
-debounce, remain active through dispatch and final Home confirmation. Held
-Continue queues an exit transit at the parked X/Y/attitude before joint Home.
+CLOSE. Successful Pick queues actual stopped pose → pre-pick → clearance →
+saved Tray Detect joints as one `candidate_N_pick_to_tray` group. Both vertical
+lifts preserve stopped X/Y and attitude and never descend. The first held lift
+uses taught retract rates; clearance uses `v=100` with travel acceleration;
+Tray Detect uses taught travel speed/acceleration, scaled by global SpeedFactor.
+There is no Home-height exit transit or final Home in this success route.
+The final command is joint-target MovL, restoring the saved Tray Detect attitude.
+Confirm only its saved joints (±1°), fresh idle RobotStatus and executed/empty
+queue after admission; no midpoint wait or fixed arrival dwell is added.
+SUCK stays ON without reissuing it; no EXHAUST/NEUTRAL release events are sent.
+Holding/output checks and the 50 ms DI1 loss debounce remain active throughout.
+Held Continue moves directly from the confirmed safety-height parked pose to
+Tray Detect, without replaying the pick, lifts or a Home detour. Successful Pick
+requests no tray observation and does not place; the next Place skips travel
+when its fresh joint/idle check already confirms Tray Detect. Preview requires
+the same saved tray destination and includes its TF for every candidate success.
 
 A missed non-final candidate starts one
 `candidate_N_pick_to_retry_M_pick` CP-blended group: old final to old pre-pick,
@@ -828,7 +838,7 @@ preserves actual stopped X/Y/attitude; the entry uses M's X/Y/attitude. Both use
 so admission marks the correct candidate
 ACTIVE; a Pause there retains M for Continue. The same geometry helper supplies
 Pause's `park_transit`, which neutralizes its I/O. Unheld Continue reuses that
-already-confirmed entry transit. Every pick and put-back has both entry and exit
+already-confirmed entry transit. Missed retries and put-back retain both entry and exit
 transits queued. Both are blended under CP(100) and can be rounded without an
 intermediate arrival wait or dwell; coincident coordinates still get separate
 requests. Direct Stop can always prevent later requests from being sent.
@@ -844,9 +854,8 @@ explicit exit transit and exact joint Home as one
 `candidate_N_pick_to_home` group. Each request still requires ordered `res=0`
 acceptance, but only exact joint Home is physically confirmed; clearance and
 transits are blended control points. Later DI1 cannot reclassify the latched miss
-as success. Successful returns use the same geometry, ordered group and
-final-Home-only confirmation, with taught retract rates on the first lift and
-held-item outputs and monitoring throughout.
+as success. Successful Pick instead uses the two lifts and direct Tray Detect
+route above; its held-item outputs and monitoring remain active.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
 in target order. Each must return `res=0` before the next is sent, with no
@@ -869,8 +878,8 @@ Motion requests carry only `user=0`, `tool=0`, and their selected `v`/`a` rates;
 they never carry a per-command `cp` or `r`. The global `CP(100)` established by
 Startup/Recover therefore controls all transitions. As specified by the Dobot
 protocol, smoothing can bypass exact intermediate pick coordinates and timed
-I/O can occur during a blended transition. Successful and exhausted Pick returns
-both queue through Home and physically verify only exact joint Home.
+I/O can occur during a blended transition. Successful Pick physically confirms
+only Tray Detect after its lift group; exhausted Pick confirms only exact joint Home.
 Serialized service responses may let
 a short pick segment decelerate despite global CP 100; queue order takes
 precedence over uninterrupted blending.

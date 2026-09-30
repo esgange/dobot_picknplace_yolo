@@ -556,6 +556,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if status is None or not status.configuration_id:
             QtWidgets.QMessageBox.warning(self, "Not configured", "Load teach files first")
             return
+        if name == "pick" and not status.tray_position_recorded:
+            QtWidgets.QMessageBox.warning(
+                self, "Tray Detect required",
+                "Load a Tray Teach with a recorded Tray Detect Pose before picking.")
+            return
         if ((name == "pick" and not status.item_detector_ready)
                 or (name == "place" and not status.tray_detector_ready)):
             provider = "Item" if name == "pick" else "Tray"
@@ -730,13 +735,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
             reachable and current in ("READY", "HOLDING") and not active)
         self.home_button.setToolTip("Move the robot to taught Home")
         self.pick_item.setEnabled(
-            reachable and state.item_detector_ready and current == "READY" and not active)
+            reachable and state.item_detector_ready and state.tray_position_recorded
+            and current == "READY" and not active)
         self.place_item.setEnabled(
             reachable and state.tray_position_recorded and state.tray_detector_ready
             and current in ("READY", "HOLDING") and not active
             and (state.manual_placement_enabled or (state.holding_item and current == "HOLDING")))
         self.pick_item.setToolTip(
-            "Request fresh item poses and pick an item" if state and state.item_detector_ready
+            "Pick an item and carry it to Tray Detect" if state and state.item_detector_ready
             else "Arm Item Teach or start Item Detect with exactly one provider")
         self.place_item.setToolTip(
             "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude"
@@ -750,6 +756,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.place_item.setToolTip(
                 "Pick an item successfully first; Place Item requires the HOLDING state")
         if state and not state.tray_position_recorded:
+            self.pick_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
             self.place_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
         for field in (self.place_x, self.place_y, self.place_rotation):
             field.setEnabled(not active)
@@ -760,7 +767,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             available = (not active and self.node.service_clients["preview"].service_is_ready()
                          and bool(self.item_path.text().strip()))
             self.home_button.setEnabled(available)
-            self.pick_item.setEnabled(available and bool(self.bin_path.text().strip()))
+            self.pick_item.setEnabled(available and bool(self.bin_path.text().strip())
+                                      and bool(self.tray_path.text().strip()))
             self.place_item.setEnabled(available and bool(self.tray_path.text().strip()))
             for button in (self.home_button, self.pick_item, self.place_item):
                 button.setToolTip(

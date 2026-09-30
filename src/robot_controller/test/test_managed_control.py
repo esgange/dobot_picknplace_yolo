@@ -12,7 +12,7 @@ from robot_controller.controller import RobotController
 from robot_controller.feedback import SuctionLossDebounce
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ManagedControl
-from robot_controller.motion import PickExecutor, Target, pick_targets
+from robot_controller.motion import PickExecutor, Target, pick_targets, pick_tray_target
 from robot_controller.pick_session import PickSession, return_targets, safety_target
 from robot_controller.state_machine import ControllerStateMachine
 
@@ -60,6 +60,8 @@ class Rig:
         self.cancel_event = threading.Event()
         self.configuration = SimpleNamespace(
             home_matrix=matrix(z=0.8), profile=profile(prepick),
+            tray=SimpleNamespace(detect_matrix=matrix(x=-.4, z=.6),
+                                 detect_joints=(.2,) * 6),
             validate_sources=lambda _root: None)
         self.events = SimpleNamespace(record=lambda *args, **kwargs: self.log.append(
             ("event", args, kwargs)))
@@ -241,15 +243,17 @@ def test_pause_held_preserves_outputs_and_continue_does_not_open_fingers():
     session = rig.managed.session
     result = PickExecutor(rig.hardware, finish_home=True).run(
         [attempt.plan for attempt in session.attempts], rig.configuration.profile,
-        session=session, check=lambda _i: None, return_home=rig._execute_home)
+        session=session,
+        tray_target=pick_tray_target(rig.configuration.tray, rig.configuration.profile),
+        check=lambda _i: None, return_home=rig._execute_home)
     assert result["picked"]
     assert ("output", 14, True) not in rig.log
-    returned = next(entry[1] for entry in rig.log if entry[0] == "home")
-    assert [target.name for target in returned["preceding"]] == ["p1_transit_exit"]
-    assert returned["preceding"][0].matrix[2, 3] == pytest.approx(.8)
-    assert not returned["preceding"][0].motion_io
+    returned = next(entry[2] for entry in reversed(rig.log) if entry[0] == "move")
+    assert next(entry[1] for entry in reversed(rig.log) if entry[0] == "move") == (
+        "tray_detect_position",)
+    assert np.array_equal(rig.hardware.current_pose(), rig.configuration.tray.detect_matrix)
     assert returned["require_suction"]
-    assert returned["queue_through_home"]
+    assert not any(entry[0] == "home" for entry in rig.log)
 
 
 @pytest.mark.parametrize("prepick", [20., 50., 80.])
@@ -427,7 +431,9 @@ def test_no_remaining_candidates_pause_at_safety_then_continue_returns_home():
     assert rig.managed.session.parked_index is None
     outcome = PickExecutor(rig.hardware, finish_home=True).run(
         [attempt.plan for attempt in rig.managed.session.attempts], rig.configuration.profile,
-        session=rig.managed.session, check=lambda _index: None, return_home=rig._execute_home)
+        session=rig.managed.session,
+        tray_target=pick_tray_target(rig.configuration.tray, rig.configuration.profile),
+        check=lambda _index: None, return_home=rig._execute_home)
     assert not outcome["picked"]
     assert states(rig) == ["FAILED"]
     assert any(entry[0] == "home" for entry in rig.log)
@@ -445,7 +451,9 @@ def test_resume_opens_fingers_then_descends_through_prepick_to_final_pick():
     session.changed = lambda index, attempt: transitions.append((index, attempt.state))
     PickExecutor(rig.hardware, finish_home=True).run(
         [attempt.plan for attempt in session.attempts], rig.configuration.profile,
-        session=session, check=lambda _index: None, return_home=rig._execute_home)
+        session=session,
+        tray_target=pick_tray_target(rig.configuration.tray, rig.configuration.profile),
+        check=lambda _index: None, return_home=rig._execute_home)
     first_motion = next(entry for entry in rig.log if entry[0] == "move")
     assert first_motion[1] == ("p1_prepick", "p1_pick")
     assert first_motion[2]["pick_settling_sec"] == rig.configuration.profile[
@@ -532,7 +540,9 @@ def test_queued_output_difference_at_pause_is_reconciled_before_neutralizing():
     session = rig.managed.session
     PickExecutor(rig.hardware, finish_home=True).run(
         [attempt.plan for attempt in session.attempts], rig.configuration.profile,
-        session=session, check=lambda _index: None, return_home=rig._execute_home)
+        session=session,
+        tray_target=pick_tray_target(rig.configuration.tray, rig.configuration.profile),
+        check=lambda _index: None, return_home=rig._execute_home)
     assert next(entry[1] for entry in rig.log if entry[0] == "move") == (
         "p2_prepick", "p2_pick")
     assert states(rig) == ["FAILED", "FAILED", "FAILED"]
@@ -557,6 +567,7 @@ def test_pause_during_either_retry_transit_keeps_next_candidate_eligible(pause_a
     with pytest.raises(ManagedInterruption):
         PickExecutor(rig.hardware, finish_home=True).run(
             plans, rig.configuration.profile, session=session,
+            tray_target=pick_tray_target(rig.configuration.tray, rig.configuration.profile),
             check=lambda _index: None, return_home=rig._execute_home)
 
     assert states(rig) == ["FAILED", "ACTIVE" if pause_at_entry else "PENDING"]
@@ -568,6 +579,7 @@ def test_pause_during_either_retry_transit_keeps_next_candidate_eligible(pause_a
     rig.log.clear()
     PickExecutor(rig.hardware, finish_home=True).run(
         plans, rig.configuration.profile, session=session,
+        tray_target=pick_tray_target(rig.configuration.tray, rig.configuration.profile),
         check=lambda _index: None, return_home=rig._execute_home)
     assert next(entry[1] for entry in rig.log if entry[0] == "move") == (
         "p2_prepick", "p2_pick")

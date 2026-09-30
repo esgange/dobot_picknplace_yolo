@@ -43,6 +43,7 @@ def test_pick_rejects_missing_unknown_namespaced_or_duplicate_pose_providers(pro
 
 def reservation(state, *, startup=True, holding=False, selection=True):
     config = Config()
+    config.tray = SimpleNamespace(detect_joints=(.2,) * 6)
     if not selection:
         config.selection = None
     calls = []

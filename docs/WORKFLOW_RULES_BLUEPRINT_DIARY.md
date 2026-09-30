@@ -7451,6 +7451,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No physical robot command or application restart was performed. Unrelated RViz
   edits and operator calibration/teach/model artifacts remain untouched/excluded.
 
+### 2026-09-30 — Rule 182: fast initial Home skip and successful Pick to Tray Detect
+
+- User corrected initial Home to skip when already there. Retain its immediate
+  fresh RobotStatus-idle plus six-joint ±1° check, without a fixed dwell, FK/query,
+  extra FeedInfo tick or Home command. Away from Home, retain conditional vertical
+  rise and joint Home before item detection.
+- Successful Pick queues actual stopped pose → upward pre-pick → upward clearance
+  → saved Tray Detect joints, one CP(100) group. Remove its Home-Z exit transit and
+  final Home. Keep retract rates on the first lift, 100%/travel acceleration on
+  clearance, and taught travel rates to Tray Detect; global SpeedFactor applies.
+  Keep early pickup Stop, settling, immediate/deferred finger CLOSE, continuous
+  held-output/DI1 monitoring, source validation and ordered res=0 admission.
+  Confirm only final saved tray joints with fresh advancing joint/status, idle,
+  empty/executed queue and intact grip before HOLDING/SUCCESS at Tray Detect.
+- Held Continue goes directly from its confirmed parked pose to Tray Detect.
+  Automatic held-loss put-back, missed-candidate transits, exhausted-batch Home,
+  three-batch limit, direct Stop and explicit Recover remain unchanged. Pick does
+  not request tray observations or placement; Place's existing joint/idle check
+  skips redundant travel from its new starting pose.
+- Require a loaded Tray Teach with saved detect joints before accepting Pick,
+  before its execution's first Home/detection and before preview observation.
+  Keep Home-only configuration possible and do not require tray-detector arming
+  for Pick. GUI admission/tooltips and preview reflect this prerequisite. Preview
+  loads the tray source and adds every candidate's success destination, preserving
+  the distinct missed/put-back branches. Supersede successful Home/exit portions
+  of rules 108/110; no interface/schema/settings change.
+- Update root/controller READMEs, AGENTS and FSM diagrams/guards/route tables;
+  regenerate offline HTML/PDF from the Markdown.
+- Validation: **665 controller tests passed**, including 18 new cases for an
+  immediate Home skip from actual joint/status inputs (all six joint limits,
+  busy/stale rejection and no extra FeedInfo tick), missing tray destination,
+  successful final pose across all batch attempts, direct Stop, held Continue
+  and Preview. Updated existing lift/rate/gripper tests and automatic suction-loss
+  tests to cover the Tray Detect destination, preserving failed/put-back Home.
+  Controller symlink build and diff checks pass. Scoped lint retains nine existing
+  findings with none introduced. Eight offline FSM diagrams and eight-page A3 PDF
+  regenerated; verified source SHA-256
+  98b56901d4ddc30ee3b44bc8179d079ee4617f8b240494dfa2abbe62d2feedf1.
+  No hardware commands or live application restart; operator RViz changes and
+  calibration/teach/model artifacts remain untouched and excluded.
+
 ### Future entry template
 
 ```text

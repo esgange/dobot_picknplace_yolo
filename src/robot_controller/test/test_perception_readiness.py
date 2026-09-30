@@ -76,3 +76,11 @@ def test_goal_checks_current_readiness_before_reserving_any_operation(action):
     node._perception_ready.return_value = True
     assert RobotController._reserve_goal(node, action, configuration_id) == GoalResponse.ACCEPT
     assert calls == [action]
+
+
+@pytest.mark.parametrize('tray', [None, SimpleNamespace(detect_joints=None)])
+def test_pick_requires_saved_tray_destination_before_reserving_operation(tray):
+    node, calls = reservation('READY')
+    node.configuration.tray = tray
+    assert RobotController._reserve_goal(node, 'pick', 'active') == GoalResponse.REJECT
+    assert not calls

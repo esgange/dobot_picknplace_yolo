@@ -5,7 +5,7 @@ import threading
 
 from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost, HeldUnknown,
                      ManagedInterruption, PausedItemDropped, ReturnedToHome)
-from .motion import CARTESIAN_POSITION_TOLERANCE_M, PickExecutor, pose_reached
+from .motion import CARTESIAN_POSITION_TOLERANCE_M, PickExecutor, pick_tray_target, pose_reached
 from .pick_session import (approach_from_safety, return_targets, safety_target,
                            transit_from_safety)
 
@@ -164,6 +164,8 @@ class ManagedControl:
             try:
                 return PickExecutor(node.hardware, finish_home=True).run(
                     plans, node.configuration.profile, session=self.session, check=check,
+                    tray_target=pick_tray_target(
+                        node.configuration.tray, node.configuration.profile),
                     return_home=node._execute_home, progress=node._candidate_progress,
                     holding_changed=lambda value: setattr(node, "holding_item", value),
                     departure=departure, departure_pose=departure_pose)
@@ -244,7 +246,8 @@ class ManagedControl:
                         picked=result["picked"], candidate=result["candidate"])
                     self.node._transition(
                         "HOLDING" if result["picked"] else "READY",
-                        "Recovery completed; retained candidate operation finished at Home")
+                        "Retained candidate operation finished at "
+                        + ("Tray Detect" if result["picked"] else "Home"))
                     return
             except ManagedInterruption:
                 retreat, origin = (), None

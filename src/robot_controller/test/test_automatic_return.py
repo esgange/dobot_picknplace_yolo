@@ -75,7 +75,7 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract", prepick=
             if loss_at == "preflight":
                 RobotController._preflight_item_state(rig, True)
             rig.feed["tool_vector_actual"] = pose_values(
-                targets[-1 if loss_at == "home" else 0].matrix)
+                targets[-1 if loss_at == "tray" else 0].matrix)
             DobotTransport._monitor_motion_policy(
                 rig.hardware, rig.snapshot(), require_suction=True, forbid_suction=False,
                 stop_on_suction=False, before_suction=None, planned_outputs={})
@@ -90,7 +90,7 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract", prepick=
     return rig
 
 
-@pytest.mark.parametrize("loss_at", ["preflight", "retract", "home"])
+@pytest.mark.parametrize("loss_at", ["preflight", "retract", "tray"])
 @pytest.mark.parametrize("count", [1, 2])
 @pytest.mark.parametrize("di1_recovers", [False, True])
 @pytest.mark.parametrize("prepick", [20., 80.])

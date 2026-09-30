@@ -122,6 +122,16 @@ def tray_detect_targets(destination, joints, *, speed_percent, acceleration_perc
                    acceleration_percent, tuple(joints)),)
 
 
+def pick_tray_target(tray, settings):
+    """Successful Pick ends at saved Tray Detect joints using taught travel rates."""
+    if tray is None or tray.detect_joints is None:
+        raise ValueError("Pick requires a Tray Teach with a recorded Tray Detect Pose")
+    return tray_detect_targets(
+        tray.detect_matrix, tray.detect_joints,
+        speed_percent=settings["speed"]["travel_percent"],
+        acceleration_percent=settings["acceleration"]["travel_percent"])[0]
+
+
 def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
     return (np.linalg.norm(actual[:3, 3] - goal[:3, 3]) <= translation_m
             and rotation_angle_deg(actual[:3, :3].T @ goal[:3, :3]) <= rotation_deg)
@@ -200,7 +210,7 @@ class PickExecutor:
         self.hardware = hardware
         self.finish_home = finish_home
 
-    def run(self, plans, settings, *, check, return_home, remember_prepick=None,
+    def run(self, plans, settings, *, tray_target, check, return_home, remember_prepick=None,
             progress=None, holding_changed=None, session=None,
             departure=(), departure_pose=None):
         grip = settings["gripper"]["use_grip"]
@@ -222,10 +232,11 @@ class PickExecutor:
                     self.hardware.output(14, False)
                     self.hardware.output(2, True)
                 current = self.hardware.current_pose()
-                return_home(preceding=(candidate_exit_transit(current, plan),),
-                            require_suction=True, forbid_suction=False,
-                            confirmed_start_pose=current, queue_through_home=True,
-                            batch_name=f"candidate_{held}_pick_to_home")
+                check(held)
+                self.hardware.move_batch(
+                    (tray_target,), require_suction=True, forbid_suction=False,
+                    confirmed_start_pose=current,
+                    batch_name=f"candidate_{held}_pick_to_tray")
                 session.resuming = False
                 return {"picked": True, "candidate": held, "holding_item": True}
             acquired, stopped_pose = True, self.hardware.current_pose()
@@ -303,16 +314,16 @@ class PickExecutor:
                     and stopped_pose[2, 3] > plan[2].matrix[2, 3]):
                 remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
                                  settings["gripper"])
-            upward.append(candidate_exit_transit(upward[-1].matrix, plan))
             if acquired:
-                # Use the exhausted-miss route with taught held-retract rates, preserving holding
-                # outputs and monitoring suction through the complete group.
-                return_home(preceding=tuple(upward), require_suction=acquired,
-                            forbid_suction=False,
-                            confirmed_start_pose=stopped_pose,
-                            queue_through_home=True,
-                            batch_name=f"candidate_{index}_pick_to_home")
+                # Keep both vertical lifts, then travel directly to observation.
+                # Only the terminal saved joints are confirmed; no Home detour.
+                check(index)
+                self.hardware.move_batch(
+                    (*upward, tray_target), require_suction=True, forbid_suction=False,
+                    confirmed_start_pose=stopped_pose,
+                    batch_name=f"candidate_{index}_pick_to_tray")
                 return {"picked": True, "candidate": index, "holding_item": True}
+            upward.append(candidate_exit_transit(upward[-1].matrix, plan))
             if index == len(plans):
                 # Complete EXHAUST -> NEUTRAL and queue the remaining Home route.
                 # DI1 was sampled through settling already; any later change is

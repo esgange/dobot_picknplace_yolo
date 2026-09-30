@@ -1,5 +1,13 @@
 # Robot Controller — Finite State Machine
 
+Pick destination review: **2026-09-30**, baseline **`1fdc2f0`** plus diary rule
+**182**. Initial Home skips immediately from fresh idle RobotStatus and all six
+canonical joint positions within ±1°, with no extra tick/query/dwell. Successful
+Pick queues pre-pick lift → clearance lift → saved Tray Detect joints, with no
+exit transit/Home. Finish HOLDING at Tray Detect; held Continue uses that same
+destination. Missed candidates, put-back and exhausted batches retain their Home
+routes. Pick/preview require recorded tray joints before motion or detection.
+
 Preview/UI review: **2026-09-30**, baseline **`e2eff65`** plus diary rule **181**.
 The motion grid is Home / Preview toggle, then Pick Item / Place Item. Preview ON
 routes all three to the read-only planner and blocks motion-producing lifecycle
@@ -130,9 +138,9 @@ fresh feedback while disabled without running Startup.
 
 Home uses joint FK for its actual origin and shares Cartesian alignment/final
 targets and arrival skips. Pick shares the conditional initial joint-Home route,
-all accepted candidate targets, both transits and every candidate's Home/put-back
-branches. It previews one fresh batch at nominal endpoints; actual early-contact
-poses and future retry batches require live execution and are not invented.
+all accepted candidates, their successful Tray Detect target, missed transits
+and Home/put-back branches. It previews one fresh batch at nominal endpoints;
+actual early-contact poses and future retry batches require live execution and are not invented.
 Place shares the saved Tray Detect target (unless already there) and four-command
 placement route, including taught rotation. It samples real fresh tray/depth at
 the camera's current pose with three requests maximum. Preview cannot move the
@@ -186,7 +194,8 @@ configuration binds that pair, the active eye-on-hand calibration selected in
 tray YAML’s original camera filename/hash is teaching history, not a source-file
 dependency. Tray Teach/Detect use current intrinsics and image-time TF with the
 unchanged saved base-frame plane. Camera replacement requires explicit reload;
-active hashes remain pinned and returned camera evidence must match the controller. Tray operations require those joints. Place requires an armed canonical
+active hashes remain pinned and returned camera evidence must match the controller.
+Pick and tray operations require those joints. Place requires an armed canonical
 `tray_teach` or headless `tray_detect` provider. Headless Place additionally requires
 a trusted HELD item; normal GUI-mode Place permits READY or HOLDING without a Pick.
 Configuration hashes include Tray Teach and its camera; reload still requires Startup.
@@ -236,7 +245,7 @@ typed status and failed service responses include the complete guidance.
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
 | `PLACING` | Observing tray/depth or queueing placement through Home. |
-| `PICKING` | Up to three fresh candidate batches, one at a time, with Home between batches. |
+| `PICKING` | Up to three fresh candidate batches, Home between exhausted batches; success ends at Tray Detect. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
 | `PAUSED` | Managed parking confirmed; controller continues checking pose, queue, outputs and held suction. |
@@ -251,7 +260,7 @@ typed status and failed service responses include the complete guidance.
 
 ```mermaid
 flowchart TD
-    Request["READY: PickItem accepted; attempt 1 of 3"] --> Home["Reach taught joint Home; validate sources"]
+    Request["READY: PickItem accepted; recorded tray joints; attempt 1 of 3"] --> Home["Fresh idle + Home joints: skip queue; otherwise reach joint Home"]
     Home --> Detect["Request a fresh candidate batch for this attempt"]
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
@@ -267,8 +276,8 @@ flowchart TD
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
-    Acquire --> HeldReturn["Lift → clearance → exit park_transit → joint Home; monitor suction"]
-    HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS"]
+    Acquire --> HeldReturn["Lift → clearance → direct saved Tray Detect joints; monitor suction"]
+    HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
     HeldReturn -->|Confirmed suction loss| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
     PutBack -->|Eligible saved candidate| Entry
     PutBack -->|Batch exhausted; Home confirmed| Limit
@@ -308,9 +317,16 @@ flowchart TD
 - Success first lifts to pre-pick at taught retract rates. Empty retract and
   the clearance rise use speed 100% with taught travel acceleration. Other Pick
   travel uses its taught rates; global SpeedFactor scales all motion.
-- Both successful and exhausted returns queue through an explicit exit transit
-  and exact joint Home. Only the terminal Home is physically confirmed for that
-  group. Intermediate points may blend under global **CP(100)**.
+- Successful Pick queues its two lifts and direct joint-target MovL to saved
+  Tray Detect, at taught travel rates. Omit the Home-height exit transit and Home.
+  Confirm only Tray Detect joints/idle/executed queue; finish HOLDING there.
+  Exhausted returns keep exit transit and exact joint Home, confirmed only at Home.
+  Both groups preserve global **CP(100)** blending and existing I/O.
+- Initial Home reads fresh RobotStatus idle plus all six canonical joints within
+  ±1° and skips the queue immediately when matched. No FK/query/new tick/dwell
+  is required for that decision. Otherwise keep the conditional rise/joint Home.
+  Pick requires recorded Tray Detect joints before moving or requesting items,
+  but does not require an armed tray detector or request tray poses/placement.
 - A missed retry queues **old exit and next entry** transit, even when coincident.
   Late DI1 from a latched miss does not turn it into success. Vacuum reset and
   DI1 clear are required before the next candidate's suction can be armed.
@@ -485,7 +501,7 @@ dispatch, retaining the measured pose. Required item transits remain queued.
 Continue requires valid sources, fresh enabled feedback, no unexpected queue
 motion, unchanged parked pose (1 mm / 0.5°), expected outputs and no pending
 held loss. Unheld Pick reopens fingers and descends through saved pre-pick to
-final approach. Held Pick continues its return through exit transit and Home.
+final approach. Held Pick continues directly to Tray Detect from its parked pose.
 Home replans its Home action. Idle Pause restores READY/HOLDING; after an idle
 HOLDING pause loses and returns its item, Continue may run remaining saved candidates.
 
@@ -624,7 +640,10 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | --- | --- | --- |
 | Explicit Hardware Home / `go_home` | Current XY with taught Home Z/attitude → full taught Cartesian Home, one blended group | Final Cartesian Home; whole move skipped if already within 5 mm / 1° |
 | Pick's initial Home | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if every Home joint is within ±1° |
-| Pick success, final exhausted miss, or put-back Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
+| Final exhausted miss or put-back Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
+
+Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
+moves directly to saved Tray Detect joints and finishes HOLDING there.
 
 Shared joint-Home planning skips its preliminary rise when current/planned Z is
 within 5 mm below Home Z or higher. Explicit Cartesian Home uses its own alignment
@@ -641,7 +660,7 @@ Names below are relative to `/robot_controller/`.
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; operation slot free |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
-| `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; item detector ready; operation slot free |
+| `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
 | `place_item` action | Started GUI READY/HOLDING, or headless HOLDING with trusted HELD source; saved tray joints; tray detector ready; exact configuration ID; operation slot free |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |

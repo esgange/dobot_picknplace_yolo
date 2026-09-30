@@ -45,7 +45,12 @@ Tray Detect Position button; Place includes that travel. `PlaceItem` carries
 the configuration ID plus positive `x_mm`, `y_mm` and
 `rotation_deg` in [−180, +180]. Rotation zero is the saved observation tool attitude,
 with a local tool-Z offset. It is independent of detected item/tray axes.
-`Configure.tray_teach_file` is optional for Home/Pick and required for tray actions.
+`Configure.tray_teach_file` is optional for Home, and a recorded Tray Detect Pose
+is required for Pick and tray actions. Pick skips its initial Home queue when
+fresh idle status and all six joints already match Home. Successful Pick lifts
+through pre-pick/clearance, then moves directly to saved Tray Detect and finishes
+HOLDING there. Pick requests no tray observation; only Place requires tray arming.
+PICK preview requires the same Tray Teach path and includes the success target.
 Status includes `tray_configured`, `tray_position_recorded`, `TRAY_POSITIONING` and
 `PLACING`. Headless Place requires HOLDING with a trusted HELD candidate.
 `manual_placement_enabled` is true only for a non-headless controller: attended

@@ -30,7 +30,8 @@ from .errors import FeedbackFailure, OperationCanceled
 from .feedback import FeedbackMonitor
 from .kinematics import Cr10Kinematics
 from .motion import (candidate_pose_in_base, candidate_exit_transit, cartesian_home_targets,
-                     home_targets, pick_targets, pose_reached, tray_detect_targets)
+                     home_targets, pick_targets, pick_tray_target, pose_reached,
+                     tray_detect_targets)
 from .pick_session import return_targets
 from .placement import TRAY_SPEED_PERCENT, place_targets, validate_target
 from .tray_client import TrayClient
@@ -163,7 +164,8 @@ class RobotControllerPreview(rclpy.node.Node):
                 request.item_teach_file,
                 request.bin_teach_file if request.operation == request.PICK else "",
                 self.root, self.kinematics, deployment=False,
-                tray_path=request.tray_teach_file if request.operation == request.PLACE else "")
+                tray_path=(request.tray_teach_file
+                           if request.operation in (request.PICK, request.PLACE) else ""))
             sample = self._snapshot()
             current = self.kinematics.forward(sample.joints)
             self.request_origin = current.copy()
@@ -177,6 +179,7 @@ class RobotControllerPreview(rclpy.node.Node):
                                     translation_m=.005, rotation_deg=1.):
                     targets.extend(cartesian_home_targets(current, config.home_matrix, **rates))
             if request.operation == request.PICK:
+                tray_target = pick_tray_target(config.tray, config.profile)
                 if not at_home:
                     targets.extend(home_targets(current, config.home_matrix,
                                                 config.home_joints, **rates))
@@ -200,10 +203,10 @@ class RobotControllerPreview(rclpy.node.Node):
                         config.home_matrix, item_pose, config.profile, index,
                         rotation=attitude.rotation)
                     targets.extend(plan)
+                    targets.append(replace(tray_target, name=f"p{index}_success_tray_detect"))
                     exit_transit = candidate_exit_transit(plan[5].matrix, plan)
                     targets.append(exit_transit)
-                    # Show every possible candidate return, including a success
-                    # before the final candidate and the exhausted-miss route.
+                    # Exit/Home targets belong to missed/put-back branches.
                     targets.extend(replace(t, name=f"p{index}_return_{t.name}") for t in
                                    home_targets(exit_transit.matrix, config.home_matrix,
                                                 config.home_joints, **rates))
