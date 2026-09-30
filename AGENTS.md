@@ -1071,6 +1071,29 @@ Keep source/feedback/ownership/pose checks, direct Stop, no automatic fourth
 request, no launch/restart/hardware command during verification and no new
 interface/schema/configuration. Update FSM and adjacent visual exports.
 
+Rule 186 simplifies Robot Controller's operator display to NOT READY, READY, BUSY,
+HOLDING ITEM, PAUSED, ATTENTION REQUIRED and OFFLINE, with a visible activity/reason
+and prominent confirmed emergency-stop override. Retain every internal FSM state.
+Separate a permanent red direct STOP from the managed Pause/Return Item control.
+STOP remains reachable during pending requests, stale status and Preview; pending
+managed work disables its own control. Gate buttons by state, fresh feedback,
+configuration/provider readiness, service availability and local pending work;
+show missing prerequisites and recheck on click. GUI Place also requires already
+at saved Tray Detect (fresh idle plus all six joints ±1°) and valid target inputs;
+the external action keeps its three-second read-only arrival window. Publish
+read-only readiness/Continue guards in typed status. Uncertain placement release
+blocks Continue without setting resume. Acquisition Pause offers Place Item (Retry),
+trusted-source Return Item and STOP; never Pick or a second Continue button.
+Preview routes only TF requests, remains usable with stationary disabled feedback,
+and blocks Start/Recover/Pause/Return/speed. Never latch Recover disabled from old
+E-stop text; explicit Recover rechecks alarms. Show raw gripper inputs as Detected,
+Not detected or Unknown. Window titles are exactly Robot Controller, Item Teach
+and Tray Teach. Supersede prior GUI state/button/label presentation only, preserving
+hardware routes, speeds, I/O, retries, Stop authority and all execution validation.
+Rebuild interfaces/controller and manually restart their clients together; never
+restart applications or command hardware during software verification.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

@@ -1,6 +1,6 @@
 # robot_controller_interfaces
 
-Typed ROS 2 interfaces for `robot_controller` v2. Long-running Home, Pick, Tray Detect Position and Place
+Typed ROS 2 interfaces for `robot_controller`. Long-running Home, Pick, Tray Detect Position and Place
 operations are actions; bounded lifecycle, configuration, Stop, preview, and
 speed operations are services. The shared `Command` service type is also used
 for the controller-owned `/robot_controller/pause` and
@@ -26,6 +26,18 @@ The GUI uses this topic for its robot-state label and two LEDs for DI1 suction
 detection and DI12 finger fully open. The additional robot flags and output bits
 remain available to API consumers. The stream updates periodically at 5 Hz and
 cannot guarantee display of every short pulse.
+
+Operator eligibility fields supplement the unchanged internal state names:
+`configuration_editable` identifies non-headless configuration, `pick_configured`
+requires Item/Bin selection, `motion_ready` and `motion_block_reason` describe
+fresh enabled/idle/empty-queue readiness, and `preview_ready` permits stationary
+disabled feedback. `at_tray_detect` compares every fresh canonical joint with the
+saved target at ±1°; it is false while moving or feedback is unavailable.
+`can_continue` / `continue_block_reason` describe retained Pause eligibility,
+including uncertain-release refusal. They are read-only hints; requests revalidate
+sources, ownership, outputs and feedback. The GUI adds local pending requests,
+input validity and service reachability to its button gates. Rebuild interfaces
+and controller, then manually restart controller/preview/GUI together.
 
 This package contains definitions only. It never connects to or commands the
 robot.
@@ -76,8 +88,8 @@ reports `PAUSED`, operation `place`, phase `TRAY_ACQUISITION_PAUSED`, plus the l
 failure reason. Existing `/continue` explicitly grants another three-request
 acquisition batch; ordinary Pause does not reset a partly used budget. The GUI's
 **Place Item (Retry)** button uses that continuation; Pick Item stays disabled.
-The paused **RETURN ITEM & STOP** control uses the existing return service and
-immediately becomes direct **STOP NOW** while return is pending/executing.
+The paused **RETURN ITEM** control uses the existing return service and disables
+itself while pending/executing. A separate permanent red **STOP** remains available.
 `can_return_item` additionally permits
 `/return_item` in this specific pause with a trusted HELD source and no issued
 placement release. It returns to the saved bin pose and Home, ending Place with

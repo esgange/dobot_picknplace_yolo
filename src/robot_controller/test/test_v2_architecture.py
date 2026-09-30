@@ -98,7 +98,8 @@ def test_pause_continue_are_controller_services_and_stop_remains_direct():
     assert '"/robot_controller/continue"' in controller
     assert '"/robot_controller/stop"' in controller
     assert 'self._command("stop")' in gui
-    assert 'self._command("return_item")' in gui
+    assert 'self.stop.clicked.connect(self._immediate_stop)' in gui
+    assert 'self.pause.clicked.connect(self._pause_or_return)' in gui
 
 
 def test_idle_pause_latch_is_not_a_startup_or_ready_gate():
@@ -133,7 +134,7 @@ def test_gui_configuration_can_reload_only_from_unheld_idle_ready():
     gui = (PACKAGE / "python/robot_controller/gui.py").read_text()
     assert "INACTIVE" in legal_targets("READY")
     assert '("UNCONFIGURED", "INACTIVE", "READY")' in controller
-    assert '"Reload Teach Configuration" if configured' in gui
+    assert '"Reload Teach Configuration" if state and state.configured' in gui
     assert 'current in ("UNCONFIGURED", "INACTIVE", "READY")' in gui
 
 

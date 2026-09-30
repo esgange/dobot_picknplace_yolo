@@ -135,7 +135,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.image_size = 640
         self.points = []
         self.next_preview = 0.
-        self.setWindowTitle("Tray Teach — live inspection and teach files")
+        self.setWindowTitle("Tray Teach")
         self.resize(1560, 960)
         self.setStyleSheet("""
             QGroupBox { font-weight: 600; border: 1px solid #cbd2da;

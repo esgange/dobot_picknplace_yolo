@@ -289,7 +289,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.next_preview_at = 0.
         self.rviz_status = "RViz 1 Hz: waiting for calibrated RGB/depth"
         self.displayed_view = self.frozen_view = self.selected_detection = None
-        self.setWindowTitle("Item Teach — visual pose inspection (no motion)")
+        self.setWindowTitle("Item Teach")
         self.resize(1560, 960)
         self.setStyleSheet("""
             QGroupBox { font-weight: 600; border: 1px solid #cbd2da;

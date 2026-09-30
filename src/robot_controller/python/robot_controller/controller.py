@@ -1,4 +1,4 @@
-"""Robot Controller v2: explicit Startup, deterministic Home/Pick, native cancellation."""
+"""Robot Controller: explicit Startup, deterministic Home/Pick, native cancellation."""
 
 from dataclasses import dataclass, field, replace
 import os
@@ -35,7 +35,7 @@ from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
 from .events import PackageEventLogger
 from .feedback import FeedbackMonitor, enabled_blockers
 from .hardware import (CARTESIAN_ORIENTATION_TOLERANCE_DEG,
-                       CARTESIAN_POSITION_TOLERANCE_M, DobotTransport)
+                       CARTESIAN_POSITION_TOLERANCE_M, HOME_JOINT_TOLERANCE_RAD, DobotTransport)
 from .kinematics import Cr10Kinematics, pose_values
 from .motion import (candidate_pose_in_base, cartesian_home_targets,
                      home_targets, pick_targets, pick_tray_target, pose_reached,
@@ -328,6 +328,8 @@ class RobotController(Node):
         status.configuration_id = (
             self.configuration.configuration_id if self.configuration else "")
         status.configured = self.configuration is not None
+        status.configuration_editable = not self.headless
+        status.pick_configured = bool(self.configuration and self.configuration.selection)
         tray = self.configuration.tray if self.configuration else None
         status.tray_configured = tray is not None
         status.tray_position_recorded = tray is not None and tray.detect_joints is not None
@@ -358,8 +360,24 @@ class RobotController(Node):
             status.robot_collision = bool(sample.feed["CollisionStates"])
             status.digital_input_bits = sample.feed["digital_input_bits"]
             status.digital_outputs = sample.feed["digital_outputs"]
-        except FeedbackFailure:
+            idle = not (status.robot_running or status.robot_queue_active)
+            status.preview_ready = idle and (
+                sample.robot_enabled or sample.feed["robot_mode"] in (4, 9, 10))
+            blockers = enabled_blockers(sample.feed, sample.robot_enabled)
+            if not idle or not sample.robot_enabled:
+                blockers.append("Waiting for robot idle and an empty queue")
+            status.motion_block_reason = "; ".join(blockers)
+            status.motion_ready = not blockers
+            status.at_tray_detect = bool(
+                status.preview_ready and status.tray_position_recorded
+                and max(abs(a - b) for a, b in zip(sample.joints, tray.detect_joints))
+                <= HOME_JOINT_TOLERANCE_RAD)
+            status.continue_block_reason = (
+                status.motion_block_reason or self.managed.continue_block_reason(sample))
+            status.can_continue = not status.continue_block_reason
+        except FeedbackFailure as exc:
             status.feedback_fresh = False
+            status.motion_block_reason = status.continue_block_reason = str(exc)
         self.status_publisher.publish(status)
 
     def publish_operator_log(self, level, message):
@@ -1263,7 +1281,8 @@ class RobotController(Node):
                         else:
                             completed_batches += 1
                             self.events.record(
-                                "INFO", "pick_batch_exhausted", "Candidate batch exhausted at Home",
+                                "INFO", "pick_batch_exhausted",
+                                "Candidate batch exhausted at Home",
                                 attempt=completed_batches, max_attempts=3,
                                 batch_id=batch.identifier, attempted=result.attempted_candidates)
                             if completed_batches < 3:

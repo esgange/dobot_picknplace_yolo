@@ -48,6 +48,7 @@ def acquisition_rig(monkeypatch, replies, *, held=True):
     node.hardware.wait_tray_position = check_position
     node.get_clock = tray.node.get_clock
     node._service_providers = tray.node._service_providers
+    node._perception_ready = lambda _action: True
     node.trays = tray.observer
     node.trays.node = node
     node.wait_control = lambda seconds: (

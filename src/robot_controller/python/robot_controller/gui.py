@@ -1,4 +1,4 @@
-"""Qt client for Robot Controller v2; contains no Dobot command clients."""
+"""Qt client for Robot Controller; contains no Dobot command clients."""
 
 from collections import deque
 import os
@@ -22,8 +22,8 @@ from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlob
 
 from .ui_state import load_state, save_state
 from .feedback import FEEDBACK_MAX_AGE_SEC
-from .errors import EMERGENCY_STOP_MESSAGE
 from .placement import validate_target
+from .operator_ui import acquisition_paused, button_policy, presentation
 
 
 class GuiNode(rclpy.node.Node):
@@ -104,7 +104,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.return_requested_locally = False
         self.speed_pending_percent = None
         self.speed_syncing = False
-        self.setWindowTitle("Robot Controller v2")
+        self.setWindowTitle("Robot Controller")
         self.resize(1050, 445)
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -112,13 +112,19 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
         header = QtWidgets.QHBoxLayout()
         self.robot_panel, robot_layout = self._status_panel("Robot status")
-        self.status = QtWidgets.QLabel("UNAVAILABLE")
+        self.status = QtWidgets.QLabel("OFFLINE")
         self.status.setTextFormat(QtCore.Qt.PlainText)
         self.status.setAlignment(QtCore.Qt.AlignCenter)
         self.status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.status.setMinimumWidth(0)
         self.status.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         robot_layout.addWidget(self.status, 1)
+        self.status_detail = QtWidgets.QLabel()
+        self.status_detail.setTextFormat(QtCore.Qt.PlainText)
+        self.status_detail.setWordWrap(True)
+        self.status_detail.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.status_detail.setStyleSheet("font-size:13px;color:#edf3f8")
+        robot_layout.addWidget(self.status_detail)
         self.gripper_panel, gripper_layout = self._status_panel("Gripper status")
         indicators = QtWidgets.QHBoxLayout()
         self.gripper_leds, self.gripper_values = {}, {}
@@ -146,6 +152,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.teach_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
                                        QtWidgets.QSizePolicy.Maximum)
         teach = QtWidgets.QGridLayout(self.teach_panel)
+        self.teach_browse_buttons = []
         self.item_path = QtWidgets.QLineEdit()
         self.bin_path = QtWidgets.QLineEdit()
         self.tray_path = QtWidgets.QLineEdit()
@@ -172,6 +179,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             button.clicked.connect(
                 lambda _checked, e=edit, d=directory: self._browse(e, d))
             teach.addWidget(button, index, 2)
+            self.teach_browse_buttons.append(button)
         self.configure = QtWidgets.QPushButton("Load Teach Configuration")
         self.configure.clicked.connect(self._configure)
         teach.addWidget(self.configure, 3, 0, 1, 3)
@@ -182,14 +190,19 @@ class ControllerWindow(QtWidgets.QMainWindow):
         lifecycle = QtWidgets.QHBoxLayout()
         self.startup = QtWidgets.QPushButton("START")
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
-        self.stop = QtWidgets.QPushButton("PAUSE")
+        self.pause = QtWidgets.QPushButton("PAUSE")
+        self.stop = QtWidgets.QPushButton("STOP")
+        self.stop.setStyleSheet(
+            "background:#b51f24;color:white;font-weight:800;font-size:18px")
+        self.stop.setToolTip("Stop immediately and preserve the gripper outputs")
         self.startup.clicked.connect(self._start_or_continue)
         self.recover.clicked.connect(lambda: self._command("recover"))
         self.recover.setToolTip(
             "Cancel the action, preserve grip while lifting and returning Home, "
             "then relax fingers and turn suction/exhaust OFF")
-        self.stop.clicked.connect(self._pause_or_stop)
-        for button in (self.startup, self.recover, self.stop):
+        self.pause.clicked.connect(self._pause_or_return)
+        self.stop.clicked.connect(self._immediate_stop)
+        for button in (self.startup, self.recover, self.pause, self.stop):
             button.setMinimumHeight(58)
             lifecycle.addWidget(button)
         layout.addLayout(lifecycle)
@@ -241,6 +254,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
         operations.addLayout(target_row, 2, 0, 1, 2)
         operations.addWidget(self.debug_images, 3, 1)
         layout.addLayout(operations)
+        self.availability_details = QtWidgets.QLabel()
+        self.availability_details.setTextFormat(QtCore.Qt.PlainText)
+        self.availability_details.setWordWrap(True)
+        self.availability_details.setStyleSheet("color:#785000")
+        layout.addWidget(self.availability_details)
 
         speed = QtWidgets.QHBoxLayout()
         self.speed_label = QtWidgets.QLabel("Global SpeedFactor: unavailable")
@@ -293,12 +311,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh)
         self.timer.start(100)
-        self._refresh_status(None)
+        self._refresh()
 
     @staticmethod
     def _status_panel(title):
         panel = QtWidgets.QFrame()
-        panel.setFixedHeight(150)
+        panel.setMinimumHeight(170)
         panel.setStyleSheet("QFrame{background:#202a35;border-radius:6px}"
                             "QLabel{color:#edf3f8;border:0;font-size:14px}")
         column = QtWidgets.QVBoxLayout(panel)
@@ -310,15 +328,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
         return panel, column
 
     def _refresh_status(self, state):
-        current = state.state if state is not None else "UNAVAILABLE"
-        emergency = (state is not None and current == "FAULT"
-                     and EMERGENCY_STOP_MESSAGE in state.message)
-        self.status.setText(
-            "EMERGENCY STOP\nPRESSED\nCannot start / recover" if emergency else current)
-        color = ("#61dfa5" if current == "READY" else
-                 "#ff9393" if current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN") else
-                 "#ffd077" if current in ("PAUSED", "UNAVAILABLE") else "#edf3f8")
-        size = 17 if emergency else 19 if len(current) > 14 else 26
+        label, detail = presentation(state, self.preview_mode)
+        self.status.setText(label)
+        self.status_detail.setText(detail)
+        color = ("#61dfa5" if label == "READY" else
+                 "#ff9393" if label in ("ATTENTION REQUIRED", "EMERGENCY STOP PRESSED") else
+                 "#ffd077" if label in ("PAUSED", "OFFLINE", "HOLDING ITEM") else "#edf3f8")
+        size = 18 if len(label) > 14 else 24
+        self.status.setWordWrap(True)
         self.status.setStyleSheet(f"font-size:{size}px;font-weight:700;color:{color}")
         if state is None:
             self.status.setToolTip("/robot_controller/status is missing or older than 1 second")
@@ -335,14 +352,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
         fresh = state is not None and state.feedback_fresh
         for channel, led in self.gripper_leds.items():
             active = bool(state.digital_input_bits & (1 << (channel - 1))) if fresh else None
-            value = "UNKNOWN" if active is None else "HIGH" if active else "LOW"
+            value = "Unknown" if active is None else "Detected" if active else "Not detected"
             color = "#e5a52e" if active is None else "#25c97e" if active else "#657789"
             led.setStyleSheet(f"background:{color};border:2px solid #9aa9b7;border-radius:12px")
             led.setAccessibleDescription(value)
             self.gripper_values[channel].setText(value)
             led.setToolTip(f"DI{channel}: {value}")
         self.gripper_panel.setToolTip(
-            "Green = HIGH · Gray = LOW · Amber = UNKNOWN\n"
+            "Green = Detected · Gray = Not detected · Amber = Unknown\n"
             "Raw DI1 suction detection and DI12 fully-open detection.\n"
             "Feedback updates at 5 Hz; brief pulses may fall between updates.\n"
             "LOW DI12 does not prove fingers closed.")
@@ -385,12 +402,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._clear_preview()
 
     def _toggle_preview(self, checked):
-        state = self.node.status
-        if checked and (state is None or state.operation_active or self.pending
-                        or self.pending_goal is not None or self.result_future is not None
-                        or self.preview_clear_future is not None
-                        or state.robot_running or state.robot_queue_active
-                        or state.state in ("PAUSED", "PAUSING", "STOPPING", "RETURNING_ITEM")):
+        if checked and self._availability()["preview_toggle"]:
             self.preview_toggle.blockSignals(True)
             self.preview_toggle.setChecked(False)
             self.preview_toggle.blockSignals(False)
@@ -434,9 +446,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 self, "Unavailable", f"{client.srv_name} is unavailable")
             return False
         self.pending[name] = client.call_async(request)
+        self._refresh_controls()
         return True
 
     def _configure(self):
+        if self._availability()["configure"]:
+            return
         request = Configure.Request()
         request.item_teach_file = self.item_path.text().strip()
         request.bin_teach_file = self.bin_path.text().strip()
@@ -447,50 +462,38 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.saved_selection = None
 
     def _command(self, name):
+        if name != "stop" and self._availability()[name]:
+            return False
         return self._call(name, Command.Request())
 
-    @staticmethod
-    def _acquisition_paused(state):
-        return bool(state is not None and state.state == "PAUSED" and state.operation == "place"
-                    and state.phase == "TRAY_ACQUISITION_PAUSED")
+    _acquisition_paused = staticmethod(acquisition_paused)
 
     def _start_or_continue(self):
         state = self.node.status
         if self._acquisition_paused(state):
-            return  # Place Item retries; the paused control returns the held item.
+            return
         operation = "continue" if state is not None and state.state == "PAUSED" else "startup"
         self._command(operation)
 
     def _immediate_stop(self):
-        if self.goal_handle is not None:
-            self.goal_handle.cancel_goal_async()
-        self._command("stop")
-
-    def _pause_or_stop(self):
         if self.preview_mode:
             self._clear_preview()
-            self._immediate_stop()
-            return
+        # Dispatch the independent Stop before optional action cancellation.
+        self._command("stop")
+        if self.goal_handle is not None:
+            self.goal_handle.cancel_goal_async()
+
+    def _pause_or_return(self):
         state = self.node.status
-        current = state.state if state is not None else "UNREACHABLE"
-        pausable = current in (
-            "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
-        if (self.pause_requested_locally or self.return_requested_locally
-                or "pause" in self.pending or "return_item" in self.pending
-                or current in ("PAUSING", "RETURNING_ITEM")):
-            self._immediate_stop()
-        elif current == "PAUSED" and getattr(state, "can_return_item", False):
-            self.return_requested_locally = True
-            self.stop.setText("STOP NOW")
-            if not self._command("return_item"):
-                self.return_requested_locally = False
-        elif pausable:
-            self.pause_requested_locally = True
-            self.stop.setText("STOP NOW")
-            if not self._command("pause"):
-                self.pause_requested_locally = False
-        else:
-            self._immediate_stop()
+        name = "return_item" if state is not None and state.state == "PAUSED" else "pause"
+        if self._availability()[name]:
+            return
+        if self._command(name):
+            if name == "return_item":
+                self.return_requested_locally = True
+            else:
+                self.pause_requested_locally = True
+            self._refresh_controls()
 
     def _preview(self, operation):
         request = Preview.Request()
@@ -531,6 +534,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _speed(self):
         self.speed_debounce.stop()
+        if self._availability()["speed"]:
+            return
         if "speed" in self.pending:
             return
         percent = int(self.speed_slider.sliderPosition())
@@ -553,33 +558,15 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.feedback_message = f"{feedback.phase} · {feedback.message}{suffix}"
 
     def _action(self, name):
+        if self._availability()[name]:
+            return
         status = self.node.status
         if not self.preview_mode and name == "place" and self._acquisition_paused(status):
-            if (not self.pending and self.pending_goal is None
-                    and not self.return_requested_locally and status.tray_detector_ready):
-                self._command("continue")
-            return
-        if (self.pending_goal is not None or self.result_future is not None or self.pending
-                or self.preview_clear_future is not None):
+            self._call("continue", Command.Request())
             return
         if self.preview_mode:
             self._preview({"home": Preview.Request.HOME, "pick": Preview.Request.PICK,
                            "place": Preview.Request.PLACE}[name])
-            return
-        if status is None or not status.configuration_id:
-            QtWidgets.QMessageBox.warning(self, "Not configured", "Load teach files first")
-            return
-        if name == "pick" and not status.tray_position_recorded:
-            QtWidgets.QMessageBox.warning(
-                self, "Tray Detect required",
-                "Load a Tray Teach with a recorded Tray Detect Pose before picking.")
-            return
-        if ((name == "pick" and not status.item_detector_ready)
-                or (name == "place" and not status.tray_detector_ready)):
-            provider = "Item" if name == "pick" else "Tray"
-            QtWidgets.QMessageBox.warning(
-                self, "Detection unavailable",
-                f"Arm {provider} Teach or start {provider} Detect with exactly one provider.")
             return
         client = self.node.action_clients[name]
         if not client.server_is_ready():
@@ -604,10 +591,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if name == "pick":
             goal.save_debug_images = self.debug_images.isChecked()
         self.pending_goal = client.send_goal_async(goal, feedback_callback=self._feedback)
+        self._refresh_controls()
 
     def _collect(self):
         if self.preview_clear_future is not None and (
-                self.preview_clear_future.done() or time.monotonic() > self.preview_clear_deadline):
+                self.preview_clear_future.done()
+                or time.monotonic() > self.preview_clear_deadline):
             try:
                 if not self.preview_clear_future.done():
                     self.preview_clear_future.cancel()
@@ -688,126 +677,120 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _refresh(self):
         self._append_operator_logs()
         self._collect()
+        self._refresh_controls()
+
+    def _availability(self):
+        try:
+            validate_target(float(self.place_x.text()), float(self.place_y.text()),
+                            self.place_rotation.value())
+            target_error = ""
+        except ValueError:
+            target_error = "Enter positive X/Y in mm and a valid rotation"
+        reasons = button_policy(
+            self.node.status, preview=self.preview_mode,
+            pending=bool(self.pending or self.preview_clear_future is not None),
+            action_pending=self.pending_goal is not None or self.result_future is not None,
+            managed_pending=self.pause_requested_locally or self.return_requested_locally,
+            target_error=target_error, item_selected=bool(self.item_path.text().strip()),
+            bin_selected=bool(self.bin_path.text().strip()),
+            tray_selected=bool(self.tray_path.text().strip()))
+        for name in reasons:
+            if reasons[name] or name == "preview_toggle":
+                continue
+            if name in ("home", "pick", "place"):
+                if self.preview_mode:
+                    client = self.node.service_clients["preview"]
+                    ready = client.service_is_ready()
+                elif name == "place" and self._acquisition_paused(self.node.status):
+                    ready = self.node.service_clients["continue"].service_is_ready()
+                else:
+                    client = self.node.action_clients.get(name)
+                    ready = client is not None and client.server_is_ready()
+            else:
+                ready = self.node.service_clients[name].service_is_ready()
+            if not ready:
+                reasons[name] = "Service unavailable"
+        return reasons
+
+    def _refresh_controls(self):
         state = self.node.status
         self._refresh_status(state)
-        reachable = state is not None
-        active = bool((state and state.operation_active) or self.pending
-                      or self.pending_goal is not None or self.result_future is not None
-                      or self.preview_clear_future is not None)
-        current = state.state if state else "UNREACHABLE"
+        current = state.state if state else "OFFLINE"
         if current not in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING"):
             self.pause_requested_locally = False
         if current != "PAUSED":
             self.return_requested_locally = False
-        configured = bool(state and state.configured)
+        reasons = self._availability()
+        paused = current == "PAUSED"
+        retry = self._acquisition_paused(state) and not self.preview_mode
         self.configure.setText(
-            "Reload Teach Configuration" if configured else "Load Teach Configuration")
-        self.configure.setEnabled(
-            reachable and current in ("UNCONFIGURED", "INACTIVE", "READY")
-            and not active)
-        pause_pending = self.pause_requested_locally or "pause" in self.pending
-        paused = current == "PAUSED" or pause_pending
-        acquisition_paused = self._acquisition_paused(state)
+            "Reload Teach Configuration" if state and state.configured
+            else "Load Teach Configuration")
         self.startup.setText("CONTINUE" if paused else "START")
-        self.startup.setToolTip(
-            "Use Place Item (Retry) or Return Item after failed tray acquisition"
-            if acquisition_paused
-            else "Continue the paused operation" if paused else "Start the configured controller")
-        self.startup.setEnabled(
-            not self.preview_mode and not acquisition_paused and reachable and (
-                (current == "INACTIVE" and not active)
-                or (current == "PAUSED" and "continue" not in self.pending
-                    and "stop" not in self.pending and "return_item" not in self.pending
-                    and not self.return_requested_locally)))
-        self.recover.setEnabled(
-            not self.preview_mode and reachable
-            and current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN")
-            and not active and "recover" not in self.pending)
-        pausable = current in (
-            "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
-        if self.preview_mode:
-            self.stop.setText("STOP")
-        elif pause_pending or self.return_requested_locally or "return_item" in self.pending:
-            self.stop.setText("STOP NOW")
-        elif current == "PAUSED" and getattr(state, "can_return_item", False):
-            self.stop.setText("RETURN ITEM & STOP")
-        elif current in ("PAUSING", "RETURNING_ITEM"):
-            self.stop.setText("STOP NOW")
-        elif paused:
-            self.stop.setText("STOP")
-        elif pausable:
-            self.stop.setText("PAUSE")
-        else:
-            self.stop.setText("STOP")
-        self.stop.setToolTip(
-            "Return the held item to its saved bin position, then return Home"
-            if self.stop.text() == "RETURN ITEM & STOP" else
-            "Pause the current operation" if self.stop.text() == "PAUSE" else
-            "Stop immediately and preserve the gripper outputs")
-        if self.stop.text() == "PAUSE":
-            self.stop.setStyleSheet(
-                "background:#d18b00;color:white;font-weight:800;font-size:18px")
-            self.stop.setEnabled(self.node.service_clients["pause"].service_is_ready())
-        else:
-            self.stop.setStyleSheet(
-                "background:#b51f24;color:white;font-weight:800;font-size:18px")
-            service = "return_item" if self.stop.text() == "RETURN ITEM & STOP" else "stop"
-            self.stop.setEnabled(self.node.service_clients[service].service_is_ready()
-                                 and (service != "return_item" or service not in self.pending))
-        self.home_button.setEnabled(
-            reachable and current in ("READY", "HOLDING") and not active)
-        self.home_button.setToolTip("Move the robot to taught Home")
-        self.pick_item.setEnabled(
-            reachable and state.item_detector_ready and state.tray_position_recorded
-            and current == "READY" and not active)
-        self.place_item.setText(
-            "Place Item (Retry)" if acquisition_paused and not self.preview_mode else "Place Item")
-        self.place_item.setEnabled(
-            reachable and state.tray_position_recorded and state.tray_detector_ready
-            and current in ("READY", "HOLDING") and not active
-            and (state.manual_placement_enabled or (state.holding_item and current == "HOLDING")))
-        self.pick_item.setToolTip(
-            "Pick an item and carry it to Tray Detect" if state and state.item_detector_ready
-            else "Arm Item Teach or start Item Detect with exactly one provider")
-        self.place_item.setToolTip(
-            "Requires Tray Detect position; observe tray, then place and retract above it"
-            if state and state.tray_detector_ready else
-            "Arm Tray Teach or start Tray Detect with exactly one provider; "
-            "restart both tray and controller applications after updating")
-        if state and state.manual_placement_enabled and state.tray_detector_ready:
-            self.place_item.setToolTip(
-                "GUI debug placement: requires Tray Detect position; "
-                "run real placement with or without an item")
-        if state and not state.manual_placement_enabled and not state.holding_item:
-            self.place_item.setToolTip(
-                "Pick an item successfully first; Place Item requires the HOLDING state")
-        if state and not state.tray_position_recorded:
-            self.pick_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
-            self.place_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
-        if acquisition_paused and not self.preview_mode:
-            selectable = (not self.pending and self.pending_goal is None
-                          and not self.return_requested_locally)
-            self.place_item.setEnabled(selectable and state.tray_detector_ready)
-            self.place_item.setToolTip("Retry tray acquisition with up to 3 fresh requests")
+        returning = self.return_requested_locally or "return_item" in self.pending
+        parking = self.pause_requested_locally or "pause" in self.pending
+        if (state is not None and state.feedback_fresh and not self.preview_mode
+                and current not in ("FAULT", "HELD_UNKNOWN", "RECOVERY_REQUIRED")
+                and (self.pending or self.pending_goal is not None or returning or parking)):
+            self.status.setText("BUSY")
+            self.status.setStyleSheet("font-size:24px;font-weight:700;color:#edf3f8")
+            self.status_detail.setText(
+                "Returning item…" if returning else "Pause requested — waiting for confirmation…"
+                if parking else "Request sent — waiting for controller confirmation…")
+        self.pause.setText("Returning item…" if returning or current == "RETURNING_ITEM" else
+                           "Pausing…" if parking or current == "PAUSING" else
+                           "RETURN ITEM" if paused and state.can_return_item else "PAUSE")
+        self.pause.setStyleSheet(
+            "QPushButton{background:#d18b00;color:white;font-weight:800;font-size:18px}"
+            "QPushButton:disabled{background:#e2e2e2;color:#999}")
+        self.place_item.setText("Place Item (Retry)" if retry else "Place Item")
+        buttons = {
+            "configure": self.configure, "continue" if paused else "startup": self.startup,
+            "recover": self.recover, "return_item" if paused else "pause": self.pause,
+            "home": self.home_button, "pick": self.pick_item, "place": self.place_item,
+            "preview_toggle": self.preview_toggle, "speed": self.speed_slider,
+        }
+        descriptions = {
+            "configure": "Validate and load the selected teach files",
+            "startup": "Start the configured controller",
+            "continue": "Resume the retained operation",
+            "recover": "Cancel the action, preserve grip to Home, then reset gripper outputs",
+            "pause": "Stop and confirm the operation's paused position",
+            "return_item": "Return the held item to its saved bin position, then Home",
+            "home": "Move Home while preserving any held item",
+            "pick": "Pick an item and carry it to Tray Detect",
+            "place": "Retry tray acquisition with up to 3 fresh requests" if retry else
+                     "Observe the tray, place and retract above it",
+            "preview_toggle": "ON: motion buttons show TFs only. OFF: real robot motion.",
+            "speed": "Change the global motion speed factor",
+        }
+        for name, button in buttons.items():
+            button.setEnabled(not reasons[name])
+            tip = reasons[name] or descriptions[name]
+            if self.preview_mode and name in ("home", "pick", "place") and not reasons[name]:
+                tip = "Show planned TF targets; no robot motion or gripper output"
+            button.setToolTip(tip)
+        self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
+        editable = (state is not None and not state.operation_active and not self.pending
+                    and self.pending_goal is None and self.result_future is None)
         for field in (self.place_x, self.place_y, self.place_rotation):
-            field.setEnabled(not active)
-        self.preview_toggle.setEnabled(self.preview_mode or (
-            reachable and not active and not state.robot_running and not state.robot_queue_active
-            and current not in ("PAUSED", "PAUSING", "STOPPING", "RETURNING_ITEM")))
-        if self.preview_mode:
-            available = (not active and self.node.service_clients["preview"].service_is_ready()
-                         and bool(self.item_path.text().strip()))
-            self.home_button.setEnabled(available)
-            self.pick_item.setEnabled(available and bool(self.bin_path.text().strip())
-                                      and bool(self.tray_path.text().strip()))
-            self.place_item.setEnabled(available and bool(self.tray_path.text().strip()))
-            for button in (self.home_button, self.pick_item, self.place_item):
-                button.setToolTip(
-                    "Preview the planned TF targets; no robot motion or gripper output")
-        self.debug_images.setEnabled(not self.preview_mode and not active)
-        speed_enabled = (not self.preview_mode and reachable
-                         and current in ("READY", "HOLDING") and not active)
-        self.speed_slider.setEnabled(speed_enabled and "speed" not in self.pending)
+            field.setEnabled(editable)
+        for field in (self.item_path, self.bin_path, self.tray_path, *self.teach_browse_buttons):
+            field.setEnabled(editable and current in ("UNCONFIGURED", "INACTIVE", "READY"))
+        self.debug_images.setEnabled(not self.preview_mode and editable)
+        visible_reasons = []
+        if not self.pending and current in ("READY", "HOLDING", "PAUSED", "INACTIVE",
+                                            "FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN"):
+            for name in (("place", "return_item") if retry else
+                         ("continue", "return_item") if paused else
+                         ("recover",) if current in
+                         ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN") else
+                         ("startup",) if current == "INACTIVE" and not self.preview_mode else
+                         ("pick", "place")):
+                if reasons[name] and reasons[name] != "Unavailable in the current state":
+                    visible_reasons.append(f"{buttons[name].text()}: {reasons[name]}")
+        self.availability_details.setText("\n".join(visible_reasons))
+        self.availability_details.setVisible(bool(visible_reasons))
         if state:
             if (self.speed_pending_percent is not None
                     and "speed" not in self.pending

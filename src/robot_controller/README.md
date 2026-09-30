@@ -1,4 +1,4 @@
-# Robot Controller v2
+# Robot Controller
 
 Visual guide: [Controller finite state machine](../../docs/ROBOT_CONTROLLER_FSM.md).
 It covers the current lifecycle, candidate ledger and operation/recovery routes;
@@ -74,13 +74,13 @@ Local source/ownership/feedback faults and invalid successful pose
 evidence remain terminal. Run exactly one provider; commands remain controller-owned.
 
 During this acquisition pause, Pick Item stays disabled. The existing Pause
-control shows **RETURN ITEM & STOP**, just as after a held Pick pause, while
+control shows **RETURN ITEM**, just as after a held Pick pause, while
 Place Item is labelled **Place Item (Retry)**. Return stays available if tray
 detection becomes unavailable; retry requires its provider. Start/Continue is
 disabled here so Place Item is the visible retry choice. The ongoing Place action
-does not block either choice. Pending return immediately shows **STOP NOW**,
-whose next click directly stops/cancels; no duplicate return or concurrent retry.
-Without a trusted held source, the paused control remains direct Stop.
+does not block either choice. Pending return disables Return and Retry; the
+permanent red STOP always stops/cancels. Without a trusted held source, Return
+stays disabled and STOP remains available.
 
 A trusted held item may be returned to its saved
 bin source through the existing put-back route: rise/entry transit, taught pre-pick
@@ -315,6 +315,61 @@ Services:
   HOME, PICK, PLACE and CLEAR, selected Item/Bin/Tray files and placement X/Y/rotation.
   The former preview endpoint is not used as a fallback.
 
+## Operator status and buttons
+
+The window title is **Robot Controller**. The main status is NOT READY, READY,
+BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED or OFFLINE. Starting, homing,
+picking, placing, parking, returning and recovering appear in the activity line;
+PAUSED appears only after confirmed parking/Stop. The reason is always visible.
+Confirmed emergency-stop evidence overrides the main label in red.
+
+The lifecycle row is Start/Continue, Recover / Clear Error, Pause/Return Item,
+and a **permanent red STOP**. STOP always calls the independent Stop service when
+reachable, including while another request is pending, with stale status, and in
+Preview. It never changes into Pause or Return. A pending Pause/Return disables
+the managed button and shows Pausing…/Returning item…; STOP remains available.
+
+| Operator status | Available controls, subject to the prerequisites below |
+| --- | --- |
+| NOT READY, no configuration | Select/load teach files; STOP |
+| NOT READY, configured | Start; select/load teach files; Preview; STOP |
+| READY | Home; Pick Item; Place Item; Preview; reload; speed; STOP |
+| BUSY, Home/Pick/Place/tray travel | Pause; STOP |
+| BUSY, startup/recovery/return/parking/stopping | STOP |
+| HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; STOP |
+| PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
+| PAUSED, tray acquisition exhausted | Place Item (Retry); Return Item with trusted held source; STOP |
+| ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
+| OFFLINE | STOP if reachable; teach loading remains possible if only robot feedback is offline |
+| EMERGENCY STOP PRESSED | STOP; explicit Recover rechecks alarms after physical release |
+
+Home/Pick/Place and speed require started configuration and fresh enabled,
+fault-free, idle robot feedback with an empty queue. Pick also requires an unheld
+READY state, configured Item/Bin, saved Tray Detect joints and exactly one armed
+item provider. Place requires saved tray joints, **already at Tray Detect** from
+fresh canonical joints/idle feedback, positive finite X/Y, legal rotation and one
+tray provider. Headless Place additionally needs a held item. Missing conditions
+appear beside the controls and in tooltips. Away from Tray Detect, GUI Place stays
+disabled; the external action retains its read-only three-second arrival window.
+
+Continue requires retained managed Pause context, unchanged parked pose/outputs,
+no pending suction loss, and no uncertain placement release. A paused observation
+also needs the tray provider. Retry uses the original target and a new three-request
+budget; target fields stay locked. Return remains independent of tray perception.
+An old E-stop message never permanently disables Recover: the controller rechecks
+current alarms on the explicit request. Unknown suction is still checked by
+Recover and never authorizes an inferred item source or output reset.
+
+Preview ON explicitly says **No robot motion** and routes Home/Pick/Place only to
+TF planning. Enable it after loading configuration. It requires fresh stationary
+feedback but permits a disabled robot and no Startup. Selected files, placement inputs and detector availability gate
+preview requests; the preview node validates the selected sources and position.
+Preview OFF and STOP remain available; Start/Recover/Pause/Return/speed stay disabled.
+A stopped fault can also be inspected with read-only Preview. All buttons check
+service availability and recheck their policy on click. Pending requests disable
+conflicting controls immediately. These status hints do not replace execution's
+source, ownership, I/O and feedback validation or guarantee a detection result.
+
 ## Unified motion preview
 
 The operations grid contains Home (top left), Preview toggle (top right), Pick
@@ -402,7 +457,7 @@ ros2 service call /robot_controller/set_global_speed \
 ## State and safety contract
 
 The states are `UNCONFIGURED`, `INACTIVE`, `STARTING`, `READY`, `HOMING`,
-`PICKING`, `HOLDING`, `PAUSING`, `PAUSED`, `RETURNING_ITEM`, `STOPPING`,
+`PICKING`, `TRAY_POSITIONING`, `PLACING`, `HOLDING`, `PAUSING`, `PAUSED`, `RETURNING_ITEM`, `STOPPING`,
 `RECOVERY_REQUIRED`, `RECOVERING`,
 `HELD_UNKNOWN`, and `FAULT`. One immutable configuration snapshot and one
 operation generation exist at a time. Action configuration IDs prevent a stale
@@ -556,7 +611,7 @@ resume after the old item's exit transit. Global SpeedFactor still applies
 and is never automatically raised by a put-back.
 
 Explicit `/return_item` cancels the interrupted action with a CANCELED result and
-finishes READY at Home. The GUI uses **RETURN ITEM & STOP** while paused with
+finishes READY at Home. The GUI uses **RETURN ITEM** while paused with
 trusted holding. A paused drop runs that same release/return route automatically
 and stays PAUSED at Home. Continue then attempts remaining candidates (including
 from the retained batch of a completed Pick), or finishes without a pick if none
@@ -631,35 +686,21 @@ release. Keyboard and groove changes are debounced for 350 ms. Controller status
 cannot overwrite an active or pending edit, and unchanged selections do not send
 another SpeedFactor request.
 
-The GUI presents START/CONTINUE and PAUSE/STOP dynamically. Continue is enabled
-only once parking completes. Immediately after requesting Pause/return and
-during `PAUSING` or `RETURNING_ITEM`, **STOP NOW**
-pre-empts without waiting for the managed request's response. While paused and
-holding, **RETURN ITEM & STOP** requests put-back without first canceling its
-owning Pick action. A pending Pause response takes priority over a newly arrived
-`PAUSED` status, so the label always matches the direct-Stop click handler.
-External clients can always call direct `/stop`.
+The GUI has separate managed Pause/Return and permanent STOP controls. See the
+operator button policy above. The two gripper LEDs show raw DI1 Suction and DI12
+Finger open as Detected / Not detected / Unknown. DO commands and logical holding
+do not drive these LEDs. DI12 Not detected does not prove that fingers are closed.
+The held-item decision retains its 50 ms loss debounce independently of the raw
+DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
-The top row places Robot status and Gripper status side by side. Robot status
-shows only the controller state (READY, PICKING, HOLDING, PAUSED, etc.). Hover
-for its message, feedback availability, configuration ID, action detail and
-ordered candidate ledger. Gripper status contains exactly two read-only LEDs:
-DI1 Suction and DI12 Finger open. Green/HIGH and gray/LOW reflect raw inputs;
-amber/UNKNOWN means feedback is unavailable. Text accompanies every color.
-DO commands and the logical held-item state never drive these LEDs. LOW DI12
-does not establish that fingers are closed, and DI1 retains its raw display
-while held-item decisions retain their 50 ms loss debounce. Short input pulses
-may occur between the periodic 5 Hz status updates. Full robot flags and DI/DO
-bits remain available in the existing typed message for other consumers.
-
-Item/Bin Teach fields, Browse buttons and Load/Reload occupy the smaller
+Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the smaller
 top-right panel. Full paths remain editable and available in field tooltips;
 prefill, explicit load, reload gates and validated persistence are unchanged.
 Lifecycle/action controls, global speed and the command-log toggle remain below.
 The GUI consumes only controller APIs. It adds no Dobot/camera subscription or
-I/O command. Missing/stale canonical feedback turns both LEDs UNKNOWN; a
+I/O command. Missing/stale canonical feedback turns both LEDs Unknown; a
 controller status older than one second by source timestamp or local receipt
-also shows robot UNAVAILABLE and disables controls that depend on status. Direct Stop remains
+also shows robot OFFLINE and disables controls that depend on status. Direct Stop remains
 available whenever its service is reachable. No automatic Stop or command is
 sent by this display logic. Rebuild interfaces and restart controller, GUI and
 preview together for the extended message definition.

@@ -23,6 +23,15 @@ bool feedback_fresh
 string[] candidate_ids
 string[] candidate_states
 bool can_return_item
+# Read-only operator eligibility; execution revalidates all safety/source guards.
+bool configuration_editable
+bool pick_configured
+bool motion_ready
+string motion_block_reason
+bool preview_ready
+bool at_tray_detect
+bool can_continue
+string continue_block_reason
 # Observed canonical feedback; valid only while feedback_fresh is true.
 bool robot_enabled
 bool robot_running

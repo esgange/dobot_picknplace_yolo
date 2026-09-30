@@ -21,7 +21,9 @@ def status(**fields):
         state="READY", message="Ready to pick", configured=True,
         configuration_id="test-configuration", startup_complete=True,
         feedback_fresh=True, robot_enabled=True, global_speed_percent=60,
-        item_detector_ready=True, tray_detector_ready=True, manual_placement_enabled=False)
+        item_detector_ready=True, tray_detector_ready=True, manual_placement_enabled=False,
+        configuration_editable=True, pick_configured=True, motion_ready=True,
+        preview_ready=True, at_tray_detect=True, can_continue=True)
     for name, value in fields.items():
         setattr(message, name, value)
     return message
@@ -36,7 +38,7 @@ def test_pick_requires_recorded_tray_position_even_with_item_detector_ready(wind
     assert not window.pick_item.isEnabled()
     assert 'recorded Tray Detect Pose' in window.pick_item.toolTip()
     window._action('pick')
-    assert len(warnings) == 1 and warnings[0][1] == 'Tray Detect required'
+    assert not warnings  # Disabled actions do not send a request or open a refusal dialog.
 
 
 @pytest.mark.parametrize('headless', [False, True])
@@ -44,6 +46,7 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(he
     feed = {
         "EnableStatus": 1, "RunningStatus": 1, "isRunQueuedCmd": 1,
         "ErrorStatus": 1, "CollisionStates": 1,
+        "robot_mode": 9, "userCoordinate": 0, "toolCoordinate": 0,
         "digital_input_bits": 1 << 11, "digital_outputs": (1 << 12) | (1 << 13)}
     sample = SimpleNamespace(feed=feed, robot_enabled=False, suction_present=True)
     messages = []
@@ -54,7 +57,8 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(he
         machine=SimpleNamespace(state="HOLDING", message="Holding"),
         configuration=None, headless=headless, holding_item=True, operation_lock=threading.Lock(),
         active_action="", phase="", waypoint="", candidate_index=1, candidate_total=2,
-        managed=SimpleNamespace(session=None, can_return_item=lambda: False),
+        managed=SimpleNamespace(session=None, can_return_item=lambda: False,
+                                continue_block_reason=lambda _sample: "Not paused"),
         global_speed_percent=60,
         startup_complete=True, expected_outputs={13: False, 14: False},
         _perception_ready=lambda action: action == "pick",
@@ -108,11 +112,15 @@ def window(tmp_path):
         call_async=lambda _request: pytest.fail("Status rendering sent a command"))
     node = SimpleNamespace(
         root=tmp_path, prefill=None, status=status(), take_operator_logs=lambda: (),
+        action_clients={name: SimpleNamespace(server_is_ready=lambda: True)
+                        for name in ("home", "pick", "place")},
         service_clients={name: client for name in (
             "configure", "startup", "recover", "pause", "continue", "stop", "return_item",
             "speed", "preview")})
     view = ControllerWindow(node)
     view.timer.stop()
+    view.place_x.setText("30")
+    view.place_y.setText("40")
     yield view
     view.close()
     view.deleteLater()
@@ -142,7 +150,7 @@ def test_placement_controls_send_typed_offsets_and_rotation_only_when_held(windo
     window.node.status = status(state="PLACING", holding_item=True, tray_position_recorded=True,
                                 operation_active=True, operation="place")
     window._refresh()
-    assert not window.place_x.isEnabled() and window.stop.text() == "PAUSE"
+    assert not window.place_x.isEnabled() and window.pause.text() == "PAUSE"
 
 
 @pytest.mark.parametrize("inputs", [0, 1, 1 << 11, (1 << 11) | 1])
@@ -152,7 +160,7 @@ def test_gripper_leds_follow_two_raw_inputs_not_outputs_or_holding(window, input
     window._refresh()
     assert set(window.gripper_leds) == {1, 12}
     for channel in (1, 12):
-        expected = "HIGH" if inputs & (1 << (channel - 1)) else "LOW"
+        expected = "Detected" if inputs & (1 << (channel - 1)) else "Not detected"
         assert window.gripper_values[channel].text() == expected
         assert window.gripper_leds[channel].accessibleDescription() == expected
     assert window.status.text() == "READY"
@@ -161,24 +169,25 @@ def test_gripper_leds_follow_two_raw_inputs_not_outputs_or_holding(window, input
 def test_unavailable_feedback_never_displays_old_io_as_live_or_off(window):
     window.node.status = status(digital_outputs=1 << 12, digital_input_bits=1)
     window._refresh()
-    assert window.gripper_values[1].text() == "HIGH"
+    assert window.gripper_values[1].text() == "Detected"
     window.node.status.feedback_fresh = False
     window._refresh()
-    assert all(value.text() == "UNKNOWN" for value in window.gripper_values.values())
-    assert all(led.accessibleDescription() == "UNKNOWN" for led in window.gripper_leds.values())
+    assert all(value.text() == "Unknown" for value in window.gripper_values.values())
+    assert all(led.accessibleDescription() == "Unknown" for led in window.gripper_leds.values())
     assert "Feedback: unavailable" in window.status.toolTip()
     window.node.status = None
     window._refresh()
-    assert window.status.text() == "UNAVAILABLE"
-    assert all(value.text() == "UNKNOWN" for value in window.gripper_values.values())
+    assert window.status.text() == "OFFLINE"
+    assert all(value.text() == "Unknown" for value in window.gripper_values.values())
     assert not window.home_button.isEnabled() and not window.pick_item.isEnabled()
     assert window.stop.isEnabled() and window.stop.text() == "STOP"
 
 
 def test_confirmed_estop_has_visible_feedback_without_latching_recover_disabled(window):
-    window.node.status = status(state="FAULT", message="Recovery failed: " + EMERGENCY_STOP_GUIDANCE)
+    window.node.status = status(
+        state="FAULT", message="Recovery failed: " + EMERGENCY_STOP_GUIDANCE)
     window._refresh()
-    assert window.status.text() == "EMERGENCY STOP\nPRESSED\nCannot start / recover"
+    assert window.status.text() == "EMERGENCY STOP PRESSED"
     assert EMERGENCY_STOP_GUIDANCE in window.status.toolTip()
     assert not window.startup.isEnabled() and not window.home_button.isEnabled()
     # The alarm may latch until clear: keep explicit Recover available after the
@@ -186,13 +195,13 @@ def test_confirmed_estop_has_visible_feedback_without_latching_recover_disabled(
     assert window.recover.isEnabled()
     window.node.status = status(state="FAULT", message="Unrelated alarm")
     window._refresh()
-    assert window.status.text() == "FAULT"
+    assert window.status.text() == "ATTENTION REQUIRED"
     window.node.status = status()
     window._refresh()
     assert window.status.text() == "READY"
 
 
-def test_pause_button_matches_direct_stop_until_both_status_and_reply_arrive(window):
+def test_permanent_stop_remains_available_until_pause_status_and_reply_arrive(window):
     commands = []
     pending = SimpleNamespace(done=lambda: False)
 
@@ -203,26 +212,27 @@ def test_pause_button_matches_direct_stop_until_both_status_and_reply_arrive(win
     window._command = command
     window.node.status = status(state="HOLDING", holding_item=True, can_return_item=True)
     window._refresh()
-    assert window.stop.text() == "PAUSE"
-    window.stop.click()
-    assert commands == ["pause"] and window.stop.text() == "STOP NOW"
+    assert window.pause.text() == "PAUSE"
+    window.pause.click()
+    assert commands == ["pause"] and not window.pause.isEnabled() and window.stop.text() == "STOP"
     window._refresh()
-    assert window.stop.text() == "STOP NOW"
+    assert not window.pause.isEnabled() and window.stop.text() == "STOP"
     window.node.status.state = "PAUSED"  # Topic can beat the Pause service reply.
     window._refresh()
-    assert window.stop.text() == "STOP NOW"
+    assert not window.pause.isEnabled() and window.stop.text() == "STOP"
     window.stop.click()
     assert commands == ["pause", "stop"]
 
 
-def test_confirmed_paused_button_returns_item_then_offers_immediate_stop(window):
+def test_confirmed_paused_return_preserves_the_separate_immediate_stop(window):
     commands = []
     window._command = lambda name: commands.append(name) or True
     window.node.status = status(state="PAUSED", holding_item=True, can_return_item=True)
     window._refresh()
-    assert window.stop.text() == "RETURN ITEM & STOP"
-    window.stop.click()
-    assert commands == ["return_item"] and window.stop.text() == "STOP NOW"
+    assert window.pause.text() == "RETURN ITEM"
+    window.pause.click()
+    assert commands == ["return_item"] and not window.pause.isEnabled()
+    assert window.stop.text() == "STOP"
     window.stop.click()
     assert commands == ["return_item", "stop"]
 
@@ -245,14 +255,14 @@ def test_failed_acquisition_place_button_retries_while_original_action_is_pendin
         commands.append(name)
         window.pending[name] = pending
         return True
-    window._command = command
+    window._call = lambda name, _request: command(name)
     window._refresh()
     assert window.place_item.isEnabled()
     assert window.place_item.text() == "Place Item (Retry)"
     assert not window.pick_item.isEnabled()
     assert not window.home_button.isEnabled() and not window.preview_toggle.isEnabled()
     assert not window.startup.isEnabled()
-    assert window.stop.text() == "RETURN ITEM & STOP"
+    assert window.pause.text() == "RETURN ITEM"
     window.place_item.click()
     assert commands == ["continue"] and window.result_future is pending
     window._refresh()
@@ -291,14 +301,14 @@ def test_acquisition_return_uses_same_paused_control_and_then_direct_stop(window
     window._refresh()
     window._start_or_continue()
     assert commands == []
-    window.stop.click()
+    window.pause.click()
     assert commands == ["return_item"]
-    assert window.stop.text() == "STOP NOW"
+    assert not window.pause.isEnabled() and window.stop.text() == "STOP"
     window.goal_handle.cancel_goal_async.assert_not_called()
     assert window.result_future is pending
     window._refresh()
     assert not window.place_item.isEnabled() and not window.pick_item.isEnabled()
-    assert window.stop.text() == "STOP NOW"
+    assert not window.pause.isEnabled() and window.stop.text() == "STOP"
     window.stop.click()
     assert commands == ["return_item", "stop"]
     window.goal_handle.cancel_goal_async.assert_called_once()
@@ -320,7 +330,7 @@ def test_acquisition_return_stays_available_without_tray_detector(window):
     window.node.status = acquisition_paused_status(tray_detector_ready=False)
     window._refresh()
     assert not window.place_item.isEnabled() and not window.pick_item.isEnabled()
-    assert window.stop.text() == "RETURN ITEM & STOP" and window.stop.isEnabled()
+    assert window.pause.text() == "RETURN ITEM" and window.stop.isEnabled()
 
 
 def test_acquisition_retry_label_resets_after_return_to_ready(window):
@@ -413,7 +423,7 @@ def test_gui_debug_place_allows_empty_but_still_requires_tray_readiness(window, 
     window._refresh()
     assert window.place_item.isEnabled() is ready
     if ready:
-        assert 'with or without an item' in window.place_item.toolTip()
+        assert 'place and retract' in window.place_item.toolTip()
     window.node.status.operation_active = True
     window._refresh()
     assert not window.place_item.isEnabled()
@@ -431,5 +441,5 @@ def test_gui_rechecks_provider_status_before_sending_goal(window, action, monkey
                                 tray_position_recorded=True)
     window.node.action_clients = {}  # Must return before accessing/sending any action.
     window._action(action)
-    assert len(warnings) == 1 and warnings[0][1] == 'Detection unavailable'
+    assert not warnings
     assert window.pending_goal is None

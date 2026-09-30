@@ -227,7 +227,8 @@ class PlacementOperation:
         # tray. Only confirmed release can resume an upward retreat.
         self.observe(node, node.monitor.snapshot(require_enabled=True))
         if not self.release_confirmed:
-            raise FeedbackFailure("Placement release unconfirmed; cannot repeat release or descend")
+            raise FeedbackFailure(
+                "Placement release unconfirmed; cannot repeat release or descend")
         if node.monitor.snapshot(require_enabled=True).feed["digital_input_bits"] & 1:
             raise HeldUnknown("DI1 HIGH after placement release; recovery blocked")
         self.neutral_issued = True
@@ -246,7 +247,8 @@ class PlacementOperation:
                                      forbid_suction=True, confirmed_start_pose=current)
         self.complete(node, node.monitor.snapshot(require_enabled=True))
 
-    def check_paused(self, node, sample):
+    def check_parked_feedback(self, node, sample):
+        """Read-only paused pose/output check shared with operator eligibility."""
         if sample.feed["isRunQueuedCmd"] or sample.feed["RunningStatus"]:
             raise FeedbackFailure("Unexpected movement during placement Pause")
         if not pose_reached(node.hardware.pose_from_snapshot(sample),
@@ -256,6 +258,9 @@ class PlacementOperation:
         if any(bool(bits & (1 << (ch - 1))) != value
                for ch, value in node.expected_outputs.items()):
             raise FeedbackFailure("Placement outputs changed while paused")
+
+    def check_paused(self, node, sample):
+        self.check_parked_feedback(node, sample)
         self.observe(node, sample)
         if self.phase in ("OBSERVE", "APPROACH"):
             self.preflight(node)

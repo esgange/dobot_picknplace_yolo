@@ -56,7 +56,7 @@ def test_operation_grid_has_exactly_the_four_requested_buttons(controls):
     ("place", Preview.Request.PLACE)])
 def test_preview_routes_each_motion_button_without_startup_or_hardware_goal(
         controls, name, operation):
-    controls.node.status = status(state="INACTIVE", startup_complete=False, configured=False)
+    controls.node.status = status(state="INACTIVE", startup_complete=False, configured=True)
     controls.preview_toggle.setChecked(True)
     controls._action(name)
     request = controls.preview_calls[-1]
@@ -83,7 +83,7 @@ def test_preview_keeps_direct_stop_and_never_turns_stop_into_pause_or_return(con
     stop = Mock(return_value=resolved(Command.Response(success=True)))
     controls.node.service_clients["stop"] = SimpleNamespace(
         service_is_ready=lambda: True, call_async=stop)
-    controls._pause_or_stop()
+    controls._immediate_stop()
     stop.assert_called_once()
     assert controls.preview_calls[-1].operation == Preview.Request.CLEAR
 
@@ -102,7 +102,7 @@ def test_unavailable_preview_never_falls_back_to_hardware(controls):
     controls._action("home")
     assert controls.preview_mode
     controls.node.action_clients["home"].send_goal_async.assert_not_called()
-    gui_module.QtWidgets.QMessageBox.warning.assert_called_once()
+    gui_module.QtWidgets.QMessageBox.warning.assert_not_called()
 
 
 def test_toggle_off_cancels_pending_preview_and_restores_hardware_dispatch(controls):
@@ -119,7 +119,7 @@ def test_toggle_off_cancels_pending_preview_and_restores_hardware_dispatch(contr
     pending.set_result(Preview.Response(success=True, message="obsolete"))
     controls._refresh()
     assert "obsolete" not in controls.feedback_message
-    assert controls.home_button.toolTip() == "Move the robot to taught Home"
+    assert controls.home_button.toolTip() == "Move Home while preserving any held item"
     controls._action("home")
     controls.node.action_clients["home"].send_goal_async.assert_called_once()
 
@@ -141,3 +141,13 @@ def test_preview_clear_timeout_is_bounded_and_never_dispatches_motion(controls, 
     assert future.cancelled() and controls.preview_clear_future is None
     for client in controls.node.action_clients.values():
         client.send_goal_async.assert_not_called()
+
+
+def test_preview_can_always_be_turned_off_after_controller_status_is_lost(controls):
+    controls.preview_toggle.setChecked(True)
+    controls.node.status = None
+    controls._refresh()
+    assert controls.preview_toggle.isEnabled()
+    assert not controls.home_button.isEnabled()
+    controls.preview_toggle.click()
+    assert not controls.preview_mode and controls.stop.isEnabled()

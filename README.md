@@ -30,7 +30,7 @@ Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-ma
 
 The root build contains 17 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `tray_perception`, `robot_controller`, `robot_controller_interfaces`, `item_perception_interfaces`, and `tray_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
 
-## Robot Controller v2
+## Robot Controller
 
 The motion controls form one four-button grid:
 
@@ -114,7 +114,7 @@ and robot feedback checks remain active; malformed pose evidence remains fatal.
 After three unavailable observations, confirm Stop and enter **PAUSED at Tray
 Detect**, preserving outputs and any trusted held source. **Place Item (Retry)**
 starts another three-request acquisition batch. The paused control shows
-**RETURN ITEM & STOP** for a known held item and uses the existing saved-bin
+**RETURN ITEM** for a known held item and uses the existing saved-bin
 put-back routine, ending Home/READY. Pick Item stays disabled. No placement or
 release is queued while waiting for the operator; robot/source faults remain terminal.
 Place Item requires an available armed Tray Teach
@@ -165,10 +165,17 @@ configuration and state unchanged. Headless `runtime_teach/` configuration is
 immutable until the process is restarted.
 
 The GUI top row shows **Robot status** and **Gripper status** side by side,
-with compact Item/Bin Teach loading at the right. Robot status shows only the
-current state, such as READY or PICKING; hover for details. Gripper status has
-two LEDs: **DI1 Suction** and **DI12 Finger open**. Green means HIGH, gray LOW,
-and amber UNKNOWN when feedback is missing/stale; each LED also has a text label.
+with compact Item/Bin/Tray Teach loading at the right. Robot status uses NOT READY,
+READY, BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED and OFFLINE, with activity
+and failure reasons always visible. Emergency stop has a prominent red override.
+The lifecycle row has Start/Continue, Recover, Pause/Return Item and a **permanent
+red STOP**. STOP always stops directly, including while Pause/Return is pending.
+Motion buttons are enabled only when their current prerequisites are met: Place
+requires confirmed Tray Detect position, valid inputs and an armed tray provider;
+Pick requires unheld READY, Item/Bin/Tray configuration and its provider. Disabled
+actions show reasons. See the [full button policy](src/robot_controller/README.md#operator-status-and-buttons).
+Gripper LEDs **DI1 Suction** and **DI12 Finger open** say Detected, Not detected or
+Unknown; DI12 Not detected does not establish that the fingers are closed.
 Values arrive through `/robot_controller/status` at a periodic 5 Hz, so brief
 input pulses may fall between updates. The command log is collapsed by default;
 **Show command log** opens the complete retained diagnostic stream and Copy Log.
@@ -204,9 +211,9 @@ with the independent Stop path before requiring recovery.
 
 After Stop with a trusted held item and no confirmed suction loss, Recover
 preserves the grip during travel, then relaxes it at confirmed Home and ends READY
-after neutral outputs and DI1 LOW. Use **RETURN ITEM & STOP** from Pause for a
-deliberate put-back to the source. **STOP NOW**
-appears immediately while Pause/return is pending and always pre-empts without
+after neutral outputs and DI1 LOW. Use **RETURN ITEM** from Pause for a
+deliberate put-back to the source. The permanent **STOP**
+remains available while Pause/return is pending and always pre-empts without
 put-back. Unknown suction instead produces an instruction to keep the robot
 stopped, safely secure/clear the item or check the suction sensor for obstruction.
 Recover remains available in `HELD_UNKNOWN`; after fresh DI1 LOW, click it again
@@ -230,7 +237,7 @@ Pause nor Continue calls the vendor queue Pause/Continue services.
 
 A trusted held item's source pose survives completion of its Pick action.
 `/robot_controller/return_item` requests a controlled put-back and ends READY at
-Home. The GUI exposes it as **RETURN ITEM & STOP** while paused with an item.
+Home. The GUI exposes it as **RETURN ITEM** while paused with an item.
 Suction loss during Pause invokes that same return automatically, even if the
 item may already have fallen; it then remains PAUSED at Home. Continue tries the
 remaining latched candidates. The return releases at the original taught pre-pick
@@ -274,7 +281,7 @@ interrupted put-back, explicit Recover cancels the previous operation and goes
 Home while preserving the current outputs. Fresh unknown DI1 HIGH, opposing
 outputs, stale feedback and active alarms block it. A confirmed prior loss is
 not erased by later DI1 HIGH; no unknown item gains a fabricated source pose.
-During parking/return, **STOP NOW**, direct Stop, cancellation and shutdown
+During parking/return, **STOP**, direct Stop, cancellation and shutdown
 pre-empt immediately. Software verification does not validate physical clearance,
 actual pulse width, or successful physical placement.
 

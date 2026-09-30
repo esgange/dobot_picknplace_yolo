@@ -135,7 +135,8 @@ def test_ready_configuration_reload_replaces_snapshot_and_requires_startup(monke
     node, old, calls = configuration_node()
     new = SimpleNamespace(configuration_id="new")
     monkeypatch.setattr(controller_module, "load_configuration", lambda *_args, **_kwargs: new)
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
+    request = SimpleNamespace(
+        item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=False, message="", configuration_id="")
 
     RobotController._configure(node, request, response)
@@ -157,7 +158,8 @@ def test_failed_ready_reload_preserves_active_configuration(monkeypatch):
         raise ValueError("invalid replacement")
 
     monkeypatch.setattr(controller_module, "load_configuration", reject)
-    request = SimpleNamespace(item_teach_file="bad.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
+    request = SimpleNamespace(
+        item_teach_file="bad.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)
@@ -178,7 +180,8 @@ def test_failed_ready_reload_preserves_active_configuration(monkeypatch):
 ])
 def test_configuration_reload_rejects_nonidle_or_held_states(state):
     node, old, calls = configuration_node(state)
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
+    request = SimpleNamespace(
+        item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)
@@ -192,7 +195,8 @@ def test_configuration_reload_rejects_nonidle_or_held_states(state):
 
 def test_headless_configuration_remains_immutable():
     node, old, calls = configuration_node("INACTIVE", headless=True)
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
+    request = SimpleNamespace(
+        item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)
@@ -207,7 +211,8 @@ def test_headless_configuration_remains_immutable():
 def test_ready_configuration_reload_rejects_inconsistent_holding_context():
     node, old, calls = configuration_node("READY")
     node.holding_item = True
-    request = SimpleNamespace(item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
+    request = SimpleNamespace(
+        item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
     response = SimpleNamespace(success=True, message="", configuration_id="stale")
 
     RobotController._configure(node, request, response)
@@ -329,7 +334,8 @@ class Timer:
 def test_gui_speed_uses_live_slider_position_and_suppresses_noop():
     calls = []
     window = SimpleNamespace(
-        pending={}, speed_slider=SpeedSlider(35), speed_debounce=Timer(),
+        pending={}, _availability=lambda: {"speed": ""},
+        speed_slider=SpeedSlider(35), speed_debounce=Timer(),
         speed_pending_percent=None, speed_label=Button(),
         node=SimpleNamespace(status=SimpleNamespace(global_speed_percent=100)),
         _call=lambda name, request: calls.append((name, request.percent)) or True)
@@ -676,34 +682,6 @@ def test_home_near_safety_z_uses_one_pose_and_direct_joint_home(below_home_m, ho
     assert preflights == [holding]
 
 
-def test_gui_second_pause_click_stops_immediately_during_parking():
-    commands = []
-    window = SimpleNamespace(
-        node=SimpleNamespace(status=SimpleNamespace(state="PICKING")), pending={},
-        preview_mode=False, pause_requested_locally=False, return_requested_locally=False,
-        stop=Button(),
-        _command=lambda name: commands.append(name) or True,
-        _immediate_stop=lambda: commands.append("stop"))
-    ControllerWindow._pause_or_stop(window)
-    ControllerWindow._pause_or_stop(window)
-    assert commands == ["pause", "stop"]
-
-
-def test_gui_nonpausable_state_calls_stop_directly_and_paused_start_continues():
-    commands = []
-    window = SimpleNamespace(
-        node=SimpleNamespace(status=SimpleNamespace(state="FAULT", operation="", phase="")),
-        pending={}, _acquisition_paused=ControllerWindow._acquisition_paused,
-        preview_mode=False, pause_requested_locally=False, return_requested_locally=False,
-        stop=Button(),
-        _command=lambda name: commands.append(name) or True,
-        _immediate_stop=lambda: commands.append("stop"))
-    ControllerWindow._pause_or_stop(window)
-    window.node.status.state = "PAUSED"
-    ControllerWindow._start_or_continue(window)
-    assert commands == ["stop", "continue"]
-
-
 def test_gui_pause_acceptance_does_not_dispatch_another_stop():
     class Future:
         @staticmethod
@@ -753,30 +731,3 @@ def test_successful_gui_reload_saves_selection_and_clears_preview(monkeypatch, t
         tmp_path / "logs/robot_controller/last_session.json",
         "item.yaml", "bin.yaml")]
     assert cleared == [True]
-
-
-def test_gui_held_pause_stop_requests_return_without_canceling_active_pick():
-    calls = []
-    window = SimpleNamespace(
-        node=SimpleNamespace(status=SimpleNamespace(state="PAUSED", can_return_item=True)),
-        pending={}, preview_mode=False, pause_requested_locally=False,
-        return_requested_locally=False, stop=Button(),
-        _command=lambda name: calls.append(name) or True,
-        _immediate_stop=lambda: calls.append("stop"))
-    ControllerWindow._pause_or_stop(window)
-    assert calls == ["return_item"]
-    ControllerWindow._pause_or_stop(window)
-    assert calls == ["return_item", "stop"]
-
-
-@pytest.mark.parametrize("state", ["PAUSING", "RETURNING_ITEM"])
-def test_gui_stop_preempts_managed_motion_immediately(state):
-    calls = []
-    window = SimpleNamespace(
-        node=SimpleNamespace(status=SimpleNamespace(state=state)),
-        pending={}, preview_mode=False, pause_requested_locally=False,
-        return_requested_locally=False,
-        _command=lambda _name: pytest.fail("Cannot Pause a managed movement"),
-        _immediate_stop=lambda: calls.append("stop"))
-    ControllerWindow._pause_or_stop(window)
-    assert calls == ["stop"]

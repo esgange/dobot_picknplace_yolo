@@ -7626,6 +7626,42 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or application restarts. Unrelated RViz edits and operator
   calibration/offline/runtime teach/model artifacts remain untouched/excluded.
 
+### 2026-09-30 — Rule 186: clear operator states and permanent STOP
+
+- Implement the approved operator state/button matrix without renaming internal
+  lifecycle states. Keep transient activity and detailed causes visible below the
+  main label. Display gripper inputs as Detected / Not detected / Unknown.
+- Add a permanent red direct STOP alongside managed Pause/Return Item. Stop never
+  changes meaning and remains reachable with pending requests or stale status.
+  Pending Pause/Return disables its own button; busy returns cannot be requested
+  twice. Keep acquisition retry and trusted-source return independent of the
+  pending original Place result, and keep Pick disabled while paused/holding.
+- Centralize GUI availability and click guards. Check typed status, configured
+  pick sources, provider availability, service reachability, pending work and
+  valid placement inputs. GUI Place requires fresh idle/joints already at Tray
+  Detect. The external Place action keeps its three-second read-only wait.
+- Add read-only typed status fields for configuration editing, Pick configuration,
+  motion/preview readiness, Tray Detect arrival and Continue eligibility. Share
+  pure parked-feedback checks; never mutate release evidence during status
+  publication. Reject uncertain-release Continue before setting resume. Preserve
+  explicit Recover rechecking despite cached E-stop evidence and all execution
+  safety/source/ownership validation. Preview remains read-only and supports
+  stationary disabled robots without Startup.
+- Set exact window titles Robot Controller, Item Teach and Tray Teach. Update
+  current READMEs, AGENTS and FSM descriptions/diagrams and regenerate exports.
+  No new teach/configuration schema, motion route, I/O timing or executor thread.
+- Validation: **797 controller tests passed**, including all 17 internal-state
+  mappings, the button matrix, independent Stop in every state, stale/changed
+  prerequisites, invalid placement input, all six Tray Detect joints/idle,
+  uncertain-release Continue, pending requests, acquisition retry/return and
+  Preview OFF after status loss. Final UI subset: **132 passed**. Four affected
+  package builds passed. Scoped
+  lint and diff checks pass. Inspected an offscreen Qt paused render using a
+  fake node only. Eight FSM SVGs and eight-page A3 PDF regenerated; verified
+  source SHA-256 d7b7f47ba48d912bd870a1516ce21f6008fc814ca377f3139d8d556888436e5d.
+  No live hardware commands or application restarts. Operator RViz edits,
+  calibration, teach profiles and models remain untouched/excluded.
+
 ### Future entry template
 
 ```text

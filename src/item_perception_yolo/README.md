@@ -1,5 +1,7 @@
 # item_perception_yolo
 
+The teaching window title is **Item Teach**, without a version suffix.
+
 `item_perception_yolo` is the project perception package. Its aligned local-only
 teaching GUIs establish the robot pick-area origin and then the four-corner bin
 ROI used by later item detection.

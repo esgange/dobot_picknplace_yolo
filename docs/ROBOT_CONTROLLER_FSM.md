@@ -1,11 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Operator UI review: **2026-09-30**, baseline **`dcd28a7`** plus diary rule **186**.
+Keep all internal lifecycle states, simplify their user-facing labels, expose the
+activity/reason and gate every button consistently before dispatch. Separate
+permanent red STOP from Pause/Return. Typed status adds read-only motion/preview
+readiness, saved Tray Detect arrival and Continue eligibility. Continue rejects
+uncertain release without setting resume. No motion queue or I/O timing changes.
+
 Acquisition pause review: **2026-09-30**, baseline **`2ed6a41`** plus diary rule
 **185**. Three unavailable observations Stop and pause Place at Tray Detect,
 preserving grip and ownership. Place Item (Retry) explicitly grants three new
-requests; Pick Item remains disabled. The normal paused RETURN ITEM & STOP
+requests; Pick Item remains disabled. The normal paused RETURN ITEM
 control uses the saved-source bin put-back and Home routine, ending READY and
-Place CANCELED. Pending/executing return presents direct STOP NOW. Require a
+Place CANCELED. Rule 186 gives direct STOP its own permanent control. Require a
 trusted HELD source before release admission and normal held checks on return;
 manual placement without a source offers retry/direct Stop. No automatic retry
 beyond the batch, parking rise, release or Home while awaiting the operator.
@@ -141,7 +148,61 @@ There are two separate state machines:
 Pick's initial Home travel still reports `PICKING`; it is not a separate Home
 action. Flowchart boxes below describe steps unless explicitly named as states.
 
-## 1a. Motion controls and preview
+## 1a. Operator status, buttons and preview
+
+The window title is **Robot Controller**. The main status is NOT READY, READY,
+BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED or OFFLINE. Starting, homing,
+picking, placing, parking, returning and recovering appear in the activity line;
+PAUSED appears only after confirmed parking/Stop. The reason is always visible.
+Confirmed emergency-stop evidence overrides the main label in red.
+
+The lifecycle row is Start/Continue, Recover / Clear Error, Pause/Return Item,
+and a **permanent red STOP**. STOP always calls the independent Stop service when
+reachable, including while another request is pending, with stale status, and in
+Preview. It never changes into Pause or Return. A pending Pause/Return disables
+the managed button and shows Pausing…/Returning item…; STOP remains available.
+
+| Operator status | Available controls, subject to the prerequisites below |
+| --- | --- |
+| NOT READY, no configuration | Select/load teach files; STOP |
+| NOT READY, configured | Start; select/load teach files; Preview; STOP |
+| READY | Home; Pick Item; Place Item; Preview; reload; speed; STOP |
+| BUSY, Home/Pick/Place/tray travel | Pause; STOP |
+| BUSY, startup/recovery/return/parking/stopping | STOP |
+| HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; STOP |
+| PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
+| PAUSED, tray acquisition exhausted | Place Item (Retry); Return Item with trusted held source; STOP |
+| ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
+| OFFLINE | STOP if reachable; teach loading remains possible if only robot feedback is offline |
+| EMERGENCY STOP PRESSED | STOP; explicit Recover rechecks alarms after physical release |
+
+Home/Pick/Place and speed require started configuration and fresh enabled,
+fault-free, idle robot feedback with an empty queue. Pick also requires an unheld
+READY state, configured Item/Bin, saved Tray Detect joints and exactly one armed
+item provider. Place requires saved tray joints, **already at Tray Detect** from
+fresh canonical joints/idle feedback, positive finite X/Y, legal rotation and one
+tray provider. Headless Place additionally needs a held item. Missing conditions
+appear beside the controls and in tooltips. Away from Tray Detect, GUI Place stays
+disabled; the external action retains its read-only three-second arrival window.
+
+Continue requires retained managed Pause context, unchanged parked pose/outputs,
+no pending suction loss, and no uncertain placement release. A paused observation
+also needs the tray provider. Retry uses the original target and a new three-request
+budget; target fields stay locked. Return remains independent of tray perception.
+An old E-stop message never permanently disables Recover: the controller rechecks
+current alarms on the explicit request. Unknown suction is still checked by
+Recover and never authorizes an inferred item source or output reset.
+
+Preview ON explicitly says **No robot motion** and routes Home/Pick/Place only to
+TF planning. Enable it after loading configuration. It requires fresh stationary
+feedback but permits a disabled robot and no Startup. Selected files, placement inputs and detector availability gate
+preview requests; the preview node validates the selected sources and position.
+Preview OFF and STOP remain available; Start/Recover/Pause/Return/speed stay disabled.
+A stopped fault can also be inspected with read-only Preview. All buttons check
+service availability and recheck their policy on click. Pending requests disable
+conflicting controls immediately. These status hints do not replace execution's
+source, ownership, I/O and feedback validation or guarantee a detection result.
+
 
 | Left | Right |
 | --- | --- |
@@ -157,7 +218,9 @@ flowchart TD
     Plan --> TF["Publish every planned target as base_link TF; no robot commands"]
     TF --> Clear["Toggle OFF, edited inputs, source/feedback loss or robot movement: clear"]
     Inputs -->|Invalid or perception unavailable| Failed["Report failure; clear targets; no fallback to motion"]
-    Stop["Stop always available"] --> Direct["Direct Stop; preview never invokes parking or put-back"]
+    Stop["Permanent red STOP in every mode"] --> Direct["Independent Stop; never Pause or Return"]
+    Managed["Separate Pause / Return Item"] --> Guard["Only eligible live or confirmed paused state"]
+    Guard --> Pending["Pending: disable managed control; STOP remains available"]
 ```
 
 Preview is a GUI routing mode, starts OFF, and cannot be entered with an active or
@@ -475,7 +538,7 @@ and observation position, then makes up to three new requests. Another exhausted
 batch pauses again. Ordinary manual Pause retains its partly used budget.
 
 Pick Item remains disabled. A trusted HELD source before any placement release
-enables the same paused RETURN ITEM & STOP control as held Pick. It calls the
+enables the same paused RETURN ITEM control as held Pick. It calls the
 existing bin put-back: safety rise and entry, exact taught pre-pick release,
 50 ms exhaust, neutral retreat/exit transit and Home, with existing rates and
 feedback barriers. Complete READY and Place CANCELED; never start a new Pick.
@@ -483,8 +546,8 @@ Normal held-suction/output checks apply during bin return even in GUI mode.
 Return does not require the tray detector; retry does. An empty/manual placement
 pause with no trusted held source offers retry and direct Stop. Start/Continue
 is disabled for this acquisition pause; the Place button supplies continuation.
-Return immediately switches to STOP NOW, including before its service response;
-a second click directly stops/cancels. Return pending blocks retry.
+Return immediately disables the managed control and retry. The separate permanent
+STOP directly stops/cancels, including before the Return service response.
 Attempt N/3 and the last failure reason appear in controller progress/events.
 No automatic arming, runtime restart, configuration/interface change or physical
 motion retry is added.
@@ -585,9 +648,9 @@ final approach. Held Pick continues directly to Tray Detect from its parked pose
 Home replans its Home action. Idle Pause restores READY/HOLDING; after an idle
 HOLDING pause loses and returns its item, Continue may run remaining saved candidates.
 
-The GUI shows **STOP NOW** immediately while Pause/return is pending. This is a
-direct Stop, including when a PAUSED topic sample arrives before the Pause reply.
-**RETURN ITEM & STOP** appears only after pending requests clear and PAUSED has
+The permanent red **STOP** always dispatches direct Stop, including when a PAUSED
+topic sample arrives before the Pause reply. Pending Pause/Return disables the
+separate managed control. **RETURN ITEM** appears only after PAUSED has
 trusted held source. External `/return_item` clients can request a managed
 return from other started eligible states; the GUI exposes it while paused.
 The exhausted tray-acquisition pause uses this same Return control and route,
@@ -814,9 +877,9 @@ arrival waits. A very short move need not expose a running sample if its streame
 command ID demonstrates execution.
 
 The GUI receives `/robot_controller/status` at periodic **5 Hz** plus state and
-progress updates. Its DI1/DI12 LEDs show raw HIGH/LOW, or UNKNOWN if feedback is
+progress updates. Its DI1/DI12 LEDs show Detected / Not detected, or Unknown if feedback is
 unavailable; status itself also expires after one second by source and local
-receipt age. `UNAVAILABLE` is a GUI display condition, not a controller FSM state.
+receipt age. `OFFLINE` is a GUI display condition, not a controller FSM state.
 Full audit details remain in `/robot_controller/operator_log` and the ignored
 `logs/robot_controller/events.jsonl`.
 

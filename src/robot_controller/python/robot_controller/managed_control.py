@@ -111,6 +111,9 @@ class ManagedControl:
                 raise CommandRejected("Continue requires completed Pause parking")
             self.node.configuration.validate_sources(self.node.root)
             sample = self.node.monitor.snapshot(require_enabled=True)
+            reason = self.continue_block_reason(sample)
+            if reason:
+                raise CommandRejected(reason)
             if node_placement := getattr(self.node, "placement", None):
                 node_placement.check_paused(self.node, sample)
             else:
@@ -119,6 +122,32 @@ class ManagedControl:
                     self.node.holding_item and not sample.suction_present):
                 raise CommandRejected("Suction lost; item return must finish before Continue")
             self.resume.set()
+
+    def continue_block_reason(self, sample):
+        """Read-only eligibility for status and Continue admission; never requests motion."""
+        with self.lock:
+            node = self.node
+            if node.machine.state != "PAUSED" or self.kind != "pause":
+                return "Continue requires completed Pause parking"
+            if self.resume.is_set():
+                return "Continue is already pending"
+            if self.drop_pending or (node.holding_item and not sample.suction_present):
+                return "Suction lost; item return must finish before Continue"
+            placement = getattr(node, "placement", None)
+            if placement is not None:
+                if placement.release_issued and not placement.release_confirmed:
+                    return "Placement release unconfirmed; use Stop, then Recover"
+                if placement.phase in ("OBSERVE", "APPROACH") and not node._perception_ready(
+                        "place"):
+                    return "Arm Tray Teach or start Tray Detect with exactly one provider"
+            try:
+                if placement is not None:
+                    placement.check_parked_feedback(node, sample)
+                else:
+                    self._check_parked(sample)
+            except (FeedbackFailure, HeldUnknown) as exc:
+                return str(exc)
+            return ""
 
     def observe(self, sample):
         """Latch drop without abandoning an outstanding service response."""

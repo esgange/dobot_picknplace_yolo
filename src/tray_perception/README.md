@@ -1,5 +1,7 @@
 # Tray Perception
 
+The teaching window title is **Tray Teach**, without a version suffix.
+
 `tray_teach` is a read-only GUI for teaching one tray profile and inspecting the
 best detected tray pose in `base_link`. Headless `tray_detect` shares its fresh
 pose-request pipeline, including controller-requested placement depth. No camera/robot process is launched and no
