@@ -30,6 +30,10 @@ class TrayObservationUnavailable(FeedbackFailure):
     """No pose/depth reply; another read-only request may supply an observation."""
 
 
+class TrayAcquisitionExhausted(FeedbackFailure):
+    """Three unavailable observations; hardware Place can await an operator choice."""
+
+
 def validate_result(result, config, sampling, start_ns, now_ns):
     if result is None or not result.success or not result.found or not result.placement.valid:
         reason = "no response" if result is None else f"{result.status}: {result.message}"
@@ -154,7 +158,8 @@ class TrayClient:
                     f"{attempts.reason}")
         node.wait_for_resume()
         check_item()
-        raise FeedbackFailure(f"Tray observation failed after 3 attempts: {attempts.reason}")
+        raise TrayAcquisitionExhausted(
+            f"Tray observation failed after 3 attempts: {attempts.reason}")
 
     def _observe(self, config, sampling, check_item, attempts):
         node = self.node

@@ -449,8 +449,15 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _command(self, name):
         return self._call(name, Command.Request())
 
+    @staticmethod
+    def _acquisition_paused(state):
+        return bool(state is not None and state.state == "PAUSED" and state.operation == "place"
+                    and state.phase == "TRAY_ACQUISITION_PAUSED")
+
     def _start_or_continue(self):
         state = self.node.status
+        if self._acquisition_paused(state):
+            return  # Place Item retries; the paused control returns the held item.
         operation = "continue" if state is not None and state.state == "PAUSED" else "startup"
         self._command(operation)
 
@@ -546,6 +553,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.feedback_message = f"{feedback.phase} · {feedback.message}{suffix}"
 
     def _action(self, name):
+        status = self.node.status
+        if not self.preview_mode and name == "place" and self._acquisition_paused(status):
+            if (not self.pending and self.pending_goal is None
+                    and not self.return_requested_locally and status.tray_detector_ready):
+                self._command("continue")
+            return
         if (self.pending_goal is not None or self.result_future is not None or self.pending
                 or self.preview_clear_future is not None):
             return
@@ -553,7 +566,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self._preview({"home": Preview.Request.HOME, "pick": Preview.Request.PICK,
                            "place": Preview.Request.PLACE}[name])
             return
-        status = self.node.status
         if status is None or not status.configuration_id:
             QtWidgets.QMessageBox.warning(self, "Not configured", "Load teach files first")
             return
@@ -695,9 +707,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
             and not active)
         pause_pending = self.pause_requested_locally or "pause" in self.pending
         paused = current == "PAUSED" or pause_pending
+        acquisition_paused = self._acquisition_paused(state)
         self.startup.setText("CONTINUE" if paused else "START")
+        self.startup.setToolTip(
+            "Use Place Item (Retry) or Return Item after failed tray acquisition"
+            if acquisition_paused
+            else "Continue the paused operation" if paused else "Start the configured controller")
         self.startup.setEnabled(
-            not self.preview_mode and reachable and (
+            not self.preview_mode and not acquisition_paused and reachable and (
                 (current == "INACTIVE" and not active)
                 or (current == "PAUSED" and "continue" not in self.pending
                     and "stop" not in self.pending and "return_item" not in self.pending
@@ -722,6 +739,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.stop.setText("PAUSE")
         else:
             self.stop.setText("STOP")
+        self.stop.setToolTip(
+            "Return the held item to its saved bin position, then return Home"
+            if self.stop.text() == "RETURN ITEM & STOP" else
+            "Pause the current operation" if self.stop.text() == "PAUSE" else
+            "Stop immediately and preserve the gripper outputs")
         if self.stop.text() == "PAUSE":
             self.stop.setStyleSheet(
                 "background:#d18b00;color:white;font-weight:800;font-size:18px")
@@ -738,6 +760,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.pick_item.setEnabled(
             reachable and state.item_detector_ready and state.tray_position_recorded
             and current == "READY" and not active)
+        self.place_item.setText(
+            "Place Item (Retry)" if acquisition_paused and not self.preview_mode else "Place Item")
         self.place_item.setEnabled(
             reachable and state.tray_position_recorded and state.tray_detector_ready
             and current in ("READY", "HOLDING") and not active
@@ -760,6 +784,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if state and not state.tray_position_recorded:
             self.pick_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
             self.place_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
+        if acquisition_paused and not self.preview_mode:
+            selectable = (not self.pending and self.pending_goal is None
+                          and not self.return_requested_locally)
+            self.place_item.setEnabled(selectable and state.tray_detector_ready)
+            self.place_item.setToolTip("Retry tray acquisition with up to 3 fresh requests")
         for field in (self.place_x, self.place_y, self.place_rotation):
             field.setEnabled(not active)
         self.preview_toggle.setEnabled(self.preview_mode or (

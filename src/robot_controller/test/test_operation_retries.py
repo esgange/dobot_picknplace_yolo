@@ -12,7 +12,7 @@ from tray_perception_interfaces.srv import GetTrayPose
 
 import robot_controller.tray_client as tray_module
 from robot_controller.errors import FeedbackFailure, ManagedInterruption, OperationCanceled
-from robot_controller.tray_client import TrayAttempts, TrayClient
+from robot_controller.tray_client import TrayAcquisitionExhausted, TrayAttempts, TrayClient
 from test_automatic_return import action_rig
 from test_placement import response_fixture
 
@@ -235,13 +235,13 @@ def test_tray_retries_missing_pose_or_reply_and_accepts_third_fresh_result(
 
 
 @pytest.mark.parametrize("failure", [None, "timeout"])
-def test_tray_stops_after_three_failures_with_final_reason(monkeypatch, failure):
+def test_tray_exhausts_three_failures_with_typed_final_reason(monkeypatch, failure):
     rig = TrayRig(monkeypatch, [failure] * 3)
-    with pytest.raises(FeedbackFailure, match="failed after 3 attempts"):
+    with pytest.raises(TrayAcquisitionExhausted, match="failed after 3 attempts"):
         rig.request()
     assert rig.client.call_async.call_count == rig.attempts.count == 3
     assert rig.observer.pending is None
-    with pytest.raises(FeedbackFailure, match="failed after 3 attempts"):
+    with pytest.raises(TrayAcquisitionExhausted, match="failed after 3 attempts"):
         rig.request()
     assert rig.client.call_async.call_count == 3
 

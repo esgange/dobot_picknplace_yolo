@@ -7583,6 +7583,49 @@ Never use a floating “latest” version in an issue, script, or deployment not
   calibration/offline/runtime teach/model artifacts remain untouched/excluded.
   No physical hardware commands or live application restart.
 
+### 2026-09-30 — Rule 185: tray-acquisition pause with Retry and normal Return Item
+
+- User clarified the paused choices: enable Place Item for retry, keep Pick Item
+  disabled, and make the Pause control use the same Return Item routine as a held
+  Pick pause. Complete the previously uncommitted acquisition-pause draft under
+  this contract; remove the misleading Pick/Place prompt and direct-Stop-only
+  override on the acquisition pause.
+- After three unavailable pose/depth replies or response timeouts, confirm Stop
+  and remain PAUSED at saved Tray Detect, retaining the original Place action,
+  operation ownership, outputs and saved item source. No parking rise, placement
+  or release is sent while waiting. Source/ownership/robot faults and invalid
+  successful evidence remain terminal; direct Stop always pre-empts.
+- Place Item (Retry) uses existing Continue to grant another three fresh requests,
+  rechecking sources and observation position. No automatic fourth request;
+  another exhausted batch pauses again. Ordinary Pause retains the partly used
+  budget. Keep Start/Continue disabled in this specific GUI state.
+- The paused RETURN ITEM & STOP control uses existing return_item and shared
+  managed put-back: safety rise/entry, saved pre-pick release, 50 ms exhaust,
+  neutral retreat/exit transit and Home. Return finishes READY and cancels Place
+  without claiming placement success or starting Pick. Require trusted HELD
+  source and no issued placement release. Return remains available without tray
+  detection; empty/untrusted-source placement offers retry/direct Stop only.
+- Pending/executing return immediately shows STOP NOW; its next click performs
+  direct Stop/cancellation, including before the request response arrives. Retry
+  stays blocked during return. Restore ordinary held-suction/output monitoring
+  while returning to the bin, including GUI placement mode; retain interrupted
+  return progress and the existing recovery policy.
+- Update root/package/interface READMEs, AGENTS, FSM diagrams/guards and visual
+  exports. No new interfaces, configuration keys, schemas or executor threads.
+- Validation: **729 controller tests passed**, including acquisition exhaustion,
+  explicit new budgets, headless/GUI bin return, saved-source/pose/output guards,
+  direct Stop during return and restored held-suction checks. GUI tests cover the
+  original pending Place action, Retry, the normal Return control, immediate
+  STOP NOW, unavailable detector, empty placement and reset labels. The earlier
+  draft's three GUI test-double failures are resolved; the full suite is green.
+  Controller symlink build and diff checks pass. Scoped lint has six existing
+  test line-length findings and no new findings. Inspected an offscreen Qt render
+  with synthetic paused status only. Regenerated eight FSM SVGs and eight-page
+  A3 PDF; verified source SHA-256
+  a173153863288005844d2b79e947d82e4856a02e65ce9b610270598535e5b928.
+  No hardware commands or application restarts. Unrelated RViz edits and operator
+  calibration/offline/runtime teach/model artifacts remain untouched/excluded.
+
 ### Future entry template
 
 ```text

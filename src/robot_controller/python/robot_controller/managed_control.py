@@ -42,15 +42,30 @@ class ManagedControl:
         elif self.kind is not None:
             raise ManagedInterruption("Managed interruption requested")
 
+    def can_return_item(self):
+        """Shared status/admission guard for trusted-source return, including acquisition Pause."""
+        node = self.node
+        if not node.holding_item or self.session is None or self.session.held_index is None:
+            return False
+        if node.active_action != "place":
+            return True
+        placement = getattr(node, "placement", None)
+        return bool(placement is not None and placement.acquisition_paused
+                    and node.machine.state == "PAUSED" and self.kind == "pause"
+                    and self._candidate().state == "HELD" and not self.drop_pending)
+
     def request(self, kind):
         node = self.node
         with self.lock:
             if not node.startup_complete or node.machine.state not in (
-                    "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING", "PAUSED"):
+                    "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING",
+                    "PLACING", "PAUSED"):
                 raise CommandRejected(
                     "Pause/return requires a started idle or motion controller")
-            if kind == "return" and node.active_action == "place":
-                raise CommandRejected("Stop and Recover placement before requesting an item return")
+            if kind == "return" and node.active_action == "place" and not self.can_return_item():
+                raise CommandRejected(
+                    "Bin return during Place requires paused failed tray acquisition "
+                    "and a trusted held item; otherwise Stop and Recover")
             if kind == "return" and (self.session is None
                                      or self.session.held_index is None
                                      or not node.holding_item):
@@ -489,7 +504,8 @@ class ManagedControl:
                                 self.session.resuming = True
                             restored = ("PICKING" if node.active_action == "pick" else
                                         "HOMING" if node.active_action == "home" else
-                                        "TRAY_POSITIONING" if node.active_action == "tray_position" else
+                                        "TRAY_POSITIONING"
+                                        if node.active_action == "tray_position" else
                                         "HOLDING" if node.holding_item else "READY")
                             # Clear before exposing the resumed state. A new
                             # request after this lock releases belongs to the

@@ -5,10 +5,10 @@ import math
 
 import numpy as np
 
-from .errors import FeedbackFailure, HeldUnknown
+from .errors import FeedbackFailure, HeldUnknown, ManagedInterruption, ReturnedToHome
 from .motion import (Target, gripper_neutral_events, pose_reached, rigid_matrix,
                      vacuum_neutral_events, gripper_open_events, vacuum_exhaust_events)
-from .tray_client import TrayAttempts
+from .tray_client import TrayAcquisitionExhausted, TrayAttempts
 
 
 TRAY_SPEED_PERCENT = 100
@@ -80,6 +80,13 @@ class PlacementOperation:
     observing: bool = False
     tray_attempts: TrayAttempts = field(default_factory=TrayAttempts)
     pending_motion: object = None
+    acquisition_failure: str = ""
+    returning_to_bin: bool = False
+
+    @property
+    def acquisition_paused(self):
+        return bool(self.acquisition_failure and self.phase == "OBSERVE"
+                    and not self.release_issued and not self.returning_to_bin)
 
     @property
     def needs_recovery(self):
@@ -191,10 +198,18 @@ class PlacementOperation:
         self.preflight(node)
         node.operation_progress("TRAY_POSITION", "Checking saved Tray Detect position")
         node.hardware.wait_tray_position(config.tray.detect_joints)
-        surface = node.trays.request(config, self.x_mm, self.y_mm,
-                                     require_held_item=self.require_held_item,
-                                     attempts=self.tray_attempts,
-                                     check_state=lambda: self.check_observation(node))
+        try:
+            surface = node.trays.request(config, self.x_mm, self.y_mm,
+                                         require_held_item=self.require_held_item,
+                                         attempts=self.tray_attempts,
+                                         check_state=lambda: self.check_observation(node))
+        except TrayAcquisitionExhausted as exc:
+            with node.managed.lock:
+                node.wait_for_resume()
+                self.acquisition_failure = str(exc)
+                node.managed.request("pause")
+            node.events.record("WARNING", "tray_acquisition_paused", str(exc))
+            raise ManagedInterruption(str(exc)) from exc
         self.check_observation(node)
         self.plan = place_targets(config.tray.detect_matrix, surface,
                                   config.profile, self.rotation_deg, config.home_matrix)
@@ -244,6 +259,8 @@ class PlacementOperation:
         self.observe(node, sample)
         if self.phase in ("OBSERVE", "APPROACH"):
             self.preflight(node)
+            if self.acquisition_paused and node.holding_item:
+                node._preflight_item_state(True)
         elif self.phase in ("RELEASED", "DONE") and sample.feed["digital_input_bits"] & 1:
             raise HeldUnknown("Unexpected suction after confirmed placement release")
 
@@ -257,17 +274,49 @@ class PlacementOperation:
                                        allow_suction_loss=self.needs_recovery)
             managed.parked_pose = node.hardware.current_pose()
             node.configuration.validate_sources(node.root)
-            node._transition("PAUSED", "Placement stopped in place; Continue resumes it")
+            if self.acquisition_paused:
+                if not node.hardware.home_already_reached(node.configuration.tray.detect_joints):
+                    raise FeedbackFailure("Not at Tray Detect position; acquisition Pause blocked")
+                choices = "Use Place Item (Retry)"
+                if node.holding_item:
+                    choices += " or Return Item"
+                message = (f"{self.acquisition_failure}; paused at Tray Detect. "
+                           f"{choices}")
+            else:
+                message = "Placement stopped in place; Continue resumes it"
+            node._transition("PAUSED", message)
+            if self.acquisition_paused:
+                node.operation_progress("TRAY_ACQUISITION_PAUSED", message)
             while True:
                 node.raise_if_cancelled()
                 self.check_paused(node, node.monitor.snapshot(require_enabled=True))
                 with managed.lock:
-                    if managed.resume.is_set():
+                    returning = managed.kind == "return"
+                    if returning:
+                        if not self.acquisition_paused:
+                            raise FeedbackFailure("Bin return requires paused tray acquisition")
+                        # Return owns the saved pick source and its I/O history.
+                        # Placement never issued motion/release in this branch.
+                        self.returning_to_bin = True
+                        managed.resume.clear()
+                    elif managed.resume.is_set():
+                        if self.acquisition_paused:
+                            self.tray_attempts = TrayAttempts()
+                            self.acquisition_failure = ""
+                            node.events.record(
+                                "INFO", "tray_acquisition_retry",
+                                "Operator requested 3 new attempts")
                         if self.phase == "APPROACH":
                             self.phase = "OBSERVE"  # Reobserve after an interrupted approach.
                         managed._clear_request()
                         node._transition("PLACING", "Continuing placement")
                         return
+                if returning:
+                    node._preflight_item_state(True)
+                    managed._put_back(dropped=False)
+                    node._transition(
+                        "READY", "Item returned to bin; robot Home; placement canceled")
+                    raise ReturnedToHome("Item returned to bin and robot Home; placement canceled")
                 node.wait_control(.02)
         finally:
             with managed.lock:

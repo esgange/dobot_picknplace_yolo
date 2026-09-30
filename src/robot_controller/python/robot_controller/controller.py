@@ -344,9 +344,7 @@ class RobotController(Node):
         if session is not None:
             status.candidate_ids = [attempt.identifier for attempt in session.attempts]
             status.candidate_states = [attempt.state for attempt in session.attempts]
-        status.can_return_item = bool(self.holding_item and session is not None
-                                      and session.held_index is not None
-                                      and self.active_action != "place")
+        status.can_return_item = self.managed.can_return_item()
         status.global_speed_percent = (
             self.global_speed_percent if self.global_speed_percent is not None else -1)
         status.startup_complete = self.startup_complete
@@ -425,7 +423,7 @@ class RobotController(Node):
             recovery.check(sample)
             return False
         placement = getattr(self, "placement", None)
-        if placement is not None:
+        if placement is not None and not placement.returning_to_bin:
             placement.observe(self, sample)
             return False
         return self.managed.observe(sample)
@@ -859,6 +857,14 @@ class RobotController(Node):
                     return result
                 except ManagedInterruption:
                     self.placement.handle_pause(self)
+        except ReturnedToHome as exc:
+            result.outcome, result.message = result.CANCELED, str(exc)
+            result.final_state = self.machine.state
+            goal.abort()
+            self.events.record("INFO", "action_result", result.message,
+                               operation="place", outcome=int(result.outcome),
+                               state=result.final_state)
+            return result
         except Exception as exc:
             return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
         finally:

@@ -57,16 +57,40 @@ Tray Detect Position action remains available to external clients with its direc
 joint-target MovL. The bin routes retain their existing clearance logic.
 After confirmation, request fresh tray/depth from Armed Tray Teach or headless
 Tray Detect, with
-**three requests total** per Place action. Retry a missing pose/depth result,
+**three requests per acquisition batch**. Retry a missing pose/depth result,
 provider no-result/error/BUSY reply or response timeout at the same observation
 position. Each request keeps its taught request timeout plus one second for the
 reply and requires RGB/depth captured after that request. A timed-out local future
 is discarded; a late reply cannot supply a later attempt. The provider serializes
-inference. Pause/Continue keeps the request count and discards interrupted results
-after completion or their original deadline; it cannot reset the three-request
-limit. After the third failure, Stop/report the last reason without placement or
-release. Local source/ownership/feedback faults and invalid successful pose
+inference. Ordinary Pause/Continue keeps the request count and discards interrupted
+results after completion or their original deadline. After three unavailable
+observations, confirm Stop and enter **PAUSED at the saved Tray Detect position**,
+with the original Place action and command ownership retained. Preserve outputs
+and any held source; queue no placement, release or parking rise. Report the final
+reason in status, action feedback and operator log. **Place Item (Retry)** starts
+another batch of up to three fresh requests, after the usual position/source checks.
+There is no automatic fourth request. Another exhausted batch pauses again.
+Local source/ownership/feedback faults and invalid successful pose
 evidence remain terminal. Run exactly one provider; commands remain controller-owned.
+
+During this acquisition pause, Pick Item stays disabled. The existing Pause
+control shows **RETURN ITEM & STOP**, just as after a held Pick pause, while
+Place Item is labelled **Place Item (Retry)**. Return stays available if tray
+detection becomes unavailable; retry requires its provider. Start/Continue is
+disabled here so Place Item is the visible retry choice. The ongoing Place action
+does not block either choice. Pending return immediately shows **STOP NOW**,
+whose next click directly stops/cancels; no duplicate return or concurrent retry.
+Without a trusted held source, the paused control remains direct Stop.
+
+A trusted held item may be returned to its saved
+bin source through the existing put-back route: rise/entry transit, taught pre-pick
+release, 50 ms exhaust, neutral retreat/exit transit and Home. Return finishes READY
+and ends the waiting Place action as CANCELED, without claiming placement success.
+The gripper is preserved until the explicit return reaches its release pose.
+GUI placement's relaxed item-presence policy does not apply to the bin return;
+normal held-suction/output monitoring resumes before that route.
+Return is blocked during ordinary placement Pause and after release admission.
+Direct Stop always pre-empts; stopped/faulted operations still require Recover.
 
 Tray configuration uses the active eye-on-hand calibration saved in the shared
 `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION` selection, independently of the camera

@@ -70,6 +70,20 @@ the queue executes. Placement Pause stops in place; Continue retains release
 progress and only retreats after confirmed release. Explicit Recover cancels,
 returns Home and resets the gripper. Neither interface nor launch automatically starts motion.
 
+Three unavailable tray observations before placement motion cause a confirmed
+in-place Pause at Tray Detect. The original Place action remains active and status
+reports `PAUSED`, operation `place`, phase `TRAY_ACQUISITION_PAUSED`, plus the last
+failure reason. Existing `/continue` explicitly grants another three-request
+acquisition batch; ordinary Pause does not reset a partly used budget. The GUI's
+**Place Item (Retry)** button uses that continuation; Pick Item stays disabled.
+The paused **RETURN ITEM & STOP** control uses the existing return service and
+immediately becomes direct **STOP NOW** while return is pending/executing.
+`can_return_item` additionally permits
+`/return_item` in this specific pause with a trusted HELD source and no issued
+placement release. It returns to the saved bin pose and Home, ending Place with
+CANCELED/final READY. No new interface fields or endpoints are added. Unknown held
+items, invalid sources/pose evidence, robot faults and direct Stop keep their guards.
+
 `ControllerStatus.item_detector_ready` and `tray_detector_ready` report availability
 of the corresponding pose service from exactly one canonical root provider. They
 are refreshed at 5 Hz; unavailable, ambiguous or foreign providers report false.

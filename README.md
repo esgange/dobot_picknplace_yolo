@@ -111,6 +111,12 @@ batch. Stop on the first held success; three exhausted batches finish READY/NO_P
 Place retries a missing tray/depth result or response timeout with at most **three
 requests total**, while staying at Tray Detect Pose. Stop/Pause, source validation
 and robot feedback checks remain active; malformed pose evidence remains fatal.
+After three unavailable observations, confirm Stop and enter **PAUSED at Tray
+Detect**, preserving outputs and any trusted held source. **Place Item (Retry)**
+starts another three-request acquisition batch. The paused control shows
+**RETURN ITEM & STOP** for a known held item and uses the existing saved-bin
+put-back routine, ending Home/READY. Pick Item stays disabled. No placement or
+release is queued while waiting for the operator; robot/source faults remain terminal.
 Place Item requires an available armed Tray Teach
 or headless Tray Detect provider. **GUI mode permits placement with or without an
 item**, from idle READY or HOLDING; no successful Pick is required. This is real

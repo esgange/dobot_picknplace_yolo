@@ -1,5 +1,15 @@
 # Robot Controller — Finite State Machine
 
+Acquisition pause review: **2026-09-30**, baseline **`2ed6a41`** plus diary rule
+**185**. Three unavailable observations Stop and pause Place at Tray Detect,
+preserving grip and ownership. Place Item (Retry) explicitly grants three new
+requests; Pick Item remains disabled. The normal paused RETURN ITEM & STOP
+control uses the saved-source bin put-back and Home routine, ending READY and
+Place CANCELED. Pending/executing return presents direct STOP NOW. Require a
+trusted HELD source before release admission and normal held checks on return;
+manual placement without a source offers retry/direct Stop. No automatic retry
+beyond the batch, parking rise, release or Home while awaiting the operator.
+
 Placement height review: **2026-09-30**, baseline **`9581a46`** plus diary rule
 **184**. Item Teach schema 10 requires `motion.trayplace_height` in millimetres.
 Real placement and Preview use surface Z + this height, independently of Pick
@@ -37,7 +47,8 @@ Retry behavior review: **2026-09-30**, baseline **`30073a2`** plus diary rule
 **180**. Pick permits three full candidate batches; an exhausted/empty batch
 counts as one attempt, with Home before fresh detection. Place permits three
 fresh tray/depth requests for unavailable observations or missing replies.
-Pause retains both limits. Robot faults and invalid successful pose evidence
+Ordinary Pause retains both limits; rule 185 permits an explicit new tray batch
+after acquisition exhaustion. Robot faults and invalid successful pose evidence
 remain terminal; no hardware command is retried on uncertain acceptance.
 
 Position feedback review: **2026-09-30**, baseline **`caad7a8`** plus diary rule
@@ -107,6 +118,8 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 - **HOLDING** means trusted held-item context; it does not always mean at Home.
 - **Pause parks Home/Pick/tray-position operations. Placement Pause stops in place**,
   then waits for Continue or direct Stop without releasing or moving the item.
+  Exhausted tray acquisition offers Place Item (Retry) and the normal held-item
+  Return control; Pick Item remains disabled.
 - **Direct Stop stops motion and preserves the grip.** It does not put an item back.
 - **Recover cancels the old action, returns Home, then relaxes the gripper.**
   Preserve outputs during travel; reset DO1/DO2/DO13/DO14 only at confirmed Home.
@@ -240,7 +253,8 @@ Place goal; there is no mixed-layout fallback. Restart Tray Teach/Detect and
 Robot Controller after updating. Provider executor failures revoke arming and
 report a terminal error with traceback, rather than retaining a silent frozen
 preview. Each unanswered in-flight request retains its bounded timeout; retry
-only within the three-request Place limit, then use the controller Stop/failure path.
+only within the three-request acquisition batch, then confirm Stop and pause.
+An explicit Place Item (Retry) grants another batch; no automatic fourth request.
 
 Startup order: validate ownership/feedback → read-only GetErrorID E-stop check → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →
@@ -268,7 +282,7 @@ typed status and failed service responses include the complete guidance.
 | `PICKING` | Up to three fresh candidate batches, Home between exhausted batches; success ends at Tray Detect. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
-| `PAUSED` | Managed parking confirmed; controller continues checking pose, queue, outputs and held suction. |
+| `PAUSED` | Managed parking or in-place acquisition Stop confirmed; monitor pose, queue, outputs and held suction. Failed tray acquisition offers explicit retry or trusted-source return. |
 | `RETURNING_ITEM` | Saved item's put-back is executing; destination afterward depends on why it started. |
 | `STOPPING` | Direct Stop/cancellation/fault containment is being confirmed. |
 | `RECOVERY_REQUIRED` | Stop confirmed; previous operation cannot simply Continue. Explicit Recover required. |
@@ -389,14 +403,19 @@ claim PLACED or RETURNED.
 ```mermaid
 flowchart TD
     Request["PlaceItem: GUI READY/HOLDING or headless trusted HOLDING; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints? No motion command"}
-    Observe -->|Yes immediately| Depth["Request fresh matched tray pose/depth; at most 3 requests per Place"]
+    Observe -->|Yes immediately| Depth["Request fresh matched tray pose/depth; at most 3 requests per acquisition batch"]
     Observe -->|No| Wait["Wait up to 3 seconds for idle + joints"]
     Wait -->|Arrived| Depth
     Wait -->|Expired| Position["Not at Tray Detect position; no detection or placement"]
     Position --> Stop["Stop and report failure; preserve item"]
     Depth -->|No usable result or reply timeout| Budget{"Requests left?"}
     Budget -->|Yes; stay at observation pose| Depth
-    Budget -->|No| Stop
+    Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
+    AcquisitionPause -->|Place Item Retry| Reset["Operator grants 3 new requests; recheck sources and position"]
+    Reset --> Observe
+    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["Saved bin pre-pick release; 50 ms exhaust; neutral retreat and Home"]
+    PutBack --> Returned["READY; Place CANCELED; no new Pick"]
+    AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Valid; still at observation position| Queue["Admit three commands in one ordered CP100 group"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
@@ -447,10 +466,28 @@ boundary. Cancel/discard timed-out local futures; never consume their late resul
 The provider serializes inference and may reply BUSY while an old callback retires.
 Pause retains the count, drains an interrupted request to completion or its original
 deadline and discards that result. Local source/ownership/feedback failures and
-invalid successful pose/depth evidence stop immediately. All three failures use
-normal Stop containment, with no placement motion or release. Attempt N/3 and the
-last failure reason appear in controller progress/events. No automatic arming,
-runtime restart, configuration/interface change or physical motion retry is added.
+invalid successful pose/depth evidence stop immediately. After three unavailable
+observations, confirm Stop and stay at saved Tray Detect in PAUSED with original
+action/operation ownership and unchanged grip. There is no parking rise or
+placement/release command. Publish phase `TRAY_ACQUISITION_PAUSED` and the failure
+reason. Place Item (Retry) explicitly resets the request budget, rechecks sources
+and observation position, then makes up to three new requests. Another exhausted
+batch pauses again. Ordinary manual Pause retains its partly used budget.
+
+Pick Item remains disabled. A trusted HELD source before any placement release
+enables the same paused RETURN ITEM & STOP control as held Pick. It calls the
+existing bin put-back: safety rise and entry, exact taught pre-pick release,
+50 ms exhaust, neutral retreat/exit transit and Home, with existing rates and
+feedback barriers. Complete READY and Place CANCELED; never start a new Pick.
+Normal held-suction/output checks apply during bin return even in GUI mode.
+Return does not require the tray detector; retry does. An empty/manual placement
+pause with no trusted held source offers retry and direct Stop. Start/Continue
+is disabled for this acquisition pause; the Place button supplies continuation.
+Return immediately switches to STOP NOW, including before its service response;
+a second click directly stops/cancels. Return pending blocks retry.
+Attempt N/3 and the last failure reason appear in controller progress/events.
+No automatic arming, runtime restart, configuration/interface change or physical
+motion retry is added.
 
 Release Z = surface Z + `motion.trayplace_height` (millimetres). Schema 10
 requires this finite, nonnegative value; Pick standoff/pre-pick/retract settings
@@ -507,8 +544,9 @@ Once release is issued, never descend/release again. Observed release permits ne
 outputs and an upward-only retreat at actual X/Y to at least pre-place Z, ending there.
 Unconfirmed partial release blocks Continue. Explicit Recover cancels placement,
 validates fresh stopped I/O, preserves outputs and lifts to Home Z before Home,
-then resets all four gripper outputs OFF. It neither replays expired history nor declares successful placement. Return Item cannot substitute
-bin put-back during placement. Pick settling/retries and its return paths are
+then resets all four gripper outputs OFF. It neither replays expired history nor
+declares successful placement. Bin put-back is available only for the exhausted
+acquisition Pause described above, before any placement release admission. Pick settling/retries and its return paths are
 unchanged. Process restart cannot reconstruct retained placement progress.
 
 ## 4. Pause and Continue
@@ -552,6 +590,8 @@ direct Stop, including when a PAUSED topic sample arrives before the Pause reply
 **RETURN ITEM & STOP** appears only after pending requests clear and PAUSED has
 trusted held source. External `/return_item` clients can request a managed
 return from other started eligible states; the GUI exposes it while paused.
+The exhausted tray-acquisition pause uses this same Return control and route,
+but stays at Tray Detect while awaiting the choice (section 3a).
 
 ## 5. Direct Stop and Recovery
 
@@ -707,7 +747,7 @@ Names below are relative to `/robot_controller/`.
 | `place_item` action | Started GUI READY/HOLDING, or headless HOLDING with trusted HELD source; saved tray joints; tray detector ready; exact configuration ID; operation slot free |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
-| `return_item` service | Started eligible managed state and trusted held source; no conflicting request |
+| `return_item` service | Started eligible managed state and trusted held source; during Place, only exhausted-acquisition PAUSED before release admission; no conflicting request |
 | `stop` service / action cancellation | Direct pre-emption; does not require Pause first |
 | `recover` service | FAULT / RECOVERY_REQUIRED / HELD_UNKNOWN; operation slot free |
 | `set_global_speed` service | Stationary READY / HOLDING; integer 1–100; operation slot free |
@@ -716,7 +756,8 @@ Acceptance is not proof of motion completion. Pause/Continue/Return services
 acknowledge a request; observe status afterward. Home/Pick actions provide final
 results: SUCCESS, NO_PICK (Pick only), CANCELED, COMMAND_REJECTED,
 FEEDBACK_FAILURE, STOP_UNCONFIRMED or CONTROLLER_FAULT. A controlled Return Item
-that ends an active Home/Pick reports CANCELED and final READY, not Pick success.
+that ends active Home/Pick or acquisition-paused Place reports CANCELED and final
+READY; it does not claim pick/placement success.
 PlaceItem SUCCESS instead means all three placement commands were accepted; its
 completion worker retains `operation_active` until final retract/neutral/DI1 LOW
 and READY, or failure containment. Clients must observe status for that outcome.

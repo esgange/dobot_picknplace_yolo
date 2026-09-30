@@ -692,7 +692,8 @@ def test_gui_second_pause_click_stops_immediately_during_parking():
 def test_gui_nonpausable_state_calls_stop_directly_and_paused_start_continues():
     commands = []
     window = SimpleNamespace(
-        node=SimpleNamespace(status=SimpleNamespace(state="FAULT")), pending={},
+        node=SimpleNamespace(status=SimpleNamespace(state="FAULT", operation="", phase="")),
+        pending={}, _acquisition_paused=ControllerWindow._acquisition_paused,
         preview_mode=False, pause_requested_locally=False, return_requested_locally=False,
         stop=Button(),
         _command=lambda name: commands.append(name) or True,

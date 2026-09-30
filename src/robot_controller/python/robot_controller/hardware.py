@@ -511,7 +511,8 @@ class DobotTransport:
         pulse_pending = bool(return_progress is not None
                              and return_progress.pending_outputs.get(1) is True)
         placement = getattr(self.node, "placement", None)
-        if placement is not None and not placement.require_held_item:
+        if (placement is not None and not placement.require_held_item
+                and not placement.returning_to_bin):
             allow_suction_loss = True
 
         def stationary(snapshot):
@@ -623,7 +624,8 @@ class DobotTransport:
             return recovery.check(snapshot)
         returning = getattr(self, "return_recovery", False)
         placement = getattr(self.node, "placement", None)
-        manual_placement = placement is not None and not placement.require_held_item
+        manual_placement = (placement is not None and not placement.require_held_item
+                            and not placement.returning_to_bin)
         holding = returning or (self.node.holding_item if known_holding is None else known_holding)
         outputs = (self.node.expected_outputs
                    if expected_outputs is None else expected_outputs)

@@ -1,6 +1,7 @@
 """Read-only status telemetry, including stale feedback and raw gripper inputs."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 import threading
 
 from builtin_interfaces.msg import Time
@@ -53,7 +54,8 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(he
         machine=SimpleNamespace(state="HOLDING", message="Holding"),
         configuration=None, headless=headless, holding_item=True, operation_lock=threading.Lock(),
         active_action="", phase="", waypoint="", candidate_index=1, candidate_total=2,
-        managed=SimpleNamespace(session=None), global_speed_percent=60,
+        managed=SimpleNamespace(session=None, can_return_item=lambda: False),
+        global_speed_percent=60,
         startup_complete=True, expected_outputs={13: False, 14: False},
         _perception_ready=lambda action: action == "pick",
         monitor=SimpleNamespace(snapshot=lambda **_kwargs: sample))
@@ -223,6 +225,111 @@ def test_confirmed_paused_button_returns_item_then_offers_immediate_stop(window)
     assert commands == ["return_item"] and window.stop.text() == "STOP NOW"
     window.stop.click()
     assert commands == ["return_item", "stop"]
+
+
+def acquisition_paused_status(**fields):
+    values = dict(state="PAUSED", operation="place", phase="TRAY_ACQUISITION_PAUSED",
+                  operation_active=True, holding_item=True, can_return_item=True,
+                  tray_position_recorded=True)
+    values.update(fields)
+    return status(**values)
+
+
+def test_failed_acquisition_place_button_retries_while_original_action_is_pending(window):
+    commands = []
+    pending = SimpleNamespace(done=lambda: False)
+    window.result_future = pending
+    window.node.status = acquisition_paused_status()
+
+    def command(name):
+        commands.append(name)
+        window.pending[name] = pending
+        return True
+    window._command = command
+    window._refresh()
+    assert window.place_item.isEnabled()
+    assert window.place_item.text() == "Place Item (Retry)"
+    assert not window.pick_item.isEnabled()
+    assert not window.home_button.isEnabled() and not window.preview_toggle.isEnabled()
+    assert not window.startup.isEnabled()
+    assert window.stop.text() == "RETURN ITEM & STOP"
+    window.place_item.click()
+    assert commands == ["continue"] and window.result_future is pending
+    window._refresh()
+    assert not window.place_item.isEnabled()
+    window._action("place")
+    assert commands == ["continue"]
+
+
+@pytest.mark.parametrize("blocker", ["provider", "stop", "return", "ordinary_pause"])
+def test_acquisition_retry_button_cannot_bypass_its_guards(window, blocker):
+    commands = []
+    window._command = lambda name: commands.append(name) or True
+    window.result_future = SimpleNamespace(done=lambda: False)
+    window.node.status = acquisition_paused_status()
+    if blocker == "provider":
+        window.node.status.tray_detector_ready = False
+    elif blocker == "stop":
+        window.pending["stop"] = SimpleNamespace(done=lambda: False)
+    elif blocker == "return":
+        window.return_requested_locally = True
+    else:
+        window.node.status.phase = "MOTION"
+    window._refresh()
+    assert not window.place_item.isEnabled()
+    window._action("place")
+    assert commands == []
+
+
+def test_acquisition_return_uses_same_paused_control_and_then_direct_stop(window):
+    commands = []
+    pending = SimpleNamespace(done=lambda: False)
+    window.result_future = pending
+    window.goal_handle = SimpleNamespace(cancel_goal_async=Mock())
+    window._command = lambda name: commands.append(name) or True
+    window.node.status = acquisition_paused_status()
+    window._refresh()
+    window._start_or_continue()
+    assert commands == []
+    window.stop.click()
+    assert commands == ["return_item"]
+    assert window.stop.text() == "STOP NOW"
+    window.goal_handle.cancel_goal_async.assert_not_called()
+    assert window.result_future is pending
+    window._refresh()
+    assert not window.place_item.isEnabled() and not window.pick_item.isEnabled()
+    assert window.stop.text() == "STOP NOW"
+    window.stop.click()
+    assert commands == ["return_item", "stop"]
+    window.goal_handle.cancel_goal_async.assert_called_once()
+
+
+def test_empty_acquisition_pause_has_retry_and_direct_stop_without_invented_return(window):
+    commands = []
+    window._command = lambda name: commands.append(name) or True
+    window.node.status = acquisition_paused_status(holding_item=False, can_return_item=False)
+    window._refresh()
+    assert window.place_item.isEnabled()
+    assert not window.pick_item.isEnabled()
+    assert window.stop.text() == "STOP"
+    window.stop.click()
+    assert commands == ["stop"]
+
+
+def test_acquisition_return_stays_available_without_tray_detector(window):
+    window.node.status = acquisition_paused_status(tray_detector_ready=False)
+    window._refresh()
+    assert not window.place_item.isEnabled() and not window.pick_item.isEnabled()
+    assert window.stop.text() == "RETURN ITEM & STOP" and window.stop.isEnabled()
+
+
+def test_acquisition_retry_label_resets_after_return_to_ready(window):
+    window.node.status = acquisition_paused_status()
+    window._refresh()
+    assert window.place_item.text() == "Place Item (Retry)"
+    window.node.status = status(state="READY", tray_position_recorded=True)
+    window._refresh()
+    assert window.place_item.text() == "Place Item"
 
 
 @pytest.mark.parametrize("inputs", [0, 1])
