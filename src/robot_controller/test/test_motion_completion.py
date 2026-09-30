@@ -35,7 +35,8 @@ class MotionRig:
         self.transport.call_group = self.dispatch
         self.monitor.wait_next = self.next_sample
 
-    def emit(self, *, z=0., command_id=0, running=0, advance=True, outputs=0, position=True):
+    def emit(self, *, z=0., command_id=0, running=0, advance=True, outputs=0,
+             position=True, di1=False):
         self.timer += int(advance)
         joints = joint_message()
         joints.position[0] = z
@@ -45,7 +46,8 @@ class MotionRig:
         self.monitor.update_feed(feed(
             controller_timer=self.timer, currentCommandId=command_id,
             tool_vector_actual=[0., 0., z * 1000, 0., 0., 0.],
-            RunningStatus=running, isRunQueuedCmd=running, digital_outputs=outputs))
+            RunningStatus=running, isRunQueuedCmd=running, digital_outputs=outputs,
+            digital_input_bits=int(di1)))
 
     @staticmethod
     def forward(joints):

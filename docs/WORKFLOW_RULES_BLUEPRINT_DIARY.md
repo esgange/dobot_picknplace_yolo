@@ -7699,6 +7699,35 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No physical hardware commands or running-app restart; unrelated RViz edits
   and operator calibration/teach/model files remain untouched/excluded.
 
+### 2026-09-30 — Rule 188: immediate pickup return after Stop acknowledgement
+
+- User clarified that final-pick settling is only the last chance to receive
+  DI1. Eligible HIGH during descent or settling sends Stop immediately, then
+  starts the successful upward return once Stop is acknowledged. Remove the
+  successful-pick stationary/idle/empty-queue confirmation, retaining fresh
+  joint-derived origin, suction and output checks. Mark HELD and use the existing
+  pre-pick/clearance/Tray Detect route, rates and grip timing. No settling delay
+  applies after acquisition; misses still require the complete taught interval.
+- Extract command acknowledgement from physical Stop confirmation. Direct Stop,
+  Pause, recovery and fault containment keep their physical confirmation. If a
+  motion reply is outstanding at acquisition, retire that reply and the immediate
+  Stop, then send/acknowledge a final Stop before returning. This discards motion
+  admitted after the initial Stop and leaves no outstanding Stop to cancel the
+  return. Remove normal acquisition Stop dispatch from delayed response callbacks;
+  cancellation and timed-out late-motion containment remain independent.
+- Add a distinct pickup_stop_acknowledged event instead of claiming standstill.
+  Preserve source validation, ownership, response deadlines, cancellation, DI1
+  arming/reset, outputs and held-suction monitoring. No interface, teach schema,
+  setting, hardware command or automatic application restart. Operator RViz,
+  calibration, runtime/offline teach files and weights remain excluded.
+- Validation: **821 controller tests passed**. New synthetic cases exercise HIGH
+  during descent/settling, return admission with still-moving feedback, waiting
+  only for Stop acceptance, rejection/exception/timeout/cancellation, both reply
+  orders for interrupted admission, and delayed callbacks after acquisition.
+  Controller build, scoped 100-column flake8 and diff checks pass. Regenerated
+  eight FSM diagrams and the eight-page A3 PDF; verified source SHA-256
+  447b7f4ff6ca2c6d5223a0499edae8df1004238ac8e601d5258c96b74408f5e9.
+
 ### Future entry template
 
 ```text

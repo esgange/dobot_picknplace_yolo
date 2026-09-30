@@ -239,7 +239,7 @@ class PickExecutor:
                     batch_name=f"candidate_{held}_pick_to_tray")
                 session.resuming = False
                 return {"picked": True, "candidate": held, "holding_item": True}
-            acquired, stopped_pose = True, self.hardware.current_pose()
+            acquired, return_origin = True, self.hardware.current_pose()
         else:
             if progress is not None:
                 progress("CANDIDATE", f"Attempting candidate {start_index}", start_index)
@@ -263,7 +263,7 @@ class PickExecutor:
                 transit = candidate_transit(departure[-1].matrix, plan)
                 forward = (*departure, transit, plan[1], plan[2], plan[3])
                 origin["confirmed_start_pose"] = departure_pose
-            acquired, stopped_pose = self.hardware.move_batch(
+            acquired, return_origin = self.hardware.move_batch(
                 forward, batch_name=(f"return_item_to_candidate_{start_index}_pick" if departure
                                      else "candidate_1_home_to_pick" if start_index == 1 else
                                      f"candidate_{start_index}_home_to_pick"),
@@ -283,12 +283,12 @@ class PickExecutor:
                 # OPEN -> NEUTRAL -> CLOSE; never overlap DO14 and DO2.
                 self.hardware.output(14, False)
                 self.hardware.output(2, True)
-            stopped_z = stopped_pose[2, 3]
+            origin_z = return_origin[2, 3]
             upward = []
             for target in plan[4:]:
-                # Vertical recovery preserves actual stopped XY/attitude.
-                matrix = stopped_pose.copy()
-                matrix[2, 3] = max(stopped_z, target.matrix[2, 3])
+                # Vertical recovery preserves the latest measured XY/attitude.
+                matrix = return_origin.copy()
+                matrix[2, 3] = max(origin_z, target.matrix[2, 3])
                 events = ()
                 if not acquired:
                     # Once final-pose settling has returned False, this attempt
@@ -309,9 +309,9 @@ class PickExecutor:
                     acceleration_percent=(target.acceleration_percent if held_retract else
                                           settings["acceleration"]["travel_percent"]),
                     motion_io=events))
-                stopped_z = matrix[2, 3]
+                origin_z = matrix[2, 3]
             if (acquired and remember_prepick is not None
-                    and stopped_pose[2, 3] > plan[2].matrix[2, 3]):
+                    and return_origin[2, 3] > plan[2].matrix[2, 3]):
                 remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
                                  settings["gripper"])
             if acquired:
@@ -320,7 +320,7 @@ class PickExecutor:
                 check(index)
                 self.hardware.move_batch(
                     (*upward, tray_target), require_suction=True, forbid_suction=False,
-                    confirmed_start_pose=stopped_pose,
+                    confirmed_start_pose=return_origin,
                     batch_name=f"candidate_{index}_pick_to_tray")
                 return {"picked": True, "candidate": index, "holding_item": True}
             upward.append(candidate_exit_transit(upward[-1].matrix, plan))
@@ -332,13 +332,13 @@ class PickExecutor:
                     return_home(preceding=tuple(upward), require_suction=False,
                                 forbid_suction=False,
                                 ignore_suction=True,
-                                confirmed_start_pose=stopped_pose,
+                                confirmed_start_pose=return_origin,
                                 queue_through_home=True,
                                 batch_name=f"candidate_{index}_pick_to_home")
                 else:
                     self.hardware.move_batch(
                         upward, batch_name=f"candidate_{index}_miss_retract",
-                        confirmed_start_pose=stopped_pose)
+                        confirmed_start_pose=return_origin)
                 break
             next_index = index + 1
             if progress is not None:
@@ -350,10 +350,10 @@ class PickExecutor:
             # Queue the old exit and next entry at the same safety Z before descent.
             # Timed output events travel with their owning motion.
             next_transit = candidate_transit(upward[-1].matrix, next_plan)
-            acquired, stopped_pose = self.hardware.move_batch(
+            acquired, return_origin = self.hardware.move_batch(
                 (*upward, next_transit, next_plan[1], next_plan[2], next_plan[3]),
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
                 pick_settling_sec=settling, return_terminal_pose=True,
-                confirmed_start_pose=stopped_pose)
+                confirmed_start_pose=return_origin)
         return {"picked": False, "candidate": None, "holding_item": False}

@@ -201,10 +201,8 @@ class DobotTransport:
                 self.node.on_late_motion_ack(stop_future)
             except StopUnconfirmed as exc:
                 self.node.events.record("ERROR", "late_ack_stop_failed", str(exc))
-        elif name in MOTION_SERVICES and self.suction_interrupted:
-            # Normal DI1 acquisition intentionally interrupts the descent.  The
-            # owning pick thread confirms this Stop before queuing its retract.
-            self.request_stop("motion acknowledgement after suction acquisition")
+        # Normal pickup interruption is serialized by the owning motion group.
+        # A delayed callback must not send another Stop into its return queue.
 
     def _late_service_completed(self, future, audit):
         if audit.get("outcome") not in LATE_RESPONSE_OUTCOMES:
@@ -393,6 +391,10 @@ class DobotTransport:
                                 if suction_loss is None:
                                     self.request_stop("Held suction lost during motion admission")
                                     suction_loss = exc
+                        if self.suction_interrupted:
+                            # The immediate Stop may precede this command's
+                            # admission. Discard again after both replies.
+                            self.suction_stop_needs_refresh = True
                         if time.monotonic() >= deadline:
                             self._finish_service_audit(
                                 audit, "timeout",
@@ -465,7 +467,8 @@ class DobotTransport:
             self.node.events.record("WARNING", "stop_requested", reason)
             return future
 
-    def confirm_stop(self, future=None, *, allow_suction_loss=False, recovery_home=None):
+    def _acknowledge_stop(self, future=None, *, check_cancel=False):
+        """Validate command acceptance without asserting a physical standstill."""
         future = future or self.stop_future
         if future is None:
             raise StopUnconfirmed("No Stop request exists to confirm")
@@ -473,6 +476,8 @@ class DobotTransport:
         audit = stop_audit[1] if stop_audit is not None and stop_audit[0] is future else None
         deadline = time.monotonic() + COMMAND_RESPONSE_TIMEOUT_SEC
         while not future.done():
+            if check_cancel:
+                self.node.raise_if_cancelled()
             try:
                 self.monitor.snapshot(require_enabled=False)
             except FeedbackFailure:
@@ -482,6 +487,8 @@ class DobotTransport:
                     audit, "timeout", detail="Stop acknowledgement timeout", level="ERROR")
                 raise StopUnconfirmed("Stop acknowledgement timeout")
             self.node.wait_control(0.02)
+        if check_cancel:
+            self.node.raise_if_cancelled()
         try:
             result = future.result()
         except Exception as exc:
@@ -497,6 +504,9 @@ class DobotTransport:
                 detail=detail, level="ERROR")
             raise StopUnconfirmed(detail)
         self._finish_service_audit(audit, "accepted", result=result)
+
+    def confirm_stop(self, future=None, *, allow_suction_loss=False, recovery_home=None):
+        self._acknowledge_stop(future)
         anchor = None
         anchor_sequence = None
         anchor_io = None
@@ -1140,6 +1150,7 @@ class DobotTransport:
             origin = target.matrix
         self.suction_interrupted = False
         self.suction_stop_future = None
+        self.suction_stop_needs_refresh = False
         self.acquisition_eligible = False
         self.late_miss_suction = require_suction_reset
         initial = self._ready_snapshot()
@@ -1194,10 +1205,15 @@ class DobotTransport:
                 "INFO", "motion_batch_interrupted", batch_name,
                 batch=batch_name, queued_targets=queued_targets,
                 reason="DI1 acquired during final approach")
-            final_stop = self.request_stop(
-                "final containment after suction acquisition group")
-            self.confirm_stop(final_stop)
-            sample = self.monitor.snapshot(require_enabled=True)
+            # Retire any outstanding Stop before dispatching the return. When
+            # pickup interrupted admission, a second ordered Stop must discard
+            # the command that could have been admitted after the first Stop.
+            self._acknowledge_stop(self.suction_stop_future, check_cancel=True)
+            if self.suction_stop_needs_refresh:
+                self.suction_stop_future = self.request_stop(
+                    "discard motion admitted during pickup Stop", fresh=True)
+                self._acknowledge_stop(self.suction_stop_future, check_cancel=True)
+            sample = self._ready_snapshot()
             if (not sample.suction_present
                     or not sample.feed["digital_outputs"] & (1 << 12)):
                 raise FeedbackFailure("Suction lost after acquisition Stop")
@@ -1207,8 +1223,13 @@ class DobotTransport:
                     raise FeedbackFailure(
                         f"Motion-timed DO{channel} mismatch after suction Stop")
             self.node.expected_outputs.update(expected_outputs)
-            stopped_pose = self.pose_from_snapshot(sample)
-            return ((True, stopped_pose) if return_terminal_pose else True)
+            self.pending_motion_outputs = {}
+            return_origin = self.pose_from_snapshot(sample)
+            self.node.events.record(
+                "INFO", "pickup_stop_acknowledged",
+                "Pickup accepted; queue return without stationary confirmation",
+                batch=batch_name, stationary_confirmation=False)
+            return ((True, return_origin) if return_terminal_pose else True)
 
         observation = self.monitor.begin_motion()
         try:

@@ -400,7 +400,7 @@ flowchart TD
     Any -->|Yes| Plan["Save ordered plans and PENDING ledger"]
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
-    Sense -->|Yes| Acquire["Stop and confirm pickup at actual stopped pose; mark HELD"]
+    Sense -->|Yes| Acquire["Send Stop; await acceptance only; fresh joint pose; mark HELD"]
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
@@ -439,9 +439,18 @@ flowchart TD
   Numerically equal offset travel (within 1e-12 radians) prefers CCW, preventing
   frame relabeling roundoff from changing an otherwise equivalent choice.
 - Final approach uses taught approach speed/acceleration. DI1 acquisition is
-  immediate once armed: it can stop before reaching the nominal final target.
-  If there is no early pickup, taught `timing.pick_settling` is the single final
-  stationary/idle observation interval. There is no extra 300 ms gate or suction wait.
+  immediate once armed: HIGH during descent or settling sends Stop to discard
+  the old trajectory. Await its command acknowledgement, then mark HELD and
+  queue the lifts/Tray Detect from the latest fresh joint-derived pose. No
+  stationary, idle, empty-queue or remaining-settling wait precedes this return.
+  Retain output/suction checks, cancellation, ownership and source validation.
+  An outstanding motion reply must resolve before the return; after that reply
+  and the first Stop reply, send and acknowledge a final Stop to discard a
+  potentially later-admitted command. Normal delayed callbacks cannot send a
+  redundant Stop into the return queue. Rejection/timeout blocks the return.
+  If there is no early pickup, taught `timing.pick_settling` is the last-chance
+  final stationary/idle observation interval. DI1 HIGH interrupts it immediately;
+  only expiry without acquisition latches a miss. No extra suction wait applies.
 - Success first lifts to pre-pick at taught retract rates. Empty retract and
   the clearance rise use speed 100% with taught travel acceleration. Other Pick
   travel uses its taught rates; global SpeedFactor scales all motion.
@@ -878,11 +887,15 @@ controller timer. Current motion origin and all actual Cartesian poses come from
 CR10 FK of the fresh canonical joint sample; there is no GetPose client or
 separate pose subscription. New joint/status samples wake position waits without
 waiting for another FeedInfo update. A motion origin requires both streams to
-advance, RobotStatus idle and an empty command queue within two seconds. Repeated
+advance, RobotStatus idle and an empty command queue within two seconds, except
+successful pickup's immediate return origin: reuse fresh joints after Stop
+acceptance without waiting for physical standstill. Repeated
 or backward joint timestamps are discarded without refreshing receipt age.
 Stale feedback can block an operation or cause containment. It never means LOW.
 
-Stop stationarity uses two distinct joint source samples unchanged within 0.05°,
+Successful pickup only acknowledges Stop before replacing its trajectory; it
+does not claim a physical stop. All other Stop stationarity checks use two
+distinct joint source samples unchanged within 0.05°,
 with the stopped/empty-queue guard. Stop can still be confirmed while disabled,
 faulted or paused; it never requires enabling the robot. Parked-position checks
 use the same joint-derived Cartesian pose with their existing 1 mm/0.5° tolerance.

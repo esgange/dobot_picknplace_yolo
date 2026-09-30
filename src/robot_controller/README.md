@@ -884,8 +884,17 @@ every candidate is presented with OPEN and no DI12 wait.
 The first `candidate_1_home_to_pick` group contains three control points: item
 X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with SUCK
 at 20%. It intentionally skips the item-clearance point on this initial descent.
-DI1 is eligible only after the candidate's SUCK transition. A DI1 acquisition
-during descent invokes Stop-and-confirm. Otherwise the terminal pose must remain
+DI1 is eligible only after the candidate's SUCK transition. The first eligible
+HIGH during descent or settling immediately sends Stop to discard the old queue.
+After its successful command acknowledgement, mark the candidate HELD and start
+the upward return from the latest fresh joint-derived pose. Do not wait for
+stationary joints, idle status, an empty-queue sample or the remaining settling
+time before this return. Command acceptance is not a physical-stop confirmation.
+If acquisition occurs while a motion reply is outstanding, resolve that reply
+and the initial Stop, then acknowledge one further Stop to discard any late
+admission before returning. Unanswered/rejected commands or cancellation prevent
+the return; delayed normal motion callbacks cannot Stop its new queue.
+Otherwise the terminal pose must remain
 within tolerance with advancing queue-idle feedback and the commanded final
 outputs for the profile's `pick_settling` interval while DI1 is monitored. This
 is the complete final-pick confirmation interval; there is no fixed 300 ms pick
@@ -911,11 +920,11 @@ this timer. The debounce is independent of taught `pick_settling` and the 50 ms
 exhaust pulse; it introduces no teach setting, launch argument or schema change.
 
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
-confirmed containment. With `grip_onpick=false`, CLOSE instead occurs at 100%
+the pickup Stop acknowledgement. With `grip_onpick=false`, CLOSE instead occurs at 100%
 of the clearance rise (DO14 OFF before DO2 ON). `use_grip=false` never enters
-CLOSE. Successful Pick queues actual stopped pose → pre-pick → clearance →
+CLOSE. Successful Pick queues latest measured pose → pre-pick → clearance →
 saved Tray Detect joints as one `candidate_N_pick_to_tray` group. Both vertical
-lifts preserve stopped X/Y and attitude and never descend. The first held lift
+lifts preserve measured X/Y and attitude and never descend. The first held lift
 uses taught retract rates; clearance uses `v=100` with travel acceleration;
 Tray Detect uses taught travel speed/acceleration, scaled by global SpeedFactor.
 There is no Home-height exit transit or final Home in this success route.
@@ -1025,15 +1034,18 @@ compares against FeedInfo `tool_vector_actual`.
 Before every independently acquired motion-batch origin or stopped-pose
 measurement, the controller waits up to two seconds for newer joint/status
 feedback, idle RobotStatus and an empty command queue. There is no additional dwell
-duration. The final-pick confirmation sample supplies its stopped pose and is
-carried directly into the immediate retract/return batch. The controller uses
+duration. A missed final pick supplies its settled pose directly to the return.
+Successful acquisition instead uses fresh joint feedback after the Stop command
+acknowledgement, without waiting for idle or stationary feedback, and carries
+that pose into the immediate lift/return batch. The controller uses
 FK from that validated joint sample; it never sends a separate
 `GetPose` request or subscribes to the slower, unstamped `ToolVectorActual`
 topic. A timeout names every current
 idle, queue and joint/status advancement blockers. Fresh connected RobotStatus, joints,
 FeedInfo, user/tool zero, held-item integrity, and the normal final-arrival
 checks remain mandatory. Startup/Recover retains its separate 200 ms READY
-lifecycle coherence. Stop confirms two distinct joint source samples unchanged
+lifecycle coherence. Outside successful pickup's acknowledgement-only handoff,
+Stop confirms two distinct joint source samples unchanged
 within 0.05° and the stopped/empty-queue state; fault/disabled stopping remains
 confirmable. Paused/placement hold checks also use joint-derived pose. The FK
 model is nominal geometry; this change is software-validated, not a new physical

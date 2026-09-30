@@ -1112,6 +1112,21 @@ prepares hardware. Supersede earlier Configure-read-only/manual-GUI-Start rules
 only. Update FSM/exports; test with synthetic feedback and no live commands or
 automatic application restarts. No message schema, motion route or I/O change.
 
+Rule 188 makes eligible Pick DI1 HIGH send Stop immediately and switch to the
+successful lift/Tray Detect route after command acknowledgement only. Final-pick
+settling is the last chance to acquire, never a delay after acquisition. Do not
+wait for stationary joints, idle status or an empty-queue sample at this handoff;
+use the latest fresh joint-derived pose as the upward-only return origin. If a
+motion reply was pending at acquisition, resolve it and the first Stop, then
+send/acknowledge a final Stop before returning so late admission is discarded.
+Never let a delayed normal callback Stop the new return queue. Keep five-second
+response limits, cancellation, source/ownership/feedback/output checks, suction
+arming/reset and held-loss monitoring. All other Stop/Pause/Recover stationarity
+checks remain physical; do not label acquisition acceptance as confirmed standstill.
+Supersede only successful pickup's stopped-origin/physical-Stop wait in earlier
+rules. Preserve routes, rates, grip timing, retry budget and schema. Update FSM
+and exports; validate with fake services/feedback, without hardware or restart.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
