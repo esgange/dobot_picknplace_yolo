@@ -47,13 +47,16 @@ change; detection/teach files and ROS interfaces are unchanged.
 Load **Item Teach**, **Bin Teach** and a complete **Tray Teach** in the controller,
 then Startup. In GUI mode, Pick Item is optional before placement; headless Place
 requires a successful Pick. Pick finishes at the recorded Tray Detect joints.
-Place skips observation travel when already there; otherwise it uses one direct
-queued joint-target MovL. There is no separate observation-position
-button; the typed Tray Detect Position action remains available to external clients.
-There is no preliminary
-Z rise or elevated transit; the bin routes retain their existing clearance logic.
-**Place Item** also reaches that observation pose when needed and
-requests fresh tray/depth from Armed Tray Teach or headless Tray Detect, with
+**Place Item never commands travel to the observation pose.** It checks fresh
+RobotStatus idle and all six `/joint_states` within ±1° of saved Tray Detect,
+just like Pick's immediate Home skip. If matched, observe immediately; otherwise
+wait up to three seconds and proceed as soon as matched. Expiry reports
+**Not at Tray Detect position**, performs Stop containment and blocks detection
+and placement. There is no separate observation-position button; the typed
+Tray Detect Position action remains available to external clients with its direct
+joint-target MovL. The bin routes retain their existing clearance logic.
+After confirmation, request fresh tray/depth from Armed Tray Teach or headless
+Tray Detect, with
 **three requests total** per Place action. Retry a missing pose/depth result,
 provider no-result/error/BUSY reply or response timeout at the same observation
 position. Each request keeps its taught request timeout plus one second for the
@@ -80,8 +83,8 @@ service. The normal GUI launch (`headless=false`) is attended debug mode: Place
 is available from idle READY or HOLDING, with or without an item or picked-item
 record. No suction-presence prerequisite applies during observation or approach.
 The sequence still commands real hardware; final neutral I/O and DI1 are checked
-at Home. Headless mode retains HOLDING, trusted picked-item source and held-suction
-guards before the placement queue begins, including travel to Tray Detect Pose.
+at final retract. Headless mode retains HOLDING, trusted picked-item source and
+held-suction guards during the position check and observation before the placement queue.
 The controller owns this policy; merely attaching a GUI to a headless controller
 does not relax it. Status reports `manual_placement_enabled`; tooltips explain it.
 
@@ -115,36 +118,39 @@ Pre-place/retract uses the placement X/Y and orientation at taught Home Z,
 matching the first Item Pick approach (`pN_transit`) before pre-pick (rule 171).
 That initial Pick route skips its lower clearance/initial point. For surface Z
 250 mm, standoff 10 mm, prepick 50 mm and Home Z 800 mm, release is Z 310 mm and
-approach/retract Z 800 mm. This is a Home-Z target over the tray, not a preliminary
-vertical rise before traveling to Tray Detect Pose. The tray attitude remains
-detect-relative until the final Home command restores Home's full pose.
+approach/retract Z 800 mm. The final pose stays above the tray at this height
+with the detect-relative attitude; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
 blocks the placement queue. No additional height field or teach-file changes.
-Tray arrival uses fresh idle/empty-queue feedback and saved joint
-angles within ±1°, with execution evidence and no added settling interval. Then
-request fresh tray/depth and queue exactly four Cartesian commands through Home:
+The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
+Recheck idle and saved joints during observation and before using its result.
+Then queue exactly three Cartesian commands:
 
 | Command | Target | Timed outputs |
 | --- | --- | --- |
 | MovL | Pre-place | Preserve existing outputs |
 | MovLIO | Release height | At 80%: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON |
 | MovLIO | Back to pre-place | At 20%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
-| MovL | Taught Home XYZ/orientation | Neutral |
 
-Tray Detect Position and all four placement commands use **speed 100%**,
+Tray Detect Position and all three placement commands use **speed 100%**,
 independent of Item Teach speed settings. Global SpeedFactor still scales them;
 placement never changes that slider. Acceleration remains Item Teach travel for
-Tray Detect Position, then travel / approach / retract / travel for the four-command
+Tray Detect Position, then travel / approach / retract for the three-command
 queue. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust
 pulse, extra retract-height waypoint or separate Home action. The 80% trigger
 starts release before the nominal lower point; exhaust duration follows the
 motion until the 20% upward trigger. All commands inherit CP(100); control points
 can blend. Admit each service in order, without waiting for intermediate arrival.
-Physically confirm only final Cartesian Home before reporting READY/SUCCESS.
+Return **PlaceItem SUCCESS immediately after all three commands receive ordered
+acceptance**, normally with `final_state=PLACING`. The action result acknowledges the queue.
+A completion worker retains the operation slot and PLACING status while the robot
+moves, so another motion cannot overlap. It uses the existing joint-FK/idle,
+execution, freshness, output and watchdog checks. Direct Stop, Pause and shutdown
+still pre-empt. This worker adds no ROS executor thread.
 
 Rule 170 removes intermediate release-confirmation gates in both modes. Send the
-entire approach → pre-pick-equivalent drop → approach → Home queue without waiting
+entire approach → pre-pick-equivalent drop → retract queue without waiting
 for OPEN/exhaust, DI12 or DI1 transitions. Missing/late release evidence, suction
 changes and gaps in output history do not interrupt this queue. Any observed
 coherent release feedback is retained as diagnostic/recovery evidence only.
@@ -152,19 +158,22 @@ Keep command acceptance/order, live enabled/error/collision/freshness checks,
 opposing-output protection, motion watchdogs and direct Stop/Pause. These are
 hardware/transport checks, not intermediate arrival or release confirmations.
 
-Only at physically confirmed idle Home, require neutral DO1/DO2/DO13/DO14 and
-DI1 LOW before READY/SUCCESS; DI12 need not be HIGH. A bad final grip reports a
-specific Home-reached fault without trying to release again. Successful Home
+Only at physically confirmed idle retract, require neutral DO1/DO2/DO13/DO14 and
+DI1 LOW before READY; DI12 need not be HIGH. A bad final grip reports a
+specific retract-reached fault without trying to release again. Successful retract
 completion records PLACED for an existing held candidate and clears holding;
-the placement_home_completed event separately records release_feedback_observed.
+the `placement_retract_completed` event records `release_feedback_observed`.
+Failures after action acceptance use Stop containment and report through typed
+status/events; they cannot change the already returned action result.
 PLACED now describes the completed queue and clear final grip, not proof that
 the item was physically deposited on the tray. An empty test creates no candidate.
 
 Placement Pause stops in place and preserves outputs. Continue reobserves when
-the release command has not been issued. Once issued, never repeat descent or
-release, even when its feedback was missed.
+the release command has not been issued, after rechecking saved Tray Detect
+position within the same three-second window. It never moves back there. Once
+issued, never repeat descent or release, even when its feedback was missed.
 After confirmed release, Continue neutralizes outputs, retracts upward
-from actual position to at least pre-place height if needed, and returns Home.
+from actual position to at least pre-place height if needed, then ends there.
 An interrupted partial release with insufficient confirmation remains blocked;
 no automatic release or bin put-back is inferred. Direct Stop requires explicit
 Recover, which cancels the placement and preserves current outputs while lifting
@@ -295,8 +304,9 @@ the current Link6 pose from joint FK. It can preview while the robot is disabled
 it never enables it. Shared planners supply Cartesian Home alignment/final targets,
 Pick's conditional initial rise/joint Home, every candidate's approach/retract,
 successful Tray Detect, missed entry/exit transits and Home/put-back targets, and
-Place's saved Tray Detect joints followed by approach/drop/retract/Cartesian Home.
-Targets already skipped by Home/Tray arrival checks are omitted. Each target is broadcast under
+Place's three approach/drop/retract targets. Place preview requires the robot
+already at saved Tray Detect joints; it adds no observation-travel or Home TF.
+Targets skipped by Home arrival checks are omitted. Each target is broadcast under
 `base_link` as a distinct `robot_controller_preview_*` frame.
 
 Pick preview shows one fresh candidate batch and its possible nominal branches,
@@ -824,8 +834,8 @@ SUCK stays ON without reissuing it; no EXHAUST/NEUTRAL release events are sent.
 Holding/output checks and the 50 ms DI1 loss debounce remain active throughout.
 Held Continue moves directly from the confirmed safety-height parked pose to
 Tray Detect, without replaying the pick, lifts or a Home detour. Successful Pick
-requests no tray observation and does not place; the next Place skips travel
-when its fresh joint/idle check already confirms Tray Detect. Preview requires
+requests no tray observation and does not place; the next Place checks saved
+Tray Detect joints/idle without queuing observation travel. Preview requires
 the same saved tray destination and includes its TF for every candidate success.
 
 A missed non-final candidate starts one

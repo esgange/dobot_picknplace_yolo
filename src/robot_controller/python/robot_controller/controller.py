@@ -98,6 +98,7 @@ class RobotController(Node):
         self.pause_event = threading.Event()
         self.managed = ManagedControl(self)
         self.placement = None
+        self.placement_thread = None
         self.recovery_home = None
 
         self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
@@ -834,6 +835,7 @@ class RobotController(Node):
         self.placement = PlacementOperation(*validate_target(
             request.x_mm, request.y_mm, request.rotation_deg), require_held_item=self.headless)
         result = PlaceItem.Result()
+        queued = False
         try:
             while True:
                 try:
@@ -842,11 +844,15 @@ class RobotController(Node):
                         self._transition("PLACING", "Tray placement started")
                     self.placement.run(self)
                     with self.managed.lock:
-                        self.wait_for_resume()
-                        self._transition("READY", "Placement sequence and Home completed")
-                        result.outcome, result.message = result.SUCCESS, self.machine.message
+                        self.raise_if_cancelled()
+                        # Pause after admission belongs to the completion worker;
+                        # the action result promises queue acceptance only.
+                        result.outcome = result.SUCCESS
+                        result.message = ("Placement queue accepted through final retract; "
+                                          "motion supervised")
                         result.final_state = self.machine.state
                         goal.succeed()
+                        queued = True
                     self.events.record("INFO", "action_result", result.message,
                                        operation="place", outcome=int(result.outcome),
                                        state=result.final_state)
@@ -856,7 +862,51 @@ class RobotController(Node):
         except Exception as exc:
             return self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
         finally:
-            if self.placement is not None and not self.placement.needs_recovery:
+            if queued:
+                try:
+                    self.active_goal = None
+                    self.operation_progress(
+                        "PLACE_QUEUED", "Queue accepted; supervising final retract",
+                        waypoint="place_retract")
+                    self.placement_thread = threading.Thread(
+                        target=self._finish_placement_queue, daemon=True)
+                    self.placement_thread.start()
+                except Exception as exc:
+                    self.placement.close_pending()
+                    self._contain_queue_control_failure("Placement supervision startup", exc)
+                    self._transition(self.machine.state, f"Placement supervision failed: {exc}; "
+                                     f"{self.machine.message}")
+                    self._end_operation()
+            else:
+                self.placement.close_pending()
+                if not self.placement.needs_recovery:
+                    self.placement = None
+                self._end_operation()
+
+    def _finish_placement_queue(self):
+        """Retain command ownership after Place acknowledges queue acceptance."""
+        try:
+            while True:
+                try:
+                    if self.placement.pending_motion is not None:
+                        self.placement.finish_pending(self)
+                    elif self.placement.phase != "DONE":
+                        self.placement.run(self)
+                        continue
+                    with self.managed.lock:
+                        self.wait_for_resume()
+                        self._transition("READY", "Placement retract complete; gripper neutral")
+                    return
+                except ManagedInterruption:
+                    self.placement.handle_pause(self)
+        except Exception as exc:
+            self._contain_queue_control_failure("Queued placement", exc)
+            self._transition(self.machine.state, f"Queued placement failed: {exc}; "
+                             f"{self.machine.message}")
+            self.events.record("ERROR", "placement_queue_failed", str(exc))
+        finally:
+            self.placement.close_pending()
+            if not self.placement.needs_recovery:
                 self.placement = None
             self._end_operation()
 
@@ -1331,6 +1381,8 @@ class RobotController(Node):
             self.late_stop_thread.join(timeout=2.0)
         if self.supervision_stop_thread is not None:
             self.supervision_stop_thread.join(timeout=2.0)
+        if self.placement_thread is not None and self.placement_thread.ident is not None:
+            self.placement_thread.join(timeout=2.0)
         if self.managed.thread is not None:
             self.managed.thread.join(timeout=2.0)
         self.candidates.close()

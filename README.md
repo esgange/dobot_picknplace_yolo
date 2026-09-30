@@ -42,14 +42,16 @@ The motion controls form one four-button grid:
 **Preview ON** makes all three motion buttons publish planned TF targets without
 moving the robot or changing gripper outputs. Home shows its alignment and final
 pose; Pick shows a fresh batch's candidate, entry/exit and return targets; Place
-shows Tray Detect and its complete placement/Home route. Preview uses fresh
-canonical joint feedback for the current pose and the same geometry as hardware.
+shows its approach, drop and retract targets from the saved Tray Detect position.
+Preview uses fresh canonical joint feedback for the current pose and the same
+geometry as hardware.
 Pick/Place still need their armed read-only detector and fresh visible targets;
 preview does not move the camera to obtain them. Start/Continue, Recover and speed
 changes are blocked while previewing; direct Stop remains available. Switch modes
 only while no hardware operation is active. Preview starts OFF and turning it OFF
-or editing inputs clears its TFs. Place automatically travels to Tray Detect;
-there is no separate Tray Detect Position button. Lifecycle controls remain separate.
+or editing inputs clears its TFs. Place checks arrival at Tray Detect without
+moving there; there is no separate Tray Detect Position button. Lifecycle
+controls remain separate.
 Rebuild `robot_controller_interfaces` and `robot_controller`, then restart the
 controller/preview/GUI together for the `/robot_controller/preview_v2` contract.
 
@@ -84,17 +86,23 @@ and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose,
 live depth and Item Teach standoff/motion settings. The drop target is the tray
 surface Z + standoff + pre-pick height. Pre-place/retract uses the placement X/Y
 at taught Home Z, matching the first item-pick approach before pre-pick.
-Tray Detect Position is one
-direct queued MovL to its recorded joints, without a preliminary safety-Z rise or
-transit. After fast idle/joint arrival and fresh detection, placement queues pre-place → release
-(OPEN/exhaust at 80%) → pre-place (neutral at 20%) → Cartesian Home in one group.
+Place checks fresh RobotStatus idle and all six joints within ±1° of saved Tray
+Detect. Proceed immediately when matched; otherwise wait up to three seconds,
+then report **Not at Tray Detect position** without detecting or placing.
+Place never queues observation travel. The external Tray Detect Position action
+remains one direct queued MovL to its recorded joints.
+After fresh detection, placement queues pre-place → release
+(OPEN/exhaust at 80%) → retract at Home Z (neutral at 20%) in one group, with no Home move.
 Tray Detect Position and every placement segment use speed 100%, scaled by the
 operator's global SpeedFactor. Item Teach acceleration settings and Item Pick
 speeds remain unchanged.
 It has no pick settling, extra retract-height waypoint or intermediate release
-confirmation gate. Missing DI12/DI1 release evidence cannot stop the queue before
-Home; final Home arrival, neutral outputs and DI1 LOW are checked there. Stop,
-robot faults, command responses and feedback freshness remain supervised.
+confirmation gate. **Place returns SUCCESS when all three commands are accepted.**
+Status remains PLACING with exclusive command ownership while a completion worker
+verifies the final retract, neutral outputs and DI1 LOW, then enters READY above
+the tray. Missing intermediate DI12/DI1 release evidence cannot stop this queue.
+Stop, robot faults, command responses and feedback freshness remain supervised;
+failures after acceptance appear in status and logs.
 Pick Item requires an available armed Item Teach or
 headless Item Detect provider. Pick uses at most **three complete candidate batches**:
 exhausting all poses counts as one attempt, then return Home and request a fresh

@@ -11,7 +11,7 @@ from robot_controller.controller import RobotController
 from robot_controller.errors import OperationCanceled
 from robot_controller.state_machine import ControllerStateMachine
 from test_feedback_v2 import joint_message
-from test_placement import operation_node
+from test_placement import operation_node, run_place
 from test_placement_queue import QueueRig, HELD, OPEN
 
 
@@ -39,7 +39,7 @@ def test_admission_uses_controller_mode_not_the_requesting_client(headless, held
 @pytest.mark.parametrize('held_context,outputs,inputs', [
     (False, 0, 0), (False, HELD, 1), (True, HELD, 0), (True, HELD, 1),
 ])
-def test_manual_queue_reaches_home_regardless_of_initial_item_presence(
+def test_manual_queue_reaches_retract_regardless_of_initial_item_presence(
         during_reply, held_context, outputs, inputs):
     rig = QueueRig(during_reply=during_reply)
     node = rig.node
@@ -53,12 +53,12 @@ def test_manual_queue_reaches_home_regardless_of_initial_item_presence(
     assert rig.monitor.snapshot(require_enabled=True).suction_present is bool(inputs)
     rig.script[0] = dict(outputs=outputs, inputs=inputs)
     rig.run()
-    assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
+    assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
     assert node.placement.phase == 'DONE' and not node.holding_item
     assert not any(node.expected_outputs.values())
     node._preflight_item_state.assert_not_called()
-    assert node.trays.request.call_args.kwargs == {
-        'require_held_item': False, 'attempts': node.placement.tray_attempts}
+    assert node.trays.request.call_args.kwargs['require_held_item'] is False
+    assert node.trays.request.call_args.kwargs['attempts'] is node.placement.tray_attempts
     if held_context:
         assert node.managed.session.attempts[0].state == 'PLACED'
     else:
@@ -122,7 +122,8 @@ def test_empty_action_transitions_ready_to_placing_and_back_without_a_pick():
     goal = SimpleNamespace(request=PlaceItem.Goal(x_mm=30., y_mm=40., rotation_deg=-90.),
                            succeed=Mock())
     result = RobotController._execute_place_action(node, goal)
-    assert result.outcome == PlaceItem.Result.SUCCESS and result.final_state == 'READY'
+    assert result.outcome == PlaceItem.Result.SUCCESS and result.final_state == 'PLACING'
+    node.placement_thread.join(timeout=1.)
     assert node.managed.session is None and node.placement is None
     node._preflight_item_state.assert_not_called()
     goal.succeed.assert_called_once()
@@ -133,25 +134,25 @@ def test_manual_placement_does_not_relabel_a_previous_terminal_candidate(previou
     node = empty_node()
     node.managed.session = operation_node().managed.session
     node.managed.session.set_state(1, previous_state)
-    node.placement.run(node)
+    run_place(node)
     assert node.placement.phase == 'DONE'
     assert node.managed.session.attempts[0].state == previous_state
     assert node.managed.session.held_index is None
 
 
-@pytest.mark.parametrize('at', [0, 1, 2])
-def test_empty_pause_preserves_mode_and_resumes_approach_or_release_recovery(at):
+@pytest.mark.parametrize('at', [1, 2])
+def test_empty_pause_preserves_mode_and_resumes_release_recovery(at):
     node = empty_node()
     node.hardware.interrupt_at = at
     with pytest.raises(OperationCanceled):
-        node.placement.run(node)
+        run_place(node)
     node.machine.transition('PAUSING', 'Pause')
     node.managed.kind = 'pause'
     node.wait_control = lambda _seconds: node.managed.resume.set()
     node.placement.handle_pause(node)
     assert node.machine.state == 'PLACING'
-    node.placement.run(node)
+    run_place(node)
     assert node.placement.phase == 'DONE'
-    assert node.trays.request.call_count == (2 if at == 0 else 1)
+    assert node.trays.request.call_count == 1
     assert not node.placement.require_held_item
     node._preflight_item_state.assert_not_called()

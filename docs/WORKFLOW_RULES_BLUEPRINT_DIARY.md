@@ -7492,6 +7492,59 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or live application restart; operator RViz changes and
   calibration/teach/model artifacts remain untouched and excluded.
 
+### 2026-09-30 — Rule 183: read-only Tray Detect arrival and placement queue acceptance
+
+- User requested that Place first verify arrival at saved Tray Detect, without
+  queuing travel there. Reuse Pick's fast Home check: fresh RobotStatus idle plus
+  all six canonical joint positions within ±1°. Already matched proceeds
+  immediately; otherwise allow three seconds for arrival, then report **Not at
+  Tray Detect position** through the failed action/GUI prompt and contain with
+  Stop. No tray request or placement command is issued on failure. Recheck the
+  position throughout observation and before using its result. Retain three
+  requests total, fresh post-trigger depth/pose evidence, exact source/ownership
+  checks and headless held-item gates. Faults, stale streams and Stop remain strict.
+- Queue exactly pre-place at Home Z → drop → retract at the same XY/Home Z.
+  Remove the final Cartesian Home. Retain saved Tray Detect attitude plus rotation,
+  drop Z = surface + standoff + prepick, 100% speeds/global SpeedFactor, taught
+  travel/approach/retract acceleration, 80% descent OPEN/exhaust and 20% ascent
+  neutral. Preserve CP(100), ordered acceptance and no intermediate arrival or
+  release-confirmation waits.
+- PlaceItem SUCCESS now acknowledges all three ordered command acceptances,
+  normally with final_state PLACING, before physical completion. Split the
+  existing transport admission/completion at that boundary; keep its live
+  execution evidence and cleanup under one owner. A placement completion worker
+  retains the operation lock/active status until advancing joint-FK/idle/execution
+  feedback confirms final retract, neutral outputs and DI1 LOW. Only then mark
+  an existing candidate PLACED, clear holding and enter READY above the tray.
+  A later failure reports exact cause through status/events and Stop containment;
+  it cannot revise the already returned action result. New motions remain blocked.
+  Keep the existing no-progress/hard motion bounds, direct Stop, Pause and shutdown
+  join; no ROS executor thread or interface field is added.
+- Pause before release admission permits reobservation only after checking saved
+  Tray Detect again within the same arrival window and remaining request budget.
+  After confirmed release, Continue neutralizes and retreats upward at actual XY
+  to at least pre-place Z, ending there without Home. Never replay an uncertain
+  release. Explicit Recover still cancels the operation and preserves outputs
+  through lift/Home before its reset. The external tray-position action is retained.
+- Preview requires the saved tray joints before requesting an observation and
+  shows only the three placement TFs. No observation-travel or final Home target
+  is invented. Disabled stationary preview remains supported. Update GUI tooltips,
+  remove obsolete Home assumptions from tests/comments, and clean scoped formatting.
+  Update root/package/interface READMEs, AGENTS and FSM, including result semantics.
+- Validation: **683 controller tests passed** with synthetic robot feedback and
+  fake perception only. New coverage includes immediate/bounded joint/status
+  arrival, unavailable/lost observation position, early action completion with
+  retained command ownership, overlapping-goal refusal, failures after acceptance,
+  Stop/Pause around the handoff, unconfirmed-release refusal and worker-start
+  failure containment. Existing output/Stop reconciliation remains shared with
+  retained placement progress. Final cleanup subset: **97 passed**. Scoped lint
+  and diff checks are clean. Both controller/interface symlink builds passed.
+  Regenerated eight offline FSM diagrams and the eight-page A3 PDF; verified HTML
+  source SHA-256 e5f68661a2a3b5aa5d3c1f4b2b24820b96e8f017faa2c27c182c39861f37043d.
+  No physical hardware command or application restart. Unrelated RViz edits and
+  operator calibration/offline/runtime teach/model artifacts remain untouched
+  and excluded from source commits.
+
 ### Future entry template
 
 ```text

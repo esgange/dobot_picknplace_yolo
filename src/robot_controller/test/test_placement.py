@@ -13,6 +13,7 @@ from robot_controller_interfaces.action import PlaceItem
 from tray_perception_interfaces.srv import GetTrayPose
 
 from robot_controller.controller import RobotController
+from robot_controller.hardware import DobotTransport
 from robot_controller.errors import FeedbackFailure, OperationCanceled, ManagedInterruption
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ManagedControl
@@ -40,17 +41,17 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
     detect = pose_matrix([300, 200, 800, 175, 12, 28])
     home = pose_matrix([500, -150, 900, 170, 25, -60])
     plan = place_targets(detect, [.3, .2, .25], settings(), angle, home)
-    assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract", "place_home"]
-    assert [p.matrix[2, 3] for p in plan] == pytest.approx([.9, .31, .9, .9])
+    assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract"]
+    assert [p.matrix[2, 3] for p in plan] == pytest.approx([.9, .31, .9])
     assert all(np.allclose(p.matrix[:2, 3], [.3, .2]) for p in plan[:3])
     c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
     expected = detect[:3, :3] @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
     assert all(np.allclose(p.matrix[:3, :3], expected) for p in plan[:3])
     assert all(np.allclose(p.matrix[:3, 2], detect[:3, 2]) for p in plan[:3])
-    assert np.allclose(plan[-1].matrix, home)
-    assert [p.speed_percent for p in plan] == [100, 100, 100, 100]
-    assert [p.acceleration_percent for p in plan] == [70, 30, 40, 70]
-    assert not plan[0].motion_io and not plan[3].motion_io
+    assert np.array_equal(plan[-1].matrix, plan[0].matrix)
+    assert [p.speed_percent for p in plan] == [100, 100, 100]
+    assert [p.acceleration_percent for p in plan] == [70, 30, 40]
+    assert not plan[0].motion_io
     assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
         (80, 2, False), (80, 14, True), (80, 13, False), (80, 1, True)]
     assert [(e.percent, e.channel, e.active) for e in plan[2].motion_io] == [
@@ -77,7 +78,7 @@ def test_tray_drop_matches_pick_prepick_and_approach_matches_first_pick_transit(
     assert place[0].matrix[2, 3] > place[1].matrix[2, 3]
     assert np.array_equal(place[0].matrix, place[2].matrix)
     assert [p.speed_percent for p in pick] == [80, 80, 80, 10, 20, 80]
-    assert [p.speed_percent for p in place] == [100] * 4
+    assert [p.speed_percent for p in place] == [100] * 3
 
 
 @pytest.mark.parametrize("surface_z", [.74, .75])
@@ -85,14 +86,14 @@ def test_drop_at_or_above_home_rejects_before_any_placement_command(surface_z):
     node = operation_node()
     node.trays.request.return_value = np.array([.3, .2, surface_z])
     with pytest.raises(ValueError, match="Home Z must be above the drop height"):
-        node.placement.run(node)
+        run_place(node)
     assert not node.hardware.calls
     assert node.holding_item
 
 
-@pytest.mark.parametrize("values", [(0, 10, 0), (10, -1, 0), (10, 10, 181),
-                                        (10, 10, -181), (10, float('nan'), 0),
-                                        (True, 1, 0), (1, 1, float('inf'))])
+@pytest.mark.parametrize("values", [
+    (0, 10, 0), (10, -1, 0), (10, 10, 181), (10, 10, -181),
+    (10, float('nan'), 0), (True, 1, 0), (1, 1, float('inf'))])
 def test_placement_rejects_invalid_inputs(values):
     with pytest.raises(ValueError):
         validate_target(*values)
@@ -110,11 +111,12 @@ class Hardware:
         self.history = []
 
     def sample(self, **_kwargs):
-        return SimpleNamespace(suction_present=self.suction, sequence=self.sequence,
-                               feed={"digital_input_bits": int(self.suction) | (int(self.outputs[14]) << 11),
-                                     "digital_outputs": sum(1 << (ch - 1) for ch, v in self.outputs.items() if v),
-                                     "isRunQueuedCmd": 0, "RunningStatus": 0,
-                                     "tool_vector_actual": pose_values(self.current)})
+        return SimpleNamespace(
+            suction_present=self.suction, sequence=self.sequence,
+            feed={"digital_input_bits": int(self.suction) | (int(self.outputs[14]) << 11),
+                  "digital_outputs": sum(1 << (ch - 1) for ch, v in self.outputs.items() if v),
+                  "isRunQueuedCmd": 0, "RunningStatus": 0,
+                  "tool_vector_actual": pose_values(self.current)})
 
     def emit(self):
         self.sequence += 1
@@ -136,24 +138,39 @@ class Hardware:
     def home_already_reached(self, _joints):
         return np.allclose(self.current, self.node.configuration.tray.detect_matrix)
 
+    def wait_tray_position(self, joints):
+        if not self.home_already_reached(joints):
+            raise FeedbackFailure("Not at Tray Detect position after 3 seconds")
+
+    finish_batch = staticmethod(DobotTransport.finish_batch)
+
     def move_batch(self, targets, *, batch_name, placement=None, forbid_suction=False,
-                   confirmed_start_pose=None, require_suction=False, preserve_outputs=False):
+                   confirmed_start_pose=None, require_suction=False, preserve_outputs=False,
+                   queue_only=False):
         self.calls.append(("move", tuple(p.name for p in targets), {"batch_name": batch_name}))
-        for i, target in enumerate(targets):
-            if placement:
-                placement.issued(i)
-            for event in target.motion_io:
-                self.outputs[event.channel] = event.active
-                if event.channel == 13 and not event.active:
-                    self.suction = False
+
+        def completion():
+            for i, target in enumerate(targets):
                 if placement:
-                    placement.observe(self.node, self.emit())
-            self.current = target.matrix.copy()
-            if self.interrupt_at == i:
-                self.interrupt_at = None
-                raise OperationCanceled("Stopped during placement queue")
-        if placement:
-            placement.complete(self.node, self.emit())
+                    placement.issued(i)
+                for event in target.motion_io:
+                    self.outputs[event.channel] = event.active
+                    if event.channel == 13 and not event.active:
+                        self.suction = False
+                    if placement:
+                        placement.observe(self.node, self.emit())
+                self.current = target.matrix.copy()
+                if self.interrupt_at == i:
+                    self.interrupt_at = None
+                    raise OperationCanceled("Stopped during placement queue")
+            if placement:
+                placement.complete(self.node, self.emit())
+            if False:
+                yield  # Match the transport's suspended completion iterator.
+        pending = completion()
+        if queue_only:
+            return pending
+        return self.finish_batch(pending)
 
     def output(self, channel, active, **_kwargs):
         self.calls.append(("output", channel, active))
@@ -190,25 +207,33 @@ def operation_node():
     node.placement = PlacementOperation(30., 40., 90.)
     node.trays = SimpleNamespace(request=Mock(return_value=np.array([.3, .2, .25])))
     node.hardware = Hardware(node)
-    node.monitor = SimpleNamespace(snapshot=node.hardware.sample,
+    node.monitor = SimpleNamespace(
+        snapshot=node.hardware.sample,
         output_history=lambda seq: tuple(v for v in node.hardware.history if v[0] > seq))
     node.expected_outputs.update(node.hardware.outputs)
     node.managed = ManagedControl(node)
     node.managed.session = PickSession(["bottle"], [()])
     node.managed.session.set_state(1, "ACTIVE")
     node.managed.session.set_state(1, "HELD")
+    node._finish_placement_queue = lambda: RobotController._finish_placement_queue(node)
+    node._contain_queue_control_failure = Mock()
     return node
 
 
-def test_place_sequence_queues_through_home_and_clears_held_context():
-    node = operation_node()
+def run_place(node):
     node.placement.run(node)
-    assert node.hardware.calls == [("move", ("place_pre", "place_release", "place_retract", "place_home"),
-                                    {"batch_name": "place_to_home"})]
+    node.placement.finish_pending(node)
+
+
+def test_place_sequence_ends_at_retract_and_clears_held_context():
+    node = operation_node()
+    run_place(node)
+    assert node.hardware.calls == [("move", ("place_pre", "place_release", "place_retract"),
+                                    {"batch_name": "place_to_retract"})]
     assert not node.holding_item and node.managed.session.held_index is None
     assert node.managed.session.attempts[0].state == "PLACED"
     assert node.placement.phase == "DONE"
-    assert np.allclose(node.hardware.current, node.configuration.home_matrix)
+    assert np.allclose(node.hardware.current, node.placement.plan[-1].matrix)
     assert not any(node.hardware.outputs.values())
 
 
@@ -216,7 +241,7 @@ def test_missing_depth_never_admits_placement_or_releases_item():
     node = operation_node()
     node.trays.request.side_effect = FeedbackFailure("No depth")
     with pytest.raises(FeedbackFailure, match="No depth"):
-        node.placement.run(node)
+        run_place(node)
     assert not node.hardware.calls and node.holding_item
 
 
@@ -224,29 +249,31 @@ def test_source_change_after_detection_blocks_queue_and_preserves_grip():
     node = operation_node()
     node.configuration.validate_sources.side_effect = [None, ValueError("Teach file changed")]
     with pytest.raises(ValueError, match="Teach file changed"):
-        node.placement.run(node)
+        run_place(node)
     assert node.holding_item and not node.hardware.calls
 
 
 @pytest.mark.parametrize("at", [1, 2])
-def test_interrupted_release_or_retract_resumes_upward_and_home_without_release(at):
+def test_interrupted_release_or_retract_resumes_upward_without_home_or_release(at):
     node = operation_node()
     node.hardware.interrupt_at = at
     with pytest.raises(OperationCanceled):
-        node.placement.run(node)
+        run_place(node)
     assert node.placement.release_confirmed and node.placement.needs_recovery
-    node.placement.run(node)
-    expected = ("place_retract", "place_home") if at == 1 else ("place_home",)
-    assert node.hardware.calls[-1][1] == expected
+    run_place(node)
+    moves = [call[1] for call in node.hardware.calls if call[0] == "move"]
+    if at == 1:
+        assert moves[-1] == ("place_retract",)
+    assert not any("place_home" in names for names in moves)
     assert all(call[2] is False for call in node.hardware.calls if call[0] == "output")
     assert node.placement.phase == "DONE"
 
 
-def test_pause_after_release_stays_in_place_then_recovers_home():
+def test_pause_after_release_stays_in_place_then_recovers_retract():
     node = operation_node()
     node.hardware.interrupt_at = 1
     with pytest.raises(OperationCanceled):
-        node.placement.run(node)
+        run_place(node)
     node.machine.transition("PAUSING", "Pause")
     node.managed.kind = "pause"
     node.wait_control = lambda _seconds: node.managed.resume.set()
@@ -254,8 +281,8 @@ def test_pause_after_release_stays_in_place_then_recovers_home():
     node.placement.handle_pause(node)
     assert len(node.hardware.calls) == before
     assert node.machine.state == "PLACING" and node.placement.phase == "RELEASED"
-    node.placement.run(node)
-    assert node.hardware.calls[-1][1][-1] == "place_home"
+    run_place(node)
+    assert node.hardware.calls[-1][1][-1] == "place_retract"
 
 
 def test_ui_selection_migration_preserves_files_and_validated_placement(tmp_path):
@@ -294,7 +321,8 @@ def response_fixture():
     result.tray.pose.orientation.w = 1.
     result.tray.extent_x = result.tray.width = .2
     result.tray.extent_y = result.tray.length = .3
-    result.diagnostics_json = json.dumps({"profile_sha256": "tray", "model_sha256": "model",
+    result.diagnostics_json = json.dumps({
+        "profile_sha256": "tray", "model_sha256": "model",
         "camera_sha256": "camera", "origin_convention": ORIGIN_CONVENTION,
         "reference_plane": tray.profile["reference_plane"], "placement_sampling": sampling})
     return result, config, sampling
@@ -306,7 +334,8 @@ def test_tray_depth_response_binds_pose_settings_sources_and_capture_time():
     assert point == pytest.approx([.13, .24, .25])
 
 
-@pytest.mark.parametrize("damage", ["cached", "xy", "quaternion", "samples", "hash", "settings", "plane"])
+@pytest.mark.parametrize("damage", [
+    "cached", "xy", "quaternion", "samples", "hash", "settings", "plane"])
 def test_tray_depth_response_rejects_invalid_evidence(damage):
     result, config, sampling = response_fixture()
     if damage == "cached":
@@ -349,13 +378,14 @@ def test_generated_configure_includes_optional_tray_file():
     assert Configure.Request().tray_teach_file == ""
 
 
-def test_place_action_finishes_ready_with_a_typed_result():
+def test_place_action_acknowledges_queue_with_a_typed_result():
     node = operation_node()
     node._end_operation = Mock()
     goal = SimpleNamespace(request=PlaceItem.Goal(x_mm=30., y_mm=40., rotation_deg=-90.),
                            succeed=Mock())
     result = RobotController._execute_place_action(node, goal)
-    assert result.outcome == PlaceItem.Result.SUCCESS and result.final_state == "READY"
+    assert result.outcome == PlaceItem.Result.SUCCESS and result.final_state == "PLACING"
+    node.placement_thread.join(timeout=1.)
     assert node.placement is None and not node.holding_item
     goal.succeed.assert_called_once()
     node._end_operation.assert_called_once()
@@ -365,7 +395,7 @@ def test_controller_recovery_cancels_placement_then_relaxes_after_home():
     node = operation_node()
     node.hardware.interrupt_at = 1
     with pytest.raises(OperationCanceled):
-        node.placement.run(node)
+        run_place(node)
     node.machine = ControllerStateMachine(initial="RECOVERY_REQUIRED")
     node.global_speed_percent = 50
     node._begin_operation = Mock()
@@ -421,11 +451,11 @@ def test_paused_tray_request_retires_before_a_new_request_and_ignores_old_result
         node.monitor.snapshot.assert_called_with(require_enabled=True)
 
 
-def test_continue_after_completed_home_never_reobserves_or_releases_again():
+def test_continue_after_completed_retract_never_reobserves_or_releases_again():
     node = operation_node()
-    node.placement.run(node)
+    run_place(node)
     calls = list(node.hardware.calls)
-    node.placement.run(node)
+    run_place(node)
     assert node.hardware.calls == calls
     node.trays.request.assert_called_once()
     assert node.placement.phase == 'DONE'

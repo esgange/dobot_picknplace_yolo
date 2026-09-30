@@ -1020,6 +1020,28 @@ all other rates/I/O. Preview adds each candidate's success destination and keeps
 miss/put-back branches. Supersede successful Home/exit requirements of rules
 108/110 only. No hardware commands or application restart during implementation.
 
+Rule 183 makes Place verify saved Tray Detect joints before observing, without
+commanding observation travel. Use fresh RobotStatus idle and all six joints
+within ±1°, as for Pick's Home skip: proceed immediately when matched, otherwise
+allow three seconds for arrival, then fail visibly with "Not at Tray Detect
+position" and no detection/placement. Recheck during observation; retain three
+requests total and all source, depth and safety gates. Queue exactly MovL pre-place
+at Home Z, MovLIO drop (80% OPEN/exhaust), MovLIO retract (20% neutral); omit final
+Home. Keep detect-relative attitude, 100% speeds, taught travel/approach/retract
+acceleration and global SpeedFactor. Place SUCCESS acknowledges ordered acceptance
+of all three commands. Retain PLACING and exclusive operation ownership in one
+completion worker until advancing joint-FK/idle/execution feedback confirms final
+retract, neutral outputs and DI1 LOW, then mark an existing candidate PLACED and
+enter READY. Later failures report through status/events and Stop containment.
+Preserve motion watchdogs, direct Stop/shutdown and placement Pause. Continue
+before release admission rechecks observation position; after confirmed release
+it neutralizes and retreats upward only, with no Home. Never repeat uncertain
+release. Explicit Recover still cancels and Homes/reset. Preview requires saved
+tray joints and shows only the three placement TFs. Retain the external tray-
+position action. Supersede earlier automatic observation travel, final placement
+Home and physical-completion Place-result requirements; no new interface fields,
+schema, settings or ROS executor thread. Regenerate FSM exports with the change.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

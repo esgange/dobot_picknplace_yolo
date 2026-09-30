@@ -1,5 +1,15 @@
 # Robot Controller — Finite State Machine
 
+Placement completion review: **2026-09-30**, baseline **`cbbacd0`** plus diary
+rule **183**. Place checks fresh idle RobotStatus and saved Tray Detect joints
+without commanding observation travel. Already matched proceeds immediately;
+otherwise allow three seconds, then report "Not at Tray Detect position" without
+detection. Queue only pre-place → release → retract, with no final Home. The
+action returns SUCCESS on complete ordered acceptance; one completion worker
+retains PLACING and command ownership until actual retract/neutral/DI1 LOW, then
+READY. Later failures use status/events and Stop containment. Preview shows those
+same three targets; interrupted confirmed release resumes upward only.
+
 Pick destination review: **2026-09-30**, baseline **`1fdc2f0`** plus diary rule
 **182**. Initial Home skips immediately from fresh idle RobotStatus and all six
 canonical joint positions within ±1°, with no extra tick/query/dwell. Successful
@@ -12,8 +22,8 @@ Preview/UI review: **2026-09-30**, baseline **`e2eff65`** plus diary rule **181*
 The motion grid is Home / Preview toggle, then Pick Item / Place Item. Preview ON
 routes all three to the read-only planner and blocks motion-producing lifecycle
 controls; direct Stop remains available. The standalone tray-position button is
-removed; Place retains its observation travel. Typed hardware actions and their
-state transitions are unchanged.
+removed; rule 183 replaces Place's observation travel with its read-only position
+check. Preview does not change hardware-controller lifecycle states.
 
 Retry behavior review: **2026-09-30**, baseline **`30073a2`** plus diary rule
 **180**. Pick permits three full candidate batches; an exhausted/empty batch
@@ -96,6 +106,8 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
   release or the old batch. Fresh gripper/robot checks must pass first.
 - One controller operation owns execution at a time. A managed Pause retains
   that ownership while waiting. Direct Stop can pre-empt it.
+- Place's action result acknowledges the queue. Its completion worker retains
+  ownership and PLACING until final retract is confirmed; READY means available again.
 
 There are two separate state machines:
 
@@ -141,8 +153,8 @@ targets and arrival skips. Pick shares the conditional initial joint-Home route,
 all accepted candidates, their successful Tray Detect target, missed transits
 and Home/put-back branches. It previews one fresh batch at nominal endpoints;
 actual early-contact poses and future retry batches require live execution and are not invented.
-Place shares the saved Tray Detect target (unless already there) and four-command
-placement route, including taught rotation. It samples real fresh tray/depth at
+Place requires saved Tray Detect joints and shares the three-command
+placement route, including taught rotation, with no observation-travel/Home TF. It samples real fresh tray/depth at
 the camera's current pose with three requests maximum. Preview cannot move the
 camera to make a hidden tray visible. Sources and successful pose evidence remain
 strict; failed observation publishes no partial placement route.
@@ -152,8 +164,8 @@ Installed TFs stop on input edits, mode OFF, source change, stale feedback or ro
 movement; RViz removes expired frames using its existing TF timeout. Rebuild
 controller interfaces/controller and restart controller/preview/GUI together.
 The old preview endpoint is not used. The removed Tray Detect Position GUI button
-does not remove the native external action; Place still owns the same observation
-travel internally. Lifecycle buttons stay in their separate row.
+does not remove the native external action. Place only checks observation position;
+it never moves there. Lifecycle buttons stay in their separate row.
 
 ## 2. Normal lifecycle
 
@@ -177,7 +189,7 @@ flowchart TD
     TRAY_POSITIONING -->|Held| HOLDING
     HOLDING -->|Place: tray detector ready| PLACING
     READY -->|GUI Place: tray detector ready| PLACING
-    PLACING -->|Released and Home confirmed| READY
+    PLACING -->|Final retract confirmed; neutral and DI1 LOW| READY
     STARTING -->|Unknown suction| HELD_UNKNOWN
     STARTING -->|Emergency stop confirmed or other failure| FAULT
 ```
@@ -244,7 +256,7 @@ typed status and failed service responses include the complete guidance.
 | `READY` | Available and unheld; can Pick, Home, Tray Detect Position, GUI-mode Place, Pause, reload or change global speed. |
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
-| `PLACING` | Observing tray/depth or queueing placement through Home. |
+| `PLACING` | Checking observation position, observing tray/depth, admitting placement or supervising retract after action SUCCESS. |
 | `PICKING` | Up to three fresh candidate batches, Home between exhausted batches; success ends at Tray Detect. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
@@ -343,7 +355,7 @@ flowchart TD
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
     HELD -->|Put-back release confirmed| RETURNED
-    HELD -->|Tray queue completed at Home with neutral outputs and DI1 LOW| PLACED
+    HELD -->|Tray retract confirmed with neutral outputs and DI1 LOW| PLACED
     PENDING -->|Explicit Recover| CANCELED
     ACTIVE -->|Explicit Recover| CANCELED
     INTERRUPTED -->|Explicit Recover| CANCELED
@@ -356,7 +368,7 @@ Eligible candidates are PENDING or INTERRUPTED in saved order. Thus Continue
 retries the interrupted candidate before later candidates. The ledger and held
 source exist only in memory; process restart does not reconstruct them.
 RETURNED confirms release feedback; retreat/Home may still be in progress.
-PLACED records the completed tray queue and clear final grip at Home, without
+PLACED records the completed tray queue and clear final grip above the tray, without
 requiring intermediate release evidence or proving the item landed on the tray.
 Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
 original destination until Home completes, next-candidate travel takes ownership,
@@ -368,24 +380,31 @@ claim PLACED or RETURNED.
 
 ```mermaid
 flowchart TD
-    Request["PlaceItem: GUI READY/HOLDING or headless trusted HOLDING; positive X/Y and Rotation"] --> Observe["Queue direct MovL to saved Tray Detect joints; confirm idle + joints; no dwell"]
-    Observe --> Depth["Request fresh matched tray pose/depth; at most 3 requests per Place"]
+    Request["PlaceItem: GUI READY/HOLDING or headless trusted HOLDING; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints? No motion command"}
+    Observe -->|Yes immediately| Depth["Request fresh matched tray pose/depth; at most 3 requests per Place"]
+    Observe -->|No| Wait["Wait up to 3 seconds for idle + joints"]
+    Wait -->|Arrived| Depth
+    Wait -->|Expired| Position["Not at Tray Detect position; no detection or placement"]
+    Position --> Stop["Stop and report failure; preserve item"]
     Depth -->|No usable result or reply timeout| Budget{"Requests left?"}
     Budget -->|Yes; stay at observation pose| Depth
-    Budget -->|No| Stop["Stop and report final failure; preserve item"]
+    Budget -->|No| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
-    Depth -->|Valid| Queue["Admit one ordered CP100 motion group through Home"]
+    Depth -->|Valid; still at observation position| Queue["Admit three commands in one ordered CP100 group"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
     Pre --> Release["MovLIO: drop Z = tray surface + standoff + pre-pick height; 80% OPEN + exhaust"]
     Release --> Retract["MovLIO: pre-place; 20% fingers + vacuum neutral"]
-    Retract --> Home["MovL: Cartesian Home; confirm idle, pose, neutral and DI1 LOW"]
-    Home --> Ready["READY / SUCCESS"]
+    Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
+    Accepted --> Monitor["Completion worker: final retract joint-FK + idle + execution; neutral and DI1 LOW"]
+    Monitor --> Ready["READY above tray; existing held candidate PLACED"]
+    Monitor -->|Fault or Stop| Stop
     Queue -. "Monitor throughout" .-> Feedback["Command acceptance, fresh enabled feedback, robot faults, opposing outputs and motion watchdogs; no release-confirmation gate"]
     Feedback -->|Fault| Stop
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
     Stopped -->|Release command not issued| Retry["Continue reobserves within remaining request budget"]
     Retry --> Observe
-    Stopped -->|Release confirmed| Recover["Continue: neutralize, upward retreat, Home; never release again"]
+    Stopped -->|Release confirmed| Recover["Continue: neutralize, upward retreat only; never release again"]
+    Recover --> Ready
     Stopped -->|Partial release unconfirmed| Block["Continue blocked; no repeated descent/release"]
     Stopped -->|Explicit Recover| Cancel["Cancel placement; fresh Stop and grip checks; preserve I/O; lift to Home Z then Home; relax gripper"]
 ```
@@ -396,12 +415,16 @@ edge. Rotation accepts −180° to +180°; zero is the saved Tray Detect Pose to
 orientation, followed by the requested local tool-Z rotation. Item axes,
 pick_rotation and the detected tray quaternion do not determine tool attitude.
 
-Place queues one direct joint-target MovL to the saved observation pose if
-necessary, without a preliminary Z rise or elevated XY transit. The standalone
-Tray Detect Position action uses this same path. Bin routes retain their existing
-clearance logic. Arrival requires fresh idle/empty
-queue feedback, all six actual joint angles within ±1° and command execution
-evidence. There is no fixed settling interval and no GetPose service call.
+Place sends no observation-position command. As for Pick's initial Home skip,
+check fresh RobotStatus idle and all six actual joints within ±1° of saved Tray
+Detect. Proceed immediately when matched, otherwise allow three seconds for
+arrival. Expiry reports "Not at Tray Detect position" through the failed action
+and GUI prompt, with Stop containment and no tray request or placement queue.
+Recheck position during observation and after its result. There is no fixed
+settling interval, new FeedInfo tick or GetPose call for this position check.
+Fresh safety/held-item gates remain. The external Tray Detect Position action
+still sends one direct joint-target MovL and confirms execution/idle/joint arrival.
+Bin routes retain their existing clearance logic.
 
 Use a fresh after-trigger synchronized RGB/depth observation and calibrated
 RGB-time TF. Preserve requested base X/Y; obtain surface base Z from target-ray
@@ -425,17 +448,17 @@ Release Z = surface Z + standoff + prepick height, matching the item pre-pick
 height above the detected tray surface. Pre-place/retract Z = taught Home Z,
 matching the first Item Pick's `pN_transit` height before pre-pick; that initial
 route skips the lower clearance point. Approach/drop/retract keep tray-target
-X/Y and detect-relative tool attitude; final Home restores full Home pose.
+X/Y and detect-relative tool attitude through the final upward endpoint.
 Require Home Z above drop Z for timed descent/retract. No extra preliminary
-safety rise or additional height setting is added. Queue exactly four commands,
-at speed 100% for every segment, also including travel to Tray Detect Position.
+safety rise or additional height setting is added. Queue exactly three commands,
+at speed 100% for every segment. The external Tray Detect Position action also uses 100%.
 Global SpeedFactor still scales those speeds and is never changed by placement.
-Retain Item Teach travel/approach/retract/travel acceleration for the queue and
+Retain Item Teach travel/approach/retract acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
 Commands are MovL pre-place; MovLIO release
 with 80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
-20% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF; MovL Cartesian Home restoring taught
-Home attitude. There is no additional retract-height/clearance target. Exhaust
+20% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF. No final Home command or additional
+retract-height/clearance target is sent. Exhaust
 lasts from descent's 80% trigger until ascent's 20% trigger, not a 50 ms pulse.
 
 Service replies are ordered admission barriers, not physical waypoint waits.
@@ -449,20 +472,29 @@ queue start; GUI mode accepts either initial item state. Preserve ordered comman
 acceptance, enabled/fresh/fault-free robot feedback, opposing-output protection,
 motion watchdogs and direct Stop/Pause throughout.
 
-Only after advancing idle feedback, terminal execution and Cartesian Home arrival,
-check neutral outputs and DI1 LOW before READY/SUCCESS. Missing final grip state
-reports a Home-reached fault; DI12 and prior release evidence are not required.
-Record PLACED for an existing HELD candidate only at successful Home completion,
+After all three ordered `res=0` replies, return PlaceItem SUCCESS immediately,
+normally with `final_state=PLACING`. One completion worker retains the operation
+slot, transport execution evidence and active status while awaiting physical
+completion. No other motion may overlap; Stop, Pause and shutdown remain active.
+The worker uses the same three-second no-progress and 300-second motion bounds;
+it adds no ROS executor thread. A post-result failure uses Stop containment and
+status/events, without changing the returned action result.
+
+Only after advancing joint/status feedback, terminal execution, empty queue and
+joint-FK final retract arrival, check neutral outputs and DI1 LOW before READY.
+Missing final grip state reports a retract-reached fault; DI12 and prior release
+evidence are not required. Record PLACED for an existing HELD candidate only at successful retract completion,
 clear held context and log release_feedback_observed separately. This confirms
 the queue completed, not physical item deposition. No candidate is invented.
 
 Placement Pause stops in place; direct Stop requires Recover. Both retain output
 and release evidence without waiting for continuous exhaust to turn itself OFF.
-If the release command was not issued, Continue can reobserve;
+If the release command was not issued, Continue rechecks saved observation position
+with the same three-second window, then can reobserve within the remaining budget;
 headless mode also requires an intact grip. Retain the original placement mode
 across Pause/Continue. Startup/idle unknown-item and other action guards remain.
 Once release is issued, never descend/release again. Observed release permits neutralizing
-outputs and an upward-only recovery to at least pre-place Z, followed by Home.
+outputs and an upward-only retreat at actual X/Y to at least pre-place Z, ending there.
 Unconfirmed partial release blocks Continue. Explicit Recover cancels placement,
 validates fresh stopped I/O, preserves outputs and lifts to Home Z before Home,
 then resets all four gripper outputs OFF. It neither replays expired history nor declares successful placement. Return Item cannot substitute
@@ -675,6 +707,9 @@ acknowledge a request; observe status afterward. Home/Pick actions provide final
 results: SUCCESS, NO_PICK (Pick only), CANCELED, COMMAND_REJECTED,
 FEEDBACK_FAILURE, STOP_UNCONFIRMED or CONTROLLER_FAULT. A controlled Return Item
 that ends an active Home/Pick reports CANCELED and final READY, not Pick success.
+PlaceItem SUCCESS instead means all three placement commands were accepted; its
+completion worker retains `operation_active` until final retract/neutral/DI1 LOW
+and READY, or failure containment. Clients must observe status for that outcome.
 
 ### Feedback and I/O
 
@@ -792,7 +827,7 @@ Source map for the next review:
 | --- | --- |
 | [state_machine.py](../src/robot_controller/python/robot_controller/state_machine.py) | Lifecycle states and allowed edges |
 | [controller.py](../src/robot_controller/python/robot_controller/controller.py) | API guards, configuration, lifecycle, action ownership, Stop and supervision |
-| [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Queued placement through Home, timed-release evidence and interruption recovery |
+| [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Read-only tray-position check, three-command placement admission, release evidence and upward interruption recovery |
 | [tray_client.py](../src/robot_controller/python/robot_controller/tray_client.py) | Fresh tray/depth request, provider and source validation |
 | [managed_control.py](../src/robot_controller/python/robot_controller/managed_control.py) | Parking, Continue, put-back and held-loss recovery |
 | [pick_session.py](../src/robot_controller/python/robot_controller/pick_session.py) | Candidate ledger and put-back geometry |

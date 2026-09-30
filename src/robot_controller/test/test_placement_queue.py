@@ -13,6 +13,7 @@ from robot_controller.errors import FeedbackFailure, OperationCanceled
 from robot_controller.hardware import DobotTransport
 from robot_controller.kinematics import pose_values
 from robot_controller.motion import Target
+from robot_controller.placement import place_targets
 from test_feedback_v2 import feed, primed_monitor, joint_message
 from test_placement import operation_node
 
@@ -54,29 +55,37 @@ class QueueRig:
             dict(outputs=HELD, inputs=1),
             dict(outputs=RELEASE, inputs=OPEN),
             dict(outputs=0, inputs=OPEN),
-            dict(outputs=0, inputs=OPEN, home=True),
+            dict(outputs=0, inputs=OPEN, retract=True),
         ]
 
-    def emit(self, *, outputs, inputs, home=False, running=1, **feedback):
+    def emit(self, *, outputs, inputs, home=False, retract=False, running=1, **feedback):
         self.timer += 1
         self.clock += .01
         matrix = (self.node.configuration.home_matrix if home
                   else self.node.configuration.tray.detect_matrix)
+        if retract:
+            matrix = place_targets(
+                self.node.configuration.tray.detect_matrix, [.3, .2, .25],
+                self.node.configuration.profile, self.node.placement.rotation_deg,
+                self.node.configuration.home_matrix)[-1].matrix
         fields = dict(
             controller_timer=self.timer, digital_outputs=outputs, digital_input_bits=inputs,
-            currentCommandId=4 if home else 2, RunningStatus=0 if home else running,
-            isRunQueuedCmd=0 if home else running, tool_vector_actual=pose_values(matrix))
+            currentCommandId=4 if home else 3 if retract else 2,
+            RunningStatus=0 if home or retract else running,
+            isRunQueuedCmd=0 if home or retract else running,
+            tool_vector_actual=pose_values(matrix))
         fields.update(feedback)
         # The fake robot publishes independent joint/status streams. Its test
         # model maps those joints to the scripted pose; production uses CR10 FK.
         from robot_controller.kinematics import pose_matrix
         matrix = pose_matrix(fields['tool_vector_actual'])
         joints = joint_message()
-        joints.position = (list(getattr(self.node.configuration, 'home_joints', (0.,) * 6))
-                           if home and 'tool_vector_actual' not in feedback else
-                           list(self.node.configuration.tray.detect_joints)
-                           if not home and 'tool_vector_actual' not in feedback else
-                           list(matrix[:3, 3]) + [0., 0., 0.])
+        if home and 'tool_vector_actual' not in feedback:
+            joints.position = list(getattr(self.node.configuration, 'home_joints', (0.,) * 6))
+        elif not home and not retract and 'tool_vector_actual' not in feedback:
+            joints.position = list(self.node.configuration.tray.detect_joints)
+        else:
+            joints.position = list(matrix[:3, 3]) + [0., 0., 0.]
         self.joint_poses[tuple(joints.position)] = matrix.copy()
         self.monitor.update_joints(joints)
         self.monitor.update_status(SimpleNamespace(
@@ -91,7 +100,7 @@ class QueueRig:
             self.requests.append((name, request))
             self.order.append(name)
             self.on_request(len(self.requests))
-            if len(self.requests) == 4 and self.during_reply:
+            if len(self.requests) == 3 and self.during_reply:
                 for values in self.script:
                     self.emit(**values)
             future = Future()
@@ -102,28 +111,29 @@ class QueueRig:
     def next_sample(self, *_args, **_kwargs):
         values = next(self.steps, None)
         if values is None:
-            pytest.fail('Unexpected feedback wait after final Home')
+            pytest.fail('Unexpected feedback wait after final retract')
         self.emit(**values)
         return self.monitor.sequence
 
     def run(self):
         self.order.clear()
-        self.steps = iter(([dict(outputs=0, inputs=OPEN, home=True)] if self.during_reply
+        self.steps = iter(([dict(outputs=0, inputs=OPEN, retract=True)] if self.during_reply
                            else self.script))
         self.node.placement.run(self.node)
+        self.node.placement.finish_pending(self.node)
 
 
 @pytest.mark.parametrize('during_reply', [False, True])
-def test_real_transport_queues_four_moves_with_exact_percentages_and_no_settling(during_reply):
+def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settling(during_reply):
     rig = QueueRig(during_reply=during_reply)
     rig.run()
-    assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
-    assert rig.order[:4] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
+    assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
+    assert rig.order[:3] == ['MovL', 'MovLIO', 'MovLIO']
     assert all(not request.mode for _, request in rig.requests)
     assert [list(request.param_value) for _, request in rig.requests] == [
         ['user=0', 'tool=0', 'v=100', f'a={acceleration}']
-        for acceleration in (70, 30, 40, 70)]
-    assert [request.c for _, request in rig.requests] == pytest.approx([800., 310., 800., 800.])
+        for acceleration in (70, 30, 40)]
+    assert [request.c for _, request in rig.requests] == pytest.approx([800., 310., 800.])
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])
     assert list(rig.requests[1][1].mdis) == [
@@ -143,7 +153,7 @@ def test_real_transport_queues_four_moves_with_exact_percentages_and_no_settling
 
 @pytest.mark.parametrize('inputs', [0, OPEN | 1])
 @pytest.mark.parametrize('during_reply', [False, True])
-def test_missing_open_or_released_suction_does_not_block_home(inputs, during_reply):
+def test_missing_open_or_released_suction_does_not_block_retract(inputs, during_reply):
     rig = QueueRig(during_reply=during_reply)
     rig.script[1]['inputs'] = inputs
     rig.run()
@@ -153,11 +163,11 @@ def test_missing_open_or_released_suction_does_not_block_home(inputs, during_rep
     assert rig.node.managed.session.held_index is None
     assert rig.node.managed.session.attempts[0].state == 'PLACED'
     finished = [c for c in rig.node.events.record.call_args_list
-                if c.args[1] == 'placement_home_completed']
+                if c.args[1] == 'placement_retract_completed']
     assert finished[-1].kwargs['release_feedback_observed'] is False
 
 
-def test_skipped_exhaust_evidence_does_not_block_home():
+def test_skipped_exhaust_evidence_does_not_block_retract():
     rig = QueueRig()
     rig.script.pop(1)
     rig.run()
@@ -165,7 +175,7 @@ def test_skipped_exhaust_evidence_does_not_block_home():
     assert not rig.node.placement.release_confirmed
 
 
-def test_expired_output_history_during_admission_does_not_block_home():
+def test_expired_output_history_during_admission_does_not_block_retract():
     rig = QueueRig(during_reply=True)
     rig.monitor._outputs = deque(maxlen=1)
     rig.run()
@@ -192,16 +202,16 @@ def test_opposing_outputs_fail_during_queue():
         rig.run()
 
 
-def test_suction_loss_during_queue_does_not_block_home_or_claim_release_evidence():
+def test_suction_loss_during_queue_does_not_block_retract_or_claim_release_evidence():
     rig = QueueRig()
     rig.script = ([dict(outputs=HELD, inputs=0)] * 8
-                  + [dict(outputs=0, inputs=0, home=True)])
+                  + [dict(outputs=0, inputs=0, retract=True)])
     rig.run()
     assert rig.node.placement.phase == 'DONE'
     assert not rig.node.placement.release_confirmed
 
 
-def test_renewed_suction_after_release_is_checked_only_at_home():
+def test_renewed_suction_after_release_is_checked_only_at_retract():
     rig = QueueRig()
     rig.script[2]['inputs'] = 1
     rig.run()
@@ -209,26 +219,25 @@ def test_renewed_suction_after_release_is_checked_only_at_home():
 
 
 @pytest.mark.parametrize('outputs,inputs', [(0, 1), (RELEASE, 0), (HELD, 1)])
-def test_bad_final_grip_is_reported_at_home_without_an_intermediate_stop(outputs, inputs):
+def test_bad_final_grip_is_reported_at_retract_without_an_intermediate_stop(outputs, inputs):
     rig = QueueRig()
     rig.script[-1].update(outputs=outputs, inputs=inputs)
-    with pytest.raises(FeedbackFailure, match='Home reached; final placement'):
+    with pytest.raises(FeedbackFailure, match='Retract reached; final placement'):
         rig.run()
-    assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO', 'MovL']
+    assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
     assert rig.monitor.snapshot().feed['tool_vector_actual'] == pose_values(
-        rig.node.configuration.home_matrix)
+        rig.node.placement.plan[-1].matrix)
     assert rig.node.managed.session.attempts[0].state == 'HELD'
 
 
 @pytest.mark.parametrize('feedback', [
     {'tool_vector_actual': [0.] * 6}, {'isRunQueuedCmd': 1, 'RunningStatus': 1},
-    {'currentCommandId': 3},
 ])
-def test_placement_still_requires_physical_idle_home_and_terminal_command(feedback):
+def test_placement_still_requires_physical_idle_retract(feedback):
     rig = QueueRig()
-    rig.script.insert(-1, dict(outputs=0, inputs=0, home=True, **feedback))
+    rig.script.insert(-1, dict(outputs=0, inputs=0, retract=True, **feedback))
     rig.run()
-    assert next(rig.steps, None) is None  # Must consume the later genuine Home sample.
+    assert next(rig.steps, None) is None  # Must consume the later genuine retract sample.
     assert rig.node.placement.phase == 'DONE'
 
 
@@ -312,12 +321,12 @@ def test_ambiguous_partial_release_blocks_recovery_without_releasing_or_descendi
     assert not rig.requests
 
 
-def test_incoherent_release_evidence_is_diagnostic_only_until_home():
+def test_incoherent_release_evidence_is_diagnostic_only_until_retract():
     rig = QueueRig()
     rig.script = [dict(outputs=1 << 13, inputs=OPEN),
                   dict(outputs=RELEASE, inputs=OPEN | 1),
                   dict(outputs=0, inputs=OPEN),
-                  dict(outputs=0, inputs=0, home=True)]
+                  dict(outputs=0, inputs=0, retract=True)]
     rig.run()
     assert rig.node.managed.session.attempts[0].state == 'PLACED'
     assert not rig.node.placement.release_confirmed

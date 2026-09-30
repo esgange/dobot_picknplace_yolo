@@ -564,7 +564,8 @@ class DobotTransport:
         if recovery_home is not None:
             self.pending_motion_outputs = {}
             self.node.events.record(
-                "INFO", "stop_confirmed", "Stationary empty queue and current gripper I/O confirmed")
+                "INFO", "stop_confirmed",
+                "Stationary empty queue and current gripper I/O confirmed")
             recovery_home.capture(self.node, last_snapshot)
             return
         if held_violation is not None:
@@ -997,6 +998,21 @@ class DobotTransport:
         initial = self._validate_held_snapshot(self._ready_snapshot())
         return reached(initial)
 
+    def wait_tray_position(self, joints_rad):
+        """Read-only three-second arrival window; never queue observation travel."""
+        deadline = time.monotonic() + 3.0
+        while True:
+            self.node.raise_if_cancelled()
+            if self.home_already_reached(joints_rad):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FeedbackFailure(
+                    "Not at Tray Detect position after 3 seconds; tray detection blocked")
+            self.monitor.wait_next(
+                self.monitor.revision, min(.1, remaining),
+                cancel=self.node.cancel_requested, position=True)
+
     def confirm_home(self, joints_rad):
         """Bound post-output confirmation without interpreting a busy queue as motion."""
         initial = self._validate_held_snapshot(self._ready_snapshot())
@@ -1054,11 +1070,39 @@ class DobotTransport:
             if not vacuum and before_suction is not None:
                 before_suction()
 
-    def move_batch(self, targets, *, batch_name="motion", require_suction=False,
-                   forbid_suction=False, stop_on_suction=False,
-                   before_suction=None, pick_settling_sec=0.0,
-                   require_suction_reset=False, return_terminal_pose=False,
-                   confirmed_start_pose=None, preserve_outputs=False, placement=None):
+    def move_batch(self, targets, *, queue_only=False, **kwargs):
+        """Admit in order; optionally hand placement completion to its owning worker."""
+        if queue_only and kwargs.get("placement") is None:
+            raise CommandRejected("Queue-only admission is reserved for supervised placement")
+        batch = self._move_batch(targets, **kwargs)
+        try:
+            next(batch)
+        except StopIteration as completed:
+            return completed.value
+        except BaseException:
+            batch.close()
+            raise
+        if queue_only:
+            return batch
+        return self.finish_batch(batch)
+
+    @staticmethod
+    def finish_batch(batch):
+        """Resume the admitted group's existing guards and physical completion loop."""
+        try:
+            next(batch)
+        except StopIteration as completed:
+            return completed.value
+        else:
+            raise FeedbackFailure("Motion batch yielded more than one admission boundary")
+        finally:
+            batch.close()
+
+    def _move_batch(self, targets, *, batch_name="motion", require_suction=False,
+                    forbid_suction=False, stop_on_suction=False,
+                    before_suction=None, pick_settling_sec=0.0,
+                    require_suction_reset=False, return_terminal_pose=False,
+                    confirmed_start_pose=None, preserve_outputs=False, placement=None):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction,
@@ -1230,6 +1274,9 @@ class DobotTransport:
                 "INFO", "motion_batch_queued", batch_name,
                 batch=batch_name, targets=queued_targets,
                 terminal_target=targets[-1].name, terminal_command_id=terminal_command_id)
+            # The generator retains moving/execution evidence and cleanup until
+            # its one owner finishes or closes it. Normal actions resume inline.
+            yield
             tail = targets[-1]
             terminal_stable_sec = (pick_settling_sec if stop_on_suction
                                    else 0.0)
@@ -1251,8 +1298,8 @@ class DobotTransport:
                 if np.max(np.abs(vector - last_vector)) > math.radians(0.05):
                     last_progress, last_vector = now, vector
                 reached = self._target_reached(tail, snapshot)
-                # Placement runs through Home without release/I/O completion
-                # gates en route; complete() reconciles its final grip there.
+                # Placement's action acknowledges admission; its worker checks
+                # the final retract and grip without intermediate release gates.
                 outputs_ready = placement is not None or all(
                     bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
                     == active for channel, active in expected_outputs.items())

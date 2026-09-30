@@ -41,7 +41,10 @@ together. The old preview endpoint cannot satisfy the new GUI.
 
 `GoTrayDetectPosition` remains available to external clients, carrying the
 configuration ID and saved Tray Teach observation joints. The GUI has no separate
-Tray Detect Position button; Place includes that travel. `PlaceItem` carries
+Tray Detect Position button. Place checks fresh idle status and all six saved tray
+joints within ±1°, proceeding immediately or waiting up to three seconds for
+arrival. It never commands observation travel; timeout reports "Not at Tray Detect
+position" without a detection request. `PlaceItem` carries
 the configuration ID plus positive `x_mm`, `y_mm` and
 `rotation_deg` in [−180, +180]. Rotation zero is the saved observation tool attitude,
 with a local tool-Z offset. It is independent of detected item/tray axes.
@@ -56,9 +59,16 @@ Status includes `tray_configured`, `tray_position_recorded`, `TRAY_POSITIONING` 
 `manual_placement_enabled` is true only for a non-headless controller: attended
 Place may start from READY or HOLDING without a picked item, and does not require
 suction before release. It still executes real hardware commands and validates
-tray/depth, release I/O and final Home. Confirmed release records PLACED only when
-a held candidate exists. Placement Pause stops in place; Continue and Recover preserve
-release progress. Neither interface nor launch automatically starts motion.
+tray/depth and release I/O. It queues approach/drop/retract without final Home.
+`PlaceItem.SUCCESS` acknowledges all three ordered command acceptances; its
+`final_state` is normally PLACING. `ControllerStatus.operation_active` remains true
+until the completion worker confirms idle final retract, neutral outputs and DI1
+LOW, then enters READY and records PLACED only when a held candidate exists.
+Later failures report through status/events and Stop containment; the returned
+action result cannot be changed. Direct Stop and Pause remain available while
+the queue executes. Placement Pause stops in place; Continue retains release
+progress and only retreats after confirmed release. Explicit Recover cancels,
+returns Home and resets the gripper. Neither interface nor launch automatically starts motion.
 
 `ControllerStatus.item_detector_ready` and `tray_detector_ready` report availability
 of the corresponding pose service from exactly one canonical root provider. They

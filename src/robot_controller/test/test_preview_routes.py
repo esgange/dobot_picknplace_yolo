@@ -26,7 +26,7 @@ def preview(monkeypatch):
     config.configuration_id = "preview-config"
     config.home_joints = (.1,) * 6
     config.home_matrix = pose_matrix([500, 150, 900, 175, 10, 20])
-    config.tray.detect_joints = (.2,) * 6
+    config.tray.detect_joints = (0.,) * 6
     config.selection = SimpleNamespace(
         station=SimpleNamespace(platform=SimpleNamespace(base_from_platform=np.eye(4))),
         robot_camera=SimpleNamespace(reference_from_camera_link=np.eye(4)),
@@ -134,20 +134,28 @@ def test_pick_preview_empty_observation_never_invents_candidates(preview):
 
 
 @pytest.mark.parametrize("angle", [-180., 0., 90., 180.])
-def test_place_preview_contains_detect_and_exact_four_placement_targets(preview, angle):
+def test_place_preview_contains_only_three_placement_targets(preview, angle):
     # Preview remains read-only and works without Startup/EnableRobot.
     preview.monitor.update_feed(feed(EnableStatus=0, robot_mode=4))
     preview.monitor.update_status(SimpleNamespace(is_connected=True, is_enable=False))
     result = preview.run(Preview.Request.PLACE, x_mm=30., y_mm=40., rotation_deg=angle)
     assert result.success
     assert [t.name for t in preview.targets] == [
-        "tray_detect_position", "place_pre", "place_release", "place_retract", "place_home"]
+        "place_pre", "place_release", "place_retract"]
     expected = place_targets(preview.config.tray.detect_matrix, [.3, .2, .25],
                              preview.config.profile, angle, preview.config.home_matrix)
-    assert preview.targets[0].joints_rad == preview.config.tray.detect_joints
-    assert all(np.allclose(a.matrix, b.matrix) for a, b in zip(preview.targets[1:], expected))
+    assert all(t.joints_rad is None for t in preview.targets)
+    assert all(np.allclose(a.matrix, b.matrix) for a, b in zip(preview.targets, expected))
     preview.trays.request.call_args.kwargs["check_state"]()
     preview.client.request.assert_not_called()
+
+
+def test_place_preview_away_from_tray_refuses_before_detection(preview):
+    preview.config.tray.detect_joints = (.1,) * 6
+    result = preview.run(Preview.Request.PLACE, x_mm=30., y_mm=40.)
+    assert not result.success and 'Not at Tray Detect position' in result.message
+    preview.trays.request.assert_not_called()
+    assert not preview.targets
 
 
 @pytest.mark.parametrize("failure", ["perception", "sources", "moving", "ownership", "stale"])

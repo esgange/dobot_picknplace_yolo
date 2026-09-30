@@ -4,6 +4,9 @@ float64 y_mm
 # Saved Tray Detect Pose tool orientation followed by this local tool-Z rotation.
 float64 rotation_deg
 ---
+# SUCCESS acknowledges all placement commands accepted through final retract.
+# ControllerStatus remains PLACING/operation_active until supervised completion;
+# later failures are reported through status. No final Home motion is queued.
 uint8 SUCCESS=0
 uint8 CANCELED=2
 uint8 COMMAND_REJECTED=3

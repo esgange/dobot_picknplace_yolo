@@ -205,7 +205,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.pick_item = QtWidgets.QPushButton("Pick Item")
         self.place_item = QtWidgets.QPushButton("Place Item")
         self.place_item.setToolTip(
-            "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude")
+            "Requires Tray Detect position; observe tray, then place and retract above it")
         self.debug_images = QtWidgets.QCheckBox("Save Pick debug RGB/depth")
         self.preview_toggle.toggled.connect(self._toggle_preview)
         self.home_button.clicked.connect(lambda: self._action("home"))
@@ -313,7 +313,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         current = state.state if state is not None else "UNAVAILABLE"
         emergency = (state is not None and current == "FAULT"
                      and EMERGENCY_STOP_MESSAGE in state.message)
-        self.status.setText("EMERGENCY STOP\nPRESSED\nCannot start / recover" if emergency else current)
+        self.status.setText(
+            "EMERGENCY STOP\nPRESSED\nCannot start / recover" if emergency else current)
         color = ("#61dfa5" if current == "READY" else
                  "#ff9393" if current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN") else
                  "#ffd077" if current in ("PAUSED", "UNAVAILABLE") else "#edf3f8")
@@ -745,13 +746,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "Pick an item and carry it to Tray Detect" if state and state.item_detector_ready
             else "Arm Item Teach or start Item Detect with exactly one provider")
         self.place_item.setToolTip(
-            "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude"
+            "Requires Tray Detect position; observe tray, then place and retract above it"
             if state and state.tray_detector_ready else
             "Arm Tray Teach or start Tray Detect with exactly one provider; "
             "restart both tray and controller applications after updating")
         if state and state.manual_placement_enabled and state.tray_detector_ready:
             self.place_item.setToolTip(
-                "GUI debug placement: run the real placement sequence with or without an item")
+                "GUI debug placement: requires Tray Detect position; "
+                "run real placement with or without an item")
         if state and not state.manual_placement_enabled and not state.holding_item:
             self.place_item.setToolTip(
                 "Pick an item successfully first; Place Item requires the HOLDING state")

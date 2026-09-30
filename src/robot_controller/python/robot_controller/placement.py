@@ -59,9 +59,6 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
             events = gripper_neutral_events(20) + vacuum_neutral_events(20)
         result.append(Target(name, point, TRAY_SPEED_PERCENT,
                              settings["acceleration"][rate], motion_io=events))
-    result.append(Target("place_home", home.copy(),
-                         TRAY_SPEED_PERCENT,
-                         settings["acceleration"]["travel_percent"]))
     return tuple(result)
 
 
@@ -73,6 +70,7 @@ class PlacementOperation:
     require_held_item: bool = True
     phase: str = "OBSERVE"
     plan: tuple = ()
+    # Shared with retained_release_progress() during output/Stop reconciliation.
     pending_outputs: dict = field(default_factory=dict)
     release_issued: bool = False
     neutral_issued: bool = False
@@ -81,6 +79,7 @@ class PlacementOperation:
     initial_outputs: int = 0
     observing: bool = False
     tray_attempts: TrayAttempts = field(default_factory=TrayAttempts)
+    pending_motion: object = None
 
     @property
     def needs_recovery(self):
@@ -118,7 +117,7 @@ class PlacementOperation:
         with node.managed.lock:
             mask = (1 << 13) | (1 << 12) | 3
             # History is diagnostic only. A gap or unobserved release interval
-            # must not interrupt the admitted approach/drop/retract/Home queue.
+            # must not interrupt the admitted approach/drop/retract queue.
             for sequence, _timer, outputs, inputs in node.monitor.output_history(
                     self.history_sequence):
                 if sequence > sample.sequence:
@@ -136,18 +135,19 @@ class PlacementOperation:
                         self.release_confirmed = True
                         self.phase = "RELEASED"
                         node.events.record(
-                            "INFO", "placement_release_observed", "Queued release feedback observed")
+                            "INFO", "placement_release_observed",
+                            "Queued release feedback observed")
                 node.expected_outputs.update({ch: bool(bits & (1 << (ch - 1)))
                                               for ch in (1, 2, 13, 14)})
 
     def complete(self, node, sample):
-        # The transport calls this only after physical arrival at final Home.
+        # The completion worker calls this after physical arrival at final retract.
         # No intermediate release state or full-open sensor is a success gate.
         self.observe(node, sample)
         if (sample.feed["digital_input_bits"] & 1
                 or sample.feed["digital_outputs"] & ((1 << 13) | (1 << 12) | 3)):
             raise FeedbackFailure(
-                "Home reached; final placement outputs must be neutral and DI1 LOW")
+                "Retract reached; final placement outputs must be neutral and DI1 LOW")
         node.holding_item = False
         node.expected_outputs.update(dict.fromkeys((1, 2, 13, 14), False))
         session = node.managed.session
@@ -156,10 +156,26 @@ class PlacementOperation:
                 session.set_state(session.held_index, "PLACED")
             session.held_index = None
         node.events.record(
-            "INFO", "placement_home_completed", "Placement queue completed at Home",
+            "INFO", "placement_retract_completed", "Placement queue completed above tray",
             release_feedback_observed=self.release_confirmed)
         self.phase = "DONE"
         self.observing = False
+
+    def check_observation(self, node):
+        node.wait_for_resume()
+        self.preflight(node)
+        if not node.hardware.home_already_reached(node.configuration.tray.detect_joints):
+            raise FeedbackFailure("Not at Tray Detect position; tray detection blocked")
+
+    def finish_pending(self, node):
+        pending, self.pending_motion = self.pending_motion, None
+        if pending is not None:
+            node.hardware.finish_batch(pending)
+
+    def close_pending(self):
+        pending, self.pending_motion = self.pending_motion, None
+        if pending is not None:
+            pending.close()
 
     def run(self, node):
         node.wait_for_resume()
@@ -173,25 +189,27 @@ class PlacementOperation:
         # An interrupted queue with unchanged outputs can be reobserved.
         self.observing = False
         self.preflight(node)
-        node._execute_tray_position()
+        node.operation_progress("TRAY_POSITION", "Checking saved Tray Detect position")
+        node.hardware.wait_tray_position(config.tray.detect_joints)
         surface = node.trays.request(config, self.x_mm, self.y_mm,
                                      require_held_item=self.require_held_item,
-                                     attempts=self.tray_attempts)
-        if not node.hardware.home_already_reached(config.tray.detect_joints):
-            raise FeedbackFailure("Robot moved away from Tray Detect Pose during observation")
+                                     attempts=self.tray_attempts,
+                                     check_state=lambda: self.check_observation(node))
+        self.check_observation(node)
         self.plan = place_targets(config.tray.detect_matrix, surface,
                                   config.profile, self.rotation_deg, config.home_matrix)
         config.validate_sources(node.root)
         self.preflight(node)
         self.phase = "APPROACH"
         self.begin_queue(node)
-        node.operation_progress("PLACE_QUEUE", "Queueing pre-place, release, retract and Home",
-                                waypoint="place_home")
-        node.hardware.move_batch(self.plan, batch_name="place_to_home", placement=self)
+        node.operation_progress("PLACE_QUEUE", "Queueing pre-place, release and final retract",
+                                waypoint="place_retract")
+        self.pending_motion = node.hardware.move_batch(
+            self.plan, batch_name="place_to_retract", placement=self, queue_only=True)
 
     def recover(self, node):
         # An interrupted release is never repeated and never descends back to the
-        # tray. Only confirmed release can resume an upward retreat and Home.
+        # tray. Only confirmed release can resume an upward retreat.
         self.observe(node, node.monitor.snapshot(require_enabled=True))
         if not self.release_confirmed:
             raise FeedbackFailure("Placement release unconfirmed; cannot repeat release or descend")
@@ -208,9 +226,9 @@ class PlacementOperation:
         retreat = []
         if rise[2, 3] > current[2, 3] + 1e-9:
             retreat.append(replace(target, matrix=rise, motion_io=()))
-        retreat.append(self.plan[3])
-        node.hardware.move_batch(tuple(retreat), batch_name="place_recovery_home",
-                                 forbid_suction=True, confirmed_start_pose=current)
+        if retreat:
+            node.hardware.move_batch(tuple(retreat), batch_name="place_recovery_retract",
+                                     forbid_suction=True, confirmed_start_pose=current)
         self.complete(node, node.monitor.snapshot(require_enabled=True))
 
     def check_paused(self, node, sample):

@@ -30,10 +30,9 @@ from .errors import FeedbackFailure, OperationCanceled
 from .feedback import FeedbackMonitor
 from .kinematics import Cr10Kinematics
 from .motion import (candidate_pose_in_base, candidate_exit_transit, cartesian_home_targets,
-                     home_targets, pick_targets, pick_tray_target, pose_reached,
-                     tray_detect_targets)
+                     home_targets, pick_targets, pick_tray_target, pose_reached)
 from .pick_session import return_targets
-from .placement import TRAY_SPEED_PERCENT, place_targets, validate_target
+from .placement import place_targets, validate_target
 from .tray_client import TrayClient
 
 
@@ -217,14 +216,17 @@ class RobotControllerPreview(rclpy.node.Node):
                 x, y, rotation = validate_target(request.x_mm, request.y_mm, request.rotation_deg)
                 if config.tray is None or config.tray.detect_joints is None:
                     raise ValueError("Load a Tray Teach with a recorded Tray Detect Pose")
-                if not np.allclose(sample.joints, config.tray.detect_joints,
-                                   atol=math.radians(1.), rtol=0):
-                    targets.extend(tray_detect_targets(
-                        config.tray.detect_matrix, config.tray.detect_joints,
-                        speed_percent=TRAY_SPEED_PERCENT,
-                        acceleration_percent=rates["acceleration_percent"]))
+
+                def check_tray_position():
+                    self._check_observation()
+                    if not np.allclose(self._snapshot().joints, config.tray.detect_joints,
+                                       atol=math.radians(1.), rtol=0):
+                        raise ValueError("Not at Tray Detect position; tray detection blocked")
+
+                check_tray_position()
                 surface = self.trays.request(
-                    config, x, y, require_held_item=False, check_state=self._check_observation)
+                    config, x, y, require_held_item=False, check_state=check_tray_position)
+                check_tray_position()
                 targets.extend(place_targets(config.tray.detect_matrix, surface,
                                              config.profile, rotation, config.home_matrix))
             config.validate_sources(self.root)
