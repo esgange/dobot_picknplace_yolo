@@ -44,7 +44,6 @@ class GuiNode(rclpy.node.Node):
             String, "/robot_controller/operator_log", self._operator_log, log_qos)
         self.service_clients = {
             "configure": self.create_client(Configure, "/robot_controller/configure"),
-            "startup": self.create_client(Command, "/robot_controller/startup"),
             "recover": self.create_client(Command, "/robot_controller/recover"),
             "pause": self.create_client(Command, "/robot_controller/pause"),
             "continue": self.create_client(Command, "/robot_controller/continue"),
@@ -188,23 +187,32 @@ class ControllerWindow(QtWidgets.QMainWindow):
         layout.addLayout(header)
 
         lifecycle = QtWidgets.QHBoxLayout()
-        self.startup = QtWidgets.QPushButton("START")
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
-        self.pause = QtWidgets.QPushButton("PAUSE")
+        self.pause = QtWidgets.QToolButton()
+        self.pause.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        self.managed_primary = "pause"
+        self.pause.clicked.connect(lambda: self._managed_command(self.managed_primary))
+        self.managed_actions = {}
+        self.pause_menu = QtWidgets.QMenu(self.pause)
+        for name, title in (("pause", "PAUSE"), ("continue", "CONTINUE"),
+                            ("return_item", "RETURN ITEM")):
+            action = QtWidgets.QAction(title, self.pause)
+            action.triggered.connect(lambda _checked=False, n=name: self._managed_command(n))
+            self.managed_actions[name] = action
+            if name != "pause":
+                self.pause_menu.addAction(action)
         self.stop = QtWidgets.QPushButton("STOP")
         self.stop.setStyleSheet(
             "background:#b51f24;color:white;font-weight:800;font-size:18px")
         self.stop.setToolTip("Stop immediately and preserve the gripper outputs")
-        self.startup.clicked.connect(self._start_or_continue)
         self.recover.clicked.connect(lambda: self._command("recover"))
         self.recover.setToolTip(
             "Cancel the action, preserve grip while lifting and returning Home, "
             "then relax fingers and turn suction/exhaust OFF")
-        self.pause.clicked.connect(self._pause_or_return)
         self.stop.clicked.connect(self._immediate_stop)
-        for button in (self.startup, self.recover, self.pause, self.stop):
+        for button in (self.recover, self.pause, self.stop):
             button.setMinimumHeight(58)
-            lifecycle.addWidget(button)
+            lifecycle.addWidget(button, 1)
         layout.addLayout(lifecycle)
 
         operations = QtWidgets.QGridLayout()
@@ -436,7 +444,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def _call(self, name, request):
-        if self.preview_mode and name not in ("preview", "stop", "configure"):
+        if self.preview_mode and name not in ("preview", "stop"):
             return False
         if name in self.pending:
             return False
@@ -462,18 +470,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.saved_selection = None
 
     def _command(self, name):
-        if name != "stop" and self._availability()[name]:
+        if name != "stop" and self._availability().get(name, "Unavailable command"):
             return False
         return self._call(name, Command.Request())
 
     _acquisition_paused = staticmethod(acquisition_paused)
-
-    def _start_or_continue(self):
-        state = self.node.status
-        if self._acquisition_paused(state):
-            return
-        operation = "continue" if state is not None and state.state == "PAUSED" else "startup"
-        self._command(operation)
 
     def _immediate_stop(self):
         if self.preview_mode:
@@ -483,15 +484,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
 
-    def _pause_or_return(self):
-        state = self.node.status
-        name = "return_item" if state is not None and state.state == "PAUSED" else "pause"
+    def _managed_command(self, name):
         if self._availability()[name]:
             return
         if self._command(name):
             if name == "return_item":
                 self.return_requested_locally = True
-            else:
+            elif name == "pause":
                 self.pause_requested_locally = True
             self._refresh_controls()
 
@@ -726,7 +725,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.configure.setText(
             "Reload Teach Configuration" if state and state.configured
             else "Load Teach Configuration")
-        self.startup.setText("CONTINUE" if paused else "START")
         returning = self.return_requested_locally or "return_item" in self.pending
         parking = self.pause_requested_locally or "pause" in self.pending
         if (state is not None and state.feedback_fresh and not self.preview_mode
@@ -736,23 +734,36 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.status.setStyleSheet("font-size:24px;font-weight:700;color:#edf3f8")
             self.status_detail.setText(
                 "Returning item…" if returning else "Pause requested — waiting for confirmation…"
-                if parking else "Request sent — waiting for controller confirmation…")
-        self.pause.setText("Returning item…" if returning or current == "RETURNING_ITEM" else
-                           "Pausing…" if parking or current == "PAUSING" else
-                           "RETURN ITEM" if paused and state.can_return_item else "PAUSE")
+                if parking else "Loading teach files and preparing robot…"
+                if "configure" in self.pending else
+                "Request sent — waiting for controller confirmation…")
+        managed_name = "pause"
+        if paused:
+            managed_name = ("return_item" if retry or state.can_return_item
+                            and not reasons["return_item"] else "continue")
+        for name, action in self.managed_actions.items():
+            action.setEnabled(not reasons[name])
+        self.managed_primary = managed_name
+        self.pause.setText(self.managed_actions[managed_name].text())
+        menu = self.pause_menu if paused and not retry and state.can_return_item else None
+        self.pause.setMenu(menu)
+        self.pause.setPopupMode(QtWidgets.QToolButton.MenuButtonPopup if menu is not None
+                                else QtWidgets.QToolButton.DelayedPopup)
+        if returning or current == "RETURNING_ITEM":
+            self.pause.setText("Returning item…")
+        elif parking or current == "PAUSING":
+            self.pause.setText("Pausing…")
         self.pause.setStyleSheet(
-            "QPushButton{background:#d18b00;color:white;font-weight:800;font-size:18px}"
-            "QPushButton:disabled{background:#e2e2e2;color:#999}")
+            "QToolButton{background:#d18b00;color:white;font-weight:800;font-size:18px}"
+            "QToolButton:disabled{background:#e2e2e2;color:#999}")
         self.place_item.setText("Place Item (Retry)" if retry else "Place Item")
         buttons = {
-            "configure": self.configure, "continue" if paused else "startup": self.startup,
-            "recover": self.recover, "return_item" if paused else "pause": self.pause,
+            "configure": self.configure, "recover": self.recover, managed_name: self.pause,
             "home": self.home_button, "pick": self.pick_item, "place": self.place_item,
             "preview_toggle": self.preview_toggle, "speed": self.speed_slider,
         }
         descriptions = {
-            "configure": "Validate and load the selected teach files",
-            "startup": "Start the configured controller",
+            "configure": "Load teach files, enable and initialize the robot to READY",
             "continue": "Resume the retained operation",
             "recover": "Cancel the action, preserve grip to Home, then reset gripper outputs",
             "pause": "Stop and confirm the operation's paused position",
@@ -764,6 +775,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "preview_toggle": "ON: motion buttons show TFs only. OFF: real robot motion.",
             "speed": "Change the global motion speed factor",
         }
+        for name, action in self.managed_actions.items():
+            action.setToolTip(reasons[name] or descriptions[name])
         for name, button in buttons.items():
             button.setEnabled(not reasons[name])
             tip = reasons[name] or descriptions[name]
@@ -785,10 +798,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
                          ("continue", "return_item") if paused else
                          ("recover",) if current in
                          ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN") else
-                         ("startup",) if current == "INACTIVE" and not self.preview_mode else
+                         ("configure",) if current == "INACTIVE" and not self.preview_mode else
                          ("pick", "place")):
                 if reasons[name] and reasons[name] != "Unavailable in the current state":
-                    visible_reasons.append(f"{buttons[name].text()}: {reasons[name]}")
+                    label = (self.managed_actions[name].text() if name in self.managed_actions
+                             else buttons[name].text())
+                    visible_reasons.append(f"{label}: {reasons[name]}")
         self.availability_details.setText("\n".join(visible_reasons))
         self.availability_details.setVisible(bool(visible_reasons))
         if state:

@@ -32,7 +32,7 @@ def test_internal_states_have_clear_operator_labels(internal, label):
 
 @pytest.mark.parametrize('internal,operation,enabled', [
     ('UNCONFIGURED', '', {'configure'}),
-    ('INACTIVE', '', {'configure', 'startup', 'preview_toggle'}),
+    ('INACTIVE', '', {'configure', 'preview_toggle'}),
     ('READY', '', {'configure', 'home', 'pick', 'place', 'preview_toggle', 'speed'}),
     ('HOLDING', '', {'home', 'place', 'pause', 'preview_toggle', 'speed'}),
     ('HOMING', 'home', {'pause'}), ('PICKING', 'pick', {'pause'}),

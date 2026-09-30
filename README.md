@@ -46,7 +46,7 @@ shows its approach, drop and retract targets from the saved Tray Detect position
 Preview uses fresh canonical joint feedback for the current pose and the same
 geometry as hardware.
 Pick/Place still need their armed read-only detector and fresh visible targets;
-preview does not move the camera to obtain them. Start/Continue, Recover and speed
+preview does not move the camera to obtain them. Load/Continue, Recover and speed
 changes are blocked while previewing; direct Stop remains available. Switch modes
 only while no hardware operation is active. Preview starts OFF and turning it OFF
 or editing inputs clears its TFs. Place checks arrival at Tray Detect without
@@ -158,18 +158,22 @@ endpoints are removed.
 
 In the non-headless GUI, **Load Teach Configuration** becomes **Reload Teach
 Configuration** after the first successful load. Reload is available only while
-the controller is idle and unheld in `READY` (or already `INACTIVE`), performs no
-robot command, and returns the controller to `INACTIVE`; press **START** again
-before Home or Pick. An invalid replacement leaves the current
-configuration and state unchanged. Headless `runtime_teach/` configuration is
+the controller is idle and unheld in `READY` (or already `INACTIVE`). Load/Reload
+now validates files and runs the existing guarded robot initialization automatically,
+reporting READY only after it succeeds. It may enable the robot and reset unheld
+gripper outputs, but never queues Home/Pick/Place. There is no Start button.
+Invalid files preserve the current configuration; initialization failures show
+the cause and require explicit Recover. Stop cancels preparation without a delayed
+restart. Load/Reload is disabled while Preview is ON. Headless `runtime_teach/` configuration is
 immutable until the process is restarted.
 
 The GUI top row shows **Robot status** and **Gripper status** side by side,
 with compact Item/Bin/Tray Teach loading at the right. Robot status uses NOT READY,
 READY, BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED and OFFLINE, with activity
 and failure reasons always visible. Emergency stop has a prominent red override.
-The lifecycle row has Start/Continue, Recover, Pause/Return Item and a **permanent
-red STOP**. STOP always stops directly, including while Pause/Return is pending.
+The lifecycle row has Recover, a Pause/Continue/Return Item control and a **permanent
+red STOP**. Empty pauses show Continue; held pauses show Return Item with Continue
+in its drop-down. Failed tray acquisition keeps Place Item (Retry). STOP always stops directly, including while Pause/Return is pending.
 Motion buttons are enabled only when their current prerequisites are met: Place
 requires confirmed Tray Detect position, valid inputs and an armed tray provider;
 Pick requires unheld READY, Item/Bin/Tray configuration and its provider. Disabled
@@ -681,8 +685,8 @@ hash checks require the same artifacts as the detector. The controller requests
 one fresh batch directly
 from `/item_detect/get_item_poses`, always using the taught `pose_candidates`
 limit and exact profile/station hashes. Detector/teach nodes remain read-only;
-only explicit controller Startup followed by a typed Home/Pick action can issue
-motion or I/O. No training is included. Private inference
+explicit controller Load/Reload (or headless Startup) prepares hardware before
+a typed motion action. No training is included. Private inference
 wheels are pinned/verified/extracted offline; exact Torch/system dependencies
 still require separate provisioning. The extracted native runtime is always
 materialized as ordinary files in the package install prefix, including when

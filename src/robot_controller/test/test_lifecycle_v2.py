@@ -123,17 +123,19 @@ def configuration_node(state="READY", *, headless=False):
         headless=headless, machine=machine, configuration=old,
         startup_complete=True, global_speed_percent=35, holding_item=False,
         expected_outputs={13: 1}, root=object(), kinematics=object(),
-        events=EventLog())
+        events=EventLog(), stop_guard=threading.RLock(), raise_if_cancelled=lambda: None,
+        hardware=SimpleNamespace(startup=lambda: calls.append(("startup",))))
     node._begin_operation = lambda name: calls.append(("begin", name))
     node._end_operation = lambda: calls.append(("end",))
     node._transition = lambda target, message: machine.transition(target, message)
     node._log_configuration = lambda event: calls.append(("log", event))
+    node._prepare_robot = lambda: RobotController._prepare_robot(node)
     return node, old, calls
 
 
-def test_ready_configuration_reload_replaces_snapshot_and_requires_startup(monkeypatch):
+def test_ready_configuration_reload_prepares_robot_under_the_same_operation(monkeypatch):
     node, old, calls = configuration_node()
-    new = SimpleNamespace(configuration_id="new")
+    new = SimpleNamespace(configuration_id="new", validate_sources=lambda _root: None)
     monkeypatch.setattr(controller_module, "load_configuration", lambda *_args, **_kwargs: new)
     request = SimpleNamespace(
         item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")
@@ -142,13 +144,13 @@ def test_ready_configuration_reload_replaces_snapshot_and_requires_startup(monke
     RobotController._configure(node, request, response)
 
     assert node.configuration is new and node.configuration is not old
-    assert node.machine.state == "INACTIVE"
-    assert not node.startup_complete
-    assert node.global_speed_percent is None
+    assert node.machine.state == "READY"
+    assert node.startup_complete
+    assert node.global_speed_percent == 100
     assert node.expected_outputs == {}
     assert response.success and response.configuration_id == "new"
     assert calls == [
-        ("begin", "configure"), ("log", "configuration_loaded"), ("end",)]
+        ("begin", "configure"), ("log", "configuration_loaded"), ("startup",), ("end",)]
 
 
 def test_failed_ready_reload_preserves_active_configuration(monkeypatch):

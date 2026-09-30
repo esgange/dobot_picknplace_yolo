@@ -66,7 +66,7 @@ def test_preview_routes_each_motion_button_without_startup_or_hardware_goal(
         assert (request.x_mm, request.y_mm, request.rotation_deg) == (30., 40., 0.)
     for client in controls.node.action_clients.values():
         client.send_goal_async.assert_not_called()
-    assert not controls.startup.isEnabled() and not controls.recover.isEnabled()
+    assert not hasattr(controls, "startup") and not controls.recover.isEnabled()
     assert not controls.speed_slider.isEnabled() and controls.stop.text() == "STOP"
 
 

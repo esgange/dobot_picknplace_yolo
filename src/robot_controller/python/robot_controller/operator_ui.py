@@ -4,7 +4,7 @@ from .errors import EMERGENCY_STOP_MESSAGE
 
 
 BUSY_ACTIVITIES = {
-    "STARTING": "Starting controller…", "HOMING": "Moving Home…",
+    "STARTING": "Preparing robot…", "HOMING": "Moving Home…",
     "PICKING": "Picking item…", "TRAY_POSITIONING": "Moving to Tray Detect…",
     "PLACING": "Placing item…", "RETURNING_ITEM": "Returning item…",
     "RECOVERING": "Recovering to Home…",
@@ -33,8 +33,9 @@ def presentation(state, preview=False):
     if state.state in ATTENTION:
         return "ATTENTION REQUIRED", state.message
     if state.state in ("UNCONFIGURED", "INACTIVE"):
-        return "NOT READY", ("Configuration loaded. Select Start." if state.configured else
-                             "Select teach files and Load Teach Configuration.")
+        return "NOT READY", (
+            "Reload teach configuration to prepare the robot." if state.configured else
+            "Select teach files and Load Teach Configuration.")
     if state.state == "PAUSED":
         return "PAUSED", state.message
     if state.state == "HOLDING":
@@ -48,7 +49,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
                   managed_pending=False, target_error="", item_selected=False,
                   bin_selected=False, tray_selected=False):
     """Empty reason means enabled; local service availability is applied by the GUI."""
-    names = ("configure", "startup", "recover", "pause", "return_item", "continue",
+    names = ("configure", "recover", "pause", "return_item", "continue",
              "home", "pick", "place", "preview_toggle", "speed")
     reasons = dict.fromkeys(names, "Unavailable in the current state")
     if state is None:
@@ -60,13 +61,17 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
     idle = not (state.operation_active or action_pending or pending or managed_pending)
     if (current in ("UNCONFIGURED", "INACTIVE", "READY") and idle
             and not state.holding_item and state.configuration_editable):
-        reasons["configure"] = "" if item_selected else "Select an Item Teach file"
+        reasons["configure"] = (
+            "Select an Item Teach file" if not item_selected else
+            "Connect robot feedback before loading and preparing"
+            if not state.feedback_fresh else "")
     reasons["preview_toggle"] = (
         "" if preview else "Load teach configuration first" if not state.configured else
         "" if idle and state.preview_ready
         and current in ("INACTIVE", "READY", "HOLDING", *ATTENTION)
         else "Finish the operation and wait for fresh stationary robot feedback")
     if preview:
+        reasons["configure"] = "Turn Preview OFF before loading and preparing the robot"
         base = ("Wait for the pending request" if not idle else
                 "Fresh stationary robot feedback required" if not state.preview_ready else
                 "Select an Item Teach file" if not item_selected else "")
@@ -90,8 +95,6 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
             if name not in ("configure", "preview_toggle"):
                 reasons[name] = "Robot feedback unavailable"
         return reasons
-    if current == "INACTIVE" and idle and state.configured:
-        reasons["startup"] = ""
     if current in ATTENTION and idle:
         reasons["recover"] = "" if state.configured else "Load teach configuration first"
     if (state.startup_complete and current in
@@ -115,7 +118,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
         return reasons
     if current not in ("READY", "HOLDING") or not idle:
         return reasons
-    base = ("Start the configured controller first" if not state.startup_complete else
+    base = ("Load teach configuration to prepare the robot" if not state.startup_complete else
             "Load teach configuration first" if not state.configured else
             state.motion_block_reason or "Robot motion is unavailable"
             if not state.motion_ready else "")

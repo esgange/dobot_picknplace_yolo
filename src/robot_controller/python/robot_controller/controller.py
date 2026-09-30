@@ -473,6 +473,7 @@ class RobotController(Node):
 
     def _configure(self, request, response):
         acquired = False
+        installed = False
         try:
             if self.headless:
                 raise CommandRejected("Headless runtime_teach configuration is immutable")
@@ -486,24 +487,60 @@ class RobotController(Node):
             config = load_configuration(
                 request.item_teach_file, request.bin_teach_file, self.root,
                 self.kinematics, deployment=False, tray_path=request.tray_teach_file)
-            self.configuration = config
-            self.startup_complete = False
-            self.global_speed_percent = None
-            self.expected_outputs.clear()
-            self._transition("INACTIVE", "Teach files loaded; explicit Startup required")
+            # Stop during validation must not be followed by enable/reset. Keep
+            # one operation owner through installation and robot preparation.
+            with self.stop_guard:
+                self.raise_if_cancelled()
+                self.configuration = config
+                installed = True
+                self.startup_complete = False
+                self.global_speed_percent = None
+                self.expected_outputs.clear()
+                self._transition("INACTIVE", "Teach files loaded; preparing robot")
             self._log_configuration("configuration_loaded")
+            self._prepare_robot()
             response.success = True
             response.message = self.machine.message
             response.configuration_id = config.configuration_id
+        except HeldUnknown as exc:
+            self.startup_complete = False
+            self._transition("HELD_UNKNOWN", str(exc))
+            response.success = False
+            response.message = str(exc)
+            response.configuration_id = ""
+        except OperationCanceled as exc:
+            response.success = False
+            response.message = str(exc)
+            response.configuration_id = ""
+            self._settle_lifecycle_cancellation(str(exc))
         except Exception as exc:
             response.success = False
             response.message = str(exc)
             response.configuration_id = ""
-            self.events.record("ERROR", "configuration_rejected", str(exc))
+            if installed:
+                self.startup_complete = False
+                if self.machine.state != "STOPPING":
+                    self._transition("FAULT", f"Robot preparation after loading failed: {exc}")
+            self.events.record("ERROR", "configuration_prepare_failed" if installed
+                               else "configuration_rejected", str(exc))
         finally:
             if acquired:
                 self._end_operation()
         return response
+
+    def _prepare_robot(self):
+        """Run Startup under the caller's existing operation ownership."""
+        self.raise_if_cancelled()
+        self.configuration.validate_sources(self.root)
+        with self.stop_guard:
+            self.raise_if_cancelled()
+            self._transition("STARTING", "Preparing robot with the loaded teach configuration")
+        self.hardware.startup()
+        with self.stop_guard:
+            self.raise_if_cancelled()
+            self.startup_complete = True
+            self.global_speed_percent = 100
+            self._transition("READY", "Robot preparation completed; ready for an operation")
 
     def _startup(self, _request, response):
         acquired = False
@@ -512,12 +549,7 @@ class RobotController(Node):
                 raise CommandRejected("Startup requires configured INACTIVE state")
             self._begin_operation("startup")
             acquired = True
-            self.configuration.validate_sources(self.root)
-            self._transition("STARTING", "Explicit Startup accepted")
-            self.hardware.startup()
-            self.startup_complete = True
-            self.global_speed_percent = 100
-            self._transition("READY", "Startup completed; robot is READY")
+            self._prepare_robot()
             response.success = True
         except HeldUnknown as exc:
             self.startup_complete = False

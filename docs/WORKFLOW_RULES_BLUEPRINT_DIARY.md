@@ -7662,6 +7662,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No live hardware commands or application restarts. Operator RViz edits,
   calibration, teach profiles and models remain untouched/excluded.
 
+### 2026-09-30 — Rule 187: Load prepares the robot; remove GUI Start
+
+- User requested removal of the one-time Start button and automatic readiness
+  after loading teach configuration. Explicit non-headless Configure now retains
+  one operation owner through source validation, installation and the existing
+  Startup sequence. Respond success only at confirmed READY. No separate GUI
+  Startup request can arrive after a Stop; cancellation is rechecked before
+  installation, initialization and READY. Invalid replacement files preserve the
+  previous configuration. Preparation failure keeps the new configuration and
+  reports FAULT/HELD_UNKNOWN for explicit Recover; no automatic retry.
+- Preserve ownership/alarm/feedback/DI1 guards, initialization settings and neutral
+  output confirmation. Load may enable and initialize hardware but queues no Home,
+  Pick or Place. Launch, saved-path prefill and headless catalog loading remain
+  inert; headless still uses the existing external Startup service. Configure
+  wire fields are unchanged, with new preparation semantics documented.
+- Remove GUI Start and its service client. Keep exactly Recover, managed Pause
+  and permanent STOP. Empty ordinary Pause becomes Continue; held Pause defaults
+  to Return Item with Continue in its split-button menu. Independent eligibility
+  applies to both actions; a valid Continue can become the primary action when
+  Return is unavailable. Acquisition failure retains Place Item (Retry) and
+  trusted-source Return, without a second Continue route. Pending work disables
+  conflicting choices and leaves direct STOP available.
+- Block loading/preparation in Preview and without fresh robot feedback. Preview
+  OFF never initializes the robot. Keep read-only TF planning and all existing
+  movement, placement retry, Return and Recover behavior. Update current READMEs,
+  AGENTS and FSM diagrams/text, and regenerate offline HTML/PDF exports.
+- Validation: **812 controller tests passed**, including shared single-owner
+  initialization, Stop during loading/installation/preparation, invalid sources,
+  FAULT/HELD_UNKNOWN outcomes, three-control layout, paused Continue/Return menu,
+  Preview isolation and removal of the GUI Startup client. Final UI subset:
+  **147 passed**. Controller build, scoped lint and diff checks pass. Offscreen
+  fake-node renders confirm three equal-width controls and no leftover menu
+  actions after held Pause. Eight FSM SVGs and an eight-page A3 PDF regenerated;
+  source SHA-256 3d07b6d62c092c8bfd0e3e67a176073a02c3b21a871a684b8d90ac01989be38c verified.
+  No physical hardware commands or running-app restart; unrelated RViz edits
+  and operator calibration/teach/model files remain untouched/excluded.
+
 ### Future entry template
 
 ```text

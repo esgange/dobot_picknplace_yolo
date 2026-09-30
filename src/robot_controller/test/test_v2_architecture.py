@@ -99,7 +99,7 @@ def test_pause_continue_are_controller_services_and_stop_remains_direct():
     assert '"/robot_controller/stop"' in controller
     assert 'self._command("stop")' in gui
     assert 'self.stop.clicked.connect(self._immediate_stop)' in gui
-    assert 'self.pause.clicked.connect(self._pause_or_return)' in gui
+    assert 'self._managed_command(n)' in gui
 
 
 def test_idle_pause_latch_is_not_a_startup_or_ready_gate():

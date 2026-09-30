@@ -135,6 +135,9 @@ def test_lifecycle_service_returns_explicit_estop_failure(operation, initial):
         _transition=lambda state, message: machine.transition(state, message),
         events=SimpleNamespace(record=lambda *_args, **_kwargs: None),
         hardware=SimpleNamespace(startup=pressed, recover=pressed))
+    node.stop_guard = threading.RLock()
+    node.raise_if_cancelled = lambda: None
+    node._prepare_robot = lambda: RobotController._prepare_robot(node)
     response = SimpleNamespace(success=True, state="", message="")
     getattr(RobotController, "_" + operation)(node, None, response)
     assert not response.success and response.state == "FAULT"

@@ -1,5 +1,12 @@
 # Robot Controller — Finite State Machine
 
+Load/preparation review: **2026-09-30**, baseline **`e87fb08`** plus diary rule
+**187**. Explicit Configure now retains one operation owner through source loading
+and the existing hardware Startup sequence. READY is confirmed before success;
+Stop cancels before further setup, and invalid files preserve the old profile.
+Remove GUI Start, keeping exactly Recover, managed Pause/Continue/Return and STOP.
+Headless construction remains inert/INACTIVE with explicit external Startup.
+
 Operator UI review: **2026-09-30**, baseline **`dcd28a7`** plus diary rule **186**.
 Keep all internal lifecycle states, simplify their user-facing labels, expose the
 activity/reason and gate every button consistently before dispatch. Separate
@@ -120,7 +127,7 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 
 ## 1. Read this first
 
-- **Launch does not enable or move the robot.** Load configuration, then Startup.
+- **Launch does not enable or move the robot.** Explicit Load/Reload prepares the robot to READY.
 - **READY** means available for an operation; it does not always mean at Home.
 - **HOLDING** means trusted held-item context; it does not always mean at Home.
 - **Pause parks Home/Pick/tray-position operations. Placement Pause stops in place**,
@@ -156,8 +163,8 @@ picking, placing, parking, returning and recovering appear in the activity line;
 PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
 
-The lifecycle row is Start/Continue, Recover / Clear Error, Pause/Return Item,
-and a **permanent red STOP**. STOP always calls the independent Stop service when
+The lifecycle row is Recover / Clear Error, a managed Pause/Continue/Return Item
+control, and a **permanent red STOP**. STOP always calls the independent Stop service when
 reachable, including while another request is pending, with stale status, and in
 Preview. It never changes into Pause or Return. A pending Pause/Return disables
 the managed button and shows Pausing…/Returning item…; STOP remains available.
@@ -165,7 +172,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | Operator status | Available controls, subject to the prerequisites below |
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
-| NOT READY, configured | Start; select/load teach files; Preview; STOP |
+| NOT READY, configured | Reload to prepare; Preview; STOP |
 | READY | Home; Pick Item; Place Item; Preview; reload; speed; STOP |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
@@ -173,7 +180,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
 | PAUSED, tray acquisition exhausted | Place Item (Retry); Return Item with trusted held source; STOP |
 | ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
-| OFFLINE | STOP if reachable; teach loading remains possible if only robot feedback is offline |
+| OFFLINE | STOP if reachable; loading/preparation waits for fresh robot feedback |
 | EMERGENCY STOP PRESSED | STOP; explicit Recover rechecks alarms after physical release |
 
 Home/Pick/Place and speed require started configuration and fresh enabled,
@@ -197,7 +204,7 @@ Preview ON explicitly says **No robot motion** and routes Home/Pick/Place only t
 TF planning. Enable it after loading configuration. It requires fresh stationary
 feedback but permits a disabled robot and no Startup. Selected files, placement inputs and detector availability gate
 preview requests; the preview node validates the selected sources and position.
-Preview OFF and STOP remain available; Start/Recover/Pause/Return/speed stay disabled.
+Preview OFF and STOP remain available; Load/Recover/Pause/Continue/Return/speed stay disabled.
 A stopped fault can also be inspected with read-only Preview. All buttons check
 service availability and recheck their policy on click. Pending requests disable
 conflicting controls immediately. These status hints do not replace execution's
@@ -219,15 +226,15 @@ flowchart TD
     TF --> Clear["Toggle OFF, edited inputs, source/feedback loss or robot movement: clear"]
     Inputs -->|Invalid or perception unavailable| Failed["Report failure; clear targets; no fallback to motion"]
     Stop["Permanent red STOP in every mode"] --> Direct["Independent Stop; never Pause or Return"]
-    Managed["Separate Pause / Return Item"] --> Guard["Only eligible live or confirmed paused state"]
+    Managed["Pause / Continue / Return Item; held Continue in menu"] --> Guard["Only eligible live or confirmed paused state"]
     Guard --> Pending["Pending: disable managed control; STOP remains available"]
 ```
 
 Preview is a GUI routing mode, starts OFF, and cannot be entered with an active or
 pending hardware operation. It adds no controller lifecycle state. While ON,
-Start/Continue, Recover, managed Pause/Return and global speed cannot dispatch;
-the three motion buttons use only `/robot_controller/preview_v2`. Load remains
-read-only. External hardware APIs retain their own guards and are independent.
+Load, Continue, Recover, managed Pause/Return and global speed cannot dispatch;
+the three motion buttons use only `/robot_controller/preview_v2`. Load/Reload is
+disabled because it now prepares real hardware. External hardware APIs retain their own guards and are independent.
 There is no fallback when the preview service is unavailable. Its process creates
 only read-only perception clients, never Dobot command clients, and can plan from
 fresh feedback while disabled without running Startup.
@@ -253,13 +260,37 @@ it never moves there. Lifecycle buttons stay in their separate row.
 
 ## 2. Normal lifecycle
 
+Load/Reload Teach Configuration is the explicit preparation command. After the
+files validate, the controller runs its existing Startup sequence under the same
+operation owner: alarm/ownership/feedback checks, Stop, cold DI1 protection,
+disable/clear/enable, global settings, guarded neutral outputs and confirmed READY.
+It does not queue Home, Pick or Place. The service reports success only at READY.
+Invalid files preserve the old configuration; preparation failure retains the
+new configuration and reports FAULT or HELD_UNKNOWN with explicit Recover guidance.
+Stop during validation, installation or preparation cancels the sequence; no later
+Startup request can re-enable the robot. Launch and filename prefill remain inert.
+Headless launch still loads into INACTIVE and needs the existing external Startup
+service. The GUI has no Startup client or button.
+
+The lifecycle row has exactly **Recover / Clear Error**, **Pause** and permanent
+red **STOP**. In an ordinary empty pause, the middle button becomes **CONTINUE**.
+With a trusted held item, its main action is **RETURN ITEM**, with **CONTINUE** in
+the split-button menu. If Return is unavailable but Continue is valid, Continue
+becomes the main action. Each choice has its own eligibility guard. Acquisition
+failure keeps **Place Item (Retry)** plus Return Item and STOP, with no duplicate
+Continue menu. Pending requests disable conflicting actions; STOP remains direct.
+
+Load/Reload is disabled in Preview because loading now prepares real hardware.
+Turning Preview OFF never starts preparation; click Load/Reload explicitly.
+Preview motion buttons retain their read-only behavior, including while disabled.
+
 ```mermaid
 flowchart TD
     Launch((GUI-mode launch)) --> UNCONFIGURED
-    UNCONFIGURED -->|Configure| INACTIVE
-    INACTIVE -->|Startup| STARTING
+    UNCONFIGURED -->|Explicit Load validates files| INACTIVE
+    INACTIVE -->|Continue same Configure operation, or external Startup| STARTING
     STARTING -->|Confirmed| READY
-    READY -->|Reload| INACTIVE
+    READY -->|Explicit Reload validates files| INACTIVE
     READY -->|Home| HOMING
     HOMING -->|Unheld| READY
     HOLDING -->|Home| HOMING
@@ -294,7 +325,7 @@ active hashes remain pinned and returned camera evidence must match the controll
 Pick and tray operations require those joints. Place requires an armed canonical
 `tray_teach` or headless `tray_detect` provider. Headless Place additionally requires
 a trusted HELD item; normal GUI-mode Place permits READY or HOLDING without a Pick.
-Configuration hashes include Tray Teach and its camera; reload still requires Startup.
+Configuration hashes include Tray Teach and its camera; explicit reload includes preparation.
 
 New Pick and Place goals require a currently available pose service from exactly
 one allowed root provider. Typed status exposes `item_detector_ready` and
@@ -336,7 +367,7 @@ typed status and failed service responses include the complete guidance.
 | State | Meaning / usual exit |
 | --- | --- |
 | `UNCONFIGURED` | No active teach configuration; Configure loads it. |
-| `INACTIVE` | Configuration loaded; explicit Startup required. |
+| `INACTIVE` | Files loaded; Configure continues into preparation. Headless waits for external Startup. |
 | `STARTING` | Startup initialization in progress; READY, HELD_UNKNOWN or FAULT follows. |
 | `READY` | Available and unheld; can Pick, Home, Tray Detect Position, GUI-mode Place, Pause, reload or change global speed. |
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
@@ -544,8 +575,8 @@ existing bin put-back: safety rise and entry, exact taught pre-pick release,
 feedback barriers. Complete READY and Place CANCELED; never start a new Pick.
 Normal held-suction/output checks apply during bin return even in GUI mode.
 Return does not require the tray detector; retry does. An empty/manual placement
-pause with no trusted held source offers retry and direct Stop. Start/Continue
-is disabled for this acquisition pause; the Place button supplies continuation.
+pause with no trusted held source offers retry and direct Stop. The Continue menu
+is absent for this acquisition pause; the Place button supplies continuation.
 Return immediately disables the managed control and retry. The separate permanent
 STOP directly stops/cancels, including before the Return service response.
 Attempt N/3 and the last failure reason appear in controller progress/events.
@@ -802,7 +833,7 @@ Names below are relative to `/robot_controller/`.
 
 | API | Main admission guard |
 | --- | --- |
-| `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; operation slot free |
+| `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |

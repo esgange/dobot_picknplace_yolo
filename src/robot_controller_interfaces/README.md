@@ -39,6 +39,15 @@ sources, ownership, outputs and feedback. The GUI adds local pending requests,
 input validity and service reachability to its button gates. Rebuild interfaces
 and controller, then manually restart controller/preview/GUI together.
 
+`/robot_controller/configure` now validates and loads teach files **and prepares
+real hardware** through the existing Startup sequence, under one operation owner.
+Its unchanged response reports success only after confirmed READY. Stop cancels
+preparation with no chained Startup request. Invalid files preserve the previous
+configuration; initialization failure keeps the new files but reports failure.
+The GUI blocks Configure in Preview. Headless construction remains read-only and
+INACTIVE; `/robot_controller/startup` remains for external supervisors. Rebuild
+and manually restart the controller and GUI together for the changed semantics.
+
 This package contains definitions only. It never connects to or commands the
 robot.
 

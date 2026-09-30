@@ -1094,6 +1094,25 @@ Rebuild interfaces/controller and manually restart their clients together; never
 restart applications or command hardware during software verification.
 
 
+Rule 187 makes explicit non-headless Configure/Load/Reload validate teach sources
+and run the existing guarded Startup sequence to confirmed READY under one
+operation owner. Keep Stop cancellation across validation, installation and setup;
+never clear it with a chained second Startup request. Invalid files preserve the
+old configuration; preparation failure retains loaded files and reports FAULT or
+HELD_UNKNOWN, requiring explicit Recover. Startup still guards ownership, alarms,
+DI1, settings, neutral outputs and READY; no Home/Pick/Place is queued by loading.
+Launch/prefill and headless deployment loading remain inert; headless retains
+external /startup. Remove the GUI Start button/client. The three lifecycle controls
+are Recover, managed Pause/Continue/Return Item, and permanent direct STOP. Empty
+ordinary Pause shows Continue; trusted held Pause defaults to Return Item with
+Continue in a split-button menu, each separately gated. Acquisition exhaustion
+keeps Place Item (Retry), Return and Stop with no duplicate Continue. Loading is
+disabled in Preview and without fresh robot feedback; toggling Preview OFF never
+prepares hardware. Supersede earlier Configure-read-only/manual-GUI-Start rules
+only. Update FSM/exports; test with synthetic feedback and no live commands or
+automatic application restarts. No message schema, motion route or I/O change.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

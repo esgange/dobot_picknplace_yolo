@@ -189,7 +189,7 @@ def test_confirmed_estop_has_visible_feedback_without_latching_recover_disabled(
     window._refresh()
     assert window.status.text() == "EMERGENCY STOP PRESSED"
     assert EMERGENCY_STOP_GUIDANCE in window.status.toolTip()
-    assert not window.startup.isEnabled() and not window.home_button.isEnabled()
+    assert not hasattr(window, "startup") and not window.home_button.isEnabled()
     # The alarm may latch until clear: keep explicit Recover available after the
     # physical button is released. Only the controller can establish readiness.
     assert window.recover.isEnabled()
@@ -261,7 +261,7 @@ def test_failed_acquisition_place_button_retries_while_original_action_is_pendin
     assert window.place_item.text() == "Place Item (Retry)"
     assert not window.pick_item.isEnabled()
     assert not window.home_button.isEnabled() and not window.preview_toggle.isEnabled()
-    assert not window.startup.isEnabled()
+    assert not hasattr(window, "startup")
     assert window.pause.text() == "RETURN ITEM"
     window.place_item.click()
     assert commands == ["continue"] and window.result_future is pending
@@ -299,7 +299,7 @@ def test_acquisition_return_uses_same_paused_control_and_then_direct_stop(window
     window._command = lambda name: commands.append(name) or True
     window.node.status = acquisition_paused_status()
     window._refresh()
-    window._start_or_continue()
+    window._managed_command("continue")
     assert commands == []
     window.pause.click()
     assert commands == ["return_item"]
