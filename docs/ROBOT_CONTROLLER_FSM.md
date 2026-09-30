@@ -1,5 +1,12 @@
 # Robot Controller — Finite State Machine
 
+Position feedback review: **2026-09-30**, baseline **`caad7a8`** plus diary rule
+**179**. All actual position checks and motion origins use canonical joint
+feedback, with CR10 forward kinematics for Cartesian poses and RobotStatus idle.
+Joint/status callbacks wake arrival checks directly. FeedInfo remains the safety,
+I/O and queue-execution source. Recovery's final gripper reset uses bounded
+post-reset confirmation rather than an immediate Home/idle boolean test.
+
 Last behavior review: **2026-09-24**, against baseline **`d8245a0`**, restored by diary rule **124**.
 Automatic camera calibration is a separate direct-command maintenance exception;
 the controller has no calibration action or CALIBRATING state. Rule **118** requires keeping this document
@@ -193,7 +200,7 @@ flowchart TD
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
     Sense -->|Yes| Acquire["Stop and confirm pickup at actual stopped pose; mark HELD"]
-    Sense -->|No| Settle["At final pose: stationary and queue-idle for taught pick_settling"]
+    Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
     Acquire --> HeldReturn["Lift → clearance → exit park_transit → joint Home; monitor suction"]
@@ -421,8 +428,10 @@ flowchart TD
     Enable -->|Failure| Fault
     Enable --> Lift["Below Home Z: vertical lift at current XY/attitude; physically confirm"]
     Lift --> Home["Move to exact taught Home; preserve grip"]
-    Home --> Relax["Stationary Home: DO1, DO2, DO13, DO14 OFF; confirm each"]
-    Relax -->|Neutral outputs and DI1 LOW| Ready["READY at Home; gripper relaxed; old batch cancelled"]
+    Home --> Relax["Idle + Home joints: DO1, DO2, DO13, DO14 OFF; confirm each"]
+    Relax --> Confirm["Up to 5 s: fresh Home joints + RobotStatus idle; output queue finished"]
+    Confirm -->|Neutral outputs and DI1 LOW| Ready["READY at Home; gripper relaxed; old batch cancelled"]
+    Confirm -->|Timeout, changed position, I/O fault or Stop| Fault
     Relax -->|DI1 remains HIGH| Unknown
     Relax -->|Output failure or Stop| Fault
 ```
@@ -468,7 +477,11 @@ confirming every response and fresh output echo. Accept only the pending OFF
 transition; unexpected output changes still fail. During this reset, intentional
 suction loss is allowed and the former held source becomes CANCELED. No finger
 OPEN command, exhaust pulse or replay of placement/put-back release is sent.
-Require neutral outputs, DI1 LOW and continued Home arrival before READY. A stuck
+Require neutral outputs, DI1 LOW and continued Home arrival before READY. After
+the output commands, wait up to five seconds for newer joint/status samples,
+idle RobotStatus, Home joint tolerance and completion of the output queue.
+A transient busy sample waits instead of falsely reporting position loss; a
+failure names idle/freshness/queue blockers and the maximum Home joint error. A stuck
 HIGH DI1 remains HELD_UNKNOWN; stale feedback/output failure/Stop cannot report
 success or dispatch remaining reset commands. No detector or next-candidate request.
 
@@ -560,9 +573,9 @@ that ends an active Home/Pick reports CANCELED and final READY, not Pick success
 
 | Input | Used for |
 | --- | --- |
-| `/joint_states` | Actual six robot joints, timestamp/freshness and joint Home confirmation |
-| `/dobot_msgs_v4/msg/RobotStatus` | Canonical connection and enabled status |
-| `/dobot_bringup_ros2/msg/FeedInfo` | Actual tool pose, queue/running flags, controller timer, modes/alarms/collision, DI/DO |
+| `/joint_states` | All actual position/progress checks, direct joint targets, Cartesian FK, motion origins and Stop joint stationarity |
+| `/dobot_msgs_v4/msg/RobotStatus` | Canonical connection and idle indication (`is_enable` means vendor mode 5) |
+| `/dobot_bringup_ros2/msg/FeedInfo` | Queue/execution evidence, controller freshness, enable/modes/alarms/collision and DI/DO; no position comparisons |
 | `/item_detect/get_item_poses` service response | Validated item candidates, source binding and matching short-X/long-Y convention before planning |
 
 | I/O | Meaning |
@@ -574,9 +587,18 @@ that ends an active Home/Pick reports CANCELED and final READY, not Pick success
 
 Feedback must be complete, connected, valid and within **one second**, including
 joint source/receipt timestamps, status/feed receipt and advancement of the
-controller timer. Current motion origin comes from that fresh FeedInfo sample's
-`tool_vector_actual`; there is no GetPose client or separate pose subscription.
+controller timer. Current motion origin and all actual Cartesian poses come from
+CR10 FK of the fresh canonical joint sample; there is no GetPose client or
+separate pose subscription. New joint/status samples wake position waits without
+waiting for another FeedInfo update. A motion origin requires both streams to
+advance, RobotStatus idle and an empty command queue within two seconds. Repeated
+or backward joint timestamps are discarded without refreshing receipt age.
 Stale feedback can block an operation or cause containment. It never means LOW.
+
+Stop stationarity uses two distinct joint source samples unchanged within 0.05°,
+with the stopped/empty-queue guard. Stop can still be confirmed while disabled,
+faulted or paused; it never requires enabling the robot. Parked-position checks
+use the same joint-derived Cartesian pose with their existing 1 mm/0.5° tolerance.
 
 Motion requests are admitted in order: wait for each `res=0` before sending the
 next, with no fixed dispatch delay. Dobot service responses have a **five-second**
@@ -584,13 +606,15 @@ deadline; this is not a five-second motion-completion limit. Global CP is 100,
 with no per-motion CP/r override. No automatic runtime restart or general fault
 retry is performed.
 
-Every queued group's terminal check requires a fresh sample after the last
-acceptance, with a newer sequence and advancing controller timer, idle/empty
-queue, actual endpoint tolerance and confirmed I/O. For a terminal MovL, require
+Every queued group's terminal check requires a newer joint source timestamp and
+newer RobotStatus receipt after the last acceptance, idle RobotStatus, actual
+endpoint tolerance and confirmed I/O. Joint targets use ±1° per joint; Cartesian
+targets use joint FK within 5 mm/1°. Empty-queue and execution evidence remain
+separate command guards. For a terminal MovL, require
 the returned queue ID to equal the stream's currentCommandId. The fixed vendor
 MovLIO/RelMovLUser interfaces return only res; these instead require execution
 evidence latched from live running/queue flags, changed currentCommandId or
-actual pose movement, including during service waits. There is no extra
+joint movement, including during service waits. There is no extra
 query service or fixed stability interval. Only final pick retains taught
 pick_settling. Midpoints and both transits stay queued and CP-blended without
 arrival waits. A very short move need not expose a running sample if its streamed

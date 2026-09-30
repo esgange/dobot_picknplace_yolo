@@ -133,6 +133,13 @@ class FakeTransport:
     def current_pose(self):
         return pose_matrix(self.node.feed["tool_vector_actual"])
 
+    def pose_from_snapshot(self, sample):
+        return pose_matrix(sample.feed["tool_vector_actual"])
+
+    def confirm_home(self, _joints):
+        assert np.allclose(self.current_pose(), self.node.configuration.home_matrix)
+        return self.node.snapshot()
+
     def sensor(self, active, _timeout):
         return bool(self.node.feed["digital_input_bits"] & 1) == active
 

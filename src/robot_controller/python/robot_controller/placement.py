@@ -6,7 +6,6 @@ import math
 import numpy as np
 
 from .errors import FeedbackFailure, HeldUnknown
-from .kinematics import pose_matrix
 from .motion import (Target, gripper_neutral_events, pose_reached, rigid_matrix,
                      vacuum_neutral_events, gripper_open_events, vacuum_exhaust_events)
 
@@ -214,7 +213,7 @@ class PlacementOperation:
     def check_paused(self, node, sample):
         if sample.feed["isRunQueuedCmd"] or sample.feed["RunningStatus"]:
             raise FeedbackFailure("Unexpected movement during placement Pause")
-        if not pose_reached(pose_matrix(sample.feed["tool_vector_actual"]),
+        if not pose_reached(node.hardware.pose_from_snapshot(sample),
                             node.managed.parked_pose):
             raise FeedbackFailure("Placement pose changed while paused")
         bits = sample.feed["digital_outputs"]

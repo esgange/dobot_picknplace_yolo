@@ -7313,6 +7313,52 @@ Never use a floating “latest” version in an issue, script, or deployment not
   restarted, no robot commands were issued, and no calibration, teach/model or
   unrelated vendor RViz files were changed or included in the source commit.
 
+### 2026-09-30 — Rule 179: joint/status position verification throughout Robot Controller
+
+- User requested RobotStatus idle and joint-stream feedback for every controller
+  position verification, and explicitly selected joint-derived FK target checks
+  for Cartesian pick/place/lift moves. Use the existing canonical CR10 model for
+  Link6 pose, current/planning and stopped return origins, Cartesian endpoint
+  tolerance, paused holds and progress. Saved Home/Tray Detect joints retain
+  direct ±1° checks; Cartesian endpoints retain 5 mm/1°. No controller position
+  comparison consumes FeedInfo tool_vector_actual. Camera Calibration is unchanged.
+- Add independent joint source timestamps, RobotStatus receipt generations and
+  a combined feedback wake counter. Joint/status callbacks wake position waits
+  directly; terminal arrival requires both streams to advance after complete
+  command-group acceptance. Reject repeated/backward joint stamps as fresh
+  evidence. Non-pick endpoints add no dwell; final pick retains its taught
+  settling interval. Stop requires two distinct joint samples within 0.05° and
+  stopped/empty queue, including disabled/fault stopping. Retain source ownership,
+  one-second stream/controller freshness, enable/fault/user/tool gates, DI/DO and
+  held-loss checks. Keep ordered res=0 admission, queue-empty completion and MovL
+  ID/acceptance-only execution evidence, CP(100), both transits and all rates/I/O.
+- Investigated the reported recovery popup: all four OFF commands succeeded,
+  then the old one-shot combined Home/idle test failed. Synthetic unchanged-Home
+  feedback reproduced it with only a busy queue or delayed RobotStatus. Live logs
+  did not record the failing field, so the exact live trigger remains unproven.
+  Recover now waits up to five seconds after reset for newer joint/status,
+  Home/idle and completed output queue before checking neutral I/O and raw DI1 LOW.
+  Failure names idle/freshness/queue conditions and maximum Home joint error.
+  Outputs remain protected through travel; direct Stop always pre-empts.
+- This supersedes rule 89's controller pose source and rule 120's required new
+  FeedInfo tick for each arrival. FeedInfo still supplies safety/I/O/execution
+  evidence; there is no new query service, subscriber, executor thread, IK call,
+  artifact migration or physical calibration. Update README/FSM behavior and
+  regenerate the adjacent offline HTML/PDF exports from the Markdown source.
+- Validation: all 575 controller tests pass, including real CR10 joint-FK target
+  checks, independent joint/status wakeups and post-admission freshness, frozen
+  position streams during pick settling, Stop with unchanged FeedInfo TCP and
+  changing joints, disabled/fault Stop, recovery output-queue lag, source/frame
+  faults, stale inputs and direct cancellation. Updated the synthetic feedback
+  fixtures to publish independent advancing joint/status evidence and replaced
+  the superseded FeedInfo-origin tests. Controller symlink build and diff checks
+  pass. Scoped lint retains 17 existing findings with no new findings. Regenerated
+  seven FSM diagrams in offline HTML/PDF; source SHA-256
+  453edaf0572e9dcccdb390fab90bb3f89223678218fb937c841a9e2b1147ae50.
+  No physical robot command or live
+  process restart; operator RViz changes and calibration/teach/model artifacts
+  remain untouched and excluded from this change.
+
 ### Future entry template
 
 ```text

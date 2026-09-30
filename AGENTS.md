@@ -944,6 +944,26 @@ Teach reference-plane calibration dialog and its startup callback. This supersed
 rule 174's tray reminder only; retain independent calibration selection, plane
 provenance/reuse, active camera/TF validation and all teaching/detection behavior.
 
+Rule 179 makes Robot Controller position verification use fresh canonical
+RobotStatus idle plus /joint_states. Compare saved joint targets directly (1°);
+derive every actual Cartesian pose, motion origin, paused-pose check and stopped
+return pose through the existing CR10 FK (5 mm/1° endpoint tolerance). Never use
+FeedInfo tool_vector_actual for controller position/progress or Stop stationarity.
+Position waits wake on either joint/status callback and require both streams to
+advance after complete group acceptance; repeated/backward joint stamps do not
+refresh evidence. Keep FeedInfo freshness, faults, user/tool zero, I/O, empty-queue
+and command-execution guards, including MovL queue IDs and latched execution for
+acceptance-only services. Stop uses two distinct joint samples within 0.05° and
+the stopped/empty-queue guard; disabled/fault Stop remains confirmable. No fixed
+arrival dwell is added; final Pick alone retains taught settling. After Recover
+resets the gripper at Home, wait boundedly (five seconds) for fresh Home joints,
+idle RobotStatus, completed output queue, neutral outputs and raw DI1 LOW.
+Report actual idle/freshness/joint-error blockers instead of claiming position
+loss from one busy sample. Preserve direct Stop, ordered admission, routes,
+rates and gripper timing. Supersede rule 89's pose source and rule 120's required
+new FeedInfo tick for each arrival only; no new services/subscriptions/executor
+threads, camera-calibration changes, artifact rewrite or automatic restart.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

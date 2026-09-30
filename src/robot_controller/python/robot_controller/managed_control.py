@@ -5,7 +5,6 @@ import threading
 
 from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost, HeldUnknown,
                      ManagedInterruption, PausedItemDropped, ReturnedToHome)
-from .kinematics import pose_matrix
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, PickExecutor, pose_reached
 from .pick_session import (approach_from_safety, return_targets, safety_target,
                            transit_from_safety)
@@ -296,7 +295,7 @@ class ManagedControl:
             node.expected_outputs.update({channel: bool(bits & (1 << (channel - 1)))
                                           for channel in (1, 2, 13, 14)})
         node.hardware.acquisition_eligible = False
-        return pose_matrix(sample.feed["tool_vector_actual"])
+        return node.hardware.pose_from_snapshot(sample)
 
     def _rise(self, current, *, holding, preserve_outputs=False, full_speed=False):
         node = self.node
@@ -423,7 +422,7 @@ class ManagedControl:
         if sample.feed["isRunQueuedCmd"] or sample.feed["RunningStatus"]:
             raise FeedbackFailure("Unexpected motion while parked")
         if self.parked_pose is not None and not pose_reached(
-                pose_matrix(sample.feed["tool_vector_actual"]), self.parked_pose,
+                node.hardware.pose_from_snapshot(sample), self.parked_pose,
                 translation_m=0.001, rotation_deg=0.5):
             raise FeedbackFailure("Robot pose changed while parked")
         for channel, expected in node.expected_outputs.items():
@@ -460,8 +459,8 @@ class ManagedControl:
                 node._transition("READY", "Item returned; stopped operation completed at Home")
                 raise ReturnedToHome("Item returned and robot Home")
             while True:
-                self.parked_pose = pose_matrix(
-                    node.monitor.snapshot(require_enabled=True).feed["tool_vector_actual"])
+                self.parked_pose = node.hardware.pose_from_snapshot(
+                    node.monitor.snapshot(require_enabled=True))
                 node._transition("PAUSED", "Parked; Continue resumes remaining operation")
                 while True:
                     node.raise_if_cancelled()

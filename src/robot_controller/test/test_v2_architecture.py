@@ -73,15 +73,16 @@ def test_runtime_continue_replans_without_vendor_queue_resume_or_empty_movlio():
     assert 'fields["mdis"] = events' in runtime
 
 
-def test_motion_origin_uses_feedinfo_without_getpose_or_second_pose_subscription():
+def test_motion_origin_uses_joint_fk_without_getpose_or_second_pose_subscription():
     hardware = (PACKAGE / "python/robot_controller/hardware.py").read_text()
     controller = (PACKAGE / "python/robot_controller/controller.py").read_text()
     constructor = hardware.split("def __init__(self, node, monitor):", 1)[1].split(
         "def close(self):", 1)[0]
     assert 'self.call("GetPose"' not in hardware
     assert "GetPose" not in constructor
-    assert 'snapshot.feed["tool_vector_actual"]' in hardware
-    assert 'timer != previous_timer' in hardware
+    assert 'self.node.kinematics.forward(snapshot.joints)' in hardware
+    assert 'snapshot.feed["tool_vector_actual"]' not in hardware
+    assert 'sample.joint_stamp_ns > previous.joint_stamp_ns' in hardware
     assert '"/dobot_bringup_ros2/msg/FeedInfo"' in controller
     assert '"/dobot_msgs_v4/msg/ToolVectorActual"' not in controller
 

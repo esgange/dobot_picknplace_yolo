@@ -28,14 +28,17 @@ class FeedbackSnapshot:
     sequence: int
     received_at: float
     suction_present: bool
+    joint_stamp_ns: int
+    status_sequence: int
+    revision: int
 
 
 class MotionObservation:
     """Keep execution evidence that can arrive during a service response wait."""
 
-    def __init__(self, feed):
+    def __init__(self, feed, joints):
         self.timer = feed["controller_timer"]
-        self.origin = tuple(feed["tool_vector_actual"])
+        self.origin_joints = tuple(joints)
         self.command_id = feed["currentCommandId"]
         self.started = False
 
@@ -45,9 +48,11 @@ class MotionObservation:
         self.timer = feed["controller_timer"]
         self.started |= bool(
             feed["isRunQueuedCmd"] or feed["RunningStatus"]
-            or feed["currentCommandId"] != self.command_id
-            or max(abs(a - b) for a, b in zip(
-                feed["tool_vector_actual"], self.origin)) > 0.05)
+            or feed["currentCommandId"] != self.command_id)
+
+    def update_joints(self, joints):
+        self.started |= max(abs(a - b) for a, b in zip(
+            joints, self.origin_joints)) > math.radians(0.05)
 
 
 class SuctionLossDebounce:
@@ -85,6 +90,8 @@ class FeedbackMonitor:
         self._status = None
         self._feed = None
         self._sequence = 0
+        self._status_sequence = 0
+        self._revision = 0
         self._controller_timer = None
         self._controller_progress_at = None
         self._flags = deque(maxlen=16)
@@ -96,6 +103,12 @@ class FeedbackMonitor:
     def sequence(self):
         with self._condition:
             return self._sequence
+
+    @property
+    def revision(self):
+        """Wake position consumers on any canonical stream, not just FeedInfo."""
+        with self._condition:
+            return self._revision
 
     def update_joints(self, message):
         names = tuple(message.name)
@@ -109,12 +122,19 @@ class FeedbackMonitor:
             raise FeedbackFailure("Actual joints require a nonzero source timestamp")
         ordered = tuple(float(values[names.index(f"joint{i}")]) for i in range(1, 7))
         with self._condition:
+            if self._joints is not None and stamp <= self._joints[1]:
+                return  # Repeated/backward source stamps cannot refresh position evidence.
             self._joints = ordered, stamp, self._monotonic()
+            self._revision += 1
+            if self._motion is not None:
+                self._motion.update_joints(ordered)
             self._condition.notify_all()
 
     def update_status(self, message):
         with self._condition:
             self._status = bool(message.is_connected), bool(message.is_enable), self._monotonic()
+            self._status_sequence += 1
+            self._revision += 1
             self._condition.notify_all()
 
     def update_feed(self, raw):
@@ -137,6 +157,7 @@ class FeedbackMonitor:
                 self._controller_timer = feed["controller_timer"]
                 self._controller_progress_at = now
             self._sequence += 1
+            self._revision += 1
             self._feed = feed, now
             self._suction.update(bool(feed["digital_input_bits"] & 1),
                                  feed["controller_timer"], now)
@@ -150,9 +171,9 @@ class FeedbackMonitor:
 
     def begin_motion(self):
         with self._condition:
-            if self._feed is None or self._motion is not None:
+            if self._feed is None or self._joints is None or self._motion is not None:
                 raise FeedbackFailure("Motion observation requires feedback and a free owner")
-            self._motion = MotionObservation(self._feed[0])
+            self._motion = MotionObservation(self._feed[0], self._joints[0])
             return self._motion
 
     def end_motion(self, observation):
@@ -170,6 +191,7 @@ class FeedbackMonitor:
             joints, status, feedback = self._joints, self._status, self._feed
             sequence, progress = self._sequence, self._controller_progress_at
             suction_present = self._suction.present
+            status_sequence, revision = self._status_sequence, self._revision
         now = self._monotonic()
         if joints is None or status is None or feedback is None:
             raise FeedbackFailure("Canonical robot feedback is incomplete")
@@ -188,7 +210,8 @@ class FeedbackMonitor:
             if blockers:
                 raise FeedbackFailure("Robot readiness blocked: " + "; ".join(blockers))
         return FeedbackSnapshot(feed, values, connected, status_enabled, sequence,
-                                feed_received, suction_present)
+                                feed_received, suction_present, source_stamp,
+                                status_sequence, revision)
 
     def consistent_flags(self, count=3):
         with self._condition:
@@ -203,7 +226,7 @@ class FeedbackMonitor:
              description="feedback condition"):
         deadline = self._monotonic() + timeout
         stable_since = None
-        observed = self.sequence
+        observed = self.revision
         evaluated_sequence = None
         while True:
             if cancel is not None and cancel():
@@ -218,7 +241,7 @@ class FeedbackMonitor:
                         self._condition.wait(0.05)
                 deadline += self._monotonic() - paused_at
                 stable_since = None
-                observed = self.sequence
+                observed = self.revision
                 continue
             try:
                 snapshot = self.snapshot(
@@ -242,9 +265,9 @@ class FeedbackMonitor:
             if remaining <= 0:
                 raise FeedbackFailure(f"Timed out waiting for {description}")
             with self._condition:
-                if self._sequence == observed:
+                if self._revision == observed:
                     self._condition.wait(min(remaining, 0.1))
-                observed = self._sequence
+                observed = self._revision
 
     def wait_samples(self, predicate, count, timeout, *, cancel=None, pause=None,
                      require_enabled=False, allow_paused=False,
@@ -286,17 +309,17 @@ class FeedbackMonitor:
                 if self._sequence == observed:
                     self._condition.wait(min(remaining, 0.1))
 
-    def wait_next(self, sequence, timeout, *, cancel=None):
+    def wait_next(self, sequence, timeout, *, cancel=None, position=False):
         deadline = self._monotonic() + timeout
         with self._condition:
-            while self._sequence <= sequence:
+            while (self._revision if position else self._sequence) <= sequence:
                 if cancel is not None and cancel():
                     raise OperationCanceled("Controller operation cancelled")
                 remaining = deadline - self._monotonic()
                 if remaining <= 0:
                     raise FeedbackFailure("Timed out waiting for advancing robot feedback")
                 self._condition.wait(min(remaining, 0.1))
-            return self._sequence
+            return self._revision if position else self._sequence
 
 
 def enabled_blockers(feed, _status_enabled, *, allow_paused=False):

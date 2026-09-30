@@ -38,11 +38,18 @@ Open the [visual HTML](docs/ROBOT_CONTROLLER_FSM.html) in a browser or the
 [visual PDF](docs/ROBOT_CONTROLLER_FSM.pdf) directly; both work offline.
 
 Motion groups retain CP(100) blending and confirm their final endpoint using
-fresh actual pose, queue/robot status and execution evidence after acceptance.
+fresh RobotStatus idle and joint feedback after acceptance. Saved joint targets
+are checked directly; Cartesian targets and current poses use the existing CR10
+forward kinematics from `/joint_states`. FeedInfo still supervises command
+execution, queue completion, faults and I/O. Joint/status callbacks wake checks
+immediately; no fixed arrival dwell is added outside taught final-pick settling.
 Explicit Recover cancels the interrupted action, preserves current gripper
 outputs during a confirmed vertical lift to Home height and return to taught Home.
 At Home, Recover / Clear Error relaxes both finger outputs and switches suction and
 exhaust OFF; confirmed neutral outputs and DI1 LOW finish READY.
+The final reset check waits up to five seconds for fresh Home joints, idle status
+and the output queue to finish. Temporary I/O activity no longer produces an
+immediate “Home position lost” failure; a timeout identifies the failed conditions.
 Later Stop clicks send a new Stop with a fresh physical confirmation.
 
 Confirmed emergency stops report **“Emergency stop pressed — cannot start or
@@ -154,8 +161,9 @@ supervision sees an unexpected running/nonempty queue, it pre-empts that motion
 with the independent Stop path before requiring recovery.
 
 After Stop with a trusted held item and no confirmed suction loss, Recover
-returns Home in `HOLDING` and preserves the grip. The GUI then explains the return
-path: **PAUSE**, wait for **RETURN ITEM & STOP**, then click it. **STOP NOW**
+preserves the grip during travel, then relaxes it at confirmed Home and ends READY
+after neutral outputs and DI1 LOW. Use **RETURN ITEM & STOP** from Pause for a
+deliberate put-back to the source. **STOP NOW**
 appears immediately while Pause/return is pending and always pre-empts without
 put-back. Unknown suction instead produces an instruction to keep the robot
 stopped, safely secure/clear the item or check the suction sensor for obstruction.
@@ -247,8 +255,8 @@ The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.
 
-The explicit Home action reads the actual `tool_vector_actual` pose
-from a fresh, stationary 100 Hz FeedInfo sample. Unless already within
+The explicit Home action derives the current Link6 pose from fresh `/joint_states`
+with the canonical CR10 model and idle RobotStatus. Unless already within
 5 mm/1° of taught Home, it queues two Cartesian `MovL` targets in one
 CP(100)-blended group: current X/Y with taught Home Z/attitude, then full taught
 Home XYZ/attitude. Each service must return `res=0` in order, but only final

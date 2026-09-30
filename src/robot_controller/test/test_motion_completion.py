@@ -10,7 +10,7 @@ import robot_controller.hardware as hardware_module
 from robot_controller.hardware import DobotTransport
 from robot_controller.motion import MotionIO, Target
 
-from test_feedback_v2 import feed, primed_monitor
+from test_feedback_v2 import feed, primed_monitor, joint_message
 
 
 class MotionRig:
@@ -24,6 +24,7 @@ class MotionRig:
         self.during_admission = lambda: self.emit()
         self.transport = object.__new__(DobotTransport)
         self.transport.node = SimpleNamespace(
+            kinematics=SimpleNamespace(forward=self.forward),
             expected_outputs={}, cancel_requested=lambda: False,
             raise_if_cancelled=lambda: None, operation_progress=lambda *_a, **_k: None,
             events=SimpleNamespace(record=lambda *a, **k: self.events.append((a, k))))
@@ -34,12 +35,23 @@ class MotionRig:
         self.transport.call_group = self.dispatch
         self.monitor.wait_next = self.next_sample
 
-    def emit(self, *, z=0., command_id=0, running=0, advance=True, outputs=0):
+    def emit(self, *, z=0., command_id=0, running=0, advance=True, outputs=0, position=True):
         self.timer += int(advance)
+        joints = joint_message()
+        joints.position[0] = z
+        if position:
+            self.monitor.update_joints(joints)
+            self.monitor.update_status(SimpleNamespace(is_connected=True, is_enable=not running))
         self.monitor.update_feed(feed(
             controller_timer=self.timer, currentCommandId=command_id,
             tool_vector_actual=[0., 0., z * 1000, 0., 0., 0.],
             RunningStatus=running, isRunQueuedCmd=running, digital_outputs=outputs))
+
+    @staticmethod
+    def forward(joints):
+        result = np.eye(4)
+        result[2, 3] = joints[0]
+        return result
 
     def dispatch(self, calls, **_kwargs):
         self.calls.extend(calls)
@@ -55,11 +67,11 @@ class MotionRig:
         self.emit(**values)
         return self.monitor.sequence
 
-    def run(self, *, z=.001, targets=None):
+    def run(self, *, z=.001, targets=None, **kwargs):
         matrix = np.eye(4)
         matrix[2, 3] = z
         return self.transport.move_batch(
-            targets or (Target("end", matrix, 100, 100),), batch_name="test")
+            targets or (Target("end", matrix, 100, 100),), batch_name="test", **kwargs)
 
 
 def test_old_idle_near_endpoint_cannot_complete_a_new_move():
@@ -102,12 +114,12 @@ def test_fast_or_zero_distance_command_needs_no_observed_running_or_dwell(zero_d
     assert len(rig.calls) == len(rig.waited) == 1
 
 
-def test_frozen_controller_timer_cannot_supply_new_terminal_evidence():
+def test_fresh_joints_and_status_complete_without_waiting_for_another_feed_tick():
     rig = MotionRig()
     rig.steps = iter([{"z": .001, "command_id": 7, "advance": False},
                       {"z": .001, "command_id": 7}])
     rig.run()
-    assert len(rig.waited) == 2
+    assert len(rig.waited) == 1
 
 
 def test_zero_length_required_timed_io_still_queues_and_confirms():
@@ -182,6 +194,24 @@ def test_non_pick_terminal_io_keeps_its_five_second_deadline(monkeypatch):
         rig.run(targets=(Target("end", target, 100, 100,
                                 motion_io=(MotionIO(0, 14, True),)),))
     assert clock[0] == 6.  # Endpoint first observed at 1 s; output deadline at 6 s.
+
+
+def test_pick_settling_cannot_finish_on_frozen_joint_and_status_samples(monkeypatch):
+    rig = MotionRig()
+    clock = [0.]
+    monkeypatch.setattr(hardware_module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    times = iter((.2, .8, .9))
+
+    def next_sample(*args, **kwargs):
+        clock[0] = next(times)
+        return rig.next_sample(*args, **kwargs)
+
+    rig.monitor.wait_next = next_sample
+    rig.steps = iter([dict(z=.1, command_id=7),
+                      dict(z=.1, command_id=7, position=False),
+                      dict(z=.1, command_id=7)])
+    rig.run(z=.1, stop_on_suction=True, pick_settling_sec=.5)
+    assert len(rig.waited) == 3
 
 
 @pytest.mark.parametrize("value", [None, "", "{}", "{-1}", "{1.0}", "{1,2}",

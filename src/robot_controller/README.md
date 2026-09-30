@@ -349,7 +349,10 @@ After stationary Home is confirmed, reset DO1, DO2, DO13 and DO14 to OFF, in tha
 order, confirming each response/output. Both finger outputs OFF means relaxed;
 there is no OPEN command or exhaust pulse. The intentional reset permits suction
 to decay. Require all four outputs OFF, DI1 LOW and continued Home arrival before
-reporting READY. Cancel the former held ledger entry without claiming PLACED or
+reporting READY. This final check waits up to five seconds for newer joint/status
+feedback and the output command queue to finish; it does not fail immediately
+on temporary I/O queue activity. A failure reports idle/freshness conditions and
+the maximum Home joint error. Cancel the former held ledger entry without claiming PLACED or
 RETURNED. A still-HIGH DI1 reports HELD_UNKNOWN; clear the item/obstruction and retry.
 Stop/cancellation prevents remaining commands during travel or output reset; failures
 never report success. Another Recover replans from fresh stopped feedback. There is
@@ -364,7 +367,7 @@ operation for a deliberate return to the source.
 
 Native action cancellation and Stop invalidate the active command generation,
 use the independent Stop client, wait for acknowledgement and two distinct
-feedback samples showing an unchanged tool pose and stationary empty queue, and
+joint samples showing unchanged joints and a stationary empty queue, and
 preserve every gripper output. They never Home, release, disable, or resume a
 discarded queue. The result is
 `RECOVERY_REQUIRED`. A late motion acknowledgement causes another Stop;
@@ -601,7 +604,8 @@ actions/services, or `events.jsonl`.
 ## Home and Pick
 
 The explicit Home action is permitted from `READY` and trusted
-`HOLDING`. It obtains current Link6 XYZ/RPY from fresh, stationary FeedInfo.
+`HOLDING`. It obtains current Link6 XYZ/RPY from fresh canonical `/joint_states`
+through the existing CR10 forward kinematics, with idle RobotStatus.
 Unless that Cartesian pose is already within 5 mm/1° of the FK-derived taught
 Home pose, it sends exactly two Cartesian-mode `MovL` targets in one named
 motion group: `(current X, current Y, Home Z, Home Rx, Home Ry, Home Rz)`, then
@@ -628,7 +632,7 @@ below taught Home Z, `RelMovLUser` first rises at current XY/attitude and confir
 5 mm/1° Cartesian arrival plus stationary/empty-queue feedback. Within 5 mm
 below Home Z or anywhere above it, skip that preliminary rise and send exact
 taught Home joints directly using joint-mode `MovL` and ±1° joint confirmation.
-The planner and first dispatch share one fresh confirmed FeedInfo pose, so a
+The planner and first dispatch share one fresh confirmed joint-derived pose, so a
 second origin reading cannot turn a planned upward correction into a rejected
 downward move. When a rise is needed, final joint Home acquires its origin after
 that rise finishes. Successful/final-miss/put-back returns always queue an
@@ -821,40 +825,45 @@ Each candidate plan also records its source quaternion, transformed short axis,
 commanded green axis, configured offset, selected CW/CCW side, rotation from the
 taught Home reference, and target RPY.
 
-Joint Home completion uses ±1° independently on every joint. Cartesian target
-completion uses 5 mm Euclidean translation and 1° orientation. Home, clearance
-and every other non-pick endpoint complete on the first fresh enabled,
-queue-idle feedback sample within the applicable tolerance after the complete
-group's acceptance, with a newer sequence and advancing controller timer.
+Joint Home and Tray Detect completion use ±1° independently on every joint.
+Cartesian targets use 5 mm Euclidean translation and 1° orientation, calculated
+from the same canonical `/joint_states` sample using the existing CR10 model.
+RobotStatus `is_enable` is the vendor's mode-5 idle indication. Home, clearance
+and every other non-pick endpoint complete on the first qualifying joint/status
+update after the complete group's acceptance. Require a newer joint source stamp
+and a newer RobotStatus receipt; duplicate/backward joint stamps cannot refresh
+position evidence. Both topic callbacks wake the wait immediately, independently
+of FeedInfo updates. There is no added stability interval.
 `MovL` exposes its queue ID in the existing reply: require that exact
 `FeedInfo.currentCommandId` at completion. The fixed vendor `MovLIO` and
 `RelMovLUser` response schemas expose only `res`; those endpoints instead require
 live execution evidence latched during dispatch/travel (running/queued status,
-changed queue ID or actual pose movement). Short/zero-distance commands can
+changed queue ID or joint movement). Queue-empty confirmation remains a separate
+execution guard. Short/zero-distance commands can
 complete without ever observing a running flag when the stream shows their
 execution. No new query service or midpoint wait is added. Optional managed
 safety rises within the existing 5 mm tolerance are skipped before dispatch
 using the actual pose. Only a final pick
 uses a timed settling interval: its taught `pick_settling` duration under the
-same feedback gates. Home remains joint-only and does not additionally compare
-Cartesian FK with the streamed actual tool pose.
+same feedback gates. Joint-mode Home remains joint-only; no position check
+compares against FeedInfo `tool_vector_actual`.
 
 Before every independently acquired motion-batch origin or stopped-pose
-measurement, the controller waits up to two seconds for coherent idle feedback
-and an advancing FeedInfo `controller_timer` (brief duplicate publishes are
-allowed, but no source freeze longer than 150 ms). There is no additional dwell
+measurement, the controller waits up to two seconds for newer joint/status
+feedback, idle RobotStatus and an empty command queue. There is no additional dwell
 duration. The final-pick confirmation sample supplies its stopped pose and is
 carried directly into the immediate retract/return batch. The controller uses
-`tool_vector_actual` from the same validated sample; it never sends a separate
+FK from that validated joint sample; it never sends a separate
 `GetPose` request or subscribes to the slower, unstamped `ToolVectorActual`
 topic. A timeout names every current
-RobotStatus/FeedInfo blocker, or reports that otherwise-valid fields could not
-produce one coherent advancing sample. Fresh connected RobotStatus, joints,
+idle, queue and joint/status advancement blockers. Fresh connected RobotStatus, joints,
 FeedInfo, user/tool zero, held-item integrity, and the normal final-arrival
 checks remain mandatory. Startup/Recover retains its separate 200 ms READY
-lifecycle coherence. A live comparison of streamed pose with
-`GetPose(user=0,tool=0)` is a separate commissioning check, not an automatic
-fallback or an extra runtime service dependency.
+lifecycle coherence. Stop confirms two distinct joint source samples unchanged
+within 0.05° and the stopped/empty-queue state; fault/disabled stopping remains
+confirmable. Paused/placement hold checks also use joint-derived pose. The FK
+model is nominal geometry; this change is software-validated, not a new physical
+calibration or an automatic runtime service dependency.
 
 Software tests use synthetic services/feedback and must never commission
 physical motion. Real commissioning requires separate explicit authorization,

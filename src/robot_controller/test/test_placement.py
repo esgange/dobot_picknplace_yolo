@@ -126,6 +126,13 @@ class Hardware:
     def current_pose(self):
         return self.current.copy()
 
+    def pose_from_snapshot(self, _sample):
+        return self.current.copy()
+
+    def confirm_home(self, _joints):
+        assert np.allclose(self.current, self.node.configuration.home_matrix)
+        return self.sample()
+
     def home_already_reached(self, _joints):
         return np.allclose(self.current, self.node.configuration.tray.detect_matrix)
 

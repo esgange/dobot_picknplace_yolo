@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 import threading
 import time
+import itertools
 
 import pytest
 
@@ -22,7 +23,12 @@ def feed(**changes):
     return value
 
 
-def joint_message(stamp_ns=1_000_000_000):
+_joint_stamps = itertools.count(900_000_000)
+
+
+def joint_message(stamp_ns=None):
+    if stamp_ns is None:
+        stamp_ns = next(_joint_stamps)
     return SimpleNamespace(
         name=[f"joint{i}" for i in range(1, 7)], position=[0.0] * 6,
         header=SimpleNamespace(stamp=SimpleNamespace(

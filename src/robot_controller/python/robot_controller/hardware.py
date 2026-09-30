@@ -13,7 +13,7 @@ from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      UNKNOWN_ITEM_GUIDANCE, EmergencyStopPressed, EMERGENCY_STOP_GUIDANCE,
                      alarm_ids, command_failure_message, command_rejection)
 from .feedback import enabled_blockers
-from .kinematics import pose_matrix, pose_values
+from .kinematics import pose_values
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, pose_reached
 from .recovery import GRIP_MASK
 
@@ -24,7 +24,6 @@ OUTPUT_FEEDBACK_TIMEOUT_SEC = 5.0
 MODE_TRANSITION_TIMEOUT_SEC = 2.0
 READY_STABLE_SEC = 0.2
 CONSISTENT_FLAG_SAMPLES = 3
-POSE_SOURCE_PROGRESS_MAX_GAP_SEC = 0.15
 MOTION_NO_PROGRESS_SEC = 3.0
 MOTION_HARD_CAP_SEC = 300.0
 CARTESIAN_ORIENTATION_TOLERANCE_DEG = 1.0
@@ -543,22 +542,22 @@ class DobotTransport:
                     if actual not in (active, planned) and not (channel == 1 and pulse_pending):
                         held_violation = (
                             f"DO{channel} changed during Stop; expected {int(active)}")
-            pose = np.asarray(feed["tool_vector_actual"], dtype=float)
-            unmoved = (anchor is not None and snapshot.sequence != anchor_sequence
-                       and np.max(np.abs(pose - anchor)) <= 0.05)
+            joints = np.asarray(snapshot.joints, dtype=float)
+            unmoved = (anchor is not None and snapshot.joint_stamp_ns > anchor_sequence
+                       and np.max(np.abs(joints - anchor)) <= math.radians(0.05))
             current_io = (feed["digital_outputs"] & GRIP_MASK, feed["digital_input_bits"] & 1)
             stopped = (not feed["isRunQueuedCmd"] and not feed["RunningStatus"]
-                       and feed["robot_mode"] in (4, 5, 9, 10))
+                       and (snapshot.robot_enabled or feed["robot_mode"] in (4, 9, 10)))
             if recovery_home is not None:
                 unmoved = unmoved and anchor_io == current_io and anchor_stopped
-            anchor = pose
-            anchor_sequence = snapshot.sequence
+            anchor = joints
+            anchor_sequence = snapshot.joint_stamp_ns
             anchor_io = current_io
             anchor_stopped = stopped
             return stopped and unmoved
         try:
             self.monitor.wait(stationary, MODE_TRANSITION_TIMEOUT_SEC,
-                              description="stationary, empty queue after Stop")
+                              description="stationary joints and empty queue after Stop")
         except FeedbackFailure as exc:
             raise StopUnconfirmed(str(exc)) from exc
         self.moving = False
@@ -897,46 +896,53 @@ class DobotTransport:
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 
     def current_pose(self):
-        idle_and_held = self._held_predicate(self._idle)
-        previous_timer = None
-        last_timer_change = None
+        initial = self._validate_held_snapshot(self._ready_snapshot())
+        snapshot = self._wait_position(
+            lambda sample: sample.robot_enabled and self._queue_idle(sample), initial,
+            MODE_TRANSITION_TIMEOUT_SEC, "idle RobotStatus and advancing joints for motion origin")
+        return self.pose_from_snapshot(snapshot)
 
-        def advancing_stationary(sample):
-            nonlocal previous_timer, last_timer_change
-            timer = sample.feed["controller_timer"]
-            now = time.monotonic()
-            if previous_timer is not None and timer != previous_timer:
-                last_timer_change = now
-            previous_timer = timer
-            source_advancing = (last_timer_change is not None
-                                and now - last_timer_change <= POSE_SOURCE_PROGRESS_MAX_GAP_SEC)
-            return idle_and_held(sample) and source_advancing
-
+    def pose_from_snapshot(self, snapshot):
+        """One authoritative base_link <- Link6 pose from canonical joint feedback."""
         try:
-            snapshot = self.monitor.wait(
-                advancing_stationary, MODE_TRANSITION_TIMEOUT_SEC,
-                cancel=self.node.cancel_requested, pause=self._pause_requested,
-                require_enabled=True,
-                description="advancing idle READY feedback for actual tool pose")
-        except FeedbackFailure as exc:
-            try:
-                snapshot = self.monitor.snapshot(require_enabled=False)
-            except FeedbackFailure as stale_exc:
-                raise FeedbackFailure(
-                    f"Current-pose feedback unavailable: {stale_exc}") from exc
-            blockers = self._idle_blockers(snapshot)
-            if blockers:
-                raise FeedbackFailure(
-                    "Current-pose acquisition blocked: " + "; ".join(blockers)) from exc
-            raise FeedbackFailure(
-                "Current-pose READY fields did not produce a coherent advancing sample") from exc
-        # The exact FeedInfo sample that passed the stationary/user=0/tool=0
-        # gate is the motion origin. Do not issue a later dashboard GetPose or
-        # combine pose and readiness from different feedback instants.
-        try:
-            return pose_matrix(snapshot.feed["tool_vector_actual"])
+            result = self.node.kinematics.forward(snapshot.joints)
+            if not self._valid_rigid_matrix(result):
+                raise ValueError("invalid FK transform")
+            return result
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
-            raise FeedbackFailure("Invalid stationary FeedInfo tool_vector_actual") from exc
+            raise FeedbackFailure(f"Invalid joint-derived Link6 pose: {exc}") from exc
+
+    @staticmethod
+    def _queue_idle(sample):
+        """Command execution guard, separate from position and RobotStatus arrival."""
+        return not (sample.feed["isRunQueuedCmd"] or sample.feed["RunningStatus"])
+
+    @staticmethod
+    def _fresh_position(sample, previous):
+        return (sample.joint_stamp_ns > previous.joint_stamp_ns
+                and sample.status_sequence > previous.status_sequence)
+
+    def _wait_position(self, predicate, initial, timeout, description):
+        deadline = time.monotonic() + timeout
+        while True:
+            self.node.raise_if_cancelled()
+            sample = self._validate_held_snapshot(self._ready_snapshot())
+            if self._fresh_position(sample, initial) and predicate(sample):
+                return sample
+            remaining = deadline - time.monotonic()
+            details = (
+                f"RobotStatus idle={sample.robot_enabled}; "
+                f"joint stream advanced={sample.joint_stamp_ns > initial.joint_stamp_ns}; "
+                f"RobotStatus advanced={sample.status_sequence > initial.status_sequence}; "
+                f"command queue idle={self._queue_idle(sample)}")
+            if remaining <= 0:
+                raise FeedbackFailure(f"Timed out waiting for {description}; {details}")
+            try:
+                self.monitor.wait_next(sample.revision, remaining,
+                                       cancel=self.node.cancel_requested, position=True)
+            except FeedbackFailure as exc:
+                raise FeedbackFailure(
+                    f"Waiting for {description}: {details}; {exc}") from exc
 
     @staticmethod
     def _valid_rigid_matrix(matrix):
@@ -965,7 +971,7 @@ class DobotTransport:
             return max(abs(actual - expected) for actual, expected in zip(
                 snapshot.joints, target.joints_rad)) <= HOME_JOINT_TOLERANCE_RAD
         return pose_reached(
-            pose_matrix(snapshot.feed["tool_vector_actual"]), target.matrix,
+            self.pose_from_snapshot(snapshot), target.matrix,
             translation_m=CARTESIAN_POSITION_TOLERANCE_M,
             rotation_deg=CARTESIAN_ORIENTATION_TOLERANCE_DEG)
 
@@ -984,12 +990,31 @@ class DobotTransport:
             raise CommandRejected("Home skip check requires six taught joints")
 
         def reached(snapshot):
-            return (self._idle(snapshot)
+            return (snapshot.robot_enabled
                     and max(abs(actual - expected) for actual, expected in zip(
                         snapshot.joints, joints_rad)) <= HOME_JOINT_TOLERANCE_RAD)
 
         initial = self._validate_held_snapshot(self._ready_snapshot())
         return reached(initial)
+
+    def confirm_home(self, joints_rad):
+        """Bound post-output confirmation without interpreting a busy queue as motion."""
+        initial = self._validate_held_snapshot(self._ready_snapshot())
+
+        def reached(sample):
+            return (sample.robot_enabled and self._queue_idle(sample)
+                    and max(abs(a - b) for a, b in zip(
+                        sample.joints, joints_rad)) <= HOME_JOINT_TOLERANCE_RAD)
+        try:
+            return self._wait_position(
+                reached, initial, OUTPUT_FEEDBACK_TIMEOUT_SEC,
+                "Home joints and idle RobotStatus after gripper reset")
+        except FeedbackFailure as exc:
+            sample = self.monitor.snapshot(require_enabled=True)
+            error = math.degrees(max(abs(a - b) for a, b in zip(sample.joints, joints_rad)))
+            raise FeedbackFailure(
+                f"Home reset confirmation failed: RobotStatus idle={sample.robot_enabled}; "
+                f"maximum joint error={error:.4f} degrees (limit 1); {exc}") from exc
 
     def _monitor_motion_policy(self, snapshot, *, require_suction, forbid_suction,
                                stop_on_suction, before_suction, planned_outputs,
@@ -1084,7 +1109,7 @@ class DobotTransport:
         self.moving = True
         started = time.monotonic()
         last_progress = started
-        last_vector = np.asarray(initial.feed["tool_vector_actual"], dtype=float)
+        last_vector = np.asarray(initial.joints, dtype=float)
         queued_targets = []
         self.node.events.record(
             "INFO", "motion_batch_dispatch_started", batch_name,
@@ -1136,11 +1161,7 @@ class DobotTransport:
                     raise FeedbackFailure(
                         f"Motion-timed DO{channel} mismatch after suction Stop")
             self.node.expected_outputs.update(expected_outputs)
-            try:
-                stopped_pose = pose_matrix(sample.feed["tool_vector_actual"])
-            except (KeyError, TypeError, ValueError, OverflowError) as exc:
-                raise FeedbackFailure(
-                    "Invalid stopped FeedInfo tool_vector_actual") from exc
+            stopped_pose = self.pose_from_snapshot(sample)
             return ((True, stopped_pose) if return_terminal_pose else True)
 
         observation = self.monitor.begin_motion()
@@ -1213,8 +1234,9 @@ class DobotTransport:
             terminal_stable_sec = (pick_settling_sec if stop_on_suction
                                    else 0.0)
             stable_since = None
+            settle_origin = None
             output_wait_since = None
-            sequence = self.monitor.sequence
+            sequence = accepted.revision
             while True:
                 paused_for = self._wait_for_resume()
                 started += paused_for
@@ -1225,8 +1247,8 @@ class DobotTransport:
                 if self.suction_interrupted:
                     return finish_suction_interrupt()
                 now = time.monotonic()
-                vector = np.asarray(snapshot.feed["tool_vector_actual"], dtype=float)
-                if np.max(np.abs(vector - last_vector)) > 0.05:
+                vector = np.asarray(snapshot.joints, dtype=float)
+                if np.max(np.abs(vector - last_vector)) > math.radians(0.05):
                     last_progress, last_vector = now, vector
                 reached = self._target_reached(tail, snapshot)
                 # Placement runs through Home without release/I/O completion
@@ -1237,9 +1259,9 @@ class DobotTransport:
                 executed = (snapshot.feed["currentCommandId"] == terminal_command_id
                             if terminal_command_id is not None else observation.started)
                 motion_idle = (
-                    snapshot.sequence > accepted.sequence
-                    and snapshot.feed["controller_timer"] != accepted.feed["controller_timer"]
-                    and executed and reached and self._idle(snapshot))
+                    self._fresh_position(snapshot, accepted)
+                    and executed and self._queue_idle(snapshot)
+                    and reached and snapshot.robot_enabled)
                 idle = motion_idle and outputs_ready
                 waiting_outputs = motion_idle and not outputs_ready and not stop_on_suction
                 output_wait_since = now if waiting_outputs and output_wait_since is None else (
@@ -1247,10 +1269,14 @@ class DobotTransport:
                 if (output_wait_since is not None
                         and now - output_wait_since >= OUTPUT_FEEDBACK_TIMEOUT_SEC):
                     raise FeedbackFailure("Timed out waiting for motion-timed output feedback")
-                stable_since = now if idle and stable_since is None else (
-                    stable_since if idle else None)
+                if idle and stable_since is None:
+                    stable_since, settle_origin = now, snapshot
+                elif not idle:
+                    stable_since, settle_origin = None, None
                 if (stable_since is not None
-                        and now - stable_since >= terminal_stable_sec):
+                        and now - stable_since >= terminal_stable_sec
+                        and (terminal_stable_sec == 0
+                             or self._fresh_position(snapshot, settle_origin))):
                     if placement is not None:
                         placement.complete(self.node, snapshot)
                     break
@@ -1260,7 +1286,7 @@ class DobotTransport:
                     raise FeedbackFailure("Motion exceeded the 300-second hard deadline")
                 sequence = self.monitor.wait_next(
                     sequence, min(1.0, MOTION_HARD_CAP_SEC - (now - started)),
-                    cancel=self.node.cancel_requested)
+                    cancel=self.node.cancel_requested, position=True)
             if expected_outputs and not stop_on_suction:
                 self.node.expected_outputs.update(expected_outputs)
             if require_suction_reset and not suction_reset_seen:
@@ -1278,11 +1304,7 @@ class DobotTransport:
                 targets=[target.name for target in targets],
                 terminal_stable_sec=terminal_stable_sec,
                 suction_confirmed=acquired_at_settle)
-            try:
-                stopped_pose = pose_matrix(snapshot.feed["tool_vector_actual"])
-            except (KeyError, TypeError, ValueError, OverflowError) as exc:
-                raise FeedbackFailure(
-                    "Invalid stopped FeedInfo tool_vector_actual") from exc
+            stopped_pose = self.pose_from_snapshot(snapshot)
             return ((acquired_at_settle, stopped_pose)
                     if return_terminal_pose else acquired_at_settle)
         except OperationCanceled:

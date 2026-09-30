@@ -26,6 +26,8 @@ class QueueRig:
     def __init__(self, *, during_reply=False):
         self.node = node = operation_node()
         self.monitor = node.monitor = primed_monitor()
+        self.joint_poses = {}
+        node.kinematics = SimpleNamespace(forward=lambda joints: self.joint_poses[tuple(joints)])
         self.clock = 0.
         self.monitor._monotonic = lambda: self.clock
         self.timer = 1
@@ -65,6 +67,20 @@ class QueueRig:
             currentCommandId=4 if home else 2, RunningStatus=0 if home else running,
             isRunQueuedCmd=0 if home else running, tool_vector_actual=pose_values(matrix))
         fields.update(feedback)
+        # The fake robot publishes independent joint/status streams. Its test
+        # model maps those joints to the scripted pose; production uses CR10 FK.
+        from robot_controller.kinematics import pose_matrix
+        matrix = pose_matrix(fields['tool_vector_actual'])
+        joints = joint_message()
+        joints.position = (list(getattr(self.node.configuration, 'home_joints', (0.,) * 6))
+                           if home and 'tool_vector_actual' not in feedback else
+                           list(self.node.configuration.tray.detect_joints)
+                           if not home and 'tool_vector_actual' not in feedback else
+                           list(matrix[:3, 3]) + [0., 0., 0.])
+        self.joint_poses[tuple(joints.position)] = matrix.copy()
+        self.monitor.update_joints(joints)
+        self.monitor.update_status(SimpleNamespace(
+            is_connected=True, is_enable=not (fields['RunningStatus'] or fields['isRunQueuedCmd'])))
         self.monitor.update_feed(feed(**fields))
         self.order.append('feedback')
         return self.monitor.snapshot(require_enabled=True)

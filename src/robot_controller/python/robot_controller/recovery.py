@@ -159,11 +159,9 @@ class HomeRecovery:
         if not node.hardware.sensor(False, OUTPUT_FEEDBACK_TIMEOUT_SEC):
             raise HeldUnknown("Gripper outputs relaxed at Home, but DI1 suction is still HIGH; "
                               "clear the item or sensor obstruction, then Recover again")
-        sample = self.check(node.monitor.snapshot(require_enabled=True))
+        sample = self.check(node.hardware.confirm_home(node.configuration.home_joints))
         if sample.feed["digital_input_bits"] & 1:
             raise HeldUnknown("Gripper outputs relaxed at Home, but DI1 suction is still HIGH")
-        if not node.hardware.home_already_reached(node.configuration.home_joints):
-            raise FeedbackFailure("Home position lost while resetting gripper")
         self.holding = False
         node.events.record("INFO", "recovery_gripper_relaxed", "Gripper reset confirmed at Home",
                            digital_outputs=sample.feed["digital_outputs"],

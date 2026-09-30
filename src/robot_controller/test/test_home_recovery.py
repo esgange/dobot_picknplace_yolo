@@ -117,7 +117,8 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
     node = rig.node
     node.active_action = 'recover'
     node.configuration.home_joints = (0.,) * 6
-    node.kinematics = SimpleNamespace(forward=lambda _j: node.configuration.home_matrix)
+    node.configuration.tray.detect_joints = (.1,) * 6
+    rig.joint_poses[node.configuration.home_joints] = node.configuration.home_matrix.copy()
     current = node.configuration.home_matrix.copy()
     current[0, 3], current[2, 3] = .1, .3
     node.configuration.tray.detect_matrix = current.copy()
@@ -139,7 +140,7 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
         if not completions:
             assert [name for name, _ in rig.requests] == ['RelMovLUser']
             node.configuration.tray.detect_matrix[2, 3] = .8
-            rig.emit(outputs=outputs, inputs=inputs, running=0)
+            rig.emit(outputs=outputs, inputs=inputs, running=0, currentCommandId=3)
         else:
             assert [name for name, _ in rig.requests] == ['RelMovLUser', 'MovL']
             rig.monitor.update_joints(joint_message())
@@ -166,8 +167,34 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
         return rig.monitor.sequence
 
     rig.on_request = reset_echo
+    rig.monitor.wait_next = reset_echo
     recovery.relax(node)
     assert [name for name, _ in rig.requests] == ['RelMovLUser', 'MovL'] + ['DO'] * 4
     assert [request.index for _, request in rig.requests[-4:]] == [1, 2, 13, 14]
     assert node.monitor.snapshot().feed['digital_outputs'] == 0
     assert not node.holding_item and node.managed.session.held_index is None
+
+
+def test_reset_at_home_waits_out_its_own_io_queue_without_false_position_failure():
+    rig = QueueRig()
+    node = rig.node
+    node.active_action = 'recover'
+    node.configuration.home_joints = (0.,) * 6
+    for _ in range(8):
+        rig.emit(outputs=0, inputs=0, home=True)
+    recovery = node.recovery_home = HomeRecovery.cancel_action(node)
+    recovery.capture(node, rig.monitor.snapshot(require_enabled=True))
+    rig.transport.home_recovery = recovery
+
+    def echo(_index):
+        request = rig.requests[-1][1]
+        rig.emit(outputs=0, inputs=0, home=True,
+                 isRunQueuedCmd=int(request.index == 14))
+
+    rig.on_request = echo
+    rig.steps = iter([dict(outputs=0, inputs=0, home=True)])
+    recovery.relax(node)
+    assert [(name, req.index, req.status) for name, req in rig.requests] == [
+        ('DO', channel, 0) for channel in (1, 2, 13, 14)]
+    assert next(rig.steps, None) is None
+    assert not recovery.holding and not node.holding_item
