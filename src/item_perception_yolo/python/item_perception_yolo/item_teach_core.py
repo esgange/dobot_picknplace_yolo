@@ -22,10 +22,10 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 9
+ITEM_SCHEMA_VERSION = 10
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
-MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height")
+MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height", "trayplace_height")
 SPEED_FIELDS = ("travel_percent", "approach_percent", "retract_percent")
 NEW_PROFILE_SPEED = {"travel_percent": 100, "approach_percent": 6, "retract_percent": 6}
 NEW_PROFILE_ACCELERATION = dict.fromkeys(SPEED_FIELDS, 100)
@@ -362,9 +362,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 9 "
-            "(four optional inward bin-wall offsets); "
-            "schemas 1–8 are unsupported; no compatibility reader")
+            "Item teach schema_version must be exactly 10 "
+            "(explicit trayplace_height above the tray surface); "
+            "schemas 1–9 are unsupported; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",

@@ -41,7 +41,7 @@ def recover_item_fields(path, *, root=None):
         return draft
     if (type(payload) is not dict or payload.get("artifact_type") != "item_teach"
             or type(payload.get("schema_version")) is not int
-            or payload["schema_version"] not in (1, 2, 3, 4, 5, 6, 7, 8, 9)):
+            or payload["schema_version"] not in range(1, core.ITEM_SCHEMA_VERSION + 1)):
         draft.issues.append("Unrecognized item format/schema; all fields cleared")
         return draft
 
@@ -91,6 +91,8 @@ def recover_item_fields(path, *, root=None):
     for key in core.MOTION_FIELDS:
         if key == "retract_height" and payload["schema_version"] < 6:
             accept(key, None, False, "old height was relative to pick; now extra above pre-pick")
+        elif key == "trayplace_height" and payload["schema_version"] < 10:
+            accept(key, None, False, "schema predates explicit trayplace_height")
         else:
             number("motion", key, unit=("distance", "mm"))
     for key in core.SPEED_FIELDS:

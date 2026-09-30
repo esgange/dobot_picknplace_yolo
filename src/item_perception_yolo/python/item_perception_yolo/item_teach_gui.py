@@ -544,13 +544,16 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "standoff_height": "Gripper compensation at final Link6 pick position",
             "prepick_height": "Distance above Link6 pick Z before final approach",
             "retract_height": "Extra clearance above pre-pick Z (pick + pre-pick + retract)",
+            "trayplace_height": "Placement Link6 drop height above the detected tray surface; "
+                                "independent of pick heights",
         }
         for key in MOTION_FIELDS:
             field = QtWidgets.QLineEdit()
             field.setPlaceholderText("Required; millimetres")
             field.setToolTip(descriptions[key])
             self.inputs[key] = field
-            motion.addRow(key, field)
+            if key != "trayplace_height":
+                motion.addRow(key, field)
         pick_rotation = QtWidgets.QLineEdit(str(NEW_PROFILE_PICK_ROTATION_DEG))
         pick_rotation.setPlaceholderText("Required; 0–90 degrees")
         pick_rotation.setToolTip(
@@ -558,6 +561,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "the equivalent clockwise or counter-clockwise tool rotation with least travel.")
         self.inputs["pick_rotation"] = pick_rotation
         motion.addRow("pick_rotation [deg]", pick_rotation)
+        motion.addRow("trayplace_height", self.inputs["trayplace_height"])
 
         speed = group("Motion speeds — %", 7)
         speed_labels = {"travel_percent": "Travel / Home", "approach_percent": "Final approach",

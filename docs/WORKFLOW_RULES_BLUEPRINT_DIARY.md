@@ -7545,6 +7545,44 @@ Never use a floating “latest” version in an issue, script, or deployment not
   operator calibration/offline/runtime teach/model artifacts remain untouched
   and excluded from source commits.
 
+### 2026-09-30 — Rule 184: explicit tray placement height in Item Teach
+
+- User requested a separate height above the tray surface. Add required
+  `motion.trayplace_height` in millimetres at the bottom of **Vertical motion — mm**,
+  below `pick_rotation`. Save/load it with the Item Teach pair; edits invalidate
+  saved/armed eligibility. Accept finite nonnegative numbers, including zero.
+- Advance Item Teach to strict schema 10. Production readers, including deployed
+  headless Item Detect and Robot Controller, reject schemas 1–9. GUI recovery
+  retains independently valid fields, Home and verified model pairing but leaves
+  the new height blank in older schemas, even if an unknown same-name field was
+  present. Require explicit entry and Save; new profiles also start blank. Do not
+  infer the old sum, choose a default or rewrite operator files on loading.
+- Hardware placement and Preview share drop Z = detected tray surface Z +
+  trayplace_height. Supersede the old standoff + pre-pick placement offset only.
+  Pick/put-back geometry is unchanged. Preserve Home-Z approach/retract above
+  the drop, saved detect-relative attitude, three accepted commands without final
+  Home, speed 100%/global SpeedFactor, taught acceleration, 80% OPEN/exhaust and
+  20% neutral, plus existing Stop and background completion supervision.
+- Update root, package and tracked artifact-directory READMEs, AGENTS and FSM;
+  regenerate its eight offline HTML/PDF diagrams from the Markdown.
+- Validation: the isolated staged change passes **698 controller tests** and
+  **501 Item Perception tests**. Five native geometry cases were rechecked after
+  linking the existing installed private runtime into the source snapshot; all
+  passed. Cover explicit save/load and deployed schema validation, GUI recovery
+  without guessed heights, field order/edit disarming, pick-height independence,
+  zero/invalid/missing values, Preview and actual transport request coordinates
+  using synthetic feedback. Both package symlink builds pass. Scoped lint has no
+  new findings (four existing test-formatting findings remain); diff checks pass.
+  Inspected an offscreen Qt render using a fake node. Regenerated eight FSM SVGs
+  and an eight-page A3 PDF; verified source SHA-256
+  8599d38e3a27abf90ac0ebd258948c590ab2bd16082d1fa8abb0433243283e6f.
+- The separate unfinished acquisition-pause draft remains outside this commit;
+  the combined dirty-tree test run has three existing GUI test-double failures
+  from that draft's missing `_acquisition_paused` method. Its code was preserved,
+  not included in the validated height-only source snapshot. Unrelated RViz and
+  calibration/offline/runtime teach/model artifacts remain untouched/excluded.
+  No physical hardware commands or live application restart.
+
 ### Future entry template
 
 ```text

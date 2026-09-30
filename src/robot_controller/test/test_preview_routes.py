@@ -138,6 +138,7 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle):
     # Preview remains read-only and works without Startup/EnableRobot.
     preview.monitor.update_feed(feed(EnableStatus=0, robot_mode=4))
     preview.monitor.update_status(SimpleNamespace(is_connected=True, is_enable=False))
+    preview.config.profile["motion"]["trayplace_height"] = 42.5
     result = preview.run(Preview.Request.PLACE, x_mm=30., y_mm=40., rotation_deg=angle)
     assert result.success
     assert [t.name for t in preview.targets] == [
@@ -145,6 +146,7 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle):
     expected = place_targets(preview.config.tray.detect_matrix, [.3, .2, .25],
                              preview.config.profile, angle, preview.config.home_matrix)
     assert all(t.joints_rad is None for t in preview.targets)
+    assert preview.targets[1].matrix[2, 3] == pytest.approx(.2925)
     assert all(np.allclose(a.matrix, b.matrix) for a, b in zip(preview.targets, expected))
     preview.trays.request.call_args.kwargs["check_state"]()
     preview.client.request.assert_not_called()

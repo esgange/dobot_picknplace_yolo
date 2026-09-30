@@ -17,7 +17,7 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 9 groups data by purpose. Production rejects schemas 1–8;
+Strict item schema 10 groups data by purpose. Production rejects schemas 1–9;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
@@ -27,7 +27,7 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 | `units` | Motion distances in mm, time in seconds, `pick_rotation` in degrees, home joints in radians, speed/acceleration in % |
 | `home` | Six named joint positions, feedback timestamp, recording time, source IP/node/topic |
 | `pick_rotation` | Unsigned 0–90° offset from the detected item short-axis line |
-| `motion` | `standoff_height`, `prepick_height`, `retract_height` |
+| `motion` | `standoff_height`, `prepick_height`, `retract_height`, `trayplace_height` |
 | `speed` | `travel_percent`, `approach_percent`, `retract_percent` (integers 1–100; initial 100/6/6) |
 | `acceleration` | The same three phase keys (integers 1–100; initial 100/100/100) |
 | `timing` | `pick_settling` |
@@ -39,6 +39,15 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 | `bin_clearance` | Optional inward mm offsets for directed Bin Teach edges `p1_p2`, `p2_p3`, `p3_p4`, `p4_p1`; null means no inset on that edge |
 | `quality` | Input/TF age, RGB-depth synchronization, request deadline, depth range, minimum retained-depth count/fraction |
 | `controller_contract` | Validation-only stage, motion disabled, Link6, vertical routine, start/end home and fixed I/O map |
+
+`motion.trayplace_height` is the required finite, nonnegative Link6 drop height
+above the detected tray surface in millimetres. It appears below `pick_rotation`
+in **Vertical motion — mm**. Hardware placement and Preview use surface Z +
+trayplace_height; pick geometry retains its existing three heights. Zero is valid
+for a drop target on the surface, but drop Z must remain below taught Home Z.
+Schema-9 and older files open as GUI recovery drafts with this field blank.
+Enter the intended height and explicitly Save before controller use or runtime
+deployment; no automatic default, pick-height sum or artifact rewrite is used.
 
 `yolo.image_size` is retained as reproducible inference metadata, not an editable
 GUI field. New profiles record 640; loading preserves the exact validated value

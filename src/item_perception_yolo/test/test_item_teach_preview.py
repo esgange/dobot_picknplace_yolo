@@ -982,6 +982,28 @@ def test_schema_four_gui_recovery_does_not_prefill_unknown_motion_rates(window, 
     window.node.inspect_model.assert_not_called()
 
 
+def test_trayplace_height_is_last_vertical_control_and_edit_disarms(window, paired_teach):
+    field = window.inputs["trayplace_height"]
+    assert field.text() == ""
+    layout = field.parentWidget().layout()
+    row, role = layout.getWidgetPosition(field)
+    rotation_row, _ = layout.getWidgetPosition(window.inputs["pick_rotation"])
+    assert row == rotation_row + 1 == layout.rowCount() - 1
+    assert role == gui.QtWidgets.QFormLayout.FieldRole
+    _, _, settings, _, _ = paired_teach
+    window._load_dialog()
+    finish_model_job(window)
+    assert float(field.text()) == settings["motion"]["trayplace_height"]
+    window.armed_toggle.setChecked(True)
+    assert window.armed_toggle.isChecked()
+    window.node.disarm.reset_mock()
+    field.setText("42.5")
+    assert window.saved_path is None
+    assert not window.armed_toggle.isChecked()
+    window.node.disarm.assert_called()
+    assert window._settings()["motion"]["trayplace_height"] == 42.5
+
+
 @pytest.mark.parametrize("prefill", [False, True])
 def test_valid_loaded_profile_can_simulate_and_arm_without_save(window, paired_teach, prefill):
     path, profile, _, _, _ = paired_teach
@@ -1090,6 +1112,8 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert window.recovered_draft
     assert window.inputs["pick_rotation"].text() == ""
     assert window.inputs["retract_height"].text() == ""
+    assert window.inputs["trayplace_height"].text() == ""
+    window.inputs["trayplace_height"].setText(str(settings["motion"]["trayplace_height"]))
     window.inputs["retract_height"].setText(str(settings["motion"]["retract_height"]))
     window.inputs["pick_rotation"].setText(str(settings["pick_rotation"]))
     assert window._settings() == settings
@@ -1102,7 +1126,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 9 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 10 and saved["retry"] == {"pose_candidates": 3}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings

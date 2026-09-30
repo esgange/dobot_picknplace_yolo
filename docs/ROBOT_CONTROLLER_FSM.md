@@ -1,5 +1,13 @@
 # Robot Controller — Finite State Machine
 
+Placement height review: **2026-09-30**, baseline **`9581a46`** plus diary rule
+**184**. Item Teach schema 10 requires `motion.trayplace_height` in millimetres.
+Real placement and Preview use surface Z + this height, independently of Pick
+heights. Approach/retract remain at Home Z, which must be above the drop. Older
+profiles require explicit height entry and Save in Item Teach before production
+loading; no fallback or automatic artifact rewrite is provided. Queue acceptance,
+release/neutral timing, final retract supervision and Pick routes are unchanged.
+
 Placement completion review: **2026-09-30**, baseline **`cbbacd0`** plus diary
 rule **183**. Place checks fresh idle RobotStatus and saved Tray Detect joints
 without commanding observation travel. Already matched proceeds immediately;
@@ -392,7 +400,7 @@ flowchart TD
     Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Valid; still at observation position| Queue["Admit three commands in one ordered CP100 group"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
-    Pre --> Release["MovLIO: drop Z = tray surface + standoff + pre-pick height; 80% OPEN + exhaust"]
+    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% OPEN + exhaust"]
     Release --> Retract["MovLIO: pre-place; 20% fingers + vacuum neutral"]
     Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
     Accepted --> Monitor["Completion worker: final retract joint-FK + idle + execution; neutral and DI1 LOW"]
@@ -444,13 +452,15 @@ normal Stop containment, with no placement motion or release. Attempt N/3 and th
 last failure reason appear in controller progress/events. No automatic arming,
 runtime restart, configuration/interface change or physical motion retry is added.
 
-Release Z = surface Z + standoff + prepick height, matching the item pre-pick
-height above the detected tray surface. Pre-place/retract Z = taught Home Z,
+Release Z = surface Z + `motion.trayplace_height` (millimetres). Schema 10
+requires this finite, nonnegative value; Pick standoff/pre-pick/retract settings
+do not affect it. Hardware and Preview share the calculation.
+Pre-place/retract Z = taught Home Z,
 matching the first Item Pick's `pN_transit` height before pre-pick; that initial
 route skips the lower clearance point. Approach/drop/retract keep tray-target
 X/Y and detect-relative tool attitude through the final upward endpoint.
 Require Home Z above drop Z for timed descent/retract. No extra preliminary
-safety rise or additional height setting is added. Queue exactly three commands,
+safety rise is added. Queue exactly three commands,
 at speed 100% for every segment. The external Tray Detect Position action also uses 100%.
 Global SpeedFactor still scales those speeds and is never changed by placement.
 Retain Item Teach travel/approach/retract acceleration for the queue and

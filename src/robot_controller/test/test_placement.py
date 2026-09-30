@@ -29,7 +29,8 @@ from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
 
 
 def settings():
-    return {"motion": {"standoff_height": 10., "prepick_height": 50., "retract_height": 20.},
+    return {"motion": {"standoff_height": 10., "prepick_height": 50., "retract_height": 20.,
+                       "trayplace_height": 60.},
             "speed": {"travel_percent": 80, "approach_percent": 10, "retract_percent": 20},
             "acceleration": {"travel_percent": 70, "approach_percent": 30, "retract_percent": 40},
             "timing": {"pick_settling": .2}, "pick_rotation": 90.,
@@ -61,18 +62,20 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
 @pytest.mark.parametrize("standoff,prepick,retract", [
     (0., 30., 0.), (10., 50., 20.), (25., 80., 120.), (10., 0., 40.),
 ])
-def test_tray_drop_matches_pick_prepick_and_approach_matches_first_pick_transit(
-        standoff, prepick, retract):
+@pytest.mark.parametrize("trayplace", [0., 40., 75.5])
+def test_tray_drop_height_is_independent_of_pick_heights(
+        standoff, prepick, retract, trayplace):
     profile = settings()
     profile["motion"] = {"standoff_height": standoff, "prepick_height": prepick,
-                         "retract_height": retract}
+                         "retract_height": retract, "trayplace_height": trayplace}
     home = pose_matrix([500, -150, 900, 170, 25, -60])
     detect = pose_matrix([300, 200, 800, 175, 12, 28])
     surface = pose_matrix([300, 200, 250, 0, 0, 0])
     pick = pick_targets(home, surface, profile, 1, rotation=detect[:3, :3])
     place = place_targets(detect, surface[:3, 3], profile, 0., home)
 
-    assert np.allclose(place[1].matrix, pick[2].matrix)
+    assert place[1].matrix[2, 3] == pytest.approx(.25 + trayplace / 1000)
+    assert pick[2].matrix[2, 3] == pytest.approx(.25 + (standoff + prepick) / 1000)
     assert np.allclose(place[0].matrix, pick[0].matrix)
     assert place[0].matrix[2, 3] == home[2, 3]
     assert place[0].matrix[2, 3] > place[1].matrix[2, 3]
@@ -86,6 +89,25 @@ def test_drop_at_or_above_home_rejects_before_any_placement_command(surface_z):
     node = operation_node()
     node.trays.request.return_value = np.array([.3, .2, surface_z])
     with pytest.raises(ValueError, match="Home Z must be above the drop height"):
+        run_place(node)
+    assert not node.hardware.calls
+    assert node.holding_item
+
+
+@pytest.mark.parametrize("value", [-1., float("nan"), float("inf"), True, "40", None])
+def test_invalid_trayplace_height_rejects_before_any_placement_command(value):
+    node = operation_node()
+    node.configuration.profile["motion"]["trayplace_height"] = value
+    with pytest.raises(ValueError, match="placement heights"):
+        run_place(node)
+    assert not node.hardware.calls
+    assert node.holding_item
+
+
+def test_missing_trayplace_height_has_no_pick_height_fallback():
+    node = operation_node()
+    del node.configuration.profile["motion"]["trayplace_height"]
+    with pytest.raises(ValueError, match="explicit trayplace_height"):
         run_place(node)
     assert not node.hardware.calls
     assert node.holding_item

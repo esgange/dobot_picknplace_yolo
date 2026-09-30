@@ -112,16 +112,21 @@ the recorded Tray Detect Pose attitude; the offset rotates about that tool's Z.
 Item axes and pick rotation have no effect on placement orientation.
 
 Placement keeps requested X/Y and measures surface Z using the Item Teach depth
-sampling diameter and quality settings. Release Z is surface + standoff + prepick
-height: the equivalent of item pre-pick above the detected tray surface (rule 169).
+sampling diameter and quality settings. Release Z is surface Z + the explicit
+Item Teach `motion.trayplace_height` in millimetres (rule 184). This placement
+clearance is independent of standoff, pre-pick and retract heights; Preview uses
+the same formula.
 Pre-place/retract uses the placement X/Y and orientation at taught Home Z,
 matching the first Item Pick approach (`pN_transit`) before pre-pick (rule 171).
 That initial Pick route skips its lower clearance/initial point. For surface Z
-250 mm, standoff 10 mm, prepick 50 mm and Home Z 800 mm, release is Z 310 mm and
+250 mm, trayplace_height 40 mm and Home Z 800 mm, release is Z 290 mm and
 approach/retract Z 800 mm. The final pose stays above the tray at this height
 with the detect-relative attitude; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
-blocks the placement queue. No additional height field or teach-file changes.
+blocks the placement queue. Require a complete schema-10 Item Teach profile with
+a finite, nonnegative `trayplace_height`. To use older profiles, open them in
+Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
+the updated pair. Production readers do not supply a fallback height.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
 Then queue exactly three Cartesian commands:
@@ -773,7 +778,7 @@ detector evidence. This origin-only constraint does not model the housing;
 maintain actual physical safety margin inside green. Blue inset checks still
 apply solely to the item pick point.
 
-The schema-9 geometry uses pick Z equal to item Z plus `standoff_height`,
+The schema-10 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed

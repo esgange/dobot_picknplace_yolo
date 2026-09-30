@@ -26,7 +26,7 @@ def validate_target(x_mm, y_mm, rotation_deg):
 
 
 def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
-    """Saved tool attitude plus local Z spin; drop at the tray-relative pre-pick Z."""
+    """Saved tool attitude plus local Z spin; explicit drop height above tray surface."""
     validate_target(1., 1., rotation_deg)
     matrix = rigid_matrix(detect_matrix, "Recorded Tray Detect Pose").copy()
     angle = math.radians(rotation_deg)
@@ -36,12 +36,12 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
     if surface.shape != (3,) or not np.isfinite(surface).all():
         raise ValueError("Placement surface must be a finite base-frame point")
     motion = settings["motion"]
-    if any(not math.isfinite(v) or v < 0 for v in motion.values()):
+    if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0
+           for v in motion.values()):
         raise ValueError("Invalid taught placement heights")
-    # The first item-pick approach is its target XY at Home Z, then pre-pick.
-    # Mirror those heights over the tray, using pre-pick as the drop endpoint.
-    release_z = (surface[2] + motion["standoff_height"] / 1000
-                 + motion["prepick_height"] / 1000)
+    if "trayplace_height" not in motion:
+        raise ValueError("Placement requires an explicit trayplace_height")
+    release_z = surface[2] + motion["trayplace_height"] / 1000
     home = rigid_matrix(home_matrix, "Home")
     pre_z = home[2, 3]
     if pre_z <= release_z:

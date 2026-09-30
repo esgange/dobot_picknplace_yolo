@@ -1043,6 +1043,18 @@ Home and physical-completion Place-result requirements; no new interface fields,
 schema, settings or ROS executor thread. Regenerate FSM exports with the change.
 
 
+Rule 184 adds required `motion.trayplace_height` to Item Teach schema 10, as an
+explicit finite, nonnegative millimetre value below pick_rotation in Vertical
+motion. Real placement and Preview set drop Z = detected tray surface Z +
+trayplace_height; Pick retains its existing standoff/pre-pick/retract equations.
+Keep Home-Z approach/retract above drop Z, saved detect-relative attitude, 100%
+speeds/global SpeedFactor, timed 80% release/20% neutral, ordered acceptance and
+background terminal supervision. Production rejects schemas 1–9; GUI recovery
+keeps independently valid fields and leaves the new height blank for explicit
+entry and Save. New profiles also start blank; never infer a default or sum of
+pick heights, automatically migrate files or rewrite local operator artifacts.
+No hardware commands or application restart. Update FSM and adjacent exports.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

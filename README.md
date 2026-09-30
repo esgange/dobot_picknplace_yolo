@@ -83,9 +83,10 @@ Error; the controller verifies alarm clearance before enabling. See the
 `robot_controller` is the production hardware authority for Home, Pick, Tray Detect
 Position and Place Item operations. Placement supports positive tray-local X/Y
 and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose, with
-live depth and Item Teach standoff/motion settings. The drop target is the tray
-surface Z + standoff + pre-pick height. Pre-place/retract uses the placement X/Y
-at taught Home Z, matching the first item-pick approach before pre-pick.
+live depth and Item Teach `motion.trayplace_height`. The drop target is the tray
+surface Z + `trayplace_height` (mm), independent of pick heights. Pre-place/retract
+uses the placement X/Y at taught Home Z, matching the first item-pick approach
+before pre-pick.
 Place checks fresh RobotStatus idle and all six joints within ±1° of saved Tray
 Detect. Proceed immediately when matched; otherwise wait up to three seconds,
 then report **Not at Tray Detect position** without detecting or placing.
@@ -406,7 +407,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-9 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-10 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -435,18 +436,21 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-9 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-10 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-9 profiles; they never recover old files.
+accept only complete schema-10 profiles; they never recover old files.
 The removed zheight_offset is not recovered. Old retract_height is blank in GUI
 drafts because it now means extra clearance above pre-pick, not above pick.
 Schema-7 and older drafts also leave `pick_rotation` blank; explicitly enter
-0–90° before saving schema 9. Schema-8 and older drafts leave all four optional
-bin-wall clearance fields blank for explicit review.
+0–90° before saving schema 10. Schema-8 and older drafts leave all four optional
+bin-wall clearance fields blank for explicit review. Schema-9 and older drafts
+leave `trayplace_height` blank; enter the intended tray clearance explicitly and
+Save before loading the new profile into the controller or deploying it for
+headless use. No automatic sum of pick heights or default is substituted.
 
-Item Teach schema 9 provides optional inward clearances for Bin Teach edges
+Item Teach schema 10 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
 valid inset is projected in light blue on both RGB and registered depth. The
 green ROI ignores a detection only when its platform-plane footprint is fully
@@ -473,10 +477,13 @@ The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
-never silently defaulted. Production rejects schemas 1–8.
-Motion saves only standoff_height, prepick_height and retract_height:
-pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
-clearance Z = pre-pick Z + retract. Offsets are millimetres in robot base Z.
+never silently defaulted. Production rejects schemas 1–9.
+Motion saves `standoff_height`, `prepick_height`, `retract_height` and
+`trayplace_height`. The new required, finite, nonnegative millimetre field is
+below `pick_rotation` at the bottom of **Vertical motion — mm**.
+Pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
+clearance Z = pre-pick Z + retract. Placement drop Z = tray surface Z +
+trayplace_height, shared by hardware and Preview. Offsets are in robot base Z.
 Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
 applied by Startup/Recover governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
