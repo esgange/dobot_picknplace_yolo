@@ -37,6 +37,8 @@ _TRANSITIONS["HOLDING"].add("PLACING")
 _TRANSITIONS["READY"].add("PLACING")
 _TRANSITIONS["PAUSED"].add("PLACING")
 _TRANSITIONS["PLACING"] = set(_TRANSITIONS["HOMING"]) | {"PAUSING"}
+# Auto Run's queued boundary transfers to Home/next Pick while retaining one owner.
+_TRANSITIONS["PLACING"].update(("HOMING", "PICKING"))
 
 # Managed parking owns the operation executor until Continue or a direct Stop.
 for _state in ("READY", "HOLDING", "PAUSED"):

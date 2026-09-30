@@ -22,12 +22,14 @@ from item_perception_yolo.item_teach_core import utc_now
 from item_perception_yolo.pick_planning import select_pick_attitude
 from item_perception_yolo.platform_teach_core import (
     _parse_env_file, load_robot_lan1_ip, workspace_root)
-from robot_controller_interfaces.action import GoHome, GoTrayDetectPosition, PickItem, PlaceItem
+from robot_controller_interfaces.action import (
+    AutoRun, GoHome, GoTrayDetectPosition, PickItem, PlaceItem)
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, SetGlobalSpeed
 
 from .candidates import (
     CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
+from .autorun import AutoRunOperation, validate_quantity
 from .configuration import load_configuration, load_runtime_configuration
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      HeldSuctionLost, HeldUnknown, ManagedInterruption, OperationCanceled,
@@ -99,6 +101,7 @@ class RobotController(Node):
         self.managed = ManagedControl(self)
         self.placement = None
         self.placement_thread = None
+        self.auto_run = None
         self.recovery_home = None
 
         self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
@@ -165,6 +168,11 @@ class RobotController(Node):
             self, PlaceItem, "/robot_controller/place_item",
             execute_callback=self._execute_place_action,
             goal_callback=self._place_goal, cancel_callback=self._cancel_goal,
+            callback_group=self.control_group)
+        self.auto_run_server = ActionServer(
+            self, AutoRun, "/robot_controller/auto_run",
+            execute_callback=self._execute_auto_run_action,
+            goal_callback=self._auto_run_goal, cancel_callback=self._cancel_goal,
             callback_group=self.control_group)
 
         if self.headless:
@@ -310,8 +318,13 @@ class RobotController(Node):
         if goal is not None:
             kind = {"home": GoHome, "pick": PickItem,
                     "tray_position": GoTrayDetectPosition, "place": PlaceItem}
-            feedback = kind[self.active_action].Feedback()
-            if self.active_action == "pick":
+            auto = getattr(self, "auto_run", None)
+            feedback = (AutoRun.Feedback() if auto is not None
+                        else kind[self.active_action].Feedback())
+            if auto is not None:
+                feedback.requested_quantity = auto.quantity
+                feedback.completed_quantity = auto.completed
+            elif self.active_action == "pick":
                 feedback.candidate_index = self.candidate_index
                 feedback.candidate_total = self.candidate_total
             feedback.phase, feedback.waypoint, feedback.message = phase, waypoint, message
@@ -340,6 +353,12 @@ class RobotController(Node):
         status.operation_active = self.operation_lock.locked()
         status.operation, status.phase, status.waypoint = (
             self.active_action, self.phase, self.waypoint)
+        auto = getattr(self, "auto_run", None)
+        status.auto_run_active = auto is not None
+        if auto is not None:
+            status.operation = "auto_run"
+            status.auto_run_requested = auto.quantity
+            status.auto_run_completed = auto.completed
         status.candidate_index, status.candidate_total = (
             self.candidate_index, self.candidate_total)
         session = self.managed.session
@@ -692,6 +711,8 @@ class RobotController(Node):
 
     def _managed_request(self, kind, response):
         try:
+            if getattr(self, "auto_run", None) is not None:
+                raise CommandRejected("Manual controls are disabled during Auto Run; use STOP")
             self.managed.request(kind)
             response.success = True
             response.message = "Request accepted; observe controller status for completion"
@@ -710,6 +731,8 @@ class RobotController(Node):
 
     def _continue(self, _request, response):
         try:
+            if getattr(self, "auto_run", None) is not None:
+                raise CommandRejected("Manual controls are disabled during Auto Run; use STOP")
             self.managed.continue_operation()
             response.success = True
             response.message = "Continue accepted"
@@ -843,9 +866,9 @@ class RobotController(Node):
         if (not self.startup_complete or config is None or self.machine.state not in allowed
                 or requested_id != config.configuration_id):
             return GoalResponse.REJECT
-        if action == "pick" and (config.selection is None or self.holding_item):
+        if action in ("pick", "auto_run") and (config.selection is None or self.holding_item):
             return GoalResponse.REJECT
-        if action in ("pick", "tray_position", "place") and (
+        if action in ("pick", "tray_position", "place", "auto_run") and (
                 config.tray is None or config.tray.detect_joints is None):
             return GoalResponse.REJECT
         if action == "place" and self.headless:
@@ -854,6 +877,9 @@ class RobotController(Node):
                     or session.attempts[session.held_index - 1].state != "HELD"):
                 return GoalResponse.REJECT
         if action in ("pick", "place") and not self._perception_ready(action):
+            return GoalResponse.REJECT
+        if action == "auto_run" and not all(
+                self._perception_ready(kind) for kind in ("pick", "place")):
             return GoalResponse.REJECT
         try:
             self._begin_operation(action)
@@ -876,6 +902,55 @@ class RobotController(Node):
         except ValueError:
             return GoalResponse.REJECT
         return self._reserve_goal("place", request.configuration_id)
+
+    def _auto_run_goal(self, request):
+        try:
+            validate_quantity(request.quantity)
+            validate_target(request.x_mm, request.y_mm, request.rotation_deg)
+        except ValueError:
+            return GoalResponse.REJECT
+        return self._reserve_goal("auto_run", request.configuration_id)
+
+    def _execute_auto_run_action(self, goal):
+        self.active_goal = goal
+        result = AutoRun.Result()
+        result.requested_quantity = goal.request.quantity
+        run = None
+        try:
+            run = self.auto_run = AutoRunOperation(self, goal.request)
+            success = run.run()
+            run.close()
+            self.raise_if_cancelled()
+            result.outcome = result.SUCCESS if success else result.NO_PICK
+            result.completed_quantity = run.completed
+            result.message = (f"Auto Run {'completed' if success else 'ended: no item picked'}; "
+                              f"{run.completed}/{run.quantity} placements completed; robot Home")
+            result.final_state = self.machine.state
+            self._transition("READY", result.message)
+            goal.succeed()
+            self.events.record("INFO", "auto_run_result", result.message,
+                               completed=run.completed, requested=run.quantity)
+            return result
+        except Exception as exc:
+            result.completed_quantity = run.completed if run is not None else 0
+            result = self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
+            result.message += (f"; Auto Run completed {result.completed_quantity}/"
+                               f"{result.requested_quantity} placements")
+            self.events.record("ERROR", "auto_run_result", result.message,
+                               completed=result.completed_quantity,
+                               requested=result.requested_quantity)
+            return result
+        finally:
+            try:
+                if run is not None:
+                    run.close()
+            except Exception as exc:
+                self._contain_queue_control_failure("Auto Run cleanup", exc)
+            finally:
+                if self.placement is not None and not self.placement.needs_recovery:
+                    self.placement = None
+                self.auto_run = None
+                self._end_operation()
 
     def _execute_place_action(self, goal):
         self.active_goal = goal
@@ -1218,6 +1293,44 @@ class RobotController(Node):
         self.operation_progress(
             phase, message, candidate_index=index, candidate_total=self.candidate_total)
 
+    def _plan_candidate_batch(self, batch):
+        config = self.configuration
+        plans = []
+        for index, candidate in enumerate(batch.candidates, 1):
+            item_pose = candidate_pose_in_base(
+                config.selection.station.platform.base_from_platform,
+                candidate.position_m, candidate.quaternion)
+            attitude = select_pick_attitude(
+                config.home_matrix, item_pose, config.profile["pick_rotation"],
+                config.profile["motion"]["standoff_height"],
+                config.selection.station.platform.base_from_platform,
+                config.selection.robot_camera.reference_from_camera_link,
+                [[point.x_m, point.y_m] for point in config.selection.bin.points])
+            if not attitude.accepted:
+                raise FeedbackFailure(
+                    "Detector returned a candidate whose normal and 180-degree "
+                    "robot-camera attitudes are outside the Bin ROI")
+            plan = pick_targets(
+                config.home_matrix, item_pose, config.profile, index,
+                rotation=attitude.rotation)
+            plans.append(plan)
+            self.events.record(
+                "INFO", "pick_orientation_planned",
+                "Applied the nearest legal offset from the item short-axis line",
+                candidate_id=candidate.identifier, candidate_index=index,
+                candidate_quaternion_xyzw=list(candidate.quaternion),
+                item_short_axis_base=item_pose[:3, 0].tolist(),
+                target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
+                configured_pick_rotation_deg=config.profile["pick_rotation"],
+                selected_offset_direction=attitude.offset_direction,
+                rotation_from_home_deg=attitude.rotation_from_home_deg,
+                robot_camera_mirrored=attitude.mirrored,
+                robot_camera_platform_xy=list(
+                    attitude.selected_camera_platform_xy),
+                robot_camera_sha256=config.selection.robot_camera.sha256,
+                target_rpy_deg=pose_values(plan[0].matrix)[3:])
+        return plans
+
     def _execute_pick_action(self, goal):
         self.active_goal = goal
         result = PickItem.Result()
@@ -1253,40 +1366,7 @@ class RobotController(Node):
                         self.operation_progress(
                             "PLAN", f"Validated {self.candidate_total} fresh candidates",
                             candidate_total=self.candidate_total)
-                        plans = []
-                        for index, candidate in enumerate(batch.candidates, 1):
-                            item_pose = candidate_pose_in_base(
-                                config.selection.station.platform.base_from_platform,
-                                candidate.position_m, candidate.quaternion)
-                            attitude = select_pick_attitude(
-                                config.home_matrix, item_pose, config.profile["pick_rotation"],
-                                config.profile["motion"]["standoff_height"],
-                                config.selection.station.platform.base_from_platform,
-                                config.selection.robot_camera.reference_from_camera_link,
-                                [[point.x_m, point.y_m] for point in config.selection.bin.points])
-                            if not attitude.accepted:
-                                raise FeedbackFailure(
-                                    "Detector returned a candidate whose normal and 180-degree "
-                                    "robot-camera attitudes are outside the Bin ROI")
-                            plan = pick_targets(
-                                config.home_matrix, item_pose, config.profile, index,
-                                rotation=attitude.rotation)
-                            plans.append(plan)
-                            self.events.record(
-                                "INFO", "pick_orientation_planned",
-                                "Applied the nearest legal offset from the item short-axis line",
-                                candidate_id=candidate.identifier, candidate_index=index,
-                                candidate_quaternion_xyzw=list(candidate.quaternion),
-                                item_short_axis_base=item_pose[:3, 0].tolist(),
-                                target_green_axis_base=plan[0].matrix[:3, 1].tolist(),
-                                configured_pick_rotation_deg=config.profile["pick_rotation"],
-                                selected_offset_direction=attitude.offset_direction,
-                                rotation_from_home_deg=attitude.rotation_from_home_deg,
-                                robot_camera_mirrored=attitude.mirrored,
-                                robot_camera_platform_xy=list(
-                                    attitude.selected_camera_platform_xy),
-                                robot_camera_sha256=config.selection.robot_camera.sha256,
-                                target_rpy_deg=pose_values(plan[0].matrix)[3:])
+                        plans = RobotController._plan_candidate_batch(self, batch)
 
                         self.managed.session = PickSession(
                             [candidate.identifier for candidate in batch.candidates], plans,

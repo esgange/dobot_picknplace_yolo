@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/PickItem.action"
   "action/GoTrayDetectPosition.action"
   "action/PlaceItem.action"
+  "action/AutoRun.action"
   "msg/ControllerStatus.msg"
   "srv/Command.srv"
   "srv/Configure.srv"

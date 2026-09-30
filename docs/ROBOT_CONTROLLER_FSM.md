@@ -1,5 +1,12 @@
 # Robot Controller — Finite State Machine
 
+Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
+One counted action owns Pick/Place and final Home. Prefetch the next bin batch
+during placement and append Home/next Pick immediately when it is ready, without
+an intermediate arrival wait. Keep the old source until placement execution and
+neutral/released feedback cross into the appended Home. Auto Run disables manual
+controls except direct STOP and ends on exhausted retries with a partial count.
+
 Load/preparation review: **2026-09-30**, baseline **`e87fb08`** plus diary rule
 **187**. Explicit Configure now retains one operation owner through source loading
 and the existing hardware Startup sequence. READY is confirmed before success;
@@ -158,7 +165,7 @@ action. Flowchart boxes below describe steps unless explicitly named as states.
 ## 1a. Operator status, buttons and preview
 
 The window title is **Robot Controller**. The main status is NOT READY, READY,
-BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED or OFFLINE. Starting, homing,
+BUSY, HOLDING ITEM, AUTO RUN, PAUSED, ATTENTION REQUIRED or OFFLINE. Starting, homing,
 picking, placing, parking, returning and recovering appear in the activity line;
 PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
@@ -173,7 +180,8 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Preview; reload; speed; STOP |
+| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; STOP |
+| AUTO RUN | STOP; quantity/progress visible; all manual controls and input edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
 | HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; STOP |
@@ -652,6 +660,68 @@ declares successful placement. Bin put-back is available only for the exhausted
 acquisition Pause described above, before any placement release admission. Pick settling/retries and its return paths are
 unchanged. Process restart cannot reconstruct retained placement progress.
 
+## 3b. Counted Auto Run and queued next Pick
+
+Auto Run is a native action under one operation lock, not GUI-generated action
+requests. It requires configured, unheld READY, saved Tray Detect joints and both
+canonical pose providers. The goal freezes quantity (1–10000), placement X/Y/rotation
+and debug-image choice. The first Pick uses the existing Home skip/arrival and
+candidate pipeline. All cycles keep normal Pick motion, acquisition and loss
+handling, and use trusted held-item placement even when launched from the GUI.
+
+```mermaid
+flowchart TD
+    Start["READY: Auto Run quantity and placement target"] --> Pick["Normal first Pick; at most 3 candidate batches"]
+    Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
+    Tray --> Observe["Fresh tray/depth acquisition; at most 3 requests"]
+    Observe --> Place["Queue approach → timed release → final retract"]
+    Place --> Last{"Last required item?"}
+    Last -->|Yes| Home["Immediately append Home behind placement"]
+    Home --> Done["Count placement execution/release; confirm final Home + neutral + DI1 LOW; READY"]
+    Last -->|No| Prefetch["Request next bin batch while supervising placement"]
+    Prefetch --> Ready{"Validated poses ready?"}
+    Ready -->|No| Prefetch
+    Ready -->|Yes| Append["Append Home → entry → pre-pick → pick; no placement/Home idle wait"]
+    Append --> Boundary["Home queue ID reached/passed + observed neutral/DI1 LOW: count old placement and switch source"]
+    Boundary --> Next["Acquire next item; normal retries/lifts"]
+    Next --> Tray
+    Pick -->|3 batches exhausted| Empty["End NO_PICK at Home; report partial count"]
+    Next -->|3 batches exhausted| Empty
+    Observe -->|3 requests exhausted| Fail["Stop containment; end run with partial count"]
+    Prefetch -->|Detector error| Fail
+    Append -->|Fault or Stop| Fail
+```
+
+Only one read-only candidate worker overlaps motion; all hardware dispatch remains
+in the owning action thread, and the ROS executor still has exactly two threads.
+The worker uses the existing validated request path and immutable configuration.
+One batch belongs to the next Pick, is consumed once, and is discarded on Stop,
+source change or run failure. A repeated batch ID is rejected across the whole run.
+If a valid empty batch arrives, append/finish Home, then use only the remaining
+two Pick attempts. If observation is slower than placement, finish normal retract
+supervision, then wait for the request while supervising unheld idle feedback.
+
+The planned retract is at Home Z, so the first appended target is an ordinary
+joint-target Home MovL. Its returned queue ID supplies the execution boundary
+that MovLIO cannot return. The old placement/source remains authoritative until
+advancing FeedInfo reaches or passes that ID and output history shows neutral
+DO1/DO2/DO13/DO14 with DI1 LOW since placement admission. Then mark the old item
+PLACED, increment once, and activate the next ledger. Old held DI1 cannot trigger
+the next pickup. Missing neutral/release evidence at the boundary fails closed;
+Stop before it retains the old source, and Stop after it retains the next source.
+There is no stationary midpoint or separate physical Home confirmation before
+the next descent; CP(100) and ordered acceptance are preserved. Final Home still
+requires actual saved-joint/idle/execution confirmation and neutral/DI1 LOW.
+Counts mean placement execution/release evidence, not measured physical delivery.
+
+The UI exposes AUTO RUN with completed/requested counts and locks all manual
+buttons/inputs except permanent STOP. External manual actions cannot acquire the
+operation slot; Pause/Continue/Return explicitly reject. Three exhausted Pick
+batches end NO_PICK at Home. Three exhausted tray requests end through Stop
+containment instead of opening the manual Place pause workflow. Other faults and
+STOP also terminate with the completed count; no fourth attempt, resume, automatic
+startup, configuration change or hardware restart is implied.
+
 ## 4. Pause and Continue
 
 ```mermaid
@@ -848,6 +918,7 @@ Names below are relative to `/robot_controller/`.
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
 | `place_item` action | Started GUI READY/HOLDING, or headless HOLDING with trusted HELD source; saved tray joints; tray detector ready; exact configuration ID; operation slot free |
+| `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
 | `return_item` service | Started eligible managed state and trusted held source; during Place, only exhausted-acquisition PAUSED before release admission; no conflicting request |
@@ -857,7 +928,7 @@ Names below are relative to `/robot_controller/`.
 
 Acceptance is not proof of motion completion. Pause/Continue/Return services
 acknowledge a request; observe status afterward. Home/Pick actions provide final
-results: SUCCESS, NO_PICK (Pick only), CANCELED, COMMAND_REJECTED,
+results: SUCCESS, NO_PICK (Pick/Auto Run), CANCELED, COMMAND_REJECTED,
 FEEDBACK_FAILURE, STOP_UNCONFIRMED or CONTROLLER_FAULT. A controlled Return Item
 that ends active Home/Pick or acquisition-paused Place reports CANCELED and final
 READY; it does not claim pick/placement success.
@@ -952,7 +1023,7 @@ Updating a message without changing state is allowed in every state.
 | `PAUSING` | `FAULT`, `PAUSED`, `RETURNING_ITEM`, `STOPPING` |
 | `RETURNING_ITEM` | `FAULT`, `PAUSED`, `PICKING`, `READY`, `STOPPING` |
 | `TRAY_POSITIONING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
-| `PLACING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
+| `PLACING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `HOMING`, `PAUSED`, `PAUSING`, `PICKING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
 
 ## 10. Maintaining this document
 

@@ -17,6 +17,22 @@ remains `HELD`; an unconfirmed release is never relabeled `PLACED` or `RETURNED`
 `can_return_item` reports availability of trusted held source context. Rebuild
 this interface package and restart all clients after updating these fields.
 
+`AutoRun` is the native `/robot_controller/auto_run` action. Its goal carries the
+exact configuration ID, a quantity of 1–10000, placement X/Y/rotation and debug-image
+choice. It requires unheld READY, a complete Item/Bin/Tray configuration and both
+canonical pose providers. One operation owner combines Pick/Place, prefetches one
+next bin batch during placement, and appends Home/next Pick as soon as it is ready,
+without waiting for intermediate placement/Home arrival. Final Home is confirmed.
+Feedback and result include requested/completed quantities; SUCCESS means all
+requested placements and final Home completed. NO_PICK ends after three exhausted
+Pick batches; other failures/cancellation retain a partial count and use normal
+Stop containment. The manual Place action's acceptance-only result is unchanged.
+`ControllerStatus.auto_run_active`, `auto_run_requested`, `auto_run_completed` and
+operation `auto_run` identify the owner while lifecycle states describe its current
+phase. Manual Pause/Continue/Return reject during Auto Run; direct Stop and action
+cancellation always pre-empt. This is a wire-interface change: rebuild interfaces
+and controller, and manually restart every status/action client together.
+
 `ControllerStatus` also carries observed enable/running/queue/error/collision
 flags and raw `digital_input_bits` / `digital_outputs` from one validated
 canonical feedback snapshot. They are valid only when `feedback_fresh` is true;

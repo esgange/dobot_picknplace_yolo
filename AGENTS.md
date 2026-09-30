@@ -1127,6 +1127,28 @@ Supersede only successful pickup's stopped-origin/physical-Stop wait in earlier
 rules. Preserve routes, rates, grip timing, retry budget and schema. Update FSM
 and exports; validate with fake services/feedback, without hardware or restart.
 
+Rule 189 adds a native counted AutoRun action and GUI Auto Run/quantity controls.
+Reserve one owner from unheld configured READY with both detectors through final
+Home or failure. Reuse Pick/Place geometry, rates, timed I/O and retry budgets;
+tray acquisition still requires confirmed saved joints/idle. After placement
+admission, prefetch one next bin batch in a read-only worker while supervising
+motion. As soon as ready, append joint Home and next Pick behind placement without
+waiting for placement/Home arrival. A valid empty batch uses Home and only the
+remaining Pick attempts. Bind/consume each batch once; reject repeated IDs and
+discard pending results on Stop/failure. Retain the old placement/source until
+advancing FeedInfo reaches/passes the appended Home queue ID with observed neutral
+outputs and DI1 LOW; then count it once and activate the next source/acquisition.
+Never count acceptance alone or let the old DI1 trigger the next item. Append final
+Home immediately after the last placement, with no extra item request, and confirm
+saved joints/idle, neutral outputs and DI1 LOW before SUCCESS. Manual controls/input
+edits, including Pause/Continue/Return, are disabled during Auto Run; direct STOP
+and action cancellation always pre-empt. Three exhausted Pick batches or tray
+requests end the run with its partial count; no automatic fourth attempt/restart.
+Add typed quantity/progress/result fields, rebuild interfaces/controller and update
+FSM/exports. Keep two ROS executor threads, no launch-time run or new config/schema,
+and no hardware commands/restarts during verification. Supersede midpoint arrival
+barriers only for the owned Auto Run placement-to-Home/next-Pick queue extension.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -201,19 +201,24 @@ class ManagedControl:
                 self.session.held_index = None
                 self.return_progress = None
 
-    def run_pick(self, plans, *, check, departure=(), departure_pose=None):
+    def run_pick(self, plans, *, check, departure=(), departure_pose=None,
+                 queued_home=(), placement_bridge=None):
         """Keep confirmed held loss inside the owning Pick and its saved batch."""
         node = self.node
         while True:
             try:
                 return PickExecutor(node.hardware, finish_home=True).run(
-                    plans, node.configuration.profile, session=self.session, check=check,
+                    plans, node.configuration.profile,
+                    session=(placement_bridge.next_session if placement_bridge is not None
+                             else self.session), check=check,
                     tray_target=pick_tray_target(
                         node.configuration.tray, node.configuration.profile),
                     return_home=node._execute_home, progress=node._candidate_progress,
                     holding_changed=lambda value: setattr(node, "holding_item", value),
-                    departure=departure, departure_pose=departure_pose)
+                    departure=departure, departure_pose=departure_pose,
+                    queued_home=queued_home, placement_bridge=placement_bridge)
             except HeldSuctionLost:
+                queued_home, placement_bridge = (), None
                 returned = self._return_after_suction_loss()
                 if returned is None:
                     return {"picked": False, "candidate": None, "holding_item": False}

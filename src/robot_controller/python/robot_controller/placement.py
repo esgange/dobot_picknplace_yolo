@@ -76,6 +76,7 @@ class PlacementOperation:
     neutral_issued: bool = False
     release_confirmed: bool = False
     history_sequence: int = 0
+    queue_start_sequence: int = 0
     initial_outputs: int = 0
     observing: bool = False
     tray_attempts: TrayAttempts = field(default_factory=TrayAttempts)
@@ -104,6 +105,7 @@ class PlacementOperation:
         mask = (1 << 13) | (1 << 12) | 3
         self.initial_outputs = sample.feed["digital_outputs"] & mask
         self.history_sequence = sample.sequence
+        self.queue_start_sequence = sample.sequence
         self.release_issued = self.neutral_issued = False
         self.release_confirmed = False
         self.observing = True
@@ -204,6 +206,9 @@ class PlacementOperation:
                                          attempts=self.tray_attempts,
                                          check_state=lambda: self.check_observation(node))
         except TrayAcquisitionExhausted as exc:
+            if getattr(node, "auto_run", None) is not None:
+                # Auto Run reports partial quantity; it never grants extra retries.
+                raise
             with node.managed.lock:
                 node.wait_for_resume()
                 self.acquisition_failure = str(exc)

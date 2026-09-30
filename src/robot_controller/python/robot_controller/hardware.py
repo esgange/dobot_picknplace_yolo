@@ -314,7 +314,7 @@ class DobotTransport:
         return result
 
     def call_group(self, calls, *, progress=None, outputs_by_call=None, admitted=None,
-                   issuing=None):
+                   issuing=None, accepted=None):
         """Admit motion in dashboard order, without intermediate arrival waits."""
         calls = tuple((name, dict(fields)) for name, fields in calls)
         if not calls or any(name not in MOTION_SERVICES for name, _fields in calls):
@@ -420,6 +420,8 @@ class DobotTransport:
                         self._motion_command_id(result)
                     self._finish_service_audit(audit, "accepted", result=result)
                     results.append(result)
+                    if accepted is not None:
+                        accepted(len(results) - 1, result)
                     if admitted is not None:
                         admitted(len(results) - 1)
                     if suction_loss is not None:
@@ -1099,10 +1101,10 @@ class DobotTransport:
         return self.finish_batch(batch)
 
     @staticmethod
-    def finish_batch(batch):
+    def finish_batch(batch, *, handoff=None):
         """Resume the admitted group's existing guards and physical completion loop."""
         try:
-            next(batch)
+            batch.send(handoff)
         except StopIteration as completed:
             return completed.value
         else:
@@ -1114,7 +1116,8 @@ class DobotTransport:
                     forbid_suction=False, stop_on_suction=False,
                     before_suction=None, pick_settling_sec=0.0,
                     require_suction_reset=False, return_terminal_pose=False,
-                    confirmed_start_pose=None, preserve_outputs=False, placement=None):
+                    confirmed_start_pose=None, preserve_outputs=False, placement=None,
+                    placement_bridge=None):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction,
@@ -1123,6 +1126,9 @@ class DobotTransport:
                     or not math.isfinite(pick_settling_sec) or pick_settling_sec < 0)
                 or (pick_settling_sec and not stop_on_suction)
                 or (require_suction_reset and not stop_on_suction)
+                or (placement_bridge is not None and (
+                    placement is not None or require_suction or forbid_suction
+                    or require_suction_reset or confirmed_start_pose is None))
                 or type(return_terminal_pose) is not bool
                 or (confirmed_start_pose is not None
                     and not self._valid_rigid_matrix(confirmed_start_pose))):
@@ -1175,6 +1181,12 @@ class DobotTransport:
 
         def progress(snapshot):
             nonlocal suction_reset_seen, suction_clear_seen, suction_armed
+            if placement_bridge is not None:
+                placement_bridge.observe(snapshot)
+                if (placement_bridge.completed and not stop_on_suction
+                        and (snapshot.feed["digital_outputs"] & GRIP_MASK
+                             or snapshot.feed["digital_input_bits"] & 1)):
+                    raise FeedbackFailure("Auto Run Home requires neutral outputs and DI1 LOW")
             if placement is not None:
                 placement.observe(self.node, snapshot)
             for channel, active in fixed_outputs.items():
@@ -1189,7 +1201,10 @@ class DobotTransport:
                 if suction_reset_seen and not detected:
                     suction_clear_seen = True
             vacuum = bool(snapshot.feed["digital_outputs"] & (1 << 12))
-            if suction_reset_seen and suction_clear_seen and vacuum:
+            bridge_ready = placement_bridge is None or placement_bridge.completed
+            if placement_bridge is not None:
+                suction_clear_seen = placement_bridge.completed
+            if bridge_ready and suction_reset_seen and suction_clear_seen and vacuum:
                 suction_armed = True
             self.acquisition_eligible = stop_on_suction and suction_armed
             if self.acquisition_eligible:
@@ -1268,9 +1283,13 @@ class DobotTransport:
                 "MOTION", f"Dispatching {batch_name} as one command group",
                 waypoint=targets[-1].name)
             extra = {"issuing": placement.issued} if placement is not None else {}
+            if placement_bridge is not None:
+                extra["accepted"] = placement_bridge.accepted
             replies = self.call_group(
                 calls, progress=progress, outputs_by_call=outputs_by_call,
-                admitted=lambda index: self._target_admitted(targets[index]), **extra)
+                admitted=lambda index: (
+                    placement_bridge.admitted(targets[index]) if placement_bridge is not None
+                    else self._target_admitted(targets[index])), **extra)
             queued_targets.extend(
                 target.name for target, _events in target_records[0:len(replies)])
             expected_outputs = {}
@@ -1299,7 +1318,9 @@ class DobotTransport:
                 terminal_target=targets[-1].name, terminal_command_id=terminal_command_id)
             # The generator retains moving/execution evidence and cleanup until
             # its one owner finishes or closes it. Normal actions resume inline.
-            yield
+            handoff = yield
+            if handoff is not None and placement is None:
+                raise CommandRejected("Only placement may hand off its admitted queue")
             tail = targets[-1]
             terminal_stable_sec = (pick_settling_sec if stop_on_suction
                                    else 0.0)
@@ -1331,7 +1352,8 @@ class DobotTransport:
                 motion_idle = (
                     self._fresh_position(snapshot, accepted)
                     and executed and self._queue_idle(snapshot)
-                    and reached and snapshot.robot_enabled)
+                    and reached and snapshot.robot_enabled
+                    and (placement_bridge is None or placement_bridge.completed))
                 idle = motion_idle and outputs_ready
                 waiting_outputs = motion_idle and not outputs_ready and not stop_on_suction
                 output_wait_since = now if waiting_outputs and output_wait_since is None else (
@@ -1350,6 +1372,10 @@ class DobotTransport:
                     if placement is not None:
                         placement.complete(self.node, snapshot)
                     break
+                if handoff is not None and handoff():
+                    # One Auto Run owner immediately appends behind this queue.
+                    # Prefer already-confirmable completion for accurate counts.
+                    return
                 if not waiting_outputs and now - last_progress >= MOTION_NO_PROGRESS_SEC:
                     raise FeedbackFailure("Motion made no measurable progress for three seconds")
                 if now - started >= MOTION_HARD_CAP_SEC:

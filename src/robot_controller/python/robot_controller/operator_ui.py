@@ -28,6 +28,9 @@ def presentation(state, preview=False):
         return "PREVIEW", "No robot motion. Home, Pick Item and Place Item show planned TFs."
     if not state.feedback_fresh:
         return "OFFLINE", "Robot feedback unavailable. " + state.motion_block_reason
+    if getattr(state, "auto_run_active", False):
+        return "AUTO RUN", (f"{state.auto_run_completed}/{state.auto_run_requested} placed\n"
+                            + state.message)
     if state.state in BUSY_ACTIVITIES:
         return "BUSY", BUSY_ACTIVITIES[state.state] + "\n" + state.message
     if state.state in ATTENTION:
@@ -50,7 +53,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
                   bin_selected=False, tray_selected=False):
     """Empty reason means enabled; local service availability is applied by the GUI."""
     names = ("configure", "recover", "pause", "return_item", "continue",
-             "home", "pick", "place", "preview_toggle", "speed")
+             "home", "pick", "place", "preview_toggle", "speed", "auto_run")
     reasons = dict.fromkeys(names, "Unavailable in the current state")
     if state is None:
         reasons = dict.fromkeys(names, "Controller status unavailable")
@@ -58,6 +61,8 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
             reasons["preview_toggle"] = ""
         return reasons
     current = state.state
+    if getattr(state, "auto_run_active", False):
+        return dict.fromkeys(names, "Auto Run owns the robot; use STOP to end the run")
     idle = not (state.operation_active or action_pending or pending or managed_pending)
     if (current in ("UNCONFIGURED", "INACTIVE", "READY") and idle
             and not state.holding_item and state.configuration_editable):
@@ -141,4 +146,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
                         or target_error
                         or ("Arm Tray Teach or start Tray Detect with exactly one provider"
                             if not state.tray_detector_ready else ""))
+    reasons["auto_run"] = (reasons["pick"] or target_error
+                           or ("Arm Tray Teach or start Tray Detect with exactly one provider"
+                               if not state.tray_detector_ready else ""))
     return reasons

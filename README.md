@@ -39,6 +39,19 @@ The motion controls form one four-button grid:
 | Home | Preview: OFF / ON |
 | Pick Item | Place Item |
 
+**Auto Run**, below this grid, takes a quantity of 1–10000 and uses the displayed
+placement X/Y/rotation for every cycle. Start from unheld READY with both detectors
+available. It picks, waits for stable Tray Detect before observing the tray, and
+queues placement. While placement executes, one read-only bin request prepares
+the next item batch. As soon as it is ready, append Home and the next Pick behind
+the placement queue; no intermediate idle/arrival wait is added. After the last
+placement, append Home immediately and finish only at confirmed Home. The displayed
+count requires placement execution and neutral/released feedback, not acceptance
+alone. Auto Run disables manual controls, including Pause; permanent STOP remains
+available. Three exhausted Pick batches or tray requests end the run and report
+its completed quantity. Robot faults and STOP also end it; no automatic restart.
+Rebuild interfaces/controller and manually restart their clients after upgrading.
+
 **Preview ON** makes all three motion buttons publish planned TF targets without
 moving the robot or changing gripper outputs. Home shows its alignment and final
 pose; Pick shows a fresh batch's candidate, entry/exit and return targets; Place

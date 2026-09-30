@@ -7728,6 +7728,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   eight FSM diagrams and the eight-page A3 PDF; verified source SHA-256
   447b7f4ff6ca2c6d5223a0499edae8df1004238ac8e601d5258c96b74408f5e9.
 
+### 2026-09-30 — Rule 189: counted Auto Run with queued placement-to-pick handoff
+
+- User requested Auto Run plus an adjacent quantity input. Freeze quantity,
+  placement offsets/rotation and debug-image choice in one native action under
+  one operation owner. Use the existing Pick/Place routines and canonical
+  candidate planning. Start unheld READY with both providers; count actual
+  execution/release evidence and finish only after final Home confirmation.
+- User corrected the initial proposal: append Home/next Pick as soon as the next
+  poses are ready, without waiting for placement to finish physically. Start one
+  read-only bin request after all placement commands are admitted. Supervise
+  placement until that result is ready, then transfer completion supervision to
+  the appended group. Saved Tray Detect joints/idle still gate tray acquisition.
+  If perception is slower, finish placement and supervise idle while awaiting it.
+- Preserve the previous source and release history until advancing queue feedback
+  reaches/passes the first appended Home MovL ID with neutral outputs and DI1 LOW.
+  Only then count placement and activate the next candidate ledger/acquisition.
+  Ignore the previous item's DI1 for next-pick acquisition. MovLIO retains its
+  acceptance-only schema. No midpoint stop, fabricated queue ID or concurrent
+  hardware owner; final Home and terminal Pick/Tray arrivals remain confirmed.
+- User selected stopping/reporting partial quantity after three exhausted Pick
+  batches or tray requests. Keep those budgets; detector/robot/transport faults
+  and direct Stop also end the run. No automatic restart or extra batch. Drop
+  handling inside Pick remains the existing saved-source put-back/retry behavior.
+  Cancel/discard the one prefetched batch on termination and reject reused batch
+  IDs across the run. Keep source/hash, geometry, freshness, ownership and I/O gates.
+- Lock manual buttons and all inputs during Auto Run, including Pause/Continue/
+  Return, while retaining permanent STOP. Reject external manual queue controls
+  and competing actions at the controller. Add typed AutoRun action and status
+  quantities; show progress and report final/partial counts. Keep the existing
+  manual action endpoints and attended Place behavior. No new teach/.env schema,
+  launch action, application restart or physical hardware command during validation.
+- Validation: **861 controller tests passed**, including queued handoff before
+  placement arrival, old/new DI1 isolation, execution/release counting, direct
+  Stop, final Home, slow/failed/canceled prefetch, three-batch exhaustion, quantity
+  bounds and GUI/manual-control exclusion. Interfaces/controller build, scoped
+  100-column flake8 and diff checks pass. Offscreen fake-node UI inspection
+  confirms quantity/progress and permanent STOP with manual controls disabled.
+  Regenerated nine FSM SVGs and the nine-page A3 PDF; verified source SHA-256
+  14670ec3d7bd135c8bc4904b174bf698d73a51cac82787712eb84f5b14d25bd3.
+  No hardware commands or running-app restart; unrelated RViz changes and local
+  calibration/teach/model artifacts remain untouched and excluded.
+
 ### Future entry template
 
 ```text

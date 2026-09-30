@@ -212,7 +212,8 @@ class PickExecutor:
 
     def run(self, plans, settings, *, tray_target, check, return_home, remember_prepick=None,
             progress=None, holding_changed=None, session=None,
-            departure=(), departure_pose=None):
+            departure=(), departure_pose=None, queued_home=(),
+            placement_bridge=None):
         grip = settings["gripper"]["use_grip"]
         close_on_pick = grip and settings["gripper"]["grip_onpick"]
         if not plans:
@@ -244,7 +245,7 @@ class PickExecutor:
             if progress is not None:
                 progress("CANDIDATE", f"Attempting candidate {start_index}", start_index)
             check(start_index)
-            if not self.hardware.sensor(False, 0):
+            if placement_bridge is None and not self.hardware.sensor(False, 0):
                 raise ValueError("DI1 failed to clear before pickup")
             if remember_prepick is not None:
                 remember_prepick(plan[2], settings["gripper"])
@@ -257,6 +258,10 @@ class PickExecutor:
                 session.resuming = False
                 session.parked_index = None
             origin = {}
+            if placement_bridge is not None:
+                forward = (*queued_home, *forward)
+                origin["confirmed_start_pose"] = placement_bridge.origin
+                origin["placement_bridge"] = placement_bridge
             if departure:
                 # Put-back release has confirmed DI1 clear; neutralize during
                 # retreat, then open at the next transit and attempt its pick.

@@ -1,0 +1,25 @@
+string configuration_id
+uint32 quantity
+float64 x_mm
+float64 y_mm
+float64 rotation_deg
+bool save_debug_images
+---
+uint8 SUCCESS=0
+uint8 NO_PICK=1
+uint8 CANCELED=2
+uint8 COMMAND_REJECTED=3
+uint8 FEEDBACK_FAILURE=4
+uint8 STOP_UNCONFIRMED=5
+uint8 CONTROLLER_FAULT=6
+uint8 outcome
+string message
+string final_state
+uint32 completed_quantity
+uint32 requested_quantity
+---
+string phase
+string waypoint
+string message
+uint32 completed_quantity
+uint32 requested_quantity

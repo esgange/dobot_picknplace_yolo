@@ -16,7 +16,7 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 
 from item_perception_yolo.platform_teach_core import workspace_root
-from robot_controller_interfaces.action import GoHome, PickItem, PlaceItem
+from robot_controller_interfaces.action import AutoRun, GoHome, PickItem, PlaceItem
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalSpeed
 
@@ -57,6 +57,7 @@ class GuiNode(rclpy.node.Node):
             "place": ActionClient(self, PlaceItem, "/robot_controller/place_item"),
             "home": ActionClient(self, GoHome, "/robot_controller/go_home"),
             "pick": ActionClient(self, PickItem, "/robot_controller/pick_item"),
+            "auto_run": ActionClient(self, AutoRun, "/robot_controller/auto_run"),
         }
 
     def _status(self, message):
@@ -261,6 +262,20 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.place_rotation.setValue(rotation)
         operations.addLayout(target_row, 2, 0, 1, 2)
         operations.addWidget(self.debug_images, 3, 1)
+        auto_row = QtWidgets.QHBoxLayout()
+        self.auto_run_button = QtWidgets.QPushButton("Auto Run")
+        self.auto_run_button.setMinimumHeight(48)
+        self.auto_run_button.clicked.connect(lambda: self._action("auto_run"))
+        self.auto_quantity = QtWidgets.QSpinBox()
+        self.auto_quantity.setRange(1, 10000)
+        self.auto_quantity.setValue(1)
+        self.auto_quantity.setAccessibleName("Auto Run quantity")
+        self.auto_progress = QtWidgets.QLabel("0 completed")
+        auto_row.addWidget(self.auto_run_button, 1)
+        auto_row.addWidget(QtWidgets.QLabel("Quantity"))
+        auto_row.addWidget(self.auto_quantity)
+        auto_row.addWidget(self.auto_progress, 1)
+        operations.addLayout(auto_row, 4, 0, 1, 2)
         layout.addLayout(operations)
         self.availability_details = QtWidgets.QLabel()
         self.availability_details.setTextFormat(QtCore.Qt.PlainText)
@@ -571,10 +586,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if not client.server_is_ready():
             QtWidgets.QMessageBox.warning(self, "Unavailable", "Action server unavailable")
             return
-        kind = {"home": GoHome, "pick": PickItem, "place": PlaceItem}
+        kind = {"home": GoHome, "pick": PickItem, "place": PlaceItem, "auto_run": AutoRun}
         goal = kind[name].Goal()
         goal.configuration_id = status.configuration_id
-        if name == "place":
+        if name in ("place", "auto_run"):
             try:
                 values = validate_target(float(self.place_x.text()), float(self.place_y.text()),
                                          self.place_rotation.value())
@@ -587,8 +602,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
             except (ValueError, OSError) as exc:
                 QtWidgets.QMessageBox.warning(self, "Placement target", str(exc))
                 return
-        if name == "pick":
+        if name in ("pick", "auto_run"):
             goal.save_debug_images = self.debug_images.isChecked()
+        if name == "auto_run":
+            goal.quantity = self.auto_quantity.value()
+            self.auto_progress.setText(f"0/{goal.quantity} completed")
         self.pending_goal = client.send_goal_async(goal, feedback_callback=self._feedback)
         self._refresh_controls()
 
@@ -666,7 +684,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 wrapped = self.result_future.result()
                 result = wrapped.result
                 self.feedback_message = f"Result {result.outcome}: {result.message}"
-                if result.outcome not in (result.SUCCESS, getattr(result, "NO_PICK", -1)):
+                if hasattr(result, "completed_quantity"):
+                    self.auto_progress.setText(
+                        f"{result.completed_quantity}/{result.requested_quantity} completed")
+                if (result.outcome not in (result.SUCCESS, getattr(result, "NO_PICK", -1))
+                        or hasattr(result, "completed_quantity")
+                        and result.outcome != result.SUCCESS):
                     QtWidgets.QMessageBox.warning(self, "Action ended", result.message)
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(self, "Action result failed", str(exc))
@@ -693,10 +716,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
             target_error=target_error, item_selected=bool(self.item_path.text().strip()),
             bin_selected=bool(self.bin_path.text().strip()),
             tray_selected=bool(self.tray_path.text().strip()))
+        if not self.auto_quantity.hasAcceptableInput():
+            reasons["auto_run"] = "Enter a whole quantity from 1 to 10000"
         for name in reasons:
             if reasons[name] or name == "preview_toggle":
                 continue
-            if name in ("home", "pick", "place"):
+            if name in ("home", "pick", "place", "auto_run"):
                 if self.preview_mode:
                     client = self.node.service_clients["preview"]
                     ready = client.service_is_ready()
@@ -761,8 +786,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "configure": self.configure, "recover": self.recover, managed_name: self.pause,
             "home": self.home_button, "pick": self.pick_item, "place": self.place_item,
             "preview_toggle": self.preview_toggle, "speed": self.speed_slider,
+            "auto_run": self.auto_run_button,
         }
         descriptions = {
+            "auto_run": "Pick and place the requested quantity, then return Home",
             "configure": "Load teach files, enable and initialize the robot to READY",
             "continue": "Resume the retained operation",
             "recover": "Cancel the action, preserve grip to Home, then reset gripper outputs",
@@ -786,8 +813,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
         editable = (state is not None and not state.operation_active and not self.pending
                     and self.pending_goal is None and self.result_future is None)
-        for field in (self.place_x, self.place_y, self.place_rotation):
+        for field in (self.place_x, self.place_y, self.place_rotation, self.auto_quantity):
             field.setEnabled(editable)
+        if state is not None and getattr(state, "auto_run_active", False):
+            self.auto_progress.setText(
+                f"{state.auto_run_completed}/{state.auto_run_requested} completed")
         for field in (self.item_path, self.bin_path, self.tray_path, *self.teach_browse_buttons):
             field.setEnabled(editable and current in ("UNCONFIGURED", "INACTIVE", "READY"))
         self.debug_images.setEnabled(not self.preview_mode and editable)

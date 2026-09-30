@@ -13,6 +13,9 @@ bool manual_placement_enabled
 bool holding_item
 bool operation_active
 string operation
+bool auto_run_active
+uint32 auto_run_requested
+uint32 auto_run_completed
 string phase
 string waypoint
 uint32 candidate_index

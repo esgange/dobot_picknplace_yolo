@@ -7,8 +7,58 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 [visual PDF](../../docs/ROBOT_CONTROLLER_FSM.pdf), generated from that document.
 
 `robot_controller` is the sole production application-level authority for the
-physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle.
+physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle,
+plus Auto Run with an adjacent quantity field and completed count.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.
+
+## Auto Run
+
+Start from configured, unheld READY with recorded tray joints and both pose
+providers available. Select a whole quantity from 1 to 10000; the run freezes the
+current placement X/Y/rotation and debug-image choice. One native `AutoRun` action
+owns all hardware commands until completion/failure/cancellation. The GUI disables
+manual motion, Preview, teach loading, speed, Pause/Continue/Return and input edits;
+permanent STOP remains enabled. External manual actions cannot acquire the operation
+slot, and manual queue-control services explicitly reject while Auto Run is active.
+Preview cannot start Auto Run. Launch/prefill never starts it.
+
+The first Pick reuses the normal Home skip/arrival, fresh batch, candidate plans,
+timed I/O, acquisition Stop acknowledgement, lifts and saved Tray Detect destination.
+Tray pose acquisition begins only after Pick confirms saved tray joints and idle
+feedback. Auto Run always requires the trusted picked item for placement, including
+in GUI mode. Placement retains its existing approach/release/retract queue and rates.
+
+After all three placement requests are accepted, one read-only worker immediately
+requests the next bin candidate batch if another item is needed. The owner continues
+supervising placement while that request runs. When the validated batch is ready,
+append joint Home → next entry → pre-pick → final pick **without waiting for placement
+to finish or Home to become stationary**. The dashboard executes those requests in
+accepted order behind placement, with CP(100) unchanged. Home starts from the planned
+placement retract at Home Z. If detection is slower than placement, finish normal
+retract supervision and wait for the batch, then use normal Home/Pick. The batch is
+bound to that next Pick, consumed once, and never shared with a manual operation.
+Source/hash/attitude checks and three complete batches per Pick remain in force.
+
+The handoff retains the previous placement and source until advancing FeedInfo
+reports the appended Home's returned queue ID (or a later ID), with observed neutral
+gripper outputs and DI1 LOW since placement admission. This proves execution passed
+the placement queue without inventing a MovLIO queue ID or requiring a midpoint
+stop. Only then count that placement, mark the old candidate PLACED, install the
+next candidate ledger and permit its suction acquisition. Old held DI1 cannot
+trigger the next Pick. Missing boundary/release evidence faults and Stops the run.
+An interrupted handoff retains the correct source for explicit Recover. Counted
+placement is robot execution/release evidence, not camera proof of item delivery.
+
+For the final item, append Home immediately after placement admission without
+requesting another item batch. Confirm final Home, neutral outputs and DI1 LOW
+before Auto Run SUCCESS/READY. Status publishes `auto_run_active`, requested and
+completed quantities; the action result preserves the final/partial count.
+Three exhausted Pick batches end READY/NO_PICK at Home. Three unavailable tray
+requests, detector errors or robot/transport faults end through Stop containment
+and explicit recovery; no fourth attempt or automatic restart is granted. STOP
+cancels the run and outstanding prefetch, discarding its result. This leaves the
+manual Place acquisition-pause/retry workflow unchanged. Rebuild interfaces and
+controller, then manually restart controller/GUI/preview and other status clients.
 
 Launching the package never enables, recovers, homes, or moves the robot. An
 operator explicitly loads teach configuration to prepare the robot to READY.
@@ -358,7 +408,8 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Preview; reload; speed; STOP |
+| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; STOP |
+| AUTO RUN | STOP; quantity/progress visible; manual controls and edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
 | HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; STOP |
