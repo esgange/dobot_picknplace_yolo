@@ -964,6 +964,23 @@ rates and gripper timing. Supersede rule 89's pose source and rule 120's require
 new FeedInfo tick for each arrival only; no new services/subscriptions/executor
 threads, camera-calibration changes, artifact rewrite or automatic restart.
 
+Rule 180 limits each Pick action to three complete candidate batches, including
+the first attempt. Exhaust all eligible poses then confirm Home before requesting
+a fresh batch; a valid empty batch also consumes one attempt. Stop at first held
+success, otherwise finish READY/NO_PICK after the third batch. Sum attempted
+candidates across batches and retain the budget through Pause/Continue. Reject
+replayed batch IDs; item-service failures, invalid pose/source evidence and robot
+faults remain terminal. Place may send at most three tray/depth requests total,
+including the first, for no-result/error/BUSY replies or missing replies. Preserve
+each request's taught timeout plus one-second response allowance and new capture
+boundary. Discard timed-out/paused results and never use late replies; provider
+inference remains serialized. Pause does not reset the budget. Keep source/owner,
+fresh robot/held-item checks and direct Stop active; malformed successful evidence
+is terminal. Failed observation never starts placement or release. No schema,
+teach setting, interface field, hardware-command retry or automatic restart is added.
+Supersede one-batch Pick completion and no-retry tray observation only; preserve
+existing routes, joint/status verification, I/O, settling and recovery.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

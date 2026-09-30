@@ -57,7 +57,8 @@ def test_manual_queue_reaches_home_regardless_of_initial_item_presence(
     assert node.placement.phase == 'DONE' and not node.holding_item
     assert not any(node.expected_outputs.values())
     node._preflight_item_state.assert_not_called()
-    assert node.trays.request.call_args.kwargs == {'require_held_item': False}
+    assert node.trays.request.call_args.kwargs == {
+        'require_held_item': False, 'attempts': node.placement.tray_attempts}
     if held_context:
         assert node.managed.session.attempts[0].state == 'PLACED'
     else:

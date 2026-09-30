@@ -392,12 +392,18 @@ def test_paused_tray_request_retires_before_a_new_request_and_ignores_old_result
     client = SimpleNamespace(service_is_ready=lambda: True,
                              call_async=Mock(side_effect=[first, second]))
     times = iter([1., 1., 3.])
-    node = SimpleNamespace(root=None, create_client=lambda *_: client,
+    node = SimpleNamespace(
+        root=None, create_client=lambda *_: client,
         _service_providers=lambda _: [("tray_teach", "/")], events=Mock(),
         get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=next(times))),
         operation_progress=Mock(), _preflight_item_state=Mock(), monitor=Mock(),
-        wait_for_resume=Mock(side_effect=ManagedInterruption("Pause")),
+        wait_for_resume=Mock(),
         wait_control=lambda _: first.set_result(GetTrayPose.Response(success=False)))
+
+    def pause_after_dispatch():
+        if client.call_async.call_count:
+            raise ManagedInterruption("Pause")
+    node.wait_for_resume.side_effect = pause_after_dispatch
     observer = TrayClient(node)
     with pytest.raises(ManagedInterruption):
         observer.request(config, sampling["x_mm"], sampling["y_mm"],

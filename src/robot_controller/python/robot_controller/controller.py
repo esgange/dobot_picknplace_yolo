@@ -1151,6 +1151,8 @@ class RobotController(Node):
             config = self.configuration
             config.validate_sources(self.root)
             batch = None
+            completed_batches = 0
+            seen_batches = set()
             self.managed.session = None
             while True:
                 try:
@@ -1161,24 +1163,19 @@ class RobotController(Node):
                         if batch is None:
                             self._execute_home()
                             self.operation_progress(
-                                "DETECT", "Requesting one fresh candidate batch")
+                                "DETECT", f"Pick attempt {completed_batches + 1}/3: "
+                                "requesting a fresh candidate batch",
+                                candidate_index=0, candidate_total=0)
                             batch = self.candidates.request(
                                 config, save_debug_images=goal.request.save_debug_images,
                                 cancel=self.cancel_requested)
+                            if batch.identifier in seen_batches:
+                                raise FeedbackFailure("Detector reused an earlier Pick batch ID")
+                            seen_batches.add(batch.identifier)
                         self.candidate_total = len(batch.candidates)
                         self.operation_progress(
                             "PLAN", f"Validated {self.candidate_total} fresh candidates",
                             candidate_total=self.candidate_total)
-                        if not batch.candidates:
-                            with self.managed.lock:
-                                self.wait_for_resume()
-                                self._transition(
-                                    "READY", "No valid pick candidates; robot remains Home")
-                                result.outcome = result.NO_PICK
-                                result.message = self.machine.message
-                                result.final_state = "READY"
-                                goal.succeed()
-                            return result
                         plans = []
                         for index, candidate in enumerate(batch.candidates, 1):
                             item_pose = candidate_pose_in_base(
@@ -1216,7 +1213,8 @@ class RobotController(Node):
 
                         self.managed.session = PickSession(
                             [candidate.identifier for candidate in batch.candidates], plans,
-                            self._attempt_changed)
+                            self._attempt_changed,
+                            previous_attempted=result.attempted_candidates)
                         for plan in plans:
                             return_targets(plan)
 
@@ -1236,7 +1234,20 @@ class RobotController(Node):
                             self._transition("HOLDING", "Pick completed; item held at Home")
                             result.outcome = result.SUCCESS
                         else:
-                            self._transition("READY", "Candidate batch exhausted; no item picked")
+                            completed_batches += 1
+                            self.events.record(
+                                "INFO", "pick_batch_exhausted", "Candidate batch exhausted at Home",
+                                attempt=completed_batches, max_attempts=3,
+                                batch_id=batch.identifier, attempted=result.attempted_candidates)
+                            if completed_batches < 3:
+                                # A complete batch is one attempt. Preserve the count
+                                # across Pause; only a fresh batch gets a new ledger.
+                                self.managed.session = None
+                                batch = None
+                                continue
+                            self._transition(
+                                "READY", "All 3 Pick attempts exhausted; "
+                                "no item picked; robot Home")
                             result.outcome = result.NO_PICK
                         result.message = self.machine.message
                         result.final_state = self.machine.state

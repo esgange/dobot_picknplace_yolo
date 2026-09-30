@@ -75,7 +75,13 @@ confirmation gate. Missing DI12/DI1 release evidence cannot stop the queue befor
 Home; final Home arrival, neutral outputs and DI1 LOW are checked there. Stop,
 robot faults, command responses and feedback freshness remain supervised.
 Pick Item requires an available armed Item Teach or
-headless Item Detect provider; Place Item requires an available armed Tray Teach
+headless Item Detect provider. Pick uses at most **three complete candidate batches**:
+exhausting all poses counts as one attempt, then return Home and request a fresh
+batch. Stop on the first held success; three exhausted batches finish READY/NO_PICK.
+Place retries a missing tray/depth result or response timeout with at most **three
+requests total**, while staying at Tray Detect Pose. Stop/Pause, source validation
+and robot feedback checks remain active; malformed pose evidence remains fatal.
+Place Item requires an available armed Tray Teach
 or headless Tray Detect provider. **GUI mode permits placement with or without an
 item**, from idle READY or HOLDING; no successful Pick is required. This is real
 hardware debug operation with unchanged tray/depth, release I/O and motion checks.
@@ -105,7 +111,7 @@ Saved capture history stays unchanged; see the [tray calibration workflow](src/t
 
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
-Pick requests one fresh hash-matched batch from the sole canonical provider:
+Each Pick attempt requests one fresh hash-matched batch from the sole canonical provider:
 headless `item_detect`, or explicitly Armed `item_teach` during attended use.
 They share `/item_detect/get_item_poses`; running both providers is rejected.
 Candidate count always comes from Item Teach `pose_candidates`. Typed Startup,
@@ -217,7 +223,8 @@ click is needed for this loss alone. It uses the saved source, taught pre-pick r
 finger OPEN and confirmed 50 ms exhaust, then the next eligible saved candidate
 or exact Home when none remain. It preserves the original batch and both transit
 waypoints. Repeated losses consume candidates until one succeeds or the batch
-is exhausted, with normal SUCCESS/NO_PICK completion. No disable/enable/settings
+is exhausted; at Home the same three-batch Pick limit governs fresh detection.
+SUCCESS/NO_PICK remain normal completion. No disable/enable/settings
 sequence is added. Direct Stop and cancellation still pre-empt this routine.
 
 Only confirmed held DI1 loss uses this path. A service rejection/timeout,

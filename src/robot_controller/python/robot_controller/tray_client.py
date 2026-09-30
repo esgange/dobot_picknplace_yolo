@@ -1,5 +1,6 @@
-"""One fresh, strictly bound tray-and-depth observation for a Place action."""
+"""Bounded fresh, strictly bound tray-and-depth observations for a Place action."""
 
+from dataclasses import dataclass
 import json
 import math
 import time
@@ -19,10 +20,20 @@ from .motion import rigid_matrix
 PROVIDERS = {("tray_teach", "/"), ("tray_detect", "/")}
 
 
+@dataclass
+class TrayAttempts:
+    count: int = 0
+    reason: str = "No fresh tray observation remained after interruption"
+
+
+class TrayObservationUnavailable(FeedbackFailure):
+    """No pose/depth reply; another read-only request may supply an observation."""
+
+
 def validate_result(result, config, sampling, start_ns, now_ns):
     if result is None or not result.success or not result.found or not result.placement.valid:
         reason = "no response" if result is None else f"{result.status}: {result.message}"
-        raise FeedbackFailure(f"No usable tray placement depth: {reason}")
+        raise TrayObservationUnavailable(f"No usable tray placement depth: {reason}")
     try:
         evidence = json.loads(result.diagnostics_json)
         expected = {"profile_sha256": config.tray.sha256,
@@ -92,8 +103,9 @@ class TrayClient:
             raise FeedbackFailure("Placement requires exactly one armed tray_teach or "
                                   "headless tray_detect provider in the root namespace")
 
-    def request(self, config, x_mm, y_mm, *, require_held_item=True):
+    def request(self, config, x_mm, y_mm, *, require_held_item=True, attempts=None):
         node = self.node
+        attempts = attempts if attempts is not None else TrayAttempts()
 
         def check_item():
             if require_held_item:
@@ -102,30 +114,54 @@ class TrayClient:
                 node.monitor.snapshot(require_enabled=True)
 
         config.validate_sources(node.root)
-        # ROS services cannot cancel server execution. Drain an interrupted
-        # request before asking for another observation, discarding its old result.
+        # ROS services cannot cancel server execution. Give an interrupted
+        # request its original deadline, then discard its result before retrying.
+        # The provider independently serializes inference and rejects overlap BUSY.
         if self.pending is not None:
             retiring, deadline = self.pending
             while not retiring.done():
                 node.wait_for_resume()
                 check_item()
                 if time.monotonic() > deadline:
-                    raise FeedbackFailure(
-                        "Previous tray request has not finished; retry after it retires")
+                    retiring.cancel()
+                    break
                 node.wait_control(.02)
             self.pending = None
-        self.check_owner()
-        if not self.client.service_is_ready():
-            raise FeedbackFailure(
-                "Tray pose v2 service is unavailable; restart tray and controller applications "
-                "after updating, then arm Tray Teach or start Tray Detect")
         sampling = sampling_from_item(config.profile, x_mm, y_mm)
+        while attempts.count < 3:
+            node.wait_for_resume()
+            check_item()
+            config.validate_sources(node.root)
+            self.check_owner()
+            if not self.client.service_is_ready():
+                raise FeedbackFailure(
+                    "Tray pose v2 service is unavailable; restart tray and controller applications "
+                    "after updating, then arm Tray Teach or start Tray Detect")
+            try:
+                return self._observe(config, sampling, check_item, attempts)
+            except TrayObservationUnavailable as exc:
+                attempts.reason = str(exc)
+                node.events.record(
+                    "WARNING", "tray_observation_attempt_failed", attempts.reason,
+                    attempt=attempts.count, max_attempts=3)
+                node.operation_progress(
+                    "TRAY_DEPTH", f"Tray observation attempt {attempts.count}/3 failed: "
+                    f"{attempts.reason}")
+        node.wait_for_resume()
+        check_item()
+        raise FeedbackFailure(f"Tray observation failed after 3 attempts: {attempts.reason}")
+
+    def _observe(self, config, sampling, check_item, attempts):
+        node = self.node
         request = GetTrayPose.Request(profile_sha256=config.tray.sha256,
                                       sample_placement_depth=True,
                                       placement=PlacementDepthRequest(**sampling))
+        node.operation_progress("TRAY_DEPTH", f"Tray observation attempt {attempts.count + 1}/3: "
+                                "requesting fresh tray pose and placement depth")
         start = node.get_clock().now().nanoseconds
         deadline = time.monotonic() + sampling["request_timeout_sec"] + 1
-        node.operation_progress("TRAY_DEPTH", "Requesting fresh tray pose and placement depth")
+        attempts.count += 1
+        attempts.reason = "Tray observation interrupted before a usable result"
         future = self.client.call_async(request)
         self.pending = (future, deadline)
         try:
@@ -133,18 +169,21 @@ class TrayClient:
                 node.wait_for_resume()
                 check_item()
                 if time.monotonic() > deadline:
-                    raise FeedbackFailure("Tray depth request timed out; no automatic retry")
+                    future.cancel()
+                    raise TrayObservationUnavailable("Tray depth request timed out")
                 node.wait_control(.02)
             node.wait_for_resume()
             check_item()
             config.validate_sources(node.root)
             self.check_owner()
+            if time.monotonic() > deadline:
+                raise TrayObservationUnavailable("Tray depth reply arrived after its deadline")
             point, evidence = validate_result(
                 future.result(), config, sampling, start, node.get_clock().now().nanoseconds)
             node.events.record("INFO", "placement_depth", "Fresh tray depth accepted",
                                surface_base_m=point.tolist(), sampling=sampling,
-                               tray_sha256=evidence["profile_sha256"])
+                               tray_sha256=evidence["profile_sha256"], attempt=attempts.count)
             return point
         finally:
-            if future.done():
+            if future.done() or future.cancelled():
                 self.pending = None

@@ -50,8 +50,17 @@ requires a successful Pick. **Tray Detect Position** moves to the joints recorde
 in Tray Teach using one direct queued joint-target MovL. There is no preliminary
 Z rise or elevated transit; the bin routes retain their existing clearance logic.
 **Place Item** also reaches that observation pose when needed and
-requests one fresh tray/depth observation from Armed Tray Teach or headless Tray
-Detect. Run exactly one provider. All hardware commands remain controller-owned.
+requests fresh tray/depth from Armed Tray Teach or headless Tray Detect, with
+**three requests total** per Place action. Retry a missing pose/depth result,
+provider no-result/error/BUSY reply or response timeout at the same observation
+position. Each request keeps its taught request timeout plus one second for the
+reply and requires RGB/depth captured after that request. A timed-out local future
+is discarded; a late reply cannot supply a later attempt. The provider serializes
+inference. Pause/Continue keeps the request count and discards interrupted results
+after completion or their original deadline; it cannot reset the three-request
+limit. After the third failure, Stop/report the last reason without placement or
+release. Local source/ownership/feedback faults and invalid successful pose
+evidence remain terminal. Run exactly one provider; commands remain controller-owned.
 
 Tray configuration uses the active eye-on-hand calibration saved in the shared
 `ITEM_TEACH_ROBOT_CAMERA_CALIBRATION` selection, independently of the camera
@@ -158,8 +167,8 @@ Recover, which cancels the placement and preserves current outputs while lifting
 to Home height and returning Home, then relaxes all four gripper outputs. It never
 replays the expired placement history
 or waits for continuous exhaust to switch itself OFF. A failed
-tray/depth observation performs no placement or release. Existing Pick settling,
-retries, camera/bin avoidance, rotation and Home paths remain unchanged.
+tray/depth observation performs no placement or release. Pick settling,
+within-batch retries, camera/bin avoidance, rotation and Home paths are unchanged.
 
 The controller UI's strict schema-3 last-session store preserves Item/Bin/Tray
 filenames and the last validated X/Y/Rotation as unapplied prefill. Explicit
@@ -228,7 +237,16 @@ Actions:
 - `/robot_controller/go_home` — goal contains `configuration_id`.
 - `/robot_controller/pick_item` — goal contains `configuration_id` and the
   one-shot `save_debug_images` flag. Candidate count cannot be supplied by the
-  caller; it comes from Item Teach `retry.pose_candidates`.
+  caller; it comes from Item Teach `retry.pose_candidates`. Each full candidate
+  batch is one attempt, with **three attempts total**. After exhausting a batch,
+  confirm Home and request a fresh batch; an empty valid batch also consumes one
+  attempt. Success ends immediately in HOLDING; three exhausted batches end
+  READY/NO_PICK at Home. `attempted_candidates` totals actual candidate attempts
+  across all batches, including canceled/faulted results. Pause/Continue retains
+  the current batch and attempt count; direct Stop/Recover ends the action.
+  Item detector errors/timeouts, source/pose validation failures and robot faults
+  remain terminal. Never replay an earlier batch ID. No teach schema, retry
+  setting or action-interface field is added; progress reports attempt N/3.
 
 Services:
 
@@ -501,7 +519,8 @@ transit, original taught pre-pick release, OPEN and confirmed 50 ms exhaust.
 Queue neutral retreat and the old exit transit before the next eligible item's
 entry/clearance/pre-pick/pick, or before exact Home if none remain. Both transits
 retain CP(100). The lost candidate stays DROPPED even if DI1 returns HIGH.
-Repeated losses advance through the finite retained batch without new detection.
+Repeated losses advance through the retained batch; after exhaustion and confirmed
+Home, rule 180 allows fresh detection within the same three-batch Pick limit.
 The action completes normally with SUCCESS or NO_PICK, so this loss alone does
 not open the GUI's Action ended dialog and needs no Recovery click. No automatic
 disable, enable, ClearError or settings sequence is issued. This also applies
@@ -654,7 +673,9 @@ Pick is permitted only from `READY` with DI1 clear:
 6. after an intermediate miss, retract to that candidate's final clearance and
    proceed through the next candidate's safety-Z transit, clearance, pre-pick
    and final pick without returning Home;
-7. after success, retract and return Home holding with suction on.
+7. after success, retract and return Home holding with suction on;
+8. after full exhaustion, confirm Home and repeat from a fresh batch, up to three
+   complete attempts total; three exhausted/empty batches finish READY/NO_PICK.
 
 The detector pose uses local X for the measured short axis and local Y for the
 long axis. It is an in-plane heading, not a TCP attitude. The controller

@@ -712,7 +712,8 @@ def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, co
     requests = []
     rig.candidates = SimpleNamespace(
         request=lambda *_a, **_k: requests.append("detect") or SimpleNamespace(
-            candidates=candidates, debug_message=""))
+            identifier=f"batch{len(requests)}",
+            candidates=candidates if len(requests) == 1 else [], debug_message=""))
     initial_home = rig._execute_home
 
     def home(**kwargs):
@@ -722,8 +723,11 @@ def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, co
             initial_home(**kwargs)
     rig._execute_home = home
     approaches = []
+    sessions = []
 
     def interrupt(targets, kwargs):
+        if rig.managed.session not in sessions:
+            sessions.append(rig.managed.session)
         if kwargs.get("stop_on_suction"):
             approaches.append(tuple(target.name for target in targets))
             if len(approaches) <= 2:
@@ -736,11 +740,11 @@ def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, co
                            succeed=lambda: finished.append("success"),
                            abort=lambda: finished.append("abort"))
     result = RobotController._execute_pick_action(rig, goal)
-    assert requests == ["detect"]
+    assert requests == ["detect"] * 3
     assert result.outcome == result.NO_PICK
     assert result.attempted_candidates == count
     assert finished == ["success"]
-    assert states(rig) == ["FAILED"] * count
+    assert [attempt.state for attempt in sessions[0].attempts] == ["FAILED"] * count
     assert approaches[:3] == [("p1_transit", "p1_prepick", "p1_pick"),
                               ("p1_prepick", "p1_pick"), ("p1_prepick", "p1_pick")]
     assert len(approaches) == count + 2

@@ -43,9 +43,15 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract", prepick=
     candidates = [SimpleNamespace(identifier=f"item{i}", position_m=(i * .1, 0., .3),
                                   quaternion=(0., 0., 0., 1.)) for i in range(count)]
     rig.requests = []
-    rig.candidates = SimpleNamespace(
-        request=lambda *_a, **_k: rig.requests.append("detect") or SimpleNamespace(
-            candidates=candidates, debug_message=""))
+    rig.seen_sessions = []
+
+    def detect(*_args, **_kwargs):
+        rig.requests.append("detect")
+        # Later observations are empty unless a test scripts fresh candidates.
+        return SimpleNamespace(identifier=f"batch{len(rig.requests)}",
+                               candidates=candidates if len(rig.requests) == 1 else [],
+                               debug_message="")
+    rig.candidates = SimpleNamespace(request=detect)
     original_home = rig._execute_home
 
     def home(**kwargs):
@@ -60,6 +66,8 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract", prepick=
 
     def lose(targets, kwargs):
         rig.batches.append((targets, kwargs))
+        if rig.managed.session not in rig.seen_sessions:
+            rig.seen_sessions.append(rig.managed.session)
         index = rig.managed.session.held_index
         if kwargs.get("require_suction") and index in losses and index not in rig.lost:
             rig.lost.append(index)
@@ -103,8 +111,9 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
     assert result.final_state == ("READY" if count == 1 else "HOLDING")
     assert result.attempted_candidates == count
     assert result.selected_candidate_id == ("" if count == 1 else "item1")
-    assert states(rig) == (["DROPPED"] if count == 1 else ["DROPPED", "HELD"])
-    assert rig.requests == ["detect"]
+    assert [a.state for a in rig.seen_sessions[0].attempts] == (
+        ["DROPPED"] if count == 1 else ["DROPPED", "HELD"])
+    assert rig.requests == ["detect"] * (3 if count == 1 else 1)
     assert not any(entry[0] == "recover" for entry in rig.log)
     assert not any(entry[0] == "state" and entry[1] in (
         "FAULT", "RECOVERY_REQUIRED", "RECOVERING", "PAUSED") for entry in rig.log)
@@ -131,9 +140,9 @@ def test_repeated_losses_consume_each_saved_candidate_once(monkeypatch):
     result = rig.execute()
     assert result.outcome == result.NO_PICK and result.final_state == "READY"
     assert rig.lost == [1, 2, 3]
-    assert states(rig) == ["DROPPED"] * 3
+    assert [a.state for a in rig.seen_sessions[0].attempts] == ["DROPPED"] * 3
     assert sum(entry[0] == "pulse" for entry in rig.log) == 3
-    assert rig.requests == ["detect"]
+    assert rig.requests == ["detect"] * 3
 
 
 @pytest.mark.parametrize("failure", ["stop", "pending", "source", "output", "release"])

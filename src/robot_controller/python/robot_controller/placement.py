@@ -8,6 +8,7 @@ import numpy as np
 from .errors import FeedbackFailure, HeldUnknown
 from .motion import (Target, gripper_neutral_events, pose_reached, rigid_matrix,
                      vacuum_neutral_events, gripper_open_events, vacuum_exhaust_events)
+from .tray_client import TrayAttempts
 
 
 TRAY_SPEED_PERCENT = 100
@@ -79,6 +80,7 @@ class PlacementOperation:
     history_sequence: int = 0
     initial_outputs: int = 0
     observing: bool = False
+    tray_attempts: TrayAttempts = field(default_factory=TrayAttempts)
 
     @property
     def needs_recovery(self):
@@ -173,7 +175,8 @@ class PlacementOperation:
         self.preflight(node)
         node._execute_tray_position()
         surface = node.trays.request(config, self.x_mm, self.y_mm,
-                                     require_held_item=self.require_held_item)
+                                     require_held_item=self.require_held_item,
+                                     attempts=self.tray_attempts)
         if not node.hardware.home_already_reached(config.tray.detect_joints):
             raise FeedbackFailure("Robot moved away from Tray Detect Pose during observation")
         self.plan = place_targets(config.tray.detect_matrix, surface,

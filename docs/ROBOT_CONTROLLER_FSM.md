@@ -1,5 +1,12 @@
 # Robot Controller — Finite State Machine
 
+Retry behavior review: **2026-09-30**, baseline **`30073a2`** plus diary rule
+**180**. Pick permits three full candidate batches; an exhausted/empty batch
+counts as one attempt, with Home before fresh detection. Place permits three
+fresh tray/depth requests for unavailable observations or missing replies.
+Pause retains both limits. Robot faults and invalid successful pose evidence
+remain terminal; no hardware command is retried on uncertain acceptance.
+
 Position feedback review: **2026-09-30**, baseline **`caad7a8`** plus diary rule
 **179**. All actual position checks and motion origins use canonical joint
 feedback, with CR10 forward kinematics for Cartesian poses and RobotStatus idle.
@@ -149,8 +156,8 @@ unversioned endpoint used before placement-depth integration cannot satisfy a ne
 Place goal; there is no mixed-layout fallback. Restart Tray Teach/Detect and
 Robot Controller after updating. Provider executor failures revoke arming and
 report a terminal error with traceback, rather than retaining a silent frozen
-preview. An unanswered in-flight request still has its existing bounded timeout
-and controller Stop/recovery path; no automatic retry or motion change is added.
+preview. Each unanswered in-flight request retains its bounded timeout; retry
+only within the three-request Place limit, then use the controller Stop/failure path.
 
 Startup order: validate ownership/feedback → read-only GetErrorID E-stop check → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →
@@ -175,7 +182,7 @@ typed status and failed service responses include the complete guidance.
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
 | `PLACING` | Observing tray/depth or queueing placement through Home. |
-| `PICKING` | One accepted candidate batch is being planned/attempted/returned. |
+| `PICKING` | Up to three fresh candidate batches, one at a time, with Home between batches. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
 | `PAUSED` | Managed parking confirmed; controller continues checking pose, queue, outputs and held suction. |
@@ -190,12 +197,15 @@ typed status and failed service responses include the complete guidance.
 
 ```mermaid
 flowchart TD
-    Request["READY: PickItem accepted"] --> Home["Reach taught joint Home; validate sources"]
-    Home --> Detect["Request one fresh candidate batch"]
+    Request["READY: PickItem accepted; attempt 1 of 3"] --> Home["Reach taught joint Home; validate sources"]
+    Home --> Detect["Request a fresh candidate batch for this attempt"]
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
     Validate -->|Valid| Any{"Any valid candidates?"}
-    Any -->|No| Empty["READY / NO_PICK; remain Home"]
+    Any -->|No| Limit{"Three batches exhausted?"}
+    Limit -->|Yes| Empty["READY / NO_PICK; robot Home"]
+    Limit -->|No| Next["Advance attempt; discard old batch"]
+    Next --> Home
     Any -->|Yes| Plan["Save ordered plans and PENDING ledger"]
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
@@ -205,17 +215,26 @@ flowchart TD
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
     Acquire --> HeldReturn["Lift → clearance → exit park_transit → joint Home; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS"]
-    HeldReturn -->|Confirmed suction loss| PutBack["Stop → RETURNING_ITEM → next eligible candidate or Home"]
+    HeldReturn -->|Confirmed suction loss| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
+    PutBack -->|Eligible saved candidate| Entry
+    PutBack -->|Batch exhausted; Home confirmed| Limit
     Miss --> More{"Another candidate?"}
     More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry transit → next clearance → next pre-pick → final approach"]
     Retry --> Sense
     More -->|No| Exhausted["Empty retract → clearance → exit transit → joint Home"]
-    Exhausted --> Empty
+    Exhausted --> Limit
 ```
 
 - The pose provider is exactly one of headless `item_detect` or explicitly armed
   `item_teach`, through `/item_detect/get_item_poses`. Inference is requested for
-  the batch; Pause/Continue does not request replacement poses. Recover cancels it.
+  the batch; Pause/Continue keeps its poses and the three-attempt limit. Recover cancels it.
+- One attempt covers all eligible poses in one batch; an empty valid batch also
+  consumes an attempt. After exhaustion, confirm Home before requesting a fresh
+  batch. First held success ends the action; three exhausted batches finish
+  READY/NO_PICK. Reused batch IDs, item-service failures/timeouts, source changes
+  and robot faults remain terminal. Result `attempted_candidates` sums candidates
+  across all batches, including failure/cancellation results. Per-batch ranking,
+  taught `pose_candidates`, routes, I/O and settling remain unchanged.
 - The accepted batch belongs to this Pick; there is no result-age expiry during
   its operation. Source/hash checks still apply before later work.
 - Both pose request and response evidence must declare
@@ -280,8 +299,11 @@ claim PLACED or RETURNED.
 ```mermaid
 flowchart TD
     Request["PlaceItem: GUI READY/HOLDING or headless trusted HOLDING; positive X/Y and Rotation"] --> Observe["Queue direct MovL to saved Tray Detect joints; confirm idle + joints; no dwell"]
-    Observe --> Depth["Request fresh matched tray pose and placement depth"]
-    Depth -->|Invalid| Stop["Stop and report failure; preserve item"]
+    Observe --> Depth["Request fresh matched tray pose/depth; at most 3 requests per Place"]
+    Depth -->|No usable result or reply timeout| Budget{"Requests left?"}
+    Budget -->|Yes; stay at observation pose| Depth
+    Budget -->|No| Stop["Stop and report final failure; preserve item"]
+    Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Valid| Queue["Admit one ordered CP100 motion group through Home"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
     Pre --> Release["MovLIO: drop Z = tray surface + standoff + pre-pick height; 80% OPEN + exhaust"]
@@ -291,7 +313,7 @@ flowchart TD
     Queue -. "Monitor throughout" .-> Feedback["Command acceptance, fresh enabled feedback, robot faults, opposing outputs and motion watchdogs; no release-confirmation gate"]
     Feedback -->|Fault| Stop
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
-    Stopped -->|Release command not issued| Retry["Continue reobserves"]
+    Stopped -->|Release command not issued| Retry["Continue reobserves within remaining request budget"]
     Retry --> Observe
     Stopped -->|Release confirmed| Recover["Continue: neutralize, upward retreat, Home; never release again"]
     Stopped -->|Partial release unconfirmed| Block["Continue blocked; no repeated descent/release"]
@@ -316,6 +338,18 @@ RGB-time TF. Preserve requested base X/Y; obtain surface base Z from target-ray
 filtered median depth. Reuse Item Teach physical diameter, range/MAD/count/fraction
 checks, with samples restricted to the tray. Inadequate/clipped depth fails before
 any placement command. Hash/provider/plane checks remain strict.
+
+Retry missing pose/depth, no-result/error/BUSY responses and unanswered requests
+at most three times total, including the first request. Each request has the
+existing taught timeout plus one second reply allowance and its own capture-time
+boundary. Cancel/discard timed-out local futures; never consume their late results.
+The provider serializes inference and may reply BUSY while an old callback retires.
+Pause retains the count, drains an interrupted request to completion or its original
+deadline and discards that result. Local source/ownership/feedback failures and
+invalid successful pose/depth evidence stop immediately. All three failures use
+normal Stop containment, with no placement motion or release. Attempt N/3 and the
+last failure reason appear in controller progress/events. No automatic arming,
+runtime restart, configuration/interface change or physical motion retry is added.
 
 Release Z = surface Z + standoff + prepick height, matching the item pre-pick
 height above the detected tray surface. Pre-place/retract Z = taught Home Z,
@@ -526,7 +560,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | Why put-back started | After release and retreat |
 | --- | --- |
 | Explicit Return Item | Home → READY; ends the interrupted operation. |
-| Held suction loss during active Pick | Next eligible saved candidate, or Home → READY if exhausted. Original Pick stays active. |
+| Held suction loss during active Pick | Next eligible saved candidate, or Home then next fresh batch within the three-attempt limit; third exhaustion → READY/NO_PICK. Original Pick stays active. |
 | Explicit Recover | Does not enter put-back; cancel, preserve grip through lift/Home, then relax at Home. |
 | Held loss during Pause / while PAUSED | Home → PAUSED. Wait for explicit Continue or Stop. |
 

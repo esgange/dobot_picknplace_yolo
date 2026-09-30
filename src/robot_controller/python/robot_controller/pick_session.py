@@ -14,7 +14,7 @@ class Attempt:
 
 
 class PickSession:
-    def __init__(self, identifiers, plans, changed=None):
+    def __init__(self, identifiers, plans, changed=None, *, previous_attempted=0):
         if len(identifiers) != len(plans):
             raise ValueError("Candidate identifiers and plans must match")
         self.attempts = [Attempt(name, tuple(plan)) for name, plan in zip(identifiers, plans)]
@@ -22,6 +22,7 @@ class PickSession:
         self.held_index = None
         self.parked_index = None
         self.resuming = False
+        self.previous_attempted = previous_attempted
 
     def set_state(self, index, state):
         attempt = self.attempts[index - 1]
@@ -69,7 +70,8 @@ class PickSession:
 
     @property
     def attempted_count(self):
-        return sum(attempt.state != "PENDING" for attempt in self.attempts)
+        return self.previous_attempted + sum(
+            attempt.state != "PENDING" for attempt in self.attempts)
 
 
 def safety_target(current, home, settings):

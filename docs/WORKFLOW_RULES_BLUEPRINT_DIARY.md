@@ -7359,6 +7359,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   process restart; operator RViz changes and calibration/teach/model artifacts
   remain untouched and excluded from this change.
 
+### 2026-09-30 — Rule 180: three complete Pick attempts and tray-observation requests
+
+- User explicitly selected **three attempts total**, including the first. One
+  Pick attempt exhausts the complete accepted candidate batch, not one pose.
+  After a missed/empty batch, confirm Home and acquire a fresh batch while the
+  original action remains PICKING. Stop at first held success; three exhausted
+  batches finish READY/NO_PICK at Home. Automatic suction-loss put-back still
+  consumes its saved candidates first, then uses the same batch limit. Per-batch
+  pose count/ranking, target planning, transit routes, I/O, rates and settling
+  remain unchanged. Sum candidate attempts across batches on success, failure
+  and cancellation. Reject a detector replay of an earlier batch ID.
+- Place requests fresh tray/depth up to three times total on missing pose/depth,
+  no-result/error/BUSY replies or missing responses. Stay at Tray Detect Pose
+  between observation attempts. Retain the taught request timeout plus one
+  second for each reply; every attempt requires its own post-request RGB/depth
+  evidence. Cancel/discard timed-out local futures and ignore their late replies;
+  ROS cannot cancel server execution, so the existing provider request lock
+  continues serializing inference and may report BUSY while retiring old work.
+  Three failures use the existing Stop/failure path and report the final reason,
+  without issuing placement or release commands.
+- Preserve both budgets through Pause/Continue. An interrupted tray request
+  consumes its dispatched attempt; drain it to completion/original deadline and
+  discard the result before a replacement. Stop/cancel, fresh robot/held-item
+  checks, exact sources/provider and successful-result geometry/timestamp/hash
+  checks remain strict. Item-service failures/timeouts and malformed successful
+  tray evidence remain terminal. Progress/events identify attempt N/3. No schema,
+  teach setting, interface field, hardware command retry or runtime restart.
+- Update root/controller READMEs and the FSM Pick/Place diagrams, lifecycle/return
+  tables and review baseline; regenerate adjacent offline HTML/PDF from Markdown.
+- Validation: all **610 controller tests pass**, including 35 new retry cases:
+  success on each Pick attempt, complete/empty/mixed batch exhaustion, Home before
+  replacement detection, cumulative results during faults/Stop, repeated Pause,
+  batch replay rejection, tray success/timeout/no-result/BUSY/error limits,
+  canceled/late replies, paused request retirement and source/geometry/time gates.
+  Controller symlink build and diff checks pass. Scoped lint has nine pre-existing
+  findings and no new findings. Regenerated seven offline FSM diagrams and the
+  seven-page A3 PDF; verified HTML source SHA-256
+  9467d8f0d803096535a05b7efc899f90c907e80d50e50f40969ced886f22139b.
+  Tests used fake perception replies and synthetic hardware only; no physical
+  command or live process restart. Operator RViz changes and calibration/teach/
+  model artifacts remain untouched and excluded.
+
 ### Future entry template
 
 ```text
