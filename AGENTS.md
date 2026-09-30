@@ -938,6 +938,13 @@ Recover sequences are unchanged. Verify encoded MovLIO requests with synthetic
 clients; do not issue live robot commands or automatically restart the controller.
 
 
+Rule 178 limits the startup calibration reminder to Platform Teach
+(`ros2 launch item_perception_yolo platform_teach.launch.py`). Remove the Tray
+Teach reference-plane calibration dialog and its startup callback. This supersedes
+rule 174's tray reminder only; retain independent calibration selection, plane
+provenance/reuse, active camera/TF validation and all teaching/detection behavior.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

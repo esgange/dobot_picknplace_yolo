@@ -402,15 +402,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._message(f"Restoring Tray Teach: {self.profile_filename}. Armed stays OFF.")
             self._read_tray(self.restoring_profile)
 
-    def show_calibration_reminder(self):
-        QtWidgets.QMessageBox.information(
-            self, "Tray reference-plane calibration",
-            "Before creating or re-teaching the tray reference plane, calibrate the "
-            "robot camera in its current mounting position and select that calibration.\n\n"
-            "Camera-only movement/recalibration can reuse the saved base-frame plane "
-            "and Tray Detect Pose when the robot base and physical reference surface "
-            "have not moved. Verify that the tray remains visible from that pose.")
-
     def _button(self, title, callback):
         button = QtWidgets.QPushButton(title)
         button.clicked.connect(callback)
@@ -1356,7 +1347,6 @@ def main(args=None):
         thread.start()
         window = TrayTeachWindow(node)
         window.show()
-        QtCore.QTimer.singleShot(0, window.show_calibration_reminder)
         app.exec_()
         if node.fatal_error:
             raise RuntimeError(node.fatal_error)

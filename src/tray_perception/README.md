@@ -227,9 +227,9 @@ Camera-only recalibration or changed live intrinsics preserves the saved plane
 and joint pose. Detection uses current intrinsics and image-time calibrated TF.
 The original camera file may be absent; Save preserves its recorded filename/hash
 while the plane is reused, and a newly captured plane records its current camera.
-Neither loading nor recalibration rewrites existing teach files. A startup reminder
-asks for current camera calibration before creating a new plane. Re-teach if the
-robot base or physical reference surface moves; after moving the camera, verify
+Neither loading nor recalibration rewrites existing teach files. The startup
+calibration reminder belongs only to Platform Teach; Tray Teach has no such dialog.
+Re-teach if the robot base or physical reference surface moves; after moving the camera, verify
 that the saved observation pose still sees the tray. Active file hashes, exact-time
 TF, synchronized depth and model validation remain enforced.
 

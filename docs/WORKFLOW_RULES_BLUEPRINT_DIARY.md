@@ -7295,6 +7295,24 @@ Never use a floating “latest” version in an issue, script, or deployment not
   to activate the locally built change. Operator calibration, teach/model files
   and unrelated vendor RViz edits remain excluded from the source commit.
 
+### 2026-09-30 — Rule 178: calibration reminder only in Platform Teach
+
+- User requested removing the unrelated Tray Teach startup calibration dialog
+  and keeping the reminder only in Platform Teach, launched with
+  `ros2 launch item_perception_yolo platform_teach.launch.py`. Remove the Tray
+  Teach dialog method and its scheduled startup callback. Keep Platform Teach's
+  existing bin-camera calibration/reuse reminder unchanged. This supersedes
+  rule 174's tray reminder only; independent camera selection, saved plane
+  provenance/reuse and active detection validation remain unchanged.
+- Validation: 88 existing Tray Teach GUI/independent-calibration and shared
+  independent-teach-calibration tests pass, including the Platform Teach reminder
+  check. Tray Teach GUI flake8, diff checks and tray_perception symlink build pass.
+  No new tests are needed for this dialog removal. Update package documentation
+  and project rules. No controller behavior or FSM change.
+- Restart Tray Teach to load the new startup behavior. No live process was
+  restarted, no robot commands were issued, and no calibration, teach/model or
+  unrelated vendor RViz files were changed or included in the source commit.
+
 ### Future entry template
 
 ```text
