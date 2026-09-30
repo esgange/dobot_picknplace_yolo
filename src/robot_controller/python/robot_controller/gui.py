@@ -16,7 +16,7 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 
 from item_perception_yolo.platform_teach_core import workspace_root
-from robot_controller_interfaces.action import GoHome, GoTrayDetectPosition, PickItem, PlaceItem
+from robot_controller_interfaces.action import GoHome, PickItem, PlaceItem
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalSpeed
 
@@ -52,14 +52,12 @@ class GuiNode(rclpy.node.Node):
             "return_item": self.create_client(Command, "/robot_controller/return_item"),
             "speed": self.create_client(
                 SetGlobalSpeed, "/robot_controller/set_global_speed"),
-            "preview": self.create_client(Preview, "/robot_controller/preview"),
+            "preview": self.create_client(Preview, "/robot_controller/preview_v2"),
         }
         self.action_clients = {
             "place": ActionClient(self, PlaceItem, "/robot_controller/place_item"),
             "home": ActionClient(self, GoHome, "/robot_controller/go_home"),
             "pick": ActionClient(self, PickItem, "/robot_controller/pick_item"),
-            "tray_position": ActionClient(
-                self, GoTrayDetectPosition, "/robot_controller/go_tray_detect_position"),
         }
 
     def _status(self, message):
@@ -99,6 +97,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.goal_handle = None
         self.result_future = None
         self.feedback_message = ""
+        self.preview_mode = False
+        self.preview_clear_future = None
         self.saved_selection = None
         self.pause_requested_locally = False
         self.return_requested_locally = False
@@ -195,30 +195,29 @@ class ControllerWindow(QtWidgets.QMainWindow):
         layout.addLayout(lifecycle)
 
         operations = QtWidgets.QGridLayout()
-        self.preview_home = QtWidgets.QPushButton("Preview Home TF")
-        self.preview_pick = QtWidgets.QPushButton("Preview Pick TFs")
-        self.hardware_home = QtWidgets.QPushButton("Home")
-        self.hardware_pick = QtWidgets.QPushButton("Pick Item")
-        self.tray_position = QtWidgets.QPushButton("Tray Detect Position")
+        self.preview_toggle = QtWidgets.QPushButton("Preview: OFF")
+        self.preview_toggle.setCheckable(True)
+        self.preview_toggle.setToolTip(
+            "ON: Home/Pick/Place publish TFs only. OFF: buttons command real robot motion.")
+        self.preview_toggle.setStyleSheet(
+            "QPushButton:checked{background:#236fa1;color:white;font-weight:bold}")
+        self.home_button = QtWidgets.QPushButton("Home")
+        self.pick_item = QtWidgets.QPushButton("Pick Item")
         self.place_item = QtWidgets.QPushButton("Place Item")
         self.place_item.setToolTip(
             "Observe tray, sample depth at X/Y, then place with the saved detect-pose attitude")
         self.debug_images = QtWidgets.QCheckBox("Save Pick debug RGB/depth")
-        self.preview_home.clicked.connect(lambda: self._preview(Preview.Request.HOME))
-        self.preview_pick.clicked.connect(lambda: self._preview(Preview.Request.PICK))
-        self.hardware_home.clicked.connect(lambda: self._action("home"))
-        self.hardware_pick.clicked.connect(lambda: self._action("pick"))
+        self.preview_toggle.toggled.connect(self._toggle_preview)
+        self.home_button.clicked.connect(lambda: self._action("home"))
+        self.pick_item.clicked.connect(lambda: self._action("pick"))
         self.place_item.clicked.connect(lambda: self._action("place"))
-        self.tray_position.clicked.connect(lambda: self._action("tray_position"))
-        for button in (self.preview_home, self.preview_pick,
-                       self.hardware_home, self.hardware_pick, self.tray_position, self.place_item):
+        for button in (self.home_button, self.preview_toggle,
+                       self.pick_item, self.place_item):
             button.setMinimumHeight(52)
-        operations.addWidget(self.preview_home, 0, 0)
-        operations.addWidget(self.preview_pick, 0, 1)
-        operations.addWidget(self.hardware_home, 1, 0)
-        operations.addWidget(self.hardware_pick, 1, 1)
-        operations.addWidget(self.tray_position, 2, 0)
-        operations.addWidget(self.place_item, 2, 1)
+        operations.addWidget(self.home_button, 0, 0)
+        operations.addWidget(self.preview_toggle, 0, 1)
+        operations.addWidget(self.pick_item, 1, 0)
+        operations.addWidget(self.place_item, 1, 1)
         self.place_x = QtWidgets.QLineEdit()
         self.place_y = QtWidgets.QLineEdit()
         self.place_x.setPlaceholderText("Positive mm")
@@ -239,8 +238,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.place_x.setText(str(x))
             self.place_y.setText(str(y))
             self.place_rotation.setValue(rotation)
-        operations.addLayout(target_row, 3, 0, 1, 2)
-        operations.addWidget(self.debug_images, 4, 1)
+        operations.addLayout(target_row, 2, 0, 1, 2)
+        operations.addWidget(self.debug_images, 3, 1)
         layout.addLayout(operations)
 
         speed = QtWidgets.QHBoxLayout()
@@ -288,6 +287,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.item_path.textEdited.connect(self._selection_changed)
         self.bin_path.textEdited.connect(self._selection_changed)
         self.tray_path.textEdited.connect(self._selection_changed)
+        self.place_x.textEdited.connect(self._clear_preview)
+        self.place_y.textEdited.connect(self._clear_preview)
+        self.place_rotation.valueChanged.connect(self._clear_preview)
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh)
         self.timer.start(100)
@@ -381,15 +383,48 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.saved_selection = None
         self._clear_preview()
 
-    def _clear_preview(self):
+    def _toggle_preview(self, checked):
+        state = self.node.status
+        if checked and (state is None or state.operation_active or self.pending
+                        or self.pending_goal is not None or self.result_future is not None
+                        or self.preview_clear_future is not None
+                        or state.robot_running or state.robot_queue_active
+                        or state.state in ("PAUSED", "PAUSING", "STOPPING", "RETURNING_ITEM")):
+            self.preview_toggle.blockSignals(True)
+            self.preview_toggle.setChecked(False)
+            self.preview_toggle.blockSignals(False)
+            QtWidgets.QMessageBox.warning(
+                self, "Preview unavailable", "Finish or stop the active operation before Preview.")
+            return
+        self.preview_mode = checked
+        self.preview_toggle.setText("Preview: ON — TF only" if checked else "Preview: OFF")
+        self.speed_debounce.stop()
+        self._clear_preview()
+        self.feedback_message = (
+            "Preview enabled: motion buttons publish TFs only" if checked else "")
+        self._refresh()
+
+    def _clear_preview(self, *_args):
+        self.feedback_message = ""
+        future = self.pending.pop("preview", None)
+        if future is not None:
+            future.cancel()
         if self.node.service_clients["preview"].service_is_ready():
             request = Preview.Request()
             request.operation = request.CLEAR
             request.item_teach_file = ""
             request.bin_teach_file = ""
-            self.node.service_clients["preview"].call_async(request)
+            self.preview_clear_future = self.node.service_clients["preview"].call_async(request)
+            self.preview_clear_deadline = time.monotonic() + 5.0
+
+    def closeEvent(self, event):
+        if self.preview_mode or "preview" in self.pending:
+            self._clear_preview()
+        super().closeEvent(event)
 
     def _call(self, name, request):
+        if self.preview_mode and name not in ("preview", "stop", "configure"):
+            return False
         if name in self.pending:
             return False
         client = self.node.service_clients[name]
@@ -424,6 +459,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._command("stop")
 
     def _pause_or_stop(self):
+        if self.preview_mode:
+            self._clear_preview()
+            self._immediate_stop()
+            return
         state = self.node.status
         current = state.state if state is not None else "UNREACHABLE"
         pausable = current in (
@@ -450,6 +489,15 @@ class ControllerWindow(QtWidgets.QMainWindow):
         request.operation = operation
         request.item_teach_file = self.item_path.text().strip()
         request.bin_teach_file = self.bin_path.text().strip()
+        request.tray_teach_file = self.tray_path.text().strip()
+        if operation == request.PLACE:
+            try:
+                request.x_mm, request.y_mm, request.rotation_deg = validate_target(
+                    float(self.place_x.text()), float(self.place_y.text()),
+                    self.place_rotation.value())
+            except ValueError as exc:
+                QtWidgets.QMessageBox.warning(self, "Placement target", str(exc))
+                return
         self._call("preview", request)
 
     def _sync_speed_slider(self, percent):
@@ -497,7 +545,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.feedback_message = f"{feedback.phase} · {feedback.message}{suffix}"
 
     def _action(self, name):
-        if self.pending_goal is not None or self.result_future is not None:
+        if (self.pending_goal is not None or self.result_future is not None or self.pending
+                or self.preview_clear_future is not None):
+            return
+        if self.preview_mode:
+            self._preview({"home": Preview.Request.HOME, "pick": Preview.Request.PICK,
+                           "place": Preview.Request.PLACE}[name])
             return
         status = self.node.status
         if status is None or not status.configuration_id:
@@ -514,8 +567,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if not client.server_is_ready():
             QtWidgets.QMessageBox.warning(self, "Unavailable", "Action server unavailable")
             return
-        kind = {"home": GoHome, "pick": PickItem,
-                "tray_position": GoTrayDetectPosition, "place": PlaceItem}
+        kind = {"home": GoHome, "pick": PickItem, "place": PlaceItem}
         goal = kind[name].Goal()
         goal.configuration_id = status.configuration_id
         if name == "place":
@@ -536,6 +588,18 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.pending_goal = client.send_goal_async(goal, feedback_callback=self._feedback)
 
     def _collect(self):
+        if self.preview_clear_future is not None and (
+                self.preview_clear_future.done() or time.monotonic() > self.preview_clear_deadline):
+            try:
+                if not self.preview_clear_future.done():
+                    self.preview_clear_future.cancel()
+                    raise RuntimeError("Preview clear response timed out")
+                cleared = self.preview_clear_future.result()
+                if cleared is None or not cleared.success:
+                    raise RuntimeError("Preview could not confirm clearing its TFs")
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Preview clear failed", str(exc))
+            self.preview_clear_future = None
         for name, future in list(self.pending.items()):
             if not future.done():
                 continue
@@ -561,6 +625,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     self._sync_speed_slider(result.confirmed_percent)
                     self.speed_label.setText(
                         f"Global SpeedFactor: {result.confirmed_percent}% confirmed")
+                elif name == "preview":
+                    self.feedback_message = result.message
+                    self.log_view.appendPlainText("PREVIEW: " + result.message)
                 elif name == "recover" and result.state == "READY":
                     QtWidgets.QMessageBox.information(
                         self, "Recovered — gripper relaxed",
@@ -606,7 +673,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         state = self.node.status
         self._refresh_status(state)
         reachable = state is not None
-        active = bool(state and state.operation_active)
+        active = bool((state and state.operation_active) or self.pending
+                      or self.pending_goal is not None or self.result_future is not None
+                      or self.preview_clear_future is not None)
         current = state.state if state else "UNREACHABLE"
         if current not in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING"):
             self.pause_requested_locally = False
@@ -622,17 +691,20 @@ class ControllerWindow(QtWidgets.QMainWindow):
         paused = current == "PAUSED" or pause_pending
         self.startup.setText("CONTINUE" if paused else "START")
         self.startup.setEnabled(
-            reachable and ((current == "INACTIVE" and not active)
-                           or (current == "PAUSED" and "continue" not in self.pending
-                               and "stop" not in self.pending
-                               and "return_item" not in self.pending
-                               and not self.return_requested_locally)))
+            not self.preview_mode and reachable and (
+                (current == "INACTIVE" and not active)
+                or (current == "PAUSED" and "continue" not in self.pending
+                    and "stop" not in self.pending and "return_item" not in self.pending
+                    and not self.return_requested_locally)))
         self.recover.setEnabled(
-            reachable and current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN")
+            not self.preview_mode and reachable
+            and current in ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN")
             and not active and "recover" not in self.pending)
         pausable = current in (
             "READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING")
-        if pause_pending or self.return_requested_locally or "return_item" in self.pending:
+        if self.preview_mode:
+            self.stop.setText("STOP")
+        elif pause_pending or self.return_requested_locally or "return_item" in self.pending:
             self.stop.setText("STOP NOW")
         elif current == "PAUSED" and getattr(state, "can_return_item", False):
             self.stop.setText("RETURN ITEM & STOP")
@@ -654,18 +726,16 @@ class ControllerWindow(QtWidgets.QMainWindow):
             service = "return_item" if self.stop.text() == "RETURN ITEM & STOP" else "stop"
             self.stop.setEnabled(self.node.service_clients[service].service_is_ready()
                                  and (service != "return_item" or service not in self.pending))
-        self.hardware_home.setEnabled(reachable and current in ("READY", "HOLDING")
-                                      and not active)
-        self.hardware_pick.setEnabled(
+        self.home_button.setEnabled(
+            reachable and current in ("READY", "HOLDING") and not active)
+        self.home_button.setToolTip("Move the robot to taught Home")
+        self.pick_item.setEnabled(
             reachable and state.item_detector_ready and current == "READY" and not active)
-        self.tray_position.setEnabled(
-            reachable and state.tray_position_recorded
-            and current in ("READY", "HOLDING") and not active)
         self.place_item.setEnabled(
             reachable and state.tray_position_recorded and state.tray_detector_ready
             and current in ("READY", "HOLDING") and not active
             and (state.manual_placement_enabled or (state.holding_item and current == "HOLDING")))
-        self.hardware_pick.setToolTip(
+        self.pick_item.setToolTip(
             "Request fresh item poses and pick an item" if state and state.item_detector_ready
             else "Arm Item Teach or start Item Detect with exactly one provider")
         self.place_item.setToolTip(
@@ -683,15 +753,21 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.place_item.setToolTip("Load a Tray Teach file with a recorded Tray Detect Pose")
         for field in (self.place_x, self.place_y, self.place_rotation):
             field.setEnabled(not active)
-        self.tray_position.setToolTip(
-            "Move to the observation joints recorded in the loaded Tray Teach"
-            if state and state.tray_position_recorded else
-            "Load a Tray Teach file with a recorded Tray Detect Pose")
-        self.preview_home.setEnabled(
-            self.node.service_clients["preview"].service_is_ready())
-        self.preview_pick.setEnabled(
-            self.node.service_clients["preview"].service_is_ready())
-        speed_enabled = reachable and current in ("READY", "HOLDING") and not active
+        self.preview_toggle.setEnabled(self.preview_mode or (
+            reachable and not active and not state.robot_running and not state.robot_queue_active
+            and current not in ("PAUSED", "PAUSING", "STOPPING", "RETURNING_ITEM")))
+        if self.preview_mode:
+            available = (not active and self.node.service_clients["preview"].service_is_ready()
+                         and bool(self.item_path.text().strip()))
+            self.home_button.setEnabled(available)
+            self.pick_item.setEnabled(available and bool(self.bin_path.text().strip()))
+            self.place_item.setEnabled(available and bool(self.tray_path.text().strip()))
+            for button in (self.home_button, self.pick_item, self.place_item):
+                button.setToolTip(
+                    "Preview the planned TF targets; no robot motion or gripper output")
+        self.debug_images.setEnabled(not self.preview_mode and not active)
+        speed_enabled = (not self.preview_mode and reachable
+                         and current in ("READY", "HOLDING") and not active)
         self.speed_slider.setEnabled(speed_enabled and "speed" not in self.pending)
         if state:
             if (self.speed_pending_percent is not None

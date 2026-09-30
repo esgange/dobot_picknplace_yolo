@@ -679,7 +679,8 @@ def test_gui_second_pause_click_stops_immediately_during_parking():
     commands = []
     window = SimpleNamespace(
         node=SimpleNamespace(status=SimpleNamespace(state="PICKING")), pending={},
-        pause_requested_locally=False, return_requested_locally=False, stop=Button(),
+        preview_mode=False, pause_requested_locally=False, return_requested_locally=False,
+        stop=Button(),
         _command=lambda name: commands.append(name) or True,
         _immediate_stop=lambda: commands.append("stop"))
     ControllerWindow._pause_or_stop(window)
@@ -691,7 +692,8 @@ def test_gui_nonpausable_state_calls_stop_directly_and_paused_start_continues():
     commands = []
     window = SimpleNamespace(
         node=SimpleNamespace(status=SimpleNamespace(state="FAULT")), pending={},
-        pause_requested_locally=False, return_requested_locally=False, stop=Button(),
+        preview_mode=False, pause_requested_locally=False, return_requested_locally=False,
+        stop=Button(),
         _command=lambda name: commands.append(name) or True,
         _immediate_stop=lambda: commands.append("stop"))
     ControllerWindow._pause_or_stop(window)
@@ -713,6 +715,7 @@ def test_gui_pause_acceptance_does_not_dispatch_another_stop():
     calls = []
     window = SimpleNamespace(
         pending={"pause": Future()}, pending_goal=None, result_future=None,
+        preview_clear_future=None,
         pause_requested_locally=True, return_requested_locally=False,
         _immediate_stop=lambda: calls.append("stop"))
     ControllerWindow._collect(window)
@@ -737,6 +740,7 @@ def test_successful_gui_reload_saves_selection_and_clears_preview(monkeypatch, t
         lambda path, item, bin_path: saved.append((path, item, bin_path)))
     window = SimpleNamespace(
         pending={"configure": Future()}, pending_goal=None, result_future=None,
+        preview_clear_future=None,
         saved_selection=("item.yaml", "bin.yaml"),
         node=SimpleNamespace(root=tmp_path),
         _clear_preview=lambda: cleared.append(True))
@@ -753,7 +757,8 @@ def test_gui_held_pause_stop_requests_return_without_canceling_active_pick():
     calls = []
     window = SimpleNamespace(
         node=SimpleNamespace(status=SimpleNamespace(state="PAUSED", can_return_item=True)),
-        pending={}, pause_requested_locally=False, return_requested_locally=False, stop=Button(),
+        pending={}, preview_mode=False, pause_requested_locally=False,
+        return_requested_locally=False, stop=Button(),
         _command=lambda name: calls.append(name) or True,
         _immediate_stop=lambda: calls.append("stop"))
     ControllerWindow._pause_or_stop(window)
@@ -767,7 +772,8 @@ def test_gui_stop_preempts_managed_motion_immediately(state):
     calls = []
     window = SimpleNamespace(
         node=SimpleNamespace(status=SimpleNamespace(state=state)),
-        pending={}, pause_requested_locally=False, return_requested_locally=False,
+        pending={}, preview_mode=False, pause_requested_locally=False,
+        return_requested_locally=False,
         _command=lambda _name: pytest.fail("Cannot Pause a managed movement"),
         _immediate_stop=lambda: calls.append("stop"))
     ControllerWindow._pause_or_stop(window)

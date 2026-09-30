@@ -30,8 +30,19 @@ cannot guarantee display of every short pulse.
 This package contains definitions only. It never connects to or commands the
 robot.
 
-`GoTrayDetectPosition` carries the configuration ID and uses the saved Tray Teach
-observation joints. `PlaceItem` carries that ID plus positive `x_mm`, `y_mm` and
+`Preview` is served only by the read-only preview process at
+`/robot_controller/preview_v2`: HOME=1, PICK=2, CLEAR=3 and PLACE=4. Requests carry
+selected Item/Bin/Tray paths plus placement X/Y millimetres and rotation degrees.
+Responses list planned TF frames; no robot command or gripper output is issued.
+CLEAR can cancel an in-flight observation. The GUI's single Preview toggle routes
+Home/Pick/Place to this service while ON; hardware actions remain separate.
+Rebuild this package and `robot_controller`, then restart controller/preview/GUI
+together. The old preview endpoint cannot satisfy the new GUI.
+
+`GoTrayDetectPosition` remains available to external clients, carrying the
+configuration ID and saved Tray Teach observation joints. The GUI has no separate
+Tray Detect Position button; Place includes that travel. `PlaceItem` carries
+the configuration ID plus positive `x_mm`, `y_mm` and
 `rotation_deg` in [−180, +180]. Rotation zero is the saved observation tool attitude,
 with a local tool-Z offset. It is independent of detected item/tray axes.
 `Configure.tray_teach_file` is optional for Home/Pick and required for tray actions.

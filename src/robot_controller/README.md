@@ -7,7 +7,7 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 [visual PDF](../../docs/ROBOT_CONTROLLER_FSM.pdf), generated from that document.
 
 `robot_controller` is the sole production application-level authority for the
-physical CR10. It provides Home, Pick Item, Tray Detect Position and Place Item.
+physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.
 
 Launching the package never enables, recovers, homes, or moves the robot. An
@@ -46,8 +46,10 @@ change; detection/teach files and ROS interfaces are unchanged.
 
 Load **Item Teach**, **Bin Teach** and a complete **Tray Teach** in the controller,
 then Startup. In GUI mode, Pick Item is optional before placement; headless Place
-requires a successful Pick. **Tray Detect Position** moves to the joints recorded
-in Tray Teach using one direct queued joint-target MovL. There is no preliminary
+requires a successful Pick. Place first moves to the joints recorded in Tray Teach
+using one direct queued joint-target MovL. There is no separate observation-position
+button; the typed Tray Detect Position action remains available to external clients.
+There is no preliminary
 Z rise or elevated transit; the bin routes retain their existing clearance logic.
 **Place Item** also reaches that observation pose when needed and
 requests fresh tray/depth from Armed Tray Teach or headless Tray Detect, with
@@ -191,7 +193,7 @@ separate commissioning.
 
 - `robot_controller` is the background hardware authority. It alone creates Dobot
   motion, Pause/Continue/Stop, robot-setting, and gripper-output clients.
-- `robot_controller_preview` calculates and broadcasts TF-only Home/Pick plans.
+- `robot_controller_preview` calculates and broadcasts TF-only Home/Pick/Place plans.
   It has no Dobot command client and cannot actuate the robot.
 - `robot_controller_gui` is a client of the controller and preview APIs. It has
   no Dobot command client.
@@ -269,7 +271,47 @@ Services:
   It is always direct and never requires a preceding Pause.
 - `/robot_controller/set_global_speed` accepts an integer 1–100 only while
   stationary in `READY` or `HOLDING`.
-- `/robot_controller/preview` belongs to the TF-only preview node.
+- `/robot_controller/preview_v2` belongs to the TF-only preview node. It accepts
+  HOME, PICK, PLACE and CLEAR, selected Item/Bin/Tray files and placement X/Y/rotation.
+  The former preview endpoint is not used as a fallback.
+
+## Unified motion preview
+
+The operations grid contains Home (top left), Preview toggle (top right), Pick
+Item (bottom left) and Place Item (bottom right). Preview defaults OFF on launch;
+it is a GUI routing choice, not a hardware-controller lifecycle or persisted teach
+setting. Turn it ON only with no active/pending hardware operation. Home/Pick/Place
+then call only the preview service, even before Startup. No fallback to hardware
+is allowed on unavailable/rejected preview. Start/Continue, Recover, managed
+Pause/Return and speed changes cannot dispatch while ON. The Stop control sends
+direct Stop and clears preview; it never parks or puts back an item in this mode.
+The separate typed hardware API retains its existing guards and behavior.
+
+The preview process has no Dobot command clients. It reads the same three canonical
+robot feedback streams, requires fresh stationary/empty-queue inputs, and obtains
+the current Link6 pose from joint FK. It can preview while the robot is disabled;
+it never enables it. Shared planners supply Cartesian Home alignment/final targets,
+Pick's conditional initial rise/joint Home, every candidate's approach/retract,
+entry/exit transits and possible Home/put-back targets, and Place's saved Tray
+Detect joints followed by approach/drop/retract/Cartesian Home. Targets already
+skipped by Home/Tray arrival checks are omitted. Each target is broadcast under
+`base_link` as a distinct `robot_controller_preview_*` frame.
+
+Pick preview shows one fresh candidate batch and its possible nominal branches,
+not simulated suction outcomes or unknown future retry observations. Actual early
+contact/Stop positions depend on hardware feedback and cannot be predicted.
+Place uses fresh tray/depth from the camera's **current physical position**, with
+the same three-request bound and evidence validation. A hidden tray cannot be
+observed by previewing a future camera pose; a missing observation fails visibly
+without fabricated targets or movement. Preview does not require a held item.
+
+Turning OFF, editing teach/placement inputs or clearing cancels pending preview
+work and stops broadcasting. CLEAR pre-empts blocked perception and late results
+cannot reinstall canceled targets. Changed sources, invalid/stale feedback or
+robot movement clear installed previews; the existing RViz TF timeout retires
+old display frames. No output commands, hardware state changes, new teach schema
+or automatic application restart are introduced. Rebuild both controller packages
+and restart controller/preview/GUI together for the versioned preview contract.
 
 `/robot_controller/status` uses
 `robot_controller_interfaces/msg/ControllerStatus`, reliable/transient-local

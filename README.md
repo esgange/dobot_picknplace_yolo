@@ -32,6 +32,27 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller v2
 
+The motion controls form one four-button grid:
+
+| Left | Right |
+| --- | --- |
+| Home | Preview: OFF / ON |
+| Pick Item | Place Item |
+
+**Preview ON** makes all three motion buttons publish planned TF targets without
+moving the robot or changing gripper outputs. Home shows its alignment and final
+pose; Pick shows a fresh batch's candidate, entry/exit and return targets; Place
+shows Tray Detect and its complete placement/Home route. Preview uses fresh
+canonical joint feedback for the current pose and the same geometry as hardware.
+Pick/Place still need their armed read-only detector and fresh visible targets;
+preview does not move the camera to obtain them. Start/Continue, Recover and speed
+changes are blocked while previewing; direct Stop remains available. Switch modes
+only while no hardware operation is active. Preview starts OFF and turning it OFF
+or editing inputs clears its TFs. Place automatically travels to Tray Detect;
+there is no separate Tray Detect Position button. Lifecycle controls remain separate.
+Rebuild `robot_controller_interfaces` and `robot_controller`, then restart the
+controller/preview/GUI together for the `/robot_controller/preview_v2` contract.
+
 See the [controller FSM and workflow diagrams](docs/ROBOT_CONTROLLER_FSM.md)
 for the current lifecycle, Pick, Pause/Continue, Stop/Recovery and item-return paths.
 Open the [visual HTML](docs/ROBOT_CONTROLLER_FSM.html) in a browser or the

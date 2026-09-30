@@ -1,5 +1,12 @@
 # Robot Controller — Finite State Machine
 
+Preview/UI review: **2026-09-30**, baseline **`e2eff65`** plus diary rule **181**.
+The motion grid is Home / Preview toggle, then Pick Item / Place Item. Preview ON
+routes all three to the read-only planner and blocks motion-producing lifecycle
+controls; direct Stop remains available. The standalone tray-position button is
+removed; Place retains its observation travel. Typed hardware actions and their
+state transitions are unchanged.
+
 Retry behavior review: **2026-09-30**, baseline **`30073a2`** plus diary rule
 **180**. Pick permits three full candidate batches; an exhausted/empty batch
 counts as one attempt, with Home before fresh detection. Place permits three
@@ -92,6 +99,53 @@ There are two separate state machines:
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
 Pick's initial Home travel still reports `PICKING`; it is not a separate Home
 action. Flowchart boxes below describe steps unless explicitly named as states.
+
+## 1a. Motion controls and preview
+
+| Left | Right |
+| --- | --- |
+| Home | Preview: OFF / ON |
+| Pick Item | Place Item |
+
+```mermaid
+flowchart TD
+    Buttons["Home / Pick Item / Place Item"] --> Mode{"Preview toggle?"}
+    Mode -->|OFF| Action["Typed hardware action; existing admission and safety gates"]
+    Mode -->|ON| Inputs["Fresh canonical joints and stationary feedback; selected sources"]
+    Inputs --> Plan["Shared Home / candidate and return / tray and placement geometry"]
+    Plan --> TF["Publish every planned target as base_link TF; no robot commands"]
+    TF --> Clear["Toggle OFF, edited inputs, source/feedback loss or robot movement: clear"]
+    Inputs -->|Invalid or perception unavailable| Failed["Report failure; clear targets; no fallback to motion"]
+    Stop["Stop always available"] --> Direct["Direct Stop; preview never invokes parking or put-back"]
+```
+
+Preview is a GUI routing mode, starts OFF, and cannot be entered with an active or
+pending hardware operation. It adds no controller lifecycle state. While ON,
+Start/Continue, Recover, managed Pause/Return and global speed cannot dispatch;
+the three motion buttons use only `/robot_controller/preview_v2`. Load remains
+read-only. External hardware APIs retain their own guards and are independent.
+There is no fallback when the preview service is unavailable. Its process creates
+only read-only perception clients, never Dobot command clients, and can plan from
+fresh feedback while disabled without running Startup.
+
+Home uses joint FK for its actual origin and shares Cartesian alignment/final
+targets and arrival skips. Pick shares the conditional initial joint-Home route,
+all accepted candidate targets, both transits and every candidate's Home/put-back
+branches. It previews one fresh batch at nominal endpoints; actual early-contact
+poses and future retry batches require live execution and are not invented.
+Place shares the saved Tray Detect target (unless already there) and four-command
+placement route, including taught rotation. It samples real fresh tray/depth at
+the camera's current pose with three requests maximum. Preview cannot move the
+camera to make a hidden tray visible. Sources and successful pose evidence remain
+strict; failed observation publishes no partial placement route.
+
+Clearing pre-empts perception and prevents a late result from installing TFs.
+Installed TFs stop on input edits, mode OFF, source change, stale feedback or robot
+movement; RViz removes expired frames using its existing TF timeout. Rebuild
+controller interfaces/controller and restart controller/preview/GUI together.
+The old preview endpoint is not used. The removed Tray Detect Position GUI button
+does not remove the native external action; Place still owns the same observation
+travel internally. Lifecycle buttons stay in their separate row.
 
 ## 2. Normal lifecycle
 

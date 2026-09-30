@@ -7401,6 +7401,56 @@ Never use a floating “latest” version in an issue, script, or deployment not
   command or live process restart. Operator RViz changes and calibration/teach/
   model artifacts remain untouched and excluded.
 
+### 2026-09-30 — Rule 181: unified TF-only preview and four motion controls
+
+- User confirmed the 2×2 layout: Home / Preview toggle on top, Pick Item / Place
+  Item below. Remove the two old preview buttons, the standalone GUI Tray Detect
+  Position button and its GUI action client. Place still travels to the saved
+  observation joints; the native tray-position action remains for external users.
+- Preview starts OFF and is a GUI routing choice, never a controller hardware-mode
+  switch or saved teach field. With ON, Home/Pick/Place call only the read-only
+  preview service. Block both widgets and dispatch for Start/Continue, Recover,
+  managed Pause/Return and speed changes. Direct Stop stays available and never
+  parks/returns an item while previewing. Reject entering Preview with active or
+  pending hardware work; an unavailable preview service never falls back to motion.
+- Extend and version the Preview service at `/robot_controller/preview_v2` for
+  PLACE, Tray Teach path and X/Y/rotation. Use read-only canonical joint/status/feed
+  subscriptions, fresh stationary feedback and joint FK for the actual origin.
+  Preview works while disabled and never starts/enables the robot. Share geometry
+  for Cartesian Home alignment/final, Pick's conditional initial joint Home, every
+  candidate's entry/exit, approach/retract and Home/put-back targets, and saved Tray
+  Detect plus the complete four-command placement route. Omit Home/Tray moves that
+  hardware arrival checks would skip. Each planned target gets its own base_link TF.
+- Pick preview uses one fresh candidate batch and shows possible nominal branches;
+  future retry observations and early-contact stopped poses cannot be predicted.
+  Place uses real fresh tray/depth from the camera's current position with the same
+  three-request limit and strict evidence checks, without needing a held item or
+  moving to reveal a hidden tray. Failed observation never invents a placement.
+- CLEAR now pre-empts a preview waiting for perception; cancellation is checked
+  before installing/publishing targets. OFF and source/placement edits clear pending
+  work and TFs. Source changes, invalid/stale feedback or actual robot movement
+  invalidate installed targets. RViz retains its existing TF-expiry behavior.
+  Bound GUI clear-response waiting to five seconds and discard obsolete replies.
+- Cleanup: extract bounded event logging into a module shared by preview/controller
+  so read-only preview no longer imports hardware authority. Reuse existing motion,
+  placement and tray evidence code; remove obsolete GUI wiring and refresh branches.
+  Keep hardware queues, gripper timing, three-attempt Pick/Place behavior, safety
+  checks and typed hardware lifecycle unchanged. Update root/package/interface
+  READMEs and FSM, regenerating its adjacent offline HTML/PDF.
+- Validation: all **647 controller tests pass**, including 37 preview-route/GUI
+  cases covering the four-button grid, all three preview routes, hardware dispatch
+  exclusion, disabled-robot preview, direct Stop, mode-switch guards, canceled/late
+  results, source/feedback failures, target invalidation and real tray-client retry
+  checks. Final GUI/preview/architecture cleanup subset: **82 passed**. Both
+  `robot_controller_interfaces` and `robot_controller` symlink builds pass. Scoped
+  lint retains seven pre-existing findings with no new findings; diff checks pass.
+  Inspected an offscreen Qt screenshot built from synthetic status only. Renamed
+  shared motion widgets and restored the real Home tooltip after leaving Preview.
+  Regenerated eight offline FSM diagrams and the eight-page A3 PDF; verified source
+  SHA-256 c9b10886e846f1600070f43ad923d65de1d4f7386f22c8c38f63bf40f3923b09.
+  No physical robot command or application restart was performed. Unrelated RViz
+  edits and operator calibration/teach/model artifacts remain untouched/excluded.
+
 ### Future entry template
 
 ```text

@@ -103,12 +103,17 @@ class TrayClient:
             raise FeedbackFailure("Placement requires exactly one armed tray_teach or "
                                   "headless tray_detect provider in the root namespace")
 
-    def request(self, config, x_mm, y_mm, *, require_held_item=True, attempts=None):
+    def request(self, config, x_mm, y_mm, *, require_held_item=True, attempts=None,
+                check_state=None):
         node = self.node
         attempts = attempts if attempts is not None else TrayAttempts()
 
         def check_item():
-            if require_held_item:
+            if check_state is not None:
+                # The read-only preview supplies a stationary observation guard;
+                # it must also work with a disabled robot, without enabling it.
+                check_state()
+            elif require_held_item:
                 node._preflight_item_state(True)
             else:
                 node.monitor.snapshot(require_enabled=True)

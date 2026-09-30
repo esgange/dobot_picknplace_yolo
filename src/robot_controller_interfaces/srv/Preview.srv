@@ -1,9 +1,14 @@
 uint8 HOME=1
 uint8 PICK=2
 uint8 CLEAR=3
+uint8 PLACE=4
 uint8 operation
 string item_teach_file
 string bin_teach_file
+string tray_teach_file
+float64 x_mm
+float64 y_mm
+float64 rotation_deg
 ---
 bool success
 string message

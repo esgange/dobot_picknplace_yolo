@@ -33,7 +33,8 @@ def test_typed_action_result_codes_are_in_result_not_goal():
 
 
 def test_preview_constants_and_three_process_launch():
-    assert (Preview.Request.HOME, Preview.Request.PICK, Preview.Request.CLEAR) == (1, 2, 3)
+    assert (Preview.Request.HOME, Preview.Request.PICK,
+            Preview.Request.CLEAR, Preview.Request.PLACE) == (1, 2, 3, 4)
     launch = (PACKAGE / "launch/robot_controller.launch.py").read_text()
     assert 'executable="robot_controller"' in launch
     assert 'executable="robot_controller_preview"' in launch
@@ -59,6 +60,9 @@ def test_legacy_public_commands_are_absent_and_preview_has_no_dobot_transport():
     assert "DobotTransport" not in preview
     assert "dobot_bringup_ros2/srv" not in preview
     assert "dobot_msgs_v4.srv" not in preview
+    assert "from .controller" not in preview
+    assert '"/robot_controller/preview_v2"' in preview
+    assert '"/robot_controller/preview_v2"' in gui
     assert "DobotTransport" not in gui
     assert "dobot_bringup_ros2/srv" not in gui
 

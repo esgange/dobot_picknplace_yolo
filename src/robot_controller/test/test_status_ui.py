@@ -157,7 +157,7 @@ def test_unavailable_feedback_never_displays_old_io_as_live_or_off(window):
     window._refresh()
     assert window.status.text() == "UNAVAILABLE"
     assert all(value.text() == "UNKNOWN" for value in window.gripper_values.values())
-    assert not window.hardware_home.isEnabled() and not window.hardware_pick.isEnabled()
+    assert not window.home_button.isEnabled() and not window.pick_item.isEnabled()
     assert window.stop.isEnabled() and window.stop.text() == "STOP"
 
 
@@ -166,7 +166,7 @@ def test_confirmed_estop_has_visible_feedback_without_latching_recover_disabled(
     window._refresh()
     assert window.status.text() == "EMERGENCY STOP\nPRESSED\nCannot start / recover"
     assert EMERGENCY_STOP_GUIDANCE in window.status.toolTip()
-    assert not window.startup.isEnabled() and not window.hardware_home.isEnabled()
+    assert not window.startup.isEnabled() and not window.home_button.isEnabled()
     # The alarm may latch until clear: keep explicit Recover available after the
     # physical button is released. Only the controller can establish readiness.
     assert window.recover.isEnabled()
@@ -218,7 +218,7 @@ def test_unknown_held_state_allows_explicit_recovery_recheck(window, inputs):
     window.node.status = status(state="HELD_UNKNOWN", digital_input_bits=inputs)
     window._refresh()
     assert window.recover.isEnabled()
-    assert not window.hardware_home.isEnabled() and not window.hardware_pick.isEnabled()
+    assert not window.home_button.isEnabled() and not window.pick_item.isEnabled()
     window.pending["recover"] = SimpleNamespace(done=lambda: False)
     window._refresh()
     assert not window.recover.isEnabled()
@@ -260,13 +260,13 @@ def test_recovery_unknown_suction_refusal_displays_server_clearing_instructions(
 def test_pick_button_tracks_item_arming_independently_of_tray(window, ready):
     window.node.status = status(item_detector_ready=ready, tray_detector_ready=False)
     window._refresh()
-    assert window.hardware_pick.isEnabled() is ready
-    assert window.hardware_home.isEnabled()
+    assert window.pick_item.isEnabled() is ready
+    assert window.home_button.isEnabled()
     if not ready:
-        assert 'Arm Item Teach' in window.hardware_pick.toolTip()
+        assert 'Arm Item Teach' in window.pick_item.toolTip()
     window.node.status.item_detector_ready = not ready
     window._refresh()
-    assert window.hardware_pick.isEnabled() is not ready
+    assert window.pick_item.isEnabled() is not ready
 
 
 @pytest.mark.parametrize('ready', [False, True])
@@ -276,7 +276,7 @@ def test_place_button_requires_tray_arming_and_a_held_item(window, ready):
                                 item_detector_ready=False)
     window._refresh()
     assert window.place_item.isEnabled() is ready
-    assert window.tray_position.isEnabled()
+    assert not hasattr(window, "tray_position")
     window.node.status.holding_item = False
     window.node.status.state = 'READY'
     window._refresh()

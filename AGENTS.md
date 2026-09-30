@@ -981,6 +981,26 @@ teach setting, interface field, hardware-command retry or automatic restart is a
 Supersede one-batch Pick completion and no-retry tray observation only; preserve
 existing routes, joint/status verification, I/O, settling and recovery.
 
+Rule 181 replaces separate Home/Pick preview buttons and GUI Tray Detect Position
+with the four-control grid Home / Preview toggle, then Pick Item / Place Item.
+Preview starts OFF and cannot be entered during active/pending hardware work.
+While ON, all three motion buttons call only /robot_controller/preview_v2; disable
+and guard Start/Continue, Recover, managed Pause/Return and speed dispatch. Direct
+Stop remains available. The separate preview process has no Dobot command clients;
+use fresh canonical joint/status/feed observations and joint FK, including when
+disabled, without Startup. Share Home/Pick/Place geometry, including Home alignment,
+conditional initial joint Home, all candidates and entry/exit/return/put-back
+targets, and Tray Detect plus placement/Home. Preview one fresh candidate batch's
+nominal branches; never fabricate future retry observations or early-stop poses.
+Place preview requests actual current-camera tray/depth with the same three-request
+bound; no observation-position movement or held-item requirement. Clear on OFF,
+edited inputs, source/feedback loss or robot movement. CLEAR must pre-empt pending
+perception and discard late results. Keep native hardware actions, routes, safety
+gates and lifecycle unchanged; external Tray Detect action remains supported.
+Separate preview event logging from controller authority, remove obsolete GUI
+clients/handlers and document/rebuild the extended versioned Preview interface.
+No hardware fallback, new teach schema, persisted mode or automatic restart.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
