@@ -778,17 +778,20 @@ class DobotTransport:
             self._check_emergency_stop()
             raise
 
-    def _apply_settings(self, speed_percent):
+    def _apply_settings(self, speed_percent, cp_percent=100):
         for name, fields in (
                 ("SpeedFactor", {"ratio": speed_percent}),
                 ("User", {"index": 0}),
                 ("Tool", {"index": 0}),
                 ("SetTool", {"index": 1, "value": "{0,0,0,0,0,0}"}),
-                ("CP", {"r": 100})):
+                ("CP", {"r": cp_percent})):
             self._check_held_context(self.node.holding_item, self.node.expected_outputs)
             self._call_startup(name, **fields)
             if name == "SpeedFactor":
                 self.node.global_speed_percent = speed_percent
+                self.node.publish_status()
+            elif name == "CP":
+                self.node.global_cp_percent = cp_percent
                 self.node.publish_status()
 
     def _confirm_ready(self):
@@ -878,7 +881,9 @@ class DobotTransport:
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
         self._wait_enabled()
-        self._apply_settings(speed_percent if speed_percent is not None else 100)
+        cp_percent = self.node.global_cp_percent
+        self._apply_settings(speed_percent if speed_percent is not None else 100,
+                             cp_percent if cp_percent is not None else 100)
         if self.home_recovery is None:
             self._reset_outputs_if_unheld()
         self._confirm_ready()
@@ -912,6 +917,21 @@ class DobotTransport:
         # The successful service acknowledgement establishes the latest known
         # factor even if the following held-item integrity check faults.
         self.node.global_speed_percent = percent
+        self.node.publish_status()
+        self._check_held_context(self.node.holding_item, self.node.expected_outputs)
+
+    def set_global_cp(self, percent):
+        if type(percent) is not int or not 0 <= percent <= 100:
+            raise CommandRejected("Global CP must be an integer from 0 through 100")
+        snapshot = self.monitor.snapshot(require_enabled=True)
+        if not self._idle(snapshot) or self.moving:
+            raise FeedbackFailure("CP requires stationary READY/HOLDING feedback")
+        self._check_held_context(self.node.holding_item, self.node.expected_outputs)
+        progress = self._validate_held_snapshot if self.node.holding_item else None
+        self.call("CP", r=percent, progress=progress)
+        # An accepted CP command is the last known setting, including when the
+        # following held-item check fails. Recovery must retain this value.
+        self.node.global_cp_percent = percent
         self.node.publish_status()
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
 

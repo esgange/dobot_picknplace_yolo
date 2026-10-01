@@ -71,7 +71,7 @@ def test_preview_routes_each_motion_button_without_startup_or_hardware_goal(
 
 
 @pytest.mark.parametrize("name", [
-    "startup", "continue", "recover", "pause", "return_item", "speed"])
+    "startup", "continue", "recover", "pause", "return_item", "speed", "cp"])
 def test_preview_blocks_motion_and_settings_even_when_called_directly(controls, name):
     controls.preview_toggle.setChecked(True)
     assert not controls._call(name, Command.Request())

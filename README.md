@@ -60,7 +60,7 @@ shows its approach, drop and retract targets from the saved Tray Detect position
 Preview uses fresh canonical joint feedback for the current pose and the same
 geometry as hardware.
 Pick/Place still need their armed read-only detector and fresh visible targets;
-preview does not move the camera to obtain them. Load/Continue, Recover and speed
+preview does not move the camera to obtain them. Load/Continue, Recover and speed/CP
 changes are blocked while previewing; direct Stop remains available. Switch modes
 only while no hardware operation is active. Preview starts OFF and turning it OFF
 or editing inputs clears its TFs. Hardware Place moves to Tray Detect if needed;
@@ -75,7 +75,7 @@ for the current lifecycle, Pick, Pause/Continue, Stop/Recovery and item-return p
 Open the [visual HTML](docs/ROBOT_CONTROLLER_FSM.html) in a browser or the
 [visual PDF](docs/ROBOT_CONTROLLER_FSM.pdf) directly; both work offline.
 
-Motion groups retain CP(100) blending and confirm their final endpoint using
+Motion groups retain CP (default 100%) blending and confirm their final endpoint using
 fresh RobotStatus idle and joint feedback after acceptance. Saved joint targets
 are checked directly; Cartesian targets and current poses use the existing CR10
 forward kinematics from `/joint_states`. FeedInfo still supervises command
@@ -177,7 +177,7 @@ Each Pick attempt requests one fresh hash-matched batch from the sole canonical 
 headless `item_detect`, or explicitly Armed `item_teach` during attended use.
 They share `/item_detect/get_item_poses`; running both providers is rejected.
 Candidate count always comes from Item Teach `pose_candidates`. Typed Startup,
-Recover, Pause, Continue, direct Stop, Configure and global-speed services support
+Recover, Pause, Continue, direct Stop, Configure and global speed/CP services support
 those actions, while reliable transient-local typed status reports the state and
 operation phase. The old Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image
 endpoints are removed.
@@ -274,7 +274,7 @@ Home Z → taught joint Home. At 90% of descent, open fingers, turn suction OFF
 and exhaust ON. At the 0% start of ascent, neutralize all four outputs.
 Queue optional vertical rise, approach, drop, retract and taught Home together,
 with no intermediate arrival wait or settling. All motions use speed
-100% and inherit CP(100); final Home requires neutral outputs and DI1 LOW.
+100% and inherit CP (default 100%); final Home requires neutral outputs and DI1 LOW.
 Accelerations are travel, approach, retract and travel respectively. There is
 no separate 50 ms pulse or release-I/O/clearance wait. Return after failed
 tray acquisition uses the same sequence, without another perception request.
@@ -347,17 +347,25 @@ The global SpeedFactor slider sends its live 1–100 position on mouse release;
 keyboard and groove edits use a 350 ms debounce. Status updates do not snap the
 control back while an edit or service confirmation is in progress.
 
+The **Global CP** slider below SpeedFactor adjusts path blending from **0–100%**
+with the same release/debounce behavior. Change it only while idle in READY or
+HOLDING; Preview and Auto Run disable it. All subsequent motion queues inherit
+the accepted value. Load/Startup sets 100%; Recover restores the last confirmed
+value, including 0. The setting is not saved across process restarts or reloads.
+Rebuild interfaces/controller and restart the controller, preview and GUI together
+for the added CP status field.
+
 The explicit Home action derives the current Link6 pose from fresh `/joint_states`
 with the canonical CR10 model and idle RobotStatus. Unless already within
 5 mm/1° of taught Home, it queues two Cartesian `MovL` targets in one
-CP(100)-blended group: current X/Y with taught Home Z/attitude, then full taught
-Home XYZ/attitude. Each service must return `res=0` in order, but only final
+group using the selected global CP (default 100%): current X/Y with taught Home
+Z/attitude, then full taught Home XYZ/attitude. Each service must return `res=0` in order, but only final
 Home is physically confirmed. The same fresh stationary pose is used both to
 plan the group and as its confirmed motion origin, without a duplicate origin
 acquisition. The first control point can be rounded, rotate or descend at
 current XY and is not collision-checked for an arbitrary starting pose. A
 successful Pick queues actual stopped pose → pre-pick lift → clearance lift →
-saved Tray Detect joints in one CP(100) group. It omits the Home-height exit
+saved Tray Detect joints in one CP (default 100%) group. It omits the Home-height exit
 transit and final Home, confirms only Tray Detect and finishes HOLDING there.
 Pick requires a loaded Tray Teach with recorded detect joints, but does not
 request tray detection or placement. Its initial Home check uses one fresh idle
@@ -411,7 +419,7 @@ at `v=100`, then queues the old item's exit transit followed by the next item's
 entry transit before descending through its clearance and pre-pick to final pick.
 Both transits use the higher of taught Home Z and stopped Z. The exit preserves
 actual stopped X/Y/attitude; the entry uses the next candidate's X/Y/attitude.
-Both use taught travel rates and CP(100) blending, with no intermediate arrival
+Both use taught travel rates and CP (default 100%) blending, with no intermediate arrival
 wait or dwell. Even coincident transit coordinates are sent as separate commands.
 The group enters EXHAUST at 80% of the first rise,
 finger/vacuum NEUTRAL at the start of the second rise, OPEN at 50% of transfer,
@@ -540,8 +548,8 @@ below `pick_rotation` at the bottom of **Vertical motion — mm**.
 Pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
 clearance Z = pre-pick Z + retract. Placement drop Z = tray surface Z +
 trayplace_height, shared by hardware and Preview. Offsets are in robot base Z.
-Queued motion commands omit per-command `cp`/`r`, so the strict global `CP(100)`
-applied by Startup/Recover governs every transition. Intermediate waypoints are
+Queued motion commands omit per-command `cp`/`r`, so the selected global CP
+(default 100%) governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
 the terminal pick/stopped pose and final saved-joint destination are physically
 confirmed. Successful Pick ends directly at Tray Detect after its two lifts;

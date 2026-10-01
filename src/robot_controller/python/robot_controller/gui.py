@@ -18,7 +18,7 @@ from std_msgs.msg import String
 from item_perception_yolo.platform_teach_core import workspace_root
 from robot_controller_interfaces.action import AutoRun, GoHome, PickItem, PlaceItem
 from robot_controller_interfaces.msg import ControllerStatus
-from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalSpeed
+from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalCP, SetGlobalSpeed
 
 from .ui_state import load_state, save_state
 from .feedback import FEEDBACK_MAX_AGE_SEC
@@ -51,6 +51,7 @@ class GuiNode(rclpy.node.Node):
             "return_item": self.create_client(Command, "/robot_controller/return_item"),
             "speed": self.create_client(
                 SetGlobalSpeed, "/robot_controller/set_global_speed"),
+            "cp": self.create_client(SetGlobalCP, "/robot_controller/set_global_cp"),
             "preview": self.create_client(Preview, "/robot_controller/preview_v2"),
         }
         self.action_clients = {
@@ -104,6 +105,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.return_requested_locally = False
         self.speed_pending_percent = None
         self.speed_syncing = False
+        self.cp_pending_percent = None
+        self.cp_syncing = False
         self.setWindowTitle("Robot Controller")
         self.resize(1050, 445)
         central = QtWidgets.QWidget()
@@ -300,6 +303,23 @@ class ControllerWindow(QtWidgets.QMainWindow):
         speed.addWidget(self.speed_slider, 1)
         layout.addLayout(speed)
 
+        cp = QtWidgets.QHBoxLayout()
+        self.cp_label = QtWidgets.QLabel("Global CP: unavailable")
+        self.cp_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.cp_slider.setRange(0, 100)
+        self.cp_slider.setValue(100)
+        self.cp_slider.setTracking(True)
+        self.cp_slider.sliderMoved.connect(self._cp_preview)
+        self.cp_slider.sliderReleased.connect(self._cp_released)
+        self.cp_slider.valueChanged.connect(self._cp_value_changed)
+        self.cp_debounce = QtCore.QTimer(self)
+        self.cp_debounce.setSingleShot(True)
+        self.cp_debounce.setInterval(350)
+        self.cp_debounce.timeout.connect(self._cp)
+        cp.addWidget(self.cp_label)
+        cp.addWidget(self.cp_slider, 1)
+        layout.addLayout(cp)
+
         log_header = QtWidgets.QHBoxLayout()
         self.log_toggle = QtWidgets.QPushButton("Show command log")
         self.log_toggle.setCheckable(True)
@@ -435,6 +455,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.preview_mode = checked
         self.preview_toggle.setText("Preview: ON — TF only" if checked else "Preview: OFF")
         self.speed_debounce.stop()
+        self.cp_debounce.stop()
         self._clear_preview()
         self.feedback_message = (
             "Preview enabled: motion buttons publish TFs only" if checked else "")
@@ -564,6 +585,45 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.speed_pending_percent = percent
             self.speed_label.setText(f"Global SpeedFactor: requesting {percent}%")
 
+    def _sync_cp_slider(self, percent):
+        self.cp_syncing = True
+        try:
+            self.cp_slider.setValue(percent)
+        finally:
+            self.cp_syncing = False
+
+    def _cp_preview(self, percent):
+        self.cp_label.setText(f"Global CP: {int(percent)}% selected")
+
+    def _cp_value_changed(self, percent):
+        if self.cp_syncing:
+            return
+        self._cp_preview(percent)
+        if not self.cp_slider.isSliderDown() and self.cp_slider.hasFocus():
+            self.cp_debounce.start()
+
+    def _cp_released(self):
+        self.cp_debounce.stop()
+        self._cp()
+
+    def _cp(self):
+        self.cp_debounce.stop()
+        if self._availability()["cp"]:
+            return
+        if "cp" in self.pending:
+            return
+        percent = int(self.cp_slider.sliderPosition())
+        status = self.node.status
+        if (status is not None and status.global_cp_percent == percent
+                and self.cp_pending_percent is None):
+            self.cp_label.setText(f"Global CP: {percent}%")
+            return
+        request = SetGlobalCP.Request()
+        request.percent = percent
+        if self._call("cp", request):
+            self.cp_pending_percent = percent
+            self.cp_label.setText(f"Global CP: requesting {percent}%")
+
     def _feedback(self, message):
         feedback = message.feedback
         suffix = ""
@@ -638,6 +698,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
                         self.speed_pending_percent = None
                         if result is not None and result.confirmed_percent >= 1:
                             self._sync_speed_slider(result.confirmed_percent)
+                    elif name == "cp":
+                        self.cp_pending_percent = None
+                        if result is not None and result.confirmed_percent >= 0:
+                            self._sync_cp_slider(result.confirmed_percent)
                     QtWidgets.QMessageBox.warning(self, f"{name} rejected", message)
                 elif name == "configure" and self.saved_selection is not None:
                     save_state(
@@ -649,6 +713,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     self._sync_speed_slider(result.confirmed_percent)
                     self.speed_label.setText(
                         f"Global SpeedFactor: {result.confirmed_percent}% confirmed")
+                elif name == "cp":
+                    self.cp_pending_percent = result.confirmed_percent
+                    self._sync_cp_slider(result.confirmed_percent)
+                    self.cp_label.setText(
+                        f"Global CP: {result.confirmed_percent}% confirmed")
                 elif name == "preview":
                     self.feedback_message = result.message
                     self.log_view.appendPlainText("PREVIEW: " + result.message)
@@ -660,6 +729,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             except Exception as exc:
                 if name == "speed":
                     self.speed_pending_percent = None
+                elif name == "cp":
+                    self.cp_pending_percent = None
                 QtWidgets.QMessageBox.warning(self, f"{name} failed", str(exc))
             finally:
                 if name == "pause" and not accepted:
@@ -786,6 +857,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "configure": self.configure, "recover": self.recover, managed_name: self.pause,
             "home": self.home_button, "pick": self.pick_item, "place": self.place_item,
             "preview_toggle": self.preview_toggle, "speed": self.speed_slider,
+            "cp": self.cp_slider,
             "auto_run": self.auto_run_button,
         }
         descriptions = {
@@ -801,6 +873,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                      "Move to Tray Detect if needed, then place and retract; item optional",
             "preview_toggle": "ON: motion buttons show TFs only. OFF: real robot motion.",
             "speed": "Change the global motion speed factor",
+            "cp": "Change global path blending: 0% minimum, 100% maximum",
         }
         for name, action in self.managed_actions.items():
             action.setToolTip(reasons[name] or descriptions[name])
@@ -857,6 +930,27 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.speed_label.setText(f"Global SpeedFactor: {speed_text}")
         else:
             self.speed_label.setText("Global SpeedFactor: unavailable")
+        if state:
+            if (self.cp_pending_percent is not None
+                    and "cp" not in self.pending
+                    and state.global_cp_percent == self.cp_pending_percent):
+                self.cp_pending_percent = None
+            editing_cp = (
+                self.cp_slider.isSliderDown() or self.cp_debounce.isActive()
+                or "cp" in self.pending or self.cp_pending_percent is not None)
+            if state.global_cp_percent >= 0 and not editing_cp:
+                self._sync_cp_slider(state.global_cp_percent)
+            if self.cp_slider.isSliderDown() or self.cp_debounce.isActive():
+                cp_text = f"{self.cp_slider.sliderPosition()}% selected"
+            elif self.cp_pending_percent is not None:
+                suffix = "requesting" if "cp" in self.pending else "confirmed"
+                cp_text = f"{self.cp_pending_percent}% {suffix}"
+            else:
+                cp_text = (f"{state.global_cp_percent}%"
+                           if state.global_cp_percent >= 0 else "unknown")
+            self.cp_label.setText(f"Global CP: {cp_text}")
+        else:
+            self.cp_label.setText("Global CP: unavailable")
 
 
 def main(args=None):

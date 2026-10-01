@@ -20,7 +20,7 @@ def status(**fields):
     message = ControllerStatus(
         state="READY", message="Ready to pick", configured=True,
         configuration_id="test-configuration", startup_complete=True,
-        feedback_fresh=True, robot_enabled=True, global_speed_percent=60,
+        feedback_fresh=True, robot_enabled=True, global_speed_percent=60, global_cp_percent=100,
         item_detector_ready=True, tray_detector_ready=True, manual_placement_enabled=False,
         configuration_editable=True, pick_configured=True, motion_ready=True,
         preview_ready=True, at_tray_detect=True, can_continue=True)
@@ -42,7 +42,8 @@ def test_pick_requires_recorded_tray_position_even_with_item_detector_ready(wind
 
 
 @pytest.mark.parametrize('headless', [False, True])
-def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(headless):
+@pytest.mark.parametrize('cp', [None, 0, 100])
+def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(headless, cp):
     feed = {
         "EnableStatus": 1, "RunningStatus": 1, "isRunQueuedCmd": 1,
         "ErrorStatus": 1, "CollisionStates": 1,
@@ -59,12 +60,13 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(he
         active_action="", phase="", waypoint="", candidate_index=1, candidate_total=2,
         managed=SimpleNamespace(session=None, can_return_item=lambda: False,
                                 continue_block_reason=lambda _sample: "Not paused"),
-        global_speed_percent=60,
+        global_speed_percent=60, global_cp_percent=cp,
         startup_complete=True, expected_outputs={13: False, 14: False},
         _perception_ready=lambda action: action == "pick",
         monitor=SimpleNamespace(snapshot=lambda **_kwargs: sample))
     RobotController.publish_status(node)
     message = messages[-1]
+    assert message.global_cp_percent == (-1 if cp is None else cp)
     assert message.feedback_fresh and message.robot_enabled
     assert message.robot_running and message.robot_queue_active
     assert message.robot_error and message.robot_collision
@@ -116,7 +118,7 @@ def window(tmp_path):
                         for name in ("home", "pick", "place")},
         service_clients={name: client for name in (
             "configure", "startup", "recover", "pause", "continue", "stop", "return_item",
-            "speed", "preview")})
+            "speed", "cp", "preview")})
     view = ControllerWindow(node)
     view.timer.stop()
     view.place_x.setText("30")

@@ -1,0 +1,7 @@
+# Global continuous-path ratio, 0 through 100 inclusive.
+uint8 percent
+---
+bool success
+string message
+# Last accepted setting; -1 means unknown (0 is a valid setting).
+int16 confirmed_percent

@@ -8136,6 +8136,35 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware calls or application restarts; unrelated RViz and local station
   artifacts remain untouched.
 
+### 2026-10-01 — Rule 204: adjustable global CP in Robot Controller
+
+- User requested CP adjustment like Global SpeedFactor. Added a Global CP slider
+  below speed and typed `/robot_controller/set_global_cp` (`SetGlobalCP`). Integer
+  range 0–100 follows the official Dobot V4 API; the vendored CP service's older
+  1–100 comment is not enforced by its integer serializer. Vendor code is unchanged.
+- Require prepared, fresh idle READY/HOLDING and the exclusive operation slot.
+  Reuse strict serialized responses, ownership, cancellation and held-output
+  checks. Preview, Auto Run and active operations disable adjustment. STOP remains
+  independent. Send the live slider position on release; keyboard/groove changes
+  debounce for 350 ms. Status cannot overwrite an edit or outstanding confirmation.
+- Status `global_cp_percent` and signed response `confirmed_percent` report the
+  last accepted CP; -1 means unknown, while 0 is valid. Startup/Load uses 100;
+  Recover reapplies the last accepted value including 0 (100 only when unknown).
+  All motion inherits selected CP, with no per-motion cp/r override. Geometry,
+  rates, I/O events, queue order and terminal checks remain unchanged. No new
+  configuration key, teach schema or persisted setting.
+- Validation: **990 controller tests passed** after sourcing the workspace;
+  interfaces/controller built successfully. Coverage includes CP endpoints,
+  invalid requests, idle/ownership/output gates, failed replies, concurrent Stop,
+  recovery of zero, startup reset, Preview/Auto Run blocking, slider debounce and
+  status synchronization. Scoped 100-column flake8 and `git diff --check` passed.
+  Regenerated and verified FSM exports: **9 SVG diagrams / 9 A3 PDF pages**, SHA-256
+  `03504c5313f86d4003f47ee4e0f847d893c53ee19c85e536641415f7a0b615d0`.
+- Rebuild and manually restart controller, preview and GUI together because the
+  typed status definition changed. No hardware commands, physical CP trial or
+  automatic application restart was performed. Local RViz edits, calibrations,
+  teach files and model weights remain untouched.
+
 ### Future entry template
 
 ```text

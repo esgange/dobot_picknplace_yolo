@@ -21,6 +21,7 @@ class RecoveryRig(Rig):
         self.operation_lock.release()
         self.startup_complete = False
         self.global_speed_percent = 60
+        self.global_cp_percent = 100
         self.stop_guard = threading.RLock()
         self.stop_attempt = None
         self.active_goal = None
@@ -245,13 +246,13 @@ def test_real_lifecycle_preserves_unheld_outputs_through_clear_enable_and_settin
     transport._clear_errors_if_needed = lambda: rig.log.append(("clear",))
     transport._call_startup = lambda name: rig.log.append((name,))
     transport._wait_enabled = lambda: None
-    transport._apply_settings = lambda speed: rig.log.append(("settings", speed))
+    transport._apply_settings = lambda speed, cp: rig.log.append(("settings", speed, cp))
     transport._reset_outputs_if_unheld = lambda: pytest.fail("Recovery reset outputs")
     transport._confirm_ready = lambda: None
     rig.check_all_command_owners = rig.check_feedback_owners = lambda *_args: None
     rig.hardware.recover = transport.recover
     assert rig.recover().success
-    assert ("EnableRobot",) in rig.log and ("settings", 60) in rig.log
+    assert ("EnableRobot",) in rig.log and ("settings", 60, 100) in rig.log
     assert rig.feed["digital_outputs"] == 0
     first_reset = next(i for i, row in enumerate(rig.log) if row[0] == "output")
     last_move = max(i for i, row in enumerate(rig.log) if row[0] == "move")

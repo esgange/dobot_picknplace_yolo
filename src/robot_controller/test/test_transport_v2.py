@@ -1046,6 +1046,7 @@ def test_explicit_return_recovery_keeps_outputs_and_restores_strict_suction_chec
     calls = []
     transport.node = SimpleNamespace(
         holding_item=True, expected_outputs=outputs.copy(), events=EventLog(),
+        global_cp_percent=100,
         managed=SimpleNamespace(recovery_return_needed=lambda: True,
                                 note_suction_loss=lambda _sample: None),
         check_all_command_owners=lambda _names: None, check_feedback_owners=lambda: None,

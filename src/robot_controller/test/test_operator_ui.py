@@ -33,8 +33,8 @@ def test_internal_states_have_clear_operator_labels(internal, label):
 @pytest.mark.parametrize('internal,operation,enabled', [
     ('UNCONFIGURED', '', {'configure'}),
     ('INACTIVE', '', {'configure', 'preview_toggle'}),
-    ('READY', '', {'configure', 'home', 'pick', 'place', 'preview_toggle', 'speed'}),
-    ('HOLDING', '', {'home', 'place', 'pause', 'preview_toggle', 'speed'}),
+    ('READY', '', {'configure', 'home', 'pick', 'place', 'preview_toggle', 'speed', 'cp'}),
+    ('HOLDING', '', {'home', 'place', 'pause', 'preview_toggle', 'speed', 'cp'}),
     ('HOMING', 'home', {'pause'}), ('PICKING', 'pick', {'pause'}),
     ('PLACING', 'place', {'pause'}), ('TRAY_POSITIONING', 'tray_position', {'pause'}),
     ('STARTING', 'startup', set()), ('RECOVERING', 'recover', set()),
@@ -131,7 +131,7 @@ def status_node(monitor):
         active_action='', phase='', waypoint='', candidate_index=0, candidate_total=0,
         managed=SimpleNamespace(session=None, can_return_item=lambda: False,
                                 continue_block_reason=lambda _sample: 'Not paused'),
-        global_speed_percent=50, startup_complete=True, _perception_ready=lambda _action: True,
+        global_speed_percent=50, global_cp_percent=100, startup_complete=True, _perception_ready=lambda _action: True,
         monitor=monitor)
     return node, messages
 

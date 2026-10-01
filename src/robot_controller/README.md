@@ -17,7 +17,7 @@ Start from configured, unheld READY with recorded tray joints and both pose
 providers available. Select a whole quantity from 1 to 10000; the run freezes the
 current placement X/Y/rotation and debug-image choice. One native `AutoRun` action
 owns all hardware commands until completion/failure/cancellation. The GUI disables
-manual motion, Preview, teach loading, speed, Pause/Continue/Return and input edits;
+manual motion, Preview, teach loading, speed/CP, Pause/Continue/Return and input edits;
 permanent STOP remains enabled. External manual actions cannot acquire the operation
 slot, and manual queue-control services explicitly reject while Auto Run is active.
 Preview cannot start Auto Run. Launch/prefill never starts it.
@@ -41,7 +41,7 @@ and queues placement. After all three placement requests are accepted, consume
 the result using the existing handoff/error path. When valid poses are ready,
 append joint Home → next entry → pre-pick → final pick **without waiting for placement
 to finish or Home to become stationary**. The dashboard executes those requests in
-accepted order behind placement, with CP(100) unchanged. Home starts from the planned
+accepted order behind placement, with the selected global CP. Home starts from the planned
 placement retract at Home Z. If detection is slower than placement, finish normal
 retract supervision and wait for the batch, then use normal Home/Pick. The batch is
 bound to that next Pick, consumed once, and never shared with a manual operation.
@@ -125,7 +125,7 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | Final MovL | Exact taught Home joints | None for manual Place |
 | Physical completion | Home joints/idle/execution, neutral outputs and DI1 LOW | Final retract/idle/execution, neutral outputs and DI1 LOW |
 
-Return uses one ordered CP(100) group: approach/drop/retract/Home. When
+Return uses one ordered CP (default 100%) group: approach/drop/retract/Home. When
 starting more than 5 mm below Home Z, prepend a vertical MovL at current X/Y/attitude
 to the same group. Confirm only final Home from fresh joints, idle and execution
 feedback. No intermediate arrival, settling, release-I/O,
@@ -313,7 +313,7 @@ There is no placement settling, separate release call, fixed-duration exhaust
 pulse, extra retract-height waypoint or separate Home action. At 90% of descent,
 open fingers, turn suction OFF and exhaust ON. Exhaust lasts
 until the upward command starts. Zero uses the existing distance-mode
-start trigger (`{1,0,channel,0}`), carried by MovLIO. All commands inherit CP(100); control points
+start trigger (`{1,0,channel,0}`), carried by MovLIO. All commands inherit CP (default 100%); control points
 can blend through the complete group. There is no drop-arrival, settling or
 release-I/O wait between descent and retract.
 Return **PlaceItem SUCCESS after all three commands are accepted**,
@@ -461,9 +461,36 @@ Services:
   It is always direct and never requires a preceding Pause.
 - `/robot_controller/set_global_speed` accepts an integer 1–100 only while
   stationary in `READY` or `HOLDING`.
+- `/robot_controller/set_global_cp` (`SetGlobalCP`) accepts integer 0–100 with
+  the same idle READY/HOLDING and single-operation ownership gates.
 - `/robot_controller/preview_v2` belongs to the TF-only preview node. It accepts
   HOME, PICK, PLACE and CLEAR, selected Item/Bin/Tray files and placement X/Y/rotation.
   The former preview endpoint is not used as a fallback.
+
+## Global CP control
+
+The **Global CP** slider below Global SpeedFactor adjusts continuous-path blending
+from 0 through 100%. It sends the live position on release or after 350 ms of
+keyboard/groove inactivity, displays the last accepted setting, and preserves
+an in-progress edit against status refresh. READY and HOLDING permit changes with
+fresh enabled idle feedback and no active operation. Preview, Auto Run, motion,
+Pause and faults disable it; STOP remains independent.
+
+The controller sends one `CP(r)` through its existing serialized transport, with
+strict ownership, response deadline, cancellation and held-output checks. A failed
+response never claims the requested setting. Status `global_cp_percent` and the
+service response's signed `confirmed_percent` use -1 for unknown and 0 for valid
+zero blending. Accepted settings apply to all subsequent queues; motion requests
+still omit per-command `cp`/`r`. Poses, rates, I/O timings and arrival checks stay
+unchanged. Smaller CP values can reduce blending and change cycle timing.
+
+Load/Startup starts at 100%. Recover reapplies the last accepted CP, including 0,
+or 100 if none is known. No teach schema, `.env` key or disk persistence is added.
+Restart the rebuilt controller, preview and GUI together for the changed status
+interface. Launch alone never sends CP or another robot command.
+The [official Dobot V4 API](https://github.com/Dobot-Arm/TCP-IP-Python-V4/blob/main/dobot_api.py#L584-L594)
+defines CP as 0–100; the vendored ROS service's older 1–100 comment is not a
+runtime limit (its integer `r` is sent unchanged).
 
 ## Operator status and buttons
 
@@ -507,18 +534,18 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; STOP |
+| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; manual controls and edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
-| HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; STOP |
+| HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; CP; STOP |
 | PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
 | PAUSED, tray acquisition exhausted | Place Item (Retry); Return Item with trusted held source; STOP |
 | ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
 | OFFLINE | STOP if reachable; loading/preparation waits for fresh robot feedback |
 | EMERGENCY STOP PRESSED | STOP; explicit Recover rechecks alarms after physical release |
 
-Home/Pick/Place and speed require started configuration and fresh enabled,
+Home/Pick/Place and speed/CP require started configuration and fresh enabled,
 fault-free, idle robot feedback with an empty queue. Pick also requires an unheld
 READY state, configured Item/Bin, saved Tray Detect joints and exactly one armed
 item provider. Place requires saved tray joints, positive finite X/Y, legal rotation
@@ -539,7 +566,7 @@ Preview ON explicitly says **No robot motion** and routes Home/Pick/Place only t
 TF planning. Enable it after loading configuration. It requires fresh stationary
 feedback but permits a disabled robot and no Startup. Selected files, placement inputs and detector availability gate
 preview requests; the preview node validates the selected sources and position.
-Preview OFF and STOP remain available; Load/Recover/Pause/Continue/Return/speed stay disabled.
+Preview OFF and STOP remain available; Load/Recover/Pause/Continue/Return/speed/CP stay disabled.
 A stopped fault can also be inspected with read-only Preview. All buttons check
 service availability and recheck their policy on click. Pending requests disable
 conflicting controls immediately. These status hints do not replace execution's
@@ -553,7 +580,7 @@ it is a GUI routing choice, not a hardware-controller lifecycle or persisted tea
 setting. Turn it ON only with no active/pending hardware operation. Home/Pick/Place
 then call only the preview service, even before Startup. No fallback to hardware
 is allowed on unavailable/rejected preview. Load, Continue, Recover, managed
-Pause/Return and speed changes cannot dispatch while ON. The Stop control sends
+Pause/Return and speed/CP changes cannot dispatch while ON. The Stop control sends
 direct Stop and clears preview; it never parks or puts back an item in this mode.
 The separate typed hardware API retains its existing guards and behavior.
 
@@ -672,8 +699,8 @@ A trusted HELD source with live suction and vacuum stays held throughout recover
 After conditional ClearError, verified alarm clearance, Enable and readiness,
 Recover issues an upward-only RelMovLUser at unchanged XY/attitude if below Home Z.
 Confirm that lift before a separate queued joint-target MovL to taught Home.
-Use taught travel speed/acceleration and the last confirmed global factor (100%
-if unset). Already at/above Home height skips the lift; already at taught Home
+Use taught travel speed/acceleration and the last confirmed global speed and CP (each 100%
+if unset, preserving CP=0). Already at/above Home height skips the lift; already at taught Home
 skips its move. Current outputs and suction policy are monitored throughout travel.
 After stationary Home is confirmed, reset DO1, DO2, DO13 and DO14 to OFF, in that
 order, confirming each response/output. Both finger outputs OFF means relaxed;
@@ -772,7 +799,7 @@ retract height is zero, omit the coincident clearance and neutralize on the
 upward exit-transit segment instead. If neither clearance nor safety Z provides
 an upward retreat, reject the geometry before picking; never attach neutral
 I/O to a zero-distance move. Otherwise the exit has no timed I/O, and it remains
-queued even when coincident with clearance. All segments retain global CP(100).
+queued even when coincident with clearance. All segments retain global CP (default 100%).
 Under rule 112, every automatic drop put-back target uses
 `v=100` and taught travel acceleration: initial safety rise, entry transit,
 taught pre-pick release, neutral clearance retreat, exit transit and
@@ -831,7 +858,7 @@ sources before returning to the saved item. Use the normal safety rise, entry
 transit, original taught pre-pick release, OPEN and confirmed 50 ms exhaust.
 Queue neutral retreat and the old exit transit before the next eligible item's
 entry/clearance/pre-pick/pick, or before exact Home if none remain. Both transits
-retain CP(100). The lost candidate stays DROPPED even if DI1 returns HIGH.
+retain CP (default 100%). The lost candidate stays DROPPED even if DI1 returns HIGH.
 Repeated losses advance through the retained batch; after exhaustion and confirmed
 Home, rules 180/200 allow fresh detection within the same limit of three nonempty
 batches plus one empty-result retry.
@@ -872,7 +899,7 @@ DI1 display. Full raw robot flags and DI/DO remain in typed status.
 Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the smaller
 top-right panel. Full paths remain editable and available in field tooltips;
 prefill, explicit load, reload gates and validated persistence are unchanged.
-Lifecycle/action controls, global speed and the command-log toggle remain below.
+Lifecycle/action controls, global speed/CP and the command-log toggle remain below.
 The GUI consumes only controller APIs. It adds no Dobot/camera subscription or
 I/O command. Missing/stale canonical feedback turns both LEDs Unknown; a
 controller status older than one second by source timestamp or local receipt
@@ -930,7 +957,7 @@ Home pose, it sends exactly two Cartesian-mode `MovL` targets in one named
 motion group: `(current X, current Y, Home Z, Home Rx, Home Ry, Home Rz)`, then
 `(Home X, Home Y, Home Z, Home Rx, Home Ry, Home Rz)`. Each service must return
 `res=0` before the next is sent, without an added delay, so both enter the Dobot
-queue in order and inherit global `CP(100)`. Only the final Home target receives
+queue in order and inherit global CP (default 100%). Only the final Home target receives
 the 5 mm/1° stationary, empty-queue physical confirmation. Both use the taught
 travel `v`/`a`, no timed I/O, and preserve/monitor suction when holding.
 The same fresh stationary pose used to plan `home_align` is passed into the
@@ -1114,7 +1141,7 @@ so admission marks the correct candidate
 ACTIVE; a Pause there retains M for Continue. The same geometry helper supplies
 Pause's `park_transit`, which neutralizes its I/O. Unheld Continue reuses that
 already-confirmed entry transit. Missed retries and put-back retain both entry and exit
-transits queued. Both are blended under CP(100) and can be rounded without an
+transits queued. Both are blended under CP (default 100%) and can be rounded without an
 intermediate arrival wait or dwell; coincident coordinates still get separate
 requests. Direct Stop can always prevent later requests from being sent.
 At 80% of the first rise the group enters EXHAUST. At 0% of the second rise it
@@ -1150,13 +1177,13 @@ new expected state when observed;
 uncommanded output changes, lost DI1/DO13, and wrong terminal states still fail.
 
 Motion requests carry only `user=0`, `tool=0`, and their selected `v`/`a` rates;
-they never carry a per-command `cp` or `r`. The global `CP(100)` established by
-Startup/Recover therefore controls all transitions. As specified by the Dobot
-protocol, smoothing can bypass exact intermediate pick coordinates and timed
+they never carry a per-command `cp` or `r`. The global CP setting (default 100%)
+controls all transitions; the idle slider changes it and Recover retains it.
+As specified by the Dobot protocol, smoothing can bypass exact intermediate pick coordinates and timed
 I/O can occur during a blended transition. Successful Pick physically confirms
 only Tray Detect after its lift group; exhausted Pick confirms only exact joint Home.
 Serialized service responses may let
-a short pick segment decelerate despite global CP 100; queue order takes
+a short pick segment decelerate even at global CP 100%; queue order takes
 precedence over uninterrupted blending.
 
 No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO

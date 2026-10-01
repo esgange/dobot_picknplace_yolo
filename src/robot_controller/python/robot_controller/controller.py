@@ -25,7 +25,7 @@ from item_perception_yolo.platform_teach_core import (
 from robot_controller_interfaces.action import (
     AutoRun, GoHome, GoTrayDetectPosition, PickItem, PlaceItem)
 from robot_controller_interfaces.msg import ControllerStatus
-from robot_controller_interfaces.srv import Command, Configure, SetGlobalSpeed
+from robot_controller_interfaces.srv import Command, Configure, SetGlobalCP, SetGlobalSpeed
 
 from .candidates import (
     CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
@@ -79,6 +79,7 @@ class RobotController(Node):
         self.configuration = None
         self.startup_complete = False
         self.global_speed_percent = None
+        self.global_cp_percent = None
         self.holding_item = False
         self.expected_outputs = {}
 
@@ -147,6 +148,9 @@ class RobotController(Node):
             callback_group=self.control_group)
         self.speed_service = self.create_service(
             SetGlobalSpeed, "/robot_controller/set_global_speed", self._set_global_speed,
+            callback_group=self.control_group)
+        self.cp_service = self.create_service(
+            SetGlobalCP, "/robot_controller/set_global_cp", self._set_global_cp,
             callback_group=self.control_group)
         self.home_server = ActionServer(
             self, GoHome, "/robot_controller/go_home",
@@ -368,6 +372,8 @@ class RobotController(Node):
         status.can_return_item = self.managed.can_return_item()
         status.global_speed_percent = (
             self.global_speed_percent if self.global_speed_percent is not None else -1)
+        status.global_cp_percent = (
+            self.global_cp_percent if self.global_cp_percent is not None else -1)
         status.startup_complete = self.startup_complete
         try:
             sample = self.monitor.snapshot(require_enabled=False)
@@ -518,6 +524,7 @@ class RobotController(Node):
                 installed = True
                 self.startup_complete = False
                 self.global_speed_percent = None
+                self.global_cp_percent = None
                 self.expected_outputs.clear()
                 self._transition("INACTIVE", "Teach files loaded; preparing robot")
             self._log_configuration("configuration_loaded")
@@ -563,6 +570,7 @@ class RobotController(Node):
             self.raise_if_cancelled()
             self.startup_complete = True
             self.global_speed_percent = 100
+            self.global_cp_percent = 100
             self._transition("READY", "Robot preparation completed; ready for an operation")
 
     def _startup(self, _request, response):
@@ -617,6 +625,8 @@ class RobotController(Node):
             self.hardware.recover(self.global_speed_percent, home_recovery=recovery)
             if self.global_speed_percent is None:
                 self.global_speed_percent = 100
+            if self.global_cp_percent is None:
+                self.global_cp_percent = 100
             recovery.run(self)
             recovery.relax(self)
             self.raise_if_cancelled()
@@ -689,6 +699,35 @@ class RobotController(Node):
             if acquired and self.machine.state != "STOPPING":
                 self._transition("FAULT", f"Global speed failed: {exc}")
             self.events.record("WARNING", "global_speed_rejected", str(exc))
+        finally:
+            if acquired:
+                self._end_operation()
+        return response
+
+    def _set_global_cp(self, request, response):
+        acquired = False
+        try:
+            if (self.machine.state not in ("READY", "HOLDING")
+                    or not self.startup_complete):
+                raise CommandRejected("Global CP requires stationary READY or HOLDING")
+            if not 0 <= request.percent <= 100:
+                raise CommandRejected("Global CP must be an integer from 0 through 100")
+            self._begin_operation("set_global_cp")
+            acquired = True
+            self.hardware.set_global_cp(request.percent)
+            self.global_cp_percent = request.percent
+            response.success = True
+            response.message = f"CP confirmed at {request.percent}%"
+            response.confirmed_percent = request.percent
+            self.events.record("INFO", "global_cp", response.message)
+        except Exception as exc:
+            response.success = False
+            response.message = str(exc)
+            response.confirmed_percent = (
+                self.global_cp_percent if self.global_cp_percent is not None else -1)
+            if acquired and self.machine.state != "STOPPING":
+                self._transition("FAULT", f"Global CP failed: {exc}")
+            self.events.record("WARNING", "global_cp_rejected", str(exc))
         finally:
             if acquired:
                 self._end_operation()

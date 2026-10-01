@@ -36,7 +36,8 @@ def lifecycle_transport(*, payload="{[1537]}", clearable=False):
     calls = []
     sample = SimpleNamespace(feed={"robot_mode": 9, "ErrorStatus": 1, "CollisionStates": 0})
     transport.node = SimpleNamespace(
-        holding_item=False, expected_outputs={}, cancel_requested=lambda: False,
+        holding_item=False, expected_outputs={}, global_cp_percent=100,
+        cancel_requested=lambda: False,
         check_all_command_owners=lambda _services: None, check_feedback_owners=lambda: None,
         events=SimpleNamespace(record=lambda *_args, **_kwargs: None),
         operation_progress=lambda *_args, **_kwargs: None)
@@ -56,7 +57,7 @@ def lifecycle_transport(*, payload="{[1537]}", clearable=False):
     transport._check_held_context = lambda *_args: None
     transport._validate_held_snapshot = lambda value: value
     transport._wait_enabled = lambda: calls.append("enabled_confirmed")
-    transport._apply_settings = lambda _speed: calls.append("settings")
+    transport._apply_settings = lambda _speed, _cp: calls.append("settings")
     transport._reset_outputs_if_unheld = lambda: calls.append("outputs")
     transport._confirm_ready = lambda: calls.append("ready")
     transport.request_stop = lambda _reason: calls.append("Stop") or object()
@@ -127,7 +128,7 @@ def test_lifecycle_service_returns_explicit_estop_failure(operation, initial):
     def pressed(*_args, **_kwargs):
         raise EmergencyStopPressed(EMERGENCY_STOP_MESSAGE)
     node = SimpleNamespace(
-        machine=machine, root=object(), global_speed_percent=100,
+        machine=machine, root=object(), global_speed_percent=100, global_cp_percent=100,
         recovery_home=HomeRecovery(False, False),
         configuration=SimpleNamespace(validate_sources=lambda _root: None),
         managed=SimpleNamespace(recovery_return_needed=lambda: False),

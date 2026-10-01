@@ -1303,6 +1303,17 @@ Keep drop/retract I/O, retry budgets, final neutral/DI1 checks and fault/unknown
 guards. No automatic arming, launch action, hardware command or restart in tests.
 Update README, diary and FSM/exports with scoped validation.
 
+Rule 204 adds controller-owned global CP adjustment through SetGlobalCP and the
+GUI slider beside Global SpeedFactor. Accept integer 0–100 only in started idle
+READY/HOLDING with exclusive operation ownership, fresh enabled safe feedback,
+strict serialized response/cancellation and held-output checks. Preview, Auto Run
+and other active operations disable manual adjustment. Status and response report
+the last accepted CP with -1 for unknown; zero is valid. Startup/Load uses 100;
+Recover retains the selected value including zero (100 only if unknown). Supersede
+earlier fixed CP(100) requirements only for this setting: every motion still
+omits per-command cp/r and inherits global CP. Preserve geometry, rates, I/O,
+queue admission and terminal checks. No config key, teach schema, persistence,
+launch-time hardware call or automatic restart. Update FSM and visual exports.
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

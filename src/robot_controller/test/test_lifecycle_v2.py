@@ -121,7 +121,7 @@ def configuration_node(state="READY", *, headless=False):
     calls = []
     node = SimpleNamespace(
         headless=headless, machine=machine, configuration=old,
-        startup_complete=True, global_speed_percent=35, holding_item=False,
+        startup_complete=True, global_speed_percent=35, global_cp_percent=25, holding_item=False,
         expected_outputs={13: 1}, root=object(), kinematics=object(),
         events=EventLog(), stop_guard=threading.RLock(), raise_if_cancelled=lambda: None,
         hardware=SimpleNamespace(startup=lambda: calls.append(("startup",))))
@@ -147,6 +147,7 @@ def test_ready_configuration_reload_prepares_robot_under_the_same_operation(monk
     assert node.machine.state == "READY"
     assert node.startup_complete
     assert node.global_speed_percent == 100
+    assert node.global_cp_percent == 100
     assert node.expected_outputs == {}
     assert response.success and response.configuration_id == "new"
     assert calls == [
@@ -170,6 +171,7 @@ def test_failed_ready_reload_preserves_active_configuration(monkeypatch):
     assert node.machine.state == "READY"
     assert node.startup_complete
     assert node.global_speed_percent == 35
+    assert node.global_cp_percent == 25
     assert node.expected_outputs == {13: 1}
     assert not response.success and response.configuration_id == ""
     assert "invalid replacement" in response.message

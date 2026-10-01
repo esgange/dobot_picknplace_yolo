@@ -1,5 +1,13 @@
 # Robot Controller — Finite State Machine
 
+Global CP review: **2026-10-01**, baseline **`0acf05a`** plus rule **204**.
+The CP slider beside the global-speed controls accepts 0–100 while idle in
+READY/HOLDING. One typed service uses the existing command owner, feedback,
+response and held-output gates. Unknown CP is -1, not 0. Startup/Load sets 100;
+Recover retains the last accepted value, including zero. Preview, Auto Run and
+active operations lock the slider. Every queue inherits this global value without
+per-motion overrides; geometry, I/O timing and endpoint checks are unchanged.
+
 Place entry review: **2026-10-01**, baseline **`289dbd9`** plus rule **203**.
 Explicit Place accepts READY/HOLDING with or without an item in either launch
 mode. Skip observation travel when fresh idle/joints match saved Tray Detect;
@@ -43,7 +51,7 @@ Release evidence uses finger-open/exhaust ON, finger-close/suction OFF and DI1 L
 of DI12. Missing intermediate release evidence still cannot block the queue.
 Place Item and explicit held Return Item neutralize DO2/DO14/DO1/DO13 at 0%
 (start) of the upward MovLIO. Use the existing distance-mode zero trigger.
-Each routine queues its complete route in one ordered CP(100) group without a
+Each routine queues its complete route in one ordered CP (default 100%) group without a
 drop-arrival or settling wait. Keep speed 100% and final neutral/DI1 LOW gates.
 Place acknowledges complete queue acceptance while its worker verifies final
 retract; Return completes only at taught Home. Auto Run can append Home/next
@@ -244,18 +252,18 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; STOP |
+| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; all manual controls and input edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
-| HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; STOP |
+| HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; CP; STOP |
 | PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
 | PAUSED, tray acquisition exhausted | Place Item (Retry); Return Item with trusted held source; STOP |
 | ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
 | OFFLINE | STOP if reachable; loading/preparation waits for fresh robot feedback |
 | EMERGENCY STOP PRESSED | STOP; explicit Recover rechecks alarms after physical release |
 
-Home/Pick/Place and speed require started configuration and fresh enabled,
+Home/Pick/Place and speed/CP require started configuration and fresh enabled,
 fault-free, idle robot feedback with an empty queue. Pick also requires an unheld
 READY state, configured Item/Bin, saved Tray Detect joints and exactly one armed
 item provider. Place requires saved tray joints, positive finite X/Y, legal rotation
@@ -276,7 +284,7 @@ Preview ON explicitly says **No robot motion** and routes Home/Pick/Place only t
 TF planning. Enable it after loading configuration. It requires fresh stationary
 feedback but permits a disabled robot and no Startup. Selected files, placement inputs and detector availability gate
 preview requests; the preview node validates the selected sources and position.
-Preview OFF and STOP remain available; Load/Recover/Pause/Continue/Return/speed stay disabled.
+Preview OFF and STOP remain available; Load/Recover/Pause/Continue/Return/speed/CP stay disabled.
 A stopped fault can also be inspected with read-only Preview. All buttons check
 service availability and recheck their policy on click. Pending requests disable
 conflicting controls immediately. These status hints do not replace execution's
@@ -304,7 +312,7 @@ flowchart TD
 
 Preview is a GUI routing mode, starts OFF, and cannot be entered with an active or
 pending hardware operation. It adds no controller lifecycle state. While ON,
-Load, Continue, Recover, managed Pause/Return and global speed cannot dispatch;
+Load, Continue, Recover, managed Pause/Return and global speed/CP cannot dispatch;
 the three motion buttons use only `/robot_controller/preview_v2`. Load/Reload is
 disabled because it now prepares real hardware. External hardware APIs retain their own guards and are independent.
 There is no fallback when the preview service is unavailable. Its process creates
@@ -363,6 +371,8 @@ flowchart TD
     INACTIVE -->|Continue same Configure operation, or external Startup| STARTING
     STARTING -->|Confirmed| READY
     READY -->|Explicit Reload validates files| INACTIVE
+    READY -->|Idle speed/CP accepted| READY
+    HOLDING -->|Idle speed/CP accepted| HOLDING
     READY -->|Home| HOMING
     HOMING -->|Unheld| READY
     HOLDING -->|Home| HOMING
@@ -441,12 +451,12 @@ typed status and failed service responses include the complete guidance.
 | `UNCONFIGURED` | No active teach configuration; Configure loads it. |
 | `INACTIVE` | Files loaded; Configure continues into preparation. Headless waits for external Startup. |
 | `STARTING` | Startup initialization in progress; READY, HELD_UNKNOWN or FAULT follows. |
-| `READY` | Available and unheld; can Pick, Home, Tray Detect Position, GUI-mode Place, Pause, reload or change global speed. |
+| `READY` | Available and unheld; can Pick, Home, Tray Detect Position, GUI-mode Place, Pause, reload or change global speed/CP. |
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
 | `PLACING` | Checking observation position, observing tray/depth, admitting placement or supervising retract after action SUCCESS. |
 | `PICKING` | Poses before Home; one empty-result retry at Home; up to three nonempty physical-pick batches; success ends at Tray Detect. |
-| `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
+| `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed/CP are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
 | `PAUSED` | Managed parking or in-place acquisition Stop confirmed; monitor pose, queue, outputs and held suction. Failed tray acquisition offers explicit retry or trusted-source return. |
 | `RETURNING_ITEM` | Saved item's put-back is executing; destination afterward depends on why it started. |
@@ -544,7 +554,7 @@ flowchart TD
   Tray Detect, at taught travel rates. Omit the Home-height exit transit and Home.
   Confirm only Tray Detect joints/idle/executed queue; finish HOLDING there.
   Exhausted returns keep exit transit and exact joint Home, confirmed only at Home.
-  Both groups preserve global **CP(100)** blending and existing I/O.
+  Both groups preserve global **selected CP** blending (default 100%) and existing I/O.
 - Initial Home reads fresh RobotStatus idle plus all six canonical joints within
   ±1° and skips the queue immediately when matched. No FK/query/new tick/dwell
   is required for that decision. Otherwise keep the conditional rise/joint Home.
@@ -706,7 +716,7 @@ Zero uses distance-mode start events (`{1,0,channel,0}`) in the retract MovLIO;
 there is no separate DO call or pre-retract output wait.
 
 Service replies are ordered admission barriers, not physical waypoint waits.
-All motion inherits CP(100), which may round control points within a group.
+All motion inherits CP (default 100%), which may round control points within a group.
 Queue the retract immediately after descent acceptance, without waiting for drop
 arrival or idle. Require advancing joint/status, final joint-FK arrival, idle/empty
 queue and execution evidence only at final retract. There is no timed settling or
@@ -820,7 +830,7 @@ PLACED, increment once, and activate the next ledger. Old held DI1 cannot trigge
 the next pickup. Missing neutral/release evidence at the boundary fails closed;
 Stop before it retains the old source, and Stop after it retains the next source.
 There is no stationary midpoint or separate physical Home confirmation before
-the next descent; CP(100) and ordered acceptance are preserved. Final Home still
+the next descent; CP (default 100%) and ordered acceptance are preserved. Final Home still
 requires actual saved-joint/idle/execution confirmation and neutral/DI1 LOW.
 Counts mean placement execution/release evidence, not measured physical delivery.
 
@@ -937,7 +947,8 @@ held suction must have a trusted source and active vacuum; sustained clear DI1
 permits empty recovery without asserting that an object left the fingers.
 
 Restore readiness with conditional ClearError, verified clearance, Enable and
-settings. Keep the last confirmed global speed (100% if unset). Preserve outputs
+settings. Keep the last confirmed global speed and CP (each 100% if unset;
+CP=0 remains valid). Preserve outputs
 during travel. Below Home Z, issue and physically confirm an upward-only
 RelMovLUser with unchanged XY/attitude; then a separate joint-target MovL to taught
 Home. Use taught travel rates. Already-high skips the rise; already-at-Home skips
@@ -990,7 +1001,7 @@ finger OPEN/suction OFF/EXHAUST and 0%-ascent NEUTRAL events.
 All speeds are 100%; acceleration
 is taught travel / approach / retract respectively, then travel for joint Home.
 Queue optional current-XY vertical rise (if more than 5 mm below Home Z), approach,
-drop, retract and joint Home in one CP(100) group using the confirmed starting
+drop, retract and joint Home in one CP (default 100%) group using the confirmed starting
 pose. No intermediate arrival, settling, release-I/O wait or separate 50 ms pulse
 is added. Final
 joint Home/idle/executed queue and
@@ -1058,6 +1069,7 @@ Names below are relative to `/robot_controller/`.
 | `stop` service / action cancellation | Direct pre-emption; does not require Pause first |
 | `recover` service | FAULT / RECOVERY_REQUIRED / HELD_UNKNOWN; operation slot free |
 | `set_global_speed` service | Stationary READY / HOLDING; integer 1–100; operation slot free |
+| `set_global_cp` service | Started, stationary READY / HOLDING; integer 0–100; operation slot free; strict CP response and held-output checks |
 
 Acceptance is not proof of motion completion. Pause/Continue/Return services
 acknowledge a request; observe status afterward. Home/Pick actions provide final

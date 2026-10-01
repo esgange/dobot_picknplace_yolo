@@ -53,7 +53,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
                   bin_selected=False, tray_selected=False):
     """Empty reason means enabled; local service availability is applied by the GUI."""
     names = ("configure", "recover", "pause", "return_item", "continue",
-             "home", "pick", "place", "preview_toggle", "speed", "auto_run")
+             "home", "pick", "place", "preview_toggle", "speed", "cp", "auto_run")
     reasons = dict.fromkeys(names, "Unavailable in the current state")
     if state is None:
         reasons = dict.fromkeys(names, "Controller status unavailable")
@@ -127,7 +127,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
             "Load teach configuration first" if not state.configured else
             state.motion_block_reason or "Robot motion is unavailable"
             if not state.motion_ready else "")
-    reasons["home"] = reasons["speed"] = base
+    reasons["home"] = reasons["speed"] = reasons["cp"] = base
     reasons["pick"] = (base or ("Return or place the held item first"
                                 if state.holding_item or current == "HOLDING" else "")
                        or ("Load Item and Bin Teach configuration"

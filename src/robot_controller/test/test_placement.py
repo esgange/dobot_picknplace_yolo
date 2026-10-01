@@ -423,6 +423,7 @@ def test_controller_recovery_cancels_placement_then_relaxes_after_home():
         run_place(node)
     node.machine = ControllerStateMachine(initial="RECOVERY_REQUIRED")
     node.global_speed_percent = 50
+    node.global_cp_percent = 100
     node._begin_operation = Mock()
     node._end_operation = Mock()
     node.hardware.recover = Mock(side_effect=lambda _speed, **kw:

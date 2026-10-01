@@ -21,6 +21,8 @@ string waypoint
 uint32 candidate_index
 uint32 candidate_total
 int16 global_speed_percent
+# Last accepted CP ratio (0..100); -1 until known.
+int16 global_cp_percent
 bool startup_complete
 bool feedback_fresh
 string[] candidate_ids

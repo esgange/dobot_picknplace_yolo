@@ -2,7 +2,7 @@
 
 Typed ROS 2 interfaces for `robot_controller`. Long-running Home, Pick, Tray Detect Position and Place
 operations are actions; bounded lifecycle, configuration, Stop, preview, and
-speed operations are services. The shared `Command` service type is also used
+speed/CP operations are services. The shared `Command` service type is also used
 for the controller-owned `/robot_controller/pause` and
 `/robot_controller/continue` and `/robot_controller/return_item` endpoints;
 `/robot_controller/stop` remains a direct call with no Pause prerequisite. `ControllerStatus` replaces the former
@@ -130,3 +130,13 @@ that sources match, or that an item is held. The GUI combines them with lifecycl
 held-item and tray-position guards; action admission independently rechecks current
 availability. Rebuild this package and Robot Controller and restart all status
 clients together; do not mix old/new ControllerStatus definitions.
+
+`SetGlobalCP` at `/robot_controller/set_global_cp` takes `uint8 percent` constrained
+to 0–100. It requires idle READY/HOLDING with exclusive ownership, like global
+speed. The response carries `success`, `message` and signed `confirmed_percent`;
+`ControllerStatus.global_cp_percent` reports the same last accepted setting.
+Both use -1 for unknown, since 0 is valid. Startup sets 100; Recover retains the
+last confirmed value (100 if unknown). All motion inherits this setting without
+per-command overrides. Preview and Auto Run disable the manual control.
+Rebuild interfaces/controller and manually restart controller, preview and GUI
+together; clients must use the same new ControllerStatus definition.

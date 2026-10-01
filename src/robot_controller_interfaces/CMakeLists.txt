@@ -17,6 +17,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/Configure.srv"
   "srv/Preview.srv"
   "srv/SetGlobalSpeed.srv"
+  "srv/SetGlobalCP.srv"
   DEPENDENCIES action_msgs std_msgs
 )
 
