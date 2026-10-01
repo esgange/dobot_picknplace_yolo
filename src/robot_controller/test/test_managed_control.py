@@ -307,9 +307,9 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     moves = [entry for entry in rig.log if entry[0] == "move"]
     approach = next(entry for entry in moves if "return_release" in entry[1])
     if not dropped:
-        assert len(moves) == 2
-        assert approach[1] == ("return_safety", "return_pre", "return_release")
-        assert moves[1][1] == ("return_retract", "home")
+        assert len(moves) == 1
+        assert approach[1] == ("return_safety", "return_pre", "return_release",
+                               "return_retract", "home")
         assert not any(entry[0] in ("output", "pulse", "home") for entry in rig.log)
         assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
         return
@@ -442,7 +442,7 @@ def test_direct_stop_during_putback_prevents_release_and_home():
     rig = Rig(held=True)
 
     def stop_during_motion(_targets, kwargs):
-        if kwargs.get("batch_name") == "return_item_drop":
+        if kwargs.get("batch_name") == "return_item_queued_home":
             rig.cancel_event.set()
             rig.managed.checkpoint()
     rig.hardware.on_move = stop_during_motion

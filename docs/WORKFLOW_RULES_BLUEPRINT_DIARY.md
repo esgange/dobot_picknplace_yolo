@@ -7928,6 +7928,30 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or running-application restart. Preserve unrelated RViz
   and local calibration/teach/model artifacts outside source commits.
 
+### 2026-10-01 — Rule 197: queue the complete return and placement routes
+
+- User canceled the unfinished 90%/slow Drop Retract proposal and requested
+  fully queued motion with the restored 80% relaxed-finger/suction-OFF,
+  100% exhaust-ON and 0% all-neutral timing. Queue each complete explicit
+  Return Item or Place Item route in one ordered CP(100) group, removing only
+  the drop-arrival barrier. All segment speeds remain 100% with taught
+  accelerations and global SpeedFactor. No Drop Retract or teach-file edit.
+- Keep final Home checks for Return and final retract checks for Place,
+  including fresh joint/status, idle/execution, neutral outputs and DI1 LOW.
+  Place acknowledges complete queue admission and retains its completion
+  worker. Auto Run can append Home/next Pick behind the placement queue.
+  Preserve Stop/Pause, release/source retention, recovery and the separate
+  automatic suction-loss put-back routine. Remove unused split-queue helpers.
+- Updated READMEs and FSM/HTML/PDF. Validation: all **897 controller tests
+  passed**, with real transport/synthetic feedback covering whole-route
+  admission, final-only pose/idle completion, retained I/O timing, Stop and
+  Auto Run queue extension. Sourced ROS package build, scoped flake8 and
+  `git diff --check` passed. Verified nine SVG diagrams, nine A3 PDF pages
+  and matching FSM source SHA-256
+  `6ebf7c0cf543d8b5d8b3a4ef65f3b4a536d79ae01b24cd7584e119f36f0ce925`.
+  No hardware commands or application restart; unrelated RViz and local
+  calibration/teach/model artifacts remain outside source commits.
+
 ### Future entry template
 
 ```text

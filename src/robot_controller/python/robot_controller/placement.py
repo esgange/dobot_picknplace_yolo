@@ -125,13 +125,10 @@ class PlacementOperation(ReleaseQueue):
         self.preflight(node)
         self.phase = "APPROACH"
         self.begin_queue(node)
-        node.operation_progress("PLACE_DROP", "Queueing pre-place and release",
-                                waypoint="place_release")
-        current = self.move_drop(node, batch_name="place_to_drop")
-        node.operation_progress("PLACE_QUEUE", "Drop reached; queueing final retract",
+        node.operation_progress("PLACE_QUEUE", "Queueing pre-place, release and final retract",
                                 waypoint="place_retract")
-        self.pending_motion = self.move_return(
-            node, batch_name="place_to_retract", current=current, queue_only=True)
+        self.pending_motion = node.hardware.move_batch(
+            self.plan, batch_name="place_to_retract", placement=self, queue_only=True)
 
     def recover(self, node):
         # An interrupted release is never repeated and never descends back to the

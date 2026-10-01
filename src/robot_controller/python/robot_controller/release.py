@@ -51,20 +51,6 @@ class ReleaseQueue:
     completion_message = "Placement queue completed above tray"
     completion_error = "Retract reached; final placement outputs must be neutral and DI1 LOW"
 
-    def move_drop(self, node, *, batch_name, confirmed_start_pose=None):
-        """Finish the drop before admitting upward motion, with no settling dwell."""
-        _acquired, current = node.hardware.move_batch(
-            self.plan[:self.neutral_index], batch_name=batch_name,
-            placement=ReleaseSegment(self, 0, final=False),
-            confirmed_start_pose=confirmed_start_pose, return_terminal_pose=True)
-        return current
-
-    def move_return(self, node, *, batch_name, current, queue_only=False):
-        return node.hardware.move_batch(
-            self.plan[self.neutral_index:], batch_name=batch_name,
-            placement=ReleaseSegment(self, self.neutral_index, final=True),
-            confirmed_start_pose=current, queue_only=queue_only)
-
     def begin_queue(self, node):
         sample = node.monitor.snapshot(require_enabled=True)
         mask = (1 << 13) | (1 << 12) | 3
@@ -133,28 +119,3 @@ class ReleaseQueue:
             release_feedback_observed=self.release_confirmed)
         self.phase = "DONE"
         self.observing = False
-
-
-@dataclass(frozen=True)
-class ReleaseSegment:
-    """Keep one release history across two separately confirmed motion groups."""
-
-    owner: ReleaseQueue
-    offset: int
-    final: bool
-
-    def issued(self, index):
-        self.owner.issued(self.offset + index)
-
-    def observe(self, node, sample):
-        self.owner.observe(node, sample)
-
-    def complete(self, node, sample):
-        if self.final:
-            self.owner.complete(node, sample)
-        else:
-            self.owner.observe(node, sample)
-            node.events.record(
-                "INFO", "release_drop_arrived",
-                "Drop pose and idle confirmed; queue return without settling",
-                target=self.owner.plan[self.owner.release_index].name)

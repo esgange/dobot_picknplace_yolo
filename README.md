@@ -110,14 +110,13 @@ then report **Not at Tray Detect position** without detecting or placing.
 Place never queues observation travel. The external Tray Detect Position action
 remains one direct queued MovL to its recorded joints.
 After fresh detection, placement queues pre-place → release (relax fingers and
-suction OFF at 80%; exhaust ON at 100% of descent).
-Confirm the drop pose using joint-derived pose, idle and execution feedback,
-then immediately queue retract at Home Z (neutral at its 0% start), without settling.
+suction OFF at 80%; exhaust ON at 100% of descent) → retract at Home Z
+(neutral at its 0% start) in one ordered group, without a drop-arrival wait or settling.
 There is no Home move. All placement segments and Tray Detect Position use speed
 100%, scaled by the operator's global SpeedFactor. Item Teach acceleration
 settings and Item Pick speeds remain unchanged. No separate release-I/O wait or
 extra retract-height waypoint is added. **Place returns SUCCESS when the retract
-command is accepted, after drop arrival.**
+command is accepted.**
 Status remains PLACING with exclusive command ownership while a completion worker
 verifies the final retract, neutral outputs and DI1 LOW, then enters READY above
 the tray. Missing intermediate DI12/DI1 release evidence cannot stop this queue.
@@ -265,9 +264,8 @@ Explicit Return Item shares tray placement's timed approach/release/retract:
 above the original item at Home Z → exact saved pre-pick pose → same X/Y at
 Home Z → taught joint Home. At 80% of descent, relax fingers and turn suction OFF;
 at 100%, turn exhaust ON. At the 0% start of ascent, neutralize all four outputs.
-Queue optional vertical
-rise, approach and drop first. After confirmed drop pose/idle/execution, immediately
-queue retract and taught Home together, with no settling. All motions use speed
+Queue optional vertical rise, approach, drop, retract and taught Home together,
+with no intermediate arrival wait or settling. All motions use speed
 100% and inherit CP(100); final Home requires neutral outputs and DI1 LOW.
 Accelerations are travel, approach, retract and travel respectively. There is
 no separate 50 ms pulse or release-I/O/clearance wait. Return after failed

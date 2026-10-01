@@ -118,11 +118,11 @@ def test_continue_explicitly_grants_new_three_request_budget(monkeypatch):
     assert not node.placement.acquisition_failure
     # Admission geometry is covered by the real transport suite; isolate the
     # observation retry here without executing another fake placement route.
-    node.hardware.move_batch = Mock(side_effect=[(False, np.eye(4)), None])
+    node.hardware.move_batch = Mock(return_value=None)
     node.placement.run(node)
     assert tray.client.call_async.call_count == 6
     assert node.placement.tray_attempts.count == 3
-    assert node.hardware.move_batch.call_count == 2
+    assert node.hardware.move_batch.call_count == 1
     assert node.hardware.move_batch.call_args.kwargs["queue_only"]
 
 
@@ -152,12 +152,10 @@ def test_return_puts_item_at_saved_bin_prepick_then_homes_and_cancels_place(monk
     assert tray.client.call_async.call_count == 3
     routes = [row for row in node.log if row[0] == "move"]
     assert routes[-1][1][-1] == "home"
-    assert len(routes) == 2
-    assert routes[0][2]["batch_name"] == "return_item_drop"
-    assert routes[1][2]["batch_name"] == "return_item_queued_home"
-    assert routes[0][1][-2:] == ("return_pre", "return_release")
-    assert routes[1][1] == ("return_retract", "home")
-    progress = routes[0][2]["placement"].owner
+    assert len(routes) == 1
+    assert routes[0][2]["batch_name"] == "return_item_queued_home"
+    assert routes[0][1][-4:] == ("return_pre", "return_release", "return_retract", "home")
+    progress = routes[0][2]["placement"]
     release = next(target for target in progress.plan if target.name == "return_release")
     assert np.array_equal(release.matrix, source[2].matrix)
     assert not any(row[0] in ("output", "pulse", "home") for row in node.log)

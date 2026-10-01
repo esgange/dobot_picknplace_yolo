@@ -35,10 +35,6 @@ class QueueRig:
         self.requests = []
         self.order = []
         self.steps = iter(())
-        self.drop_steps = iter([
-            dict(outputs=HELD, inputs=1),
-            dict(outputs=HELD, inputs=1, drop=True),
-        ])
         self.on_request = lambda _index: None
         self.monitor.update_joints(joint_message())
         self.monitor.update_status(SimpleNamespace(is_connected=True, is_enable=True))
@@ -117,13 +113,9 @@ class QueueRig:
         return SimpleNamespace(service_is_ready=lambda: True, call_async=call)
 
     def next_sample(self, *_args, **_kwargs):
-        owner = self.node.managed.return_progress or self.node.placement
-        dropping = (owner is not None and owner.observing
-                    and owner.release_issued and not owner.neutral_issued)
-        values = next(self.drop_steps if dropping else self.steps, None)
+        values = next(self.steps, None)
         if values is None:
-            pytest.fail('Unexpected feedback wait during drop' if dropping
-                        else 'Unexpected feedback wait after final retract')
+            pytest.fail('Unexpected feedback wait after final retract')
         self.emit(**values)
         return self.monitor.sequence
 
@@ -144,7 +136,7 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     rig.node.configuration.profile["speed"]["approach_percent"] = approach_speed
     rig.run()
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
-    assert rig.order[:5] == ['MovL', 'MovLIO', 'feedback', 'feedback', 'MovLIO']
+    assert rig.order[:3] == ['MovL', 'MovLIO', 'MovLIO']
     assert all(not request.mode for _, request in rig.requests)
     assert [list(request.param_value) for _, request in rig.requests] == [
         ['user=0', 'tool=0', f'v={speed}', f'a={acceleration}']

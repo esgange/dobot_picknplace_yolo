@@ -182,7 +182,7 @@ class Hardware:
                     if placement:
                         placement.observe(self.node, self.emit())
                 self.current = target.matrix.copy()
-                if self.interrupt_at == i + (placement.offset if placement else 0):
+                if self.interrupt_at == i:
                     self.interrupt_at = None
                     raise OperationCanceled("Stopped during placement queue")
             if placement:
@@ -253,8 +253,8 @@ def test_place_sequence_ends_at_retract_and_clears_held_context():
     node = operation_node()
     run_place(node)
     assert node.hardware.calls == [
-        ("move", ("place_pre", "place_release"), {"batch_name": "place_to_drop"}),
-        ("move", ("place_retract",), {"batch_name": "place_to_retract"})]
+        ("move", ("place_pre", "place_release", "place_retract"),
+         {"batch_name": "place_to_retract"})]
     assert not node.holding_item and node.managed.session.held_index is None
     assert node.managed.session.attempts[0].state == "PLACED"
     assert node.placement.phase == "DONE"

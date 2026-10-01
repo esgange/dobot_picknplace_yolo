@@ -76,16 +76,16 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | MovLIO descent | Exact saved pre-pick target at 100% | Detected surface Z + trayplace_height at 100% |
 | At 80% descent | DO2 OFF, DO14 OFF (relaxed), DO13 OFF | Same |
 | At 100% descent | DO1 ON (exhaust) | Same |
-| Queue boundary | Confirm drop pose / idle / execution; no settling | Same |
+| Queue admission | One complete ordered group; no drop-arrival wait | Same |
 | MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
 | At 0% ascent (start) | DO2/DO14/DO1/DO13 OFF | Same |
 | Final MovL | Exact taught Home joints | None for manual Place |
 | Physical completion | Home joints/idle/execution, neutral outputs and DI1 LOW | Final retract/idle/execution, neutral outputs and DI1 LOW |
 
-Return uses two ordered CP(100) groups: approach/drop, then retract/Home. When
+Return uses one ordered CP(100) group: approach/drop/retract/Home. When
 starting more than 5 mm below Home Z, prepend a vertical MovL at current X/Y/attitude
-to the first group. Confirm drop arrival from fresh joint-FK, idle and execution
-feedback, then immediately admit the second group. No settling, release-I/O,
+to the same group. Confirm only final Home from fresh joints, idle and execution
+feedback. No intermediate arrival, settling, release-I/O,
 DI12 or exhaust-pulse wait is added. All motions use speed 100%, scaled by global
 SpeedFactor. Approach/Home
 use taught travel acceleration, descent uses approach acceleration, and retract
@@ -173,11 +173,11 @@ permanent red STOP always stops/cancels. Without a trusted held source, Return
 stays disabled and STOP remains available.
 
 A trusted held item may be returned to its saved
-bin source through a queued approach at Home Z → saved pre-pick drop, then a
-second queue of retract to Home Z → taught joint Home. Confirm drop pose/idle
-before the second queue, without settling. Use tray placement's 80%-descent finger
+bin source through one queued approach at Home Z → saved pre-pick drop →
+retract to Home Z → taught joint Home, without intermediate arrival waits or
+settling. Use tray placement's 80%-descent finger
 relaxation/suction OFF, 100%-descent exhaust ON and 0%-ascent neutral events,
-with a preliminary vertical rise in the first queue
+with a preliminary vertical rise in the same queue
 when needed. Return finishes READY
 and ends the waiting Place action as CANCELED, without claiming placement success.
 The gripper is preserved until the motion-timed release begins.
@@ -247,13 +247,12 @@ Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
 the updated pair. Production readers do not supply a fallback height.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
-Then send three Cartesian commands in two queues:
+Then send three Cartesian commands in one queue:
 
 | Command | Target | Timed outputs |
 | --- | --- | --- |
 | MovL | Pre-place | Preserve existing outputs |
 | MovLIO | Release height | At 80%: DO2 OFF, DO14 OFF (relaxed), DO13 OFF; at 100%: DO1 ON |
-| Queue boundary | Confirm drop pose / idle / execution | No settling or release-I/O wait |
 | MovLIO | Back to pre-place | At 0% (start): DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 
 All placement segments and Tray Detect Position use **speed 100%**, scaled by
@@ -265,9 +264,9 @@ pulse, extra retract-height waypoint or separate Home action. At 80% of descent,
 relax fingers and turn suction OFF. Exhaust starts at the 100% endpoint and lasts
 until the upward command starts. Zero uses the existing distance-mode
 start trigger (`{1,0,channel,0}`), carried by MovLIO. All commands inherit CP(100); control points
-can blend within each group. The first group ends at the drop; confirm joint-FK
-pose, idle and execution before immediately admitting the upward second group.
-Return **PlaceItem SUCCESS after drop arrival and retract acceptance**,
+can blend through the complete group. There is no drop-arrival, settling or
+release-I/O wait between descent and retract.
+Return **PlaceItem SUCCESS after all three commands are accepted**,
 normally with `final_state=PLACING`. The action result acknowledges the final queue.
 A completion worker retains the operation slot and PLACING status while the robot
 moves, so another motion cannot overlap. It uses the existing joint-FK/idle,
@@ -281,7 +280,7 @@ changes and gaps in output history do not interrupt this queue. Any observed
 coherent release feedback is retained as diagnostic/recovery evidence only.
 Keep command acceptance/order, live enabled/error/collision/freshness checks,
 opposing-output protection, motion watchdogs and direct Stop/Pause. These are
-hardware/transport checks and drop arrival, without separate release-I/O confirmation.
+hardware/transport checks, without intermediate arrival or release-I/O confirmation.
 
 Only at physically confirmed idle retract, require neutral DO1/DO2/DO13/DO14 and
 DI1 LOW before READY; DI12 need not be HIGH. A bad final grip reports a

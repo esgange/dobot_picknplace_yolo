@@ -1,6 +1,6 @@
 # Robot Controller — Finite State Machine
 
-Release/retract I/O review: **2026-10-01**, baseline **`fae0fb7`** plus rule **196**.
+Queued release review: **2026-10-01**, baseline **`d830584`** plus rule **197**.
 Place Item and explicit held Return Item relax fingers (DO2/DO14 OFF), disable
 suction at 80% descent, then enable exhaust (DO1 ON) at 100% of descent.
 Neither routine commands finger OPEN.
@@ -8,19 +8,16 @@ Release evidence uses exhaust ON, fingers/suction OFF and DI1 LOW, independently
 of DI12. Missing intermediate release evidence still cannot block the queue.
 Place Item and explicit held Return Item neutralize DO2/DO14/DO1/DO13 at 0%
 (start) of the upward MovLIO. Use the existing distance-mode zero trigger.
-Keep the two queues, confirmed drop without settling, speed 100%, and final
-neutral/DI1 LOW completion gates.
-
-Drop boundary review: **2026-10-01**, baseline **`f2013fb`** plus rule **193**.
-Explicit Return Item and Place Item restore speed 100% for descent. Queue
-approach/drop first; confirm drop joint-FK pose, idle and execution, then send
-the return group immediately without settling. Return Item queues retract/Home;
-Place queues retract. Timed I/O and final neutral/DI1 LOW gates remain unchanged.
+Each routine queues its complete route in one ordered CP(100) group without a
+drop-arrival or settling wait. Keep speed 100% and final neutral/DI1 LOW gates.
+Place acknowledges complete queue acceptance while its worker verifies final
+retract; Return completes only at taught Home. Auto Run can append Home/next
+Pick behind placement. No slow Drop Retract segment is added.
 
 Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **191**.
 Explicit held Return shares placement's approach/drop/retract, 80% relax/suction
-OFF, 100% exhaust ON and 0% neutral timing, using the saved pre-pick drop target. Append exact joint Home
-in the return queue; confirm final Home and neutral/DI1 LOW. Source/release
+OFF, 100% exhaust ON and 0% neutral timing, using the saved pre-pick drop target.
+Append exact joint Home in the same queue; confirm final Home and neutral/DI1 LOW. Source/release
 context survives Stop. Automatic drop put-back retains its separate pulse route.
 
 Pickup grip review: **2026-10-01**, baseline **`fa9836d`** plus diary rule **190**.
@@ -558,15 +555,14 @@ flowchart TD
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
     AcquisitionPause -->|Place Item Retry| Reset["Operator grants 3 new requests; recheck sources and position"]
     Reset --> Observe
-    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["Queue bin approach → saved pre-pick (relax/suction OFF 80%; exhaust 100%); confirm drop without settling; queue retract (neutral at 0% start) → joint Home"]
+    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["One queue: bin approach → saved pre-pick (relax/suction OFF 80%; exhaust 100%) → retract (neutral at 0% start) → joint Home; confirm only Home"]
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
-    Depth -->|Valid; still at observation position| Queue["Queue 1: pre-place and drop at speed 100%; CP100"]
+    Depth -->|Valid; still at observation position| Queue["One queue: pre-place, drop and retract at speed 100%; CP100; no intermediate arrival wait"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
     Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% relaxed fingers/suction OFF; 100% exhaust ON"]
-    Release --> Drop["Confirm drop joint-FK pose + idle + execution; no settling or release-I/O wait"]
-    Drop --> Retract["Queue 2: MovLIO to pre-place at speed 100%; 0% start fingers + vacuum neutral"]
+    Release --> Retract["MovLIO to pre-place in same queue; speed 100%; 0% start fingers + vacuum neutral"]
     Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
     Accepted --> Monitor["Completion worker: final retract joint-FK + idle + execution; neutral and DI1 LOW"]
     Monitor --> Ready["READY above tray; existing held candidate PLACED"]
@@ -625,8 +621,8 @@ enables the same paused RETURN ITEM control as held Pick. It calls the
 queued bin Return Item: optional vertical rise, Home-Z approach, saved pre-pick
 drop with relax/suction OFF at 80% and exhaust ON at 100%, retract to Home Z
 with neutral at its 0% start, then joint Home.
-Confirm the drop at the end of the first queue; immediately admit retract/Home
-as the second queue, then confirm Home/neutral/DI1 LOW. No settling is added.
+Admit the complete route in one queue, then confirm Home/neutral/DI1 LOW.
+No intermediate arrival or settling wait is added.
 Complete READY and Place CANCELED; never start a new Pick. Require trusted held
 state before dispatch even in GUI mode; queued release supervision matches Place.
 Return does not require the tray detector; retry does. An empty/manual placement
@@ -646,8 +642,8 @@ matching the first Item Pick's `pN_transit` height before pre-pick; that initial
 route skips the lower clearance point. Approach/drop/retract keep tray-target
 X/Y and detect-relative tool attitude through the final upward endpoint.
 Require Home Z above drop Z for timed descent/retract. No extra preliminary
-safety rise is added. Send exactly three commands in two groups: pre-place/drop,
-then retract. Every segment and the external Tray Detect Position action use 100%.
+safety rise is added. Send exactly three commands in one group: pre-place, drop
+and retract. Every segment and the external Tray Detect Position action use 100%.
 Global SpeedFactor still scales those speeds and is never changed by placement.
 Retain Item Teach travel/approach/retract acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
@@ -662,10 +658,10 @@ there is no separate DO call or pre-retract output wait.
 
 Service replies are ordered admission barriers, not physical waypoint waits.
 All motion inherits CP(100), which may round control points within a group.
-The first group ends at the drop. Require fresh advancing joint/status feedback,
-joint-FK arrival, idle/empty queue and latched execution evidence before dispatching
-the retract group. Reuse that confirmed pose as the second group's origin.
-There is no timed settling or extra origin wait. No intermediate relaxed-finger/exhaust/
+Queue the retract immediately after descent acceptance, without waiting for drop
+arrival or idle. Require advancing joint/status, final joint-FK arrival, idle/empty
+queue and execution evidence only at final retract. There is no timed settling or
+extra origin wait. No intermediate relaxed-finger/exhaust/
 DI12/DI1 confirmation gate is added in either mode.
 Missing/late release feedback, suction changes and bounded-history gaps do not
 stop the queue. Retain coherent exhaust ON, finger outputs/suction OFF and DI1
@@ -675,7 +671,7 @@ queue start; GUI mode accepts either initial item state. Preserve ordered comman
 acceptance, enabled/fresh/fault-free robot feedback, opposing-output protection,
 motion watchdogs and direct Stop/Pause throughout.
 
-After drop arrival and the retract's ordered `res=0` reply, return PlaceItem SUCCESS,
+After all three commands' ordered `res=0` replies, return PlaceItem SUCCESS,
 normally with `final_state=PLACING`. One completion worker retains the operation
 slot, transport execution evidence and active status while awaiting physical
 completion. No other motion may overlap; Stop, Pause and shutdown remain active.
@@ -901,9 +897,8 @@ to recheck after physical release, avoiding a latch that prevents clearing alarm
 ```mermaid
 flowchart TD
     Start["Confirmed stopped pose and retained return progress"] --> Kind{"Explicit return with trusted held item?"}
-    Kind -->|Yes| Queue["Queue 1 at speed 100%: optional vertical rise → item XY at Home Z → saved pre-pick drop (relax/suction OFF 80%; exhaust 100%)"]
-    Queue --> Drop["Confirm drop joint-FK pose + idle + execution; no settling"]
-    Drop --> Return["Queue 2 at speed 100%: retract Home Z (neutral at 0% start) → joint Home"]
+    Kind -->|Yes| Queue["One queue at speed 100%: optional vertical rise → item XY at Home Z → saved pre-pick drop (relax/suction OFF 80%; exhaust 100%)"]
+    Queue --> Return["Same queue: retract Home Z (neutral at 0% start) → joint Home; no intermediate arrival wait"]
     Return --> Done["Confirm Home joints + idle/execution + neutral + DI1 LOW; mark RETURNED; READY"]
     Kind -->|Automatic / dropped| Released{"Release already confirmed?"}
     Released -->|No| Up["Approach via safety rise and entry park_transit if needed"]
@@ -923,10 +918,10 @@ planner and release observer. Approach/drop/retract use the same 80%-descent
 finger relaxation/suction OFF, 100%-descent EXHAUST and 0%-ascent NEUTRAL events.
 All speeds are 100%; acceleration
 is taught travel / approach / retract respectively, then travel for joint Home.
-Queue optional current-XY vertical rise (if more than 5 mm below Home Z), approach
-and drop in the first CP(100) group. Confirm drop joint-FK pose, idle/empty queue
-and execution, then immediately queue retract and joint Home using the confirmed
-origin. No settling, release-I/O wait or separate 50 ms pulse is added. Final
+Queue optional current-XY vertical rise (if more than 5 mm below Home Z), approach,
+drop, retract and joint Home in one CP(100) group using the confirmed starting
+pose. No intermediate arrival, settling, release-I/O wait or separate 50 ms pulse
+is added. Final
 joint Home/idle/executed queue and
 neutral outputs/DI1 LOW complete the operation. Final completion marks RETURNED;
 Stop before it retains source and observed release state. Explicit Recover
@@ -961,7 +956,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | --- | --- | --- |
 | Explicit Hardware Home / `go_home` | Current XY with taught Home Z/attitude → full taught Cartesian Home, one blended group | Final Cartesian Home; whole move skipped if already within 5 mm / 1° |
 | Pick's initial Home | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if every Home joint is within ±1° |
-| Explicit held Return Item | Queue optional rise → item XY at Home Z → saved pre-pick timed drop; then queue timed retract Home Z → joint Home | Drop joint-FK / idle / execution without settling; final Home with neutral outputs / DI1 LOW |
+| Explicit held Return Item | One queue: optional rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → joint Home | Final Home joints / idle / execution with neutral outputs / DI1 LOW |
 | Final exhausted miss or automatic drop put-back Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
 
 Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
@@ -999,7 +994,7 @@ results: SUCCESS, NO_PICK (Pick/Auto Run), CANCELED, COMMAND_REJECTED,
 FEEDBACK_FAILURE, STOP_UNCONFIRMED or CONTROLLER_FAULT. A controlled Return Item
 that ends active Home/Pick or acquisition-paused Place reports CANCELED and final
 READY; it does not claim pick/placement success.
-PlaceItem SUCCESS means drop arrival and acceptance of the upward second queue; its
+PlaceItem SUCCESS means acceptance of the complete approach/drop/retract queue; its
 completion worker retains `operation_active` until final retract/neutral/DI1 LOW
 and READY, or failure containment. Clients must observe status for that outcome.
 
@@ -1123,9 +1118,9 @@ Source map for the next review:
 | --- | --- |
 | [state_machine.py](../src/robot_controller/python/robot_controller/state_machine.py) | Lifecycle states and allowed edges |
 | [controller.py](../src/robot_controller/python/robot_controller/controller.py) | API guards, configuration, lifecycle, action ownership, Stop and supervision |
-| [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Read-only tray-position check, drop then retract queues, release evidence and upward interruption recovery |
-| [release.py](../src/robot_controller/python/robot_controller/release.py) | Shared timed targets, drop/return queue boundary, observed release progress and terminal neutral checks |
-| [item_return.py](../src/robot_controller/python/robot_controller/item_return.py) | Explicit held return: saved pre-pick drop queue, then retract and taught Home queue |
+| [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Read-only tray-position check, complete placement queue, release evidence and upward interruption recovery |
+| [release.py](../src/robot_controller/python/robot_controller/release.py) | Shared timed targets, observed release progress and terminal neutral checks |
+| [item_return.py](../src/robot_controller/python/robot_controller/item_return.py) | Explicit held return: one queue through saved pre-pick drop, retract and taught Home |
 | [tray_client.py](../src/robot_controller/python/robot_controller/tray_client.py) | Fresh tray/depth request, provider and source validation |
 | [managed_control.py](../src/robot_controller/python/robot_controller/managed_control.py) | Parking, Continue, put-back and held-loss recovery |
 | [pick_session.py](../src/robot_controller/python/robot_controller/pick_session.py) | Candidate ledger and put-back geometry |

@@ -73,9 +73,7 @@ def test_next_home_and_pick_are_admitted_before_placement_finishes_without_old_d
     assert [name for name, _ in rig.requests] == [
         "MovL", "MovLIO", "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO", "Stop"]
     # No new feedback/arrival wait between placement admission and all next targets.
-    assert rig.order[:2] == ["MovL", "MovLIO"]
-    assert rig.order[2:4] == ["feedback", "feedback"]  # First queue ends at drop.
-    assert rig.order[4:9] == [name for name, _ in rig.requests[2:7]]
+    assert rig.order[:7] == [name for name, _ in rig.requests[:7]]
     assert run.completed == 1
     assert old_session.attempts[0].state == "PLACED" and old_session.held_index is None
     assert rig.node.managed.session is bridge.next_session
@@ -93,7 +91,7 @@ def test_final_home_is_queued_behind_placement_and_success_waits_only_at_final_h
     ])
     run.finish_home(bridge)
     assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovL"]
-    assert rig.order[:6] == ["MovL", "MovLIO", "feedback", "feedback", "MovLIO", "MovL"]
+    assert rig.order[:4] == ["MovL", "MovLIO", "MovLIO", "MovL"]
     assert run.completed == 1 and rig.node.machine.state == "READY"
     assert rig.monitor.snapshot().robot_enabled
     rig.node._preflight_item_state.assert_called_with(False)

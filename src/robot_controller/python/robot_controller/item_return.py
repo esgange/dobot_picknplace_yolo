@@ -45,12 +45,10 @@ class ItemReturnOperation(ReleaseQueue):
         self.release_index, self.neutral_index = len(preceding) + 1, len(preceding) + 2
         node._transition("RETURNING_ITEM", "Queueing saved pre-pick drop, then retract and Home")
         self.begin_queue(node)
-        node.operation_progress("RETURN_DROP", "Queueing approach and saved pre-pick drop",
-                                waypoint="return_release")
-        current = self.move_drop(node, batch_name="return_item_drop", confirmed_start_pose=current)
-        node.operation_progress("RETURN_QUEUE", "Drop reached; queueing retract and taught Home",
+        node.operation_progress("RETURN_QUEUE", "Queueing approach, drop, retract and taught Home",
                                 waypoint="home")
-        self.move_return(node, batch_name="return_item_queued_home", current=current)
+        node.hardware.move_batch(self.plan, batch_name="return_item_queued_home",
+                                 placement=self, confirmed_start_pose=current)
         managed.session.parked_index = None
         managed.return_progress = None
         node.events.record("INFO", "item_return_completed",

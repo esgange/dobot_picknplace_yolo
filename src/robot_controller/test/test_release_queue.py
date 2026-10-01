@@ -1,4 +1,4 @@
-"""Real transport verifies the drop/return boundary without commanding hardware."""
+"""Real transport verifies uninterrupted release queues without commanding hardware."""
 
 import pytest
 
@@ -31,48 +31,54 @@ def operation_rig(returning):
     {"tool_vector_actual": [0.] * 6},
     {"RunningStatus": 1, "isRunQueuedCmd": 1},
 ])
-def test_drop_requires_target_and_idle_then_returns_on_first_valid_sample(returning, blocker):
+def test_whole_route_is_queued_but_completion_still_requires_final_pose_and_idle(
+        returning, blocker):
     rig, run = operation_rig(returning)
-    rig.drop_steps = iter([
+    endpoint = {"home": True} if returning else {"retract": True}
+    rig.steps = iter([
         dict(outputs=HELD, inputs=1),
-        dict(outputs=RELEASE, inputs=OPEN, drop=True, **blocker),
         dict(outputs=RELEASE, inputs=OPEN, drop=True),
+        dict(outputs=0, inputs=0, **endpoint, **blocker),
+        dict(outputs=0, inputs=0, **endpoint),
     ])
     received = []
     advance = rig.monitor.wait_next
 
     def next_sample(*args, **kwargs):
+        assert rig.node.managed.session.attempts[0].state == "HELD"
         received.append(len(rig.requests))
         return advance(*args, **kwargs)
     rig.monitor.wait_next = next_sample
     run()
-    assert received[:3] == [2, 2, 2]  # Neither retract nor Home admitted early.
-    assert rig.order[:6] == ["MovL", "MovLIO", "feedback", "feedback", "feedback", "MovLIO"]
+    commands = ["MovL", "MovLIO", "MovLIO"] + (["MovL"] if returning else [])
+    assert received == [len(commands)] * 4
+    assert rig.order[:len(commands)] == commands
     completed = [call for call in rig.node.events.record.call_args_list
                  if call.args[1] == "motion_batch_completed"]
-    assert len(completed) == 2
+    assert len(completed) == 1
     assert all(call.kwargs["terminal_stable_sec"] == 0. for call in completed)
     assert not any(name in ("DO", "CP", "SpeedFactor") for name, _ in rig.requests)
     assert rig.node.managed.session.held_index is None
 
 
 @pytest.mark.parametrize("returning", [False, True])
-def test_stop_at_confirmed_drop_prevents_the_entire_return_queue(returning):
+def test_stop_after_drop_admission_prevents_retract_and_home_admission(returning):
     rig, run = operation_rig(returning)
     canceled = [False]
     rig.node.cancel_requested = lambda: canceled[0]
 
     def check_cancel():
         if canceled[0]:
-            raise OperationCanceled("Stop at drop boundary")
+            raise OperationCanceled("Stop after drop admission")
     rig.node.raise_if_cancelled = check_cancel
 
-    def stop(event_level, event, *_args, **_kwargs):
-        if event == "release_drop_arrived":
+    def stop(index):
+        if index == 2:
             canceled[0] = True
-    rig.node.events.record.side_effect = stop
+    rig.on_request = stop
     with pytest.raises(OperationCanceled):
         run()
     assert [name for name, _ in rig.requests if name != "Stop"] == ["MovL", "MovLIO"]
+    assert rig.requests[-1][0] == "Stop"
     assert rig.node.managed.session.held_index == 1
     assert rig.node.managed.session.attempts[0].state == "HELD"

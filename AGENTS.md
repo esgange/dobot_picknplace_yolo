@@ -1220,6 +1220,19 @@ event; no separate DO call, pulse, setting or teach edit. Pick and automatic
 drop put-back keep existing I/O. Update READMEs, FSM/exports and diary; no
 hardware commands or application restart during verification.
 
+Rule 197 restores one complete ordered motion group for explicit held Return
+Item and Place Item, superseding rule 193's drop/return split. Return queues
+optional vertical rise, approach, saved pre-pick drop, retract and taught joint
+Home; Place queues approach, drop and retract, including Auto Run placement.
+Keep ordered service acceptance without physical intermediate arrival or settling
+waits. Retain speed 100%, taught accelerations, global SpeedFactor, fingers and
+suction OFF at 80% descent, exhaust ON at 100%, all-neutral at 0% retract,
+final feedback/I/O checks and Stop/Pause/Recover ownership. Place acknowledges
+complete queue acceptance while its worker retains physical completion; Return
+completes only at Home. Remove unused split-queue helpers. No Drop Retract, 6%
+segment, settings/teach edits or automatic-drop changes. Update READMEs, FSM and
+exports plus the diary; no hardware commands or application restart for validation.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

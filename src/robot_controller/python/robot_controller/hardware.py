@@ -1388,8 +1388,8 @@ class DobotTransport:
                 sequence = self.monitor.wait_next(
                     sequence, min(1.0, MOTION_HARD_CAP_SEC - (now - started)),
                     cancel=self.node.cancel_requested, position=True)
-            # Release queues reconcile observed I/O themselves. At the drop
-            # boundary, accepted timed outputs need not have been observed yet.
+            # Release queues reconcile observed I/O themselves; acceptance of
+            # timed outputs is not evidence of their physical execution.
             if expected_outputs and not stop_on_suction and placement is None:
                 self.node.expected_outputs.update(expected_outputs)
             if require_suction_reset and not suction_reset_seen:
