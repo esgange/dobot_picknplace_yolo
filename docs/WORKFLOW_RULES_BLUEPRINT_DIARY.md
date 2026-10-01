@@ -7952,6 +7952,24 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or application restart; unrelated RViz and local
   calibration/teach/model artifacts remain outside source commits.
 
+### 2026-10-01 — Rule 198: relax fingers and stop suction at 90% descent
+
+- User requested 90% descent for relaxed fingers and suction OFF, 100% for
+  exhaust ON, and 0% retract for all outputs OFF. Update the shared release
+  planner: downward MovLIO DO2/DO14/DO13 OFF at 90%, DO1 ON at 100%; upward
+  MovLIO DO2/DO14/DO1/DO13 OFF at 0%. This covers explicit held Return Item,
+  manual/Auto Run placement and Preview. No changes to Pick or automatic
+  suction-loss put-back timing, geometry, speeds or teach artifacts.
+- Retain the complete ordered queues, final Home/retract feedback and neutral
+  outputs/DI1 LOW gates, Stop/Pause/Recover ownership and source retention.
+  Updated READMEs/FSM and regenerated HTML/PDF. All **897 controller tests
+  passed**, including exact MovLIO service tuples for both routes. Sourced ROS
+  package build, scoped flake8 and `git diff --check` passed. Verified nine SVG
+  diagrams, nine A3 PDF pages and matching FSM source SHA-256
+  `016772204606ba7df64f1e4faa26408b0ab3a1ca8c86c8ccbce765c437c4be40`.
+  No hardware commands or running-application restart; unrelated RViz and local
+  calibration/teach/model artifacts remain outside source commits.
+
 ### Future entry template
 
 ```text

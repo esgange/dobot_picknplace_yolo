@@ -110,7 +110,7 @@ then report **Not at Tray Detect position** without detecting or placing.
 Place never queues observation travel. The external Tray Detect Position action
 remains one direct queued MovL to its recorded joints.
 After fresh detection, placement queues pre-place → release (relax fingers and
-suction OFF at 80%; exhaust ON at 100% of descent) → retract at Home Z
+suction OFF at 90%; exhaust ON at 100% of descent) → retract at Home Z
 (neutral at its 0% start) in one ordered group, without a drop-arrival wait or settling.
 There is no Home move. All placement segments and Tray Detect Position use speed
 100%, scaled by the operator's global SpeedFactor. Item Teach acceleration
@@ -262,7 +262,7 @@ A trusted held item's source pose survives completion of its Pick action.
 Home. The GUI exposes it as **RETURN ITEM** while paused with an item.
 Explicit Return Item shares tray placement's timed approach/release/retract:
 above the original item at Home Z → exact saved pre-pick pose → same X/Y at
-Home Z → taught joint Home. At 80% of descent, relax fingers and turn suction OFF;
+Home Z → taught joint Home. At 90% of descent, relax fingers and turn suction OFF;
 at 100%, turn exhaust ON. At the 0% start of ascent, neutralize all four outputs.
 Queue optional vertical rise, approach, drop, retract and taught Home together,
 with no intermediate arrival wait or settling. All motions use speed

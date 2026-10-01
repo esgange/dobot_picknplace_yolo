@@ -7,7 +7,7 @@ from .motion import MotionIO, Target, gripper_neutral_events, rigid_matrix, vacu
 
 
 def release_targets(release_pose, settings, home_matrix, *, prefix):
-    """Relax/suction OFF at 80%, exhaust at drop end, neutral as retract starts."""
+    """Relax/suction OFF at 90%, exhaust at drop end, neutral as retract starts."""
     release = rigid_matrix(release_pose, "Release target")
     home = rigid_matrix(home_matrix, "Home")
     pre_z = home[2, 3]
@@ -21,8 +21,8 @@ def release_targets(release_pose, settings, home_matrix, *, prefix):
         point[2, 3] = z
         events = ()
         if name == "release":
-            events = gripper_neutral_events(80) + (
-                MotionIO(80, 13, False), MotionIO(100, 1, True))
+            events = gripper_neutral_events(90) + (
+                MotionIO(90, 13, False), MotionIO(100, 1, True))
         elif name == "retract":
             events = gripper_neutral_events(0) + vacuum_neutral_events(0)
         result.append(Target(f"{prefix}_{name}", point, 100,

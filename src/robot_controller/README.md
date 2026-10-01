@@ -74,7 +74,7 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | --- | --- | --- |
 | MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and tray attitude plus rotation at Home Z |
 | MovLIO descent | Exact saved pre-pick target at 100% | Detected surface Z + trayplace_height at 100% |
-| At 80% descent | DO2 OFF, DO14 OFF (relaxed), DO13 OFF | Same |
+| At 90% descent | DO2 OFF, DO14 OFF (relaxed), DO13 OFF | Same |
 | At 100% descent | DO1 ON (exhaust) | Same |
 | Queue admission | One complete ordered group; no drop-arrival wait | Same |
 | MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
@@ -89,7 +89,7 @@ feedback. No intermediate arrival, settling, release-I/O,
 DI12 or exhaust-pulse wait is added. All motions use speed 100%, scaled by global
 SpeedFactor. Approach/Home
 use taught travel acceleration, descent uses approach acceleration, and retract
-uses retract acceleration. Finger relaxation and suction OFF occur at 80%;
+uses retract acceleration. Finger relaxation and suction OFF occur at 90%;
 exhaust starts at the 100% drop endpoint and ends as retract begins.
 The shared planner/observer keeps the placement I/O timing and release supervision
 identical. Neither routine commands finger OPEN. Observed release means exhaust
@@ -175,7 +175,7 @@ stays disabled and STOP remains available.
 A trusted held item may be returned to its saved
 bin source through one queued approach at Home Z → saved pre-pick drop →
 retract to Home Z → taught joint Home, without intermediate arrival waits or
-settling. Use tray placement's 80%-descent finger
+settling. Use tray placement's 90%-descent finger
 relaxation/suction OFF, 100%-descent exhaust ON and 0%-ascent neutral events,
 with a preliminary vertical rise in the same queue
 when needed. Return finishes READY
@@ -252,7 +252,7 @@ Then send three Cartesian commands in one queue:
 | Command | Target | Timed outputs |
 | --- | --- | --- |
 | MovL | Pre-place | Preserve existing outputs |
-| MovLIO | Release height | At 80%: DO2 OFF, DO14 OFF (relaxed), DO13 OFF; at 100%: DO1 ON |
+| MovLIO | Release height | At 90%: DO2 OFF, DO14 OFF (relaxed), DO13 OFF; at 100%: DO1 ON |
 | MovLIO | Back to pre-place | At 0% (start): DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 
 All placement segments and Tray Detect Position use **speed 100%**, scaled by
@@ -260,7 +260,7 @@ global SpeedFactor; placement never changes that slider. Acceleration remains
 Item Teach travel for Tray Detect Position, then travel / approach / retract
 for placement. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust
-pulse, extra retract-height waypoint or separate Home action. At 80% of descent,
+pulse, extra retract-height waypoint or separate Home action. At 90% of descent,
 relax fingers and turn suction OFF. Exhaust starts at the 100% endpoint and lasts
 until the upward command starts. Zero uses the existing distance-mode
 start trigger (`{1,0,channel,0}`), carried by MovLIO. All commands inherit CP(100); control points

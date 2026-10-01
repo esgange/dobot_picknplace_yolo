@@ -1233,6 +1233,16 @@ completes only at Home. Remove unused split-queue helpers. No Drop Retract, 6%
 segment, settings/teach edits or automatic-drop changes. Update READMEs, FSM and
 exports plus the diary; no hardware commands or application restart for validation.
 
+Rule 198 moves explicit held Return Item and Place Item finger relaxation and
+suction OFF from 80% to 90% of descent. The downward MovLIO sends DO2/DO14/DO13
+OFF at 90%, then DO1 ON at 100%; the upward MovLIO still sends all four outputs
+OFF at 0%. Apply through the shared release planner to manual/Auto Run placement
+and Preview. Keep one complete ordered queue, full speed/global SpeedFactor,
+taught accelerations, final feedback checks and Stop/Pause/Recover behavior.
+Pick and automatic suction-loss put-back keep their existing timing. No new
+motion, setting, teach edit, hardware command or application restart; update
+READMEs, FSM/exports and the diary with validation.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
