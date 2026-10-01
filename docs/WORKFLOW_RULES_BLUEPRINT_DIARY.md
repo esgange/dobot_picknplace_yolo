@@ -7970,6 +7970,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or running-application restart; unrelated RViz and local
   calibration/teach/model artifacts remain outside source commits.
 
+### 2026-10-01 — Rule 199: open fingers and exhaust at 90% descent
+
+- User requested finger OPEN, suction OFF and exhaust ON at 90% descent,
+  removing the separate 100% event. The shared release planner now uses
+  DO2 OFF → DO14 ON → DO13 OFF → DO1 ON at 90%, preserving opposite-output
+  ordering. Retract still sets all four outputs OFF at 0%. Explicit held Return
+  Item, manual/Auto Run placement and Preview use the same planner.
+- Match observed release to DO14/DO1 ON, DO2/DO13 OFF and DI1 LOW, without
+  requiring DI12 or introducing an intermediate wait. Keep complete queued
+  motion, final Home/retract checks, Stop/Pause/Recover and source retention.
+  Pick and automatic suction-loss put-back timing remain unchanged. No new
+  motion, speed, setting or teach-file change.
+- Updated READMEs/FSM and regenerated HTML/PDF. All **898 controller tests
+  passed**. Exact service tuples verify 90% OPEN/exhaust and 0% neutral for
+  both routes; release evidence requires both commanded active outputs while
+  DI12 remains optional. Stop/recovery, final completion and Auto Run tests pass.
+  Sourced ROS package build, scoped flake8 and `git diff --check` passed.
+  Verified nine SVG diagrams, nine A3 PDF pages and matching FSM source SHA-256
+  `f9e7f790d66fa71a386c1df8192ec5ff2ae31d30bc76ea5500b0435a90a5fef7`.
+  No hardware commands or running-application restart; unrelated RViz and local
+  calibration/teach/model artifacts remain outside source commits.
+
 ### Future entry template
 
 ```text

@@ -19,7 +19,7 @@ from test_placement import operation_node
 
 
 HELD = (1 << 12) | 2
-RELEASE = 1  # Exhaust ON, fingers relaxed, suction OFF.
+RELEASE = (1 << 13) | 1  # Finger OPEN and exhaust ON, close/suction OFF.
 OPEN = 1 << 11
 
 
@@ -145,7 +145,7 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])
     assert list(rig.requests[1][1].mdis) == [
-        '{0,90,2,0}', '{0,90,14,0}', '{0,90,13,0}', '{0,100,1,1}']
+        '{0,90,2,0}', '{0,90,14,1}', '{0,90,13,0}', '{0,90,1,1}']
     assert list(rig.requests[2][1].mdis) == [
         '{1,0,2,0}', '{1,0,14,0}', '{1,0,1,0}', '{1,0,13,0}']
     assert all(not any(v.startswith(('cp=', 'r=')) for v in request.param_value)
@@ -307,7 +307,7 @@ def test_stop_after_release_preserves_exhaust_without_waiting_for_a_pulse_end():
     rig.monitor.wait = advancing_stationary
     rig.transport.confirm_stop(CompletedFuture())
     assert operation.release_confirmed and operation.needs_recovery
-    assert node.expected_outputs == {1: True, 2: False, 13: False, 14: False}
+    assert node.expected_outputs == {1: True, 2: False, 13: False, 14: True}
     assert not rig.requests  # Stop confirmation never issues release/reset commands.
 
 
@@ -329,9 +329,10 @@ def test_ambiguous_partial_release_blocks_recovery_without_releasing_or_descendi
     assert not rig.requests
 
 
-def test_incoherent_release_evidence_is_diagnostic_only_until_retract():
+@pytest.mark.parametrize('partial_outputs', [1 << 13, 1])
+def test_incoherent_release_evidence_is_diagnostic_only_until_retract(partial_outputs):
     rig = QueueRig()
-    rig.script = [dict(outputs=1 << 13, inputs=OPEN),
+    rig.script = [dict(outputs=partial_outputs, inputs=OPEN),
                   dict(outputs=RELEASE, inputs=OPEN | 1),
                   dict(outputs=0, inputs=OPEN),
                   dict(outputs=0, inputs=0, retract=True)]

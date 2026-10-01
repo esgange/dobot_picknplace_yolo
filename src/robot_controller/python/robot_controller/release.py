@@ -3,11 +3,12 @@
 from dataclasses import dataclass, field
 
 from .errors import FeedbackFailure
-from .motion import MotionIO, Target, gripper_neutral_events, rigid_matrix, vacuum_neutral_events
+from .motion import (Target, gripper_neutral_events, gripper_open_events, rigid_matrix,
+                     vacuum_exhaust_events, vacuum_neutral_events)
 
 
 def release_targets(release_pose, settings, home_matrix, *, prefix):
-    """Relax/suction OFF at 90%, exhaust at drop end, neutral as retract starts."""
+    """Open fingers and exhaust at 90% descent, neutral as retract starts."""
     release = rigid_matrix(release_pose, "Release target")
     home = rigid_matrix(home_matrix, "Home")
     pre_z = home[2, 3]
@@ -21,8 +22,7 @@ def release_targets(release_pose, settings, home_matrix, *, prefix):
         point[2, 3] = z
         events = ()
         if name == "release":
-            events = gripper_neutral_events(90) + (
-                MotionIO(90, 13, False), MotionIO(100, 1, True))
+            events = gripper_open_events(90) + vacuum_exhaust_events(90)
         elif name == "retract":
             events = gripper_neutral_events(0) + vacuum_neutral_events(0)
         result.append(Target(f"{prefix}_{name}", point, 100,
@@ -88,7 +88,7 @@ class ReleaseQueue:
                     node.holding_item = False
                     if not self.release_confirmed:
                         self.phase = "RELEASING"
-                if (self.release_issued and bits == 1
+                if (self.release_issued and bits == ((1 << 13) | 1)
                         and bits != self.initial_outputs
                         and not inputs & 1):
                     if not self.release_confirmed:

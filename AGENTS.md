@@ -1243,6 +1243,17 @@ Pick and automatic suction-loss put-back keep their existing timing. No new
 motion, setting, teach edit, hardware command or application restart; update
 READMEs, FSM/exports and the diary with validation.
 
+Rule 199 changes explicit held Return Item and Place Item to finger OPEN,
+suction OFF and exhaust ON together at 90% descent. The downward MovLIO sends
+DO2 OFF, DO14 ON, DO13 OFF, DO1 ON in that order, all at 90%; remove the 100%
+exhaust event. Keep all four outputs OFF at 0% retract, complete ordered queues,
+speed/acceleration, final feedback checks and Stop/Pause/Recover behavior.
+Release evidence uses DO14/DO1 ON, DO2/DO13 OFF and DI1 LOW; DI12 remains
+optional and no intermediate release wait is added. Shared planning covers
+Return, manual/Auto Run placement and Preview; Pick and automatic drop put-back
+are unchanged. Update READMEs, FSM/exports and diary. No new setting, teach edit,
+hardware command or application restart during validation.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
