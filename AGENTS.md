@@ -1179,6 +1179,20 @@ global SpeedFactor, 80% release / 20% neutral, ordered queues and final feedback
 gates. No teach/schema/settings changes, hardware commands or application restart;
 update FSM/exports and the diary.
 
+Rule 193 restores 100% descent for explicit held Return Item and Place Item,
+superseding rule 192. Split each routine into two ordered CP(100) groups:
+optional rise/approach/drop, then retract plus taught Home for Return Item or
+retract alone for Place. Require fresh joint-FK drop arrival, idle/empty queue
+and execution evidence before the second group, with no settling or extra
+motion-origin wait. Preserve release at 80%, neutral at 20%, taught acceleration,
+global SpeedFactor and final neutral/DI1 LOW gates. Share release history and
+offset timed-command indices across both groups; never infer observed I/O merely
+from drop arrival. Stop/Pause must prevent later admission and retain source.
+Place succeeds on retract admission after drop arrival; Auto Run may prefetch
+and append Home/next Pick behind that retract as before. No automatic-drop
+put-back changes, new settings, teach edits, hardware commands or app restart.
+Update FSM/exports, READMEs and the diary.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

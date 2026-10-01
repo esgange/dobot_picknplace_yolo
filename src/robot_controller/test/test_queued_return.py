@@ -44,7 +44,7 @@ def return_rig(height=.8):
 
 @pytest.mark.parametrize("height", [.3, .8, 1.0])
 @pytest.mark.parametrize("approach_speed", [6, 17])
-def test_return_queues_release_retract_and_exact_home_before_any_arrival(height, approach_speed):
+def test_return_confirms_drop_then_queues_retract_and_home_without_settling(height, approach_speed):
     rig, source = return_rig(height)
     rig.node.configuration.profile["speed"]["approach_percent"] = approach_speed
     rig.steps = iter([
@@ -56,7 +56,8 @@ def test_return_queues_release_retract_and_exact_home_before_any_arrival(height,
     offset = int(height < .795)
     assert [name for name, _ in rig.requests] == ["MovL"] * offset + [
         "MovL", "MovLIO", "MovLIO", "MovL"]
-    assert rig.order[:4 + offset] == [name for name, _ in rig.requests]
+    assert rig.order[:6 + offset] == (["MovL"] * offset + [
+        "MovL", "MovLIO", "feedback", "feedback", "MovLIO", "MovL"])
     approach, release, retract, home = [request for _, request in rig.requests[offset:]]
     assert (release.a, release.b, release.c) == pytest.approx(source[2].matrix[:3, 3] * 1000)
     assert (approach.a, approach.b, approach.c) == pytest.approx((120., -230., 800.))
@@ -71,7 +72,7 @@ def test_return_queues_release_retract_and_exact_home_before_any_arrival(height,
     assert [list(request.param_value) for _, request in rig.requests] == [
         ["user=0", "tool=0", f"v={speed}", f"a={acceleration}"]
         for speed, acceleration in (
-            [(100, 70)] * offset + [(100, 70), (approach_speed, 30), (100, 40), (100, 70)])]
+            [(100, 70)] * offset + [(100, 70), (100, 30), (100, 40), (100, 70)])]
     assert rig.node.managed.session.attempts[0].state == "RETURNED"
     assert rig.node.managed.session.held_index is None
     assert rig.node.managed.return_progress is None
@@ -130,7 +131,7 @@ def test_neutral_idle_at_retract_cannot_finish_before_taught_home_joints():
         return advance(*args, **kwargs)
     rig.monitor.wait_next = wait
     rig.node.managed._put_back(dropped=False)
-    assert observations == ["HELD", "HELD"]
+    assert observations == ["HELD"] * 4
     assert rig.node.managed.session.attempts[0].state == "RETURNED"
 
 

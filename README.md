@@ -109,14 +109,14 @@ Detect. Proceed immediately when matched; otherwise wait up to three seconds,
 then report **Not at Tray Detect position** without detecting or placing.
 Place never queues observation travel. The external Tray Detect Position action
 remains one direct queued MovL to its recorded joints.
-After fresh detection, placement queues pre-place → release
-(OPEN/exhaust at 80%) → retract at Home Z (neutral at 20%) in one group, with no Home move.
-Placement descent uses Item Teach `speed.approach_percent` (6% when taught as 6).
-Tray Detect Position, pre-place travel and retract use speed 100%, all scaled by
-the operator's global SpeedFactor. Item Teach acceleration settings and Item Pick
-speeds remain unchanged.
-It has no pick settling, extra retract-height waypoint or intermediate release
-confirmation gate. **Place returns SUCCESS when all three commands are accepted.**
+After fresh detection, placement queues pre-place → release (OPEN/exhaust at 80%).
+Confirm the drop pose using joint-derived pose, idle and execution feedback,
+then immediately queue retract at Home Z (neutral at 20%), without settling.
+There is no Home move. All placement segments and Tray Detect Position use speed
+100%, scaled by the operator's global SpeedFactor. Item Teach acceleration
+settings and Item Pick speeds remain unchanged. No separate release-I/O wait or
+extra retract-height waypoint is added. **Place returns SUCCESS when the retract
+command is accepted, after drop arrival.**
 Status remains PLACING with exclusive command ownership while a completion worker
 verifies the final retract, neutral outputs and DI1 LOW, then enters READY above
 the tray. Missing intermediate DI12/DI1 release evidence cannot stop this queue.
@@ -263,12 +263,12 @@ Home. The GUI exposes it as **RETURN ITEM** while paused with an item.
 Explicit Return Item shares tray placement's timed approach/release/retract:
 above the original item at Home Z → exact saved pre-pick pose → same X/Y at
 Home Z → taught joint Home. At 80% of descent, open fingers, suction OFF and
-exhaust ON; at 20% of ascent, neutralize all four outputs. Queue every motion in
-one ordered CP(100) group, including a preliminary vertical rise if needed, and
-confirm only final Home with neutral outputs and DI1 LOW. Descent uses taught
-approach speed (6% when taught as 6); all other motions use speed 100%.
+exhaust ON; at 20% of ascent, neutralize all four outputs. Queue optional vertical
+rise, approach and drop first. After confirmed drop pose/idle/execution, immediately
+queue retract and taught Home together, with no settling. All motions use speed
+100% and inherit CP(100); final Home requires neutral outputs and DI1 LOW.
 Accelerations are travel, approach, retract and travel respectively. There is
-no separate 50 ms pulse or release/clearance arrival wait. Return after failed
+no separate 50 ms pulse or release-I/O/clearance wait. Return after failed
 tray acquisition uses the same sequence, without another perception request.
 
 Suction loss during Pause invokes the existing automatic put-back, even if the

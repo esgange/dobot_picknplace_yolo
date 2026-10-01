@@ -73,18 +73,20 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | Motion | Return Item | Place Item |
 | --- | --- | --- |
 | MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and tray attitude plus rotation at Home Z |
-| MovLIO descent | Exact saved pre-pick target at taught approach speed | Detected surface Z + trayplace_height at taught approach speed |
+| MovLIO descent | Exact saved pre-pick target at 100% | Detected surface Z + trayplace_height at 100% |
 | At 80% descent | DO2 OFF, DO14 ON, DO13 OFF, DO1 ON | Same |
+| Queue boundary | Confirm drop pose / idle / execution; no settling | Same |
 | MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
 | At 20% ascent | DO2/DO14/DO1/DO13 OFF | Same |
 | Final MovL | Exact taught Home joints | None for manual Place |
 | Physical completion | Home joints/idle/execution, neutral outputs and DI1 LOW | Final retract/idle/execution, neutral outputs and DI1 LOW |
 
-Return queues every target as one ordered CP(100) group. When starting more than
-5 mm below Home Z, prepend a vertical MovL at current X/Y/attitude in that same
-group. It has no intermediate physical-arrival, release, DI12 or exhaust-pulse
-wait. Descent uses Item Teach `speed.approach_percent` (6% when taught as 6);
-all other motions use speed 100%, scaled by global SpeedFactor. Approach/Home
+Return uses two ordered CP(100) groups: approach/drop, then retract/Home. When
+starting more than 5 mm below Home Z, prepend a vertical MovL at current X/Y/attitude
+to the first group. Confirm drop arrival from fresh joint-FK, idle and execution
+feedback, then immediately admit the second group. No settling, release-I/O,
+DI12 or exhaust-pulse wait is added. All motions use speed 100%, scaled by global
+SpeedFactor. Approach/Home
 use taught travel acceleration, descent uses approach acceleration, and retract
 uses retract acceleration. The 80% release happens before the pre-pick endpoint.
 The shared planner/observer keeps the placement I/O timing and release supervision
@@ -167,9 +169,10 @@ permanent red STOP always stops/cancels. Without a trusted held source, Return
 stays disabled and STOP remains available.
 
 A trusted held item may be returned to its saved
-bin source through one queued approach at Home Z → saved pre-pick drop → retract
-to Home Z → taught joint Home. Use tray placement's 80%-descent release and
-20%-ascent neutral events, with a preliminary vertical rise in the same queue
+bin source through a queued approach at Home Z → saved pre-pick drop, then a
+second queue of retract to Home Z → taught joint Home. Confirm drop pose/idle
+before the second queue, without settling. Use tray placement's 80%-descent release
+and 20%-ascent neutral events, with a preliminary vertical rise in the first queue
 when needed. Return finishes READY
 and ends the waiting Place action as CANCELED, without claiming placement success.
 The gripper is preserved until the motion-timed release begins.
@@ -239,27 +242,27 @@ Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
 the updated pair. Production readers do not supply a fallback height.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
-Then queue exactly three Cartesian commands:
+Then send three Cartesian commands in two queues:
 
 | Command | Target | Timed outputs |
 | --- | --- | --- |
 | MovL | Pre-place | Preserve existing outputs |
 | MovLIO | Release height | At 80%: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON |
+| Queue boundary | Confirm drop pose / idle / execution | No settling or release-I/O wait |
 | MovLIO | Back to pre-place | At 20%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 
-Placement descent uses **Item Teach `speed.approach_percent`**, giving 6% when
-the taught approach speed is 6%. Tray Detect Position, pre-place and retract use
-**speed 100%**. Global SpeedFactor still scales them; placement never changes
-that slider. Acceleration remains Item Teach travel for
-Tray Detect Position, then travel / approach / retract for the three-command
-queue. Item Pick retains its taught speeds. No teach-file edit is required.
+All placement segments and Tray Detect Position use **speed 100%**, scaled by
+global SpeedFactor; placement never changes that slider. Acceleration remains
+Item Teach travel for Tray Detect Position, then travel / approach / retract
+for placement. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust
 pulse, extra retract-height waypoint or separate Home action. The 80% trigger
 starts release before the nominal lower point; exhaust duration follows the
 motion until the 20% upward trigger. All commands inherit CP(100); control points
-can blend. Admit each service in order, without waiting for intermediate arrival.
-Return **PlaceItem SUCCESS immediately after all three commands receive ordered
-acceptance**, normally with `final_state=PLACING`. The action result acknowledges the queue.
+can blend within each group. The first group ends at the drop; confirm joint-FK
+pose, idle and execution before immediately admitting the upward second group.
+Return **PlaceItem SUCCESS after drop arrival and retract acceptance**,
+normally with `final_state=PLACING`. The action result acknowledges the final queue.
 A completion worker retains the operation slot and PLACING status while the robot
 moves, so another motion cannot overlap. It uses the existing joint-FK/idle,
 execution, freshness, output and watchdog checks. Direct Stop, Pause and shutdown
@@ -272,7 +275,7 @@ changes and gaps in output history do not interrupt this queue. Any observed
 coherent release feedback is retained as diagnostic/recovery evidence only.
 Keep command acceptance/order, live enabled/error/collision/freshness checks,
 opposing-output protection, motion watchdogs and direct Stop/Pause. These are
-hardware/transport checks, not intermediate arrival or release confirmations.
+hardware/transport checks and drop arrival, without separate release-I/O confirmation.
 
 Only at physically confirmed idle retract, require neutral DO1/DO2/DO13/DO14 and
 DI1 LOW before READY; DI12 need not be HIGH. A bad final grip reports a
@@ -714,7 +717,7 @@ Under rule 112, every automatic drop put-back target uses
 taught pre-pick release, neutral clearance retreat, exit transit and
 exact joint Home. Put-back never inherits the slow approach/retract rates.
 This applies to paused drop and automatic loss return. Explicit held Return Item
-uses the single placement-style queue described above under rule 191.
+uses the two placement-style queues described above under rule 193.
 Explicit Recover instead preserves outputs and uses taught travel rates to Home,
 then neutralizes the gripper at Home.
 If another candidate follows, its normal travel and final-pick approach rates

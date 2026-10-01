@@ -99,7 +99,12 @@ def test_position_lost_during_observation_cannot_start_placement():
 
 def test_place_transport_returns_at_third_acceptance_with_live_completion_context():
     rig = QueueRig()
-    rig.monitor.wait_next = Mock(side_effect=AssertionError('Must not await retract arrival'))
+    advance = rig.monitor.wait_next
+
+    def drop_only(*args, **kwargs):
+        assert len(rig.requests) == 2, 'Must not await retract arrival'
+        return advance(*args, **kwargs)
+    rig.monitor.wait_next = Mock(side_effect=drop_only)
     operation = rig.node.placement
     operation.run(rig.node)
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
@@ -107,7 +112,7 @@ def test_place_transport_returns_at_third_acceptance_with_live_completion_contex
     assert rig.transport.moving and rig.monitor._motion is not None
     assert operation.phase != 'DONE' and rig.node.holding_item
     assert rig.node.managed.session.attempts[0].state == 'HELD'
-    rig.monitor.wait_next.assert_not_called()
+    assert rig.monitor.wait_next.call_count == 2  # Motion evidence then drop; no settling.
     operation.close_pending()
     assert not rig.transport.moving and rig.monitor._motion is None
 
@@ -142,6 +147,8 @@ def background_rig():
     node.waiting, node.release = threading.Event(), threading.Event()
 
     def next_sample(*_args, **_kwargs):
+        if node.placement.release_issued and not node.placement.neutral_issued:
+            return rig.next_sample()
         node.waiting.set()
         assert node.release.wait(2.), 'Test failed to release the completion worker'
         values = next(rig.steps)

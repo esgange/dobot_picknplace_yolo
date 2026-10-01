@@ -35,6 +35,10 @@ class QueueRig:
         self.requests = []
         self.order = []
         self.steps = iter(())
+        self.drop_steps = iter([
+            dict(outputs=HELD, inputs=1),
+            dict(outputs=HELD, inputs=1, drop=True),
+        ])
         self.on_request = lambda _index: None
         self.monitor.update_joints(joint_message())
         self.monitor.update_status(SimpleNamespace(is_connected=True, is_enable=True))
@@ -58,11 +62,15 @@ class QueueRig:
             dict(outputs=0, inputs=OPEN, retract=True),
         ]
 
-    def emit(self, *, outputs, inputs, home=False, retract=False, running=1, **feedback):
+    def emit(self, *, outputs, inputs, home=False, retract=False, drop=False,
+             running=1, **feedback):
         self.timer += 1
         self.clock += .01
         matrix = (self.node.configuration.home_matrix if home
                   else self.node.configuration.tray.detect_matrix)
+        if drop:
+            owner = self.node.managed.return_progress or self.node.placement
+            matrix = owner.plan[owner.release_index].matrix
         if retract:
             matrix = place_targets(
                 self.node.configuration.tray.detect_matrix, [.3, .2, .25],
@@ -71,8 +79,8 @@ class QueueRig:
         fields = dict(
             controller_timer=self.timer, digital_outputs=outputs, digital_input_bits=inputs,
             currentCommandId=4 if home else 3 if retract else 2,
-            RunningStatus=0 if home or retract else running,
-            isRunQueuedCmd=0 if home or retract else running,
+            RunningStatus=0 if home or retract or drop else running,
+            isRunQueuedCmd=0 if home or retract or drop else running,
             tool_vector_actual=pose_values(matrix))
         fields.update(feedback)
         # The fake robot publishes independent joint/status streams. Its test
@@ -82,7 +90,7 @@ class QueueRig:
         joints = joint_message()
         if home and 'tool_vector_actual' not in feedback:
             joints.position = list(getattr(self.node.configuration, 'home_joints', (0.,) * 6))
-        elif not home and not retract and 'tool_vector_actual' not in feedback:
+        elif not home and not retract and not drop and 'tool_vector_actual' not in feedback:
             joints.position = list(self.node.configuration.tray.detect_joints)
         else:
             joints.position = list(matrix[:3, 3]) + [0., 0., 0.]
@@ -109,9 +117,13 @@ class QueueRig:
         return SimpleNamespace(service_is_ready=lambda: True, call_async=call)
 
     def next_sample(self, *_args, **_kwargs):
-        values = next(self.steps, None)
+        owner = self.node.managed.return_progress or self.node.placement
+        dropping = (owner is not None and owner.observing
+                    and owner.release_issued and not owner.neutral_issued)
+        values = next(self.drop_steps if dropping else self.steps, None)
         if values is None:
-            pytest.fail('Unexpected feedback wait after final retract')
+            pytest.fail('Unexpected feedback wait during drop' if dropping
+                        else 'Unexpected feedback wait after final retract')
         self.emit(**values)
         return self.monitor.sequence
 
@@ -132,11 +144,11 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     rig.node.configuration.profile["speed"]["approach_percent"] = approach_speed
     rig.run()
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
-    assert rig.order[:3] == ['MovL', 'MovLIO', 'MovLIO']
+    assert rig.order[:5] == ['MovL', 'MovLIO', 'feedback', 'feedback', 'MovLIO']
     assert all(not request.mode for _, request in rig.requests)
     assert [list(request.param_value) for _, request in rig.requests] == [
         ['user=0', 'tool=0', f'v={speed}', f'a={acceleration}']
-        for speed, acceleration in ((100, 70), (approach_speed, 30), (100, 40))]
+        for speed, acceleration in ((100, 70), (100, 30), (100, 40))]
     assert [request.c for _, request in rig.requests] == pytest.approx([800., 292.5, 800.])
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])

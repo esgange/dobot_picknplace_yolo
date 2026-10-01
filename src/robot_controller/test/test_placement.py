@@ -50,7 +50,7 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
     assert all(np.allclose(p.matrix[:3, :3], expected) for p in plan[:3])
     assert all(np.allclose(p.matrix[:3, 2], detect[:3, 2]) for p in plan[:3])
     assert np.array_equal(plan[-1].matrix, plan[0].matrix)
-    assert [p.speed_percent for p in plan] == [100, 10, 100]
+    assert [p.speed_percent for p in plan] == [100, 100, 100]
     assert [p.acceleration_percent for p in plan] == [70, 30, 40]
     assert not plan[0].motion_io
     assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
@@ -81,7 +81,7 @@ def test_tray_drop_height_is_independent_of_pick_heights(
     assert place[0].matrix[2, 3] > place[1].matrix[2, 3]
     assert np.array_equal(place[0].matrix, place[2].matrix)
     assert [p.speed_percent for p in pick] == [80, 80, 80, 10, 20, 80]
-    assert [p.speed_percent for p in place] == [100, 10, 100]
+    assert [p.speed_percent for p in place] == [100, 100, 100]
 
 
 @pytest.mark.parametrize("surface_z", [.74, .75])
@@ -168,7 +168,7 @@ class Hardware:
 
     def move_batch(self, targets, *, batch_name, placement=None, forbid_suction=False,
                    confirmed_start_pose=None, require_suction=False, preserve_outputs=False,
-                   queue_only=False):
+                   queue_only=False, return_terminal_pose=False):
         self.calls.append(("move", tuple(p.name for p in targets), {"batch_name": batch_name}))
 
         def completion():
@@ -182,11 +182,13 @@ class Hardware:
                     if placement:
                         placement.observe(self.node, self.emit())
                 self.current = target.matrix.copy()
-                if self.interrupt_at == i:
+                if self.interrupt_at == i + (placement.offset if placement else 0):
                     self.interrupt_at = None
                     raise OperationCanceled("Stopped during placement queue")
             if placement:
                 placement.complete(self.node, self.emit())
+            if return_terminal_pose:
+                return False, self.current.copy()
             if False:
                 yield  # Match the transport's suspended completion iterator.
         pending = completion()
@@ -250,8 +252,9 @@ def run_place(node):
 def test_place_sequence_ends_at_retract_and_clears_held_context():
     node = operation_node()
     run_place(node)
-    assert node.hardware.calls == [("move", ("place_pre", "place_release", "place_retract"),
-                                    {"batch_name": "place_to_retract"})]
+    assert node.hardware.calls == [
+        ("move", ("place_pre", "place_release"), {"batch_name": "place_to_drop"}),
+        ("move", ("place_retract",), {"batch_name": "place_to_retract"})]
     assert not node.holding_item and node.managed.session.held_index is None
     assert node.managed.session.attempts[0].state == "PLACED"
     assert node.placement.phase == "DONE"

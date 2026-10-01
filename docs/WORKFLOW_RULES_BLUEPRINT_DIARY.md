@@ -7842,6 +7842,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   d989ba7117b7c78a494cc4b21b2ee8ec86b5de2733190646210c75a8184a0b4f verified.
   No physical hardware command or running-application restart.
 
+### 2026-10-01 — Rule 193: full-speed drop and separate return queue without settling
+
+- User rejected the slow descent and requested two queues: drop, then return,
+  with no settling. Apply to explicit Return Item and Place Item. Restore
+  descent to 100%, scaled by the existing global SpeedFactor. Taught acceleration
+  remains unchanged; no teach file or setting is modified.
+- Queue optional safety rise/approach/drop first. Confirm the actual drop using
+  fresh advancing joints/RobotStatus, joint-derived pose, idle/empty queue and
+  latched execution evidence. Immediately send retract/Home for Return or
+  retract alone for Place, reusing that confirmed origin with no extra dwell.
+  Retain CP(100), 80% release and 20% neutral, final Home/retract and neutral/DI1
+  LOW checks, source/release progress, Stop/Pause pre-emption and Recover behavior.
+- A shared segment adapter preserves timed-command indices and release history
+  across the boundary. Do not overwrite observed outputs with expected release
+  outputs merely because the drop arrived. No DI12/release-I/O wait or separate
+  exhaust pulse. Automatic suction-loss put-back retains its existing routine.
+- Place action acknowledges the upward queue after drop arrival; Auto Run keeps
+  its prefetch and queued Home/next-Pick handoff behind the retract. Preview uses
+  the same restored target speeds. Update FSM/HTML/PDF and READMEs.
+- Validation: **892 controller tests passed**. Real transport with synthetic
+  feedback verifies full-speed requests, exact timed I/O, separate drop arrival,
+  refusal to queue upward motion at a wrong pose or while busy, immediate return
+  after the first valid sample, zero settling, and Stop at the queue boundary.
+  Placement action ownership, Auto Run queue extension, interrupted release and
+  final Home/retract gates remain covered. Controller build, scoped 100-column
+  flake8 and diff checks pass. Regenerated nine FSM SVGs and a nine-page A3 PDF;
+  source SHA-256
+  1f4cee13363ca861977527eeef7f1f92c650114cb11997eb852a480895a196e0 verified.
+  No hardware commands or running-application restart; unrelated RViz and
+  calibration/teach/model files remain outside the change.
+
 ### Future entry template
 
 ```text
