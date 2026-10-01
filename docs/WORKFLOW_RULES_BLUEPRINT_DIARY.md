@@ -7910,6 +7910,24 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No physical hardware commands or running-application restart; unrelated RViz
   and local calibration/teach/model artifacts stay outside source commits.
 
+### 2026-10-01 — Rule 196: trigger exhaust at the descent endpoint
+
+- User requested exhaust at 100% instead of 80% for Return Item and Place Item.
+  Move only DO1 ON to the downward MovLIO's 100% event; keep DO2/DO14/DO13 OFF
+  at 80%. Shared planner covers explicit held Return, manual/Auto Run placement
+  and Preview. Do not alter Pick or automatic suction-loss put-back I/O.
+- Retain all-neutral at retract's 0% start, full speed/global SpeedFactor,
+  taught accelerations, two queues with confirmed drop and no settling, release
+  diagnostics, final feedback gates and Stop/Pause/Recover source handling.
+  No new DO call, exhaust pulse/dwell, setting, schema or teach-file change.
+- Updated READMEs/FSM and regenerated HTML/PDF. Validation: all 897 controller
+  tests passed; `robot_controller` built successfully with the sourced ROS
+  workspace; changed Python files passed targeted flake8 and `git diff --check`.
+  Verified nine SVG diagrams, nine A3 PDF pages and matching FSM source SHA-256
+  `a90ca0512ed3f4a02aade9c777f3f5a6b9a674631471a9d532468ba75e6400fe`.
+  No hardware commands or running-application restart. Preserve unrelated RViz
+  and local calibration/teach/model artifacts outside source commits.
+
 ### Future entry template
 
 ```text

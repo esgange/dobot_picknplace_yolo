@@ -1211,6 +1211,15 @@ Stop/Pause/Recover ownership. Pick and automatic suction-loss put-back retain
 their existing I/O. No teach/settings/schema changes or hardware commands/restarts;
 update READMEs, FSM/exports and the diary.
 
+Rule 196 moves only exhaust ON (DO1) to 100% of descent in explicit held Return
+Item and Place Item, including Auto Run placement. Retain DO2/DO14/DO13 OFF at
+80%, all-neutral retract at 0%, full speed/global SpeedFactor, two queues with
+confirmed drop and no settling, release diagnostics and final feedback gates.
+Use one downward MovLIO with ordered 80% OFF events then the 100% exhaust ON
+event; no separate DO call, pulse, setting or teach edit. Pick and automatic
+drop put-back keep existing I/O. Update READMEs, FSM/exports and diary; no
+hardware commands or application restart during verification.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

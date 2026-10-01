@@ -1,14 +1,15 @@
 # Robot Controller — Finite State Machine
 
-Release/retract I/O review: **2026-10-01**, baseline **`0f56d91`** plus rules **194–195**.
+Release/retract I/O review: **2026-10-01**, baseline **`fae0fb7`** plus rule **196**.
 Place Item and explicit held Return Item relax fingers (DO2/DO14 OFF), disable
-suction and enable exhaust at 80% descent; neither routine commands finger OPEN.
+suction at 80% descent, then enable exhaust (DO1 ON) at 100% of descent.
+Neither routine commands finger OPEN.
 Release evidence uses exhaust ON, fingers/suction OFF and DI1 LOW, independently
 of DI12. Missing intermediate release evidence still cannot block the queue.
 Place Item and explicit held Return Item neutralize DO2/DO14/DO1/DO13 at 0%
 (start) of the upward MovLIO. Use the existing distance-mode zero trigger.
-Keep the two queues, confirmed drop without settling, speed 100%, release at
-80% of descent, and final neutral/DI1 LOW completion gates.
+Keep the two queues, confirmed drop without settling, speed 100%, and final
+neutral/DI1 LOW completion gates.
 
 Drop boundary review: **2026-10-01**, baseline **`f2013fb`** plus rule **193**.
 Explicit Return Item and Place Item restore speed 100% for descent. Queue
@@ -17,8 +18,8 @@ the return group immediately without settling. Return Item queues retract/Home;
 Place queues retract. Timed I/O and final neutral/DI1 LOW gates remain unchanged.
 
 Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **191**.
-Explicit held Return shares placement's approach/drop/retract and 80% release /
-0% neutral timing, using the saved pre-pick drop target. Append exact joint Home
+Explicit held Return shares placement's approach/drop/retract, 80% relax/suction
+OFF, 100% exhaust ON and 0% neutral timing, using the saved pre-pick drop target. Append exact joint Home
 in the return queue; confirm final Home and neutral/DI1 LOW. Source/release
 context survives Stop. Automatic drop put-back retains its separate pulse route.
 
@@ -557,13 +558,13 @@ flowchart TD
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
     AcquisitionPause -->|Place Item Retry| Reset["Operator grants 3 new requests; recheck sources and position"]
     Reset --> Observe
-    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["Queue bin approach → saved pre-pick (release 80%); confirm drop without settling; queue retract (neutral at 0% start) → joint Home"]
+    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["Queue bin approach → saved pre-pick (relax/suction OFF 80%; exhaust 100%); confirm drop without settling; queue retract (neutral at 0% start) → joint Home"]
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Valid; still at observation position| Queue["Queue 1: pre-place and drop at speed 100%; CP100"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
-    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% relaxed fingers + exhaust"]
+    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% relaxed fingers/suction OFF; 100% exhaust ON"]
     Release --> Drop["Confirm drop joint-FK pose + idle + execution; no settling or release-I/O wait"]
     Drop --> Retract["Queue 2: MovLIO to pre-place at speed 100%; 0% start fingers + vacuum neutral"]
     Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
@@ -622,7 +623,8 @@ batch pauses again. Ordinary manual Pause retains its partly used budget.
 Pick Item remains disabled. A trusted HELD source before any placement release
 enables the same paused RETURN ITEM control as held Pick. It calls the
 queued bin Return Item: optional vertical rise, Home-Z approach, saved pre-pick
-drop with release at 80%, retract to Home Z with neutral at its 0% start, then joint Home.
+drop with relax/suction OFF at 80% and exhaust ON at 100%, retract to Home Z
+with neutral at its 0% start, then joint Home.
 Confirm the drop at the end of the first queue; immediately admit retract/Home
 as the second queue, then confirm Home/neutral/DI1 LOW. No settling is added.
 Complete READY and Place CANCELED; never start a new Pick. Require trusted held
@@ -650,10 +652,11 @@ Global SpeedFactor still scales those speeds and is never changed by placement.
 Retain Item Teach travel/approach/retract acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
 Commands are MovL pre-place; MovLIO release
-with 80% DO2 OFF → DO14 OFF → DO13 OFF → DO1 ON; MovLIO back to pre-place with
+with 80% DO2 OFF → DO14 OFF → DO13 OFF, then 100% DO1 ON; MovLIO back to pre-place with
 0% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF. No final Home command or additional
 retract-height/clearance target is sent. Exhaust
-lasts from descent's 80% trigger until the upward command starts, not a 50 ms pulse.
+lasts from descent's 100% endpoint trigger until the upward command starts,
+not a 50 ms pulse.
 Zero uses distance-mode start events (`{1,0,channel,0}`) in the retract MovLIO;
 there is no separate DO call or pre-retract output wait.
 
@@ -898,7 +901,7 @@ to recheck after physical release, avoiding a latch that prevents clearing alarm
 ```mermaid
 flowchart TD
     Start["Confirmed stopped pose and retained return progress"] --> Kind{"Explicit return with trusted held item?"}
-    Kind -->|Yes| Queue["Queue 1 at speed 100%: optional vertical rise → item XY at Home Z → saved pre-pick drop (release 80%)"]
+    Kind -->|Yes| Queue["Queue 1 at speed 100%: optional vertical rise → item XY at Home Z → saved pre-pick drop (relax/suction OFF 80%; exhaust 100%)"]
     Queue --> Drop["Confirm drop joint-FK pose + idle + execution; no settling"]
     Drop --> Return["Queue 2 at speed 100%: retract Home Z (neutral at 0% start) → joint Home"]
     Return --> Done["Confirm Home joints + idle/execution + neutral + DI1 LOW; mark RETURNED; READY"]
@@ -917,7 +920,8 @@ flowchart TD
 Both routes use the saved pre-pick pose, **final-pick Z + taught pre-pick height**,
 with its original X/Y and attitude. Explicit Return Item shares the placement
 planner and release observer. Approach/drop/retract use the same 80%-descent
-relaxed-finger/EXHAUST and 0%-ascent NEUTRAL events. All speeds are 100%; acceleration
+finger relaxation/suction OFF, 100%-descent EXHAUST and 0%-ascent NEUTRAL events.
+All speeds are 100%; acceleration
 is taught travel / approach / retract respectively, then travel for joint Home.
 Queue optional current-XY vertical rise (if more than 5 mm below Home Z), approach
 and drop in the first CP(100) group. Confirm drop joint-FK pose, idle/empty queue
