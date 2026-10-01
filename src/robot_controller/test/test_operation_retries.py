@@ -299,6 +299,9 @@ class TrayRig:
     None, "timeout",
     GetTrayPose.Response(success=True, found=False, status="NO_VALID_TRAY", message="No tray"),
     GetTrayPose.Response(status="ERROR", message="No fresh calibrated observation"),
+    GetTrayPose.Response(
+        status="ERROR", message="Insufficient accepted placement depth samples/fraction"),
+    GetTrayPose.Response(success=True, found=True, status="OK"),  # Missing valid depth.
     GetTrayPose.Response(status="BUSY", message="Previous request active"),
 ])
 @pytest.mark.parametrize("require_held_item", [True, False])
@@ -308,6 +311,9 @@ def test_tray_retries_missing_pose_or_reply_and_accepts_third_fresh_result(
     assert rig.request(require_held_item=require_held_item) == pytest.approx([.13, .24, .25])
     assert rig.client.call_async.call_count == rig.attempts.count == 3
     assert rig.observer.pending is None
+    requests = [call.args[0] for call in rig.client.call_async.call_args_list]
+    assert len({id(request) for request in requests}) == 3
+    assert all(request.sample_placement_depth for request in requests)
     if failure == "timeout":
         assert all(f.cancelled() for f in rig.futures[:2])
     if require_held_item:
@@ -317,7 +323,11 @@ def test_tray_retries_missing_pose_or_reply_and_accepts_third_fresh_result(
         rig.node._preflight_item_state.assert_not_called()
 
 
-@pytest.mark.parametrize("failure", [None, "timeout"])
+@pytest.mark.parametrize("failure", [
+    None, "timeout",
+    GetTrayPose.Response(
+        status="ERROR", message="Insufficient accepted placement depth samples/fraction"),
+])
 def test_tray_exhausts_three_failures_with_typed_final_reason(monkeypatch, failure):
     rig = TrayRig(monkeypatch, [failure] * 3)
     with pytest.raises(TrayAcquisitionExhausted, match="failed after 3 attempts"):

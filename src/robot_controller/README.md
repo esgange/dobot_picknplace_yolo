@@ -154,7 +154,11 @@ After confirmation, request fresh tray/depth from Armed Tray Teach or headless
 Tray Detect, with
 **three requests per acquisition batch**. Retry a missing pose/depth result,
 provider no-result/error/BUSY reply or response timeout at the same observation
-position. Each request keeps its taught request timeout plus one second for the
+position. One attempt is **fresh tray pose → fresh placement depth**. A depth
+failure consumes that attempt even when a tray was found; the next attempt repeats
+tray detection and depth sampling from a new observation, with no saved-pose reuse.
+The first attempt plus two retries share one budget, not separate pose/depth budgets.
+Each request keeps its taught request timeout plus one second for the
 reply and requires RGB/depth captured after that request. A timed-out local future
 is discarded; a late reply cannot supply a later attempt. The provider serializes
 inference. Ordinary Pause/Continue keeps the request count and discards interrupted

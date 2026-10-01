@@ -8019,6 +8019,29 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or running-application restart; unrelated RViz and local
   calibration/teach/model artifacts remain outside source commits.
 
+### 2026-10-01 — verify complete tray-pose/depth retries
+
+- User reaffirmed one Place observation attempt as fresh tray pose followed by
+  placement depth. A failed depth observation consumes one attempt; reacquire
+  both on the next request, with three total attempts (first plus two retries).
+  Existing rules 180/185/189 already implement this for manual Place and Auto Run.
+  No production retry, motion, I/O, threshold or failure-policy change is needed.
+- Add controller regression coverage for insufficient-depth ERROR replies and
+  found-tray replies without valid depth: success on the third complete request,
+  depth exhaustion at three and no fourth request. Add provider coverage that
+  changes both the tray pose and RGB/depth observation across failed requests,
+  proving each new request reruns tray inference and samples its own depth.
+- Clarified the package README and both placement diagrams; regenerated FSM exports.
+  Sourced ROS validation: **921 controller tests and 235 tray tests passed**;
+  scoped flake8 and `git diff --check` passed. Two existing RViz configuration
+  assertions fail against the preserved local RViz edits (serialized voxel size
+  0.009999999776482582 versus exact 0.01). Both pass when reading the committed
+  configuration; excluded only those two from the final tray-suite run.
+  Verified nine SVG diagrams, nine PDF pages and matching FSM source SHA-256
+  `42578516f920ba23d27935dbe6ce224fbd6a66c15ba3b9fb8416812a7f7044c8`.
+  Tests/documentation only; no production rebuild, hardware commands, application
+  restarts or teach edits. Unrelated local files remain outside the commit.
+
 ### Future entry template
 
 ```text

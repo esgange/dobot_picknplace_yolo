@@ -161,6 +161,65 @@ def test_placement_request_uses_one_fresh_observation_and_reports_depth(backend,
         assert 'Insufficient placement depth' in finished.kwargs['traceback']
 
 
+@pytest.mark.parametrize("last_usable", [False, True])
+def test_depth_failure_restarts_pose_and_depth_from_new_observation(backend, last_usable):
+    node, _, digest = backend
+    ordinary_snapshot = node.snapshot.side_effect
+    ordinary_preview = node.preview.side_effect
+    attempt = 0
+    observations, order = [], []
+
+    def snapshot(**kwargs):
+        view = ordinary_snapshot()
+        view["rgb"]["stamp_ns"] += attempt * 1_000_000_000
+        view["depth"] = {"stamp_ns": view["rgb"]["stamp_ns"],
+                         "received_at": view["rgb"]["received_at"],
+                         "depth": bytes([attempt + 1]) * 8}
+        observations.append(view)
+        return view
+
+    def preview(*args, **kwargs):
+        order.append("pose")
+        view = ordinary_preview(*args, **kwargs)
+        # A changed tray position exposes accidental reuse of the old pose.
+        view["result"]["selected"]["position"][0] += attempt * .01
+        for corner in view["result"]["selected"]["corners_base_m"]:
+            corner[0] += attempt * .01
+        return view
+
+    def depth(request, data, **kwargs):
+        order.append("depth")
+        assert request["selected"]["position"][0] == pytest.approx(.1 + attempt * .01)
+        assert data == bytes([attempt + 1]) * 8
+        if attempt < 2 or not last_usable:
+            return {"state": "ok",
+                    "error": "Insufficient accepted placement depth samples/fraction"}, b""
+        return {"state": "ok", "surface_base": [.14, .13, .24],
+                "accepted_samples": 50, "total_samples": 60,
+                "median_mm": 700., "sigma_mm": 1.}, b""
+
+    node.snapshot.side_effect = snapshot
+    node.preview.side_effect = preview
+    node.native.call = MagicMock(side_effect=depth)
+    arm(backend)
+    observations.clear()  # Arming performs its own read-only readiness snapshot.
+    sample = {"x_mm": 20., "y_mm": 30., "diameter_mm": 30., **QUALITY_DEFAULTS}
+    for attempt in range(3):
+        node.get_clock = lambda: SimpleNamespace(now=lambda: Time(seconds=100 + attempt))
+        response = node.requests.handle(GetTrayPose.Request(
+            profile_sha256=digest, sample_placement_depth=True,
+            placement=PlacementDepthRequest(**sample)), GetTrayPose.Response())
+        assert response.success is (attempt == 2 and last_usable)
+        assert response.placement.valid is response.success
+        if not response.success:
+            assert response.message == "Insufficient accepted placement depth samples/fraction"
+        assert observations[-1]["rgb"]["stamp_ns"] > (100 + attempt) * 1_000_000_000
+        assert node.requests.service is not None and not node.native.failed
+    assert order == ["pose", "depth"] * 3
+    assert len(observations) == 3
+    assert node.preview.call_count == node.native.call.call_count == 3
+
+
 def test_armed_and_simulated_requests_share_fresh_single_pose_pipeline(backend):
     node, path, digest = backend
     api = node.requests

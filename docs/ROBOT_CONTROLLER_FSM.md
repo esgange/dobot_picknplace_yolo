@@ -565,7 +565,7 @@ claim PLACED or RETURNED.
 ```mermaid
 flowchart TD
     Request["PlaceItem: GUI READY/HOLDING or headless trusted HOLDING; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints? No motion command"}
-    Observe -->|Yes immediately| Depth["Request fresh matched tray pose/depth; at most 3 requests per acquisition batch"]
+    Observe -->|Yes immediately| Depth["Fresh tray pose then placement depth; first attempt + 2 retries; reacquire both on failure"]
     Observe -->|No| Wait["Wait up to 3 seconds for idle + joints"]
     Wait -->|Arrived| Depth
     Wait -->|Expired| Position["Not at Tray Detect position; no detection or placement"]
@@ -734,7 +734,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 flowchart TD
     Start["READY: Auto Run quantity and placement target"] --> Pick["Request poses first, then ensure Home; normal bounded Pick"]
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
-    Tray --> Observe["Fresh tray/depth acquisition; at most 3 requests"]
+    Tray --> Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
     Observe --> Place["Queue approach → timed release → final retract"]
     Place --> Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append Home behind placement"]
