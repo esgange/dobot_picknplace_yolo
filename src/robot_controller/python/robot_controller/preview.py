@@ -30,9 +30,10 @@ from .errors import FeedbackFailure, OperationCanceled
 from .feedback import FeedbackMonitor
 from .kinematics import Cr10Kinematics
 from .motion import (candidate_pose_in_base, candidate_exit_transit, cartesian_home_targets,
-                     home_targets, pick_targets, pick_tray_target, pose_reached)
+                     home_targets, pick_targets, pick_tray_target, pose_reached,
+                     tray_detect_targets)
 from .pick_session import return_targets
-from .placement import place_targets, validate_target
+from .placement import TRAY_SPEED_PERCENT, place_targets, validate_target
 from .tray_client import TrayClient
 
 
@@ -173,6 +174,7 @@ class RobotControllerPreview(rclpy.node.Node):
             at_home = np.allclose(sample.joints, config.home_joints,
                                   atol=math.radians(1.), rtol=0)
             targets = []
+            tray_travel_only = False
             if request.operation == request.HOME:
                 if not pose_reached(current, config.home_matrix,
                                     translation_m=.005, rotation_deg=1.):
@@ -223,12 +225,20 @@ class RobotControllerPreview(rclpy.node.Node):
                                        atol=math.radians(1.), rtol=0):
                         raise ValueError("Not at Tray Detect position; tray detection blocked")
 
-                check_tray_position()
-                surface = self.trays.request(
-                    config, x, y, require_held_item=False, check_state=check_tray_position)
-                check_tray_position()
-                targets.extend(place_targets(config.tray.detect_matrix, surface,
-                                             config.profile, rotation, config.home_matrix))
+                if not np.allclose(sample.joints, config.tray.detect_joints,
+                                   atol=math.radians(1.), rtol=0):
+                    targets.extend(tray_detect_targets(
+                        config.tray.detect_matrix, config.tray.detect_joints,
+                        speed_percent=TRAY_SPEED_PERCENT,
+                        acceleration_percent=rates["acceleration_percent"]))
+                    tray_travel_only = True
+                else:
+                    check_tray_position()
+                    surface = self.trays.request(
+                        config, x, y, require_held_item=False, check_state=check_tray_position)
+                    check_tray_position()
+                    targets.extend(place_targets(config.tray.detect_matrix, surface,
+                                                 config.profile, rotation, config.home_matrix))
             config.validate_sources(self.root)
             self._check_observation()
             frames = tuple(f"robot_controller_preview_{target.name}_{index}"
@@ -244,6 +254,9 @@ class RobotControllerPreview(rclpy.node.Node):
                 response.message += "; one fresh batch, all candidate/return branches"
                 if not batch.candidates:
                     response.message += "; no valid item candidates"
+            if tray_travel_only:
+                response.message += ("; Tray Detect travel only; placement targets require "
+                                     "a fresh tray observation at that pose")
             response.configuration_id = config.configuration_id
             response.tf_frames = list(frames)
             self.events.record(

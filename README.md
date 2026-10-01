@@ -63,8 +63,9 @@ Pick/Place still need their armed read-only detector and fresh visible targets;
 preview does not move the camera to obtain them. Load/Continue, Recover and speed
 changes are blocked while previewing; direct Stop remains available. Switch modes
 only while no hardware operation is active. Preview starts OFF and turning it OFF
-or editing inputs clears its TFs. Place checks arrival at Tray Detect without
-moving there; there is no separate Tray Detect Position button. Lifecycle
+or editing inputs clears its TFs. Hardware Place moves to Tray Detect if needed;
+away from that pose, Place preview shows only the observation-travel TF because
+fresh placement depth is not yet available. There is no separate Tray Detect Position button. Lifecycle
 controls remain separate.
 Rebuild `robot_controller_interfaces` and `robot_controller`, then restart the
 controller/preview/GUI together for the `/robot_controller/preview_v2` contract.
@@ -106,10 +107,10 @@ surface Z + `trayplace_height` (mm), independent of pick heights. Pre-place/retr
 uses the placement X/Y at taught Home Z, matching the first item-pick approach
 before pre-pick.
 Place checks fresh RobotStatus idle and all six joints within ±1° of saved Tray
-Detect. Proceed immediately when matched; otherwise wait up to three seconds,
-then report **Not at Tray Detect position** without detecting or placing.
-Place never queues observation travel. The external Tray Detect Position action
-remains one direct queued MovL to its recorded joints.
+Detect. Skip travel when matched; otherwise send the existing direct joint-target
+MovL at 100%, preserving outputs, and confirm execution/idle/joints before detection.
+Failed or interrupted arrival prevents tray acquisition and placement. The external
+Tray Detect Position action uses this same direct route.
 After fresh detection, placement queues pre-place → release (open fingers,
 suction OFF and exhaust ON at 90% of descent) → retract at Home Z
 (neutral at its 0% start) in one ordered group, without a drop-arrival wait or settling.
@@ -141,10 +142,12 @@ starts another three-request acquisition batch. The paused control shows
 put-back routine, ending Home/READY. Pick Item stays disabled. No placement or
 release is queued while waiting for the operator; robot/source faults remain terminal.
 Place Item requires an available armed Tray Teach
-or headless Tray Detect provider. **GUI mode permits placement with or without an
-item**, from idle READY or HOLDING; no successful Pick is required. This is real
+or headless Tray Detect provider. **Explicit Place permits placement with or without an
+item** in either launch mode, from idle READY or HOLDING; no successful Pick is required. This is real
 hardware debug operation with unchanged tray/depth, release I/O and motion checks.
-Headless mode still requires a successfully picked, trusted held item.
+Auto Run still requires a successful Pick before each placement and both armed
+detectors before starting. The GUI displays Auto Run's blocking reason beside
+the controls, including a missing/disarmed tray provider.
 See the
 [placement workflow](src/robot_controller/README.md#tray-placement). Normal launch
 separates it into a background controller,

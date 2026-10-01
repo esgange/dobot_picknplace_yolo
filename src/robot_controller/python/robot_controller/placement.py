@@ -102,6 +102,8 @@ class PlacementOperation(ReleaseQueue):
         self.observing = False
         self.preflight(node)
         node.operation_progress("TRAY_POSITION", "Checking saved Tray Detect position")
+        if not node.hardware.home_already_reached(config.tray.detect_joints):
+            node._execute_tray_position()
         node.hardware.wait_tray_position(config.tray.detect_joints)
         try:
             surface = node.trays.request(config, self.x_mm, self.y_mm,

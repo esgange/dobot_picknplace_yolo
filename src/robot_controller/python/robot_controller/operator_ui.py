@@ -138,11 +138,6 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
                            if not state.item_detector_ready else ""))
     reasons["place"] = (base or ("Load a Tray Teach file with a recorded Tray Detect Pose"
                                  if not state.tray_position_recorded else "")
-                        or ("Pick an item successfully first"
-                            if not state.manual_placement_enabled
-                            and (not state.holding_item or current != "HOLDING") else "")
-                        or ("Robot is not at Tray Detect position"
-                            if not state.at_tray_detect else "")
                         or target_error
                         or ("Arm Tray Teach or start Tray Detect with exactly one provider"
                             if not state.tray_detector_ready else ""))

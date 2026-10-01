@@ -72,7 +72,7 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(he
     assert message.digital_input_bits == 1 << 11  # Raw DI1 LOW despite debounced holding.
     assert message.holding_item
     assert message.item_detector_ready and not message.tray_detector_ready
-    assert message.manual_placement_enabled is not headless
+    assert message.manual_placement_enabled
 
     def stale(**_kwargs):
         raise FeedbackFailure("stale")
@@ -127,7 +127,7 @@ def window(tmp_path):
     app.processEvents()
 
 
-def test_placement_controls_send_typed_offsets_and_rotation_only_when_held(window):
+def test_placement_controls_send_typed_offsets_and_allow_empty_or_held(window):
     sent = []
     window.node.action_clients = {"place": SimpleNamespace(
         server_is_ready=lambda: True,
@@ -146,7 +146,7 @@ def test_placement_controls_send_typed_offsets_and_rotation_only_when_held(windo
     window.pending_goal = None
     window.node.status = status(state="READY", holding_item=False, tray_position_recorded=True)
     window._refresh()
-    assert not window.place_item.isEnabled()
+    assert window.place_item.isEnabled()
     window.node.status = status(state="PLACING", holding_item=True, tray_position_recorded=True,
                                 operation_active=True, operation="place")
     window._refresh()
@@ -400,7 +400,7 @@ def test_pick_button_tracks_item_arming_independently_of_tray(window, ready):
 
 
 @pytest.mark.parametrize('ready', [False, True])
-def test_place_button_requires_tray_arming_and_a_held_item(window, ready):
+def test_place_button_requires_tray_arming_for_empty_or_held_robot(window, ready):
     window.node.status = status(state='HOLDING', holding_item=True,
                                 tray_position_recorded=True, tray_detector_ready=ready,
                                 item_detector_ready=False)
@@ -410,8 +410,7 @@ def test_place_button_requires_tray_arming_and_a_held_item(window, ready):
     window.node.status.holding_item = False
     window.node.status.state = 'READY'
     window._refresh()
-    assert not window.place_item.isEnabled()
-    assert 'Pick an item successfully first' in window.place_item.toolTip()
+    assert window.place_item.isEnabled() is ready
 
 
 @pytest.mark.parametrize('ready', [False, True])

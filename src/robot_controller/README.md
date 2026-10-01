@@ -178,14 +178,15 @@ change; detection/teach files and ROS interfaces are unchanged.
 ## Tray placement
 
 Load **Item Teach**, **Bin Teach** and a complete **Tray Teach** in the controller,
-which automatically prepares the robot to READY. In GUI mode, Pick Item is optional before placement; headless Place
-requires a successful Pick. Pick finishes at the recorded Tray Detect joints.
-**Place Item never commands travel to the observation pose.** It checks fresh
+which automatically prepares the robot to READY. Explicit Place Item accepts an
+empty or held robot in either launch mode. Pick finishes at the recorded Tray Detect joints.
+**Place Item commands travel to the observation pose when needed.** It checks fresh
 RobotStatus idle and all six `/joint_states` within ±1° of saved Tray Detect,
 just like Pick's immediate Home skip. If matched, observe immediately; otherwise
-wait up to three seconds and proceed as soon as matched. Expiry reports
-**Not at Tray Detect position**, performs Stop containment and blocks detection
-and placement. There is no separate observation-position button; the typed
+send the existing direct joint-target MovL at 100% with taught travel acceleration
+and preserved outputs. Confirm execution/idle/joints before requesting the tray.
+Failure or interruption performs existing containment and blocks detection and
+placement. There is no separate observation-position button; the typed
 Tray Detect Position action remains available to external clients with its direct
 joint-target MovL. The bin routes retain their existing clearance logic.
 After confirmation, request fresh tray/depth from Armed Tray Teach or headless
@@ -244,14 +245,13 @@ the replacement explicitly and must be armed again. Loading never moves the robo
 Pick Item is enabled only in idle READY with its Item Teach/Detect service
 available and a loaded Tray Teach with recorded Tray Detect joints. Pick does
 not require tray detection to be armed. Place Item needs a recorded Tray Detect Pose and its Tray Teach/Detect
-service. The normal GUI launch (`headless=false`) is attended debug mode: Place
+service. Explicit Place, including through a headless controller,
 is available from idle READY or HOLDING, with or without an item or picked-item
 record. No suction-presence prerequisite applies during observation or approach.
 The sequence still commands real hardware; final neutral I/O and DI1 are checked
-at final retract. Headless mode retains HOLDING, trusted picked-item source and
-held-suction guards during the position check and observation before the placement queue.
-The controller owns this policy; merely attaching a GUI to a headless controller
-does not relax it. Status reports `manual_placement_enabled`; tooltips explain it.
+at final retract. Auto Run retains its trusted picked-item source and held-suction
+guards. Status reports `manual_placement_enabled=true` for explicit Place in both
+launch modes; it does not permit placement from a fault or unknown-item state.
 
 The controller reports `item_detector_ready` and `tray_detector_ready` in typed
 status at 5 Hz. It checks service availability and exactly one allowed provider:
@@ -262,6 +262,9 @@ admission, so stale GUI readiness cannot bypass it. These are read-only checks;
 no detector trigger, model inference or automatic arming occurs. Fresh request-time
 source/pose/depth validation still applies. Home and Tray Detect Position remain
 available under their usual guards even when detection is disarmed.
+Auto Run also displays its blocking reason beside the controls. It can start away
+from Tray Detect, but both detectors must be available. CameraInfo changes disarm
+Tray Teach; re-arm its validated setup before using Place or Auto Run.
 
 Rebuild `robot_controller_interfaces` and `robot_controller`, then restart all
 controller/GUI clients together for these status fields.
@@ -363,7 +366,7 @@ New APIs are `GoTrayDetectPosition` at `/robot_controller/go_tray_detect_positio
 and `PlaceItem` at `/robot_controller/place_item`, both with the active configuration
 ID. Configure accepts `tray_teach_file`; status includes `tray_configured`,
 `tray_position_recorded`, `manual_placement_enabled`, `TRAY_POSITIONING` and `PLACING`.
-Only headless placement requires a trusted HELD candidate.
+Auto Run placement requires a trusted HELD candidate; explicit Place does not.
 
 Rebuild `tray_perception_interfaces`, `robot_controller_interfaces`,
 `tray_perception` and `robot_controller`, then restart the tray provider and
@@ -518,11 +521,11 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 Home/Pick/Place and speed require started configuration and fresh enabled,
 fault-free, idle robot feedback with an empty queue. Pick also requires an unheld
 READY state, configured Item/Bin, saved Tray Detect joints and exactly one armed
-item provider. Place requires saved tray joints, **already at Tray Detect** from
-fresh canonical joints/idle feedback, positive finite X/Y, legal rotation and one
-tray provider. Headless Place additionally needs a held item. Missing conditions
-appear beside the controls and in tooltips. Away from Tray Detect, GUI Place stays
-disabled; the external action retains its read-only three-second arrival window.
+item provider. Place requires saved tray joints, positive finite X/Y, legal rotation
+and one tray provider. It accepts READY/HOLDING with or without an item, regardless
+of current Tray Detect position; the action moves there if needed and confirms
+arrival before acquisition. Missing conditions, including Auto Run blockers,
+appear beside the controls and in tooltips.
 
 Continue requires retained managed Pause context, unchanged parked pose/outputs,
 no pending suction loss, and no uncertain placement release. A paused observation
@@ -560,8 +563,10 @@ the current Link6 pose from joint FK. It can preview while the robot is disabled
 it never enables it. Shared planners supply Cartesian Home alignment/final targets,
 Pick's conditional initial rise/joint Home, every candidate's approach/retract,
 successful Tray Detect, missed entry/exit transits and Home/put-back targets, and
-Place's three approach/drop/retract targets. Place preview requires the robot
-already at saved Tray Detect joints; it adds no observation-travel or Home TF.
+Place's three approach/drop/retract targets when already at Tray Detect. Away from
+the saved joints, Place preview shows only its observation-travel TF and explains
+that placement targets need a fresh observation at that pose. It never moves the
+robot, samples placement from the wrong pose or fabricates the unknown drop height.
 Targets skipped by Home arrival checks are omitted. Each target is broadcast under
 `base_link` as a distinct `robot_controller_preview_*` frame.
 

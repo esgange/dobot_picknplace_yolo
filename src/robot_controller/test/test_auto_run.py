@@ -404,6 +404,21 @@ def test_auto_goal_requires_both_detectors_before_reserving_robot(missing):
     node._begin_operation.assert_not_called()
 
 
+def test_auto_and_place_away_from_tray_show_missing_provider(window):  # noqa: F811
+    window.node.action_clients['auto_run'] = SimpleNamespace(server_is_ready=lambda: True)
+    window.node.status = status(tray_position_recorded=True, at_tray_detect=False,
+                                tray_detector_ready=False)
+    window._refresh()
+    assert window.pick_item.isEnabled()
+    assert not window.auto_run_button.isEnabled() and not window.place_item.isEnabled()
+    assert 'Auto Run: Arm Tray Teach' in window.availability_details.text()
+    assert 'Place Item: Arm Tray Teach' in window.availability_details.text()
+    window.node.status.tray_detector_ready = True
+    window._refresh()
+    assert window.auto_run_button.isEnabled() and window.place_item.isEnabled()
+    assert 'Tray Detect position' not in window.availability_details.text()
+
+
 @pytest.mark.parametrize("value", ["", "0", "10001"])
 def test_invalid_quantity_cannot_dispatch_auto_goal(window, value):  # noqa: F811
     send = Mock()

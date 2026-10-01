@@ -1288,6 +1288,21 @@ or other run failure cancels/discards the result; recovery/Return cannot reuse i
 Keep manual routines, motion/I/O, retry limits and the one hardware owner unchanged.
 Update READMEs, diary and FSM/exports; validate without hardware commands/restarts.
 
+Rule 203 lets explicit Place Item start from READY/HOLDING with or without a held
+item in either launch mode. Remove current Tray Detect position and held-source
+button/admission gates, retaining fresh safe idle feedback, valid configuration
+and target, one armed tray provider and exclusive ownership. Skip observation
+travel when saved joints/idle match; otherwise reuse the direct 100% joint-target
+MovL with preserved outputs and confirm arrival before tray/depth acquisition.
+Stop/failed travel prevents detection and placement. Continue before release may
+revisit observation pose; never repeat an issued release. Auto Run keeps its
+trusted Pick and both-provider prerequisites, with a visible disabled reason.
+Preview away from Tray Detect publishes only the travel TF and explains that
+placement geometry needs a fresh observation there; no motion or invented depth.
+Keep drop/retract I/O, retry budgets, final neutral/DI1 checks and fault/unknown-item
+guards. No automatic arming, launch action, hardware command or restart in tests.
+Update README, diary and FSM/exports with scoped validation.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

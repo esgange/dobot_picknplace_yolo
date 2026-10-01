@@ -17,7 +17,7 @@ from test_placement_queue import QueueRig, HELD, OPEN
 
 @pytest.mark.parametrize('headless', [False, True])
 @pytest.mark.parametrize('held', [False, True])
-def test_admission_uses_controller_mode_not_the_requesting_client(headless, held):
+def test_explicit_place_admission_allows_empty_or_held_in_either_mode(headless, held):
     node = operation_node()
     node.headless, node.holding_item = headless, held
     if not held:
@@ -26,8 +26,7 @@ def test_admission_uses_controller_mode_not_the_requesting_client(headless, held
     node.configuration.configuration_id = 'bound'
     node._begin_operation = Mock()
     node._perception_ready = Mock(return_value=True)
-    expected = GoalResponse.ACCEPT if held or not headless else GoalResponse.REJECT
-    assert RobotController._reserve_goal(node, 'place', 'bound') == expected
+    assert RobotController._reserve_goal(node, 'place', 'bound') == GoalResponse.ACCEPT
     node._begin_operation.reset_mock()
     assert RobotController._reserve_goal(node, 'place', 'stale') == GoalResponse.REJECT
     node._perception_ready.return_value = False
@@ -91,6 +90,54 @@ def test_manual_observation_move_has_no_item_presence_gate(held_context, inputs)
     node._preflight_item_state.assert_not_called()
 
 
+@pytest.mark.parametrize('held', [False, True])
+@pytest.mark.parametrize('at_tray', [False, True])
+def test_place_moves_to_tray_only_if_needed_and_detects_after_arrival(held, at_tray):
+    rig = QueueRig()
+    node = rig.node
+    node.placement.require_held_item = False
+    node.holding_item = held
+    if not held:
+        node.managed.session = None
+    outputs, inputs = (HELD, 1) if held else (0, 0)
+    node.expected_outputs = {ch: bool(outputs & (1 << (ch - 1))) for ch in (1, 2, 13, 14)}
+    for _ in range(8):
+        rig.emit(outputs=outputs, inputs=inputs, running=0)
+    if not at_tray:
+        joints = joint_message()
+        joints.position[0] = .2
+        origin = node.configuration.tray.detect_matrix.copy()
+        origin[0, 3] += .1
+        rig.joint_poses[tuple(joints.position)] = origin
+        rig.monitor.update_joints(joints)
+    node._execute_tray_position = Mock(
+        side_effect=lambda: RobotController._execute_tray_position(node))
+    rig.transport.current_pose = lambda: rig.transport.pose_from_snapshot(rig.monitor.snapshot())
+    rig.script[0] = dict(outputs=outputs, inputs=inputs)
+    rig.steps = iter(([] if at_tray else [dict(outputs=outputs, inputs=inputs, home=True)])
+                     + rig.script)
+
+    def observe(*_args, **kwargs):
+        assert rig.transport.home_already_reached(node.configuration.tray.detect_joints)
+        assert len(rig.requests) == (0 if at_tray else 1)
+        assert node.expected_outputs == {ch: bool(outputs & (1 << (ch - 1)))
+                                         for ch in (1, 2, 13, 14)}
+        assert not kwargs['require_held_item']
+        return [.3, .2, .25]
+
+    node.trays.request.side_effect = observe
+    node.placement.run(node)
+    assert node._execute_tray_position.call_count == (0 if at_tray else 1)
+    assert [name for name, _ in rig.requests] == (
+        [] if at_tray else ['MovL']) + ['MovL', 'MovLIO', 'MovLIO']
+    if not at_tray:
+        assert rig.requests[0][1].mode
+        assert 'v=100' in rig.requests[0][1].param_value
+    node.placement.finish_pending(node)
+    assert node.placement.phase == 'DONE' and not node.holding_item
+    assert not any(node.expected_outputs.values())
+
+
 @pytest.mark.parametrize('inputs', [0, OPEN | 1])
 def test_manual_mode_finishes_retract_with_optional_release_evidence(inputs):
     rig = QueueRig()
@@ -115,8 +162,10 @@ def empty_node():
     return node
 
 
-def test_empty_action_transitions_ready_to_placing_and_back_without_a_pick():
+@pytest.mark.parametrize('headless', [False, True])
+def test_empty_action_transitions_ready_to_placing_and_back_without_a_pick(headless):
     node = empty_node()
+    node.headless = headless
     node.machine = ControllerStateMachine(initial='READY')
     node._end_operation = Mock()
     goal = SimpleNamespace(request=PlaceItem.Goal(x_mm=30., y_mm=40., rotation_deg=-90.),

@@ -348,7 +348,7 @@ class RobotController(Node):
         status.tray_position_recorded = tray is not None and tray.detect_joints is not None
         status.item_detector_ready = self._perception_ready("pick")
         status.tray_detector_ready = self._perception_ready("place")
-        status.manual_placement_enabled = not self.headless
+        status.manual_placement_enabled = True
         status.holding_item = self.holding_item
         status.operation_active = self.operation_lock.locked()
         status.operation, status.phase, status.waypoint = (
@@ -864,9 +864,8 @@ class RobotController(Node):
 
     def _reserve_goal(self, action, requested_id):
         config = self.configuration
-        allowed = (("HOLDING",) if action == "place" and self.headless else
-                   ("READY", "HOLDING") if action == "place" else
-                   ("READY", "HOLDING") if action in ("home", "tray_position") else ("READY",))
+        allowed = (("READY", "HOLDING") if action in ("home", "tray_position", "place")
+                   else ("READY",))
         if (not self.startup_complete or config is None or self.machine.state not in allowed
                 or requested_id != config.configuration_id):
             return GoalResponse.REJECT
@@ -875,11 +874,6 @@ class RobotController(Node):
         if action in ("pick", "tray_position", "place", "auto_run") and (
                 config.tray is None or config.tray.detect_joints is None):
             return GoalResponse.REJECT
-        if action == "place" and self.headless:
-            session = self.managed.session
-            if (not self.holding_item or session is None or session.held_index is None
-                    or session.attempts[session.held_index - 1].state != "HELD"):
-                return GoalResponse.REJECT
         if action in ("pick", "place") and not self._perception_ready(action):
             return GoalResponse.REJECT
         if action == "auto_run" and not all(
@@ -960,7 +954,7 @@ class RobotController(Node):
         self.active_goal = goal
         request = goal.request
         self.placement = PlacementOperation(*validate_target(
-            request.x_mm, request.y_mm, request.rotation_deg), require_held_item=self.headless)
+            request.x_mm, request.y_mm, request.rotation_deg), require_held_item=False)
         result = PlaceItem.Result()
         queued = False
         try:

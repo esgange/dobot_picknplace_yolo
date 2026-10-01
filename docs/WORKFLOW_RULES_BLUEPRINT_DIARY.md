@@ -8104,6 +8104,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or application restart; unrelated RViz, calibration,
   teach and model files remain untouched.
 
+### 2026-10-01 — Rule 203: Place reaches Tray Detect; explicit empty placement
+
+- User requested Place remain available away from Tray Detect and with or without
+  an item. Explicit Place now accepts idle READY/HOLDING in either launch mode;
+  status reports manual placement enabled. Preserve configuration, target,
+  provider, operation-owner, feedback, fault and unknown-item gates. Auto Run
+  still requires a successful trusted Pick before each placement.
+- Reuse the existing direct 100% joint-target MovL to saved Tray Detect with
+  taught travel acceleration and preserved outputs. Skip if fresh joints/idle
+  already match. Confirm execution/idle/joints before tray-pose/depth acquisition;
+  failed/interrupted travel prevents it. Manual observation travel retains its
+  existing optional item-presence policy. Pre-release Continue can revisit the
+  observation pose; release/retract geometry, I/O and budgets stay unchanged.
+- Preview away from the saved joints shows only the observation-travel TF and
+  explains why placement needs a fresh observation there. Already at Tray Detect,
+  keep the normal three placement TFs. Never command hardware or fabricate depth.
+- Investigated the reported Auto Run block: logs show Tray Teach armed at
+  11:20:14 UTC and disarmed on CameraInfo change at 11:20:36 UTC; Item Teach stayed
+  armed. Auto Run never required starting at Tray Detect. Its disabled reason now
+  appears beside the controls, including missing/disarmed provider and unavailable
+  action server. Preserve both-provider readiness; no automatic rearming. A live
+  status read was unavailable because the controller was no longer running.
+- Validation: **933 controller tests passed**. Tests cover both launch modes and item states, conditional
+  travel before detection with real transport/fake feedback, arrival failure/Stop,
+  source preservation, partial TF preview and visible Auto Run prerequisites.
+  Controller/interfaces build, scoped flake8 and `git diff --check` passed after
+  sourcing the workspace. Regenerated and verified **9 SVG diagrams / 9 A3 PDF
+  pages**, source SHA-256
+  `8a9fe4ccae4b2d4a66559f4df7885531d5d5c898247d23171eaeeedf33b34e23`.
+  No hardware calls or application restarts; unrelated RViz and local station
+  artifacts remain untouched.
+
 ### Future entry template
 
 ```text

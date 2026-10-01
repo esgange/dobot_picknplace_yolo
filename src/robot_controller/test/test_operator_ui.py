@@ -63,7 +63,7 @@ def test_button_matrix_and_stop_do_not_depend_on_the_action_result(
 
 
 @pytest.mark.parametrize('field,value', [
-    ('feedback_fresh', False), ('motion_ready', False), ('at_tray_detect', False),
+    ('feedback_fresh', False), ('motion_ready', False),
     ('tray_detector_ready', False), ('tray_position_recorded', False),
 ])
 def test_lost_prerequisite_disables_place_and_rechecks_before_send(

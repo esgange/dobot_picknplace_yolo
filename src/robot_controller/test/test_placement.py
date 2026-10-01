@@ -384,7 +384,7 @@ def test_tray_depth_response_rejects_invalid_evidence(damage):
         validate_result(result, config, sampling, 1_000_000_000, 3_000_000_000)
 
 
-def test_place_goal_requires_startup_matching_configuration_and_held_source():
+def test_place_goal_requires_startup_and_matching_configuration_not_a_held_source():
     node = operation_node()
     node._perception_ready = Mock(return_value=True)
     node.configuration.configuration_id = "bound"
@@ -396,7 +396,7 @@ def test_place_goal_requires_startup_matching_configuration_and_held_source():
     node.startup_complete = True
     assert RobotController._reserve_goal(node, "place", "bound") == GoalResponse.ACCEPT
     node.managed.session.set_state(1, "DROPPED")
-    assert RobotController._reserve_goal(node, "place", "bound") == GoalResponse.REJECT
+    assert RobotController._reserve_goal(node, "place", "bound") == GoalResponse.ACCEPT
 
 
 def test_generated_configure_includes_optional_tray_file():

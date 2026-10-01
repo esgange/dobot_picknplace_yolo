@@ -152,12 +152,15 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle):
     preview.client.request.assert_not_called()
 
 
-def test_place_preview_away_from_tray_refuses_before_detection(preview):
+def test_place_preview_away_from_tray_shows_observation_travel_without_detection(preview):
     preview.config.tray.detect_joints = (.1,) * 6
     result = preview.run(Preview.Request.PLACE, x_mm=30., y_mm=40.)
-    assert not result.success and 'Not at Tray Detect position' in result.message
+    assert result.success and 'Tray Detect travel only' in result.message
     preview.trays.request.assert_not_called()
-    assert not preview.targets
+    assert [t.name for t in preview.targets] == ['tray_detect_position']
+    assert preview.targets[0].joints_rad == preview.config.tray.detect_joints
+    assert preview.targets[0].speed_percent == 100
+    assert not preview.targets[0].motion_io
 
 
 @pytest.mark.parametrize("failure", ["perception", "sources", "moving", "ownership", "stale"])

@@ -74,13 +74,15 @@ def test_tray_wait_preserves_stop_freshness_and_fault_gates(reason):
     assert rig.waits == 0
 
 
-def test_wrong_tray_position_blocks_perception_and_all_motion():
+@pytest.mark.parametrize('failure', [FeedbackFailure, OperationCanceled])
+def test_failed_tray_travel_blocks_perception_and_placement(failure):
     node = operation_node()
     node.hardware.current[0, 3] += .1
-    with pytest.raises(FeedbackFailure, match='Not at Tray Detect position'):
+    node._execute_tray_position.side_effect = failure('Tray travel interrupted')
+    with pytest.raises(failure, match='Tray travel interrupted'):
         node.placement.run(node)
     node.trays.request.assert_not_called()
-    node._execute_tray_position.assert_not_called()
+    node._execute_tray_position.assert_called_once()
     assert not node.hardware.calls
 
 

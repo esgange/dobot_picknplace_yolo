@@ -8,7 +8,7 @@ bool tray_position_recorded
 # Exactly one canonical provider advertises the corresponding pose service.
 bool item_detector_ready
 bool tray_detector_ready
-# Non-headless controller permits attended Place without trusted pickup context.
+# Explicit Place permits an empty robot or an item without trusted pickup context.
 bool manual_placement_enabled
 bool holding_item
 bool operation_active

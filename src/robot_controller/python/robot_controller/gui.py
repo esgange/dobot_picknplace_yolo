@@ -227,7 +227,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.pick_item = QtWidgets.QPushButton("Pick Item")
         self.place_item = QtWidgets.QPushButton("Place Item")
         self.place_item.setToolTip(
-            "Requires Tray Detect position; observe tray, then place and retract above it")
+            "Move to Tray Detect if needed, observe tray, then place and retract; item optional")
         self.debug_images = QtWidgets.QCheckBox("Save Pick debug RGB/depth")
         self.preview_toggle.toggled.connect(self._toggle_preview)
         self.home_button.clicked.connect(lambda: self._action("home"))
@@ -798,7 +798,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "home": "Move Home while preserving any held item",
             "pick": "Pick an item and carry it to Tray Detect",
             "place": "Retry tray acquisition with up to 3 fresh requests" if retry else
-                     "Observe the tray, place and retract above it",
+                     "Move to Tray Detect if needed, then place and retract; item optional",
             "preview_toggle": "ON: motion buttons show TFs only. OFF: real robot motion.",
             "speed": "Change the global motion speed factor",
         }
@@ -829,7 +829,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                          ("recover",) if current in
                          ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN") else
                          ("configure",) if current == "INACTIVE" and not self.preview_mode else
-                         ("pick", "place")):
+                         ("pick", "place", "auto_run")):
                 if reasons[name] and reasons[name] != "Unavailable in the current state":
                     label = (self.managed_actions[name].text() if name in self.managed_actions
                              else buttons[name].text())

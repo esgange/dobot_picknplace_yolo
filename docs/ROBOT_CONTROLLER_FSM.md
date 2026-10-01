@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Place entry review: **2026-10-01**, baseline **`289dbd9`** plus rule **203**.
+Explicit Place accepts READY/HOLDING with or without an item in either launch
+mode. Skip observation travel when fresh idle/joints match saved Tray Detect;
+otherwise use its direct 100% joint-target MovL, preserve outputs and confirm
+arrival before acquiring tray/depth. Travel failure/Stop prevents acquisition.
+Auto Run retains both-provider and trusted-pick guards; its disabled reason is
+now visible beside the controls. Away-from-tray preview shows only the required
+observation-travel TF, never an invented placement depth or hardware command.
+
 Early acquisition review: **2026-10-01**, baseline **`f1efca5`** plus rule **202**.
 After successful Pick confirms saved Tray Detect joints/idle, start one next-item
 bin request before tray acquisition when another item remains. Fresh observations
@@ -94,9 +103,9 @@ release/neutral timing, final retract supervision and Pick routes are unchanged.
 
 Placement completion review: **2026-09-30**, baseline **`cbbacd0`** plus diary
 rule **183**. Place checks fresh idle RobotStatus and saved Tray Detect joints
-without commanding observation travel. Already matched proceeds immediately;
-otherwise allow three seconds, then report "Not at Tray Detect position" without
-detection. Queue only pre-place → release → retract, with no final Home. The
+and skips travel when already matched. Rule 203 supersedes the old read-only
+arrival window with confirmed observation travel when needed. Then queue only
+pre-place → release → retract, with no final Home. The
 action returns SUCCESS on complete ordered acceptance; one completion worker
 retains PLACING and command ownership until actual retract/neutral/DI1 LOW, then
 READY. Later failures use status/events and Stop containment. Preview shows those
@@ -156,8 +165,8 @@ now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
 retained Continue progress and never enters the bin put-back routine. Explicit
 Recover supersedes that progress with cancel-and-Home-then-relax under rule 176.
-GUI-mode placement also permits an empty robot; headless placement retains its
-trusted held-item requirement.
+Rule 203 permits explicit empty or held placement in either launch mode;
+Auto Run retains its trusted held-item requirement.
 Tray service requests now use the versioned depth-capable endpoint; old provider
 processes cannot satisfy readiness. Executor failures in the provider are visible.
 
@@ -249,11 +258,11 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 Home/Pick/Place and speed require started configuration and fresh enabled,
 fault-free, idle robot feedback with an empty queue. Pick also requires an unheld
 READY state, configured Item/Bin, saved Tray Detect joints and exactly one armed
-item provider. Place requires saved tray joints, **already at Tray Detect** from
-fresh canonical joints/idle feedback, positive finite X/Y, legal rotation and one
-tray provider. Headless Place additionally needs a held item. Missing conditions
-appear beside the controls and in tooltips. Away from Tray Detect, GUI Place stays
-disabled; the external action retains its read-only three-second arrival window.
+item provider. Place requires saved tray joints, positive finite X/Y, legal rotation
+and one tray provider. It accepts READY/HOLDING with or without an item, regardless
+of current Tray Detect position; the action moves there if needed and confirms
+arrival before acquisition. Missing conditions, including Auto Run blockers,
+appear beside the controls and in tooltips.
 
 Continue requires retained managed Pause context, unchanged parked pose/outputs,
 no pending suction loss, and no uncertain placement release. A paused observation
@@ -386,8 +395,8 @@ dependency. Tray Teach/Detect use current intrinsics and image-time TF with the
 unchanged saved base-frame plane. Camera replacement requires explicit reload;
 active hashes remain pinned and returned camera evidence must match the controller.
 Pick and tray operations require those joints. Place requires an armed canonical
-`tray_teach` or headless `tray_detect` provider. Headless Place additionally requires
-a trusted HELD item; normal GUI-mode Place permits READY or HOLDING without a Pick.
+`tray_teach` or headless `tray_detect` provider. Explicit Place permits READY or
+HOLDING without a Pick in either launch mode; Auto Run still requires a trusted item.
 Configuration hashes include Tray Teach and its camera; explicit reload includes preparation.
 
 New Pick and Place goals require a currently available pose service from exactly
@@ -396,10 +405,10 @@ one allowed root provider. Typed status exposes `item_detector_ready` and
 status, and action admission rechecks the service/owner before reserving work.
 Teaching disarm removes its service. Missing, unknown, namespaced or duplicate
 providers disable admission; neither check triggers detection nor arms a provider.
-Armed Tray Teach does not imply HOLDING. `manual_placement_enabled` reports the
-controller's non-headless mode: GUI debug placement accepts an empty READY robot
-and does not require suction during observation/approach. It still controls real
-hardware. A GUI client cannot override a headless controller's held-source guard.
+Armed Tray Teach does not imply HOLDING. `manual_placement_enabled` is true in
+either launch mode: explicit Place accepts an empty READY robot and does not
+require suction during observation/approach. Auto Run still requires a trusted
+picked item. Both execute real hardware motion with the existing feedback guards.
 Tooltips explain the applicable prerequisites. Home and Tray
 Detect Position have no perception-readiness requirement. Keep request-time source
 and fresh-pose validation. Rebuild/restart status publishers and clients together.
@@ -582,12 +591,13 @@ claim PLACED or RETURNED.
 
 ```mermaid
 flowchart TD
-    Request["PlaceItem: GUI READY/HOLDING or headless trusted HOLDING; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints? No motion command"}
+    Request["PlaceItem: READY/HOLDING, empty or held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
     Observe -->|Yes immediately| Depth["Fresh tray pose then placement depth; first attempt + 2 retries; reacquire both on failure"]
-    Observe -->|No| Wait["Wait up to 3 seconds for idle + joints"]
-    Wait -->|Arrived| Depth
-    Wait -->|Expired| Position["Not at Tray Detect position; no detection or placement"]
-    Position --> Stop["Stop and report failure; preserve item"]
+    Observe -->|No| Travel["Direct joint-target MovL to Tray Detect; speed 100%; preserve outputs"]
+    Travel --> Arrive["Confirm execution, saved joints and idle before detection"]
+    Arrive --> Depth
+    Travel -->|Failure or Stop| Stop["Stop and report failure; preserve outputs"]
+    Arrive -->|Failure or Stop| Stop
     Depth -->|No usable result or reply timeout| Budget{"Requests left?"}
     Budget -->|Yes; stay at observation pose| Depth
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
@@ -622,11 +632,12 @@ edge. Rotation accepts −180° to +180°; zero is the saved Tray Detect Pose to
 orientation, followed by the requested local tool-Z rotation. Item axes,
 pick_rotation and the detected tray quaternion do not determine tool attitude.
 
-Place sends no observation-position command. As for Pick's initial Home skip,
-check fresh RobotStatus idle and all six actual joints within ±1° of saved Tray
-Detect. Proceed immediately when matched, otherwise allow three seconds for
-arrival. Expiry reports "Not at Tray Detect position" through the failed action
-and GUI prompt, with Stop containment and no tray request or placement queue.
+As for Pick's initial Home skip, check fresh RobotStatus idle and all six actual
+joints within ±1° of saved Tray Detect. Proceed immediately when matched;
+otherwise use the existing direct joint-target MovL at 100% with taught travel
+acceleration and preserved gripper outputs. Confirm actual execution/idle/joint
+arrival before requesting tray pose/depth. Failure or Stop contains motion and
+prevents a tray request or placement queue; no Home detour is added.
 Recheck position during observation and after its result. There is no fixed
 settling interval, new FeedInfo tick or GetPose call for this position check.
 Fresh safety/held-item gates remain. The external Tray Detect Position action
@@ -704,8 +715,8 @@ DI12/DI1 confirmation gate is added in either mode.
 Missing/late release feedback, suction changes and bounded-history gaps do not
 stop the queue. Retain coherent finger-open/exhaust ON, finger-close/suction OFF and DI1
 LOW as release evidence for diagnostics and interruption recovery only; DI12 is
-not a release-confirmation gate. Headless still requires a trusted held item before
-queue start; GUI mode accepts either initial item state. Preserve ordered command
+not a release-confirmation gate. Auto Run requires a trusted held item before
+queue start; explicit Place accepts either initial item state. Preserve ordered command
 acceptance, enabled/fresh/fault-free robot feedback, opposing-output protection,
 motion watchdogs and direct Stop/Pause throughout.
 
@@ -726,9 +737,9 @@ the queue completed, not physical item deposition. No candidate is invented.
 
 Placement Pause stops in place; direct Stop requires Recover. Both retain output
 and release evidence without waiting for continuous exhaust to turn itself OFF.
-If the release command was not issued, Continue rechecks saved observation position
-with the same three-second window, then can reobserve within the remaining budget;
-headless mode also requires an intact grip. Retain the original placement mode
+If the release command was not issued, Continue rechecks saved observation position,
+returns there if needed, then can reobserve within the remaining budget.
+Retain the original placement mode
 across Pause/Continue. Startup/idle unknown-item and other action guards remain.
 Once release is issued, never descend/release again. Observed release permits neutralizing
 outputs and an upward-only retreat at actual X/Y to at least pre-place Z, ending there.
@@ -1039,7 +1050,7 @@ Names below are relative to `/robot_controller/`.
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
-| `place_item` action | Started GUI READY/HOLDING, or headless HOLDING with trusted HELD source; saved tray joints; tray detector ready; exact configuration ID; operation slot free |
+| `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
