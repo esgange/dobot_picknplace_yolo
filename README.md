@@ -525,7 +525,8 @@ the terminal pick/stopped pose and final saved-joint destination are physically
 confirmed. Successful Pick ends directly at Tray Detect after its two lifts;
 exhausted Pick keeps its exit transit and exact Home. Successful travel preserves
 SUCK and grip behavior; exhausted returns use EXHAUST then
-NEUTRAL. Deferred finger CLOSE occurs at 100% of the successful clearance rise.
+NEUTRAL. Deferred finger CLOSE occurs at 50% of the successful first lift to
+pre-pick, using MovLIO; the clearance rise uses MovL with no timed finger event.
 Motion requests wait for
 queue-admission responses in order but not intermediate physical arrival;
 short segments may still decelerate despite CP 100. See the

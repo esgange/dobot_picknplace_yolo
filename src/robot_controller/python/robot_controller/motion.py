@@ -303,10 +303,9 @@ class PickExecutor:
                     else:
                         events = (gripper_neutral_events(0)
                                   + vacuum_neutral_events(0))
-                elif upward and grip and not close_on_pick:
-                    # Deferred CLOSE belongs to the end of clearance now that
-                    # held and missed returns share the exit-transit route.
-                    events = gripper_close_events(100)
+                elif not upward and grip and not close_on_pick:
+                    # Close halfway through the first held lift to pre-pick.
+                    events = gripper_close_events(50)
                 held_retract = acquired and not upward
                 upward.append(replace(
                     target, matrix=matrix,

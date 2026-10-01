@@ -971,8 +971,10 @@ this timer. The debounce is independent of taught `pick_settling` and the 50 ms
 exhaust pulse; it introduces no teach setting, launch argument or schema change.
 
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
-the pickup Stop acknowledgement. With `grip_onpick=false`, CLOSE instead occurs at 100%
-of the clearance rise (DO14 OFF before DO2 ON). `use_grip=false` never enters
+the pickup Stop acknowledgement. With `grip_onpick=false`, the first lift to
+pre-pick uses MovLIO and CLOSE occurs at 50% (DO14 OFF before DO2 ON), encoded as
+`mdis=["{0,50,14,0}", "{0,50,2,1}"]`. The clearance rise uses MovL with no timed
+finger event. `use_grip=false` never enters
 CLOSE. Successful Pick queues latest measured pose → pre-pick → clearance →
 saved Tray Detect joints as one `candidate_N_pick_to_tray` group. Both vertical
 lifts preserve measured X/Y and attitude and never descend. The first held lift

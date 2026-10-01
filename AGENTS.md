@@ -1149,6 +1149,15 @@ FSM/exports. Keep two ROS executor threads, no launch-time run or new config/sch
 and no hardware commands/restarts during verification. Supersede midpoint arrival
 barriers only for the owned Auto Run placement-to-Home/next-Pick queue extension.
 
+Rule 190 moves delayed finger CLOSE for successful Pick with use_grip=true and
+grip_onpick=false to 50% of the first held lift to pre-pick. Use MovLIO with
+DO14 OFF before DO2 ON at that percentage; clearance uses MovL without finger
+events. Apply through the shared Pick executor to manual Pick and Auto Run.
+Preserve immediate grip_onpick closing, no-grip and missed-pick behavior, upward
+geometry, taught retract rates, full-speed clearance, suction/Stop monitoring,
+ordered blended queues and final Tray Detect confirmation. No schema, settings,
+hardware command or application restart during validation; update FSM and exports.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

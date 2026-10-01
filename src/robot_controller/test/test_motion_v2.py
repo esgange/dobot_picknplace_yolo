@@ -312,7 +312,7 @@ def test_success_closes_only_after_suction_and_finishes_at_tray_holding():
     assert hardware.targets[-1][-1].joints_rad == tray_target().joints_rad
 
 
-def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
+def test_success_with_deferred_grip_closes_halfway_through_prepick_lift():
     taught = settings(close_on_pick=False)
     hardware = FakeHardware([True])
     plan = pick_targets(matrix(1.0), item_pose(), taught, 1)
@@ -328,13 +328,47 @@ def test_success_with_deferred_grip_closes_at_end_of_clearance_rise():
                    for entry in hardware.log)
     assert not returned
     retract, clearance, destination = hardware.targets[-1]
-    assert not retract.motion_io
-    assert clearance.motion_io == gripper_close_events(100)
+    assert [event.vendor_value() for event in retract.motion_io] == [
+        "{0,50,14,0}", "{0,50,2,1}"]
+    assert not clearance.motion_io
     assert not destination.motion_io
 
 
+def test_deferred_pick_return_sends_movlio_then_two_movl_before_arrival():
+    from test_placement_queue import QueueRig, HELD
+
+    taught = settings(close_on_pick=False)
+    taught["speed"].update(travel_percent=80, retract_percent=6)
+    taught["acceleration"].update(travel_percent=70, retract_percent=40)
+    rig = QueueRig()
+    rig.node.placement = None
+    rig.node.expected_outputs = {1: False, 2: False, 13: True, 14: True}
+    rig.emit(outputs=(1 << 12) | (1 << 13), inputs=1, running=0)
+    hardware = FakeHardware([True])
+    plan = pick_targets(matrix(1.), item_pose(), taught, 1)
+    PickExecutor(hardware, finish_home=True).run(
+        [plan], taught, tray_target=pick_tray_target(rig.node.configuration.tray, taught),
+        check=lambda _index: None, return_home=lambda **_kwargs: pytest.fail("No Home"))
+    rig.order.clear()
+    rig.steps = iter([dict(outputs=HELD, inputs=1, running=0, currentCommandId=4)])
+
+    rig.transport.move_batch(
+        hardware.targets[-1], require_suction=True, confirmed_start_pose=hardware.pose)
+
+    assert rig.order == ["MovLIO", "MovL", "MovL", "feedback"]
+    lift, clearance, tray = [request for _service, request in rig.requests]
+    assert list(lift.mdis) == ["{0,50,14,0}", "{0,50,2,1}"]
+    assert not lift.mode and not clearance.mode and tray.mode
+    assert [list(request.param_value) for request in (lift, clearance, tray)] == [
+        ["user=0", "tool=0", "v=6", "a=40"],
+        ["user=0", "tool=0", "v=100", "a=70"],
+        ["user=0", "tool=0", "v=80", "a=70"]]
+    assert (lift.c, clearance.c) == pytest.approx((350., 450.))
+    assert rig.node.expected_outputs == {1: False, 2: True, 13: True, 14: False}
+
+
 @pytest.mark.parametrize("use_grip, close_on_pick", [
-    (False, False), (True, True), (True, False)])
+    (False, False), (False, True), (True, True), (True, False)])
 @pytest.mark.parametrize("home_z, stopped_z", [
     (1.0, 0.3), (0.454, 0.3), (0.45, 0.3), (1.0, 0.5), (1.0, 1.1)])
 def test_success_goes_directly_to_tray_while_exhaustion_keeps_home_route(
@@ -392,8 +426,9 @@ def test_success_goes_directly_to_tray_while_exhaustion_keeps_home_route(
         if acquired:
             assert all(event.channel in (2, 14) for target in group
                        for event in target.motion_io)
-            assert group[1].motion_io == (
-                gripper_close_events(100) if use_grip and not close_on_pick else ())
+            assert group[0].motion_io == (
+                gripper_close_events(50) if use_grip and not close_on_pick else ())
+            assert not group[1].motion_io
         else:
             assert group[0].motion_io == vacuum_exhaust_events(80)
             assert group[1].motion_io == (

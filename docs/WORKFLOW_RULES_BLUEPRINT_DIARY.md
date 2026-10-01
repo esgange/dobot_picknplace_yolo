@@ -7770,6 +7770,27 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or running-app restart; unrelated RViz changes and local
   calibration/teach/model artifacts remain untouched and excluded.
 
+### 2026-10-01 — Rule 190: delayed finger close halfway through the pre-pick lift
+
+- User requested successful pickup's delayed CLOSE during the first lift to
+  pre-pick, at 50%, instead of the end of the clearance rise. Shared manual/Auto
+  Pick now uses MovLIO for that first lift with DO14 OFF then DO2 ON at 50%; the
+  clearance rise uses MovL without finger events. Preserve taught retract rates,
+  100% clearance speed/travel acceleration and the direct Tray Detect destination.
+- Keep use_grip=false, grip_onpick=true immediate closing, failed-pick I/O,
+  suction monitoring, Stop acknowledgement, upward-only geometry and ordered
+  blended queue behavior. No new setting, interface or teach schema. Update
+  READMEs, FSM behavior/diagram and generated offline exports.
+- Validation: **867 controller tests passed**. The real transport with synthetic
+  feedback verifies MovLIO/MovL/MovL admission before arrival, exact 50% OPEN-OFF /
+  CLOSE-ON tuples, taught rates and retained suction. The grip-mode/height matrix
+  checks early acquisition, upward-only geometry, immediate/no-grip settings and
+  unchanged failed-pick I/O. Controller build, scoped 100-column flake8 and diff
+  checks pass. Regenerated nine FSM SVGs and a nine-page A3 PDF; source SHA-256
+  dad98cb17ba7c86a7007e118ae858d68eefa191de052e1f0a09e1447f2e82c4d verified.
+  No hardware commands or running-app restart; unrelated RViz and local
+  calibration/teach/model files remain untouched and excluded.
+
 ### Future entry template
 
 ```text

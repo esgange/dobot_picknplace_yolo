@@ -1,5 +1,11 @@
 # Robot Controller — Finite State Machine
 
+Pickup grip review: **2026-10-01**, baseline **`fa9836d`** plus diary rule **190**.
+With use_grip enabled and grip_onpick disabled, close fingers at 50% of the first
+held lift to pre-pick using MovLIO; clearance uses MovL with no finger event.
+Immediate grip_onpick closing, no-grip behavior, motion rates, Stop acknowledgement
+and direct Tray Detect completion remain unchanged for manual Pick and Auto Run.
+
 Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
 One counted action owns Pick/Place and final Home. Prefetch the next bin batch
 during placement and append Home/next Pick immediately when it is ready, without
@@ -412,7 +418,7 @@ flowchart TD
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
-    Acquire --> HeldReturn["Lift → clearance → direct saved Tray Detect joints; monitor suction"]
+    Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → saved Tray Detect joints; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
     HeldReturn -->|Confirmed suction loss| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
     PutBack -->|Eligible saved candidate| Entry
@@ -462,6 +468,11 @@ flowchart TD
 - Success first lifts to pre-pick at taught retract rates. Empty retract and
   the clearance rise use speed 100% with taught travel acceleration. Other Pick
   travel uses its taught rates; global SpeedFactor scales all motion.
+- With `use_grip=true, grip_onpick=false`, that first held lift uses MovLIO with
+  `{0,50,14,0}` then `{0,50,2,1}`: OPEN OFF, CLOSE ON at 50%. Clearance uses MovL
+  without timed finger I/O. With `grip_onpick=true`, keep the separate DO14 OFF
+  then DO2 ON calls and output confirmation before lifting; both lifts use MovL.
+  With `use_grip=false`, neither lift commands CLOSE. Suction remains ON.
 - Successful Pick queues its two lifts and direct joint-target MovL to saved
   Tray Detect, at taught travel rates. Omit the Home-height exit transit and Home.
   Confirm only Tray Detect joints/idle/executed queue; finish HOLDING there.
