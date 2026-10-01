@@ -218,6 +218,50 @@ def test_latest_robot_camera_requires_exact_on_hand_link6_binding(root):
         station.validate_robot_camera_calibration(latest, root=root)
 
 
+def test_repeated_catalog_reads_files_but_reuses_identical_prefix_parsing(root, monkeypatch):
+    camera = _camera(root, prefix="robot_camera", mode=camera_core.CAMERA_ON_HAND)
+    _camera(root, stamp="20260910T083036_133658Z", prefix="bin_camera")
+    station._camera_prefix.cache_clear()
+    parser = MagicMock(wraps=station.yaml.load)
+    monkeypatch.setattr(station.yaml, "load", parser)
+    for _ in range(3):
+        selected = station.latest_robot_camera_calibration(root)
+        assert selected.path == camera.path and selected.sha256 == camera.sha256
+    prefix_parses = [call for call in parser.call_args_list
+                     if call.kwargs.get("Loader") is station._UniqueKeyLoader]
+    assert len(prefix_parses) == 2  # Each unique file parsed once for its prefix.
+    assert len(parser.call_args_list) == 5  # Full selected-artifact parsing still repeats.
+
+
+@pytest.mark.parametrize("change", ["prefix", "payload", "duplicate", "missing",
+                                    "symlink", "newer_invalid"])
+def test_warm_catalog_cannot_hide_changed_or_invalid_sources(root, change):
+    camera = _camera(root, prefix="robot_camera", mode=camera_core.CAMERA_ON_HAND)
+    station.validate_robot_camera_calibration(camera, root=root)
+    original = camera.path.read_bytes()
+    stat = camera.path.stat()
+    if change in ("prefix", "payload"):
+        old, new = ((b"prefix: robot_camera", b"prefix: wrong_camera") if change == "prefix"
+                    else (b"schema_version: 7", b"schema_version: 6"))
+        changed = original.replace(old, new)
+        assert changed != original and len(changed) == len(original)
+        camera.path.write_bytes(changed)
+        os.utime(camera.path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    elif change == "duplicate":
+        camera.path.write_bytes(original + b"\ncamera: {prefix: robot_camera}\n")
+    elif change == "missing":
+        camera.path.unlink()
+    elif change == "symlink":
+        moved = camera.path.with_suffix(".saved")
+        camera.path.rename(moved)
+        camera.path.symlink_to(moved)
+    else:
+        (root / "calibration/camera_on_hand_calibration_20260910T083036_133658Z.yaml").write_text(
+            "camera: {prefix: robot_camera}\n")
+    with pytest.raises(ValueError):
+        station.validate_robot_camera_calibration(camera, root=root)
+
+
 def test_robot_camera_missing_wrong_mode_and_invalid_latest_never_fall_back(root):
     _camera(root, prefix="bin_camera", mode=camera_core.CAMERA_TO_HAND)
     with pytest.raises(ValueError, match="No camera robot_camera"):

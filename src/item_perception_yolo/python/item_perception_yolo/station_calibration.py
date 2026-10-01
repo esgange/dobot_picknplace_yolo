@@ -1,6 +1,7 @@
 """Deterministic platform geometry and independent active-camera selection."""
 
 from datetime import datetime, timezone
+from functools import lru_cache
 import re
 
 import yaml
@@ -42,6 +43,29 @@ def _newest(candidates, label):
     return latest[0], instant
 
 
+@lru_cache(maxsize=16)
+def _camera_prefix(content):
+    """Reuse only parsing of identical bytes, never a file or validation result."""
+    payload = yaml.load(content, Loader=_UniqueKeyLoader)
+    prefix = payload["camera"]["prefix"]
+    if type(prefix) is not str or not prefix:
+        raise ValueError("Missing camera prefix")
+    return prefix
+
+
+def _camera_catalog(directory):
+    for path in sorted(directory.glob("camera_*_calibration_*.yaml")):
+        stamp = _stamp(
+            path, r"camera_(?:to_hand|on_hand)_calibration_(\d{8}T\d{6}_\d{6}Z)\.yaml")
+        try:
+            # Read every file on every scan. Equal size/mtime is not evidence
+            # of unchanged contents; catalog and symlink checks still run above.
+            prefix = _camera_prefix(path.read_bytes())
+        except (OSError, yaml.YAMLError, KeyError, TypeError, UnicodeError, ValueError) as exc:
+            raise ValueError(f"Cannot identify calibration camera: {path.name}: {exc}") from exc
+        yield stamp, path, prefix
+
+
 def latest_station_calibration(root=None):
     """Latest current-robot platform and latest camera of its prefix, independently.
 
@@ -63,16 +87,7 @@ def latest_station_calibration(root=None):
             "Latest platform filename timestamp conflicts with its saved creation time")
     prefix = platform.camera_settings.camera_prefix
     cameras = []
-    for path in sorted(directory.glob("camera_*_calibration_*.yaml")):
-        camera_stamp = _stamp(
-            path, r"camera_(?:to_hand|on_hand)_calibration_(\d{8}T\d{6}_\d{6}Z)\.yaml")
-        try:
-            payload = yaml.load(path.read_bytes(), Loader=_UniqueKeyLoader)
-            camera_prefix = payload["camera"]["prefix"]
-            if type(camera_prefix) is not str or not camera_prefix:
-                raise ValueError("Missing camera prefix")
-        except (OSError, yaml.YAMLError, KeyError, TypeError, UnicodeError, ValueError) as exc:
-            raise ValueError(f"Cannot identify calibration camera: {path.name}: {exc}") from exc
+    for camera_stamp, path, camera_prefix in _camera_catalog(directory):
         if camera_prefix == prefix:
             cameras.append((camera_stamp, path))
     camera_path, camera_stamp = _newest(cameras, f"camera {prefix}")
@@ -111,16 +126,7 @@ def latest_robot_camera_calibration(root=None):
     """
     directory = calibration_directory(root).resolve()
     candidates = []
-    for path in sorted(directory.glob("camera_*_calibration_*.yaml")):
-        stamp = _stamp(
-            path, r"camera_(?:to_hand|on_hand)_calibration_(\d{8}T\d{6}_\d{6}Z)\.yaml")
-        try:
-            payload = yaml.load(path.read_bytes(), Loader=_UniqueKeyLoader)
-            prefix = payload["camera"]["prefix"]
-            if type(prefix) is not str or not prefix:
-                raise ValueError("Missing camera prefix")
-        except (OSError, yaml.YAMLError, KeyError, TypeError, UnicodeError, ValueError) as exc:
-            raise ValueError(f"Cannot identify calibration camera: {path.name}: {exc}") from exc
+    for stamp, path, prefix in _camera_catalog(directory):
         if prefix == ROBOT_CAMERA_PREFIX:
             candidates.append((stamp, path))
     path, stamp = _newest(candidates, f"camera {ROBOT_CAMERA_PREFIX}")

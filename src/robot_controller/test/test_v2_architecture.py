@@ -158,7 +158,7 @@ def test_hardware_and_preview_share_candidate_orientation_planner():
 def test_pick_uses_named_forward_and_return_queue_batches():
     motion = (PACKAGE / "python/robot_controller/motion.py").read_text()
     hardware = (PACKAGE / "python/robot_controller/hardware.py").read_text()
-    assert '"candidate_1_home_to_pick"' in motion
+    assert 'f"candidate_{start_index}_home_to_pick"' in motion
     assert 'batch_name=f"candidate_{index}_pick_to_home"' in motion
     assert 'batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick"' in motion
     assert "admit_each_reply_in_order_then_verify_terminal_feedback" in hardware

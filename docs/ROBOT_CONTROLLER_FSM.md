@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Cycle audit: **2026-10-01**, baseline **`f31bd97`** plus rule **201**. Manual and
+Auto Run retain the same queues, rates, I/O, arrival checks and retry budgets.
+Strict source validation still runs at every existing checkpoint. Catalog scans
+reuse only camera-prefix parsing of identical bytes (bounded to 16 contents),
+while rereading files and preserving newest-file, schema and hash checks. No
+perception observation or physical state is cached. The recorded 3/3 Auto Run
+completed in 53.65 s before this optimization; the separate offline validation
+benchmark improved 41.5%, not a measured physical-cycle speedup.
+
 Pick acquisition review: **2026-10-01**, baseline **`9145d4a`** plus rule **200**.
 Request item poses before Home. A nonempty result is retained while ensuring
 Home before candidate motion; the existing idle/joint match skips that motion.

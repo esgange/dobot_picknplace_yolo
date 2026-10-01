@@ -8042,6 +8042,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Tests/documentation only; no production rebuild, hardware commands, application
   restarts or teach edits. Unrelated local files remain outside the commit.
 
+### 2026-10-01 — Rule 201: cycle audit and exact-content catalog parsing reuse
+
+- Audited full Pick → Tray Detect → Place → next Pick/final Home plus missed-pick,
+  held-loss, Pause/Return and failure routes. Latest complete recorded Auto Run
+  at 08:52:05.898–08:52:59.552 UTC finished 3/3 in 53.65 s, with first-candidate
+  picks and first-attempt tray/depth. Prefetch overlapped both placements, but
+  results arrived 1.69/1.08 s after retract completion. Final Home was immediately
+  appended after last placement admission. Source validation and inference remain
+  latency contributors; no motion, I/O, ordering, retry or failure-policy change.
+- Consolidated duplicate strict camera catalog loops and bounded only prefix
+  parsing by exact current bytes (16 entries). Every scan still reads files,
+  validates filenames/symlinks/timestamps and selects newest; full selected-file
+  schemas/hashes remain checked on each call. No size/mtime shortcut, cached
+  validation result, observation/pose cache, removed checkpoint or changed model.
+  Removed a redundant Pick batch-name branch with identical resulting names.
+- Offline alternating seven-pair benchmark using the same current artifacts:
+  median controller validation 425.09 ms without prefix reuse versus 248.66 ms
+  with reuse (41.5% improvement). cProfile located repeated YAML parsing as the
+  dominant initial cost. This is not a measured robot cycle improvement.
+- Added warm-cache source-change tests including same-size/restored-mtime edits,
+  duplicate keys, deletion, symlinks and invalid new latest files. Existing strict
+  parser and full selected-artifact parsing are retained. Validation: controller
+  **921 passed**; Item Perception **508 passed** (including the **43** station
+  calibration tests). Both packages built successfully after sourcing the ROS
+  workspace; scoped flake8 and `git diff --check` passed. Regenerated and verified
+  FSM HTML/PDF exports: **9 diagrams / 9 pages**, source SHA-256
+  `90ad4c5db41938325466535097c3a7dfcc1eed5fe03c680676076d5b79168ba4`.
+- Follow-ups: phase latency instrumentation; production overlay avoidance when
+  images are unused; failed-depth sample/rejection diagnostics; complete run-trace
+  retention beyond the existing 1,000-event reset. These remain suggestions.
+  No hardware commands/restarts or calibration/teach/model/RViz edits.
+
 ### Future entry template
 
 ```text

@@ -70,6 +70,32 @@ Launching the package never enables, recovers, homes, or moves the robot. An
 operator explicitly loads teach configuration to prepare the robot to READY.
 Headless supervisors retain the explicit Startup service after deployment loading.
 
+## Cycle audit and acquisition performance
+
+The 2026-10-01 audit checked manual Pick/Place, missed candidates, held-loss
+put-back, Return Item, Auto Run handoff and final Home against their shared
+planners/executors. The latest complete recorded Auto Run finished 3/3 in 53.65 s
+(12:52:05.898–12:52:59.552 Dubai time), with first-candidate picks and first-attempt
+tray/depth results. The two next-item requests started after placement admission
+and overlapped execution; their validated results arrived 1.69 s and 1.08 s after
+retract completion. Final Home was appended immediately behind the last placement.
+
+Repeated source validation was a measured CPU cost. Strict catalog scans now
+share one implementation and reuse camera-prefix parsing only for identical
+file bytes. Every scan still reads files and checks their names, symlinks and
+selection; selected calibration parsing, schemas, hashes and validation checkpoints
+remain unchanged. No perception result is cached. An alternating seven-pair
+offline benchmark on the local configured artifacts reduced median validation
+from 425.09 ms to 248.66 ms (41.5%). This measures validation only, not a new robot
+cycle time; first-time parsing still runs normally. Rebuild Item Perception and
+Robot Controller, then manually restart the controller to use this optimization.
+
+Further work suggested by the audit: measure per-request validation, preview-lock
+wait, inference, geometry and reply validation separately; avoid overlay generation
+in production requests when no display/debug image consumes it; record failed depth
+sample counts/rejection reasons; retain a complete run trace across the current
+1,000-event log reset. These are follow-ups, not changes to this cycle's behavior.
+
 ## Return Item compared with tray placement
 
 Explicit Return Item requires a trusted held source, including after failed tray

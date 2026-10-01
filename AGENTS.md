@@ -1267,6 +1267,15 @@ without a midpoint wait. Stop always pre-empts. No new teach setting, pose-clien
 fallback, hardware command or restart during validation. Update READMEs, diary,
 FSM and visual exports with tests for order, bounded requests and interruption.
 
+Rule 201 permits bounded reuse of camera-prefix YAML parsing keyed by exact file
+bytes during strict calibration catalog scans. Read every file and recheck names,
+symlinks, timestamps and newest selection on every scan; never trust size/mtime
+or retain a filesystem validation result. Keep all selected-artifact schema,
+hash, robot and mounting validation at existing checkpoints. Cache only the
+immutable prefix string for at most 16 contents, never images, poses, depth,
+models or exceptions. Preserve motion, I/O, retries, ownership and Stop behavior.
+Document offline timings separately from unmeasured physical-cycle improvements.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

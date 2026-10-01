@@ -6,6 +6,14 @@ The teaching window title is **Item Teach**, without a version suffix.
 teaching GUIs establish the robot pick-area origin and then the four-corner bin
 ROI used by later item detection.
 
+Strict automatic calibration catalog scans share a bounded cache of parsed camera
+prefixes keyed by exact YAML bytes. Every scan still reads each file and checks
+its filename/symlink/timestamp; every selected artifact still undergoes its full
+validation and hash checks. Same-size/mtime edits cannot reuse old prefix data.
+Only prefix strings are reused, never camera frames, poses, depth or model results.
+This reduces repeated controller source-validation cost without changing explicit
+Item Teach/Detect calibration selection or the fresh-request contract.
+
 ## Installed nodes
 
 | Node | Purpose |

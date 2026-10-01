@@ -270,8 +270,7 @@ class PickExecutor:
                 origin["confirmed_start_pose"] = departure_pose
             acquired, return_origin = self.hardware.move_batch(
                 forward, batch_name=(f"return_item_to_candidate_{start_index}_pick" if departure
-                                     else "candidate_1_home_to_pick" if start_index == 1 else
-                                     f"candidate_{start_index}_home_to_pick"),
+                                     else f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
                 return_terminal_pose=True, **origin)
         for index in range(start_index, len(plans) + 1):
