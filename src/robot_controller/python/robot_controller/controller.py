@@ -1346,6 +1346,8 @@ class RobotController(Node):
             pick_tray_target(config.tray, config.profile)
             batch = None
             completed_batches = 0
+            empty_retry_used = False
+            retry_home_pending = False
             seen_batches = set()
             self.managed.session = None
             while True:
@@ -1354,8 +1356,11 @@ class RobotController(Node):
                         self.wait_for_resume()
                         self._transition("PICKING", "Pick action started")
                     if self.managed.session is None:
-                        if batch is None:
+                        if retry_home_pending:
                             self._execute_home()
+                            retry_home_pending = False
+                        if batch is None:
+                            self._preflight_item_state(False)
                             self.operation_progress(
                                 "DETECT", f"Pick attempt {completed_batches + 1}/3: "
                                 "requesting a fresh candidate batch",
@@ -1363,9 +1368,23 @@ class RobotController(Node):
                             batch = self.candidates.request(
                                 config, save_debug_images=goal.request.save_debug_images,
                                 cancel=self.cancel_requested)
+                            self.raise_if_cancelled()
                             if batch.identifier in seen_batches:
                                 raise FeedbackFailure("Detector reused an earlier Pick batch ID")
                             seen_batches.add(batch.identifier)
+                            if not batch.candidates and not empty_retry_used:
+                                # Reserve the one retry before Home so Pause cannot
+                                # reset its budget or request again before arrival.
+                                empty_retry_used = retry_home_pending = True
+                                self.events.record(
+                                    "INFO", "pick_empty_pose_retry",
+                                    "No item poses; confirm Home and retry acquisition once",
+                                    batch_id=batch.identifier)
+                                batch = None
+                                continue
+                        if batch.candidates:
+                            # Retain the accepted batch if Home is interrupted.
+                            self._execute_home()
                         self.candidate_total = len(batch.candidates)
                         self.operation_progress(
                             "PLAN", f"Validated {self.candidate_total} fresh candidates",
@@ -1394,6 +1413,15 @@ class RobotController(Node):
                             result.selected_candidate_id = candidate.identifier
                             self._transition("HOLDING", "Pick completed; item held at Tray Detect")
                             result.outcome = result.SUCCESS
+                        elif not batch.candidates:
+                            self._transition(
+                                "READY", "No item poses; the one Home acquisition retry "
+                                "has been used; no item picked; robot Home")
+                            result.outcome = result.NO_PICK
+                            self.events.record(
+                                "INFO", "pick_pose_acquisition_exhausted", self.machine.message,
+                                batch_id=batch.identifier,
+                                attempted=result.attempted_candidates)
                         else:
                             completed_batches += 1
                             self.events.record(

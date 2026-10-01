@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Pick acquisition review: **2026-10-01**, baseline **`9145d4a`** plus rule **200**.
+Request item poses before Home. A nonempty result is retained while ensuring
+Home before candidate motion; the existing idle/joint match skips that motion.
+The first valid empty result grants one Home-and-acquisition retry per Pick.
+A later empty result ends NO_PICK at Home. Preserve this allowance across Pause
+and physical misses, separately from the three-nonempty-batch physical-pick limit.
+Auto Run applies the same policy; empty prefetch finishes the owned Home and
+counts placement before retry. Service faults and invalid evidence stay terminal.
+
 Queued release review: **2026-10-01**, baseline **`57bf58e`** plus rule **199**.
 Place Item and explicit held Return Item open fingers (DO2 OFF, DO14 ON), disable
 suction and enable exhaust (DO13 OFF, DO1 ON) at 90% of descent.
@@ -91,8 +100,10 @@ removed; rule 183 replaces Place's observation travel with its read-only positio
 check. Preview does not change hardware-controller lifecycle states.
 
 Retry behavior review: **2026-09-30**, baseline **`30073a2`** plus diary rule
-**180**. Pick permits three full candidate batches; an exhausted/empty batch
-counts as one attempt, with Home before fresh detection. Place permits three
+**180**, superseded for Pick acquisition by rule **200**. Pick permits three
+nonempty physical-pick batches and one empty-result acquisition retry after Home.
+The initial request precedes Home; Home is confirmed before candidate motion.
+Place permits three
 fresh tray/depth requests for unavailable observations or missing replies.
 Ordinary Pause retains both limits; rule 185 permits an explicit new tray batch
 after acquisition exhaustion. Robot faults and invalid successful pose evidence
@@ -407,7 +418,7 @@ typed status and failed service responses include the complete guidance.
 | `HOMING` | Explicit Cartesian GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
 | `PLACING` | Checking observation position, observing tray/depth, admitting placement or supervising retract after action SUCCESS. |
-| `PICKING` | Up to three fresh candidate batches, Home between exhausted batches; success ends at Tray Detect. |
+| `PICKING` | Poses before Home; one empty-result retry at Home; up to three nonempty physical-pick batches; success ends at Tray Detect. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
 | `PAUSED` | Managed parking or in-place acquisition Stop confirmed; monitor pose, queue, outputs and held suction. Failed tray acquisition offers explicit retry or trusted-source return. |
@@ -422,16 +433,20 @@ typed status and failed service responses include the complete guidance.
 
 ```mermaid
 flowchart TD
-    Request["READY: PickItem accepted; recorded tray joints; attempt 1 of 3"] --> Home["Fresh idle + Home joints: skip queue; otherwise reach joint Home"]
-    Home --> Detect["Request a fresh candidate batch for this attempt"]
+    Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Detect["Request fresh item poses before Home"]
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
     Validate -->|Valid| Any{"Any valid candidates?"}
-    Any -->|No| Limit{"Three batches exhausted?"}
-    Limit -->|Yes| Empty["READY / NO_PICK; robot Home"]
+    Any -->|No| EmptyBudget{"Single empty-result retry already used?"}
+    EmptyBudget -->|Yes| Empty["READY / NO_PICK; robot Home"]
+    EmptyBudget -->|No| RetryHome["Reserve retry; confirm Home or skip if matched; Pause retains budget"]
+    RetryHome --> Detect
+    Limit{"Three nonempty batches physically exhausted?"}
+    Limit -->|Yes| Empty
     Limit -->|No| Next["Advance attempt; discard old batch"]
-    Next --> Home
-    Any -->|Yes| Plan["Save ordered plans and PENDING ledger"]
+    Next --> Detect
+    Any -->|Yes| Home["Retain poses; fresh idle + Home joints: skip queue, otherwise reach Home"]
+    Home --> Plan["Save ordered plans and PENDING ledger"]
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
     Sense -->|Yes| Acquire["Send Stop; await acceptance only; fresh joint pose; mark HELD"]
@@ -453,9 +468,14 @@ flowchart TD
 - The pose provider is exactly one of headless `item_detect` or explicitly armed
   `item_teach`, through `/item_detect/get_item_poses`. Inference is requested for
   the batch; Pause/Continue keeps its poses and the three-attempt limit. Recover cancels it.
-- One attempt covers all eligible poses in one batch; an empty valid batch also
-  consumes an attempt. After exhaustion, confirm Home before requesting a fresh
-  batch. First held success ends the action; three exhausted batches finish
+- One physical attempt covers all eligible poses in a nonempty batch. Request
+  poses first, then ensure Home before candidate motion. The first valid empty
+  result grants exactly one retry after Home confirmation; another empty result
+  ends READY/NO_PICK at Home. Empty results do not consume physical attempts,
+  and the empty-result allowance survives Pause and later misses. Three nonempty
+  batches plus one empty observation permit at most four requests per Pick.
+  After physical exhaustion, confirm Home before requesting a fresh batch.
+  First held success ends the action; three physically exhausted batches finish
   READY/NO_PICK. Reused batch IDs, item-service failures/timeouts, source changes
   and robot faults remain terminal. Result `attempted_candidates` sums candidates
   across all batches, including failure/cancellation results. Per-batch ranking,
@@ -712,7 +732,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 
 ```mermaid
 flowchart TD
-    Start["READY: Auto Run quantity and placement target"] --> Pick["Normal first Pick; at most 3 candidate batches"]
+    Start["READY: Auto Run quantity and placement target"] --> Pick["Request poses first, then ensure Home; normal bounded Pick"]
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
     Tray --> Observe["Fresh tray/depth acquisition; at most 3 requests"]
     Observe --> Place["Queue approach → timed release → final retract"]
@@ -720,14 +740,19 @@ flowchart TD
     Last -->|Yes| Home["Immediately append Home behind placement"]
     Home --> Done["Count placement execution/release; confirm final Home + neutral + DI1 LOW; READY"]
     Last -->|No| Prefetch["Request next bin batch while supervising placement"]
-    Prefetch --> Ready{"Validated poses ready?"}
+    Prefetch --> Ready{"Request finished?"}
     Ready -->|No| Prefetch
-    Ready -->|Yes| Append["Append Home → entry → pre-pick → pick; no placement/Home idle wait"]
+    Ready -->|Yes| Poses{"Any valid poses?"}
+    Poses -->|Yes| Append["Append Home → entry → pre-pick → pick; no placement/Home idle wait"]
+    Poses -->|No| RetryHome["Finish owned Home; count placement; retry acquisition once"]
+    RetryHome --> Retried{"Poses returned?"}
+    Retried -->|Yes| Next
+    Retried -->|No| Empty
     Append --> Boundary["Home queue ID reached/passed + observed neutral/DI1 LOW: count old placement and switch source"]
     Boundary --> Next["Acquire next item; normal retries/lifts"]
     Next --> Tray
-    Pick -->|3 batches exhausted| Empty["End NO_PICK at Home; report partial count"]
-    Next -->|3 batches exhausted| Empty
+    Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK at Home; report partial count"]
+    Next -->|3 physical batches or empty retry exhausted| Empty
     Observe -->|3 requests exhausted| Fail["Stop containment; end run with partial count"]
     Prefetch -->|Detector error| Fail
     Append -->|Fault or Stop| Fail
@@ -738,8 +763,11 @@ in the owning action thread, and the ROS executor still has exactly two threads.
 The worker uses the existing validated request path and immutable configuration.
 One batch belongs to the next Pick, is consumed once, and is discarded on Stop,
 source change or run failure. A repeated batch ID is rejected across the whole run.
-If a valid empty batch arrives, append/finish Home, then use only the remaining
-two Pick attempts. If observation is slower than placement, finish normal retract
+If a valid empty batch arrives, append/finish Home and count the placement, then
+request poses once more. Another empty result ends NO_PICK with the partial count.
+The one empty-result retry belongs to that Pick and cannot reset after a physical
+miss. Empty observations do not consume its three nonempty physical-pick batches.
+If observation is slower than placement, finish normal retract
 supervision, then wait for the request while supervising unheld idle feedback.
 
 The planned retract is at Home Z, so the first appended target is an ordinary
@@ -757,10 +785,12 @@ Counts mean placement execution/release evidence, not measured physical delivery
 
 The UI exposes AUTO RUN with completed/requested counts and locks all manual
 buttons/inputs except permanent STOP. External manual actions cannot acquire the
-operation slot; Pause/Continue/Return explicitly reject. Three exhausted Pick
-batches end NO_PICK at Home. Three exhausted tray requests end through Stop
+operation slot; Pause/Continue/Return explicitly reject. Three physically exhausted
+nonempty Pick batches, or an empty result after its one acquisition retry is used,
+end NO_PICK at Home. Three exhausted tray requests end through Stop
 containment instead of opening the manual Place pause workflow. Other faults and
-STOP also terminate with the completed count; no fourth attempt, resume, automatic
+STOP also terminate with the completed count; no fourth physical-pick batch,
+extra empty-result retry, resume, automatic
 startup, configuration change or hardware restart is implied.
 
 ## 4. Pause and Continue
@@ -946,7 +976,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | Why put-back started | After release and retreat |
 | --- | --- |
 | Explicit Return Item, including failed tray acquisition | One timed-release queue through Home → READY; ends the interrupted operation. |
-| Held suction loss during active Pick | Next eligible saved candidate, or Home then next fresh batch within the three-attempt limit; third exhaustion → READY/NO_PICK. Original Pick stays active. |
+| Held suction loss during active Pick | Next eligible saved candidate, or Home then fresh detection within three nonempty batches plus one empty-result retry; exhaustion → READY/NO_PICK. Original Pick stays active. |
 | Explicit Recover | Does not enter put-back; cancel, preserve grip through lift/Home, then relax at Home. |
 | Held loss during Pause / while PAUSED | Home → PAUSED. Wait for explicit Continue or Stop. |
 
@@ -955,7 +985,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | Request | Planned route | Completion check |
 | --- | --- | --- |
 | Explicit Hardware Home / `go_home` | Current XY with taught Home Z/attitude → full taught Cartesian Home, one blended group | Final Cartesian Home; whole move skipped if already within 5 mm / 1° |
-| Pick's initial Home | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if every Home joint is within ±1° |
+| Pick's Home after pose acquisition, or before its empty-result retry | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if idle and every Home joint is within ±1° |
 | Explicit held Return Item | One queue: optional rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → joint Home | Final Home joints / idle / execution with neutral outputs / DI1 LOW |
 | Final exhausted miss or automatic drop put-back Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
 

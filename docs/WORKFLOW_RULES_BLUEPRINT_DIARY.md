@@ -7992,6 +7992,33 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or running-application restart; unrelated RViz and local
   calibration/teach/model artifacts remain outside source commits.
 
+### 2026-10-01 — Rule 200: acquire Pick poses before Home; one empty-result retry
+
+- User requested pose acquisition first, then Home, with a Home-and-acquisition
+  retry at most once when no poses arrive, and confirmed retaining physical-pick
+  retries. Scope the one retry to valid empty
+  results, retaining the existing three-nonempty-batch physical-pick budget.
+  A second empty result ends READY/NO_PICK at Home; the empty-result allowance
+  persists across physical misses and Pause. At most four pose requests can
+  occur when one empty result accompanies three nonempty physical-pick batches.
+  Service errors/timeouts, source/pose validation faults and reused IDs remain
+  terminal; no fourth physical-pick batch or extra empty-result retry is added.
+- Manual Pick and Auto Run first request poses, then ensure Home before candidate
+  motion using the existing idle/joint skip and guarded Home route. Retain poses
+  across an interrupted Home. Reserve an empty-result retry before moving so
+  Pause cannot reset it or request again before Home confirmation. Empty Auto Run
+  prefetch finishes the owned placement/Home path and counts that placement before
+  retrying once; valid prefetch keeps queued Home/next-Pick overlap. Stop remains
+  active before/after acquisition and during Home. No Pick motion/I/O changes.
+- Updated READMEs, FSM and adjacent HTML/PDF. All **916 controller tests passed**,
+  including detection-before-Home ordering, both retry budgets, Pause/Stop and
+  empty Auto Run prefetch with placement counting. Sourced ROS package build,
+  scoped flake8 and `git diff --check` passed. Verified nine SVG diagrams, nine
+  A3 PDF pages and matching FSM source SHA-256
+  `5a520fcc848f633bcefc87acaccbc605f873a92a33271a5f840252a09acfe724`.
+  No hardware commands or running-application restart; unrelated RViz and local
+  calibration/teach/model artifacts remain outside source commits.
+
 ### Future entry template
 
 ```text

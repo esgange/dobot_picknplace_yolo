@@ -123,7 +123,11 @@ the tray. Missing intermediate DI12/DI1 release evidence cannot stop this queue.
 Stop, robot faults, command responses and feedback freshness remain supervised;
 failures after acceptance appear in status and logs.
 Pick Item requires an available armed Item Teach or
-headless Item Detect provider. Pick uses at most **three complete candidate batches**:
+headless Item Detect provider. Pick **requests poses before Home**, then ensures
+Home before approaching a candidate. The first valid empty result grants one
+Home-and-acquisition retry per Pick; another empty result ends READY/NO_PICK at
+Home. An empty result does not consume a physical-pick batch. Pick uses at most
+**three nonempty candidate batches**:
 exhausting all poses counts as one attempt, then return Home and request a fresh
 batch. Stop on the first held success; three exhausted batches finish READY/NO_PICK.
 Place retries a missing tray/depth result or response timeout with at most **three
@@ -299,7 +303,8 @@ click is needed for this loss alone. It uses the saved source, taught pre-pick r
 finger OPEN and confirmed 50 ms exhaust, then the next eligible saved candidate
 or exact Home when none remain. It preserves the original batch and both transit
 waypoints. Repeated losses consume candidates until one succeeds or the batch
-is exhausted; at Home the same three-batch Pick limit governs fresh detection.
+is exhausted; at Home the same limit of three nonempty batches plus one
+empty-result retry governs fresh detection.
 SUCCESS/NO_PICK remain normal completion. No disable/enable/settings
 sequence is added. Direct Stop and cancellation still pre-empt this routine.
 
@@ -354,8 +359,9 @@ Pick requires a loaded Tray Teach with recorded detect joints, but does not
 request tray detection or placement. Its initial Home check uses one fresh idle
 RobotStatus and all six `/joint_states` within ±1°: skip the entire Home queue
 immediately when matched, without an extra feedback tick, service query or dwell.
-Otherwise use the existing conditional rise and joint Home before detection.
-Missed retries, exhausted-batch Home and three-batch limits are unchanged.
+Otherwise use the existing conditional rise and joint Home after acquiring poses,
+before candidate motion. If no poses are returned, confirm Home first and retry
+acquisition once. Missed-candidate routes and the three-nonempty-batch limit remain.
 Finger states are OPEN (DO2 OFF then DO14 ON), CLOSE (DO14 OFF then DO2 ON),
 or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST
 (DO13 OFF then DO1 ON), or NEUTRAL (both OFF). Opposing outputs are never

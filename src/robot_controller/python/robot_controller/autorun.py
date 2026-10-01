@@ -162,20 +162,49 @@ class AutoRunOperation:
         node, config = self.node, self.configuration
         node.active_action = "pick"
         attempted = 0
+        empty_retry_used = False
         for attempt in range(1, 4):
             node.raise_if_cancelled()
             config.validate_sources(node.root)
             if bridge is None:
                 node._transition("PICKING", "Auto Run: starting Pick")
+                node._preflight_item_state(False)
+            while True:
+                node.raise_if_cancelled()
+                if batch is None:
+                    node.operation_progress("DETECT", f"Auto Run Pick attempt {attempt}/3")
+                    batch = node.candidates.request(
+                        config, save_debug_images=self.save_debug_images,
+                        cancel=node.cancel_requested)
+                node.raise_if_cancelled()
+                if batch.identifier in self.seen_batches:
+                    raise FeedbackFailure("Detector reused an earlier Auto Run batch ID")
+                self.seen_batches.add(batch.identifier)
+                if batch.candidates:
+                    break
+                if empty_retry_used:
+                    node._transition(
+                        "READY", "Auto Run stopped: no item poses; the one Home "
+                        "acquisition retry has been used")
+                    node.events.record(
+                        "INFO", "pick_pose_acquisition_exhausted", node.machine.message,
+                        batch_id=batch.identifier, attempted=attempted)
+                    return False
+                empty_retry_used = True
+                node.events.record(
+                    "INFO", "pick_empty_pose_retry",
+                    "No item poses; confirm Home and retry acquisition once",
+                    batch_id=batch.identifier)
+                if bridge is not None:
+                    self.finish_home(bridge)
+                    bridge = None
+                    node.active_action = "pick"
+                    node._transition("PICKING", "Auto Run: retrying item poses at Home")
+                else:
+                    node._execute_home()
+                batch = None
+            if bridge is None:
                 node._execute_home()
-            if batch is None:
-                node.operation_progress("DETECT", f"Auto Run Pick attempt {attempt}/3")
-                batch = node.candidates.request(
-                    config, save_debug_images=self.save_debug_images,
-                    cancel=node.cancel_requested)
-            if batch.identifier in self.seen_batches:
-                raise FeedbackFailure("Detector reused an earlier Auto Run batch ID")
-            self.seen_batches.add(batch.identifier)
             node.candidate_total = len(batch.candidates)
             plans = node._plan_candidate_batch(batch)
             session = PickSession(
@@ -184,14 +213,10 @@ class AutoRunOperation:
             for plan in plans:
                 return_targets(plan)
             extra = {}
-            if bridge is not None and plans:
+            if bridge is not None:
                 bridge.next_session = session
                 extra = dict(queued_home=self.queued_home(bridge), placement_bridge=bridge)
             else:
-                if bridge is not None:
-                    self.finish_home(bridge)
-                    node.active_action = "pick"
-                    node._transition("PICKING", "Auto Run: no candidates in prefetched batch")
                 node.managed.session = session
 
             def check(_index):

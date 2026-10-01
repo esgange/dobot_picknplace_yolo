@@ -325,7 +325,7 @@ def test_stop_before_prefetch_consumption_discards_it_without_next_pick(monkeypa
     assert run.completed == 0 and workers[0].closed
 
 
-def test_auto_pick_exhausts_only_three_batches_and_reports_no_pick(monkeypatch):
+def test_auto_pick_retries_empty_poses_once_and_preserves_completed_quantity(monkeypatch):
     from test_automatic_return import action_rig
 
     node = action_rig(monkeypatch, count=1, losses=())
@@ -339,8 +339,50 @@ def test_auto_pick_exhausts_only_three_batches_and_reports_no_pick(monkeypatch):
     run = AutoRunOperation(node, request(4))
     run.completed = 2
     assert not run._pick()
-    assert len(node.requests) == 3
+    assert len(node.requests) == 2
     assert run.completed == 2 and node.machine.state == "READY"
+
+
+@pytest.mark.parametrize("counts,acquisitions", [
+    ([1], [True]), ([0, 1], [True]), ([1, 1, 1], [False] * 3), ([0, 1, 0], [False]),
+    ([0, 1, 1, 1], [False] * 3), ([1, 0, 1, 1], [False] * 3),
+])
+def test_auto_pick_detects_first_and_keeps_separate_acquisition_and_pick_budgets(
+        monkeypatch, counts, acquisitions):
+    from test_operation_retries import pick_rig
+
+    node = pick_rig(monkeypatch, counts, acquisitions)
+    node.managed.session = None
+    node._plan_candidate_batch = lambda batch: RobotController._plan_candidate_batch(node, batch)
+    run = AutoRunOperation(node, request(2))
+    assert run._pick() is any(acquisitions)
+    assert len(node.requests) == len(counts)
+    assert node.log.index(("detect", 1)) < node.log.index(("ensure_home",))
+    if not counts[0]:
+        assert node.log.index(("ensure_home",)) < node.log.index(("detect", 2))
+
+
+def test_empty_prefetch_finishes_queued_home_before_its_single_retry():
+    rig, run, bridge = queue_rig(quantity=2)
+    rig.node._execute_home = Mock(side_effect=AssertionError("Home is owned by the bridge"))
+    rig.steps = iter([
+        dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
+        dict(outputs=0, inputs=OPEN, currentCommandId=3),
+        dict(outputs=0, inputs=OPEN, currentCommandId=4),
+        dict(outputs=0, inputs=0, home=True),
+    ])
+
+    def detect(*_args, **_kwargs):
+        assert run.completed == 1 and bridge.completed
+        assert rig.monitor.snapshot().robot_enabled
+        assert np.allclose(rig.transport.pose_from_snapshot(rig.monitor.snapshot()),
+                           rig.node.configuration.home_matrix)
+        assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovL"]
+        return SimpleNamespace(identifier="retry-empty", candidates=[])
+    rig.node.candidates = SimpleNamespace(request=Mock(side_effect=detect))
+    assert not run._pick(SimpleNamespace(identifier="prefetched-empty", candidates=[]), bridge)
+    rig.node.candidates.request.assert_called_once()
+    assert run.completed == 1 and rig.node.machine.state == "READY"
 
 
 @pytest.mark.parametrize("missing", ["pick", "place"])

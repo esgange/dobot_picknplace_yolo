@@ -1254,6 +1254,19 @@ Return, manual/Auto Run placement and Preview; Pick and automatic drop put-back
 are unchanged. Update READMEs, FSM/exports and diary. No new setting, teach edit,
 hardware command or application restart during validation.
 
+Rule 200 starts Pick by requesting item poses before Home, including the first
+Auto Run Pick. After a valid nonempty batch, ensure Home before candidate motion
+with the existing joint/idle skip. The first validated empty batch grants one
+Home-and-acquisition retry per Pick; a later empty batch ends NO_PICK at Home.
+This single empty-result retry survives Pause and physical misses and does not
+consume the existing three-nonempty-batch physical-pick budget. Keep accepted
+poses while Home is interrupted, reject reused batch IDs and retain terminal
+service/validation faults. Empty Auto Run prefetch finishes the owned queued
+Home and counts placement before retry; nonempty prefetch still appends Home/Pick
+without a midpoint wait. Stop always pre-empts. No new teach setting, pose-client
+fallback, hardware command or restart during validation. Update READMEs, diary,
+FSM and visual exports with tests for order, bounded requests and interruption.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

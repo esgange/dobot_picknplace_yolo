@@ -1,4 +1,4 @@
-"""Three bounded attempts per Pick/Place, using fake motion and perception only."""
+"""Bounded Pick acquisition/physical retries and Place requests without hardware."""
 
 import copy
 from types import SimpleNamespace
@@ -22,7 +22,8 @@ def pick_rig(monkeypatch, counts, acquisitions):
     rig.hardware.acquisitions = iter(acquisitions)
 
     def detect(*_args, **_kwargs):
-        assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
+        if rig.requests:
+            assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
         assert not rig.holding_item
         index = len(rig.requests)
         rig.requests.append("detect")
@@ -31,6 +32,12 @@ def pick_rig(monkeypatch, counts, acquisitions):
             SimpleNamespace(identifier=f"b{index + 1}:{i + 1}", position_m=(i * .1, 0., .3),
                             quaternion=(0., 0., 0., 1.)) for i in range(counts[index])])
     rig.candidates.request = detect
+    previous_home = rig._execute_home
+
+    def home(**kwargs):
+        rig.log.append(("ensure_home",))
+        return previous_home(**kwargs)
+    rig._execute_home = home
     return rig
 
 
@@ -50,23 +57,99 @@ def test_pick_success_ends_retries_and_counts_all_previous_candidates(
     assert "Tray Detect" in result.message
 
 
-@pytest.mark.parametrize("counts", [[2, 1, 3], [0, 0, 0], [2, 0, 1]])
+@pytest.mark.parametrize("counts", [[2, 1, 3], [0, 2, 1, 3], [2, 0, 1, 3]])
 def test_pick_exhausts_three_complete_batches_and_returns_home_between_them(monkeypatch, counts):
     rig = pick_rig(monkeypatch, counts, [False] * sum(counts))
     result = rig.execute()
     assert result.outcome == result.NO_PICK and result.final_state == "READY"
     assert result.attempted_candidates == sum(counts)
     assert "3 Pick attempts" in result.message
-    assert len(rig.requests) == 3 and rig.finished == ["success"]
+    assert len(rig.requests) == len(counts) and rig.finished == ["success"]
     for attempt, count in enumerate(counts, 1):
         start = rig.log.index(("detect", attempt))
-        end = rig.log.index(("detect", attempt + 1)) if attempt < 3 else len(rig.log)
+        end = rig.log.index(("detect", attempt + 1)) if attempt < len(counts) else len(rig.log)
         moves = [row for row in rig.log[start:end] if row[0] == "move"]
         if count:
             assert len([row for row in moves if row[2].get("stop_on_suction")]) == count
             assert moves[-1][1][-1] == "home"
         else:
             assert not moves
+
+
+def test_pick_requests_poses_before_home_and_homes_before_candidate_motion(monkeypatch):
+    rig = pick_rig(monkeypatch, [1], [True])
+    assert not np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
+    result = rig.execute()
+    assert result.outcome == result.SUCCESS
+    detect = rig.log.index(("detect", 1))
+    home = rig.log.index(("ensure_home",))
+    first_move = next(i for i, row in enumerate(rig.log) if row[0] == "move")
+    assert detect < home < first_move
+    assert len(rig.requests) == 1
+
+
+@pytest.mark.parametrize("retry_count", [0, 1])
+def test_empty_pose_result_homes_then_retries_only_once(monkeypatch, retry_count):
+    rig = pick_rig(monkeypatch, [0, retry_count], [True] if retry_count else [])
+    result = rig.execute()
+    assert result.outcome == (result.SUCCESS if retry_count else result.NO_PICK)
+    assert result.attempted_candidates == retry_count
+    assert len(rig.requests) == 2
+    assert rig.log.index(("detect", 1)) < rig.log.index(("ensure_home",)) < rig.log.index(
+        ("detect", 2))
+    if not retry_count:
+        assert "one Home acquisition retry" in result.message
+        assert not any(row[0] == "move" for row in rig.log)
+        assert np.array_equal(rig.hardware.current_pose(), rig.configuration.home_matrix)
+
+
+def test_empty_retry_budget_survives_a_physical_pick_miss(monkeypatch):
+    rig = pick_rig(monkeypatch, [0, 1, 0], [False])
+    result = rig.execute()
+    assert result.outcome == result.NO_PICK and result.attempted_candidates == 1
+    assert len(rig.requests) == 3
+    assert "one Home acquisition retry" in result.message
+
+
+@pytest.mark.parametrize("counts", [[1], [0]])
+@pytest.mark.parametrize("failure", [FeedbackFailure, OperationCanceled])
+def test_home_failure_after_detection_blocks_retry_or_candidate_motion(
+        monkeypatch, counts, failure):
+    rig = pick_rig(monkeypatch, counts, [])
+    rig._execute_home = Mock(side_effect=failure("Home interrupted"))
+    result = rig.execute()
+    assert result.outcome == (result.CANCELED if failure is OperationCanceled
+                              else result.FEEDBACK_FAILURE)
+    assert len(rig.requests) == 1
+    assert not any(row[0] == "move" for row in rig.log)
+
+
+def test_detector_error_is_terminal_without_home_or_retry(monkeypatch):
+    rig = pick_rig(monkeypatch, [], [])
+    rig.candidates.request = Mock(side_effect=FeedbackFailure("detector failed"))
+    result = rig.execute()
+    assert result.outcome == result.FEEDBACK_FAILURE
+    rig.candidates.request.assert_called_once()
+    assert ("ensure_home",) not in rig.log
+
+
+@pytest.mark.parametrize("counts", [[0, 0], [1]])
+def test_pause_during_home_preserves_acquired_batch_or_one_retry_budget(monkeypatch, counts):
+    rig = pick_rig(monkeypatch, counts, [True] if counts[0] else [])
+    rig.hardware.on_move = Mock()  # No held-loss injection before a candidate ledger exists.
+    home = rig._execute_home
+    interrupted = []
+
+    def pause(**kwargs):
+        if not interrupted:
+            interrupted.append(True)
+            rig.managed.request("pause")
+            rig.managed.checkpoint()
+        return home(**kwargs)
+    rig._execute_home = pause
+    result = rig.execute()
+    assert result.outcome == (result.SUCCESS if counts[0] else result.NO_PICK)
+    assert len(rig.requests) == len(counts) and ("state", "PAUSED") in rig.log
 
 
 @pytest.mark.parametrize("cancel", [False, True])

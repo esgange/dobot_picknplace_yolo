@@ -22,7 +22,7 @@ permanent STOP remains enabled. External manual actions cannot acquire the opera
 slot, and manual queue-control services explicitly reject while Auto Run is active.
 Preview cannot start Auto Run. Launch/prefill never starts it.
 
-The first Pick reuses the normal Home skip/arrival, fresh batch, candidate plans,
+The first Pick requests a fresh batch before the normal Home skip/arrival, candidate plans,
 timed I/O, acquisition Stop acknowledgement, lifts and saved Tray Detect destination.
 Tray pose acquisition begins only after Pick confirms saved tray joints and idle
 feedback. Auto Run always requires the trusted picked item for placement, including
@@ -37,7 +37,11 @@ accepted order behind placement, with CP(100) unchanged. Home starts from the pl
 placement retract at Home Z. If detection is slower than placement, finish normal
 retract supervision and wait for the batch, then use normal Home/Pick. The batch is
 bound to that next Pick, consumed once, and never shared with a manual operation.
-Source/hash/attitude checks and three complete batches per Pick remain in force.
+Source/hash/attitude checks and three nonempty batches per Pick remain in force.
+Each Pick has one retry for an empty pose result: confirm Home before requesting
+again. An empty prefetch uses the owned placement-to-Home route and counts the
+completed placement before this retry. Another empty result ends NO_PICK at Home
+with the completed quantity. Empty observations do not consume physical-pick batches.
 
 The handoff retains the previous placement and source until advancing FeedInfo
 reports the appended Home's returned queue ID (or a later ID), with observed neutral
@@ -53,9 +57,11 @@ For the final item, append Home immediately after placement admission without
 requesting another item batch. Confirm final Home, neutral outputs and DI1 LOW
 before Auto Run SUCCESS/READY. Status publishes `auto_run_active`, requested and
 completed quantities; the action result preserves the final/partial count.
-Three exhausted Pick batches end READY/NO_PICK at Home. Three unavailable tray
+Three exhausted nonempty Pick batches, or an empty result after the one Home
+acquisition retry is used, end READY/NO_PICK at Home. Three unavailable tray
 requests, detector errors or robot/transport faults end through Stop containment
-and explicit recovery; no fourth attempt or automatic restart is granted. STOP
+and explicit recovery; no fourth physical-pick batch, extra empty-result retry
+or automatic restart is granted. STOP
 cancels the run and outstanding prefetch, discarding its result. This leaves the
 manual Place acquisition-pause/retry workflow unchanged. Rebuild interfaces and
 controller, then manually restart controller/GUI/preview and other status clients.
@@ -374,9 +380,13 @@ Actions:
 - `/robot_controller/pick_item` — goal contains `configuration_id` and the
   one-shot `save_debug_images` flag. Candidate count cannot be supplied by the
   caller; it comes from Item Teach `retry.pose_candidates`. Each full candidate
-  batch is one attempt, with **three attempts total**. After exhausting a batch,
-  confirm Home and request a fresh batch; an empty valid batch also consumes one
-  attempt. Success ends immediately in HOLDING; three exhausted batches end
+  nonempty batch is one physical-pick attempt, with **three attempts total**.
+  Request poses first, then ensure Home before candidate motion. A valid empty
+  result grants one Home-and-acquisition retry per Pick, preserved across Pause
+  and later physical misses. Another empty result ends READY/NO_PICK at Home.
+  Empty results do not consume physical-pick attempts. After exhausting a
+  nonempty batch, confirm Home and request a fresh batch.
+  Success ends immediately in HOLDING; three exhausted nonempty batches end
   READY/NO_PICK at Home. `attempted_candidates` totals actual candidate attempts
   across all batches, including canceled/faulted results. Pause/Continue retains
   the current batch and attempt count; direct Stop/Recover ends the action.
@@ -776,7 +786,8 @@ Queue neutral retreat and the old exit transit before the next eligible item's
 entry/clearance/pre-pick/pick, or before exact Home if none remain. Both transits
 retain CP(100). The lost candidate stays DROPPED even if DI1 returns HIGH.
 Repeated losses advance through the retained batch; after exhaustion and confirmed
-Home, rule 180 allows fresh detection within the same three-batch Pick limit.
+Home, rules 180/200 allow fresh detection within the same limit of three nonempty
+batches plus one empty-result retry.
 The action completes normally with SUCCESS or NO_PICK, so this loss alone does
 not open the GUI's Action ended dialog and needs no Recovery click. No automatic
 disable, enable, ClearError or settings sequence is issued. This also applies
@@ -907,10 +918,12 @@ Successful Pick instead finishes directly at Tray Detect after its two lifts.
 Pick requires `READY`, DI1 clear and a loaded Tray Teach with recorded detect
 joints. Its tray detector need not be armed; Pick only travels to the saved pose:
 
-1. run the same Home function;
-2. request one fresh profile/model/camera/platform/bin-hash-matched batch from
+1. request one fresh profile/model/camera/platform/bin-hash-matched batch from
    `/item_detect/get_item_poses`, advertised by exactly one root node: headless
    `/item_detect` or explicitly Armed `/item_teach`;
+2. run the same Home function after poses arrive, skipping motion when already
+   matched. If the result is empty, confirm Home and retry acquisition once per
+   Pick; another empty result ends NO_PICK at Home;
 3. transform platform-relative targets into base coordinates;
 4. offset Link6 green/Y by the taught `pick_rotation` from each item's short-axis
    line while preserving taught tool Z;
@@ -921,7 +934,13 @@ joints. Its tray detector need not be armed; Pick only travels to the saved pose
 7. after success, lift to pre-pick, lift to clearance, then move directly to saved
    Tray Detect joints and finish HOLDING there with suction on;
 8. after full exhaustion, confirm Home and repeat from a fresh batch, up to three
-   complete attempts total; three exhausted/empty batches finish READY/NO_PICK.
+   nonempty batches total; three physically exhausted batches finish READY/NO_PICK.
+
+The empty-result retry is separate from physical-pick attempts and cannot reset
+after a miss or Pause. This permits at most four pose requests per Pick when one
+empty observation occurs among three nonempty batches. If both initial requests
+are empty, stop after those two. Detector errors/timeouts and invalid evidence
+remain terminal; no hardware command is retried after uncertain acceptance.
 
 The detector pose uses local X for the measured short axis and local Y for the
 long axis. It is an in-plane heading, not a TCP attitude. The controller
