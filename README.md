@@ -365,8 +365,10 @@ plan the group and as its confirmed motion origin, without a duplicate origin
 acquisition. The first control point can be rounded, rotate or descend at
 current XY and is not collision-checked for an arbitrary starting pose. A
 successful Pick queues actual stopped pose → pre-pick lift → clearance lift →
-saved Tray Detect joints in one CP (default 100%) group. It omits the Home-height exit
-transit and final Home, confirms only Tray Detect and finishes HOLDING there.
+vertical Safety Z exit → saved Tray Detect joints in one CP (default 100%) group.
+Safety Z is taught Home Z or the higher actual height; the exit preserves current
+X/Y and attitude. It omits final Home, confirms only Tray Detect and finishes
+HOLDING there. The queued exit remains subject to the selected CP blending.
 Pick requires a loaded Tray Teach with recorded detect joints, but does not
 request tray detection or placement. Its initial Home check uses one fresh idle
 RobotStatus and all six `/joint_states` within ±1°: skip the entire Home queue
@@ -427,7 +429,7 @@ and SUCK at 20% of the new final descent. A final miss queues the same
 EXHAUST/NEUTRAL rise, explicit exit transit and exact joint Home in one
 ordered group. Clearance and transits remain blended control points; only exact
 joint Home is physically confirmed. A confirmed pickup lifts through
-pre-pick and clearance, then moves directly to saved Tray Detect in one group
+pre-pick, clearance and the Safety Z exit, then moves to saved Tray Detect in one group
 while holding SUCK. Held Continue moves directly from its parked pose to Tray
 Detect. Unheld Continue reuses the entry transit already confirmed by Pause.
 Motion services are admitted in order: each response must be `res=0`
@@ -552,8 +554,8 @@ Queued motion commands omit per-command `cp`/`r`, so the selected global CP
 (default 100%) governs every transition. Intermediate waypoints are
 therefore blended planning control points rather than guaranteed exact stops;
 the terminal pick/stopped pose and final saved-joint destination are physically
-confirmed. Successful Pick ends directly at Tray Detect after its two lifts;
-exhausted Pick keeps its exit transit and exact Home. Successful travel preserves
+confirmed. Successful Pick ends at Tray Detect after its two lifts and Safety Z exit;
+exhausted Pick uses the same exit transit and exact Home. Successful travel preserves
 SUCK and grip behavior; exhausted returns use EXHAUST then
 NEUTRAL. Deferred finger CLOSE occurs at 50% of the successful first lift to
 pre-pick, using MovLIO; the clearance rise uses MovL with no timed finger event.

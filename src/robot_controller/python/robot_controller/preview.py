@@ -204,10 +204,11 @@ class RobotControllerPreview(rclpy.node.Node):
                         config.home_matrix, item_pose, config.profile, index,
                         rotation=attitude.rotation)
                     targets.extend(plan)
-                    targets.append(replace(tray_target, name=f"p{index}_success_tray_detect"))
                     exit_transit = candidate_exit_transit(plan[5].matrix, plan)
                     targets.append(exit_transit)
-                    # Exit/Home targets belong to missed/put-back branches.
+                    targets.append(replace(tray_target, name=f"p{index}_success_tray_detect"))
+                    # Both successful and missed picks use the Safety Z exit;
+                    # only missed/put-back branches continue through Home.
                     targets.extend(replace(t, name=f"p{index}_return_{t.name}") for t in
                                    home_targets(exit_transit.matrix, config.home_matrix,
                                                 config.home_joints, **rates))

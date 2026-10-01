@@ -8165,6 +8165,33 @@ Never use a floating “latest” version in an issue, script, or deployment not
   automatic application restart was performed. Local RViz edits, calibrations,
   teach files and model weights remain untouched.
 
+### 2026-10-01 — Rule 205: restore successful Pick's Safety Z exit
+
+- User observed successful Pick traveling toward Tray Detect below Safety Z.
+  Logs at 12:21:41 UTC confirmed only pre-pick Z 172.23 mm, clearance Z 202.23 mm
+  and Tray Detect were queued; the initial Safety/Home Z was 352.44 mm. Rule 182
+  had removed both the Home destination and the vertical exit; restore the exit.
+- Manual Pick and Auto Run now share one ordered return group: pre-pick lift →
+  clearance → explicit Cartesian Safety Z exit → saved Tray Detect joints.
+  Reuse the existing exit planner at max(taught Home Z, current height), retaining
+  measured X/Y/attitude, taught travel rates and no I/O. Keep the exit even when
+  coincident with clearance. Preview places its shared exit TF before the success
+  tray destination; missed/put-back branches retain their existing Home targets.
+- Preserve first-lift CLOSE at 50%, other grip modes, suction monitoring, Stop,
+  ordered acceptance, global CP and final Tray Detect confirmation. No Home detour
+  or intermediate physical arrival wait is added. The exit remains a blended
+  control point, so selected CP can round the path; exact height before lateral
+  motion is not guaranteed. Held Continue already leaves confirmed safety-height
+  parking and retains direct tray travel. No teach schema or configuration change.
+- Validation: **990 controller tests passed**, including geometry at/below/above
+  Home Z, all grip modes, three physical-pick attempts, Preview ordering and real
+  transport/fake feedback proving all four commands precede the terminal wait.
+  Sourced controller build, scoped 100-column flake8 and `git diff --check` passed.
+  Regenerated and verified **9 SVG diagrams / 9 A3 PDF pages**, source SHA-256
+  `69baec91537461e36bf30e27420d7d1549b5e51c43b1d361ab97e0fbb23cadbd`.
+  No hardware commands or application restart; unrelated RViz, calibration,
+  offline/runtime teach files and model weights remain untouched.
+
 ### Future entry template
 
 ```text

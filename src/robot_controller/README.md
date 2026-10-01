@@ -987,7 +987,8 @@ service query. FeedInfo remains the fresh fault/frame/I/O guard. Exhausted and
 put-back returns retain an explicit Cartesian exit transit, even at Home Z.
 Exhausted Pick queues pre-pick, clearance, exit transit and joint Home together,
 using the confirmed stopped pose as origin and confirming only final Home.
-Successful Pick instead finishes directly at Tray Detect after its two lifts.
+Successful Pick uses the same vertical Safety Z exit after its two lifts, then
+finishes at Tray Detect instead of Home.
 
 Pick requires `READY`, DI1 clear and a loaded Tray Teach with recorded detect
 joints. Its tray detector need not be armed; Pick only travels to the saved pose:
@@ -1114,11 +1115,14 @@ pre-pick uses MovLIO and CLOSE occurs at 50% (DO14 OFF before DO2 ON), encoded a
 `mdis=["{0,50,14,0}", "{0,50,2,1}"]`. The clearance rise uses MovL with no timed
 finger event. `use_grip=false` never enters
 CLOSE. Successful Pick queues latest measured pose → pre-pick → clearance →
-saved Tray Detect joints as one `candidate_N_pick_to_tray` group. Both vertical
-lifts preserve measured X/Y and attitude and never descend. The first held lift
-uses taught retract rates; clearance uses `v=100` with travel acceleration;
-Tray Detect uses taught travel speed/acceleration, scaled by global SpeedFactor.
-There is no Home-height exit transit or final Home in this success route.
+Safety Z exit → saved Tray Detect joints as one `candidate_N_pick_to_tray` group.
+The vertical targets preserve measured X/Y and attitude and never descend.
+Safety Z is max(taught Home Z, current height); retain the explicit exit even if
+coincident with clearance. The first held lift uses taught retract rates;
+clearance uses `v=100` with travel acceleration. Exit and Tray Detect use taught
+travel speed/acceleration, scaled by global SpeedFactor. There is no final Home
+in this success route. The Safety Z exit is a queued control point and may be
+rounded by the selected global CP; it has no separate physical arrival gate.
 The final command is joint-target MovL, restoring the saved Tray Detect attitude.
 Confirm only its saved joints (±1°), fresh idle RobotStatus and executed/empty
 queue after admission; no midpoint wait or fixed arrival dwell is added.
@@ -1156,8 +1160,8 @@ explicit exit transit and exact joint Home as one
 `candidate_N_pick_to_home` group. Each request still requires ordered `res=0`
 acceptance, but only exact joint Home is physically confirmed; clearance and
 transits are blended control points. Later DI1 cannot reclassify the latched miss
-as success. Successful Pick instead uses the two lifts and direct Tray Detect
-route above; its held-item outputs and monitoring remain active.
+as success. Successful Pick instead uses the two lifts, Safety Z exit and Tray
+Detect route above; its held-item outputs and monitoring remain active.
 
 All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
 in target order. Each must return `res=0` before the next is sent, with no

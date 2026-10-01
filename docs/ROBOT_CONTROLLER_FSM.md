@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Safety Z restoration review: **2026-10-01**, baseline **`77f3559`** plus rule **205**.
+Successful manual/Auto Run Pick now queues pre-pick lift → clearance → explicit
+vertical Safety Z exit → saved Tray Detect. Exit Z is max(taught Home Z, current
+height), with unchanged measured X/Y/attitude and taught travel rates. Keep it
+even when coincident with clearance. Preserve the one ordered group, selected
+CP, grip timing and final Tray Detect confirmation; no Home detour or extra
+arrival wait. Preview shows the shared exit before the success destination.
+The exit is a CP-blended control point, not a guarantee of exact intermediate
+height before lateral travel. Held Continue already departs its confirmed
+safety-height parking pose and keeps the existing direct Tray Detect route.
+
 Global CP review: **2026-10-01**, baseline **`0acf05a`** plus rule **204**.
 The CP slider beside the global-speed controls accepts 0–100 while idle in
 READY/HOLDING. One typed service uses the existing command owner, feedback,
@@ -122,8 +133,8 @@ same three targets; interrupted confirmed release resumes upward only.
 Pick destination review: **2026-09-30**, baseline **`1fdc2f0`** plus diary rule
 **182**. Initial Home skips immediately from fresh idle RobotStatus and all six
 canonical joint positions within ±1°, with no extra tick/query/dwell. Successful
-Pick queues pre-pick lift → clearance lift → saved Tray Detect joints, with no
-exit transit/Home. Finish HOLDING at Tray Detect; held Continue uses that same
+Pick queues pre-pick lift → clearance lift → Safety Z exit → saved Tray Detect
+joints (exit restored by rule 205), with no final Home. Finish HOLDING at Tray Detect; held Continue uses that same
 destination. Missed candidates, put-back and exhausted batches retain their Home
 routes. Pick/preview require recorded tray joints before motion or detection.
 
@@ -490,7 +501,7 @@ flowchart TD
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
-    Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → saved Tray Detect joints; monitor suction"]
+    Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → Safety Z exit → saved Tray Detect joints; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
     HeldReturn -->|Confirmed suction loss| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
     PutBack -->|Eligible saved candidate| Entry
@@ -550,8 +561,11 @@ flowchart TD
   without timed finger I/O. With `grip_onpick=true`, keep the separate DO14 OFF
   then DO2 ON calls and output confirmation before lifting; both lifts use MovL.
   With `use_grip=false`, neither lift commands CLOSE. Suction remains ON.
-- Successful Pick queues its two lifts and direct joint-target MovL to saved
-  Tray Detect, at taught travel rates. Omit the Home-height exit transit and Home.
+- Successful Pick queues its two lifts, Cartesian Safety Z exit, then
+  joint-target MovL to saved Tray Detect. Exit and tray travel use taught travel
+  rates. The exit keeps measured X/Y/attitude and Z at max(Home Z, current height).
+  Keep that queued control point even at clearance height; omit final Home.
+  Selected CP may round the exit; no intermediate arrival gate is added.
   Confirm only Tray Detect joints/idle/executed queue; finish HOLDING there.
   Exhausted returns keep exit transit and exact joint Home, confirmed only at Home.
   Both groups preserve global **selected CP** blending (default 100%) and existing I/O.

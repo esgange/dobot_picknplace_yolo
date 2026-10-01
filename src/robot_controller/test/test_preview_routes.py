@@ -99,6 +99,14 @@ def test_pick_preview_includes_success_tray_and_missed_or_put_back_home_branches
                             index, rotation=preview.config.home_matrix[:3, :3])
         assert np.allclose(targets[f"p{index}_pick"].matrix, plan[3].matrix)
         assert targets[f"p{index}_return_home"].joints_rad == preview.config.home_joints
+        exit_transit = targets[f"p{index}_transit_exit"]
+        assert exit_transit.matrix[2, 3] == preview.config.home_matrix[2, 3]
+        assert np.array_equal(exit_transit.matrix[:2, 3], plan[5].matrix[:2, 3])
+        assert np.array_equal(exit_transit.matrix[:3, :3], plan[5].matrix[:3, :3])
+        assert not exit_transit.motion_io
+        names = [target.name for target in preview.targets]
+        assert names.index(f"p{index}_final") < names.index(exit_transit.name)
+        assert names.index(exit_transit.name) < names.index(f"p{index}_success_tray_detect")
         destination = targets[f"p{index}_success_tray_detect"]
         assert destination.joints_rad == preview.config.tray.detect_joints
         assert np.array_equal(destination.matrix, preview.config.tray.detect_matrix)

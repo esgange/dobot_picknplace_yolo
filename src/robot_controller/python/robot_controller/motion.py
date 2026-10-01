@@ -317,8 +317,10 @@ class PickExecutor:
                     and return_origin[2, 3] > plan[2].matrix[2, 3]):
                 remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
                                  settings["gripper"])
+            upward.append(candidate_exit_transit(upward[-1].matrix, plan))
             if acquired:
-                # Keep both vertical lifts, then travel directly to observation.
+                # Rise vertically through Safety Z before observation travel.
+                # The exit remains a queued control point under global CP.
                 # Only the terminal saved joints are confirmed; no Home detour.
                 check(index)
                 self.hardware.move_batch(
@@ -326,7 +328,6 @@ class PickExecutor:
                     confirmed_start_pose=return_origin,
                     batch_name=f"candidate_{index}_pick_to_tray")
                 return {"picked": True, "candidate": index, "holding_item": True}
-            upward.append(candidate_exit_transit(upward[-1].matrix, plan))
             if index == len(plans):
                 # Complete EXHAUST -> NEUTRAL and queue the remaining Home route.
                 # DI1 was sampled through settling already; any later change is
