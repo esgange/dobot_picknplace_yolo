@@ -224,6 +224,7 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
         def run(self, owner):
             assert owner.machine.state == "PLACING"
+            order.append("tray acquisition")
             order.append("place queued")
             self.phase = "APPROACH"
             self.pending_motion = object()
@@ -233,7 +234,8 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
     class Worker:
         def __init__(self, *_args):
-            assert order[-1] == "place queued"
+            assert node.machine.state == "PLACING" and node.placement.phase == "OBSERVE"
+            assert order[-1] in ("Pick", "append next Pick")
             order.append("prefetch")
             self.future = Future()
             self.closed = False
@@ -295,6 +297,9 @@ def test_counted_cycles_prefetch_only_when_needed_and_append_final_home(
     assert order.count("place queued") == quantity
     assert order.count("prefetch") == quantity - 1
     assert order.count("append next Pick") == (0 if slow else quantity - 1)
+    assert order[:4] == (["Pick", "prefetch", "tray acquisition", "place queued"]
+                         if quantity > 1 else
+                         ["Pick", "tray acquisition", "place queued", "append final Home"])
     assert order[-1] == "append final Home"
     assert node.machine.state == "READY"
     assert all(worker.closed for worker in workers)
@@ -305,7 +310,7 @@ def test_prefetch_error_ends_run_without_queuing_another_pick_or_counting_releas
     with pytest.raises(FeedbackFailure, match="detector unavailable"):
         run.run()
     run.close()
-    assert order == ["Pick", "place queued", "prefetch"]
+    assert order == ["Pick", "prefetch", "tray acquisition", "place queued"]
     assert run.completed == 0 and workers[0].closed
 
 
@@ -321,7 +326,7 @@ def test_stop_before_prefetch_consumption_discards_it_without_next_pick(monkeypa
     with pytest.raises(OperationCanceled):
         run.run()
     run.close()
-    assert order == ["Pick", "place queued", "prefetch"]
+    assert order == ["Pick", "prefetch", "tray acquisition", "place queued"]
     assert run.completed == 0 and workers[0].closed
 
 
@@ -489,4 +494,70 @@ def test_completed_placement_is_reported_even_when_prefetch_fails(monkeypatch):
         run.run()
     run.close()
     assert run.completed == 1
-    assert order == ["Pick", "place queued", "prefetch"]
+    assert order == ["Pick", "prefetch", "tray acquisition", "place queued"]
+
+
+@pytest.mark.parametrize("outcome", ["no_pick", "stop", "arrival_failed"])
+def test_prefetch_requires_successful_pick_and_confirmed_tray_arrival(monkeypatch, outcome):
+    run, node, order, workers = cycle_rig(monkeypatch, 2)
+    run._pick = Mock(return_value=False)
+    error = {"stop": OperationCanceled, "arrival_failed": FeedbackFailure}.get(outcome)
+    if error:
+        run._pick.side_effect = error("Tray Detect not confirmed")
+        with pytest.raises(error):
+            run.run()
+    else:
+        assert not run.run()
+    run.close()
+    assert not order and not workers and node.placement is None
+
+
+@pytest.mark.parametrize("interruption", ["tray_exhausted", "stop", "held_loss"])
+def test_early_prefetch_is_canceled_if_tray_acquisition_ends_run(monkeypatch, interruption):
+    from robot_controller.errors import HeldSuctionLost
+    from robot_controller.tray_client import TrayAcquisitionExhausted
+    from test_tray_acquisition_pause import acquisition_rig
+
+    node, tray = acquisition_rig(monkeypatch, [None] * 3)
+    run = node.auto_run = AutoRunOperation(node, request(2))
+    run._pick = Mock(return_value=True)  # Successful Pick's confirmed Tray Detect endpoint.
+    entered = threading.Event()
+    released = threading.Event()
+    requested = []
+    original_session = node.managed.session
+
+    def acquire(configuration, *, save_debug_images, cancel):
+        requested.append(configuration)
+        entered.set()
+        assert released.wait(2.)
+        assert run.prefetch.cancel.wait(2.)  # The operation's close must cancel the request.
+        assert cancel()
+        return object()  # A late service response must never become another Pick.
+
+    node.candidates = SimpleNamespace(request=acquire)
+    errors = {"tray_exhausted": TrayAcquisitionExhausted,
+              "stop": OperationCanceled, "held_loss": HeldSuctionLost}
+
+    def tray_reply(_future):
+        assert entered.wait(2.)
+        assert run.prefetch is not None and not run.prefetch.future.done()
+        assert node.managed.session is original_session and node.holding_item
+        assert not any(row[0] in ("move", "output", "pulse") for row in node.log)
+        if interruption != "tray_exhausted":
+            raise errors[interruption](interruption)
+
+    tray.on_send = tray_reply
+    try:
+        with pytest.raises(errors[interruption]):
+            run.run()
+        worker = run.prefetch
+        assert len(requested) == 1 and run.completed == 0
+        assert tray.client.call_async.call_count == (3 if interruption == "tray_exhausted" else 1)
+        assert node.managed.session is original_session and node.holding_item
+        run._pick.assert_called_once()
+    finally:
+        released.set()
+        run.close()
+    assert run.prefetch is None and not worker.thread.is_alive()
+    with pytest.raises(OperationCanceled):
+        worker.future.result()

@@ -41,10 +41,11 @@ The motion controls form one four-button grid:
 
 **Auto Run**, below this grid, takes a quantity of 1–10000 and uses the displayed
 placement X/Y/rotation for every cycle. Start from unheld READY with both detectors
-available. It picks, waits for stable Tray Detect before observing the tray, and
-queues placement. While placement executes, one read-only bin request prepares
-the next item batch. As soon as it is ready, append Home and the next Pick behind
-the placement queue; no intermediate idle/arrival wait is added. After the last
+available. It picks and confirms stable Tray Detect, then starts one read-only
+next-item bin request alongside tray-pose/depth acquisition if another item is
+needed. Tray Detect must leave the fixed bin camera's view unobstructed. Once the
+placement queue is accepted and the next batch is ready, append Home and the next
+Pick behind placement; no intermediate idle/arrival wait is added. After the last
 placement, append Home immediately and finish only at confirmed Home. The displayed
 count requires placement execution and neutral/released feedback, not acceptance
 alone. Auto Run disables manual controls, including Pause; permanent STOP remains

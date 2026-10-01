@@ -1276,6 +1276,18 @@ immutable prefix string for at most 16 contents, never images, poses, depth,
 models or exceptions. Preserve motion, I/O, retries, ownership and Stop behavior.
 Document offline timings separately from unmeasured physical-cycle improvements.
 
+Rule 202 starts Auto Run's single next-item request immediately after successful
+Pick confirms saved Tray Detect joints/idle, before tray acquisition. Overlap the
+same fresh post-request bin observation with tray-pose/depth attempts and placement;
+never duplicate it on tray retries or request after the final item. Tray Detect
+must leave the fixed bin view clear; no automatic occlusion test or in-motion
+trigger is added. Retain an early result until complete placement admission, then
+use the existing handoff/error path, empty-result retry and execution/release
+counting. Preserve the old held source/DI1 boundary. Stop, held loss, tray exhaustion
+or other run failure cancels/discards the result; recovery/Return cannot reuse it.
+Keep manual routines, motion/I/O, retry limits and the one hardware owner unchanged.
+Update READMEs, diary and FSM/exports; validate without hardware commands/restarts.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

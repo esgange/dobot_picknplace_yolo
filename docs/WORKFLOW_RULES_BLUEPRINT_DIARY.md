@@ -8074,6 +8074,36 @@ Never use a floating “latest” version in an issue, script, or deployment not
   retention beyond the existing 1,000-event reset. These remain suggestions.
   No hardware commands/restarts or calibration/teach/model/RViz edits.
 
+### 2026-10-01 — Rule 202: prefetch at confirmed Tray Detect before tray acquisition
+
+- User approved moving Auto Run's next-item request earlier so it overlaps tray
+  acquisition as well as placement. Start the existing single read-only worker
+  immediately after successful Pick confirms saved Tray Detect joints/idle,
+  before running Place's observation/queue pipeline. No new waypoint, idle wait,
+  hardware owner, executor thread, setting or interface. The saved observation
+  pose must leave the fixed bin-camera view clear; camera-occlusion detection and
+  an in-motion bin-clear trigger remain outside this change.
+- Keep the fresh post-request RGB/depth/TF pipeline and reserve one result for
+  the next Pick. Tray-pose/depth retries reuse that one pending/ready request,
+  with no duplicate request; final-item placement starts none. An early result
+  cannot append Home/Pick before the complete placement queue is accepted.
+  Consume results/errors at the existing handoff boundary; preserve physical
+  placement counting, source/DI1 ownership, all retry budgets and manual behavior.
+- Stop, held loss, tray exhaustion or another run failure cancels/discards the
+  request and result through existing operation cleanup. Recovery/Return never
+  reuses that batch. Added coverage for acquisition overlap and ordering, no
+  prefetch after failed Pick/unconfirmed tray arrival, cancellation/late replies
+  during tray exhaustion/Stop/held loss, and preserved final-item behavior.
+- Baseline trace shows the trigger can move 5.3–6.5 s earlier than placement
+  admission. This is not a measured new cycle-time result; simultaneous item/tray
+  processing and bin visibility at the taught pose need attended runtime review.
+  Validation: **927 controller tests passed**, including **53 Auto Run tests**;
+  sourced controller build, scoped 100-column flake8 and `git diff --check` passed.
+  Regenerated and verified **9 SVG diagrams / 9 A3 PDF pages**, source SHA-256
+  `ab1a2dafa96d74b7b1622a0494ab118e35ad548b7a914858ff4ec86679c4098a`.
+  No hardware commands or application restart; unrelated RViz, calibration,
+  teach and model files remain untouched.
+
 ### Future entry template
 
 ```text

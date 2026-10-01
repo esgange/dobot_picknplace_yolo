@@ -1,5 +1,13 @@
 # Robot Controller — Finite State Machine
 
+Early acquisition review: **2026-10-01**, baseline **`f1efca5`** plus rule **202**.
+After successful Pick confirms saved Tray Detect joints/idle, start one next-item
+bin request before tray acquisition when another item remains. Fresh observations
+overlap tray-pose/depth retries and placement; ready results wait for complete
+placement admission before the existing queue handoff/error path. No new request
+on tray retries or the final item. Stop/run failure cancels and discards the batch;
+motion, I/O, source/DI1 ownership, retry limits and physical counting are unchanged.
+
 Cycle audit: **2026-10-01**, baseline **`f31bd97`** plus rule **201**. Manual and
 Auto Run retain the same queues, rates, I/O, arrival checks and retry budgets.
 Strict source validation still runs at every existing checkpoint. Catalog scans
@@ -46,7 +54,8 @@ and direct Tray Detect completion remain unchanged for manual Pick and Auto Run.
 
 Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
 One counted action owns Pick/Place and final Home. Prefetch the next bin batch
-during placement and append Home/next Pick immediately when it is ready, without
+at confirmed Tray Detect (rule 202), overlapping tray acquisition and placement.
+After placement admission, append Home/next Pick when the batch is ready, without
 an intermediate arrival wait. Keep the old source until placement execution and
 neutral/released feedback cross into the appended Home. Auto Run disables manual
 controls except direct STOP and ends on exhausted retries with a partial count.
@@ -743,14 +752,17 @@ handling, and use trusted held-item placement even when launched from the GUI.
 flowchart TD
     Start["READY: Auto Run quantity and placement target"] --> Pick["Request poses first, then ensure Home; normal bounded Pick"]
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
-    Tray --> Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
+    Tray --> More{"Another item needed after this placement?"}
+    More -->|Yes| Prefetch["Start one next-bin request in background; fresh post-trigger RGB/depth/TF"]
+    More -->|No| Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
+    Prefetch -->|Do not wait for result| Observe
     Observe --> Place["Queue approach → timed release → final retract"]
     Place --> Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append Home behind placement"]
     Home --> Done["Count placement execution/release; confirm final Home + neutral + DI1 LOW; READY"]
-    Last -->|No| Prefetch["Request next bin batch while supervising placement"]
-    Prefetch --> Ready{"Request finished?"}
-    Ready -->|No| Prefetch
+    Last -->|No| Ready{"Next-bin request finished?"}
+    Ready -->|No| Wait["Supervise placement or unheld idle while awaiting result"]
+    Wait --> Ready
     Ready -->|Yes| Poses{"Any valid poses?"}
     Poses -->|Yes| Append["Append Home → entry → pre-pick → pick; no placement/Home idle wait"]
     Poses -->|No| RetryHome["Finish owned Home; count placement; retry acquisition once"]
@@ -763,15 +775,24 @@ flowchart TD
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK at Home; report partial count"]
     Next -->|3 physical batches or empty retry exhausted| Empty
     Observe -->|3 requests exhausted| Fail["Stop containment; end run with partial count"]
-    Prefetch -->|Detector error| Fail
+    Ready -->|Detector error| Fail
     Append -->|Fault or Stop| Fail
 ```
 
-Only one read-only candidate worker overlaps motion; all hardware dispatch remains
+Only one read-only candidate worker overlaps tray acquisition and motion;
+all hardware dispatch remains
 in the owning action thread, and the ROS executor still has exactly two threads.
 The worker uses the existing validated request path and immutable configuration.
 One batch belongs to the next Pick, is consumed once, and is discarded on Stop,
 source change or run failure. A repeated batch ID is rejected across the whole run.
+Pick already confirms saved Tray Detect joints/idle before this worker starts.
+That taught pose must leave the fixed bin camera view clear; no automatic occlusion
+test, tool-height heuristic or in-motion trigger is added. The existing detector
+requires post-request RGB/depth and matching TF. Keep the same single request
+through tray-pose/depth retries, and never start one for the final item. A ready
+result or detector error is consumed only at the existing post-placement-admission
+handoff boundary. Tray exhaustion, Stop or held loss closes/discards this worker
+and its result before another operation can own the controller.
 If a valid empty batch arrives, append/finish Home and count the placement, then
 request poses once more. Another empty result ends NO_PICK with the partial count.
 The one empty-result retry belongs to that Pick and cannot reset after a physical

@@ -248,16 +248,21 @@ class AutoRunOperation:
             node._transition("PLACING", "Auto Run: waiting for stable Tray Detect and tray pose")
             placement = PlacementOperation(*self.target, require_held_item=True)
             node.placement = placement
+            if self.completed + 1 < self.quantity:
+                # Pick has physically confirmed saved Tray Detect joints/idle.
+                # Observe the bin while acquiring the tray, retaining the current
+                # held source until the normal placement execution boundary.
+                node.operation_progress(
+                    "AUTO_PREFETCH", "Tray Detect confirmed; acquiring next bin candidate batch")
+                self.prefetch = CandidatePrefetch(
+                    node, self.configuration, self.save_debug_images)
             placement.run(node)
             self.bridge = bridge = PlacementBridge(self, placement)
             if self.completed + 1 == self.quantity:
                 self.finish_home(bridge)
                 return True
-            # Only the read-only bin observation overlaps the placement. All
-            # motion is appended by this same owner in accepted dashboard order.
-            node.operation_progress(
-                "AUTO_PREFETCH", "Placement queued; acquiring the next bin candidate batch")
-            self.prefetch = CandidatePrefetch(node, self.configuration, self.save_debug_images)
+            # A ready result cannot append motion until placement is fully
+            # admitted. This same owner retains accepted dashboard ordering.
             pending, placement.pending_motion = placement.pending_motion, None
             node.hardware.finish_batch(pending, handoff=self.prefetch.future.done)
             if placement.phase == "DONE":

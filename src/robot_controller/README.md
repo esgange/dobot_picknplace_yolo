@@ -28,9 +28,17 @@ Tray pose acquisition begins only after Pick confirms saved tray joints and idle
 feedback. Auto Run always requires the trusted picked item for placement, including
 in GUI mode. Placement retains its existing approach/release/retract queue and rates.
 
-After all three placement requests are accepted, one read-only worker immediately
-requests the next bin candidate batch if another item is needed. The owner continues
-supervising placement while that request runs. When the validated batch is ready,
+Immediately after Pick confirms Tray Detect joints/idle, one read-only worker
+requests the next bin candidate batch if another item is needed. This overlaps
+tray-pose/depth acquisition (including its three attempts) and placement execution;
+tray retries never start duplicate item requests. The saved Tray Detect position
+must leave the fixed bin camera's view unobstructed; this is a position-based trigger,
+not automatic camera-occlusion detection. Capture remains a fresh post-request
+RGB/depth/TF observation. Manual Pick/Place do not launch this lookahead.
+
+Keep an early result reserved for the next Pick while the owner acquires the tray
+and queues placement. After all three placement requests are accepted, consume
+the result using the existing handoff/error path. When valid poses are ready,
 append joint Home → next entry → pre-pick → final pick **without waiting for placement
 to finish or Home to become stationary**. The dashboard executes those requests in
 accepted order behind placement, with CP(100) unchanged. Home starts from the planned
@@ -62,7 +70,9 @@ acquisition retry is used, end READY/NO_PICK at Home. Three unavailable tray
 requests, detector errors or robot/transport faults end through Stop containment
 and explicit recovery; no fourth physical-pick batch, extra empty-result retry
 or automatic restart is granted. STOP
-cancels the run and outstanding prefetch, discarding its result. This leaves the
+cancels the run and outstanding prefetch, discarding its result, including during
+tray acquisition. Tray exhaustion, held loss or another fault also discards it;
+it cannot survive into recovery or Return Item. This leaves the
 manual Place acquisition-pause/retry workflow unchanged. Rebuild interfaces and
 controller, then manually restart controller/GUI/preview and other status clients.
 
@@ -72,13 +82,15 @@ Headless supervisors retain the explicit Startup service after deployment loadin
 
 ## Cycle audit and acquisition performance
 
-The 2026-10-01 audit checked manual Pick/Place, missed candidates, held-loss
+The 2026-10-01 audit before rule 202 checked manual Pick/Place, missed candidates, held-loss
 put-back, Return Item, Auto Run handoff and final Home against their shared
 planners/executors. The latest complete recorded Auto Run finished 3/3 in 53.65 s
 (12:52:05.898–12:52:59.552 Dubai time), with first-candidate picks and first-attempt
 tray/depth results. The two next-item requests started after placement admission
 and overlapped execution; their validated results arrived 1.69 s and 1.08 s after
 retract completion. Final Home was appended immediately behind the last placement.
+Rule 202 moves that next-item request to confirmed Tray Detect arrival, 5.3–6.5 s
+earlier in this baseline trace. No new physical cycle timing has been measured.
 
 Repeated source validation was a measured CPU cost. Strict catalog scans now
 share one implementation and reuse camera-prefix parsing only for identical
