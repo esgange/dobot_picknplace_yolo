@@ -7873,6 +7873,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or running-application restart; unrelated RViz and
   calibration/teach/model files remain outside the change.
 
+### 2026-10-01 — Rule 194: neutralize outputs at the start of retract
+
+- User requested retract timing to change from 20% to 0%. The shared Place Item
+  and explicit held Return Item planner now schedules DO2/DO14/DO1/DO13 OFF at
+  the start of the upward MovLIO. The existing MotionIO serializer emits the
+  distance-mode zero tuples `{1,0,channel,0}`; no separate DO call or wait is added.
+- Keep 80% descent release, speed 100%/global SpeedFactor, taught accelerations,
+  the confirmed-drop boundary and two queues without settling, final arrival and
+  neutral/DI1 LOW gates. Auto Run placement and Preview share the updated plan.
+  Pick and automatic suction-loss put-back remain unchanged. Update READMEs and
+  FSM/HTML/PDF; no teach/configuration/schema edits or application restart.
+- Validated together with rule 195 below: 897 controller tests, build, scoped
+  lint and regenerated FSM exports passed. No hardware commands.
+
+### 2026-10-01 — Rule 195: relax fingers instead of opening during release
+
+- User requested exhaust and relaxed fingers only for Return Item and Place
+  Item. At 80% of descent the shared planner sends DO2 OFF, DO14 OFF, DO13 OFF,
+  DO1 ON. Neither route sends OPEN. Include the preceding pending request to
+  neutralize all four outputs at the 0% start of retract in the same change.
+- Match release diagnostics/recovery evidence to exhaust ON, fingers/suction
+  OFF and DI1 LOW. DI12 no longer participates because OPEN is not commanded.
+  Keep optional intermediate release evidence, strict final neutral/DI1 checks,
+  full speed/global SpeedFactor, two queues with drop arrival and no settling,
+  Auto Run placement, Stop/Pause/Recover and saved-source handling. Pick and
+  automatic suction-loss put-back are unchanged; no teach/settings/schema edits.
+- Validation: **897 controller tests passed**. Real transport with synthetic
+  feedback verifies exact relaxed-finger/exhaust tuples at 80%, all-neutral
+  distance-mode zero tuples at retract start, release evidence for both DI12
+  states, and retained source/Stop/Recover behavior. Existing two-queue, no-dwell,
+  full-speed, Auto Run and final feedback checks pass. Controller build, scoped
+  100-column flake8 and diff checks pass. READMEs/FSM updated; nine SVGs and a
+  nine-page A3 PDF regenerated and source SHA-256 verified:
+  503cace60d53892fd3f08133dacd1137a9f2f08b0afe3c1e301a677598231cf6.
+  No physical hardware commands or running-application restart; unrelated RViz
+  and local calibration/teach/model artifacts stay outside source commits.
+
 ### Future entry template
 
 ```text

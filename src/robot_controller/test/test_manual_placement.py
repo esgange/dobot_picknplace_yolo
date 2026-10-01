@@ -91,14 +91,14 @@ def test_manual_observation_move_has_no_item_presence_gate(held_context, inputs)
     node._preflight_item_state.assert_not_called()
 
 
-@pytest.mark.parametrize('bad_inputs', [0, OPEN | 1])
-def test_manual_mode_runs_home_without_intermediate_release_confirmation(bad_inputs):
+@pytest.mark.parametrize('inputs', [0, OPEN | 1])
+def test_manual_mode_finishes_retract_with_optional_release_evidence(inputs):
     rig = QueueRig()
     rig.node.placement.require_held_item = False
-    rig.script[1]['inputs'] = bad_inputs
+    rig.script[1]['inputs'] = inputs
     rig.run()
     assert rig.node.placement.phase == 'DONE'
-    assert not rig.node.placement.release_confirmed
+    assert rig.node.placement.release_confirmed == (not bool(inputs & 1))
 
 
 def empty_node():

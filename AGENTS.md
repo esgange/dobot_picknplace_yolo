@@ -1193,6 +1193,24 @@ and append Home/next Pick behind that retract as before. No automatic-drop
 put-back changes, new settings, teach edits, hardware commands or app restart.
 Update FSM/exports, READMEs and the diary.
 
+Rule 194 moves retract NEUTRAL from 20% to the 0% start in Place Item and
+explicit held Return Item. Use the existing MotionIO distance-mode zero trigger
+for DO2/DO14/DO1/DO13 OFF within the upward MovLIO, including Auto Run placement.
+Preserve 80% descent release, full speed/global SpeedFactor, two queues with
+drop arrival and no settling, final feedback gates and automatic drop put-back.
+No separate DO calls, settings/teach edits or hardware commands/restarts.
+Update READMEs, FSM/exports and the diary.
+
+Rule 195 changes explicit held Return Item and Place Item release to relaxed
+fingers plus exhaust: at 80% descent set DO2 OFF, DO14 OFF, DO13 OFF, DO1 ON.
+Neither routine commands finger OPEN. The shared release observer recognizes
+exhaust ON, both finger outputs and suction OFF, and DI1 LOW; DI12 is irrelevant.
+Retain diagnostic-only intermediate release evidence and final neutral/DI1 gates,
+0%-start retract neutral, two full-speed queues without settling, Auto Run and
+Stop/Pause/Recover ownership. Pick and automatic suction-loss put-back retain
+their existing I/O. No teach/settings/schema changes or hardware commands/restarts;
+update READMEs, FSM/exports and the diary.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

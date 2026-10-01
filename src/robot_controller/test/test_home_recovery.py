@@ -25,7 +25,7 @@ def confirm_fresh_stop(rig, recovery, *, outputs=0, inputs=0):
 
 def test_expired_placement_history_does_not_trap_explicit_recovery_or_claim_placed():
     rig = QueueRig()
-    rig.script[1]['inputs'] = 0  # Reproduce original missing full-open evidence.
+    rig.script[1]['inputs'] = 1  # No confirmed suction release before history expires.
     advance = rig.next_sample
 
     def stop_after_neutral(*args, **kwargs):

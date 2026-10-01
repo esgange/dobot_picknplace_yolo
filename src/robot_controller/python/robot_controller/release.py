@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 
 from .errors import FeedbackFailure
 from .motion import (Target, gripper_neutral_events, rigid_matrix, vacuum_neutral_events,
-                     gripper_open_events, vacuum_exhaust_events)
+                     vacuum_exhaust_events)
 
 
 def release_targets(release_pose, settings, home_matrix, *, prefix):
-    """Approach at Home Z, release at 80% down, neutral at 20% back up."""
+    """Approach at Home Z, release at 80% down, neutral as retract starts."""
     release = rigid_matrix(release_pose, "Release target")
     home = rigid_matrix(home_matrix, "Home")
     pre_z = home[2, 3]
@@ -22,9 +22,9 @@ def release_targets(release_pose, settings, home_matrix, *, prefix):
         point[2, 3] = z
         events = ()
         if name == "release":
-            events = gripper_open_events(80) + vacuum_exhaust_events(80)
+            events = gripper_neutral_events(80) + vacuum_exhaust_events(80)
         elif name == "retract":
-            events = gripper_neutral_events(20) + vacuum_neutral_events(20)
+            events = gripper_neutral_events(0) + vacuum_neutral_events(0)
         result.append(Target(f"{prefix}_{name}", point, 100,
                              settings["acceleration"][rate], motion_io=events))
     return tuple(result)
@@ -102,9 +102,9 @@ class ReleaseQueue:
                     node.holding_item = False
                     if not self.release_confirmed:
                         self.phase = "RELEASING"
-                if (self.release_issued and bits == ((1 << 13) | 1)
+                if (self.release_issued and bits == 1
                         and bits != self.initial_outputs
-                        and inputs & (1 << 11) and not inputs & 1):
+                        and not inputs & 1):
                     if not self.release_confirmed:
                         self.release_confirmed = True
                         self.phase = "RELEASED"

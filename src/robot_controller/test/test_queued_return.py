@@ -63,9 +63,9 @@ def test_return_confirms_drop_then_queues_retract_and_home_without_settling(heig
     assert (approach.a, approach.b, approach.c) == pytest.approx((120., -230., 800.))
     assert (retract.a, retract.b, retract.c) == pytest.approx((120., -230., 800.))
     assert list(release.mdis) == [
-        "{0,80,2,0}", "{0,80,14,1}", "{0,80,13,0}", "{0,80,1,1}"]
+        "{0,80,2,0}", "{0,80,14,0}", "{0,80,13,0}", "{0,80,1,1}"]
     assert list(retract.mdis) == [
-        "{0,20,2,0}", "{0,20,14,0}", "{0,20,1,0}", "{0,20,13,0}"]
+        "{1,0,2,0}", "{1,0,14,0}", "{1,0,1,0}", "{1,0,13,0}"]
     assert not any(request.mode for _, request in rig.requests[:-1]) and home.mode
     assert (home.a, home.b, home.c, home.d, home.e, home.f) == pytest.approx(
         np.rad2deg(rig.node.configuration.home_joints))
@@ -135,14 +135,15 @@ def test_neutral_idle_at_retract_cannot_finish_before_taught_home_joints():
     assert rig.node.managed.session.attempts[0].state == "RETURNED"
 
 
-def test_stop_reconciles_timed_return_outputs_and_recover_cancels_without_replay():
+@pytest.mark.parametrize("open_sensor", [0, OPEN])
+def test_stop_reconciles_timed_return_outputs_and_recover_cancels_without_replay(open_sensor):
     rig, _source = return_rig()
     canceled = [False]
     rig.node.cancel_requested = lambda: canceled[0]
 
     def release_then_stop(index):
         if index == 2:
-            rig.emit(outputs=RELEASE, inputs=OPEN)
+            rig.emit(outputs=RELEASE, inputs=open_sensor)
         if index == 3:
             canceled[0] = True
     rig.on_request = release_then_stop

@@ -19,7 +19,7 @@ from test_placement import operation_node
 
 
 HELD = (1 << 12) | 2
-RELEASE = (1 << 13) | 1
+RELEASE = 1  # Exhaust ON, fingers relaxed, suction OFF.
 OPEN = 1 << 11
 
 
@@ -153,9 +153,9 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])
     assert list(rig.requests[1][1].mdis) == [
-        '{0,80,2,0}', '{0,80,14,1}', '{0,80,13,0}', '{0,80,1,1}']
+        '{0,80,2,0}', '{0,80,14,0}', '{0,80,13,0}', '{0,80,1,1}']
     assert list(rig.requests[2][1].mdis) == [
-        '{0,20,2,0}', '{0,20,14,0}', '{0,20,1,0}', '{0,20,13,0}']
+        '{1,0,2,0}', '{1,0,14,0}', '{1,0,1,0}', '{1,0,13,0}']
     assert all(not any(v.startswith(('cp=', 'r=')) for v in request.param_value)
                for _, request in rig.requests)
     assert rig.node.placement.phase == 'DONE'
@@ -167,20 +167,20 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     assert completed[-1].kwargs['terminal_stable_sec'] == 0.
 
 
-@pytest.mark.parametrize('inputs', [0, OPEN | 1])
+@pytest.mark.parametrize('inputs', [0, 1, OPEN, OPEN | 1])
 @pytest.mark.parametrize('during_reply', [False, True])
-def test_missing_open_or_released_suction_does_not_block_retract(inputs, during_reply):
+def test_release_evidence_uses_di1_without_requiring_open_sensor(inputs, during_reply):
     rig = QueueRig(during_reply=during_reply)
     rig.script[1]['inputs'] = inputs
     rig.run()
     assert all(name != 'DO' for name, _ in rig.requests)
     assert rig.node.placement.phase == 'DONE'
-    assert not rig.node.placement.release_confirmed
+    assert rig.node.placement.release_confirmed == (not bool(inputs & 1))
     assert rig.node.managed.session.held_index is None
     assert rig.node.managed.session.attempts[0].state == 'PLACED'
     finished = [c for c in rig.node.events.record.call_args_list
                 if c.args[1] == 'placement_retract_completed']
-    assert finished[-1].kwargs['release_feedback_observed'] is False
+    assert finished[-1].kwargs['release_feedback_observed'] == (not bool(inputs & 1))
 
 
 def test_skipped_exhaust_evidence_does_not_block_retract():
@@ -315,7 +315,7 @@ def test_stop_after_release_preserves_exhaust_without_waiting_for_a_pulse_end():
     rig.monitor.wait = advancing_stationary
     rig.transport.confirm_stop(CompletedFuture())
     assert operation.release_confirmed and operation.needs_recovery
-    assert node.expected_outputs == {1: True, 2: False, 13: False, 14: True}
+    assert node.expected_outputs == {1: True, 2: False, 13: False, 14: False}
     assert not rig.requests  # Stop confirmation never issues release/reset commands.
 
 
