@@ -6,8 +6,8 @@ import math
 import numpy as np
 
 from .errors import FeedbackFailure, HeldUnknown, ManagedInterruption, ReturnedToHome
-from .motion import (Target, gripper_neutral_events, pose_reached, rigid_matrix,
-                     vacuum_neutral_events, gripper_open_events, vacuum_exhaust_events)
+from .motion import pose_reached, rigid_matrix
+from .release import ReleaseQueue, release_targets
 from .tray_client import TrayAcquisitionExhausted, TrayAttempts
 
 
@@ -42,43 +42,16 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
     if "trayplace_height" not in motion:
         raise ValueError("Placement requires an explicit trayplace_height")
     release_z = surface[2] + motion["trayplace_height"] / 1000
-    home = rigid_matrix(home_matrix, "Home")
-    pre_z = home[2, 3]
-    if pre_z <= release_z:
-        raise ValueError("Placement approach at Home Z must be above the drop height")
-    result = []
-    for name, z, rate in (("place_pre", pre_z, "travel_percent"),
-                          ("place_release", release_z, "approach_percent"),
-                          ("place_retract", pre_z, "retract_percent")):
-        point = matrix.copy()
-        point[:3, 3] = [surface[0], surface[1], z]
-        events = ()
-        if name == "place_release":
-            events = gripper_open_events(80) + vacuum_exhaust_events(80)
-        elif name == "place_retract":
-            events = gripper_neutral_events(20) + vacuum_neutral_events(20)
-        result.append(Target(name, point, TRAY_SPEED_PERCENT,
-                             settings["acceleration"][rate], motion_io=events))
-    return tuple(result)
+    matrix[:3, 3] = [surface[0], surface[1], release_z]
+    return release_targets(matrix, settings, home_matrix, prefix="place")
 
 
 @dataclass
-class PlacementOperation:
+class PlacementOperation(ReleaseQueue):
     x_mm: float
     y_mm: float
     rotation_deg: float
     require_held_item: bool = True
-    phase: str = "OBSERVE"
-    plan: tuple = ()
-    # Shared with retained_release_progress() during output/Stop reconciliation.
-    pending_outputs: dict = field(default_factory=dict)
-    release_issued: bool = False
-    neutral_issued: bool = False
-    release_confirmed: bool = False
-    history_sequence: int = 0
-    queue_start_sequence: int = 0
-    initial_outputs: int = 0
-    observing: bool = False
     tray_attempts: TrayAttempts = field(default_factory=TrayAttempts)
     pending_motion: object = None
     acquisition_failure: str = ""
@@ -99,76 +72,6 @@ class PlacementOperation:
         else:
             # Attended placement still requires healthy, enabled robot feedback.
             node.monitor.snapshot(require_enabled=True)
-
-    def begin_queue(self, node):
-        sample = node.monitor.snapshot(require_enabled=True)
-        mask = (1 << 13) | (1 << 12) | 3
-        self.initial_outputs = sample.feed["digital_outputs"] & mask
-        self.history_sequence = sample.sequence
-        self.queue_start_sequence = sample.sequence
-        self.release_issued = self.neutral_issued = False
-        self.release_confirmed = False
-        self.observing = True
-
-    def issued(self, index):
-        # Called before dispatch: a timed command with an uncertain response may
-        # have executed. Never assume it is safe to repeat its release.
-        if index == 1:
-            self.release_issued = True
-            self.phase = "RELEASING"
-        elif index == 2:
-            self.neutral_issued = True
-
-    def observe(self, node, sample):
-        """Record available release evidence; never gate the queue on DI1/DI12."""
-        if not self.observing:
-            return
-        with node.managed.lock:
-            mask = (1 << 13) | (1 << 12) | 3
-            # History is diagnostic only. A gap or unobserved release interval
-            # must not interrupt the admitted approach/drop/retract queue.
-            for sequence, _timer, outputs, inputs in node.monitor.output_history(
-                    self.history_sequence):
-                if sequence > sample.sequence:
-                    break
-                bits = outputs & mask
-                self.history_sequence = sequence
-                if self.release_issued and bits != self.initial_outputs:
-                    node.holding_item = False
-                    if not self.release_confirmed:
-                        self.phase = "RELEASING"
-                if (self.release_issued and bits == ((1 << 13) | 1)
-                        and bits != self.initial_outputs
-                        and inputs & (1 << 11) and not inputs & 1):
-                    if not self.release_confirmed:
-                        self.release_confirmed = True
-                        self.phase = "RELEASED"
-                        node.events.record(
-                            "INFO", "placement_release_observed",
-                            "Queued release feedback observed")
-                node.expected_outputs.update({ch: bool(bits & (1 << (ch - 1)))
-                                              for ch in (1, 2, 13, 14)})
-
-    def complete(self, node, sample):
-        # The completion worker calls this after physical arrival at final retract.
-        # No intermediate release state or full-open sensor is a success gate.
-        self.observe(node, sample)
-        if (sample.feed["digital_input_bits"] & 1
-                or sample.feed["digital_outputs"] & ((1 << 13) | (1 << 12) | 3)):
-            raise FeedbackFailure(
-                "Retract reached; final placement outputs must be neutral and DI1 LOW")
-        node.holding_item = False
-        node.expected_outputs.update(dict.fromkeys((1, 2, 13, 14), False))
-        session = node.managed.session
-        if session is not None and session.held_index is not None:
-            if session.attempts[session.held_index - 1].state == "HELD":
-                session.set_state(session.held_index, "PLACED")
-            session.held_index = None
-        node.events.record(
-            "INFO", "placement_retract_completed", "Placement queue completed above tray",
-            release_feedback_observed=self.release_confirmed)
-        self.phase = "DONE"
-        self.observing = False
 
     def check_observation(self, node):
         node.wait_for_resume()

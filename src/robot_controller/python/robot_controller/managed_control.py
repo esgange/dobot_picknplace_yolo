@@ -6,6 +6,7 @@ import threading
 from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost, HeldUnknown,
                      ManagedInterruption, PausedItemDropped, ReturnedToHome)
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, PickExecutor, pick_tray_target, pose_reached
+from .item_return import ItemReturnOperation
 from .pick_session import (approach_from_safety, return_targets, safety_target,
                            transit_from_safety)
 
@@ -394,6 +395,13 @@ class ManagedControl:
     def _put_back(self, *, dropped, continue_candidates=False):
         node = self.node
         attempt = self._candidate()
+        if (self.kind == "return" and not dropped and attempt.state == "HELD"
+                and self.return_progress is None):
+            self.return_progress = ItemReturnOperation(
+                index=self.session.held_index, phase="APPROACH")
+        if isinstance(self.return_progress, ItemReturnOperation):
+            self.return_progress.run(node)
+            return None
         if self.return_progress is None:
             self.return_progress = ReturnProgress(
                 self.session.held_index, dropped, continue_candidates)

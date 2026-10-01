@@ -1,5 +1,11 @@
 # Robot Controller — Finite State Machine
 
+Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **191**.
+Explicit held Return shares placement's approach/drop/retract and 80% release /
+20% neutral timing, using the saved pre-pick drop target. Append exact joint Home
+in the same queue; confirm only final Home and neutral/DI1 LOW. Source/release
+context survives Stop. Automatic drop put-back retains its separate pulse route.
+
 Pickup grip review: **2026-10-01**, baseline **`fa9836d`** plus diary rule **190**.
 With use_grip enabled and grip_onpick disabled, close fingers at 50% of the first
 held lift to pre-pick using MovLIO; clearance uses MovL with no finger event.
@@ -535,7 +541,7 @@ flowchart TD
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
     AcquisitionPause -->|Place Item Retry| Reset["Operator grants 3 new requests; recheck sources and position"]
     Reset --> Observe
-    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["Saved bin pre-pick release; 50 ms exhaust; neutral retreat and Home"]
+    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["One queue: bin approach → saved pre-pick (release 80%) → retract (neutral 20%) → joint Home"]
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
@@ -598,10 +604,11 @@ batch pauses again. Ordinary manual Pause retains its partly used budget.
 
 Pick Item remains disabled. A trusted HELD source before any placement release
 enables the same paused RETURN ITEM control as held Pick. It calls the
-existing bin put-back: safety rise and entry, exact taught pre-pick release,
-50 ms exhaust, neutral retreat/exit transit and Home, with existing rates and
-feedback barriers. Complete READY and Place CANCELED; never start a new Pick.
-Normal held-suction/output checks apply during bin return even in GUI mode.
+queued bin Return Item: optional vertical rise, Home-Z approach, saved pre-pick
+drop with release at 80%, retract to Home Z with neutral at 20%, then joint Home.
+All requests are admitted before waiting only for final Home/neutral/DI1 LOW.
+Complete READY and Place CANCELED; never start a new Pick. Require trusted held
+state before dispatch even in GUI mode; queued release supervision matches Place.
 Return does not require the tray detector; retry does. An empty/manual placement
 pause with no trusted held source offers retry and direct Stop. The Continue menu
 is absent for this acquisition pause; the Place button supplies continuation.
@@ -862,11 +869,14 @@ also fail without enabling. Held-suction loss retains its existing failure path.
 No automatic reset, retry or enabling is added. Recover remains available in FAULT
 to recheck after physical release, avoiding a latch that prevents clearing alarms.
 
-## 6. The common put-back route
+## 6. Explicit Return Item and automatic drop put-back
 
 ```mermaid
 flowchart TD
-    Start["Confirmed stopped pose and retained return progress"] --> Released{"Release already confirmed?"}
+    Start["Confirmed stopped pose and retained return progress"] --> Kind{"Explicit return with trusted held item?"}
+    Kind -->|Yes| Queue["One queue: optional vertical rise → item XY at Home Z → saved pre-pick drop (release 80%) → retract Home Z (neutral 20%) → joint Home"]
+    Queue --> Done["Confirm Home joints + idle/execution + neutral + DI1 LOW; mark RETURNED; READY"]
+    Kind -->|Automatic / dropped| Released{"Release already confirmed?"}
     Released -->|No| Up["Approach via safety rise and entry park_transit if needed"]
     Up --> Release["Exact saved pre-pick release pose"]
     Release --> Pulse["Open fingers; 50 ms exhaust; confirm exhaust OFF and DI1 LOW"]
@@ -878,12 +888,25 @@ flowchart TD
     Exit --> Next["Next item's entry transit → clearance → pre-pick → pick"]
 ```
 
+Both routes use the saved pre-pick pose, **final-pick Z + taught pre-pick height**,
+with its original X/Y and attitude. Explicit Return Item shares the placement
+planner and release observer. Approach/drop/retract use the same 80%-descent
+OPEN/EXHAUST and 20%-ascent NEUTRAL events, with speed 100% and taught travel /
+approach / retract acceleration; final joint Home uses speed 100% and travel
+acceleration. All are queued in one ordered CP(100) group, including an optional
+current-XY vertical rise if more than 5 mm below Home Z. There is no midpoint
+arrival or separate 50 ms pulse; only final joint Home/idle/executed queue and
+neutral outputs/DI1 LOW complete the operation. Final completion marks RETURNED;
+Stop before it retains source and observed release state. Explicit Recover
+cancels the interrupted return and never repeats its release.
+
+Automatic drop put-back keeps its existing confirmed release and pulse behavior.
 Release height is **final-pick Z + taught pre-pick height**, using the exact
 saved pre-pick attitude/XY. The former fixed +50 mm release/minimum is removed.
 Release commands turn finger-close and suction off, open fingers, then pulse
 exhaust. These are ordered commands, not simultaneous electrical edges.
 
-The complete put-back route uses **speed 100% / taught travel acceleration**,
+The complete automatic drop route uses **speed 100% / taught travel acceleration**,
 scaled by global SpeedFactor. If clearance equals pre-pick, the rise to exit
 transit carries the neutral events. A real upward retreat must exist. Both entry
 and exit transits are queued, with CP blending permitted. Physical item placement
@@ -895,7 +918,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 
 | Why put-back started | After release and retreat |
 | --- | --- |
-| Explicit Return Item | Home → READY; ends the interrupted operation. |
+| Explicit Return Item, including failed tray acquisition | One timed-release queue through Home → READY; ends the interrupted operation. |
 | Held suction loss during active Pick | Next eligible saved candidate, or Home then next fresh batch within the three-attempt limit; third exhaustion → READY/NO_PICK. Original Pick stays active. |
 | Explicit Recover | Does not enter put-back; cancel, preserve grip through lift/Home, then relax at Home. |
 | Held loss during Pause / while PAUSED | Home → PAUSED. Wait for explicit Continue or Stop. |
@@ -906,7 +929,8 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | --- | --- | --- |
 | Explicit Hardware Home / `go_home` | Current XY with taught Home Z/attitude → full taught Cartesian Home, one blended group | Final Cartesian Home; whole move skipped if already within 5 mm / 1° |
 | Pick's initial Home | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if every Home joint is within ±1° |
-| Final exhausted miss or put-back Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
+| Explicit held Return Item | Optional vertical rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → exact joint Home, one ordered group | Final joint Home with neutral outputs / DI1 LOW |
+| Final exhausted miss or automatic drop put-back Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
 
 Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
 moves directly to saved Tray Detect joints and finishes HOLDING there.
@@ -1068,6 +1092,8 @@ Source map for the next review:
 | [state_machine.py](../src/robot_controller/python/robot_controller/state_machine.py) | Lifecycle states and allowed edges |
 | [controller.py](../src/robot_controller/python/robot_controller/controller.py) | API guards, configuration, lifecycle, action ownership, Stop and supervision |
 | [placement.py](../src/robot_controller/python/robot_controller/placement.py) | Read-only tray-position check, three-command placement admission, release evidence and upward interruption recovery |
+| [release.py](../src/robot_controller/python/robot_controller/release.py) | Shared placement/return timed motion targets, observed release progress and terminal neutral checks |
+| [item_return.py](../src/robot_controller/python/robot_controller/item_return.py) | Explicit held return to saved pre-pick with Home in the same queue |
 | [tray_client.py](../src/robot_controller/python/robot_controller/tray_client.py) | Fresh tray/depth request, provider and source validation |
 | [managed_control.py](../src/robot_controller/python/robot_controller/managed_control.py) | Parking, Continue, put-back and held-loss recovery |
 | [pick_session.py](../src/robot_controller/python/robot_controller/pick_session.py) | Candidate ledger and put-back geometry |

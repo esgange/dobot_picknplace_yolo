@@ -7791,6 +7791,38 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or running-app restart; unrelated RViz and local
   calibration/teach/model files remain untouched and excluded.
 
+### 2026-10-01 — Rule 191: queue explicit Return Item like placement through Home
+
+- User requested paused Return Item to match tray placement while dropping at
+  the remembered pre-pick pose, then explicitly selected taught Home as the
+  endpoint with all motions queued. Share the pure approach/drop/retract planner
+  and release feedback observer between placement and explicit held Return.
+- Queue optional vertical rise, source X/Y/attitude at Home Z, saved pre-pick drop,
+  same-X/Y retract at Home Z and exact taught joint Home. Timed descent release
+  at 80% opens fingers, disables suction and enables exhaust; ascent at 20%
+  neutralizes all four outputs. All speeds 100%; accelerations follow placement's
+  travel/approach/retract plus travel for Home. No intermediate arrival/output
+  wait, separate 50 ms pulse, new detection or extra clearance point.
+- Final Home joints/idle/execution plus neutral outputs and DI1 LOW are required
+  before RETURNED/READY. Retain original source and observed release through
+  cancellation/Stop; explicit Recover cancels and uses its existing lift/Home
+  without repeating the drop. Failed tray acquisition's Return uses this same
+  route and ends Place CANCELED. Automatic suction-loss/paused-drop put-back
+  keeps its existing release pulse, retreat and candidate continuation behavior.
+- Update root/package READMEs, FSM route/diagram/guards and offline exports.
+  No schema/interface/settings change or automatic restart. Preserve unrelated
+  RViz and local calibration/teach/model files outside the commit.
+- Validation: **881 controller tests passed**. Real transport with synthetic
+  services/feedback verifies all return motions admitted before arrival, exact
+  80%/20% I/O, optional queued rise, saved pre-pick and joint Home targets, rates,
+  final neutral/DI1 gating, no false completion at retract, Stop at every admission
+  boundary, interrupted-release reconciliation and Recover cancellation. Existing
+  placement/Auto Run and automatic drop tests also pass. Controller build, scoped
+  100-column flake8 and diff checks pass. Regenerated nine FSM SVGs and a nine-page
+  A3 PDF; source SHA-256
+  30dc1f880810869cc586b89ece5dec8425e9a9acffbcf51ea97f419b5a83e462 verified.
+  No physical hardware commands or running-application restart.
+
 ### Future entry template
 
 ```text

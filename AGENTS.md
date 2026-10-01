@@ -1158,6 +1158,19 @@ geometry, taught retract rates, full-speed clearance, suction/Stop monitoring,
 ordered blended queues and final Tray Detect confirmation. No schema, settings,
 hardware command or application restart during validation; update FSM and exports.
 
+Rule 191 makes explicit Return Item with a trusted held source use the shared
+placement motion/release pipeline, including after failed tray acquisition.
+Queue optional current-XY vertical rise, source XY/attitude at Home Z, exact saved
+pre-pick drop, same-XY retract to Home Z and exact taught joint Home in one ordered
+CP(100) group. Release OPEN/SUCK-OFF/EXHAUST at 80% of descent; neutralize all four
+outputs at 20% of ascent. All speeds are 100%, with taught travel/approach/retract/
+travel accelerations. No intermediate arrival, release/DI12 or separate pulse
+wait; confirm only final Home joints/idle/execution, neutral outputs and DI1 LOW
+before RETURNED/READY. Retain source/release progress on Stop; Recover cancels
+without repeating release. Keep automatic suction-loss/paused-drop put-back's
+existing 50 ms pulse and continuation behavior. No detector request, new setting,
+schema/interface change or live validation; update FSM/exports and the diary.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

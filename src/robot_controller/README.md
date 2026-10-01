@@ -64,6 +64,39 @@ Launching the package never enables, recovers, homes, or moves the robot. An
 operator explicitly loads teach configuration to prepare the robot to READY.
 Headless supervisors retain the explicit Startup service after deployment loading.
 
+## Return Item compared with tray placement
+
+Explicit Return Item requires a trusted held source, including after failed tray
+acquisition. It never requests another bin/tray pose. The original saved pre-pick
+matrix supplies its exact drop position and attitude; `trayplace_height` is unused.
+
+| Motion | Return Item | Place Item |
+| --- | --- | --- |
+| MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and tray attitude plus rotation at Home Z |
+| MovLIO descent | Exact saved pre-pick target | Detected surface Z + trayplace_height |
+| At 80% descent | DO2 OFF, DO14 ON, DO13 OFF, DO1 ON | Same |
+| MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
+| At 20% ascent | DO2/DO14/DO1/DO13 OFF | Same |
+| Final MovL | Exact taught Home joints | None for manual Place |
+| Physical completion | Home joints/idle/execution, neutral outputs and DI1 LOW | Final retract/idle/execution, neutral outputs and DI1 LOW |
+
+Return queues every target as one ordered CP(100) group. When starting more than
+5 mm below Home Z, prepend a vertical MovL at current X/Y/attitude in that same
+group. It has no intermediate physical-arrival, release, DI12 or exhaust-pulse
+wait. All motions use speed 100%, scaled by global SpeedFactor; approach/Home
+use taught travel acceleration, descent uses approach acceleration, and retract
+uses retract acceleration. The 80% release happens before the pre-pick endpoint.
+The shared planner/observer keeps the placement I/O timing and release supervision
+identical. Only final Home completion marks the candidate RETURNED and clears its
+source; queue acceptance alone cannot report READY or successful return.
+
+Direct Stop pre-empts admission/execution and retains observed release/source
+progress. Explicit Recover cancels the interrupted queue, preserves current grip
+through its existing lift/Home, and resets at Home; it never repeats the drop.
+Automatic suction-loss put-back keeps its separate stationary pre-pick release,
+50 ms exhaust and eligible-candidate continuation policy. No configuration or
+interface changes are required; restart the controller after rebuilding to apply.
+
 ## Emergency-stop feedback
 
 The controller translates a Dobot command response `res=-3` or confirmed robot
@@ -133,12 +166,14 @@ permanent red STOP always stops/cancels. Without a trusted held source, Return
 stays disabled and STOP remains available.
 
 A trusted held item may be returned to its saved
-bin source through the existing put-back route: rise/entry transit, taught pre-pick
-release, 50 ms exhaust, neutral retreat/exit transit and Home. Return finishes READY
+bin source through one queued approach at Home Z → saved pre-pick drop → retract
+to Home Z → taught joint Home. Use tray placement's 80%-descent release and
+20%-ascent neutral events, with a preliminary vertical rise in the same queue
+when needed. Return finishes READY
 and ends the waiting Place action as CANCELED, without claiming placement success.
-The gripper is preserved until the explicit return reaches its release pose.
+The gripper is preserved until the motion-timed release begins.
 GUI placement's relaxed item-presence policy does not apply to the bin return;
-normal held-suction/output monitoring resumes before that route.
+trusted held-item checks apply before dispatch; queued release supervision matches placement.
 Return is blocked during ordinary placement Pause and after release admission.
 Direct Stop always pre-empts; stopped/faulted operations still require Recover.
 
@@ -646,8 +681,8 @@ Stale feedback or output faults are not
 converted into ordinary drops. An eligible acquisition during the initial Stop
 can establish trusted holding; late DI1 from a latched miss cannot.
 
-Put-back retains the original held candidate pose even after successful Pick has
-already completed at Home. From confirmed Stop it rises to Home Z if necessary,
+Automatic drop put-back retains the original held candidate pose even after
+successful Pick has completed at Tray Detect. From confirmed Stop it rises to Home Z if necessary,
 queues the entry transit, then releases at the exact saved pre-pick pose:
 nominal final-pick Z plus taught `motion.prepick_height`, at that candidate's
 X/Y/attitude. Rule 113 removes the fixed +50 mm release offset and its minimum
@@ -672,11 +707,12 @@ upward exit-transit segment instead. If neither clearance nor safety Z provides
 an upward retreat, reject the geometry before picking; never attach neutral
 I/O to a zero-distance move. Otherwise the exit has no timed I/O, and it remains
 queued even when coincident with clearance. All segments retain global CP(100).
-Under rule 112, every put-back target uses
+Under rule 112, every automatic drop put-back target uses
 `v=100` and taught travel acceleration: initial safety rise, entry transit,
 taught pre-pick release, neutral clearance retreat, exit transit and
 exact joint Home. Put-back never inherits the slow approach/retract rates.
-This applies to explicit return, paused drop and automatic loss return.
+This applies to paused drop and automatic loss return. Explicit held Return Item
+uses the single placement-style queue described above under rule 191.
 Explicit Recover instead preserves outputs and uses taught travel rates to Home,
 then neutralizes the gripper at Home.
 If another candidate follows, its normal travel and final-pick approach rates
@@ -685,7 +721,7 @@ and is never automatically raised by a put-back.
 
 Explicit `/return_item` cancels the interrupted action with a CANCELED result and
 finishes READY at Home. The GUI uses **RETURN ITEM** while paused with
-trusted holding. A paused drop runs that same release/return route automatically
+trusted holding. A paused drop runs the separate pulse-based route described here
 and stays PAUSED at Home. Continue then attempts remaining candidates (including
 from the retained batch of a completed Pick), or finishes without a pick if none
 remain. A dropped candidate stays `DROPPED`; completing the motions is not proof
@@ -922,7 +958,7 @@ uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed
 pick's same rise uses `v=100` and taught travel acceleration. The next clearance
 rise uses `v=100` with taught travel acceleration for both outcomes. All rates
-remain subject to global SpeedFactor. Put-back uses `v=100` and travel
+remain subject to global SpeedFactor. Automatic drop put-back uses `v=100` and travel
 acceleration throughout, including release descent and empty retreat.
 
 The outputs are explicit mutually exclusive states. Finger OPEN is DO2 OFF then

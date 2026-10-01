@@ -152,12 +152,13 @@ def test_return_puts_item_at_saved_bin_prepick_then_homes_and_cancels_place(monk
     assert tray.client.call_async.call_count == 3
     routes = [row for row in node.log if row[0] == "move"]
     assert routes[-1][1][-1] == "home"
-    approach = next(row for row in routes if row[2]["batch_name"] == "return_item_to_release")
-    assert approach[1][-1] == "return_release"
-    assert ("pulse", 50) in node.log
+    assert len(routes) == 1 and routes[0][2]["batch_name"] == "return_item_queued_home"
+    assert routes[0][1][-4:] == ("return_pre", "return_release", "return_retract", "home")
+    progress = routes[0][2]["placement"]
+    release = next(target for target in progress.plan if target.name == "return_release")
+    assert np.array_equal(release.matrix, source[2].matrix)
+    assert not any(row[0] in ("output", "pulse", "home") for row in node.log)
     assert np.array_equal(node.hardware.current_pose(), node.configuration.home_matrix)
-    home = next(row for row in node.log if row[0] == "home")
-    assert np.array_equal(home[1]["confirmed_start_pose"], source[2].matrix)
     assert not any(name.startswith("place_") for row in routes for name in row[1])
 
 

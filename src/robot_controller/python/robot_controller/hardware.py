@@ -536,6 +536,11 @@ class DobotTransport:
                 # Explicit cancel-and-Home uses newly stopped I/O, never the
                 # interrupted placement/put-back history. No outputs are sent.
                 pass
+            elif return_progress is not None and getattr(return_progress, "observing", False):
+                try:
+                    return_progress.observe(self.node, snapshot)
+                except (FeedbackFailure, HeldUnknown) as exc:
+                    held_violation = str(exc)
             elif placement is not None and placement.observing:
                 try:
                     placement.observe(self.node, snapshot)

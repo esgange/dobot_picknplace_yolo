@@ -59,13 +59,15 @@ class Rig:
         self.pause_event = threading.Event()
         self.cancel_event = threading.Event()
         self.configuration = SimpleNamespace(
-            home_matrix=matrix(z=0.8), profile=profile(prepick),
+            home_matrix=matrix(z=0.8), home_joints=(0.,) * 6, profile=profile(prepick),
             tray=SimpleNamespace(detect_matrix=matrix(x=-.4, z=.6),
                                  detect_joints=(.2,) * 6),
             validate_sources=lambda _root: None)
         self.events = SimpleNamespace(record=lambda *args, **kwargs: self.log.append(
             ("event", args, kwargs)))
-        self.monitor = SimpleNamespace(snapshot=self.snapshot)
+        self.output_history = []
+        self.monitor = SimpleNamespace(snapshot=self.snapshot, output_history=lambda sequence: [
+            row for row in self.output_history if row[0] > sequence])
         self.hardware = FakeTransport(self)
         self.managed = ManagedControl(self)
         plans = [pick_targets(self.configuration.home_matrix, matrix(x=i * .1),
@@ -93,6 +95,10 @@ class Rig:
     def raise_if_cancelled(self):
         if self.cancel_event.is_set():
             raise OperationCanceled("direct Stop")
+
+    def _preflight_item_state(self, holding):
+        if holding != self.holding_item or holding and not self.suction.present:
+            raise HeldUnknown("Unexpected held-item state")
 
     def _transition(self, state, message):
         self.machine.transition(state, message)
@@ -172,12 +178,30 @@ class FakeTransport:
         node.managed.checkpoint()
         self.on_move(targets, kwargs)
         node.log.append(("move", tuple(target.name for target in targets), kwargs))
-        for target in targets:
+        release = kwargs.get("placement")
+        for index, target in enumerate(targets):
+            if release is not None:
+                release.issued(index)
             if not node.managed.executing and node.managed.session is not None:
                 node.managed.motion_admitted(target)
             for event in target.motion_io:
-                self.output(event.channel, event.active)
+                if release is None:
+                    self.output(event.channel, event.active)
+                else:
+                    node.log.append(("timed_output", event.percent, event.channel, event.active))
+                    mask = 1 << (event.channel - 1)
+                    node.feed["digital_outputs"] = ((node.feed["digital_outputs"] & ~mask)
+                                                    | (mask if event.active else 0))
+            if release is not None:
+                if not node.feed["digital_outputs"] & (1 << 12):
+                    node.set_di1(False)
+                node.output_history.append((node.feed_sequence, node.clock,
+                                            node.feed["digital_outputs"],
+                                            node.feed["digital_input_bits"]))
+                release.observe(node, node.snapshot())
         node.feed["tool_vector_actual"] = pose_values(targets[-1].matrix)
+        if release is not None:
+            release.complete(node, node.snapshot())
         acquired = next(self.acquisitions) if kwargs.get("stop_on_suction") else False
         if acquired:
             node.set_di1(True)
@@ -282,6 +306,13 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
     assert rig.managed.session.held_index is None
     moves = [entry for entry in rig.log if entry[0] == "move"]
     approach = next(entry for entry in moves if "return_release" in entry[1])
+    if not dropped:
+        assert len(moves) == 1
+        assert approach[1] == (
+            "return_safety", "return_pre", "return_release", "return_retract", "home")
+        assert not any(entry[0] in ("output", "pulse", "home") for entry in rig.log)
+        assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
+        return
     assert approach[1] == ("park_transit", "return_release")
     assert ("pulse", 50) in rig.log
     pulse = rig.log.index(("pulse", 50))
@@ -411,7 +442,7 @@ def test_direct_stop_during_putback_prevents_release_and_home():
     rig = Rig(held=True)
 
     def stop_during_motion(_targets, kwargs):
-        if kwargs.get("batch_name") == "return_item_to_release":
+        if kwargs.get("batch_name") == "return_item_queued_home":
             rig.cancel_event.set()
             rig.managed.checkpoint()
     rig.hardware.on_move = stop_during_motion
@@ -598,8 +629,9 @@ def test_return_requested_from_confirmed_pause_has_no_continue_or_new_pick():
                    for entry in rig.log)
 
 
-def test_pulse_failure_stops_before_retract_home_and_keeps_source_context():
+def test_dropped_item_pulse_failure_stops_before_retract_home_and_keeps_source_context():
     rig = Rig(held=True)
+    rig.lose_suction()
 
     def fail():
         raise FeedbackFailure("Exhaust OFF not confirmed")

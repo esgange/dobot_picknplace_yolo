@@ -459,6 +459,10 @@ class RobotController(Node):
         if recovery is not None and self.active_action == "recover":
             recovery.check(sample)
             return False
+        returning = getattr(self.managed, "return_progress", None)
+        if returning is not None and getattr(returning, "observing", False):
+            returning.observe(self, sample)
+            return False
         placement = getattr(self, "placement", None)
         if placement is not None and not placement.returning_to_bin:
             placement.observe(self, sample)

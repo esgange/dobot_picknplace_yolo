@@ -259,9 +259,19 @@ Pause nor Continue calls the vendor queue Pause/Continue services.
 A trusted held item's source pose survives completion of its Pick action.
 `/robot_controller/return_item` requests a controlled put-back and ends READY at
 Home. The GUI exposes it as **RETURN ITEM** while paused with an item.
-Suction loss during Pause invokes that same return automatically, even if the
+Explicit Return Item shares tray placement's timed approach/release/retract:
+above the original item at Home Z → exact saved pre-pick pose → same X/Y at
+Home Z → taught joint Home. At 80% of descent, open fingers, suction OFF and
+exhaust ON; at 20% of ascent, neutralize all four outputs. Queue every motion in
+one ordered CP(100) group, including a preliminary vertical rise if needed, and
+confirm only final Home with neutral outputs and DI1 LOW. All speeds are 100%;
+accelerations are travel, approach, retract and travel respectively. There is
+no separate 50 ms pulse or release/clearance arrival wait. Return after failed
+tray acquisition uses the same sequence, without another perception request.
+
+Suction loss during Pause invokes the existing automatic put-back, even if the
 item may already have fallen; it then remains PAUSED at Home. Continue tries the
-remaining latched candidates. The return releases at the original taught pre-pick
+remaining latched candidates. That automatic route releases at the original taught pre-pick
 pose (`final-pick Z + prepick_height`), opens fingers, and issues a
 controller-timed 50 ms exhaust pulse. OPEN is commanded before the pulse; these
 are separate commands, not simultaneous electrical edges. Exhaust OFF and DI1
@@ -274,10 +284,10 @@ rise to exit transit carries the neutral events; clearance or safety Z must
 still provide a real upward retreat. The pulse is independent of the
 taught final-pick settling interval.
 
-The complete put-back route uses commanded speed 100% with taught travel
+The complete automatic drop put-back route uses commanded speed 100% with taught travel
 acceleration: safety rise, entry transit, taught pre-pick release, neutral
-retreat, exit transit and Home. This applies to explicit return, paused drop,
-and automatic suction-loss return. Explicit Recover uses taught travel rates. The global SpeedFactor still scales
+retreat, exit transit and Home. This applies to paused drop
+and active-Pick suction-loss return. Explicit Recover uses taught travel rates. The global SpeedFactor still scales
 these movements; returning an item does not change the slider setting.
 
 During an active Pick's held lift/tray travel, confirmed suction loss immediately
@@ -503,7 +513,7 @@ successful pickup, the first lift from final pick to pre-pick uses taught retrac
 speed and acceleration. Without a picked item, that retract uses speed 100% and
 taught travel acceleration. The following clearance rise also uses speed 100%
 and travel acceleration in both cases. Successful Pick travel to Tray Detect and
-missed-pick exit-transit/Home moves use taught travel rates. Every put-back motion,
+missed-pick exit-transit/Home moves use taught travel rates. Every automatic drop put-back motion,
 including its release approach, empty retreat and Home, uses speed 100% with taught travel acceleration.
 Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
