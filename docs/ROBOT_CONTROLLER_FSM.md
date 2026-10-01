@@ -1,5 +1,10 @@
 # Robot Controller — Finite State Machine
 
+Descent speed review: **2026-10-01**, baseline **`f57866a`** plus rule **192**.
+Explicit Return Item and Place Item use taught `speed.approach_percent` for
+the release descent (6% when taught as 6). Other segments retain speed 100%,
+with unchanged accelerations, timed I/O, queue ordering and completion gates.
+
 Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **191**.
 Explicit held Return shares placement's approach/drop/retract and 80% release /
 20% neutral timing, using the saved pre-pick drop target. Append exact joint Home
@@ -547,7 +552,7 @@ flowchart TD
     Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Valid; still at observation position| Queue["Admit three commands in one ordered CP100 group"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
-    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% OPEN + exhaust"]
+    Pre --> Release["MovLIO at taught approach speed: drop Z = tray surface + trayplace_height; 80% OPEN + exhaust"]
     Release --> Retract["MovLIO: pre-place; 20% fingers + vacuum neutral"]
     Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
     Accepted --> Monitor["Completion worker: final retract joint-FK + idle + execution; neutral and DI1 LOW"]
@@ -626,8 +631,9 @@ matching the first Item Pick's `pN_transit` height before pre-pick; that initial
 route skips the lower clearance point. Approach/drop/retract keep tray-target
 X/Y and detect-relative tool attitude through the final upward endpoint.
 Require Home Z above drop Z for timed descent/retract. No extra preliminary
-safety rise is added. Queue exactly three commands,
-at speed 100% for every segment. The external Tray Detect Position action also uses 100%.
+safety rise is added. Queue exactly three commands: pre-place and retract at
+speed 100%, release descent at taught `speed.approach_percent` (6% when taught
+as 6). The external Tray Detect Position action also uses 100%.
 Global SpeedFactor still scales those speeds and is never changed by placement.
 Retain Item Teach travel/approach/retract acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
@@ -874,7 +880,7 @@ to recheck after physical release, avoiding a latch that prevents clearing alarm
 ```mermaid
 flowchart TD
     Start["Confirmed stopped pose and retained return progress"] --> Kind{"Explicit return with trusted held item?"}
-    Kind -->|Yes| Queue["One queue: optional vertical rise → item XY at Home Z → saved pre-pick drop (release 80%) → retract Home Z (neutral 20%) → joint Home"]
+    Kind -->|Yes| Queue["One queue: optional vertical rise → item XY at Home Z → saved pre-pick drop at taught approach speed (release 80%) → retract Home Z (neutral 20%) → joint Home"]
     Queue --> Done["Confirm Home joints + idle/execution + neutral + DI1 LOW; mark RETURNED; READY"]
     Kind -->|Automatic / dropped| Released{"Release already confirmed?"}
     Released -->|No| Up["Approach via safety rise and entry park_transit if needed"]
@@ -891,8 +897,9 @@ flowchart TD
 Both routes use the saved pre-pick pose, **final-pick Z + taught pre-pick height**,
 with its original X/Y and attitude. Explicit Return Item shares the placement
 planner and release observer. Approach/drop/retract use the same 80%-descent
-OPEN/EXHAUST and 20%-ascent NEUTRAL events, with speed 100% and taught travel /
-approach / retract acceleration; final joint Home uses speed 100% and travel
+OPEN/EXHAUST and 20%-ascent NEUTRAL events. Descent uses taught approach speed
+(6% when taught as 6); approach/retract use speed 100%, with taught travel /
+approach / retract acceleration respectively. Final joint Home uses speed 100% and travel
 acceleration. All are queued in one ordered CP(100) group, including an optional
 current-XY vertical rise if more than 5 mm below Home Z. There is no midpoint
 arrival or separate 50 ms pulse; only final joint Home/idle/executed queue and

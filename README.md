@@ -111,8 +111,9 @@ Place never queues observation travel. The external Tray Detect Position action
 remains one direct queued MovL to its recorded joints.
 After fresh detection, placement queues pre-place → release
 (OPEN/exhaust at 80%) → retract at Home Z (neutral at 20%) in one group, with no Home move.
-Tray Detect Position and every placement segment use speed 100%, scaled by the
-operator's global SpeedFactor. Item Teach acceleration settings and Item Pick
+Placement descent uses Item Teach `speed.approach_percent` (6% when taught as 6).
+Tray Detect Position, pre-place travel and retract use speed 100%, all scaled by
+the operator's global SpeedFactor. Item Teach acceleration settings and Item Pick
 speeds remain unchanged.
 It has no pick settling, extra retract-height waypoint or intermediate release
 confirmation gate. **Place returns SUCCESS when all three commands are accepted.**
@@ -264,8 +265,9 @@ above the original item at Home Z → exact saved pre-pick pose → same X/Y at
 Home Z → taught joint Home. At 80% of descent, open fingers, suction OFF and
 exhaust ON; at 20% of ascent, neutralize all four outputs. Queue every motion in
 one ordered CP(100) group, including a preliminary vertical rise if needed, and
-confirm only final Home with neutral outputs and DI1 LOW. All speeds are 100%;
-accelerations are travel, approach, retract and travel respectively. There is
+confirm only final Home with neutral outputs and DI1 LOW. Descent uses taught
+approach speed (6% when taught as 6); all other motions use speed 100%.
+Accelerations are travel, approach, retract and travel respectively. There is
 no separate 50 ms pulse or release/clearance arrival wait. Return after failed
 tray acquisition uses the same sequence, without another perception request.
 

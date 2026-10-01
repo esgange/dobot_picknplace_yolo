@@ -43,8 +43,10 @@ def return_rig(height=.8):
 
 
 @pytest.mark.parametrize("height", [.3, .8, 1.0])
-def test_return_queues_release_retract_and_exact_home_before_any_arrival(height):
+@pytest.mark.parametrize("approach_speed", [6, 17])
+def test_return_queues_release_retract_and_exact_home_before_any_arrival(height, approach_speed):
     rig, source = return_rig(height)
+    rig.node.configuration.profile["speed"]["approach_percent"] = approach_speed
     rig.steps = iter([
         dict(outputs=RELEASE, inputs=OPEN),
         dict(outputs=0, inputs=OPEN),
@@ -67,8 +69,9 @@ def test_return_queues_release_retract_and_exact_home_before_any_arrival(height)
     assert (home.a, home.b, home.c, home.d, home.e, home.f) == pytest.approx(
         np.rad2deg(rig.node.configuration.home_joints))
     assert [list(request.param_value) for _, request in rig.requests] == [
-        ["user=0", "tool=0", "v=100", f"a={a}"]
-        for a in ([70] * offset + [70, 30, 40, 70])]
+        ["user=0", "tool=0", f"v={speed}", f"a={acceleration}"]
+        for speed, acceleration in (
+            [(100, 70)] * offset + [(100, 70), (approach_speed, 30), (100, 40), (100, 70)])]
     assert rig.node.managed.session.attempts[0].state == "RETURNED"
     assert rig.node.managed.session.held_index is None
     assert rig.node.managed.return_progress is None

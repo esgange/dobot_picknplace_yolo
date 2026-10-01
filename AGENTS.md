@@ -1171,6 +1171,14 @@ without repeating release. Keep automatic suction-loss/paused-drop put-back's
 existing 50 ms pulse and continuation behavior. No detector request, new setting,
 schema/interface change or live validation; update FSM/exports and the diary.
 
+Rule 192 makes the release descent in Place Item and explicit held Return Item
+use Item Teach speed.approach_percent (6% when taught as 6), superseding their
+100% descent rate. Apply through the shared release planner to hardware, Preview
+and Auto Run placement. Keep other segments at 100%, taught accelerations,
+global SpeedFactor, 80% release / 20% neutral, ordered queues and final feedback
+gates. No teach/schema/settings changes, hardware commands or application restart;
+update FSM/exports and the diary.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

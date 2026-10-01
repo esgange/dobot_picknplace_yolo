@@ -124,16 +124,19 @@ class QueueRig:
 
 
 @pytest.mark.parametrize('during_reply', [False, True])
-def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settling(during_reply):
+@pytest.mark.parametrize('approach_speed', [6, 17])
+def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settling(
+        during_reply, approach_speed):
     rig = QueueRig(during_reply=during_reply)
     rig.node.configuration.profile["motion"]["trayplace_height"] = 42.5
+    rig.node.configuration.profile["speed"]["approach_percent"] = approach_speed
     rig.run()
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
     assert rig.order[:3] == ['MovL', 'MovLIO', 'MovLIO']
     assert all(not request.mode for _, request in rig.requests)
     assert [list(request.param_value) for _, request in rig.requests] == [
-        ['user=0', 'tool=0', 'v=100', f'a={acceleration}']
-        for acceleration in (70, 30, 40)]
+        ['user=0', 'tool=0', f'v={speed}', f'a={acceleration}']
+        for speed, acceleration in ((100, 70), (approach_speed, 30), (100, 40))]
     assert [request.c for _, request in rig.requests] == pytest.approx([800., 292.5, 800.])
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])

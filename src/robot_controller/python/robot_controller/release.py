@@ -25,7 +25,8 @@ def release_targets(release_pose, settings, home_matrix, *, prefix):
             events = gripper_open_events(80) + vacuum_exhaust_events(80)
         elif name == "retract":
             events = gripper_neutral_events(20) + vacuum_neutral_events(20)
-        result.append(Target(f"{prefix}_{name}", point, 100,
+        speed = settings["speed"]["approach_percent"] if name == "release" else 100
+        result.append(Target(f"{prefix}_{name}", point, speed,
                              settings["acceleration"][rate], motion_io=events))
     return tuple(result)
 

@@ -50,7 +50,7 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
     assert all(np.allclose(p.matrix[:3, :3], expected) for p in plan[:3])
     assert all(np.allclose(p.matrix[:3, 2], detect[:3, 2]) for p in plan[:3])
     assert np.array_equal(plan[-1].matrix, plan[0].matrix)
-    assert [p.speed_percent for p in plan] == [100, 100, 100]
+    assert [p.speed_percent for p in plan] == [100, 10, 100]
     assert [p.acceleration_percent for p in plan] == [70, 30, 40]
     assert not plan[0].motion_io
     assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
@@ -81,7 +81,7 @@ def test_tray_drop_height_is_independent_of_pick_heights(
     assert place[0].matrix[2, 3] > place[1].matrix[2, 3]
     assert np.array_equal(place[0].matrix, place[2].matrix)
     assert [p.speed_percent for p in pick] == [80, 80, 80, 10, 20, 80]
-    assert [p.speed_percent for p in place] == [100] * 3
+    assert [p.speed_percent for p in place] == [100, 10, 100]
 
 
 @pytest.mark.parametrize("surface_z", [.74, .75])

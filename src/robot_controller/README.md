@@ -73,7 +73,7 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | Motion | Return Item | Place Item |
 | --- | --- | --- |
 | MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and tray attitude plus rotation at Home Z |
-| MovLIO descent | Exact saved pre-pick target | Detected surface Z + trayplace_height |
+| MovLIO descent | Exact saved pre-pick target at taught approach speed | Detected surface Z + trayplace_height at taught approach speed |
 | At 80% descent | DO2 OFF, DO14 ON, DO13 OFF, DO1 ON | Same |
 | MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
 | At 20% ascent | DO2/DO14/DO1/DO13 OFF | Same |
@@ -83,7 +83,8 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 Return queues every target as one ordered CP(100) group. When starting more than
 5 mm below Home Z, prepend a vertical MovL at current X/Y/attitude in that same
 group. It has no intermediate physical-arrival, release, DI12 or exhaust-pulse
-wait. All motions use speed 100%, scaled by global SpeedFactor; approach/Home
+wait. Descent uses Item Teach `speed.approach_percent` (6% when taught as 6);
+all other motions use speed 100%, scaled by global SpeedFactor. Approach/Home
 use taught travel acceleration, descent uses approach acceleration, and retract
 uses retract acceleration. The 80% release happens before the pre-pick endpoint.
 The shared planner/observer keeps the placement I/O timing and release supervision
@@ -246,9 +247,10 @@ Then queue exactly three Cartesian commands:
 | MovLIO | Release height | At 80%: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON |
 | MovLIO | Back to pre-place | At 20%: DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 
-Tray Detect Position and all three placement commands use **speed 100%**,
-independent of Item Teach speed settings. Global SpeedFactor still scales them;
-placement never changes that slider. Acceleration remains Item Teach travel for
+Placement descent uses **Item Teach `speed.approach_percent`**, giving 6% when
+the taught approach speed is 6%. Tray Detect Position, pre-place and retract use
+**speed 100%**. Global SpeedFactor still scales them; placement never changes
+that slider. Acceleration remains Item Teach travel for
 Tray Detect Position, then travel / approach / retract for the three-command
 queue. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust

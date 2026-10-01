@@ -7823,6 +7823,25 @@ Never use a floating “latest” version in an issue, script, or deployment not
   30dc1f880810869cc586b89ece5dec8425e9a9acffbcf51ea97f419b5a83e462 verified.
   No physical hardware commands or running-application restart.
 
+### 2026-10-01 — Rule 192: use taught approach speed for placement and return descent
+
+- User requested step 3 (Descend) at 6%, matching approach speed. The shared
+  release planner now reads Item Teach speed.approach_percent for that segment,
+  so a taught value of 6 produces v=6 without introducing a separate constant
+  or setting. Applies to explicit held Return Item and Place Item, including
+  Auto Run placement and the shared placement Preview plan.
+- Preserve 100% travel/retract/Home, all accelerations, global SpeedFactor,
+  80%-descent release, 20%-ascent neutral, ordered queue admission and terminal
+  feedback checks. Automatic suction-loss put-back retains its existing rates.
+  Teach artifacts and schemas are unchanged. Update READMEs and FSM/exports.
+- Validation: **886 controller tests passed**. Real transport with synthetic
+  feedback verifies v=6 and v=17 for both descent routes, 100% on other segments,
+  unchanged acceleration/I/O and queue admission before final arrival. Controller
+  build, scoped 100-column flake8 and diff checks pass. Regenerated nine FSM SVGs
+  and a nine-page A3 PDF; source SHA-256
+  d989ba7117b7c78a494cc4b21b2ee8ec86b5de2733190646210c75a8184a0b4f verified.
+  No physical hardware command or running-application restart.
+
 ### Future entry template
 
 ```text
