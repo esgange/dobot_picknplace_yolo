@@ -324,7 +324,7 @@ invalidated. See [NOTICE.md](NOTICE.md) for attribution.
 
 The top row follows Item Teach: **YOLO Detect**, **Simulate Trigger**, and
 **Armed**. Preview and arming are separate. GUI startup and profile loading leave
-Armed OFF; Armed ON is red and advertises `/tray_detect/get_tray_pose_v2` using
+Armed OFF; Armed ON is red and advertises `/tray_detect/get_tray_pose_v3` using
 [`tray_perception_interfaces/srv/GetTrayPose`](../tray_perception_interfaces/README.md).
 The versioned endpoint separates this depth-capable layout from the earlier
 pose-only service. No legacy endpoint is advertised or tried. Rebuild and restart
@@ -463,7 +463,11 @@ and its exact quality settings. The provider takes fresh synchronized RGB/depth
 after the trigger, performs the usual single tray inference, and samples the
 requested target using original registered-depth pixels and their own intrinsics.
 It uses the same median/MAD acceptance as Item Pick, excludes outside-tray samples,
-and rejects invalid targets, clipped footprints or insufficient depth. The saved
+and requires the saved `minimum_depth_fraction` of all original circle pixels
+to remain valid (default 50%). There is no fixed sample-count minimum; empty
+footprints and zero valid pixels fail. Item Teach displays the shared threshold
+as **Minimum valid depth (%)**. Invalid targets, clipped footprints or
+insufficient valid percentage are rejected. The saved
 plane remains unchanged. A depth failure returns ERROR without killing/disarming
 the native worker/provider. Ordinary pose requests keep depth optional.
 
@@ -474,4 +478,5 @@ evidence. The controller checks every requested setting, source identity, result
 frame, synchronization and after-trigger timestamps before motion. An invalid
 response never becomes a placement target. Perception issues no robot or I/O calls.
 Rebuild these interfaces and restart all tray providers and controller clients
-together; `GetTrayPose`'s wire definition changed.
+together; the v3 `PlacementDepthRequest` removes `minimum_depth_samples`.
+Earlier tray endpoints are not used as fallbacks.

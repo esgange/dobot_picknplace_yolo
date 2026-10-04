@@ -146,15 +146,14 @@ def recover_item_fields(path, *, root=None):
     accept("pose_candidates", count, set(retry) == {"pose_candidates"}
            and type(count) is int and 1 <= count <= 1000)
     for key in core.QUALITY_DEFAULTS:
-        if key == "minimum_depth_samples":
-            number("quality", key, integer=True, low=3, high=100000)
-        else:
-            high = (1 if key == "minimum_depth_fraction" else
-                    30 if key == "request_timeout_sec" else None)
-            # Quality field names explicitly encode seconds/mm; require corresponding units.
-            unit = (("distance", "mm") if key.endswith("_mm") else
-                    ("time", "s") if key.endswith("_sec") else None)
-            number("quality", key, low=0.000001, high=high, unit=unit)
+        high = (1 if key == "minimum_depth_fraction" else
+                30 if key == "request_timeout_sec" else None)
+        # Quality field names explicitly encode seconds/mm; require corresponding units.
+        unit = (("distance", "mm") if key.endswith("_mm") else
+                ("time", "s") if key.endswith("_sec") else None)
+        number("quality", key, low=0.000001, high=high, unit=unit)
+    if "minimum_depth_samples" in group("quality"):
+        draft.issues.append("Removed fixed depth sample count; review minimum valid depth (%)")
     for first, second, invalid in (
         ("height", "width", lambda a, b: a < b),
         ("depth_min_mm", "depth_max_mm", lambda a, b: a >= b),

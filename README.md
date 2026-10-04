@@ -474,7 +474,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-10 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-11 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -503,21 +503,21 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-10 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-11 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-10 profiles; they never recover old files.
+accept only complete schema-11 profiles; they never recover old files.
 The removed zheight_offset is not recovered. Old retract_height is blank in GUI
 drafts because it now means extra clearance above pre-pick, not above pick.
 Schema-7 and older drafts also leave `pick_rotation` blank; explicitly enter
-0–90° before saving schema 10. Schema-8 and older drafts leave all four optional
+0–90° before saving schema 11. Schema-8 and older drafts leave all four optional
 bin-wall clearance fields blank for explicit review. Schema-9 and older drafts
 leave `trayplace_height` blank; enter the intended tray clearance explicitly and
 Save before loading the new profile into the controller or deploying it for
 headless use. No automatic sum of pick heights or default is substituted.
 
-Item Teach schema 10 provides optional inward clearances for Bin Teach edges
+Item Teach schema 11 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
 valid inset is projected in light blue on both RGB and registered depth. The
 green ROI ignores a detection only when its platform-plane footprint is fully
@@ -544,7 +544,7 @@ The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
-never silently defaulted. Production rejects schemas 1–9.
+never silently defaulted. Production rejects schemas 1–10.
 Motion saves `standoff_height`, `prepick_height`, `retract_height` and
 `trayplace_height`. The new required, finite, nonnegative millimetre field is
 below `pick_rotation` at the bottom of **Vertical motion — mm**.
@@ -762,6 +762,13 @@ does not synchronize `runtime_teach/`; compare file hashes before switching mode
 Headless requires production profiles, whereas GUIs can retain incomplete drafts
 and unsaved edits.
 
+Depth coverage uses **Minimum valid depth (%)** in Item Teach (default 50%).
+Item picks and tray placement depth apply this percentage after range/outlier
+filtering over the full physical sampling circle, with no fixed pixel-count
+minimum. Schema 11 removes the count field; open older Item profiles, review and
+Save before controller reload or manual headless deployment. Restart Tray
+Teach/Detect and Robot Controller together for `/tray_detect/get_tray_pose_v3`.
+
 ## Tray Teach
 
 The separate `tray_perception` package currently provides the read-only
@@ -861,7 +868,7 @@ controller-facing service and holds its exact returned RGB/depth result for
 **10 seconds after display**, including empty results. Then live preview resumes
 and the simulated pose clears. Click RGB to resume sooner; armed requests remain
 independent throughout. **Armed ON**
-advertises `/tray_detect/get_tray_pose_v2`; requests supply the saved YAML SHA-256
+advertises `/tray_detect/get_tray_pose_v3`; requests supply the saved YAML SHA-256
 and receive one tray or an explicit no-tray result. Settings changes disarm.
 The versioned endpoint carries the placement-depth contract; there is no fallback
 to the old endpoint. Restart Tray Teach/Detect and Robot Controller together after

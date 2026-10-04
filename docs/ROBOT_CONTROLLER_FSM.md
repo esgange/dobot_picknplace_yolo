@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Depth coverage review: **2026-10-04**, baseline **`14e4dfd`** plus rule **208**.
+Item schema 11 removes the fixed depth sample-count field. Item poses and tray
+placement require the taught fraction of all original sampling-circle pixels to
+survive containment, range and MAD filtering (default 50%). Empty/zero-valid
+footprints fail. Tray provider and controller validate the same fraction before
+placement admission through `/tray_detect/get_tray_pose_v3`; old endpoints cannot
+satisfy readiness. GUI recovery retains older percentages for explicit review
+and Save. No motion, I/O, freshness, source-binding or retry behavior changes.
+
 Placement-first acquisition review: **2026-10-04**, baseline **`b761fdf`** plus rule **206**.
 After Pick confirms Tray Detect, acquire tray pose/depth and obtain acceptance of
 the complete approach/release/retract queue before starting the next-bin request.
@@ -435,8 +444,8 @@ Tooltips explain the applicable prerequisites. Home and Tray
 Detect Position have no perception-readiness requirement. Keep request-time source
 and fresh-pose validation. Rebuild/restart status publishers and clients together.
 
-Tray readiness and requests use `/tray_detect/get_tray_pose_v2` exclusively. The
-unversioned endpoint used before placement-depth integration cannot satisfy a new
+Tray readiness and requests use `/tray_detect/get_tray_pose_v3` exclusively. The
+unversioned and v2 endpoints cannot satisfy a new
 Place goal; there is no mixed-layout fallback. Restart Tray Teach/Detect and
 Robot Controller after updating. Provider executor failures revoke arming and
 report a terminal error with traceback, rather than retaining a silent frozen
@@ -617,7 +626,7 @@ claim PLACED or RETURNED.
 ```mermaid
 flowchart TD
     Request["PlaceItem: READY/HOLDING, empty or held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
-    Observe -->|Yes immediately| Depth["Fresh tray pose then placement depth; first attempt + 2 retries; reacquire both on failure"]
+    Observe -->|Yes immediately| Depth["Fresh tray pose/depth; valid pixels meet taught percentage; at most 3 attempts"]
     Observe -->|No| Travel["Direct joint-target MovL to Tray Detect; speed 100%; preserve outputs"]
     Travel --> Arrive["Confirm execution, saved joints and idle before detection"]
     Arrive --> Depth
@@ -671,8 +680,10 @@ Bin routes retain their existing clearance logic.
 
 Use a fresh after-trigger synchronized RGB/depth observation and calibrated
 RGB-time TF. Preserve requested base X/Y; obtain surface base Z from target-ray
-filtered median depth. Reuse Item Teach physical diameter, range/MAD/count/fraction
-checks, with samples restricted to the tray. Inadequate/clipped depth fails before
+filtered median depth. Reuse Item Teach physical diameter, range/MAD and valid
+pixel percentage, with samples restricted to the tray and all circle pixels in
+the denominator. Empty/zero-valid samples fail; no count floor remains.
+Inadequate/clipped depth fails before
 any placement command. Hash/provider/plane checks remain strict.
 
 Retry missing pose/depth, no-result/error/BUSY responses and unanswered requests
@@ -1080,6 +1091,7 @@ Names below are relative to `/robot_controller/`.
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Auto Run next-bin request (internal) | Owning action has confirmed Tray Detect, acquired tray pose/depth and accepted all three placement commands; another item remains; no cancellation; no placement-completion wait |
+| Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
 | `return_item` service | Started eligible managed state and trusted held source; during Place, only exhausted-acquisition PAUSED before release admission; no conflicting request |

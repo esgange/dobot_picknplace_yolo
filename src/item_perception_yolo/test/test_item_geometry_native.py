@@ -410,6 +410,59 @@ def exercise_geometry():
     print("geometry: MAD, colors, centers, dimensions, ranking, masks/OBB, tilted rays passed")
 
 
+def exercise_resolution_depth_coverage():
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import generate_candidates, project
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+
+    transform = np.diag([1., -1., -1., 1.])
+    transform[2, 3] = .8
+    mount = np.eye(4)
+    mount[0, 3] = .04
+    physical = np.array([[-.04, -.016, 0.], [.04, -.016, 0.],
+                         [.04, .016, 0.], [-.04, .016, 0.]])
+    settings = {"geometry_source": "mask", "bin_clearance": dict.fromkeys(
+        ("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
+        "geometry": {"height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 10.},
+        "quality": dict(QUALITY_DEFAULTS), "yolo": {"class_ids": [1], "confidence": .5}}
+    for scale in (1, 2):
+        width, height, focal = 640 * scale, 360 * scale, 300. * scale
+        center = np.array([width / 2, height / 2])
+        camera = {"k": [focal, 0., center[0], 0., focal, center[1], 0., 0., 1.],
+                  "d": [0.] * 5}
+        context = {"camera": camera, "depth_camera": camera,
+                   "platform_from_optical": transform.tolist(),
+                   "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]],
+                   "pick_planning": {
+                       "home_matrix": np.eye(4).tolist(),
+                       "base_from_platform": np.eye(4).tolist(),
+                       "link6_from_robot_camera": mount.tolist(),
+                       "pick_rotation_deg": 0., "standoff_height_mm": 0.}}
+        polygon = project(physical, camera, transform, cv2, np).astype(np.float32)
+        item = {"index": 0, "class_id": 1, "class_name": "test", "confidence": .9,
+                "polygon": polygon, "rectangle": polygon, "center": center}
+        yy, xx = np.mgrid[:height, :width]
+        circle = np.argwhere((xx - center[0])**2 + (yy - center[1])**2
+                             <= (.005 * focal / .8)**2)
+        total = len(circle)
+        for good in (0, total // 2, (total + 1) // 2, total):
+            depth = np.zeros((height, width), np.uint16)
+            depth[tuple(circle[:good].T)] = 700
+            _, _, candidates, rejected = generate_candidates(
+                [item], np.zeros((height, width, 3), np.uint8), depth,
+                context, settings, cv2, np)
+            if good / total >= .5:
+                assert len(candidates) == 1 and not rejected
+                assert candidates[0]["accepted_depth_count"] == good
+                assert candidates[0]["rejected_depth_count"] == total - good
+                assert np.allclose(candidates[0]["position"], [0., 0., .1])
+                if scale == 1:
+                    assert good < 30
+            else:
+                assert not candidates and "requires 50.0%" in rejected[0]["reason"]
+
+
 def exercise_registered_depth():
     import cv2
     import numpy as np
@@ -613,9 +666,9 @@ def exercise_robot_camera_rejects_before_ranking():
     assert np.any(np.all(depth_view == [255, 0, 255], axis=2))
 
 
-@pytest.mark.parametrize("exercise", ["exercise_geometry", "exercise_registered_depth",
-                                     "exercise_candidate_batch_overlay",
-                                     "exercise_robot_camera_rejects_before_ranking"])
+@pytest.mark.parametrize("exercise", [
+    "exercise_geometry", "exercise_registered_depth", "exercise_resolution_depth_coverage",
+    "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

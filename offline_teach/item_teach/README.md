@@ -17,7 +17,7 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 10 groups data by purpose. Production rejects schemas 1–9;
+Strict item schema 11 groups data by purpose. Production rejects schemas 1–10;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
@@ -37,7 +37,7 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 | `geometry_source` | Explicit mask, OBB, or none for RGB-only preview |
 | `geometry` | Long-side `height`, short-side `width`, ± `tolerance`, `pickdepth_radius` (all mm; the last key means diameter, default 30 mm) |
 | `bin_clearance` | Optional inward mm offsets for directed Bin Teach edges `p1_p2`, `p2_p3`, `p3_p4`, `p4_p1`; null means no inset on that edge |
-| `quality` | Input/TF age, RGB-depth synchronization, request deadline, depth range, minimum retained-depth count/fraction |
+| `quality` | Input/TF age, RGB-depth synchronization, request deadline, depth range, minimum retained-depth fraction (0–1, displayed as a percentage) |
 | `controller_contract` | Validation-only stage, motion disabled, Link6, vertical routine, start/end home and fixed I/O map |
 
 `motion.trayplace_height` is the required finite, nonnegative Link6 drop height

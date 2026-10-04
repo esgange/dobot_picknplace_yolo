@@ -233,7 +233,7 @@ The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
 Armed ON is highlighted red so advertised production pose-service state cannot
 be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
-a complete saved/loaded schema-10 profile, its verified model, matching current
+a complete saved/loaded schema-11 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
 first. It neither advertises/calls the pose service nor issues robot commands.
 
@@ -291,7 +291,7 @@ recorded only in the existing bounded package events.
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict production item schema 10, class filters and quality gates remain enforced.
+strict production item schema 11, class filters and quality gates remain enforced.
 
 ### Pick-oriented RGB overlays
 
@@ -398,7 +398,7 @@ if weight replacement precedes a YAML write failure, restore the original model.
 YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
 never silently load. A success dialog names both files; the original external
 model remains untouched and the pair works without it.
-**Load Item Teach** accepts only that directory. Complete schema-10 files load
+**Load Item Teach** accepts only that directory. Complete schema-11 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
 verification, YOLO ON and fresh station inputs remain mandatory. Loading
@@ -414,7 +414,7 @@ The warning/Activity log explains every cleared field. Missing internal
 Recovery also applies to named-file startup prefill; any independently verified
 paired model then loads automatically. Missing/changed pairs never execute.
 No recovered draft can simulate, arm or be validated in the controller until
-reviewed and saved as a strict schema-10 pair. Same known item name overwrites
+reviewed and saved as a strict schema-11 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
@@ -450,7 +450,7 @@ zero means the detected surface. Placement drop Z = detected tray surface Z +
 `trayplace_height`, independent of pick heights. Robot Controller and Preview
 use this same endpoint; approach/retract remain at taught Home Z above it.
 New profiles start with this height blank. Schema-9 and older files recover with
-it blank too; enter the intended clearance and Save a valid schema-10 pair before
+it blank too; enter the intended clearance and Save a valid schema-11 pair before
 controller use or runtime deployment. Loading never invents or writes a height.
 `pick_rotation` is a separate required 0–90° value. It is an unsigned offset
 from the detected short-axis line; Robot Controller chooses the lower-travel
@@ -487,12 +487,12 @@ percentages: travel/Home, final approach, pick-to-prepick retract. All must be
 integers 1–100. New-profile speed is explicitly 100/6/6 and acceleration
 100/100/100; loaded profiles retain their exact values. Speed and acceleration
 edits disarm and invalidate saved eligibility without interrupting read-only
-inference or automatically saving/commanding hardware. Save writes schema 10 with
+inference or automatically saving/commanding hardware. Save writes schema 11 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
 global SpeedFactor starts at 100% and the controller can adjust it explicitly
 while Live/idle, without rewriting these taught per-command rates. Production
-rejects schemas 1–9; old GUI recovery drafts leave missing/invalid rates,
+rejects schemas 1–10; old GUI recovery drafts leave missing/invalid rates,
 `pick_rotation`, `trayplace_height` and the four newer bin-clearance fields blank
 until the operator explicitly reviews and saves them. Shared schema-6 named-file
 UI state is unchanged.
@@ -603,7 +603,7 @@ blocking service request. All native operations are serialized in one worker.
   rejected instead of silently shrinking the sampling area.
 - Remove invalid/non-positive/out-of-range depths, calculate median and MAD,
   and retain `abs(depth - median) <= 3 * 1.4826 * MAD`. When MAD=0 only readings
-  equal to the median pass. Minimum sample count/fraction still apply. Median
+  equal to the median pass. Minimum valid-pixel percentage still applies. Median
   retained camera depth back-projects the exact center pixel, then the complete
   3D point is transformed into `platform_reference`. Never append optical depth
   to platform-plane XY. Depth Z does not alter projected dimensions.
@@ -637,7 +637,18 @@ rejected before their candidate poses can be used for picking.
 
 Initial form values are explicit and saved in `quality`: input age 0.5 s,
 RGB/depth separation 0.1 s, robot TF age 1 s, request deadline 10 s, at least
-30 accepted samples and 50% of circle pixels, and depth 200–1000 mm. There is no
+50% valid circle pixels, and depth 200–1000 mm. **Minimum valid depth (%)** is
+displayed on a 0–100 scale (greater than zero) and stored as
+`quality.minimum_depth_fraction` in (0, 1]. The numerator is the pixels retained
+after range/MAD filtering and item-mask inclusion; the denominator is every
+original depth pixel in the physical sampling circle. Empty footprints and
+zero valid pixels fail. There is no additional fixed pixel-count minimum.
+Tray placement uses this same saved percentage, with tray containment instead
+of the item mask. Plane-based tray pose measurement itself needs no live depth.
+Schema 11 removes `minimum_depth_samples`. Open an older profile in Item Teach,
+review the retained percentage and Save; then reload the controller and manually
+deploy the updated pair before headless startup. Recovery does not save or arm.
+There is no
 result-age field: an accepted batch remains valid until invalidated or replaced.
 Edit and save these fields deliberately; a file missing them is rejected.
 Frames/overlays are bounded transient memory, never saved as an accumulating

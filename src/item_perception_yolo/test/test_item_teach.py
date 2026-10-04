@@ -68,7 +68,7 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
-    assert profile["schema_version"] == 10
+    assert profile["schema_version"] == 11
     assert profile["pick_rotation"] == 15.0
     assert profile["motion"]["trayplace_height"] == 40.0
     assert "result_max_age_sec" not in profile["quality"]
@@ -258,13 +258,13 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    for old_version in range(1, 10):
+    for old_version in range(1, 11):
         profile["schema_version"] = old_version
-        with pytest.raises(ValueError, match="exactly 10"):
+        with pytest.raises(ValueError, match="exactly 11"):
             core.validate_profile(profile)
 
 
-@pytest.mark.parametrize("schema", [9, 10])
+@pytest.mark.parametrize("schema", [9, 10, 11])
 def test_deployed_reader_requires_explicit_current_placement_height(pair, schema):
     root, _, path, profile = pair
     directory = root / "runtime_teach"
@@ -275,8 +275,8 @@ def test_deployed_reader_requires_explicit_current_placement_height(pair, schema
         del profile["motion"]["trayplace_height"]
     deployed.write_text(yaml.safe_dump(profile))
     deployed.with_suffix(".pt").write_bytes(path.with_suffix(".pt").read_bytes())
-    if schema == 9:
-        with pytest.raises(ValueError, match="exactly 10"):
+    if schema < 11:
+        with pytest.raises(ValueError, match="exactly 11"):
             core.load_item_profile(deployed, root=root, deployment=True)
     else:
         loaded, _ = core.load_item_profile(deployed, root=root, deployment=True)
@@ -324,7 +324,7 @@ def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair)
     assert draft.model_path == path.with_suffix(".pt")
     assert draft.model_sha256 == profile["model"]["sha256"]
     assert "retry_limit" in " ".join(draft.issues)
-    with pytest.raises(ValueError, match="exactly 10"):
+    with pytest.raises(ValueError, match="exactly 11"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -451,7 +451,7 @@ def test_schema_nine_recovery_requires_explicit_trayplace_height(pair, extra_fie
     assert draft.home == profile["home"]
     assert draft.model_path == path.with_suffix(".pt")
     assert any("predates explicit trayplace_height" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 10"):
+    with pytest.raises(ValueError, match="exactly 11"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -479,7 +479,7 @@ def test_schema_seven_recovery_requires_explicit_pick_rotation(pair):
     draft = recover_item_fields(path, root=root)
     assert draft.values["pick_rotation"] is None
     assert any("predates explicit pick_rotation" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 10"):
+    with pytest.raises(ValueError, match="exactly 11"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -493,7 +493,7 @@ def test_schema_eight_recovery_requires_explicit_bin_clearance(pair):
     draft = recover_item_fields(path, root=root)
     assert all(draft.values[key] is None for key in core.BIN_CLEARANCE_FIELDS)
     assert any("predates optional bin-wall clearance" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 10"):
+    with pytest.raises(ValueError, match="exactly 11"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -563,7 +563,7 @@ def test_schema_four_recovery_leaves_unknown_rates_blank_and_does_not_write(pair
         assert draft.values[key] is None
         assert draft.values[f"acceleration_{key}"] is None
     assert path.read_bytes() == original
-    with pytest.raises(ValueError, match="exactly 10"):
+    with pytest.raises(ValueError, match="exactly 11"):
         core.load_item_profile(path, root=root)
 
 

@@ -1092,6 +1092,32 @@ def test_external_change_save_failure_keeps_target_and_disarms(window, paired_te
     window.node.disarm.assert_called()
 
 
+@pytest.mark.parametrize("old_schema", [False, True])
+def test_depth_percentage_load_recovery_and_save(
+        window, paired_teach, tmp_path, monkeypatch, old_schema):
+    path, profile, _, _, _ = paired_teach
+    if old_schema:
+        profile["schema_version"] = 10
+        profile["quality"]["minimum_depth_samples"] = 30
+        path.write_text(yaml.safe_dump(profile))
+    window._load_dialog()
+    finish_model_job(window)
+    assert window.recovered_draft is old_schema
+    assert "minimum_depth_samples" not in window.inputs
+    field = window.inputs["minimum_depth_fraction"]
+    assert float(field.text()) == 50.
+    field.setText("75")
+    assert window._quality_settings()["minimum_depth_fraction"] == .75
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
+    window._save()
+    saved, _ = core.load_item_profile(path, root=tmp_path)
+    assert saved["schema_version"] == 11
+    assert saved["quality"]["minimum_depth_fraction"] == .75
+    assert "minimum_depth_samples" not in saved["quality"]
+    window._load(path, prefill=True)
+    assert float(field.text()) == 75.
+
+
 def test_old_teach_requires_review_then_overwrites_with_backup(
         window, paired_teach, tmp_path, monkeypatch):
     path, profile, settings, _, _ = paired_teach
@@ -1126,7 +1152,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 10 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 11 and saved["retry"] == {"pose_candidates": 3}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings

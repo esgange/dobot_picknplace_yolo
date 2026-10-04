@@ -5,7 +5,7 @@ from camera_calibration_gui.calibration_core import quaternion_to_rotation_matri
 from item_perception_yolo.item_geometry import (
     objects_from_result, on_plane, project, rays, reproject_pixels, filter_depth, rectangle_axes,
     depth_sampling_circle, shade_masks)
-from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS, depth_coverage_ok
 from item_perception_yolo.item_rviz_native import colored_voxels
 from item_perception_yolo.yolo_worker_native import render_result
 
@@ -63,9 +63,11 @@ def _placement_depth(request, data, cv2, np):
     accepted, median, sigma = filter_depth(
         values, settings["depth_min_mm"], settings["depth_max_mm"], cv2, np)
     good, total = int(accepted.sum()), len(pixels)
-    if (good < settings["minimum_depth_samples"] or not total
-            or good / total < settings["minimum_depth_fraction"]):
-        raise ValueError("Insufficient accepted placement depth samples/fraction")
+    if not depth_coverage_ok(good, total, settings["minimum_depth_fraction"]):
+        fraction = good / total if total else 0.
+        raise ValueError(
+            f"Insufficient valid placement depth pixels: {good}/{total} ({fraction:.1%}); "
+            f"requires {settings['minimum_depth_fraction']:.1%}")
     measured = optical[:3, :3] @ (rays([center], context["camera"], cv2, np)[0]
                                   * median / 1000) + optical[:3, 3]
     # X/Y are the requested tray coordinates. Only height comes from depth.

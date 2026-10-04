@@ -3,7 +3,7 @@
 import math
 
 from .planar_bin_roi import border_in_optical
-from .item_teach_core import inset_bin_roi
+from .item_teach_core import depth_coverage_ok, inset_bin_roi
 from .pick_planning import candidate_pose_in_base, select_pick_attitude
 
 
@@ -568,9 +568,11 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                           (0, 255, 255), 2)
             good, total = int(accepted.sum()), len(pixels)
             label += f" depth {good}/{total}"
-            if (good < quality["minimum_depth_samples"] or total == 0
-                    or good / total < quality["minimum_depth_fraction"]):
-                raise ValueError("insufficient accepted depth samples/fraction")
+            if not depth_coverage_ok(good, total, quality["minimum_depth_fraction"]):
+                fraction = good / total if total else 0.
+                raise ValueError(
+                    f"insufficient valid depth pixels: {good}/{total} ({fraction:.1%}); "
+                    f"requires {quality['minimum_depth_fraction']:.1%}")
             optical_point = rays([center], camera, cv2, np)[0] * median / 1000
             position = transform[:3, :3] @ optical_point + transform[:3, 3]
             if not inside(position[:2], roi, cv2, np):

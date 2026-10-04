@@ -279,6 +279,20 @@ def test_disarm_invalidates_request_but_old_accepted_observation_remains_valid(s
     assert result.success and len(result.candidates) == 1
 
 
+@pytest.mark.parametrize("good,bad,valid", [
+    (1, 0, True), (2, 2, True), (2, 3, False), (0, 0, False),
+    (0, 10, False), (-1, 10, False), (100, 100, True), (100, 101, False)])
+def test_native_depth_contract_uses_coverage_without_fixed_count(service_node, good, bad, valid):
+    node, candidate = service_node
+    candidate.update(accepted_depth_count=good, rejected_depth_count=bad)
+    result = node.infer.return_value["metadata"]
+    if valid:
+        detector.validate_candidates(result, node.settings)
+    else:
+        with pytest.raises(RuntimeError, match="depth-quality contract"):
+            detector.validate_candidates(result, node.settings)
+
+
 def test_native_protocol_candidate_checks(service_node):
     node, candidate = service_node
     result = {"candidates": [candidate]}

@@ -22,7 +22,7 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 10
+ITEM_SCHEMA_VERSION = 11
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height", "trayplace_height")
@@ -39,7 +39,7 @@ NEW_PROFILE_PICK_ROTATION_DEG = 0.0
 QUALITY_DEFAULTS = {
     "input_max_age_sec": 0.5, "sync_tolerance_sec": 0.1,
     "robot_tf_max_age_sec": 1.0, "request_timeout_sec": 10.0,
-    "minimum_depth_samples": 30, "minimum_depth_fraction": 0.5,
+    "minimum_depth_fraction": 0.5,
     "depth_min_mm": 200.0, "depth_max_mm": 1000.0,
 }
 IO_MAP = {
@@ -244,7 +244,6 @@ def validate_quality(quality):
     _fields(quality, QUALITY_DEFAULTS, "quality")
     for key in QUALITY_DEFAULTS:
         _number(quality[key], key, low=0.000001)
-    _integer(quality["minimum_depth_samples"], "minimum_depth_samples", low=3, high=100000)
     if quality["minimum_depth_fraction"] > 1:
         raise ValueError("minimum_depth_fraction must be <= 1")
     if quality["depth_min_mm"] >= quality["depth_max_mm"]:
@@ -253,6 +252,13 @@ def validate_quality(quality):
         raise ValueError("Synchronization tolerance cannot exceed input freshness")
     if quality["request_timeout_sec"] > 30:
         raise ValueError("Request deadline cannot exceed 30 seconds")
+
+
+def depth_coverage_ok(accepted, total, minimum_fraction):
+    """Valid depth coverage of the original sampling footprint, independent of pixel count."""
+    return (type(accepted) is int and type(total) is int
+            and 0 < accepted <= total
+            and accepted / total >= minimum_fraction)
 
 
 def detection_settings(settings):
@@ -362,9 +368,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 10 "
-            "(explicit trayplace_height above the tray surface); "
-            "schemas 1–9 are unsupported; no compatibility reader")
+            "Item teach schema_version must be exactly 11 "
+            "(percentage-only depth coverage); "
+            "schemas 1–10 require review and Save in Item Teach; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",

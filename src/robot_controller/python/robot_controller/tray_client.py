@@ -7,6 +7,7 @@ import time
 
 import numpy as np
 from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
+from item_perception_yolo.item_teach_core import depth_coverage_ok
 from tray_perception.core import ORIGIN_CONVENTION
 from tray_perception.placement import sampling_from_item
 from tray_perception.contract import SERVICE_NAME as SERVICE
@@ -70,10 +71,8 @@ def validate_result(result, config, sampling, start_ns, now_ns):
                 or not 0 < sampling["y_mm"] / 1000 < pose.extent_y
                 or not np.allclose([pose.extent_x, pose.extent_y],
                                    [pose.width, pose.length], atol=1e-6)
-                or not sample.total_samples >= sample.accepted_samples
-                >= sampling["minimum_depth_samples"]
-                or sample.accepted_samples / sample.total_samples
-                < sampling["minimum_depth_fraction"]
+                or not depth_coverage_ok(sample.accepted_samples, sample.total_samples,
+                                         sampling["minimum_depth_fraction"])
                 or not sampling["depth_min_mm"] <= sample.median_mm <= sampling["depth_max_mm"]
                 or sample.sigma_mm < 0):
             raise ValueError("malformed tray pose or insufficient depth evidence")

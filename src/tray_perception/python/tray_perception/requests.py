@@ -16,7 +16,7 @@ from tf2_ros import TransformException
 from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
 
 from item_perception_yolo.item_detector import encode_rgb_png
-from item_perception_yolo.item_teach_core import file_sha256
+from item_perception_yolo.item_teach_core import file_sha256, depth_coverage_ok
 from tray_perception_interfaces.srv import GetTrayPose
 
 from .core import load_profile, ORIGIN_CONVENTION
@@ -362,10 +362,9 @@ class TrayRequests:
                                 measured["median_mm"], measured["sigma_mm"]]).all()
                             or not sampling["depth_min_mm"] <= measured["median_mm"]
                             <= sampling["depth_max_mm"] or measured["sigma_mm"] < 0
-                            or not measured["total_samples"] >= measured["accepted_samples"]
-                            >= sampling["minimum_depth_samples"]
-                            or measured["accepted_samples"] / measured["total_samples"]
-                            < sampling["minimum_depth_fraction"]):
+                            or not depth_coverage_ok(
+                                measured["accepted_samples"], measured["total_samples"],
+                                sampling["minimum_depth_fraction"])):
                         raise RuntimeError("Invalid native placement-depth reply")
                     sampled = response.placement
                     sampled.surface_base.x, sampled.surface_base.y, sampled.surface_base.z = map(

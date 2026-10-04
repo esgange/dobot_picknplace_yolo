@@ -284,8 +284,8 @@ def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth)
 
     node.snapshot.side_effect = snapshot
     node.native.call = MagicMock(return_value=({
-        "state": "ok", "surface_base": [.12, .13, .24], "accepted_samples": 50,
-        "total_samples": 60, "median_mm": 700., "sigma_mm": 1.}, b""))
+        "state": "ok", "surface_base": [.12, .13, .24], "accepted_samples": 2,
+        "total_samples": 4, "median_mm": 700., "sigma_mm": 1.}, b""))
     sample = {"x_mm": 20., "y_mm": 30., "diameter_mm": 30., **QUALITY_DEFAULTS}
     responses = []
     for deployment in (False, True):
@@ -551,10 +551,11 @@ def exercise_ros_transport(root):
         assert node.rgb is not None
         digest = core.file_sha256(path)
         client = peer.create_client(GetTrayPose, requests.SERVICE_NAME)
-        assert requests.SERVICE_NAME == '/tray_detect/get_tray_pose_v2'
+        assert requests.SERVICE_NAME == '/tray_detect/get_tray_pose_v3'
         legacy_calls = []
-        peer.create_service(GetTrayPose, '/tray_detect/get_tray_pose',
-                            lambda req, reply: legacy_calls.append(req) or reply)
+        for endpoint in ('/tray_detect/get_tray_pose', '/tray_detect/get_tray_pose_v2'):
+            peer.create_service(GetTrayPose, endpoint,
+                                lambda req, reply: legacy_calls.append(req) or reply)
         assert not client.wait_for_service(timeout_sec=.2)
         publish()
         node.requests.arm(path, settings(), digest)

@@ -658,9 +658,17 @@ class ItemTeachWindow(QtWidgets.QWidget):
         clearance.addRow(clearance_help)
         quality = group("Data-quality limits", 4)
         for key, value in QUALITY_DEFAULTS.items():
+            percentage = key == "minimum_depth_fraction"
+            if percentage:
+                value *= 100
             field = QtWidgets.QLineEdit(str(value))
+            if percentage:
+                field.setToolTip(
+                    "Required valid pixels after depth-range and outlier filtering, as a "
+                    "percentage of all pixels in the sampling circle. Used by Item Pick "
+                    "and Tray placement depth. Greater than 0 and at most 100%.")
             self.inputs[key] = field
-            quality.addRow(key, field)
+            quality.addRow("Minimum valid depth (%)" if percentage else key, field)
 
         for order in sorted(sections):
             form_column.addWidget(sections[order])
@@ -1825,7 +1833,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 "quality": self._quality_settings()}
 
     def _quality_settings(self):
-        return {key: self._number(key, int if key == "minimum_depth_samples" else float)
+        return {key: self._number(key) / (100 if key == "minimum_depth_fraction" else 1)
                 for key in QUALITY_DEFAULTS}
 
     def _settings(self):
@@ -1967,6 +1975,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             for key, value in settings[section].items():
                 if key in ("class_ids", "image_size"):
                     continue
+                if key == "minimum_depth_fraction" and value is not None:
+                    value *= 100
                 self.inputs[key].setText(
                     "" if value is None else
                     ",".join(map(str, value)) if isinstance(value, list) else str(value)
@@ -2014,6 +2024,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.geometry_source.setCurrentIndex(-1)
         for key, widget in self.inputs.items():
             value = draft.values.get(key)
+            if key == "minimum_depth_fraction" and value is not None:
+                value *= 100
             if isinstance(widget, QtWidgets.QLineEdit):
                 widget.setText("" if value is None else str(value))
             elif isinstance(widget, QtWidgets.QCheckBox):

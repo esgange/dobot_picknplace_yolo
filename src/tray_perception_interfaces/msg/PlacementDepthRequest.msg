@@ -7,7 +7,7 @@ float64 input_max_age_sec
 float64 sync_tolerance_sec
 float64 robot_tf_max_age_sec
 float64 request_timeout_sec
-uint32 minimum_depth_samples
+# Valid original pixels / all pixels in the physical sampling circle, in (0, 1].
 float64 minimum_depth_fraction
 float64 depth_min_mm
 float64 depth_max_mm

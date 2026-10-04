@@ -36,7 +36,7 @@ from .platform_teach_core import (
 from .item_teach_core import (file_sha256, load_item_profile, settings_from_profile,
                               validate_detection_settings, detection_settings, validate_quality,
                               validate_bin_clearance, inset_bin_roi, BIN_CLEARANCE_FIELDS,
-                              validate_home)
+                              validate_home, depth_coverage_ok)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
 from .item_native_client import NativeClient
 from .pick_planning import Cr10Kinematics, rigid_matrix
@@ -207,8 +207,8 @@ def validate_candidates(result, settings):
             raise RuntimeError("Native candidate failed class/confidence contract")
         good, bad = candidate["accepted_depth_count"], candidate["rejected_depth_count"]
         if (type(good) is not int or type(bad) is not int or bad < 0
-                or good < settings["quality"]["minimum_depth_samples"]
-                or good / (good+bad) < settings["quality"]["minimum_depth_fraction"]):
+                or not depth_coverage_ok(good, good+bad,
+                                         settings["quality"]["minimum_depth_fraction"])):
             raise RuntimeError("Native candidate failed depth-quality contract")
         key = (candidate["center_distance"], -candidate["confidence"], index)
         if last_key is not None and key < last_key:

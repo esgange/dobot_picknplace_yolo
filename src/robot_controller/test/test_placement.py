@@ -359,6 +359,21 @@ def test_tray_depth_response_binds_pose_settings_sources_and_capture_time():
     assert point == pytest.approx([.13, .24, .25])
 
 
+@pytest.mark.parametrize("accepted,total,valid", [
+    (1, 1, True), (2, 4, True), (2, 5, False), (0, 0, False),
+    (0, 10, False), (6, 5, False), (100, 200, True), (100, 201, False)])
+def test_tray_depth_response_uses_fraction_without_fixed_count(accepted, total, valid):
+    result, config, sampling = response_fixture()
+    result.placement.accepted_samples = accepted
+    result.placement.total_samples = total
+    if valid:
+        point, _ = validate_result(result, config, sampling, 1_000_000_000, 3_000_000_000)
+        assert point == pytest.approx([.13, .24, .25])
+    else:
+        with pytest.raises(FeedbackFailure, match="insufficient depth evidence"):
+            validate_result(result, config, sampling, 1_000_000_000, 3_000_000_000)
+
+
 @pytest.mark.parametrize("damage", [
     "cached", "xy", "quaternion", "samples", "hash", "settings", "plane"])
 def test_tray_depth_response_rejects_invalid_evidence(damage):

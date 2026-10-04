@@ -8284,6 +8284,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   (or Tray Detect if running) to load the updated GUI/native worker code. Preserve
   the operator's RViz edits and all local teaching/model/calibration artifacts.
 
+### 2026-10-04 — Rule 208: percentage-only depth coverage after reducing resolution
+
+- User changed both streams to 640×360 and requested removal of fixed valid-pixel
+  counts. Recent available logs do not establish a count-related failure: the
+  selected Item profile already required only 3 samples, accepted Item candidates
+  retained 250–303 pixels, and logged Tray rejections concerned dimensions or
+  image-edge clipping. Successful placement observations were also recorded.
+- Remove `quality.minimum_depth_samples` and use the existing taught
+  `minimum_depth_fraction` alone. Default remains 0.5; GUI displays **Minimum valid
+  depth (%)**, converts 50 to/from 0.5 on load/save/recovery, and removes the count
+  control. Share one coverage predicate between Item native inference/protocol
+  validation, Tray native sampling/service validation and controller admission.
+  Denominator is all original depth pixels in the physical sampling circle;
+  numerator is the in-item/in-tray, range/MAD-accepted subset. No count floor,
+  resizing, duplicate samples or percentage relaxation. Empty/zero-valid data
+  still fails. Native rejection messages include accepted/total and required %.
+- Advance strict Item profiles to schema 11. GUI recovery retains old fractions,
+  Home, motion and verified model fields, drops the retired count and requires
+  explicit review/Save. Production has no old-schema fallback or automatic
+  migration. Removing the field from PlacementDepthRequest requires the new
+  `/tray_detect/get_tray_pose_v3` endpoint; v2/unversioned services cannot satisfy
+  readiness. Rebuild and restart all tray providers/controller clients together.
+- Tray reference-plane capture already uses available valid samples in each
+  7×7 patch; no fixed production sample floor applies there. Plane-based tray
+  detection itself remains independent of live depth. Preserve plane geometry,
+  freshness, source binding, pose eligibility, motion/I/O and retry behavior.
+- Validation: **523 Item**, **236 Tray** and **1004 controller tests pass**.
+  Tray retains the same **2 pre-existing RViz exact-float failures**. New native
+  360p/720p cases retain metric poses and accept small valid footprints below
+  30 pixels, while rejecting insufficient coverage and empty frames. Protocol
+  tests cover 1/1, 2/4, below-threshold and malformed/empty evidence. GUI tests
+  cover percentage round trips and reviewed schema-10 recovery; transport tests
+  verify v3 requests and rejection of older service endpoints. Read-only recovery
+  validation of the operator's actual profile retains every required field and
+  its saved 50% threshold. Four affected packages build successfully; production
+  and changed-line flake8 plus whitespace checks pass (existing test style remains).
+- Updated READMEs and controller FSM review/diagram/admission guard; regenerated
+  **9 diagrams / 9 PDF pages** with matching source SHA-256
+  `6af3bcc0e1080fb2e1a308b2b6b42ad37f368be255ad20156de065e02b09900c`.
+  No operator profile, runtime artifact, calibration, `.env`, model weight or
+  unrelated RViz edit changed. No hardware command or production application
+  restart. Existing Item files need explicit review/Save in the restarted GUI,
+  controller reload and manual deployment before headless use of the new version.
+
 ### Future entry template
 
 ```text

@@ -6,7 +6,7 @@ request. There is no unversioned fallback. Restart the provider and controller
 together after rebuilding; incompatible future layout changes must bump the
 endpoint again. YAML teach schemas are independent of this wire version.
 
-`GetTrayPose` is the shared read-only `/tray_detect/get_tray_pose_v2` service exposed
+`GetTrayPose` is the shared read-only `/tray_detect/get_tray_pose_v3` service exposed
 by Armed Tray Teach or headless Tray Detect, with only one provider at a time.
 The caller supplies the exact saved tray YAML SHA-256. Each request acquires a
 new RGB observation after request arrival, with matching calibration and exact
@@ -41,7 +41,10 @@ and its exact quality settings. The provider takes fresh synchronized RGB/depth
 after the trigger, performs the usual single tray inference, and samples the
 requested target using original registered-depth pixels and their own intrinsics.
 It uses the same median/MAD acceptance as Item Pick, excludes outside-tray samples,
-and rejects invalid targets, clipped footprints or insufficient depth. The saved
+and requires `minimum_depth_fraction` of all original circle pixels to remain
+valid. The fraction is in (0, 1], with no fixed count threshold. Empty footprints
+and zero valid pixels fail. Invalid targets, clipped footprints or insufficient
+valid percentage are rejected. The saved
 plane remains unchanged. A depth failure returns ERROR without killing/disarming
 the native worker/provider. Ordinary pose requests keep depth optional.
 
@@ -52,4 +55,5 @@ evidence. The controller checks every requested setting, source identity, result
 frame, synchronization and after-trigger timestamps before motion. An invalid
 response never becomes a placement target. Perception issues no robot or I/O calls.
 Rebuild these interfaces and restart all tray providers and controller clients
-together; `GetTrayPose`'s wire definition changed.
+together; the v3 `PlacementDepthRequest` removes `minimum_depth_samples`.
+Neither v2 nor the unversioned endpoint is a compatible fallback.

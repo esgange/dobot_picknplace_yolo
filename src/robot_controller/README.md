@@ -270,7 +270,7 @@ Tray Teach; re-arm its validated setup before using Place or Auto Run.
 Rebuild `robot_controller_interfaces` and `robot_controller`, then restart all
 controller/GUI clients together for these status fields.
 
-Tray requests use `/tray_detect/get_tray_pose_v2`, the depth-capable contract.
+Tray requests use `/tray_detect/get_tray_pose_v3`, the depth-capable contract.
 The earlier endpoint is never used as a fallback. Restart Tray Teach/Detect and
 Robot Controller together after rebuilding; an old provider leaves Place disabled
 instead of accepting an incompatible request. No robot motion is sent by detection.
@@ -281,7 +281,10 @@ the recorded Tray Detect Pose attitude; the offset rotates about that tool's Z.
 Item axes and pick rotation have no effect on placement orientation.
 
 Placement keeps requested X/Y and measures surface Z using the Item Teach depth
-sampling diameter and quality settings. Release Z is surface Z + the explicit
+sampling diameter and quality settings. Valid original pixels after range/MAD
+filtering must cover the taught percentage of the full sampling circle (default
+50%); no fixed sample-count threshold remains. Empty samples fail. The detector,
+service and controller apply the same rule. Release Z is surface Z + the explicit
 Item Teach `motion.trayplace_height` in millimetres (rule 184). This placement
 clearance is independent of standoff, pre-pick and retract heights; Preview uses
 the same formula.
@@ -292,10 +295,12 @@ That initial Pick route skips its lower clearance/initial point. For surface Z
 approach/retract Z 800 mm. The final pose stays above the tray at this height
 with the detect-relative attitude; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
-blocks the placement queue. Require a complete schema-10 Item Teach profile with
+blocks the placement queue. Require a complete schema-11 Item Teach profile with
 a finite, nonnegative `trayplace_height`. To use older profiles, open them in
 Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
 the updated pair. Production readers do not supply a fallback height.
+Schema-10 profiles retain that height during GUI recovery; review the retained
+**Minimum valid depth (%)** and Save as schema 11 to remove the fixed-count field.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
 Then send three Cartesian commands in one queue:
@@ -1056,7 +1061,7 @@ detector evidence. This origin-only constraint does not model the housing;
 maintain actual physical safety margin inside green. Blue inset checks still
 apply solely to the item pick point.
 
-The schema-10 geometry uses pick Z equal to item Z plus `standoff_height`,
+The schema-11 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed

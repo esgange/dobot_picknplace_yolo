@@ -43,6 +43,33 @@ def exercise_placement_depth():
         result, data = placement_depth(invalid, frame.tobytes(), cv2, np)
         assert result["error"] and data == b"", f"Accepted invalid placement depth: {change}"
 
+    # The same physical footprint accepts the same coverage at 360p and 720p,
+    # including a high-quality footprint containing fewer than 30 pixels.
+    for scale in (1, 2):
+        width, height, focal = 640 * scale, 360 * scale, 300. * scale
+        camera = {"width": width, "height": height,
+                  "k": [focal, 0., width / 2, 0., focal, height / 2, 0., 0., 1.],
+                  "d": [0.] * 5, "distortion_model": "plumb_bob"}
+        request = {"width": width, "height": height, "selected": selected,
+                   "sampling": {**sampling, "x_mm": 100., "y_mm": 50., "diameter_mm": 10.},
+                   "camera_context": {"camera": camera, "depth_camera": camera,
+                                      "base_from_optical": optical.tolist()}}
+        yy, xx = np.mgrid[:height, :width]
+        circle = np.argwhere((xx - width / 2)**2 + (yy - height / 2)**2
+                             <= (.005 * focal / .8)**2)
+        total = len(circle)
+        for good in (0, total // 2, (total + 1) // 2, total):
+            frame = np.zeros((height, width), dtype="<u2")
+            frame[tuple(circle[:good].T)] = 700
+            result, _ = placement_depth(request, frame.tobytes(), cv2, np)
+            if good / total >= .5:
+                assert result["accepted_samples"] == good and result["total_samples"] == total
+                assert np.allclose(result["surface_base"], [.3, .2, .3])
+                if scale == 1:
+                    assert good < 30
+            else:
+                assert "requires 50.0%" in result["error"]
+
 
 def test_private_placement_depth_geometry():
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
@@ -69,7 +96,7 @@ def test_real_worker_survives_unusable_placement_depth():
                "selected": {"position": [.2, .1, .2], "quaternion": [0., 0., 0., 1.],
                             "width_mm": 200., "length_mm": 300.},
                "sampling": {"x_mm": 100., "y_mm": 100., "diameter_mm": 30.,
-                            **QUALITY_DEFAULTS, "minimum_depth_samples": 3},
+                            **QUALITY_DEFAULTS},
                "camera_context": {"camera": camera, "depth_camera": camera,
                                   "base_from_optical": optical.tolist()}}
     client = NativeClient(Mock(), worker_package="tray_perception", worker_executable="tray_worker")
