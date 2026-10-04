@@ -301,8 +301,8 @@ def test_acquisition_return_uses_same_paused_control_and_then_direct_stop(window
     window._command = lambda name: commands.append(name) or True
     window.node.status = acquisition_paused_status()
     window._refresh()
-    window._managed_command("continue")
-    assert commands == []
+    assert window.managed_actions["continue"].isEnabled()
+    assert window.pause.menu() is window.pause_menu
     window.pause.click()
     assert commands == ["return_item"]
     assert not window.pause.isEnabled() and window.stop.text() == "STOP"

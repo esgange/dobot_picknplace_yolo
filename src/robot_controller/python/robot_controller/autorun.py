@@ -3,7 +3,8 @@
 from concurrent.futures import Future
 import threading
 
-from .errors import CommandRejected, FeedbackFailure, HeldSuctionLost, OperationCanceled
+from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost,
+                     ManagedInterruption, OperationCanceled)
 from .pick_session import PickSession, return_targets
 from .placement import PlacementOperation, validate_target
 from .recovery import GRIP_MASK
@@ -252,6 +253,10 @@ class AutoRunOperation:
                 return self._run_cycles()
             except HeldSuctionLost:
                 self.node.raise_if_cancelled()
+                if self.node.machine.state == "PAUSED":
+                    # A failure while awaiting an operator decision must not
+                    # resume counted production behind the paused controls.
+                    raise
                 # Discard speculative perception and appended motion. Recovery
                 # retains managed.session, the batch owning the dropped item.
                 self.close()
@@ -274,7 +279,14 @@ class AutoRunOperation:
             placement = PlacementOperation(*self.target, require_held_item=True)
             node.placement = placement
             last_item = self.completed + 1 == self.quantity
-            placement.run(node, on_observed=None if last_item else self._start_prefetch)
+            while True:
+                try:
+                    placement.run(node, on_observed=None if last_item else self._start_prefetch)
+                    break
+                except ManagedInterruption:
+                    # Keep the held source, target and quantity in the owning
+                    # action while the operator retries or returns the item.
+                    placement.handle_pause(node)
             # run() returns only after ordered acceptance of every placement
             # command. Even an already-ready batch cannot append Home/Pick earlier.
             self.bridge = bridge = PlacementBridge(self, placement)

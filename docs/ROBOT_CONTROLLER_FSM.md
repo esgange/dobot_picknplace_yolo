@@ -1,5 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Tray-failure Pause review: **2026-10-04**, baseline **`72073dc`** plus rule **214**.
+Three unavailable tray observations now confirm Stop and enter PAUSED at Tray
+Detect in both manual Place and Auto Run. Keep the held source, outputs, original
+target, operation owner and completed count. The normal paused Continue / Return
+Item menu is available, alongside Place Item (Retry) and direct STOP. Continue
+grants three fresh tray attempts for the same item; another exhausted batch
+pauses again. Return uses the shared return queue, ends Home/READY and cancels
+the operation without counting that item or starting another Pick. Auto Run
+permits these two typed controls only in this confirmed pre-release Pause;
+other manual controls remain blocked. No placement or next-bin request starts
+while waiting. Faults or held loss while awaiting the operator cannot resume the
+run automatically; source, feedback, output and Stop containment remain strict.
+
 Release-timing review: **2026-10-04**, baseline **`3de7a22`** plus rule **213**.
 Place Item and every Return Item route now open fingers, turn suction OFF and
 turn exhaust ON at **80% descent**, using the shared release planner. This
@@ -142,7 +155,8 @@ and execution; all placement commands must be accepted before Home/next Pick.
 Append Home/next Pick when the batch is ready, without
 an intermediate arrival wait. Keep the old source until placement execution and
 neutral/released feedback cross into the appended Home. Auto Run disables manual
-controls except direct STOP and ends on exhausted retries with a partial count.
+controls except direct STOP during execution. Rule 214 adds Continue/Return
+after tray-exhaustion Pause; exhausted Pick retries still end with a partial count.
 
 Load/preparation review: **2026-09-30**, baseline **`e87fb08`** plus diary rule
 **187**. Explicit Configure now retains one operation owner through source loading
@@ -160,13 +174,15 @@ uncertain release without setting resume. No motion queue or I/O timing changes.
 
 Acquisition pause review: **2026-09-30**, baseline **`2ed6a41`** plus diary rule
 **185**. Three unavailable observations Stop and pause Place at Tray Detect,
-preserving grip and ownership. Place Item (Retry) explicitly grants three new
+preserving grip and ownership. Continue / Place Item (Retry) explicitly grants three new
 requests; Pick Item remains disabled. The normal paused RETURN ITEM
 control uses the saved-source bin put-back and Home routine, ending READY and
 Place CANCELED. Rule 186 gives direct STOP its own permanent control. Require a
 trusted HELD source before release admission and normal held checks on return;
 manual placement without a source offers retry/direct Stop. No automatic retry
 beyond the batch, parking rise, release or Home while awaiting the operator.
+Rule 214 extends this workflow to Auto Run and restores the normal paused
+Continue/Return menu for both actions.
 
 Placement height review: **2026-09-30**, baseline **`9581a46`** plus diary rule
 **184**. Item Teach schema 10 requires `motion.trayplace_height` in millimetres.
@@ -278,8 +294,8 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 - **HOLDING** means trusted held-item context; it does not always mean at Home.
 - **Pause parks Home/Pick/tray-position operations. Placement Pause stops in place**,
   then waits for Continue or direct Stop without releasing or moving the item.
-  Exhausted tray acquisition offers Place Item (Retry) and the normal held-item
-  Return control; Pick Item remains disabled.
+  Exhausted tray acquisition offers Continue / Place Item (Retry) and the normal
+  held-item Return control, including during Auto Run; Pick Item remains disabled.
 - **Direct Stop stops motion and preserves the grip.** It does not put an item back.
 - **Recover cancels the old action, returns Home, then relaxes the gripper.**
   Preserve outputs during travel; reset DO1/DO2/DO13/DO14 only at confirmed Home.
@@ -325,7 +341,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | BUSY, startup/recovery/return/parking/stopping | STOP |
 | HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; CP; STOP |
 | PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
-| PAUSED, tray acquisition exhausted | Place Item (Retry); Return Item with trusted held source; STOP |
+| PAUSED, tray acquisition exhausted (Place / Auto Run) | Continue / Place Item (Retry); Return Item with trusted held source; STOP |
 | ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
 | OFFLINE | STOP if reachable; loading/preparation waits for fresh robot feedback |
 | EMERGENCY STOP PRESSED | STOP; explicit Recover rechecks alarms after physical release |
@@ -424,8 +440,9 @@ red **STOP**. In an ordinary empty pause, the middle button becomes **CONTINUE**
 With a trusted held item, its main action is **RETURN ITEM**, with **CONTINUE** in
 the split-button menu. If Return is unavailable but Continue is valid, Continue
 becomes the main action. Each choice has its own eligibility guard. Acquisition
-failure keeps **Place Item (Retry)** plus Return Item and STOP, with no duplicate
-Continue menu. Pending requests disable conflicting actions; STOP remains direct.
+failure uses this same Continue/Return menu in manual Place and Auto Run, plus
+the **Place Item (Retry)** shortcut. Pending requests disable conflicting actions;
+STOP remains direct.
 
 Load/Reload is disabled in Preview because loading now prepares real hardware.
 Turning Preview OFF never starts preparation; click Load/Reload explicitly.
@@ -497,7 +514,7 @@ Robot Controller after updating. Provider executor failures revoke arming and
 report a terminal error with traceback, rather than retaining a silent frozen
 preview. Each unanswered in-flight request retains its bounded timeout; retry
 only within the three-request acquisition batch, then confirm Stop and pause.
-An explicit Place Item (Retry) grants another batch; no automatic fourth request.
+Explicit Continue / Place Item (Retry) grants another batch; no automatic fourth request.
 
 Startup order: validate ownership/feedback → read-only GetErrorID E-stop check → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →
@@ -683,7 +700,7 @@ flowchart TD
     Depth -->|No usable result or reply timeout| Budget{"Requests left?"}
     Budget -->|Yes; stay at observation pose| Depth
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
-    AcquisitionPause -->|Place Item Retry| Reset["Operator grants 3 new requests; recheck sources and position"]
+    AcquisitionPause -->|Continue / Place Item Retry| Reset["Operator grants 3 new requests; recheck sources and position"]
     Reset --> Observe
     AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["One queue: bin approach → saved pre-pick (80% fingers OPEN, suction OFF, exhaust ON) → retract (neutral at 0% start) → joint Home; confirm only Home"]
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
@@ -750,7 +767,7 @@ invalid successful pose/depth evidence stop immediately. After three unavailable
 observations, confirm Stop and stay at saved Tray Detect in PAUSED with original
 action/operation ownership and unchanged grip. There is no parking rise or
 placement/release command. Publish phase `TRAY_ACQUISITION_PAUSED` and the failure
-reason. Place Item (Retry) explicitly resets the request budget, rechecks sources
+reason. Continue / Place Item (Retry) explicitly resets the request budget, rechecks sources
 and observation position, then makes up to three new requests. Another exhausted
 batch pauses again. Ordinary manual Pause retains its partly used budget.
 
@@ -761,11 +778,12 @@ drop with fingers OPEN, suction OFF and exhaust ON at 80%, retract to Home Z
 with neutral at its 0% start, then joint Home.
 Admit the complete route in one queue, then confirm Home/neutral/DI1 LOW.
 No intermediate arrival or settling wait is added.
-Complete READY and Place CANCELED; never start a new Pick. Require trusted held
+Complete READY and Place/Auto Run CANCELED; never start a new Pick. Require trusted held
 state before dispatch even in GUI mode; queued release supervision matches Place.
 Return does not require the tray detector; retry does. An empty/manual placement
-pause with no trusted held source offers retry and direct Stop. The Continue menu
-is absent for this acquisition pause; the Place button supplies continuation.
+pause with no trusted held source offers Continue and direct Stop. A held item
+uses the same Continue/Return split-button menu as an ordinary Pause; the Place
+button supplies the retry shortcut. Auto Run shows PAUSED with its retained count.
 Return immediately disables the managed control and retry. The separate permanent
 STOP directly stops/cancels, including before the Return service response.
 Attempt N/3 and the last failure reason appear in controller progress/events.
@@ -876,7 +894,10 @@ flowchart TD
     Next --> Tray
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK; Home after misses or bin exit after final drop; partial count"]
     Next -->|3 physical batches or empty retry exhausted| Empty
-    Observe -->|3 requests exhausted| Fail["Stop containment; end run with partial count"]
+    Observe -->|3 requests exhausted| Paused["Confirm Stop; PAUSED at Tray Detect; retain item, target, owner and count"]
+    Paused -->|Continue / Place Item Retry| Observe
+    Paused -->|Return Item| PutBack["Shared return queue through Home; READY / CANCELED; unchanged partial count"]
+    Paused -->|Stop or safety fault| Fail["Stop containment; end run with partial count"]
     Place -->|Rejected, unanswered or Stop; discard worker| Fail
     Ready -->|Detector error| Fail
     Append -->|Fault or Stop| Fail
@@ -932,15 +953,24 @@ the next descent; CP (default 100%) and ordered acceptance are preserved. Final 
 requires actual saved-joint/idle/execution confirmation and neutral/DI1 LOW.
 Counts mean placement execution/release evidence, not measured physical delivery.
 
-The UI exposes AUTO RUN with completed/requested counts and locks all manual
-buttons/inputs except permanent STOP. External manual actions cannot acquire the
-operation slot; Pause/Continue/Return explicitly reject. Three physically exhausted
-nonempty Pick batches, or an empty result after its one acquisition retry is used,
-end NO_PICK at Home. Three exhausted tray requests end through Stop
-containment instead of opening the manual Place pause workflow. Other faults and
-STOP also terminate with the completed count; no fourth physical-pick batch,
-extra empty-result retry, resume, automatic
-startup, configuration change or hardware restart is implied.
+The UI exposes AUTO RUN with completed/requested counts and locks manual controls
+and inputs during execution, except permanent STOP. Three unavailable tray requests
+confirm Stop and enter the shared acquisition PAUSED state at Tray Detect. Keep
+the same placement object, held source, target, action owner and completed count;
+show PAUSED and the normal Continue/Return menu. Typed Continue and Return Item
+are permitted only in this confirmed pre-release acquisition Pause. Continue
+grants three new tray requests for that item; another exhaustion pauses again.
+No new Pick, bin prefetch or placement motion is sent while waiting. Return Item
+executes the shared saved-source queue through Home, ends READY / CANCELED and
+retains the partial count. No fault-recovery Stop is added after successful return.
+Return requires a trusted held source; Continue also requires the tray provider
+and valid unchanged parked state. A fault or held loss while awaiting this
+operator decision cannot automatically restart counted production.
+External manual actions still cannot acquire the operation slot. Three physically
+exhausted nonempty Pick batches, or an empty result after its one acquisition retry
+is used, end NO_PICK at Home. Other faults and STOP terminate with the completed
+count; no fourth physical-pick batch, extra empty-result retry, automatic startup,
+configuration change or hardware restart is implied.
 
 ## 4. Pause and Continue
 
@@ -1162,8 +1192,8 @@ Names below are relative to `/robot_controller/`.
 | Auto Run next Home/Pick motion (internal) | All three placement commands have received ordered acceptance; next batch validated and available; no cancellation; no physical placement-completion wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
-| `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
-| `return_item` service | Started eligible managed state and trusted held source; during Place, only exhausted-acquisition PAUSED before release admission; no conflicting request |
+| `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback; during Auto Run, only exhausted-acquisition Pause |
+| `return_item` service | Started eligible managed state and trusted held source; during Place/Auto Run, only exhausted-acquisition PAUSED before release admission; no conflicting request |
 | `stop` service / action cancellation | Direct pre-emption; does not require Pause first |
 | `recover` service | FAULT / RECOVERY_REQUIRED / HELD_UNKNOWN; operation slot free |
 | `set_global_speed` service | Stationary READY / HOLDING; integer 1–100; operation slot free |
@@ -1173,8 +1203,8 @@ Acceptance is not proof of motion completion. Pause/Continue/Return services
 acknowledge a request; observe status afterward. Home/Pick actions provide final
 results: SUCCESS, NO_PICK (Pick/Auto Run), CANCELED, COMMAND_REJECTED,
 FEEDBACK_FAILURE, STOP_UNCONFIRMED or CONTROLLER_FAULT. A controlled Return Item
-that ends active Home/Pick or acquisition-paused Place reports CANCELED and final
-READY; it does not claim pick/placement success.
+that ends active Home/Pick or acquisition-paused Place/Auto Run reports CANCELED
+and final READY; it does not claim pick/placement success or increment Auto Run's count.
 PlaceItem SUCCESS means acceptance of the complete approach/drop/retract queue; its
 completion worker retains `operation_active` until final retract/neutral/DI1 LOW
 and READY, or failure containment. Clients must observe status for that outcome.

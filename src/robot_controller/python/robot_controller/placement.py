@@ -11,6 +11,14 @@ from .release import ReleaseQueue, release_targets
 from .tray_client import TrayAcquisitionExhausted, TrayAttempts
 
 
+def acquisition_pause_active(node):
+    """The retained pre-release Pause that permits operator tray retry or return."""
+    placement = getattr(node, "placement", None)
+    return bool(node.machine.state == "PAUSED" and placement is not None
+                and placement.acquisition_paused and node.active_action == "place"
+                and node.managed.kind == "pause")
+
+
 TRAY_SPEED_PERCENT = 100
 
 
@@ -111,9 +119,6 @@ class PlacementOperation(ReleaseQueue):
                                          attempts=self.tray_attempts,
                                          check_state=lambda: self.check_observation(node))
         except TrayAcquisitionExhausted as exc:
-            if getattr(node, "auto_run", None) is not None:
-                # Auto Run reports partial quantity; it never grants extra retries.
-                raise
             with node.managed.lock:
                 node.wait_for_resume()
                 self.acquisition_failure = str(exc)
@@ -194,7 +199,7 @@ class PlacementOperation(ReleaseQueue):
             if self.acquisition_paused:
                 if not node.hardware.home_already_reached(node.configuration.tray.detect_joints):
                     raise FeedbackFailure("Not at Tray Detect position; acquisition Pause blocked")
-                choices = "Use Place Item (Retry)"
+                choices = "Use Continue / Place Item (Retry)"
                 if node.holding_item:
                     choices += " or Return Item"
                 message = (f"{self.acquisition_failure}; paused at Tray Detect. "

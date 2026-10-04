@@ -40,7 +40,7 @@ def test_internal_states_have_clear_operator_labels(internal, label):
     ('STARTING', 'startup', set()), ('RECOVERING', 'recover', set()),
     ('RETURNING_ITEM', 'place', set()), ('PAUSING', 'pick', set()),
     ('STOPPING', 'stop', set()), ('PAUSED', 'pick', {'continue', 'return_item'}),
-    ('PAUSED', 'place', {'place', 'return_item'}),
+    ('PAUSED', 'place', {'place', 'continue', 'return_item'}),
     ('FAULT', '', {'recover', 'preview_toggle'}),
     ('HELD_UNKNOWN', '', {'recover', 'preview_toggle'}),
     ('RECOVERY_REQUIRED', '', {'recover', 'preview_toggle'}),

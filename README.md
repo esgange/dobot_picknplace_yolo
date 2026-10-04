@@ -50,9 +50,11 @@ are accepted and the next batch is ready may Home and the next Pick be appended;
 no intermediate idle/arrival wait is added. After the last
 placement, append Home immediately and finish only at confirmed Home. The displayed
 count requires placement execution and neutral/released feedback, not acceptance
-alone. Auto Run disables manual controls, including Pause; permanent STOP remains
-available. Three exhausted Pick batches or tray requests end the run and report
-its completed quantity. Robot faults and STOP also end it; no automatic restart.
+alone. Auto Run disables manual controls during motion; permanent STOP remains
+available. Three unavailable tray observations pause at Tray Detect with the item
+held and the count retained. **Continue** retries tray detection for that item;
+**Return Item** puts it back and ends the run at Home/READY with its partial count.
+Three exhausted Pick batches, robot faults and STOP end the run; no automatic restart.
 Rebuild interfaces/controller and manually restart their clients after upgrading.
 
 **Preview ON** makes all three motion buttons publish planned TF targets without
@@ -138,10 +140,12 @@ Place retries a missing tray/depth result or response timeout with at most **thr
 requests total**, while staying at Tray Detect Pose. Stop/Pause, source validation
 and robot feedback checks remain active; malformed pose evidence remains fatal.
 After three unavailable observations, confirm Stop and enter **PAUSED at Tray
-Detect**, preserving outputs and any trusted held source. **Place Item (Retry)**
-starts another three-request acquisition batch. The paused control shows
-**RETURN ITEM** for a known held item and uses the existing saved-bin
-put-back routine, ending Home/READY. Pick Item stays disabled. No placement or
+Detect**, preserving outputs and any trusted held source, in both manual Place
+and Auto Run. **Continue**, also available as **Place Item (Retry)**,
+starts another three-request acquisition batch for the same target. The paused
+control shows **RETURN ITEM** for a known held item, with **Continue** in its menu.
+Return uses the existing saved-bin put-back routine, ending Home/READY and
+canceling the placement/run without counting it. Pick Item stays disabled. No placement or
 release is queued while waiting for the operator; robot/source faults remain terminal.
 Place Item requires an available armed Tray Teach
 or headless Tray Detect provider. **Explicit Place permits placement with or without an
@@ -201,7 +205,8 @@ READY, BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED and OFFLINE, with activity
 and failure reasons always visible. Emergency stop has a prominent red override.
 The lifecycle row has Recover, a Pause/Continue/Return Item control and a **permanent
 red STOP**. Empty pauses show Continue; held pauses show Return Item with Continue
-in its drop-down. Failed tray acquisition keeps Place Item (Retry). STOP always stops directly, including while Pause/Return is pending.
+in its drop-down. Failed tray acquisition uses the same controls, plus Place Item (Retry).
+STOP always stops directly, including while Pause/Return is pending.
 Motion buttons are enabled only when their current prerequisites are met: Place
 requires confirmed Tray Detect position, valid inputs and an armed tray provider;
 Pick requires unheld READY, Item/Bin/Tray configuration and its provider. Disabled

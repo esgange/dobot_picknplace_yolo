@@ -124,13 +124,13 @@ def test_paused_continue_uses_same_control_or_its_menu_without_return_or_cancel(
     assert window.stop.isEnabled() and not window.pause.isEnabled()
 
 
-def test_no_hidden_continue_after_failed_tray_acquisition(window):  # noqa: F811
+def test_failed_tray_acquisition_has_the_normal_continue_return_menu(window):  # noqa: F811
     window.node.status = status(state='PAUSED', operation_active=True, operation='place',
                                 phase='TRAY_ACQUISITION_PAUSED', holding_item=True,
                                 can_return_item=True, tray_position_recorded=True)
     window._refresh()
-    assert window.pause.text() == 'RETURN ITEM' and window.pause.menu() is None
-    assert not window.managed_actions['continue'].isEnabled()
+    assert window.pause.text() == 'RETURN ITEM' and window.pause.menu() is window.pause_menu
+    assert window.managed_actions['continue'].isEnabled()
     assert window.place_item.isEnabled() and window.stop.isEnabled()
 
 

@@ -15,7 +15,8 @@ ATTENTION = ("FAULT", "RECOVERY_REQUIRED", "HELD_UNKNOWN")
 
 
 def acquisition_paused(state):
-    return bool(state is not None and state.state == "PAUSED" and state.operation == "place"
+    return bool(state is not None and state.state == "PAUSED"
+                and state.operation in ("place", "auto_run")
                 and state.phase == "TRAY_ACQUISITION_PAUSED")
 
 
@@ -29,8 +30,8 @@ def presentation(state, preview=False):
     if not state.feedback_fresh:
         return "OFFLINE", "Robot feedback unavailable. " + state.motion_block_reason
     if getattr(state, "auto_run_active", False):
-        return "AUTO RUN", (f"{state.auto_run_completed}/{state.auto_run_requested} placed\n"
-                            + state.message)
+        return ("PAUSED" if state.state == "PAUSED" else "AUTO RUN"), (
+            f"{state.auto_run_completed}/{state.auto_run_requested} placed\n" + state.message)
     if state.state in BUSY_ACTIVITIES:
         return "BUSY", BUSY_ACTIVITIES[state.state] + "\n" + state.message
     if state.state in ATTENTION:
@@ -61,7 +62,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
             reasons["preview_toggle"] = ""
         return reasons
     current = state.state
-    if getattr(state, "auto_run_active", False):
+    if getattr(state, "auto_run_active", False) and not acquisition_paused(state):
         return dict.fromkeys(names, "Auto Run owns the robot; use STOP to end the run")
     idle = not (state.operation_active or action_pending or pending or managed_pending)
     if (current in ("UNCONFIGURED", "INACTIVE", "READY") and idle
@@ -113,7 +114,6 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
         if state.can_return_item and state.motion_ready:
             reasons["return_item"] = ""
         if acquisition_paused(state):
-            reasons["continue"] = "Use Place Item (Retry) or Return Item"
             reasons["place"] = (state.continue_block_reason or "Retry is unavailable"
                                 if not state.can_continue else
                                 "Arm Tray Teach or start Tray Detect with exactly one provider"

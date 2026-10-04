@@ -533,7 +533,6 @@ def test_prefetch_requires_successful_pick_and_confirmed_tray_arrival(monkeypatc
 @pytest.mark.parametrize("interruption", ["tray_exhausted", "stop"])
 def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, interruption):
     from robot_controller.errors import HeldSuctionLost
-    from robot_controller.tray_client import TrayAcquisitionExhausted
     from test_tray_acquisition_pause import acquisition_rig
 
     node, tray = acquisition_rig(monkeypatch, [None] * 3)
@@ -541,7 +540,7 @@ def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, in
     run._pick = Mock(return_value=True)  # Successful Pick's confirmed Tray Detect endpoint.
     original_session = node.managed.session
     node.candidates = SimpleNamespace(request=Mock())
-    errors = {"tray_exhausted": TrayAcquisitionExhausted,
+    errors = {"tray_exhausted": OperationCanceled,
               "stop": OperationCanceled, "held_loss": HeldSuctionLost}
 
     def tray_reply(_future):
@@ -553,6 +552,12 @@ def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, in
             raise errors[interruption](interruption)
 
     tray.on_send = tray_reply
+
+    def stop_when_paused():
+        assert node.machine.state == "PAUSED" and node.placement.acquisition_paused
+        assert tray.client.call_async.call_count == 3
+        node.cancel_event.set()
+    node.on_wait = stop_when_paused
     try:
         with pytest.raises(errors[interruption]):
             run.run()

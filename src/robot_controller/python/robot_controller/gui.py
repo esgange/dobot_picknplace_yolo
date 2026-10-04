@@ -835,13 +835,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 "Request sent — waiting for controller confirmation…")
         managed_name = "pause"
         if paused:
-            managed_name = ("return_item" if retry or state.can_return_item
+            managed_name = ("return_item" if state.can_return_item
                             and not reasons["return_item"] else "continue")
         for name, action in self.managed_actions.items():
             action.setEnabled(not reasons[name])
         self.managed_primary = managed_name
         self.pause.setText(self.managed_actions[managed_name].text())
-        menu = self.pause_menu if paused and not retry and state.can_return_item else None
+        menu = self.pause_menu if paused and state.can_return_item else None
         self.pause.setMenu(menu)
         self.pause.setPopupMode(QtWidgets.QToolButton.MenuButtonPopup if menu is not None
                                 else QtWidgets.QToolButton.DelayedPopup)

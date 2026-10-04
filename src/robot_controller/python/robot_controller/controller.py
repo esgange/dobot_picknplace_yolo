@@ -43,7 +43,8 @@ from .motion import (candidate_pose_in_base, cartesian_home_targets,
                      home_targets, pick_targets, pick_tray_target, pose_reached,
                      tray_detect_targets)
 from .managed_control import ManagedControl
-from .placement import PlacementOperation, TRAY_SPEED_PERCENT, validate_target
+from .placement import (PlacementOperation, TRAY_SPEED_PERCENT, acquisition_pause_active,
+                        validate_target)
 from .recovery import HomeRecovery
 from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
@@ -758,7 +759,8 @@ class RobotController(Node):
 
     def _managed_request(self, kind, response):
         try:
-            if getattr(self, "auto_run", None) is not None:
+            if (getattr(self, "auto_run", None) is not None
+                    and not (kind == "return" and acquisition_pause_active(self))):
                 raise CommandRejected("Manual controls are disabled during Auto Run; use STOP")
             self.managed.request(kind)
             response.success = True
@@ -778,7 +780,8 @@ class RobotController(Node):
 
     def _continue(self, _request, response):
         try:
-            if getattr(self, "auto_run", None) is not None:
+            if (getattr(self, "auto_run", None) is not None
+                    and not acquisition_pause_active(self)):
                 raise CommandRejected("Manual controls are disabled during Auto Run; use STOP")
             self.managed.continue_operation()
             response.success = True
@@ -970,6 +973,16 @@ class RobotController(Node):
             result.final_state = self.machine.state
             self._transition("READY", result.message)
             goal.succeed()
+            self.events.record("INFO", "auto_run_result", result.message,
+                               completed=run.completed, requested=run.quantity)
+            return result
+        except ReturnedToHome as exc:
+            result.outcome = result.CANCELED
+            result.completed_quantity = run.completed
+            result.message = (f"{exc}; Auto Run ended by Return Item with "
+                              f"{run.completed}/{run.quantity} placements completed")
+            result.final_state = self.machine.state
+            goal.abort()
             self.events.record("INFO", "auto_run_result", result.message,
                                completed=run.completed, requested=run.quantity)
             return result

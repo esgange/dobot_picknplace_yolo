@@ -8519,6 +8519,52 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the unrelated RViz edit. No hardware command, production restart or physical
   validation. Restart the controller manually to apply the release timing.
 
+### 2026-10-04 — Rule 214: failed tray detection uses the normal Pause controls
+
+- Latest failed Auto Run audit: the 12:26:05–12:26:19 UTC run (16:26 Dubai),
+  requested quantity three, picked its first candidate and reached Tray Detect.
+  All three tray requests returned `NO_VALID_TRAY` with zero detections. The
+  controller then entered RECOVERY_REQUIRED with 0/3 completed. Auto Run had
+  explicitly bypassed manual Place's exhausted-acquisition Pause, and its typed
+  controls/UI also blocked Continue and Return Item for the owning action.
+- Share manual Place's managed acquisition Pause with Auto Run. After three
+  unavailable tray pose/depth observations, confirm Stop in place at Tray Detect,
+  preserve the held source, grip outputs, placement target and operation owner,
+  and retain the completed/requested count. No placement, release, parking rise,
+  new Pick or next-bin request occurs while awaiting the operator.
+- Offer the ordinary Continue / Return Item menu and permanent STOP in both
+  manual Place and Auto Run; keep Place Item (Retry) as a Continue shortcut.
+  Auto Run's visible status becomes PAUSED with its count. Continue revalidates
+  sources, parked state and the tray provider, then grants three fresh tray
+  requests for the same held item/target. Another exhausted batch pauses again.
+  The next-bin worker still starts only after validated tray pose/depth, and
+  next-pick motion still waits for complete placement-queue acceptance.
+- Return Item requires the same trusted held source as ordinary Pause, uses the
+  shared 80%-release / 0%-neutral return queue through Home, and ends READY.
+  Cancel the waiting Place/Auto Run action without counting that item, starting
+  another Pick or misclassifying a successful return as a fault requiring Stop.
+  Permit Auto Run typed Continue/Return only in this confirmed pre-release Pause;
+  other manual controls remain blocked. Provider loss blocks retry, not return.
+- Keep three-request batches, direct Stop, unchanged parked-pose/output checks,
+  held monitoring and strict source/reply/feedback gates. A fault or held loss
+  while awaiting the operator cannot silently resume counted production. Invalid
+  successful pose evidence remains fatal. No motion rate, release timing, teach
+  schema, configuration, interface or executor changes are introduced. This
+  supersedes rule 189's tray-exhaustion terminal outcome and rule 186's missing
+  Continue menu only for this acquisition Pause.
+- Validation: **1066 controller tests passed**, including 13 new cases for
+  repeated no-tray/timeouts and same-item continuation, partial-count Return,
+  Stop/suction/position/output/source failure containment and both GUI pause
+  menus. Existing manual acquisition and Auto Run queue-order tests pass.
+  Sourced `robot_controller` symlink build, scoped flake8 and whitespace checks
+  pass. Updated root/package READMEs, AGENTS and FSM; regenerated and visually
+  reviewed **9 diagrams / 9 A3 PDF pages**, including placement and Auto Run.
+  Verified HTML/full-source and every PDF footer hash against source SHA-256
+  `d8951e732ad12db26db25100ad9fc4c396f401abb4fc23918f592785b3430cb3`.
+- No hardware command, production restart or physical validation. Manually
+  restart controller and GUI to apply. Preserved `.env`, calibration, offline/
+  runtime teach/model artifacts and the unrelated RViz edit.
+
 ### Future entry template
 
 ```text

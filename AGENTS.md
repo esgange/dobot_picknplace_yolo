@@ -1408,6 +1408,21 @@ Preserve geometry, motion rates, queue ordering, continuous held-loss monitoring
 until observed commanded suction OFF, and every endpoint/Stop/feedback guard.
 No teach file, schema, interface or configuration changes. Update FSM/exports.
 
+Rule 214 shares manual Place's failed-acquisition Pause with Auto Run. After
+three unavailable tray pose/depth requests, confirm Stop at Tray Detect and keep
+the held source, outputs, target, operation owner and completed count. Offer the
+normal Continue / Return Item controls and permanent STOP; Place Item (Retry)
+remains a Continue alias. Continue grants three fresh tray attempts for that same
+item; repeated exhaustion pauses again. Do not request another bin batch or send
+placement/next-pick commands while waiting. Return uses the shared queue through
+Home, finishes READY and cancels the placement/run without counting that item or
+starting another Pick. Permit typed Continue/Return during Auto Run only in this
+confirmed pre-release acquisition Pause; other manual controls remain blocked.
+Preserve provider/source/parked-state/held-output checks and direct Stop. Faults
+or held loss while awaiting the operator must not automatically resume the run.
+Keep three-request batches, motion/release timing and schemas/interfaces unchanged.
+Update the FSM, its generated exports and GUI status/control tests.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
