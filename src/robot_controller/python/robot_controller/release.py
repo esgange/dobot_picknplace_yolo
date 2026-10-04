@@ -8,7 +8,7 @@ from .motion import (Target, gripper_neutral_events, gripper_open_events, rigid_
 
 
 def release_targets(release_pose, settings, home_matrix, *, prefix):
-    """Open fingers and exhaust at 90% descent, neutral as retract starts."""
+    """Open fingers and exhaust at 80% descent, neutral as retract starts."""
     release = rigid_matrix(release_pose, "Release target")
     home = rigid_matrix(home_matrix, "Home")
     pre_z = home[2, 3]
@@ -22,7 +22,7 @@ def release_targets(release_pose, settings, home_matrix, *, prefix):
         point[2, 3] = z
         events = ()
         if name == "release":
-            events = gripper_open_events(90) + vacuum_exhaust_events(90)
+            events = gripper_open_events(80) + vacuum_exhaust_events(80)
         elif name == "retract":
             events = gripper_neutral_events(0) + vacuum_neutral_events(0)
         result.append(Target(f"{prefix}_{name}", point, 100,

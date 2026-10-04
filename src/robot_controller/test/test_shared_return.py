@@ -92,7 +92,7 @@ def test_shared_return_and_next_pick_are_one_ordered_queue_with_no_home_or_midpo
     assert node.managed.session.held_index is None and node.managed.return_progress is None
     np.testing.assert_array_equal(prefix[1].matrix, source[2].matrix)
     assert [event.vendor_value() for event in prefix[1].motion_io] == [
-        "{0,90,2,0}", "{0,90,14,1}", "{0,90,13,0}", "{0,90,1,1}"]
+        "{0,80,2,0}", "{0,80,14,1}", "{0,80,13,0}", "{0,80,1,1}"]
     assert [event.vendor_value() for event in prefix[2].motion_io] == [
         "{1,0,2,0}", "{1,0,14,0}", "{1,0,1,0}", "{1,0,13,0}"]
 

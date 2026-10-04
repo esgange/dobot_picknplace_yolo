@@ -129,7 +129,7 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
     release_pose = next(target.matrix for targets, _kwargs in rig.batches
                         for target in targets if target.name == "return_release")
     assert release_pose[2, 3] == pytest.approx(.3 + prepick / 1000)
-    assert ("timed_output", 90, 1, True) in rig.log
+    assert ("timed_output", 80, 1, True) in rig.log
     assert ("timed_output", 0, 1, False) in rig.log
     assert not any(entry[0] == "pulse" for entry in rig.log)
     assert rig.startup_complete
@@ -142,7 +142,7 @@ def test_repeated_losses_consume_each_saved_candidate_once(monkeypatch):
     assert result.outcome == result.NO_PICK and result.final_state == "READY"
     assert rig.lost == [1, 2, 3]
     assert [a.state for a in rig.seen_sessions[0].attempts] == ["DROPPED"] * 3
-    assert rig.log.count(("timed_output", 90, 1, True)) == 3
+    assert rig.log.count(("timed_output", 80, 1, True)) == 3
     assert rig.requests == ["detect"] * 3
 
 
@@ -222,7 +222,7 @@ def test_pause_after_return_boundary_resumes_next_candidate_without_second_relea
     assert result.outcome == result.SUCCESS and rig.finished == ["success"]
     assert states(rig) == ["DROPPED", "HELD"]
     assert ("state", "PAUSED") in rig.log
-    assert rig.log.count(("timed_output", 90, 1, True)) == 1
+    assert rig.log.count(("timed_output", 80, 1, True)) == 1
 
 
 def test_direct_stop_at_automatic_return_handover_leaves_no_managed_owner(monkeypatch):

@@ -8496,6 +8496,29 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserved root `.env`, calibration, offline/runtime teach artifacts, weights
   and the unrelated RViz edit.
 
+### 2026-10-04 — Rule 213: shared release at 80% descent
+
+- User requested 80% descent for both Place Item and Return Item. Change the
+  shared release planner's finger OPEN and vacuum EXHAUST events from 90% to
+  80%: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON. This applies to manual/Auto Run
+  placement, explicit Return and automatic/paused drop return. All four outputs
+  still become neutral at 0% of upward retract; exhaust lasts until that event.
+- Preserve release poses, Home-Z approach/retract, rates, global SpeedFactor/CP,
+  queue order, endpoint checks and saved-candidate continuation. Continuous
+  held-loss monitoring still ends on observed commanded suction OFF. No new
+  setting, schema/interface change or teach-file edit/re-save.
+- Validation: **1053 controller tests passed**. Updated existing planner and
+  real-transport assertions for exact `{0,80,...}` release tuples, together with
+  shared-return, interruption, automatic return and continuous-drop expectations.
+  Sourced controller symlink build, scoped flake8 and whitespace checks pass.
+  Updated root/package READMEs, AGENTS and FSM current descriptions/diagrams.
+  Regenerated **9 diagrams / 9 A3 PDF pages**, checked placement/return visuals
+  and verified HTML/all PDF footer hashes against source SHA-256
+  `e57f6ce803f9fa6ba362e561458c08b9fadd3ea0201a8c10d97a3d8f0038f5aa`.
+- Committed source only; preserved `.env`, teach/calibration/model artifacts and
+  the unrelated RViz edit. No hardware command, production restart or physical
+  validation. Restart the controller manually to apply the release timing.
+
 ### Future entry template
 
 ```text

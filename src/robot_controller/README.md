@@ -123,7 +123,7 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | --- | --- | --- |
 | MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and tray attitude plus rotation at Home Z |
 | MovLIO descent | Exact saved pre-pick target at 100% | Detected surface Z + trayplace_height at 100% |
-| At 90% descent | DO2 OFF, DO14 ON (open), DO13 OFF, DO1 ON (exhaust) | Same |
+| At 80% descent | DO2 OFF, DO14 ON (open), DO13 OFF, DO1 ON (exhaust) | Same |
 | Queue admission | One complete ordered group; no drop-arrival wait | Same |
 | MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
 | At 0% ascent (start) | DO2/DO14/DO1/DO13 OFF | Same |
@@ -137,7 +137,7 @@ feedback. No intermediate arrival, settling, release-I/O,
 DI12 or exhaust-pulse wait is added. All motions use speed 100%, scaled by global
 SpeedFactor. Approach/Home
 use taught travel acceleration, descent uses approach acceleration, and retract
-uses retract acceleration. Finger OPEN, suction OFF and exhaust ON occur at 90%;
+uses retract acceleration. Finger OPEN, suction OFF and exhaust ON occur at 80%;
 exhaust ends as retract begins. No separate 100% event is sent.
 The shared planner/observer keeps the placement I/O timing and release supervision
 identical. Observed release means finger-open/exhaust outputs ON, finger-close
@@ -229,7 +229,7 @@ stays disabled and STOP remains available.
 A trusted held item may be returned to its saved
 bin source through one queued approach at Home Z → saved pre-pick drop →
 retract to Home Z → taught joint Home, without intermediate arrival waits or
-settling. Use tray placement's 90%-descent finger OPEN/suction OFF/exhaust ON
+settling. Use tray placement's 80%-descent finger OPEN/suction OFF/exhaust ON
 and 0%-ascent neutral events,
 with a preliminary vertical rise in the same queue
 when needed. Return finishes READY
@@ -313,7 +313,7 @@ Then send three Cartesian commands in one queue:
 | Command | Target | Timed outputs |
 | --- | --- | --- |
 | MovL | Pre-place | Preserve existing outputs |
-| MovLIO | Release height | At 90%: DO2 OFF, DO14 ON (open), DO13 OFF, DO1 ON |
+| MovLIO | Release height | At 80%: DO2 OFF, DO14 ON (open), DO13 OFF, DO1 ON |
 | MovLIO | Back to pre-place | At 0% (start): DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 
 All placement segments and Tray Detect Position use **speed 100%**, scaled by
@@ -321,7 +321,7 @@ global SpeedFactor; placement never changes that slider. Acceleration remains
 Item Teach travel for Tray Detect Position, then travel / approach / retract
 for placement. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust
-pulse, extra retract-height waypoint or separate Home action. At 90% of descent,
+pulse, extra retract-height waypoint or separate Home action. At 80% of descent,
 open fingers, turn suction OFF and exhaust ON. Exhaust lasts
 until the upward command starts. Zero uses the existing distance-mode
 start trigger (`{1,0,channel,0}`), carried by MovLIO. All commands inherit CP (default 100%); control points
@@ -791,7 +791,7 @@ the exact original saved pre-pick X/Y/Z/attitude. The shared queue contains:
 
 1. Optional vertical rise at current X/Y/attitude when more than 5 mm below Home Z.
 2. Approach above the saved source at Home Z.
-3. Descend to saved pre-pick; at 90%, DO2 OFF, DO14 ON, DO13 OFF, DO1 ON.
+3. Descend to saved pre-pick; at 80%, DO2 OFF, DO14 ON, DO13 OFF, DO1 ON.
 4. Retract vertically to Home Z; at 0%, DO2/DO14/DO1/DO13 OFF.
 
 Every return target uses speed 100%. Rise/approach/Home use taught travel
@@ -869,7 +869,7 @@ Monitoring ends only on observed, issued suction OFF, never on release-command
 submission or finger motion. Planned release is exempt. Once loss is latched,
 DI1 HIGH or a late planned release cannot erase it or mark the candidate PLACED.
 Keep its original source plan. Use the shared paused Return Item approach,
-90%-descent release and 0%-neutral retract to Home Z, then append the next eligible
+80%-descent release and 0%-neutral retract to Home Z, then append the next eligible
 entry/clearance/pre-pick/pick in the same group. Preserve
 saved order and exclude failed/dropped/returned poses. No Home, new detection or
 operator action is inserted while eligible poses remain. Exhausted automatic

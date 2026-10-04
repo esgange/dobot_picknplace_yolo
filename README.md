@@ -114,7 +114,7 @@ MovL at 100%, preserving outputs, and confirm execution/idle/joints before detec
 Failed or interrupted arrival prevents tray acquisition and placement. The external
 Tray Detect Position action uses this same direct route.
 After fresh detection, placement queues pre-place → release (open fingers,
-suction OFF and exhaust ON at 90% of descent) → retract at Home Z
+suction OFF and exhaust ON at 80% of descent) → retract at Home Z
 (neutral at its 0% start) in one ordered group, without a drop-arrival wait or settling.
 There is no Home move. All placement segments and Tray Detect Position use speed
 100%, scaled by the operator's global SpeedFactor. Item Teach acceleration
@@ -273,7 +273,7 @@ A trusted held item's source pose survives completion of its Pick action.
 Home. The GUI exposes it as **RETURN ITEM** while paused with an item.
 Explicit Return Item shares tray placement's timed approach/release/retract:
 above the original item at Home Z → exact saved pre-pick pose → same X/Y at
-Home Z → taught joint Home. At 90% of descent, open fingers, turn suction OFF
+Home Z → taught joint Home. At 80% of descent, open fingers, turn suction OFF
 and exhaust ON. At the 0% start of ascent, neutralize all four outputs.
 Queue optional vertical rise, approach, drop, retract and taught Home together,
 with no intermediate arrival wait or settling. All motions use speed
@@ -284,7 +284,7 @@ tray acquisition uses the same sequence, without another perception request.
 
 Paused **Return Item is the reference for every item return**. Automatic drop
 recovery uses the same optional rise, Home-Z approach, exact saved pre-pick
-release and Home-Z retract, with identical 90%/0% timed outputs and segment
+release and Home-Z retract, with identical 80%/0% timed outputs and segment
 accelerations. There is no separate exhaust pulse or release-arrival wait.
 Home Z must be above saved pre-pick so the retract is upward; no fixed 50 mm
 release offset or minimum pre-pick height is introduced. All return speeds are
@@ -305,7 +305,7 @@ OFF does. Planned release is never classified as a drop.
 Resolve all issued command replies, then send a final Stop and confirm stationary
 joints and an empty queue before automatic put-back. Preserve the original source
 and mark its candidate DROPPED even if DI1 returns HIGH. Execute the shared paused
-Return Item approach, 90%-descent release and 0%-neutral retract to Home Z.
+Return Item approach, 80%-descent release and 0%-neutral retract to Home Z.
 **No Home is included in this active automatic return route.** Join the retract
 directly to the next eligible saved candidate in original order, without a
 detection request or operator action.

@@ -1,9 +1,17 @@
 # Robot Controller — Finite State Machine
 
+Release-timing review: **2026-10-04**, baseline **`3de7a22`** plus rule **213**.
+Place Item and every Return Item route now open fingers, turn suction OFF and
+turn exhaust ON at **80% descent**, using the shared release planner. This
+supersedes the earlier 90% trigger; all four outputs still become neutral at
+0% retract. Preserve route geometry, rates, ordered queue admission, endpoint
+checks and continuous drop monitoring until observed commanded suction OFF.
+No teach setting, schema or interface change is introduced.
+
 Shared item-return review: **2026-10-04**, baseline **`f405420`** plus rule **212**.
 Paused explicit Return Item is the reference for every return: optional current-XY
 rise to Home Z → source approach at Home Z → exact saved pre-pick release →
-vertical retract to Home Z. Release is motion-timed at 90% descent; all four
+vertical retract to Home Z. Release is motion-timed at 80% descent; all four
 outputs become neutral at 0% retract. Speed is 100%, with taught travel/approach/
 retract acceleration per segment. There is no separate exhaust pulse or midpoint
 arrival/release wait. Explicit Return and paused drop append joint Home; active
@@ -26,7 +34,7 @@ OFF does. Planned release is exempt, and a late release cannot erase a latched d
 Resolve every issued command response within its original deadline, acknowledge
 Stop, then send a final Stop and confirm stationary joints/empty queue. Keep the
 saved source and original batch. Rule 212 uses the shared paused Return Item
-90%-descent release and 0%-neutral Home-Z retract. **No Home belongs to this active
+80%-descent release and 0%-neutral Home-Z retract. **No Home belongs to this active
 automatic return route.** Join the next eligible saved entry/pick in order without
 detection or operator action. Exhaustion confirms the retract above
 the bin; ordinary Pick's bounded new-batch policy is separate. Auto Run discards
@@ -103,7 +111,7 @@ counts placement before retry. Service faults and invalid evidence stay terminal
 
 Queued release review: **2026-10-01**, baseline **`57bf58e`** plus rule **199**.
 Place Item and explicit held Return Item open fingers (DO2 OFF, DO14 ON), disable
-suction and enable exhaust (DO13 OFF, DO1 ON) at 90% of descent.
+suction and enable exhaust (DO13 OFF, DO1 ON) at 80% of descent.
 There is no separate 100% output event.
 Release evidence uses finger-open/exhaust ON, finger-close/suction OFF and DI1 LOW, independently
 of DI12. Missing intermediate release evidence still cannot block the queue.
@@ -116,7 +124,7 @@ retract; Return completes only at taught Home. Auto Run can append Home/next
 Pick behind placement. No slow Drop Retract segment is added.
 
 Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **191**.
-Explicit held Return shares placement's approach/drop/retract, 90% finger OPEN/
+Explicit held Return shares placement's approach/drop/retract, 80% finger OPEN/
 suction OFF/exhaust ON and 0% neutral timing, using the saved pre-pick drop target.
 Append exact joint Home in the same queue; confirm final Home and neutral/DI1 LOW. Source/release
 context survives Stop. Rule 212 extends this same route to automatic drop returns.
@@ -551,7 +559,7 @@ flowchart TD
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
     Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → Safety Z exit → saved Tray Detect joints; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
-    HeldReturn -->|Held DI1 LOW for 50 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 90% release / 0% neutral retract; no Home"]
+    HeldReturn -->|Held DI1 LOW for 50 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
     PutBack -->|Eligible saved candidate; same queue| Entry
     PutBack -->|Batch exhausted; retract confirmed| Limit
     Miss --> More{"Another candidate?"}
@@ -677,13 +685,13 @@ flowchart TD
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
     AcquisitionPause -->|Place Item Retry| Reset["Operator grants 3 new requests; recheck sources and position"]
     Reset --> Observe
-    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["One queue: bin approach → saved pre-pick (90% fingers OPEN, suction OFF, exhaust ON) → retract (neutral at 0% start) → joint Home; confirm only Home"]
+    AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["One queue: bin approach → saved pre-pick (80% fingers OPEN, suction OFF, exhaust ON) → retract (neutral at 0% start) → joint Home; confirm only Home"]
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Valid; still at observation position| Queue["One queue: pre-place, drop and retract at speed 100%; CP100; no intermediate arrival wait"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
-    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 90% fingers OPEN, suction OFF, exhaust ON"]
+    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN, suction OFF, exhaust ON"]
     Release --> Retract["MovLIO to pre-place in same queue; speed 100%; 0% start fingers + vacuum neutral"]
     Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
     Accepted --> Monitor["Completion worker: final retract joint-FK + idle + execution; neutral and DI1 LOW"]
@@ -694,7 +702,7 @@ flowchart TD
     Depth -. "Held loss before intentional release" .-> Drop
     Pre -. "Held loss" .-> Drop
     Release -. "Held loss before observed suction OFF" .-> Drop["50 ms loss: latch DROPPED; immediate Stop; drain replies; final Stop and empty queue"]
-    Drop --> Source["Shared Return Item: source approach → pre-pick (90% release) → Home-Z retract (0% neutral); no Home"]
+    Drop --> Source["Shared Return Item: source approach → pre-pick (80% release) → Home-Z retract (0% neutral); no Home"]
     Source --> Saved["Next eligible original-batch Pick; no detection; HOLDING at Tray Detect, or READY if exhausted"]
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
     Stopped -->|Release command not issued| Retry["Continue reobserves within remaining request budget"]
@@ -749,7 +757,7 @@ batch pauses again. Ordinary manual Pause retains its partly used budget.
 Pick Item remains disabled. A trusted HELD source before any placement release
 enables the same paused RETURN ITEM control as held Pick. It calls the
 queued bin Return Item: optional vertical rise, Home-Z approach, saved pre-pick
-drop with fingers OPEN, suction OFF and exhaust ON at 90%, retract to Home Z
+drop with fingers OPEN, suction OFF and exhaust ON at 80%, retract to Home Z
 with neutral at its 0% start, then joint Home.
 Admit the complete route in one queue, then confirm Home/neutral/DI1 LOW.
 No intermediate arrival or settling wait is added.
@@ -778,10 +786,10 @@ Global SpeedFactor still scales those speeds and is never changed by placement.
 Retain Item Teach travel/approach/retract acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
 Commands are MovL pre-place; MovLIO release
-with 90% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
+with 80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
 0% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF. No final Home command or additional
 retract-height/clearance target is sent. Exhaust
-lasts from descent's 90% trigger until the upward command starts,
+lasts from descent's 80% trigger until the upward command starts,
 not a 50 ms pulse.
 Zero uses distance-mode start events (`{1,0,channel,0}`) in the retract MovLIO;
 there is no separate DO call or pre-retract output wait.
@@ -877,7 +885,7 @@ flowchart TD
     Place -. "Held loss before suction OFF" .-> Drop
     Append -. "Old item still held: loss" .-> Drop["Immediate Stop; discard worker/new ledger; retain old source and batch; no placement count"]
     Drop --> Contain["Resolve issued replies; final Stop and stationary empty queue"]
-    Contain --> Return["Shared Return Item: source approach → pre-pick (90% release) → Home-Z retract (0% neutral); no Home"]
+    Contain --> Return["Shared Return Item: source approach → pre-pick (80% release) → Home-Z retract (0% neutral); no Home"]
     Return --> Saved{"Eligible original poses?"}
     Saved -->|Yes| SavedPick["Same queue: next saved entry and Pick; execution/neutral boundary arms new pickup; no new detection"]
     SavedPick --> Tray
@@ -1069,7 +1077,7 @@ to recheck after physical release, avoiding a latch that prevents clearing alarm
 ```mermaid
 flowchart TD
     Start["Confirmed stopped pose; trusted retained source"] --> Queue["Shared paused Return Item queue at speed 100%: optional vertical rise → source XY/attitude at Home Z"]
-    Queue --> Release["Exact saved pre-pick; at 90% descent: fingers OPEN, suction OFF, exhaust ON"]
+    Queue --> Release["Exact saved pre-pick; at 80% descent: fingers OPEN, suction OFF, exhaust ON"]
     Release --> Retract["Vertical retract to Home Z; all four outputs neutral at 0% start"]
     Retract --> Kind{"Same queue: select endpoint policy"}
     Kind -->|Explicit Return / paused drop| Home["Append exact joint Home; confirm Home + idle/execution + neutral + DI1 LOW"]
@@ -1088,7 +1096,7 @@ moves to source X/Y at Home Z, descent releases at pre-pick, and retract returns
 vertically to Home Z. Home Z must exceed saved pre-pick Z; candidate validation
 and preview use this same geometry. No fixed +50 mm release offset is added.
 
-At 90% descent: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON. At 0% retract: DO2/DO14/DO1/
+At 80% descent: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON. At 0% retract: DO2/DO14/DO1/
 DO13 OFF. All return speeds are 100%; acceleration is taught travel for rise,
 approach and Home, approach for descent, and retract for ascent. Global
 SpeedFactor/CP apply. One complete group is admitted in order, with no intermediate

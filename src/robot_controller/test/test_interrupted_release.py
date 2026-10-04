@@ -46,7 +46,7 @@ def test_interrupted_release_recovery_preserves_io_to_home_then_neutralizes(boun
             interrupt()
 
     def timed_output(event, target):
-        if event.percent == 90 and event.channel == boundary:
+        if event.percent == 80 and event.channel == boundary:
             operation = rig.managed.return_progress
             rig.feed_sequence += 1
             rig.output_history.append((rig.feed_sequence, rig.clock,
@@ -98,7 +98,7 @@ def test_stop_after_release_recovers_upward_without_second_release():
     rig.hardware.on_move = lambda targets, kwargs: resumed.append((targets, kwargs))
     result = rig.recover()
     assert result.success and result.state == "READY"
-    assert rig.log.count(("timed_output", 90, 1, True)) == 1
+    assert rig.log.count(("timed_output", 80, 1, True)) == 1
     assert len(resumed) == 1
     targets, kwargs = resumed[0]
     assert kwargs["batch_name"] == "recovery_home" and kwargs["preserve_outputs"]
@@ -197,5 +197,5 @@ def test_recover_after_completed_release_cancels_next_candidate_instead_of_hando
     assert rig.managed.session.held_index is None
     assert rig.managed.session.attempts[1].state == "CANCELED"
     assert rig.managed.return_progress is None
-    assert rig.log.count(("timed_output", 90, 1, True)) == 1
+    assert rig.log.count(("timed_output", 80, 1, True)) == 1
     assert "p2_pick" not in executed

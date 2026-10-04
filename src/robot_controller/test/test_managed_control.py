@@ -344,7 +344,7 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
         assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
         return
     assert approach[1] == ("return_pre", "return_release", "return_retract", "home")
-    assert ("timed_output", 90, 1, True) in rig.log
+    assert ("timed_output", 80, 1, True) in rig.log
     assert ("timed_output", 0, 1, False) in rig.log
     assert not any(entry[0] in ("pulse", "output") for entry in rig.log)
     assert not any(rig.expected_outputs.values())
@@ -390,7 +390,7 @@ def test_put_back_uses_reference_return_rates_then_normal_pick_rates(prepick, dr
     assert [(target.speed_percent, target.acceleration_percent) for target in prefix] == [
         (100, 80), (100, 80), (100, 50), (100, 50)]
     assert np.array_equal(prefix[2].matrix, rig.managed.session.attempts[0].plan[2].matrix)
-    assert ("timed_output", 90, 1, True) in rig.log
+    assert ("timed_output", 80, 1, True) in rig.log
     assert not any(entry[0] == "pulse" for entry in rig.log)
     assert rig.global_speed_percent == 37
 
@@ -444,7 +444,7 @@ def test_drop_during_pause_rise_stops_and_puts_back_even_if_di1_bounces_high():
     rig.managed.request("pause")
     rig.managed.handle()
     assert states(rig)[0] == "DROPPED"
-    assert ("timed_output", 90, 1, True) in rig.log
+    assert ("timed_output", 80, 1, True) in rig.log
     assert not rig.holding_item
     assert any(entry[0] == "stop" and "Suction lost" in entry[1] for entry in rig.log)
 
@@ -558,7 +558,7 @@ def test_return_geometry_uses_exact_taught_prepick_including_standoff(prepick):
     release, retreat = return_targets(plan)
     assert release.matrix[2, 3] == pytest.approx(.312 + prepick / 1000)
     assert np.array_equal(release.matrix, plan[2].matrix)
-    assert all(event.percent == 90 for event in release.motion_io)
+    assert all(event.percent == 80 for event in release.motion_io)
     assert [target.name for target in retreat] == ["return_retract"]
     assert retreat[0].matrix[2, 3] == pytest.approx(home[2, 3])
     assert not plan[2].motion_io and not plan[5].motion_io
@@ -703,7 +703,7 @@ def test_completed_picks_paused_drop_continues_retained_candidates_after_home():
     assert states(rig) == ["DROPPED", "FAILED"]
     assert rig.machine.state == "READY"
     assert not rig.operation_lock.locked()
-    release = rig.log.index(("timed_output", 90, 1, True))
+    release = rig.log.index(("timed_output", 80, 1, True))
     next_pick = next(i for i, entry in enumerate(rig.log)
                      if entry[0] == "move" and "p2_pick" in entry[1])
     assert release < next_pick
@@ -736,7 +736,7 @@ def test_feedback_callback_latches_confirmed_paused_drop_even_after_di1_recovers
     rig.managed.request("pause")
     rig.managed.handle()
     assert states(rig)[0] == "DROPPED"
-    assert ("timed_output", 90, 1, True) in rig.log
+    assert ("timed_output", 80, 1, True) in rig.log
 
 
 @pytest.mark.parametrize("count", [1, 2])
@@ -903,7 +903,7 @@ def test_return_requested_at_paused_drop_releases_once_and_finishes_ready():
         rig.managed.handle()
     assert rig.machine.state == "READY"
     assert states(rig)[0] == "DROPPED"
-    assert rig.log.count(("timed_output", 90, 1, True)) == 1
+    assert rig.log.count(("timed_output", 80, 1, True)) == 1
 
 
 @pytest.mark.parametrize("prepick", [20., 50., 80.])

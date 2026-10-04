@@ -63,7 +63,7 @@ def test_return_queues_all_targets_before_waiting_for_home(height, approach_spee
     assert (approach.a, approach.b, approach.c) == pytest.approx((120., -230., 800.))
     assert (retract.a, retract.b, retract.c) == pytest.approx((120., -230., 800.))
     assert list(release.mdis) == [
-        "{0,90,2,0}", "{0,90,14,1}", "{0,90,13,0}", "{0,90,1,1}"]
+        "{0,80,2,0}", "{0,80,14,1}", "{0,80,13,0}", "{0,80,1,1}"]
     assert list(retract.mdis) == [
         "{1,0,2,0}", "{1,0,14,0}", "{1,0,1,0}", "{1,0,13,0}"]
     assert not any(request.mode for _, request in rig.requests[:-1]) and home.mode

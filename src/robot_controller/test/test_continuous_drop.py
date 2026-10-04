@@ -201,7 +201,7 @@ def test_return_uses_saved_prepick_and_joins_next_eligible_pose_without_home_or_
     assert any("return_release" in row[1] and "return_retract" in row[1]
                and "p3_pick" in row[1] for row in moves)
     np.testing.assert_array_equal(source, session.attempts[0].plan[2].matrix)
-    assert ("timed_output", 90, 1, True) in node.log
+    assert ("timed_output", 80, 1, True) in node.log
     stop_index = next(i for i, row in enumerate(node.log) if row[0] == "stop_confirmed")
     move_index = next(i for i, row in enumerate(node.log) if row[0] == "move")
     assert stop_index < move_index
