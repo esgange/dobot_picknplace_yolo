@@ -29,13 +29,16 @@ feedback. Auto Run always requires the trusted picked item for placement, includ
 in GUI mode. Placement retains its existing approach/release/retract queue and rates.
 
 After Pick confirms Tray Detect joints/idle, acquire the tray pose and placement
-depth first, including any of the three allowed observation attempts. Send the
-complete approach/release/retract queue and require acceptance of all three commands.
-Only then start one read-only worker requesting the next bin candidate batch, if
-another item is needed (rule 206 supersedes rule 202). The request overlaps placement
-execution; tray acquisition and placement admission never overlap this request.
-Tray failure, rejected/unanswered placement commands or Stop before that boundary
-prevent the request. Capture remains a fresh post-request RGB/depth/TF observation.
+depth first, including any of the three allowed observation attempts. After the
+validated result and observation-position check, start one read-only worker requesting
+the next bin candidate batch if another item is needed (rule 209 supersedes rule 206).
+It runs while the owning action plans and sends the placement approach/release/retract
+queue, overlapping command admission and execution. The worker never sends hardware
+commands. Require ordered acceptance of all three placement commands before consuming
+even an already-ready result or appending Home/next-Pick motion. Tray failure or Stop
+before the worker starts prevents the request; a subsequent placement admission or
+execution failure cancels/discards it. Capture remains a fresh post-request
+RGB/depth/TF observation.
 Keep the fixed bin camera's view clear during placement; no automatic occlusion
 test is added. Manual Pick/Place do not launch this lookahead.
 
@@ -90,8 +93,9 @@ planners/executors. The latest complete recorded Auto Run finished 3/3 in 53.65 
 tray/depth results. The two next-item requests started after placement admission
 and overlapped execution; their validated results arrived 1.69 s and 1.08 s after
 retract completion. Final Home was appended immediately behind the last placement.
-Rule 206 retains this placement-admission trigger, superseding rule 202's earlier
-Tray Detect trigger. No new physical cycle timing has been measured for this change.
+Rule 209 now starts the worker after validated tray/depth acquisition, overlapping
+placement admission as well as execution while retaining the complete placement
+admission gate before any next-Pick motion. No new physical cycle timing has been measured.
 
 Repeated source validation was a measured CPU cost. Strict catalog scans now
 share one implementation and reuse camera-prefix parsing only for identical

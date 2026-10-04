@@ -237,6 +237,15 @@ class AutoRunOperation:
         node._transition("READY", "Auto Run stopped: all three Pick attempts exhausted")
         return False
 
+    def _start_prefetch(self):
+        self.node.raise_if_cancelled()
+        if self.prefetch is not None:
+            raise FeedbackFailure("Auto Run already has a next-bin request")
+        self.node.operation_progress(
+            "AUTO_PREFETCH", "Tray pose/depth accepted; acquiring next bin batch during placement")
+        self.prefetch = CandidatePrefetch(
+            self.node, self.configuration, self.save_debug_images)
+
     def run(self):
         node = self.node
         batch, bridge = None, None
@@ -248,19 +257,15 @@ class AutoRunOperation:
             node._transition("PLACING", "Auto Run: waiting for stable Tray Detect and tray pose")
             placement = PlacementOperation(*self.target, require_held_item=True)
             node.placement = placement
-            placement.run(node)
+            last_item = self.completed + 1 == self.quantity
+            placement.run(node, on_observed=None if last_item else self._start_prefetch)
+            # run() returns only after ordered acceptance of every placement
+            # command. Even an already-ready batch cannot append Home/Pick earlier.
             self.bridge = bridge = PlacementBridge(self, placement)
-            if self.completed + 1 == self.quantity:
+            if last_item:
                 self.finish_home(bridge)
                 return True
             node.raise_if_cancelled()
-            # Tray/depth acquisition and all three placement acknowledgements
-            # precede the next bin request. Supervise the executing queue while
-            # this read-only worker acquires poses for the appended Home/Pick.
-            node.operation_progress(
-                "AUTO_PREFETCH", "Placement queue accepted; acquiring next bin candidate batch")
-            self.prefetch = CandidatePrefetch(
-                node, self.configuration, self.save_debug_images)
             pending, placement.pending_motion = placement.pending_motion, None
             node.hardware.finish_batch(pending, handoff=self.prefetch.future.done)
             if placement.phase == "DONE":

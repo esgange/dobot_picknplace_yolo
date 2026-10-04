@@ -89,7 +89,7 @@ class PlacementOperation(ReleaseQueue):
         if pending is not None:
             pending.close()
 
-    def run(self, node):
+    def run(self, node, *, on_observed=None):
         node.wait_for_resume()
         config = node.configuration
         config.validate_sources(node.root)
@@ -121,6 +121,8 @@ class PlacementOperation(ReleaseQueue):
             node.events.record("WARNING", "tray_acquisition_paused", str(exc))
             raise ManagedInterruption(str(exc)) from exc
         self.check_observation(node)
+        if on_observed is not None:
+            on_observed()
         self.plan = place_targets(config.tray.detect_matrix, surface,
                                   config.profile, self.rotation_deg, config.home_matrix)
         config.validate_sources(node.root)

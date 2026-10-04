@@ -1354,6 +1354,16 @@ Use strict Item schema 11 and the v3 tray endpoint; GUI recovery retains older
 fractions for explicit review/Save. Preserve tray plane capture/measurement,
 freshness, source hashes, motion/I/O and retry gates. Update FSM and exports.
 
+Rule 209 starts Auto Run's single read-only next-bin worker after validated tray
+pose/depth and the observation-position check, before placement planning/dispatch.
+Supersede rule 206's post-admission trigger; overlap placement admission and execution.
+All three placement commands must receive ordered acceptance before any Home/next-Pick
+motion, even if the worker finishes early. Failed tray acquisition or pre-trigger Stop
+prevents the request; later admission/execution failure cancels/discards it. No worker
+for the final item. Keep one hardware owner, fresh observations, no added arrival wait,
+slow-result supervision, retries, source/DI1 ownership, counting and cleanup. No motion,
+I/O, rate, interface, configuration or executor change. Update FSM and exports.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

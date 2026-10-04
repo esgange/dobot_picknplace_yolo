@@ -12,7 +12,8 @@ import robot_controller.autorun as auto_module
 from robot_controller.autorun import (
     AutoRunOperation, CandidatePrefetch, PlacementBridge, validate_quantity)
 from robot_controller.controller import RobotController
-from robot_controller.errors import CommandRejected, FeedbackFailure, OperationCanceled
+from robot_controller.errors import (
+    CommandRejected, CommandResponseTimeout, FeedbackFailure, OperationCanceled)
 from robot_controller.motion import home_targets, pick_targets
 from robot_controller.pick_session import PickSession
 from robot_controller_interfaces.action import AutoRun
@@ -222,9 +223,11 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
             self.plan = (Target("retract", np.eye(4), 100, 100),)
             self.observing = True
 
-        def run(self, owner):
+        def run(self, owner, *, on_observed=None):
             assert owner.machine.state == "PLACING"
             order.append("tray acquisition")
+            if on_observed is not None:
+                on_observed()
             order.append("place queued")
             self.phase = "APPROACH"
             self.pending_motion = object()
@@ -234,8 +237,8 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
     class Worker:
         def __init__(self, *_args):
-            assert node.machine.state == "PLACING" and node.placement.phase == "APPROACH"
-            assert order[-1] == "place queued"
+            assert node.machine.state == "PLACING" and node.placement.phase == "OBSERVE"
+            assert order[-1] == "tray acquisition"
             order.append("prefetch")
             self.future = Future()
             self.closed = False
@@ -297,7 +300,7 @@ def test_counted_cycles_prefetch_only_when_needed_and_append_final_home(
     assert order.count("place queued") == quantity
     assert order.count("prefetch") == quantity - 1
     assert order.count("append next Pick") == (0 if slow else quantity - 1)
-    assert order[:4] == (["Pick", "tray acquisition", "place queued", "prefetch"]
+    assert order[:4] == (["Pick", "tray acquisition", "prefetch", "place queued"]
                          if quantity > 1 else
                          ["Pick", "tray acquisition", "place queued", "append final Home"])
     assert order[-1] == "append final Home"
@@ -310,7 +313,7 @@ def test_prefetch_error_ends_run_without_queuing_another_pick_or_counting_releas
     with pytest.raises(FeedbackFailure, match="detector unavailable"):
         run.run()
     run.close()
-    assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
+    assert order == ["Pick", "tray acquisition", "prefetch", "place queued"]
     assert run.completed == 0 and workers[0].closed
 
 
@@ -326,7 +329,7 @@ def test_stop_before_prefetch_consumption_discards_it_without_next_pick(monkeypa
     with pytest.raises(OperationCanceled):
         run.run()
     run.close()
-    assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
+    assert order == ["Pick", "tray acquisition", "prefetch", "place queued"]
     assert run.completed == 0 and workers[0].closed
 
 
@@ -509,7 +512,7 @@ def test_completed_placement_is_reported_even_when_prefetch_fails(monkeypatch):
         run.run()
     run.close()
     assert run.completed == 1
-    assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
+    assert order == ["Pick", "tray acquisition", "prefetch", "place queued"]
 
 
 @pytest.mark.parametrize("outcome", ["no_pick", "stop", "arrival_failed"])
@@ -564,40 +567,47 @@ def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, in
 
 
 @pytest.mark.parametrize("reply", ["accepted", "rejected", "stop"])
-def test_next_item_request_waits_for_final_placement_acknowledgement(reply):
+@pytest.mark.parametrize("pending_index", [1, 2, 3])
+def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply, pending_index):
     rig = QueueRig()
     node = rig.node
     run = node.auto_run = AutoRunOperation(node, request(2))
     batch = object()
     pending = Future()
     canceled = [False]
+    entered = threading.Event()
     rig.order.clear()
-    original_call = rig.transport.clients["MovLIO"].call_async
+    for name in ("MovL", "MovLIO"):
+        original_call = rig.transport.clients[name].call_async
 
-    def dispatch(command):
-        response = original_call(command)
-        return pending if len(rig.requests) == 3 else response
+        def dispatch(command, original=original_call):
+            assert entered.wait(2.)  # Worker is active before the first motion reply.
+            response = original(command)
+            return pending if len(rig.requests) == pending_index else response
 
-    rig.transport.clients["MovLIO"].call_async = dispatch
+        rig.transport.clients[name].call_async = dispatch
     node.cancel_requested = lambda: canceled[0]
 
     def awaiting_reply(_seconds):
-        assert len(rig.requests) == 3 and not pending.done()
-        assert run.prefetch is None
-        node.candidates.request.assert_not_called()
+        assert len(rig.requests) == pending_index and not pending.done()
+        assert run.prefetch.future.result(timeout=2.) is batch
+        assert run._pick.call_count == 1  # Ready poses cannot enter the next Pick yet.
+        node.candidates.request.assert_called_once()
         if reply == "stop":
             canceled[0] = True
         else:
-            rig.order.append("retract accepted" if reply == "accepted" else "retract rejected")
-            pending.set_result(SimpleNamespace(res=0 if reply == "accepted" else -1))
+            rig.order.append("placement accepted" if reply == "accepted" else "placement rejected")
+            pending.set_result(SimpleNamespace(
+                res=0 if reply == "accepted" else -1, robot_return="{4}"))
 
     node.wait_control = awaiting_reply
 
     def acquire(configuration, *, save_debug_images, cancel):
         assert configuration is node.configuration and not save_debug_images and not cancel()
-        assert rig.order == ["MovL", "MovLIO", "MovLIO", "retract accepted"]
-        assert node.placement.phase != "DONE" and run.completed == 0
+        assert not rig.requests and node.placement.phase != "DONE"
+        assert run.completed == 0
         rig.order.append("next item request")
+        entered.set()
         return batch
 
     node.candidates = SimpleNamespace(request=Mock(side_effect=acquire))
@@ -606,7 +616,10 @@ def test_next_item_request_waits_for_final_placement_acknowledgement(reply):
     finish = rig.transport.finish_batch
 
     def finish_placement(motion, *, handoff):
+        assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO"]
+        assert pending.done() and pending.result().res == 0
         assert run.prefetch.future.result(timeout=2.) is batch
+        rig.transport.finish_batch = finish
         return finish(motion, handoff=handoff)
 
     rig.transport.finish_batch = finish_placement
@@ -617,6 +630,26 @@ def test_next_item_request_waits_for_final_placement_acknowledgement(reply):
         assert found is batch and bridge is run.bridge
         assert not bridge.completed and bridge.placement.phase != "DONE"
         assert node.managed.session is bridge.old_session
+        assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO"]
+        assert "placement accepted" in rig.order
+        # Append actual Home/Pick transport calls before placement arrival.
+        item = np.eye(4)
+        item[:3, 3] = [.4, .1, .25]
+        plan = pick_targets(node.configuration.home_matrix, item, node.configuration.profile, 1)
+        bridge.next_session = PickSession(["next-item"], [plan])
+        home = home_targets(bridge.origin, node.configuration.home_matrix,
+                            node.configuration.home_joints,
+                            speed_percent=80, acceleration_percent=70)
+        rig.steps = iter([
+            dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
+            dict(outputs=0, inputs=OPEN, currentCommandId=3),
+            dict(outputs=0, inputs=OPEN, currentCommandId=4),
+            dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+        ])
+        node.hardware.move_batch(
+            (*home, plan[0], plan[2], plan[3]), stop_on_suction=True,
+            pick_settling_sec=10., return_terminal_pose=True,
+            confirmed_start_pose=bridge.origin, placement_bridge=bridge)
         raise OperationCanceled("test reached next Pick handoff")
 
     run._pick = Mock(side_effect=next_pick)
@@ -624,39 +657,122 @@ def test_next_item_request_waits_for_final_placement_acknowledgement(reply):
         with pytest.raises(CommandRejected if reply == "rejected" else OperationCanceled):
             run.run()
         names = [name for name, _ in rig.requests]
-        assert names[:3] == ["MovL", "MovLIO", "MovLIO"]
         if reply == "accepted":
-            assert not names[3:]
+            assert names == ["MovL", "MovLIO", "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO",
+                             "Stop"]
+            assert rig.order.index("placement accepted") < rig.order.index("MovL", 2)
+            assert rig.order.index("feedback") > rig.order.index("MovL", 2)
+            assert run.completed == 1
         else:
-            assert names[3:] and set(names[3:]) == {"Stop"}
-        assert node.candidates.request.call_count == (1 if reply == "accepted" else 0)
+            assert names[:pending_index] == ["MovL", "MovLIO", "MovLIO"][:pending_index]
+            assert names[pending_index:] and set(names[pending_index:]) == {"Stop"}
+            assert "feedback" not in rig.order and run.completed == 0
+        node.candidates.request.assert_called_once()
         assert run._pick.call_count == (2 if reply == "accepted" else 1)
-        assert "feedback" not in rig.order  # No physical placement-arrival wait was added.
-        assert run.completed == 0
     finally:
         if not pending.done():
             pending.set_result(SimpleNamespace(res=0))
         run.close()
 
 
-def test_stop_after_placement_admission_prevents_prefetch(monkeypatch):
+def test_stop_after_placement_admission_discards_prefetch_without_next_pick(monkeypatch):
     run, node, order, workers = cycle_rig(monkeypatch, 2)
     original = auto_module.PlacementOperation.run
 
-    def place_then_stop(placement, owner):
-        original(placement, owner)
+    def place_then_stop(placement, owner, **kwargs):
+        original(placement, owner, **kwargs)
         owner.raise_if_cancelled = Mock(side_effect=OperationCanceled("operator Stop"))
 
     monkeypatch.setattr(auto_module.PlacementOperation, "run", place_then_stop)
     try:
         with pytest.raises(OperationCanceled):
             run.run()
-        assert order == ["Pick", "tray acquisition", "place queued"]
-        assert not workers and run.prefetch is None
+        assert order == ["Pick", "tray acquisition", "prefetch", "place queued"]
+        assert len(workers) == 1 and run.prefetch is workers[0]
         assert node.placement.pending_motion is not None
     finally:
         run.close()
     assert node.placement.pending_motion is None
+    assert run.prefetch is None and workers[0].closed
+
+
+@pytest.mark.parametrize("interruption", ["rejected", "timeout", "stop"])
+def test_failed_placement_admission_discards_inflight_item_request(monkeypatch, interruption):
+    rig = QueueRig()
+    node = rig.node
+    run = node.auto_run = AutoRunOperation(node, request(2))
+    run._pick = Mock(return_value=True)
+    entered, released = threading.Event(), threading.Event()
+    pending = Future()
+    canceled = [False]
+    node.cancel_requested = lambda: canceled[0]
+    old_session = node.managed.session
+
+    def acquire(_configuration, *, save_debug_images, cancel):
+        entered.set()
+        assert released.wait(2.)
+        assert run.prefetch.cancel.wait(2.) and cancel()
+        return object()  # This late observation must be discarded.
+
+    node.candidates = SimpleNamespace(request=Mock(side_effect=acquire))
+    original = rig.transport.clients["MovLIO"].call_async
+
+    def dispatch(command):
+        response = original(command)
+        if len(rig.requests) != 3:
+            return response
+        assert entered.wait(2.)
+        if interruption == "rejected":
+            pending.set_result(SimpleNamespace(res=-1))
+        elif interruption == "stop":
+            canceled[0] = True
+        return pending
+
+    rig.transport.clients["MovLIO"].call_async = dispatch
+    if interruption == "timeout":
+        monkeypatch.setattr("robot_controller.hardware.COMMAND_RESPONSE_TIMEOUT_SEC", 0.)
+    error = {"rejected": CommandRejected, "timeout": CommandResponseTimeout,
+             "stop": OperationCanceled}[interruption]
+    try:
+        with pytest.raises(error):
+            run.run()
+        worker = run.prefetch
+        assert worker is not None and not worker.future.done()
+        assert run.bridge is None and run.completed == 0
+        assert node.managed.session is old_session and old_session.held_index == 1
+        run._pick.assert_called_once()
+        names = [name for name, _ in rig.requests]
+        assert names[:3] == ["MovL", "MovLIO", "MovLIO"]
+        assert names[3:] and set(names[3:]) == {"Stop"}
+    finally:
+        if not pending.done():
+            pending.set_result(SimpleNamespace(res=0))
+        released.set()
+        run.close()
+    assert run.prefetch is None and not worker.thread.is_alive()
+    with pytest.raises(OperationCanceled):
+        worker.future.result()
+
+
+def test_stop_after_tray_reply_before_worker_start_prevents_request():
+    rig = QueueRig()
+    node = rig.node
+    run = node.auto_run = AutoRunOperation(node, request(2))
+    run._pick = Mock(return_value=True)
+    node.candidates = SimpleNamespace(request=Mock())
+
+    def observe(*_args, **_kwargs):
+        node.raise_if_cancelled = Mock(side_effect=OperationCanceled("operator Stop"))
+        return np.array([.3, .2, .25])
+
+    node.trays.request.side_effect = observe
+    try:
+        with pytest.raises(OperationCanceled):
+            run.run()
+        assert run.prefetch is None and not rig.requests
+        node.candidates.request.assert_not_called()
+    finally:
+        run.close()
 
 
 @pytest.mark.parametrize("interruption", ["stop", "held_loss"])
@@ -669,7 +785,6 @@ def test_executing_placement_failure_discards_inflight_next_item_result(monkeypa
     node.cancel_requested = lambda: False
 
     def acquire(_configuration, *, save_debug_images, cancel):
-        assert order == ["Pick", "tray acquisition", "place queued"]
         order.append("prefetch")
         entered.set()
         assert released.wait(2.)
@@ -691,7 +806,8 @@ def test_executing_placement_failure_discards_inflight_next_item_result(monkeypa
         worker = run.prefetch
         assert run.completed == 0
         node.candidates.request.assert_called_once()
-        assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
+        assert order[:2] == ["Pick", "tray acquisition"]
+        assert sorted(order[2:]) == ["place queued", "prefetch"]
     finally:
         released.set()
         run.close()

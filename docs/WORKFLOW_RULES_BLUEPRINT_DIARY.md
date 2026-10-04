@@ -8328,6 +8328,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   restart. Existing Item files need explicit review/Save in the restarted GUI,
   controller reload and manual deployment before headless use of the new version.
 
+### 2026-10-04 — Rule 209: acquire next bin poses during placement command admission
+
+- User requested parallel Item Detect after the tray reply, while retaining every
+  placement command ahead of any next-item motion. Supersede rule 206's trigger:
+  after validated tray pose/depth and the observation-position recheck, Auto Run
+  starts its existing single read-only candidate worker, then continues placement
+  planning and approach/release/retract dispatch in the owning action thread.
+  Manual Place has no callback or prefetch; the final Auto Run item starts none.
+- Placement still requires ordered successful responses for all three commands
+  before returning to Auto Run. Even an already-ready item result cannot append
+  Home/next Pick before that boundary. Preserve the immediate queue extension once
+  accepted and ready, without a physical placement/Home arrival wait. Slow results
+  retain normal placement supervision and the existing unheld idle wait.
+- Tray retries start no worker until a valid result; exhausted acquisition or
+  pre-trigger Stop prevents it. Rejection, missing response, Stop or held loss
+  during admission/execution retains containment and cancels/discards any active
+  worker/result during cleanup. No late result becomes another Pick. Keep fresh
+  source-bound observations, retry budgets, old/new source and DI1 ownership,
+  execution/release counting, motion targets, I/O, rates and selected global CP.
+  No interface, teach schema, configuration, hardware owner or executor change.
+- Validation: **1014 controller tests passed**, including **70 Auto Run tests**.
+  Synthetic transport delays each of the three placement replies with item poses
+  already ready, then verifies actual Home/Pick service calls follow all placement
+  calls and admission without an intermediate feedback/arrival wait. Rejected,
+  timed-out and stopped admission discard an in-flight late item result; checks
+  also cover pre-trigger Stop, tray exhaustion, held loss, early errors, slow
+  results, final Home, source boundaries and physical placement counting.
+  Scoped flake8, whitespace checks and sourced controller symlink build pass.
+- Updated root/package READMEs, AGENTS and FSM review/diagram/guard table.
+  Regenerated and visually reviewed **9 diagrams / 9 PDF pages**, with matching
+  source SHA-256 `d748b9a1b7ab61347d3d1594b6deeed2e07e33829d83c934ae8f9080462ef667`.
+  No physical cycle timing measured, hardware commands or application restarts.
+  Manually restart the controller to load this change. Preserve root `.env`,
+  calibration, offline/runtime teach files, weights and unrelated RViz edits.
+
 ### Future entry template
 
 ```text
