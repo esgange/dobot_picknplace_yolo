@@ -8222,6 +8222,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   on its next manual restart. Existing RViz edits, root `.env`, calibration,
   offline/runtime teach files and model weights remain untouched.
 
+### 2026-10-04 — Verify GUI/headless perception parity and refresh local deployment
+
+- Audited the shared ItemDetectNode and TrayTeachNode/TrayRequests paths. Both
+  modes use the same production pose engines, request freshness, profile/source
+  validation and filtering. Tray placement depth also uses the same fresh
+  observation and sampling path. GUI previews/drafts and headless startup/voxel
+  lifecycle intentionally differ; no perception or controller behavior changed.
+- Added regressions comparing complete GUI/headless responses from identical
+  saved production profiles through their real strict readers. Item covers
+  empty, shortage and complete batches, including ranking, geometry, source
+  hashes, diagnostics and fresh acquisition. Tray covers pose-only and placement
+  depth requests, including all response fields and one inference per trigger.
+  Only per-request UUIDs are normalized; sensors and native inference are synthetic.
+- Found the local runtime Item YAML at unsupported schema 9, with older detection
+  thresholds/candidate count and motion settings; the selected teaching copy is
+  valid schema 10. Runtime had no Tray pair. With no headless detector running,
+  backed up the catalog under ignored
+  `logs/headless_alignment/20261004T070618_896998Z/runtime_teach_before/`, then
+  manually copied the exact selected saved Item YAML and Tray YAML/model pair.
+  Existing Item model and Bin YAML already matched. All five deployed files now
+  match teaching SHA-256 hashes and pass strict deployment loaders. The three
+  active `.env` calibrations validate, and Tray's saved GUI camera matches the
+  shared active robot-camera selection. Backup manifest records file hashes.
+- Corrected the obsolete Item README claim that tray-prefixed files are forbidden
+  in the shared catalog. Documented exact-file/calibration parity, manual
+  deployment and the intentional GUI draft/preview differences in the READMEs.
+- Validation: all **508 existing Item tests** and **3 new parity cases** pass.
+  Tray's full suite has **235 passes and 2 existing RViz configuration failures**;
+  its updated request suite passes **44 tests**, including **2 new parity cases**.
+  Both existing failures compare `.01` with RViz's saved
+  `.009999999776482582` voxel size using exact equality. Preserve the unrelated
+  operator RViz edits. Scoped 100-column flake8 and whitespace checks pass.
+- No hardware commands, application starts/restarts or controller/FSM changes.
+  Calibration, `.env` and offline teaching sources remain unchanged. Local runtime
+  artifacts, weights and backups are excluded from the source commit. Live
+  camera/robot operation was not exercised; the active teaching GUIs remain in use.
+
 ### Future entry template
 
 ```text

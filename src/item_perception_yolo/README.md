@@ -678,8 +678,9 @@ The Item YAML and model must have the same stem. The shared headless catalog
 classifies by `item_teach_` and `bin_teach_` filename prefixes, then applies the
 current strict schema/hash readers. Missing, duplicate, mismatched, symlinked,
 nested, unknown-prefix or unsupported-extension entries fail startup. Hidden
-dot-prefixed atomic-write entries are ignored. `tray_teach_` is reserved for a
-future workflow and currently fails explicitly rather than being ignored.
+dot-prefixed atomic-write entries are ignored. A complete optional
+`tray_teach_*.yaml` / same-stem `.pt` pair may coexist with these files; an
+incomplete or duplicate tray pair fails explicitly.
 Each missing Item YAML, Item model or Bin YAML has a distinct error. Duplicate
 errors list the conflicting filenames. Item Detect writes the exact message as
 a bounded `FATAL` `item_detector_failed` event, logs it through ROS and exits.
@@ -690,6 +691,14 @@ For a replacement, stop the process, stage incomplete transfers under hidden
 dot-prefixed names, expose exactly one complete visible set, and restart. The
 runtime does not copy files, watch the directory, retry selection or switch
 catalogs while running.
+
+GUI/headless pose parity requires copying the exact saved Item YAML/model and
+selected Bin YAML into that catalog after teaching changes. Identical filenames
+alone do not establish parity: compare file SHA-256 hashes. Both modes use
+`ItemDetectNode` for strict profile validation, fresh request snapshots, inference,
+filtering, candidate limits and pose responses. GUI preview can show additional
+candidates; compare Simulate Trigger or the Armed service with headless requests.
+Unsaved GUI edits and recovery drafts are not deployed production settings.
 
 Launch with no arguments:
 

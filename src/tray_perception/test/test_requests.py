@@ -266,6 +266,53 @@ def test_stale_rgb_cannot_satisfy_trigger_and_fresh_depth_is_not_required(backen
     assert node.preview.call_args.kwargs["view"]["rgb"]["stamp_ns"] > 100_000_000_000
 
 
+@pytest.mark.parametrize("sample_depth", [False, True])
+def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth):
+    node, path, digest = backend
+    runtime = node.root / "runtime_teach"
+    runtime.mkdir()
+    for source in (path, path.with_suffix(".pt")):
+        shutil.copy2(source, runtime / source.name)
+    ordinary = node.snapshot.side_effect
+
+    def snapshot(**kwargs):
+        view = ordinary()
+        if sample_depth:
+            view["depth"] = {"stamp_ns": view["rgb"]["stamp_ns"],
+                             "received_at": view["rgb"]["received_at"], "depth": bytes(8)}
+        return view
+
+    node.snapshot.side_effect = snapshot
+    node.native.call = MagicMock(return_value=({
+        "state": "ok", "surface_base": [.12, .13, .24], "accepted_samples": 50,
+        "total_samples": 60, "median_mm": 700., "sigma_mm": 1.}, b""))
+    sample = {"x_mm": 20., "y_mm": 30., "diameter_mm": 30., **QUALITY_DEFAULTS}
+    responses = []
+    for deployment in (False, True):
+        node.requests.disarm("Switch synthetic provider")
+        node.deployment = deployment
+        name = "tray_detect" if deployment else "tray_teach"
+        node.get_name = lambda: name
+        node.get_node_names_and_namespaces = lambda: [(name, "/")]
+        current = runtime / path.name if deployment else path
+        node.model["path"] = str(current.with_suffix(".pt"))
+        node.requests.arm(current, settings(), digest)
+        response = node.requests.handle(GetTrayPose.Request(
+            profile_sha256=digest, sample_placement_depth=sample_depth,
+            placement=PlacementDepthRequest(**sample)), GetTrayPose.Response())
+        assert response.success and response.found
+        assert response.placement.valid is sample_depth
+        responses.append(response)
+    assert responses[0].batch_id != responses[1].batch_id
+    for response in responses:
+        response.batch_id = ""
+        response.tray.id = response.tray.id.split(":", 1)[1]
+    assert responses[0] == responses[1]
+    assert node.preview.call_count == 2
+    assert node.native.call.call_count == (2 if sample_depth else 0)
+    assert node.preview.call_args_list[0].args == node.preview.call_args_list[1].args
+
+
 def test_no_detection_is_explicit_success_without_a_pose(backend):
     node, _, _ = backend
     arm(backend)

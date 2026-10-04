@@ -755,6 +755,13 @@ lists every conflicting filename. There is no watcher or startup retry. Stop the
 consumer before replacing the catalog, stage incomplete transfers under hidden
 dot-prefixed names, expose exactly one complete set, and then restart it.
 
+Teaching GUIs and headless detectors share their pose-generation code. To keep
+their results aligned, deploy the exact saved Item/Bin files and Tray YAML/model
+pair, and use matching active calibration selections. Saving teaching changes
+does not synchronize `runtime_teach/`; compare file hashes before switching modes.
+Headless requires production profiles, whereas GUIs can retain incomplete drafts
+and unsaved edits.
+
 ## Tray Teach
 
 The separate `tray_perception` package currently provides the read-only

@@ -427,6 +427,14 @@ The Item/controller catalog still requires its own Item pair and Bin YAML, and
 now allows a complete optional tray pair. Missing/duplicate tray files, mismatched
 stems, unknown prefixes, unsupported extensions and symlinks fail visibly.
 
+For GUI/headless parity, deploy the exact saved production YAML/model pair and
+use the same active robot-camera calibration. Tray Teach may explicitly load a
+different camera; headless always uses the `.env` selection above. Both modes
+share `TrayTeachNode` and `TrayRequests`: saved-plane geometry, mask cleanup,
+size filtering, tray selection and optional fresh placement-depth sampling are
+identical for identical inputs. GUI drafts and unsaved edits are not deployable
+production profiles. Saving in Tray Teach does not update `runtime_teach/`.
+
 ```bash
 source scripts/source_ros_workspace.bash
 ros2 launch tray_perception tray_detect.launch.py
