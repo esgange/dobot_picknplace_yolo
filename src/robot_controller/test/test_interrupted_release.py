@@ -2,7 +2,8 @@
 
 import pytest
 
-from robot_controller.errors import FeedbackFailure, OperationCanceled, StopUnconfirmed
+from robot_controller.errors import OperationCanceled, StopUnconfirmed
+from robot_controller.feedback import SUCTION_LOSS_DEBOUNCE_SEC
 from robot_controller.hardware import DobotTransport
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ReturnProgress
@@ -23,7 +24,7 @@ def return_rig():
 
 def settle_stop(rig):
     if not rig.feed["digital_input_bits"] & 1:
-        rig.set_di1(False, .05)
+        rig.set_di1(False, SUCTION_LOSS_DEBOUNCE_SEC)
     rig.managed._clear_request()
     rig._settle_lifecycle_cancellation("Stop during return")
     rig._end_operation()

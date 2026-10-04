@@ -776,7 +776,7 @@ idle READY Pause remains stationary.
 
 Held Pause preserves the outputs and rises vertically at current X/Y/attitude
 to Home Z, without descending if already above it. Paused feedback, actual pose,
-DI1 and outputs remain supervised. DI1 LOW lasting 50 ms on advancing feedback
+DI1 and outputs remain supervised. DI1 LOW lasting 300 ms on advancing feedback
 during the rise requests Stop; confirmed loss while parked also starts the
 same put-back routine described below. A shorter LOW followed by HIGH cancels
 the pending loss. Confirmed loss is latched even if DI1 rises again.
@@ -903,7 +903,7 @@ The GUI has separate managed Pause/Return and permanent STOP controls. See the
 operator button policy above. The two gripper LEDs show raw DI1 Suction and DI12
 Finger open as Detected / Not detected / Unknown. DO commands and logical holding
 do not drive these LEDs. DI12 Not detected does not prove that fingers are closed.
-The held-item decision retains its 50 ms loss debounce independently of the raw
+The held-item decision retains its 300 ms loss debounce independently of the raw
 DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
 Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the smaller
@@ -1101,9 +1101,10 @@ is the complete final-pick confirmation interval; there is no fixed 300 ms pick
 gate before it or separate sensor wait after it. If DI1 is still low when the
 interval ends, that attempt is irrevocably missed.
 
-DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.050` filter owned
-by the canonical feedback monitor. After HIGH has been seen, the first advancing
-LOW sample starts a monotonic timer. Advancing LOW feedback at least 50 ms later
+DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.300` filter owned
+by the canonical feedback monitor, not a teach-file setting. After HIGH has been
+seen, the first advancing LOW sample starts a monotonic timer. Advancing LOW feedback
+at least 300 ms later
 confirms loss; any HIGH resets the pending interval immediately. Re-reading a
 snapshot or publishing the same controller timer cannot complete the debounce.
 A feedback gap beyond the existing freshness limit cannot count toward it, and
@@ -1137,7 +1138,7 @@ The final command is joint-target MovL, restoring the saved Tray Detect attitude
 Confirm only its saved joints (±1°), fresh idle RobotStatus and executed/empty
 queue after admission; no midpoint wait or fixed arrival dwell is added.
 SUCK stays ON without reissuing it; no EXHAUST/NEUTRAL release events are sent.
-Holding/output checks and the 50 ms DI1 loss debounce remain active throughout.
+Holding/output checks and the 300 ms DI1 loss debounce remain active throughout.
 Held Continue moves directly from the confirmed safety-height parked pose to
 Tray Detect, without replaying the pick, lifts or a Home detour. Successful Pick
 requests no tray observation and does not place; the next Place checks saved

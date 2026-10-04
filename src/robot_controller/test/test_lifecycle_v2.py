@@ -276,7 +276,7 @@ def test_idle_supervision_ignores_enable_pause_latch():
     assert stops == []
 
 
-def test_home_preflight_and_idle_holding_share_the_fifty_ms_suction_loss_gate():
+def test_home_preflight_and_idle_holding_share_the_three_hundred_ms_suction_loss_gate():
     from test_feedback_v2 import timed_monitor
 
     monitor, _clock, emit = timed_monitor()
@@ -288,11 +288,11 @@ def test_home_preflight_and_idle_holding_share_the_fifty_ms_suction_loss_gate():
         _transition=lambda target, message: machine.transition(target, message))
     emit(0.0, True)
     emit(0.010, False)
-    emit(0.010 + 0.049999, False)
+    emit(0.010 + 0.299999, False)
     RobotController._preflight_item_state(node)
     RobotController._supervise(node)
     assert machine.state == "HOLDING"
-    emit(0.010 + 0.050, False)
+    emit(0.010 + 0.300, False)
     with pytest.raises(HeldSuctionLost, match="lost DI1"):
         RobotController._preflight_item_state(node)
     RobotController._supervise(node)

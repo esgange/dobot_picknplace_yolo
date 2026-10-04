@@ -253,7 +253,8 @@ without an extra Stop click. HIGH or unavailable feedback never permits an
 unheld output reset. Close competing maintenance applications such as Gripper
 Diagnostics before controller recovery.
 
-Held-item DI1 loss has a fixed 50 ms falling-edge debounce. Advancing FeedInfo
+Held-item DI1 loss has a fixed 300 ms falling-edge debounce, stored in the
+controller rather than a teach file. Advancing FeedInfo
 must continue reporting LOW for that interval; HIGH cancels the pending loss
 immediately. One shared filter covers held motion, Home preflight, Stop/recovery,
 idle holding and Pause. Confirmed held-item loss stays latched even if DI1 rises

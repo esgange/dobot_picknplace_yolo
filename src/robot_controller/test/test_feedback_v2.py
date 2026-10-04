@@ -69,17 +69,18 @@ def timed_monitor():
     return monitor, clock, emit
 
 
-def test_di1_low_requires_fifty_ms_but_high_and_raw_bits_are_immediate():
+def test_di1_low_requires_three_hundred_ms_but_high_and_raw_bits_are_immediate():
     monitor, _clock, emit = timed_monitor()
-    assert SUCTION_LOSS_DEBOUNCE_SEC == 0.050
+    assert SUCTION_LOSS_DEBOUNCE_SEC == 0.300
     assert not emit(0.0, False).suction_present
     assert emit(0.001, True).suction_present
     low = emit(0.010, False)
     assert low.suction_present
     assert low.feed["digital_input_bits"] == 1 << 11
-    assert emit(0.010 + 0.049999, False).suction_present
-    assert not emit(0.010 + 0.050, False).suction_present
-    assert emit(0.061, True).suction_present
+    assert emit(0.010 + 0.050, False).suction_present
+    assert emit(0.010 + 0.299999, False).suction_present
+    assert not emit(0.010 + 0.300, False).suction_present
+    assert emit(0.311, True).suction_present
     assert monitor.output_history(low.sequence - 1)[0][3] == 1 << 11
 
 
@@ -87,20 +88,20 @@ def test_di1_high_bounce_resets_the_full_falling_edge_interval():
     _monitor, _clock, emit = timed_monitor()
     emit(0.0, True)
     assert emit(0.010, False).suction_present
-    assert emit(0.049, True).suction_present
-    assert emit(0.050, False).suction_present
-    assert emit(0.050 + 0.049999, False).suction_present
-    assert not emit(0.050 + 0.050, False).suction_present
+    assert emit(0.299, True).suction_present
+    assert emit(0.300, False).suction_present
+    assert emit(0.300 + 0.299999, False).suction_present
+    assert not emit(0.300 + 0.300, False).suction_present
 
 
 def test_di1_debounce_cannot_expire_by_rereading_or_republishing_frozen_feedback():
     monitor, clock, emit = timed_monitor()
     emit(0.0, True)
     emit(0.010, False)
-    clock[0] = 0.060
+    clock[0] = 0.310
     assert monitor.snapshot().suction_present
-    assert emit(0.080, False, advance=False).suction_present
-    assert not emit(0.081, False).suction_present
+    assert emit(0.330, False, advance=False).suction_present
+    assert not emit(0.331, False).suction_present
 
 
 def test_stale_feedback_still_fails_and_does_not_count_toward_di1_debounce():
@@ -111,7 +112,8 @@ def test_stale_feedback_still_fails_and_does_not_count_toward_di1_debounce():
     with pytest.raises(FeedbackFailure, match="stale"):
         monitor.snapshot()
     assert emit(1.030, False).suction_present
-    assert not emit(1.030 + 0.050, False).suction_present
+    assert emit(1.030 + 0.299999, False).suction_present
+    assert not emit(1.030 + 0.300, False).suction_present
 
 
 def test_mode_derived_robot_status_is_not_an_active_motion_enable_latch():

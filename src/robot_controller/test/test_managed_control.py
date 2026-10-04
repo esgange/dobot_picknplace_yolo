@@ -9,7 +9,7 @@ import pytest
 from robot_controller.errors import (CommandRejected, FeedbackFailure, HeldUnknown,
                                      ManagedInterruption, OperationCanceled, ReturnedToHome)
 from robot_controller.controller import RobotController
-from robot_controller.feedback import SuctionLossDebounce
+from robot_controller.feedback import SUCTION_LOSS_DEBOUNCE_SEC, SuctionLossDebounce
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ManagedControl
 from robot_controller.motion import PickExecutor, Target, pick_targets, pick_tray_target
@@ -90,7 +90,7 @@ class Rig:
 
     def lose_suction(self):
         self.set_di1(False)
-        self.set_di1(False, 0.050)
+        self.set_di1(False, SUCTION_LOSS_DEBOUNCE_SEC)
 
     def raise_if_cancelled(self):
         if self.cancel_event.is_set():
@@ -391,7 +391,7 @@ def test_brief_di1_low_during_pause_never_drops_or_releases_the_item(during_rise
     def bounce():
         rig.set_di1(False)
         assert not rig.managed.observe(rig.snapshot())
-        rig.set_di1(False, 0.049)
+        rig.set_di1(False, 0.299)
         assert not rig.managed.observe(rig.snapshot())
         assert rig.holding_item
 

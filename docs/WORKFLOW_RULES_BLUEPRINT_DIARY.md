@@ -8363,6 +8363,35 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Manually restart the controller to load this change. Preserve root `.env`,
   calibration, offline/runtime teach files, weights and unrelated RViz edits.
 
+### 2026-10-04 — Rule 210: increase held DI1-loss debounce to 300 ms
+
+- User requested this timing change first, conditional on the value not being a
+  teach-file setting. Verified the strict Item timing schema contains only
+  `pick_settling`; deployed/offline teaching files have no suction-loss debounce.
+  Change the shared controller `SUCTION_LOSS_DEBOUNCE_SEC` constant from 0.050 to
+  0.300 seconds. No teach-file edit, GUI field, schema or `.env` key is needed.
+- Preserve the same feedback-driven filter: immediate HIGH/reset, loss only
+  after advancing LOW feedback spans 300 ms, and no expiry from frozen snapshots
+  or a stale feedback gap. The shared held-motion, Pause, Home/preflight,
+  Stop/recovery and idle consumers all inherit the interval. No sleeping is added.
+  Raw acquisition/release/reset checks, DO integrity, freshness and explicit Stop
+  remain immediate; the separate 50 ms exhaust pulse is unchanged.
+- This changes only the debounce interval. Existing monitoring phases and
+  recovery routes remain; the requested broader drop-interrupt redesign is
+  still pending and is not claimed implemented by this change.
+- Validation: **1014 controller tests passed**. Boundary checks cover retained
+  suction at 50 ms and 299.999 ms, confirmed loss at 300 ms, immediate HIGH,
+  bounce reset, frozen/stale feedback, raw bits, output faults and shared motion,
+  recovery, idle and Pause behavior. Adjusted synthetic recovery/placement
+  fixtures to span the new interval. Scoped flake8, whitespace checks and the
+  sourced controller symlink build pass.
+- Updated root/package READMEs, AGENTS and FSM review, Pick/Pause diagrams and
+  DI1 table. Regenerated and visually reviewed the **9 diagrams / 9 PDF pages**,
+  with matching source SHA-256
+  `f36c615a8273acf03004b90302b4c6adeec2ef8e17d11eecfbbe01036a722af3`.
+  No hardware commands, production restarts or local artifact/config changes.
+  Manually restart the controller to load the new constant; no teach re-save.
+
 ### Future entry template
 
 ```text

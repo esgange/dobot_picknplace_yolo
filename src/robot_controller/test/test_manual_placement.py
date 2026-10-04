@@ -47,7 +47,7 @@ def test_manual_queue_reaches_retract_regardless_of_initial_item_presence(
     if not held_context:
         node.managed.session = None
     node.expected_outputs = {ch: bool(outputs & (1 << (ch - 1))) for ch in (1, 2, 13, 14)}
-    for _ in range(8):  # Exceed the real DI1 LOW debounce, including a stale held record.
+    for _ in range(32):  # Exceed the real DI1 LOW debounce, including a stale held record.
         rig.emit(outputs=outputs, inputs=inputs, running=0)
     assert rig.monitor.snapshot(require_enabled=True).suction_present is bool(inputs)
     rig.script[0] = dict(outputs=outputs, inputs=inputs)
@@ -71,7 +71,7 @@ def test_manual_observation_move_has_no_item_presence_gate(held_context, inputs)
     node = rig.node
     node.placement.require_held_item = False
     node.holding_item = held_context
-    for _ in range(8):
+    for _ in range(32):
         rig.emit(outputs=HELD, inputs=inputs, running=0)
     joints = joint_message()
     joints.position[0] = .2
@@ -101,7 +101,7 @@ def test_place_moves_to_tray_only_if_needed_and_detects_after_arrival(held, at_t
         node.managed.session = None
     outputs, inputs = (HELD, 1) if held else (0, 0)
     node.expected_outputs = {ch: bool(outputs & (1 << (ch - 1))) for ch in (1, 2, 13, 14)}
-    for _ in range(8):
+    for _ in range(32):
         rig.emit(outputs=outputs, inputs=inputs, running=0)
     if not at_tray:
         joints = joint_message()

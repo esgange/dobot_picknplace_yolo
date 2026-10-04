@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Suction-loss debounce review: **2026-10-04**, baseline **`4466aa4`** plus rule **210**.
+The shared controller constant is now **300 ms**, superseding rule 107's 50 ms
+falling-edge interval. Confirm held DI1 loss only with advancing LOW feedback
+spanning that interval; HIGH resets the timer immediately. Frozen or stale inputs
+cannot complete it. This is not a teach-file field and adds no sleep. Pickup HIGH,
+raw release/reset LOW, output/freshness gates and direct Stop remain immediate;
+the exhaust pulse remains 50 ms. Existing phase coverage and drop-recovery routes
+are unchanged; this does not extend drop handling into the queued placement phase.
+
 Depth coverage review: **2026-10-04**, baseline **`14e4dfd`** plus rule **208**.
 Item schema 11 removes the fixed depth sample-count field. Item poses and tray
 placement require the taught fraction of all original sampling-circle pixels to
@@ -516,7 +525,7 @@ flowchart TD
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
     Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → Safety Z exit → saved Tray Detect joints; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
-    HeldReturn -->|Confirmed suction loss| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
+    HeldReturn -->|Held DI1 LOW for 300 ms of advancing feedback| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
     PutBack -->|Eligible saved candidate| Entry
     PutBack -->|Batch exhausted; Home confirmed| Limit
     Miss --> More{"Another candidate?"}
@@ -896,8 +905,8 @@ flowchart TD
     Stay --> Paused
     Paused -->|Continue accepted| Resume["Restore owning operation and replan from actual parked pose"]
     Paused -->|Held item: Return Item| Return["RETURNING_ITEM → Home → READY"]
-    Paused -->|Held suction lost| Drop["Put back saved item → Home → remain PAUSED"]
-    Rise -->|Held suction lost during rise| Drop
+    Paused -->|Held DI1 LOW for 300 ms| Drop["Put back saved item → Home → remain PAUSED"]
+    Rise -->|Held DI1 LOW for 300 ms during rise| Drop
     Drop --> Paused
 ```
 
@@ -1131,7 +1140,7 @@ and READY, or failure containment. Clients must observe status for that outcome.
 
 | I/O | Meaning |
 | --- | --- |
-| DI1 | Suction detection: acquisition HIGH is immediate; held HIGH→LOW loss is debounced 50 ms with advancing feedback |
+| DI1 | Suction detection: acquisition HIGH is immediate; held HIGH→LOW loss is debounced 300 ms with advancing feedback |
 | DI12 | Finger fully open feedback, shown on the GUI; LOW does not prove fingers are closed |
 | DO1 / DO13 | Exhaust / suction; both OFF is neutral; both ON is invalid |
 | DO2 / DO14 | Finger close / open; both OFF is neutral; both ON is invalid |

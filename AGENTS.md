@@ -1364,6 +1364,14 @@ for the final item. Keep one hardware owner, fresh observations, no added arriva
 slow-result supervision, retries, source/DI1 ownership, counting and cleanup. No motion,
 I/O, rate, interface, configuration or executor change. Update FSM and exports.
 
+Rule 210 changes the shared SUCTION_LOSS_DEBOUNCE_SEC controller constant from
+0.050 to 0.300 seconds, superseding rule 107's interval only. It is not a teach
+field. Require advancing LOW feedback spanning 300 ms; HIGH resets immediately,
+and frozen/stale inputs cannot finish the interval. Keep immediate pickup HIGH,
+raw release/reset checks, DO/freshness gates and direct Stop. The separate 50 ms
+exhaust pulse, existing drop-monitoring phases and recovery routes are unchanged.
+No schema/configuration/interface changes. Update FSM and regenerate its exports.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

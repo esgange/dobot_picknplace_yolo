@@ -11,7 +11,7 @@ from .errors import FeedbackFailure, OperationCanceled
 
 
 FEEDBACK_MAX_AGE_SEC = 1.0
-SUCTION_LOSS_DEBOUNCE_SEC = 0.050
+SUCTION_LOSS_DEBOUNCE_SEC = 0.300
 REQUIRED_FEED_KEYS = (
     "robot_mode", "digital_input_bits", "digital_outputs", "controller_timer",
     "isRunQueuedCmd", "RunningStatus", "ErrorStatus", "CollisionStates",
@@ -56,7 +56,7 @@ class MotionObservation:
 
 
 class SuctionLossDebounce:
-    """Immediate HIGH, with LOW confirmed by advancing feedback spanning 50 ms."""
+    """Immediate HIGH, with LOW confirmed by advancing feedback spanning 300 ms."""
 
     def __init__(self):
         self.present = False
