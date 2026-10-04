@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Placement-first acquisition review: **2026-10-04**, baseline **`b761fdf`** plus rule **206**.
+After Pick confirms Tray Detect, acquire tray pose/depth and obtain acceptance of
+the complete approach/release/retract queue before starting the next-bin request.
+The single read-only worker overlaps placement execution only; this supersedes
+rule 202's earlier trigger. Failed acquisition, incomplete queue admission or Stop
+before that boundary prevents the request. Ready poses still append Home/next Pick
+without waiting for placement completion. Preserve all motion/I/O, retry limits,
+source/DI1 ownership, slow-result supervision, cancellation and physical counting.
+
 Safety Z restoration review: **2026-10-01**, baseline **`77f3559`** plus rule **205**.
 Successful manual/Auto Run Pick now queues pre-pick lift → clearance → explicit
 vertical Safety Z exit → saved Tray Detect. Exit Z is max(taught Home Z, current
@@ -27,14 +36,6 @@ arrival before acquiring tray/depth. Travel failure/Stop prevents acquisition.
 Auto Run retains both-provider and trusted-pick guards; its disabled reason is
 now visible beside the controls. Away-from-tray preview shows only the required
 observation-travel TF, never an invented placement depth or hardware command.
-
-Early acquisition review: **2026-10-01**, baseline **`f1efca5`** plus rule **202**.
-After successful Pick confirms saved Tray Detect joints/idle, start one next-item
-bin request before tray acquisition when another item remains. Fresh observations
-overlap tray-pose/depth retries and placement; ready results wait for complete
-placement admission before the existing queue handoff/error path. No new request
-on tray retries or the final item. Stop/run failure cancels and discards the batch;
-motion, I/O, source/DI1 ownership, retry limits and physical counting are unchanged.
 
 Cycle audit: **2026-10-01**, baseline **`f31bd97`** plus rule **201**. Manual and
 Auto Run retain the same queues, rates, I/O, arrival checks and retry budgets.
@@ -82,8 +83,8 @@ and direct Tray Detect completion remain unchanged for manual Pick and Auto Run.
 
 Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
 One counted action owns Pick/Place and final Home. Prefetch the next bin batch
-at confirmed Tray Detect (rule 202), overlapping tray acquisition and placement.
-After placement admission, append Home/next Pick when the batch is ready, without
+after complete placement admission (rule 206), overlapping placement execution.
+Append Home/next Pick when the batch is ready, without
 an intermediate arrival wait. Keep the old source until placement execution and
 neutral/released feedback cross into the appended Home. Auto Run disables manual
 controls except direct STOP and ends on exhausted retries with a partial count.
@@ -787,15 +788,13 @@ handling, and use trusted held-item placement even when launched from the GUI.
 flowchart TD
     Start["READY: Auto Run quantity and placement target"] --> Pick["Request poses first, then ensure Home; normal bounded Pick"]
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
-    Tray --> More{"Another item needed after this placement?"}
-    More -->|Yes| Prefetch["Start one next-bin request in background; fresh post-trigger RGB/depth/TF"]
-    More -->|No| Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
-    Prefetch -->|Do not wait for result| Observe
-    Observe --> Place["Queue approach → timed release → final retract"]
-    Place --> Last{"Last required item?"}
+    Tray --> Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
+    Observe --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
+    Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append Home behind placement"]
     Home --> Done["Count placement execution/release; confirm final Home + neutral + DI1 LOW; READY"]
-    Last -->|No| Ready{"Next-bin request finished?"}
+    Last -->|No, and not canceled| Prefetch["Start one next-bin request during placement execution; fresh post-trigger RGB/depth/TF"]
+    Prefetch --> Ready{"Next-bin request finished?"}
     Ready -->|No| Wait["Supervise placement or unheld idle while awaiting result"]
     Wait --> Ready
     Ready -->|Yes| Poses{"Any valid poses?"}
@@ -810,24 +809,27 @@ flowchart TD
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK at Home; report partial count"]
     Next -->|3 physical batches or empty retry exhausted| Empty
     Observe -->|3 requests exhausted| Fail["Stop containment; end run with partial count"]
+    Place -->|Rejected, unanswered or Stop| Fail
     Ready -->|Detector error| Fail
     Append -->|Fault or Stop| Fail
 ```
 
-Only one read-only candidate worker overlaps tray acquisition and motion;
+Only one read-only candidate worker overlaps placement execution;
 all hardware dispatch remains
 in the owning action thread, and the ROS executor still has exactly two threads.
 The worker uses the existing validated request path and immutable configuration.
 One batch belongs to the next Pick, is consumed once, and is discarded on Stop,
 source change or run failure. A repeated batch ID is rejected across the whole run.
-Pick already confirms saved Tray Detect joints/idle before this worker starts.
-That taught pose must leave the fixed bin camera view clear; no automatic occlusion
-test, tool-height heuristic or in-motion trigger is added. The existing detector
-requires post-request RGB/depth and matching TF. Keep the same single request
-through tray-pose/depth retries, and never start one for the final item. A ready
-result or detector error is consumed only at the existing post-placement-admission
-handoff boundary. Tray exhaustion, Stop or held loss closes/discards this worker
-and its result before another operation can own the controller.
+Pick confirms saved Tray Detect joints/idle, then the owner acquires tray pose/depth
+and receives accepted replies for all three placement commands before this worker
+starts. Tray retries run without a next-item request; exhausted acquisition,
+rejected/unanswered commands or cancellation before admission completes prevents
+prefetch. Never start it for the final item. Keep the fixed bin camera view clear
+during the placement-time observation; no automatic occlusion or tool-height test
+is added. The existing detector requires post-request RGB/depth and matching TF.
+A ready result or detector error uses the existing handoff path. Stop, held loss
+or another run failure closes/discards this worker and its result before another
+operation can own the controller.
 If a valid empty batch arrives, append/finish Home and count the placement, then
 request poses once more. Another empty result ends NO_PICK with the partial count.
 The one empty-result retry belongs to that Pick and cannot reset after a physical
@@ -1077,6 +1079,7 @@ Names below are relative to `/robot_controller/`.
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
+| Auto Run next-bin request (internal) | Owning action has confirmed Tray Detect, acquired tray pose/depth and accepted all three placement commands; another item remains; no cancellation; no placement-completion wait |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback |
 | `return_item` service | Started eligible managed state and trusted held source; during Place, only exhausted-acquisition PAUSED before release admission; no conflicting request |

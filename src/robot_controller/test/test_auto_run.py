@@ -12,7 +12,7 @@ import robot_controller.autorun as auto_module
 from robot_controller.autorun import (
     AutoRunOperation, CandidatePrefetch, PlacementBridge, validate_quantity)
 from robot_controller.controller import RobotController
-from robot_controller.errors import FeedbackFailure, OperationCanceled
+from robot_controller.errors import CommandRejected, FeedbackFailure, OperationCanceled
 from robot_controller.motion import home_targets, pick_targets
 from robot_controller.pick_session import PickSession
 from robot_controller_interfaces.action import AutoRun
@@ -234,8 +234,8 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
     class Worker:
         def __init__(self, *_args):
-            assert node.machine.state == "PLACING" and node.placement.phase == "OBSERVE"
-            assert order[-1] in ("Pick", "append next Pick")
+            assert node.machine.state == "PLACING" and node.placement.phase == "APPROACH"
+            assert order[-1] == "place queued"
             order.append("prefetch")
             self.future = Future()
             self.closed = False
@@ -297,7 +297,7 @@ def test_counted_cycles_prefetch_only_when_needed_and_append_final_home(
     assert order.count("place queued") == quantity
     assert order.count("prefetch") == quantity - 1
     assert order.count("append next Pick") == (0 if slow else quantity - 1)
-    assert order[:4] == (["Pick", "prefetch", "tray acquisition", "place queued"]
+    assert order[:4] == (["Pick", "tray acquisition", "place queued", "prefetch"]
                          if quantity > 1 else
                          ["Pick", "tray acquisition", "place queued", "append final Home"])
     assert order[-1] == "append final Home"
@@ -310,7 +310,7 @@ def test_prefetch_error_ends_run_without_queuing_another_pick_or_counting_releas
     with pytest.raises(FeedbackFailure, match="detector unavailable"):
         run.run()
     run.close()
-    assert order == ["Pick", "prefetch", "tray acquisition", "place queued"]
+    assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
     assert run.completed == 0 and workers[0].closed
 
 
@@ -326,7 +326,7 @@ def test_stop_before_prefetch_consumption_discards_it_without_next_pick(monkeypa
     with pytest.raises(OperationCanceled):
         run.run()
     run.close()
-    assert order == ["Pick", "prefetch", "tray acquisition", "place queued"]
+    assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
     assert run.completed == 0 and workers[0].closed
 
 
@@ -509,7 +509,7 @@ def test_completed_placement_is_reported_even_when_prefetch_fails(monkeypatch):
         run.run()
     run.close()
     assert run.completed == 1
-    assert order == ["Pick", "prefetch", "tray acquisition", "place queued"]
+    assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
 
 
 @pytest.mark.parametrize("outcome", ["no_pick", "stop", "arrival_failed"])
@@ -528,7 +528,7 @@ def test_prefetch_requires_successful_pick_and_confirmed_tray_arrival(monkeypatc
 
 
 @pytest.mark.parametrize("interruption", ["tray_exhausted", "stop", "held_loss"])
-def test_early_prefetch_is_canceled_if_tray_acquisition_ends_run(monkeypatch, interruption):
+def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, interruption):
     from robot_controller.errors import HeldSuctionLost
     from robot_controller.tray_client import TrayAcquisitionExhausted
     from test_tray_acquisition_pause import acquisition_rig
@@ -536,26 +536,14 @@ def test_early_prefetch_is_canceled_if_tray_acquisition_ends_run(monkeypatch, in
     node, tray = acquisition_rig(monkeypatch, [None] * 3)
     run = node.auto_run = AutoRunOperation(node, request(2))
     run._pick = Mock(return_value=True)  # Successful Pick's confirmed Tray Detect endpoint.
-    entered = threading.Event()
-    released = threading.Event()
-    requested = []
     original_session = node.managed.session
-
-    def acquire(configuration, *, save_debug_images, cancel):
-        requested.append(configuration)
-        entered.set()
-        assert released.wait(2.)
-        assert run.prefetch.cancel.wait(2.)  # The operation's close must cancel the request.
-        assert cancel()
-        return object()  # A late service response must never become another Pick.
-
-    node.candidates = SimpleNamespace(request=acquire)
+    node.candidates = SimpleNamespace(request=Mock())
     errors = {"tray_exhausted": TrayAcquisitionExhausted,
               "stop": OperationCanceled, "held_loss": HeldSuctionLost}
 
     def tray_reply(_future):
-        assert entered.wait(2.)
-        assert run.prefetch is not None and not run.prefetch.future.done()
+        assert run.prefetch is None
+        node.candidates.request.assert_not_called()
         assert node.managed.session is original_session and node.holding_item
         assert not any(row[0] in ("move", "output", "pulse") for row in node.log)
         if interruption != "tray_exhausted":
@@ -565,11 +553,145 @@ def test_early_prefetch_is_canceled_if_tray_acquisition_ends_run(monkeypatch, in
     try:
         with pytest.raises(errors[interruption]):
             run.run()
-        worker = run.prefetch
-        assert len(requested) == 1 and run.completed == 0
+        node.candidates.request.assert_not_called()
+        assert run.completed == 0
         assert tray.client.call_async.call_count == (3 if interruption == "tray_exhausted" else 1)
         assert node.managed.session is original_session and node.holding_item
         run._pick.assert_called_once()
+    finally:
+        run.close()
+    assert run.prefetch is None
+
+
+@pytest.mark.parametrize("reply", ["accepted", "rejected", "stop"])
+def test_next_item_request_waits_for_final_placement_acknowledgement(reply):
+    rig = QueueRig()
+    node = rig.node
+    run = node.auto_run = AutoRunOperation(node, request(2))
+    batch = object()
+    pending = Future()
+    canceled = [False]
+    rig.order.clear()
+    original_call = rig.transport.clients["MovLIO"].call_async
+
+    def dispatch(command):
+        response = original_call(command)
+        return pending if len(rig.requests) == 3 else response
+
+    rig.transport.clients["MovLIO"].call_async = dispatch
+    node.cancel_requested = lambda: canceled[0]
+
+    def awaiting_reply(_seconds):
+        assert len(rig.requests) == 3 and not pending.done()
+        assert run.prefetch is None
+        node.candidates.request.assert_not_called()
+        if reply == "stop":
+            canceled[0] = True
+        else:
+            rig.order.append("retract accepted" if reply == "accepted" else "retract rejected")
+            pending.set_result(SimpleNamespace(res=0 if reply == "accepted" else -1))
+
+    node.wait_control = awaiting_reply
+
+    def acquire(configuration, *, save_debug_images, cancel):
+        assert configuration is node.configuration and not save_debug_images and not cancel()
+        assert rig.order == ["MovL", "MovLIO", "MovLIO", "retract accepted"]
+        assert node.placement.phase != "DONE" and run.completed == 0
+        rig.order.append("next item request")
+        return batch
+
+    node.candidates = SimpleNamespace(request=Mock(side_effect=acquire))
+    # Wait only for the detector thread; the real transport still supervises the
+    # accepted placement and hands off without waiting for physical arrival.
+    finish = rig.transport.finish_batch
+
+    def finish_placement(motion, *, handoff):
+        assert run.prefetch.future.result(timeout=2.) is batch
+        return finish(motion, handoff=handoff)
+
+    rig.transport.finish_batch = finish_placement
+
+    def next_pick(found, bridge):
+        if found is None:
+            return True  # The first Pick has confirmed Tray Detect.
+        assert found is batch and bridge is run.bridge
+        assert not bridge.completed and bridge.placement.phase != "DONE"
+        assert node.managed.session is bridge.old_session
+        raise OperationCanceled("test reached next Pick handoff")
+
+    run._pick = Mock(side_effect=next_pick)
+    try:
+        with pytest.raises(CommandRejected if reply == "rejected" else OperationCanceled):
+            run.run()
+        names = [name for name, _ in rig.requests]
+        assert names[:3] == ["MovL", "MovLIO", "MovLIO"]
+        if reply == "accepted":
+            assert not names[3:]
+        else:
+            assert names[3:] and set(names[3:]) == {"Stop"}
+        assert node.candidates.request.call_count == (1 if reply == "accepted" else 0)
+        assert run._pick.call_count == (2 if reply == "accepted" else 1)
+        assert "feedback" not in rig.order  # No physical placement-arrival wait was added.
+        assert run.completed == 0
+    finally:
+        if not pending.done():
+            pending.set_result(SimpleNamespace(res=0))
+        run.close()
+
+
+def test_stop_after_placement_admission_prevents_prefetch(monkeypatch):
+    run, node, order, workers = cycle_rig(monkeypatch, 2)
+    original = auto_module.PlacementOperation.run
+
+    def place_then_stop(placement, owner):
+        original(placement, owner)
+        owner.raise_if_cancelled = Mock(side_effect=OperationCanceled("operator Stop"))
+
+    monkeypatch.setattr(auto_module.PlacementOperation, "run", place_then_stop)
+    try:
+        with pytest.raises(OperationCanceled):
+            run.run()
+        assert order == ["Pick", "tray acquisition", "place queued"]
+        assert not workers and run.prefetch is None
+        assert node.placement.pending_motion is not None
+    finally:
+        run.close()
+    assert node.placement.pending_motion is None
+
+
+@pytest.mark.parametrize("interruption", ["stop", "held_loss"])
+def test_executing_placement_failure_discards_inflight_next_item_result(monkeypatch, interruption):
+    from robot_controller.errors import HeldSuctionLost
+
+    run, node, order, _workers = cycle_rig(monkeypatch, 2)
+    entered, released = threading.Event(), threading.Event()
+    monkeypatch.setattr(auto_module, "CandidatePrefetch", CandidatePrefetch)
+    node.cancel_requested = lambda: False
+
+    def acquire(_configuration, *, save_debug_images, cancel):
+        assert order == ["Pick", "tray acquisition", "place queued"]
+        order.append("prefetch")
+        entered.set()
+        assert released.wait(2.)
+        assert run.prefetch.cancel.wait(2.) and cancel()
+        return object()  # A late reply must never become another Pick.
+
+    node.candidates = SimpleNamespace(request=Mock(side_effect=acquire))
+    error = OperationCanceled if interruption == "stop" else HeldSuctionLost
+
+    def fail(_pending, **_kwargs):
+        assert entered.wait(2.)
+        assert not run.prefetch.future.done()
+        raise error(interruption)
+
+    node.hardware.finish_batch = fail
+    try:
+        with pytest.raises(error):
+            run.run()
+        worker = run.prefetch
+        assert run.completed == 0
+        node.candidates.request.assert_called_once()
+        assert order == ["Pick", "tray acquisition", "place queued", "prefetch"]
     finally:
         released.set()
         run.close()

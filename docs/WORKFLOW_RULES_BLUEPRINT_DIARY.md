@@ -8192,6 +8192,36 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands or application restart; unrelated RViz, calibration,
   offline/runtime teach files and model weights remain untouched.
 
+### 2026-10-04 — Rule 206: acquire next bin poses after placement queue acceptance
+
+- User requested tray pose/depth first, then acceptance of the complete placement
+  approach/release/retract queue, then the next-bin candidate request. Move Auto
+  Run's one existing read-only worker to that admission boundary, superseding
+  rule 202. The request overlaps placement execution only. No new worker,
+  executor thread, hardware owner, interface, configuration or teach schema.
+- Failed tray acquisition, rejected/unanswered placement commands and Stop before
+  the boundary prevent prefetch. Check cancellation after admission and before
+  starting the worker. Preserve fresh post-request observations and the existing
+  Home/next-Pick append when the batch is ready, without waiting for placement
+  to finish or adding a stationary Home gate. If the result is slow, finish
+  retract supervision and wait at unheld idle. The final item requests no batch.
+- Retain all motion targets, Safety Z exit, global CP, rates, timed I/O,
+  source/DI1 execution boundary, physical placement counting, retry budgets and
+  failure/cancellation cleanup. Update READMEs, FSM diagrams/guard table and
+  adjacent HTML/PDF. No physical cycle-time improvement is claimed.
+- Validation: **996 controller tests passed**, including **60 Auto Run tests**.
+  Real transport with synthetic replies verifies no request before the final
+  placement acknowledgement, rejection/Stop containment and no added arrival
+  wait. Coverage retains early Home/next-Pick queue admission, slow results,
+  final Home, retry/counting behavior and canceled late-result disposal.
+  Sourced controller build, scoped 100-column flake8 and `git diff --check`
+  passed. Regenerated and verified **9 SVG diagrams / 9 A3 PDF pages**, including
+  visual review of Auto Run and matching source SHA-256
+  `5b65f0c797cfe12e1b8baab6c0402635ac0cabce3c3aa243633679f88e0a90ba`.
+- No hardware commands or application restarts. Rebuilt controller takes effect
+  on its next manual restart. Existing RViz edits, root `.env`, calibration,
+  offline/runtime teach files and model weights remain untouched.
+
 ### Future entry template
 
 ```text

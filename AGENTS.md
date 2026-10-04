@@ -1326,6 +1326,17 @@ final tray-joint/idle/execution checks. Held Continue from confirmed safety-heig
 parking stays direct. Preview places the shared exit before the success tray TF.
 Update README, diary and FSM/exports; validate without hardware commands/restarts.
 
+Rule 206 starts Auto Run's one next-bin candidate request only after confirmed
+Tray Detect, successful tray-pose/depth acquisition and acceptance of the complete
+placement approach/release/retract queue. Supersede rule 202's earlier trigger;
+overlap placement execution only. Failed tray acquisition, incomplete/rejected
+queue admission or Stop before that boundary prevents the request. Once poses
+are ready, append Home/next Pick behind placement without a physical completion
+wait. Keep slow-result supervision, fresh observations, final-item behavior,
+retry budgets, source/DI1 ownership, cancellation and physical placement counting.
+No motion/I/O/rate, interface, configuration or executor changes. Update READMEs,
+diary and FSM/exports; validate without hardware commands or application restarts.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.
