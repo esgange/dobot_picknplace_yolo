@@ -8259,6 +8259,31 @@ Never use a floating “latest” version in an issue, script, or deployment not
   artifacts, weights and backups are excluded from the source commit. Live
   camera/robot operation was not exercised; the active teaching GUIs remain in use.
 
+### 2026-10-04 — Rule 207: hide the saved Tray Teach plane overlay
+
+- User requested removal of the reference-plane visualization. Remove the green
+  saved-plane border and P1–P4 labels from RGB/depth previews, simulated results
+  and GUI/headless request images. Remove the unused projection renderer and
+  its drawing-only diagnostics; retain the existing worker message contract.
+- Keep the detected tray's masks, outlines, X/Y arrows and dimensions. Explicit
+  four-corner capture still shows draft markers and depth-sample evidence. The
+  sidebar continues to report the plane's loaded/saved state. RViz scene and pose
+  displays remain unchanged.
+- The base_link reference plane, its capture/save/load paths, metric detection,
+  ranking and live placement-depth sampling are unchanged. No controller/FSM,
+  schema, configuration, calibration or deployment-file changes.
+- Updated existing native visualization/worker checks and removed the obsolete
+  saved-outline clipping test. Geometry, tilted-plane measurement, capture
+  evidence, RGB/depth tray axes and GUI/headless request parity remain covered.
+  Validation: package run plus native rerun gives **236 passing tests**, with
+  the same **2 unrelated RViz exact-float failures** documented in the preceding
+  entry. Scoped flake8, whitespace checks and sourced Tray Perception symlink
+  build pass. The native rerun updates assertions that formerly required the
+  removed outline and its drawing-error messages.
+- No hardware commands or application restarts. Manually restart Tray Teach
+  (or Tray Detect if running) to load the updated GUI/native worker code. Preserve
+  the operator's RViz edits and all local teaching/model/calibration artifacts.
+
 ### Future entry template
 
 ```text

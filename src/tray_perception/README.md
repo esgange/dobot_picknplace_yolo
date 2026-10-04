@@ -109,14 +109,10 @@ fit; live updates preserve your chosen split.
    Numbered corner locations, accepted-sample counts and median depth appear in
    both captured panes; sampled pixels mark accepted values black and rejected values red,
    mapped with each pane's distortion model.
-   Once created or loaded, the plane's green border and P1–P4 corners remain on
-   both live panes, independently of YOLO or tray acceptance. Their projection
-   follows the current timestamped calibrated view. Visible border segments are
-   clipped to the image; only on-screen corners receive markers. Behind-camera,
-   off-screen or numerically unsafe outlines are omitted without stopping the
-   preview or changing the saved plane or tray-pose calculations. RGB preview
-   reports why the outline is unavailable. Green means a plane is
-   available in this session; the sidebar explicitly says **not saved — Save
+   Created/loaded planes are used for measurement without drawing the green
+   border or P1–P4 labels on RGB/depth previews, simulation or request images.
+   Explicit corner capture still shows the draft corners and sample evidence.
+   The sidebar reports plane availability and explicitly says **not saved — Save
    Tray Teach** until the plane is written to a profile or loaded from one.
 4. Click a displayed tray to inspect its measured size and acceptance reason.
    Once the reference plane exists, every fully measurable mask/OBB has a cyan

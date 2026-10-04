@@ -1337,6 +1337,13 @@ retry budgets, source/DI1 ownership, cancellation and physical placement countin
 No motion/I/O/rate, interface, configuration or executor changes. Update READMEs,
 diary and FSM/exports; validate without hardware commands or application restarts.
 
+Rule 207 removes the saved reference-plane green outline and P1–P4 labels from
+Tray Teach RGB/depth previews, simulation and GUI/headless request images.
+Preserve explicit corner-capture markers and depth evidence, detected-tray masks,
+axes/dimensions, sidebar plane status and RViz scene/pose displays. The saved
+base_link plane, measurement, pose selection and placement depth are unchanged;
+no artifact/schema, configuration or controller behavior changes.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

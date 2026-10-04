@@ -308,7 +308,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             "Each corner uses the valid depth samples available; zero valid samples blocks it. "
             "Create the plane to enable measurements; dimensions and Item Teach position "
             "are not needed yet. Save the complete Tray Teach profile to keep the plane. "
-            "A green four-corner outline marks the created or loaded plane.\n\n"
+            "Plane status is shown above; the saved plane is hidden from live images.\n\n"
             "Origin: corner nearest base_link. X = short edge; Y = long edge, both inward. "
             "Re-teach after changing tray support height or tilt.")
         instructions.setWordWrap(True)

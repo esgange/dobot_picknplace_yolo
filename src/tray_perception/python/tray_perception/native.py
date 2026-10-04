@@ -210,61 +210,12 @@ def capture_plane(request, data, cv2, np):
         return {"state": "ok", "plane": None, "error": str(exc)}, b""
 
 
-def draw_plane(overlay, plane, context, cv2, np):
-    optical = np.asarray(context["base_from_optical"])
-    corners = np.asarray(plane["corners_base_m"])
-    transform = np.asarray(plane["base_from_plane"])
-    distances = (corners - transform[:3, 3]) @ transform[:3, 2]
-    corners = corners - distances[:, None] * transform[:3, 2]
-    # Project densely sampled edges so lens distortion remains visible.
-    border = np.concatenate([np.linspace(corners[i], corners[(i + 1) % 4], 32)
-                             for i in range(4)])
-    image_points = project(border, context["camera"], optical, cv2, np)
-    corner_pixels = project(corners, context["camera"], optical, cv2, np)
-    # Forward-facing points can still explode near the camera plane, especially
-    # with distortion. Validate both projections before casting or painting:
-    # OpenCV reports out-of-int32 circle centers as a misleading "wrong type".
-    for pixels in (image_points, corner_pixels):
-        if not np.isfinite(pixels).all() or np.any(np.abs(pixels) > 2_000_000_000):
-            raise ValueError("Reference plane projection exceeds safe drawing range")
-    image_height, image_width = overlay.shape[:2]
-    border_pixels = np.rint(image_points).astype(int)
-    visible = False
-    for start, end in zip(border_pixels, np.roll(border_pixels, -1, axis=0)):
-        intersects, clipped_start, clipped_end = cv2.clipLine(
-            (0, 0, image_width, image_height), tuple(start), tuple(end))
-        if intersects:
-            cv2.line(overlay, clipped_start, clipped_end, (0, 255, 0), 5, cv2.LINE_AA)
-            visible = True
-    if not visible:
-        raise ValueError("Reference plane outline is outside the image")
-    center = corner_pixels.mean(axis=0)
-    for index, point in enumerate(corner_pixels, 1):
-        point = tuple(np.rint(point).astype(int))
-        if not (0 <= point[0] < image_width and 0 <= point[1] < image_height):
-            continue
-        cv2.circle(overlay, point, 6, (0, 0, 0), -1, cv2.LINE_AA)
-        cv2.circle(overlay, point, 4, (0, 255, 0), -1, cv2.LINE_AA)
-        label = f"P{index}"
-        (width, height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .5, 1)
-        at = (point[0] + 12 if center[0] >= point[0] else point[0] - width - 12,
-              point[1] + height + 8 if center[1] >= point[1] else point[1] - 8)
-        cv2.putText(overlay, label, at, cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(overlay, label, at, cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 255, 0), 1, cv2.LINE_AA)
-
-
 def overlay_plane(request, data, cv2, np):
+    """RGB-only preview; retain the worker protocol without drawing the saved plane."""
     width, height = request["width"], request["height"]
     if len(data) != width * height * 3:
         raise RuntimeError("Malformed tray RGB snapshot")
-    overlay = np.frombuffer(data, np.uint8).reshape(height, width, 3).copy()
-    error = ""
-    if request["plane"] is not None:
-        try:
-            draw_plane(overlay, request["plane"], request["camera_context"], cv2, np)
-        except ValueError as exc:
-            error = str(exc)
-    return {"state": "ok", "width": width, "height": height, "error": error}, overlay.tobytes()
+    return {"state": "ok", "width": width, "height": height, "error": ""}, data
 
 
 def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
@@ -383,11 +334,6 @@ def predict_trays(request, result, rgb, names, cv2, np):
         if settings["geometry_source"] == "mask":
             overlay = shade_masks(rgb, [d["polygon"] for d in displayed if len(d["polygon"]) >= 3],
                                   cv2, np)
-        if plane is not None and context is not None:
-            try:
-                draw_plane(overlay, plane, context, cv2, np)
-            except ValueError as exc:
-                reason += f" | Reference plane outline unavailable: {exc}"
         for detection in displayed:
             if len(detection["polygon"]) < 3:
                 continue
@@ -415,11 +361,6 @@ def tray_visuals(request, data, cv2, np):
     context, samples = request["camera_context"], []
     if context is not None:
         color_info, depth_info = context["camera"], context["depth_camera"]
-        if request.get("plane") is not None:
-            try:
-                draw_plane(overlay, request["plane"], {**context, "camera": depth_info}, cv2, np)
-            except ValueError:
-                pass  # An off-camera taught plane cannot suppress the available depth scene.
         for detection in request["detections"]:
             if len(detection["polygon"]) < 3:
                 continue

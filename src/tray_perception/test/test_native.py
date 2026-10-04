@@ -229,10 +229,10 @@ def exercise_tray_axis_overlays():
     frozen_result, frozen = native.predict_trays(
         {**request, "returned_only": True}, None, rgb, {1: "tray"}, cv2, np)
     assert frozen_result == result
-    _, plane_only = native.overlay_plane(
+    _, plain_rgb = native.overlay_plane(
         {"width": 640, "height": 480, "plane": plane, "camera_context": context},
         rgb.tobytes(), cv2, np)
-    assert frozen == plane_only
+    assert frozen == plain_rgb == rgb.tobytes()
     accepted_settings = {**settings, "accepted_class_ids": [1],
                          "geometry": {"length_mm": 200., "width_mm": 100., "tolerance_mm": 1.}}
     accepted_request = {**request, "settings": accepted_settings}
@@ -240,7 +240,7 @@ def exercise_tray_axis_overlays():
     returned_result, returned_pixels = native.predict_trays(
         {**accepted_request, "returned_only": True}, None, rgb, {1: "tray"}, cv2, np)
     assert returned_result == accepted_result and returned_result["selected"] is not None
-    assert returned_pixels != plane_only
+    assert returned_pixels != plain_rgb
     _, data = native.tray_visuals(
         {"width": 640, "height": 480, "camera_context": context,
          "detections": [item], "pixels": [], "cloud": False},
@@ -248,12 +248,11 @@ def exercise_tray_axis_overlays():
     depth_overlay = np.frombuffer(data[:rgb.size], np.uint8).reshape(rgb.shape)
     assert np.all(depth_overlay[240, 270] == [255, 0, 0])  # X/short edge in depth pixels.
     assert np.all(depth_overlay[265, 320] == [0, 255, 0])  # Y/long edge in depth pixels.
-    # Moving the saved outline far away must not alter independently measured trays.
+    # Saved capture corners are not drawn and cannot alter measured trays or their image.
     far_plane = {**plane, "corners_base_m": (corners + [10000., 0., 0.]).tolist()}
-    far_result, _ = native.predict_trays(
+    far_result, far_pixels = native.predict_trays(
         {**request, "plane": far_plane}, None, rgb, {1: "tray"}, cv2, np)
-    assert far_result["detections"] == [item] and far_result["selected"] is None
-    assert "outline unavailable" in far_result["reason"]
+    assert far_result == result and far_pixels == overlay.tobytes()
     # Size failure still provides inspection geometry, but never a production winner.
     settings["geometry"] = {"length_mm": 300., "width_mm": 150., "tolerance_mm": 1.}
     result, _ = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
@@ -279,18 +278,16 @@ def exercise_tray_axis_overlays():
     assert "rectangle" not in result["detections"][0]
     image_preview = np.frombuffer(data, np.uint8).reshape(rgb.shape)
     assert np.any(np.all(image_preview == [255, 0, 0], axis=2))
-    # Taught-plane marks persist even without YOLO/detections, in each camera model.
+    # Saved-plane marks are absent from both panes, including YOLO-off previews.
     _, data = native.overlay_plane({"width": 640, "height": 480, "plane": plane,
                                     "camera_context": context}, rgb.tobytes(), cv2, np)
-    green_rgb = np.frombuffer(data, np.uint8).reshape(rgb.shape)
-    _, data = native.tray_visuals(
-        {"width": 640, "height": 480, "camera_context": context, "plane": plane,
-         "detections": [], "pixels": [], "cloud": False},
-        rgb.tobytes() + np.full((480, 640), 800, "<u2").tobytes(), cv2, np)
-    green_depth = np.frombuffer(data[:rgb.size], np.uint8).reshape(rgb.shape)
-    for camera_model, overlay in ((camera, green_rgb), (depth_camera, green_depth)):
-        for x, y in np.rint(project(corners, camera_model, optical, cv2, np)).astype(int):
-            assert np.all(overlay[y, x] == [0, 255, 0])
+    assert data == rgb.tobytes()
+    visual_request = {"width": 640, "height": 480, "camera_context": context,
+                      "plane": plane, "detections": [], "pixels": [], "cloud": False}
+    visual_data = rgb.tobytes() + np.full((480, 640), 800, "<u2").tobytes()
+    with_plane = native.tray_visuals(visual_request, visual_data, cv2, np)
+    without_plane = native.tray_visuals({**visual_request, "plane": None}, visual_data, cv2, np)
+    assert with_plane == without_plane
     # Every quadrant, tilt and rotation keeps inward short X / long Y and right-handed Z.
     tilt = cv2.Rodrigues(np.array([.4, .2, .1]))[0]
     for x in (-.4, .4):
@@ -318,77 +315,6 @@ def test_private_tray_axes_and_inspection_overlays():
         "lib/item_perception_yolo/yolo_runtime"
     command = "import sys,runpy; sys.path.insert(0,sys.argv[1]); " \
         "runpy.run_path(sys.argv[2])['exercise_tray_axis_overlays']()"
-    result = subprocess.run(["/usr/bin/python3", "-c", command, str(runtime), __file__],
-                            env=dict(os.environ, OPENBLAS_NUM_THREADS="1"),
-                            capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def exercise_plane_projection_bounds():
-    import copy
-    import warnings
-    import cv2
-    import numpy as np
-    from tray_perception import native
-
-    camera = {"width": 640, "height": 480,
-              "k": [400., 0., 320., 0., 400., 240., 0., 0., 1.],
-              "d": [.9, .2, 0., 0., 0.], "distortion_model": "plumb_bob"}
-    corners = np.array([[-.4, -.2, 0.], [.4, -.2, 0.], [.4, .2, 0.], [-.4, .2, 0.]])
-    plane = {"base_from_plane": np.eye(4).tolist(), "corners_base_m": corners.tolist()}
-    original_plane = copy.deepcopy(plane)
-    optical = np.diag([1., -1., -1., 1.])
-    rgb = np.zeros((480, 640, 3), np.uint8)
-    request = {"width": 640, "height": 480, "plane": plane}
-    # A moving camera can leave all corners forward but project them outside int32,
-    # or even to infinity. Neither case may reach an integer cast or drawing call.
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", RuntimeWarning)
-        for distance in (.0001, 1e-60):
-            optical[:3, 3] = [0., 0., distance]
-            context = {"camera": camera, "depth_camera": camera,
-                       "base_from_optical": optical.tolist()}
-            result, data = native.overlay_plane(
-                {**request, "camera_context": context}, rgb.tobytes(), cv2, np)
-            assert result["state"] == "ok" and "safe drawing range" in result["error"]
-            assert data == rgb.tobytes()  # No partially drawn/wrapped green outline.
-            visual_request = {**request, "camera_context": context, "pixels": [],
-                              "detections": [], "cloud": False}
-            depths = np.full((480, 640), 600, "<u2").tobytes()
-            result, data = native.tray_visuals(visual_request, rgb.tobytes() + depths, cv2, np)
-            _, plain = native.tray_visuals(
-                {**visual_request, "plane": None}, rgb.tobytes() + depths, cv2, np)
-            assert result["state"] == "ok" and data == plain
-
-    # A finite off-screen plane also leaves the image alone with a useful reason.
-    camera = {**camera, "d": [0.] * 5}
-    optical[:3, 3] = [100., 0., 1.]
-    context = {"camera": camera, "base_from_optical": optical.tolist()}
-    result, data = native.overlay_plane(
-        {**request, "camera_context": context}, rgb.tobytes(), cv2, np)
-    assert "outside the image" in result["error"] and data == rgb.tobytes()
-
-    # Partly visible edges are clipped, while hidden corners get no invented markers.
-    from unittest.mock import patch
-    optical[:3, 3] = [.6, 0., .8]
-    context["base_from_optical"] = optical.tolist()
-    with patch.object(cv2, "circle", wraps=cv2.circle) as circles:
-        result, data = native.overlay_plane(
-            {**request, "camera_context": context}, rgb.tobytes(), cv2, np)
-        centers = {call.args[1] for call in circles.call_args_list}
-    assert not result["error"] and centers == {(220, 140), (220, 340)}
-    image = np.frombuffer(data, np.uint8).reshape(rgb.shape)
-    assert np.all(image[140, 0] == [0, 255, 0])
-    assert np.all(image[340, 0] == [0, 255, 0])
-    assert np.all(image[240, 220] == [0, 255, 0])
-    assert plane == original_plane
-
-
-def test_private_plane_projection_bounds():
-    runtime = Path(get_package_prefix("item_perception_yolo")) / \
-        "lib/item_perception_yolo/yolo_runtime"
-    command = "import sys,runpy; sys.path.insert(0,sys.argv[1]); " \
-        "runpy.run_path(sys.argv[2])['exercise_plane_projection_bounds']()"
     result = subprocess.run(["/usr/bin/python3", "-c", command, str(runtime), __file__],
                             env=dict(os.environ, OPENBLAS_NUM_THREADS="1"),
                             capture_output=True, text=True, timeout=30)
@@ -466,8 +392,8 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
             bytes(64 * 48 * 3))
         assert result["selected"] is None and result["reason"] == "No eligible tray"
         assert len(data) == 64 * 48 * 3 and not client.failed
-        # All three native entry points survive an overflowing projected outline
-        # and the same worker can still draw a subsequent healthy observation.
+        # None of the preview operations projects saved-plane corners, even when
+        # the camera is so close that drawing them would previously overflow.
         worker_pid = client.process.pid
         near_optical = optical.copy()
         near_optical[2, 3] = plane["base_from_plane"][2][3] + .0001
@@ -482,16 +408,19 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
                     **model_config, "task": "segment", "yolo": settings["yolo"]})
             elif operation == "tray_visuals":
                 request.update(pixels=[], detections=[], cloud=False)
-            result, _ = client.call(request, rgb + depths if operation == "tray_visuals" else rgb)
+            result, data = client.call(
+                request, rgb + depths if operation == "tray_visuals" else rgb)
             assert result["state"] == "ok" and not client.failed
-            if operation != "tray_visuals":
-                assert "safe drawing range" in result.get("error", result.get("reason", ""))
+            if operation == "tray_overlay":
+                assert not result["error"] and data == rgb
+            elif operation == "tray_preview":
+                assert result["reason"] == "No eligible tray"
         result, data = client.call(
             {"operation": "tray_overlay", "width": 64, "height": 48,
              "camera_context": context, "plane": plane}, rgb)
-        assert not result["error"] and data != rgb
+        assert not result["error"] and data == rgb
         assert not client.failed and client.process.pid == worker_pid
-        # Losing the saved outline behind the camera is an observation issue, not worker failure.
+        # A saved plane behind the camera creates no drawing error or worker failure.
         optical[:3, :3] = np.eye(3)
         result, _ = client.call(
             {"operation": "tray_preview", "width": 64, "height": 48,
@@ -499,6 +428,6 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
              "plane": plane, "settings": settings,
              "model": {**model_config, "task": "segment", "yolo": settings["yolo"]}},
             bytes(64 * 48 * 3))
-        assert "outline unavailable" in result["reason"] and not client.failed
+        assert result["reason"] == "No eligible tray" and not client.failed
     finally:
         client.close()
