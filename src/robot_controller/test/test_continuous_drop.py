@@ -198,10 +198,10 @@ def test_return_uses_saved_prepick_and_joins_next_eligible_pose_without_home_or_
     assert node.machine.state == "HOLDING" and session.held_index == 3
     moves = [row for row in node.log if row[0] == "move"]
     assert not any("home" in row[1] for row in moves)
-    assert any(row[1][:2] == ("return_clearance", "return_park_transit")
+    assert any("return_release" in row[1] and "return_retract" in row[1]
                and "p3_pick" in row[1] for row in moves)
     np.testing.assert_array_equal(source, session.attempts[0].plan[2].matrix)
-    assert ("pulse", 50) in node.log
+    assert ("timed_output", 90, 1, True) in node.log
     stop_index = next(i for i, row in enumerate(node.log) if row[0] == "stop_confirmed")
     move_index = next(i for i, row in enumerate(node.log) if row[0] == "move")
     assert stop_index < move_index
@@ -211,7 +211,7 @@ def test_exhausted_drop_return_finishes_upward_without_home():
     node = recovery_rig(1)
     assert not node.managed.continue_after_loss()
     moves = [row for row in node.log if row[0] == "move"]
-    assert moves[-1][1] == ("return_clearance", "return_park_transit")
+    assert moves[-1][1][-3:] == ("return_pre", "return_release", "return_retract")
     assert not any("home" in row[1] for row in moves)
     assert node.machine.state == "READY" and not node.holding_item
 

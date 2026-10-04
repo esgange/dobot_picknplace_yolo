@@ -148,9 +148,10 @@ source; queue acceptance alone cannot report READY or successful return.
 Direct Stop pre-empts admission/execution and retains observed release/source
 progress. Explicit Recover cancels the interrupted queue, preserves current grip
 through its existing lift/Home, and resets at Home; it never repeats the drop.
-Automatic suction-loss put-back keeps its separate stationary pre-pick release,
-50 ms exhaust and eligible-candidate continuation policy. No configuration or
-interface changes are required; restart the controller after rebuilding to apply.
+Rule 212 makes this paused Return Item route the shared reference for automatic
+suction-loss returns too. Paused drop appends Home and remains PAUSED; an active
+drop appends the next saved candidate instead. No configuration or interface
+changes are required; restart the controller after rebuilding to apply.
 
 ## Emergency-stop feedback
 
@@ -785,43 +786,37 @@ Stale feedback or output faults are not
 converted into ordinary drops. An eligible acquisition during the initial Stop
 can establish trusted holding; late DI1 from a latched miss cannot.
 
-Automatic drop put-back retains the original held candidate pose even after
-successful Pick has completed at Tray Detect. From confirmed Stop it rises to Home Z if necessary,
-queues the entry transit, then releases at the exact saved pre-pick pose:
-nominal final-pick Z plus taught `motion.prepick_height`, at that candidate's
-X/Y/attitude. Rule 113 removes the fixed +50 mm release offset and its minimum
-pre-pick check. Preview and hardware use the same release geometry. No extra
-descent below pre-pick or duplicate pre-pick target is queued. Holding outputs
-are preserved until the release pose is physically confirmed. For an already
-latched drop, DI1 LOW is expected but output/fault/feedback checks continue.
+All item returns use paused **Return Item** as their reference (rule 212), with
+the exact original saved pre-pick X/Y/Z/attitude. The shared queue contains:
 
-Release commands CLOSE OFF, SUCK OFF, OPEN ON, then `DO(1,1,50)`: the robot
-controller ends EXHAUST after 50 ms. OPEN is established before EXHAUST, not at
-an exactly simultaneous electrical edge. The pulse is independent of
-`timing.pick_settling`. A bounded feedback history records the pulse ON/OFF even
-when it finishes before its ROS response arrives. Missing pulse evidence, exhaust
-remaining ON or DI1 remaining HIGH blocks return motion. Fingers stay OPEN during
-release; the first real upward `MovLIO` return segment commands all four outputs
-NEUTRAL at its start. The clearance/exit-transit/exact joint-Home
-route is admitted in order and physically confirms only terminal Home.
-Put-back queues entry `park_transit` before pre-pick/release and exit
-`return_park_transit` after clearance, including at/near Home Z. If taught
-retract height is zero, omit the coincident clearance and neutralize on the
-upward exit-transit segment instead. If neither clearance nor safety Z provides
-an upward retreat, reject the geometry before picking; never attach neutral
-I/O to a zero-distance move. Otherwise the exit has no timed I/O, and it remains
-queued even when coincident with clearance. All segments retain global CP (default 100%).
-Under rule 112, every automatic drop put-back target uses
-`v=100` and taught travel acceleration: initial safety rise, entry transit,
-taught pre-pick release, neutral clearance retreat, exit transit and
-exact joint Home. Put-back never inherits the slow approach/retract rates.
-This applies to paused drop and automatic loss return. Explicit held Return Item
-uses the two placement-style queues described above under rule 193.
-Explicit Recover instead preserves outputs and uses taught travel rates to Home,
-then neutralizes the gripper at Home.
-If another candidate follows, its normal travel and final-pick approach rates
-resume after the old item's exit transit. Global SpeedFactor still applies
-and is never automatically raised by a put-back.
+1. Optional vertical rise at current X/Y/attitude when more than 5 mm below Home Z.
+2. Approach above the saved source at Home Z.
+3. Descend to saved pre-pick; at 90%, DO2 OFF, DO14 ON, DO13 OFF, DO1 ON.
+4. Retract vertically to Home Z; at 0%, DO2/DO14/DO1/DO13 OFF.
+
+Every return target uses speed 100%. Rise/approach/Home use taught travel
+acceleration, descent uses approach acceleration, and retract uses retract
+acceleration. Global SpeedFactor and CP apply. Home Z must exceed saved pre-pick Z;
+preview and candidate validation use the same geometry. The fixed +50 mm offset,
+separate 50 ms exhaust pulse, explicit release DO calls and intermediate arrival/
+release-I/O waits are absent. Exhaust ends with the retract's timed neutralization.
+
+Explicit Return and paused drop append exact joint Home in that same group,
+confirming Home execution/idle/neutral outputs/DI1 LOW. Explicit Return marks the
+held candidate RETURNED and ends READY; a paused drop stays DROPPED and PAUSED.
+An active drop instead appends the next retained entry/clearance/pre-pick/pick in
+the same ordered group, without Home or a return-arrival wait. The original
+source remains DROPPED and owned until advancing feedback reaches the next
+clearance's returned MovL queue ID and neutral outputs with raw DI1 LOW have
+been observed after the retract command was issued. Only then can the next
+candidate own acquisition. Early command acceptance or old suction cannot do so.
+If no candidate remains, confirm the shared retract above the bin and neutral/
+DI1 LOW. Physical item placement is not measured.
+
+Stop pre-empts either route and retains issued release/source evidence. Explicit
+Recover cancels that operation, preserves grip through its existing lift/Home,
+then neutralizes at Home; it never replays the interrupted release. Unexpected
+outputs, stale feedback or rejected/unanswered commands remain faults.
 
 Explicit `/return_item` cancels the interrupted action with a CANCELED result and
 finishes READY at Home. The GUI uses **RETURN ITEM** while paused with
@@ -873,9 +868,9 @@ Feedback/source/output failures or rejected/unanswered commands block recovery.
 Monitoring ends only on observed, issued suction OFF, never on release-command
 submission or finger motion. Planned release is exempt. Once loss is latched,
 DI1 HIGH or a late planned release cannot erase it or mark the candidate PLACED.
-Keep its original source plan. Use the safety rise, entry transit, exact pre-pick
-release, OPEN and confirmed 50 ms exhaust; neutralize during upward retreat and
-queue the old exit before the next eligible entry/clearance/pre-pick/pick. Preserve
+Keep its original source plan. Use the shared paused Return Item approach,
+90%-descent release and 0%-neutral retract to Home Z, then append the next eligible
+entry/clearance/pre-pick/pick in the same group. Preserve
 saved order and exclude failed/dropped/returned poses. No Home, new detection or
 operator action is inserted while eligible poses remain. Exhausted automatic
 return confirms the exit above the bin; active Pick may then use its existing
@@ -898,8 +893,8 @@ loss latched, send no later old-group command, then confirm Stop before put-back
 A rejected/unanswered response, unconfirmed Stop, failed release or other fault
 ends the action through normal containment and explicit Recovery. Direct Stop,
 action cancellation and shutdown always pre-empt; pending Pause retains its
-existing put-back-and-remain-paused behavior. Idle HOLDING and standalone Home
-losses continue to require explicit Recovery.
+put-back-and-remain-paused endpoint. Idle HOLDING uses the automatic shared return;
+standalone Home losses continue to require explicit Recovery.
 
 Explicit Recover is a separate cancel-and-Home-then-relax operation under rule 176. It
 never invokes the automatic put-back or next-candidate routine. A repeated
@@ -1006,8 +1001,9 @@ second origin reading cannot turn a planned upward correction into a rejected
 downward move. When a rise is needed, final joint Home acquires its origin after
 that rise finishes. The initial Home skip reads one fresh idle RobotStatus and
 canonical joint sample immediately; it waits for no extra sample, dwell, FK or
-service query. FeedInfo remains the fresh fault/frame/I/O guard. Exhausted and
-put-back returns retain an explicit Cartesian exit transit, even at Home Z.
+service query. FeedInfo remains the fresh fault/frame/I/O guard. Miss returns
+retain an explicit Cartesian exit transit, even at Home Z.
+Item returns use their shared Home-Z retract instead.
 Exhausted Pick queues pre-pick, clearance, exit transit and joint Home together,
 using the confirmed stopped pose as origin and confirming only final Home.
 Successful Pick uses the same vertical Safety Z exit after its two lifts, then
@@ -1084,8 +1080,9 @@ uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed
 pick's same rise uses `v=100` and taught travel acceleration. The next clearance
 rise uses `v=100` with taught travel acceleration for both outcomes. All rates
-remain subject to global SpeedFactor. Automatic drop put-back uses `v=100` and travel
-acceleration throughout, including release descent and empty retreat.
+remain subject to global SpeedFactor. All item returns use `v=100`, with travel
+acceleration for approach/rise/Home,
+approach acceleration for release descent and retract acceleration for ascent.
 
 The outputs are explicit mutually exclusive states. Finger OPEN is DO2 OFF then
 DO14 ON, CLOSE is DO14 OFF then DO2 ON, and NEUTRAL is both OFF. Vacuum SUCK is
@@ -1130,8 +1127,8 @@ history remain unchanged: first HIGH pickup detection, cold/untrusted DI1,
 missed-pick suction reset, release/exhaust confirmation and unheld checks still
 use raw DI1. DO13 loss, opposing outputs and other faults receive no new delay.
 Direct Stop is sent immediately and its stationary confirmation never waits for
-this timer. The debounce is independent of taught `pick_settling` and the 50 ms
-exhaust pulse; it introduces no teach setting, launch argument or schema change.
+this timer. The debounce is independent of taught `pick_settling` and motion-timed
+release; it introduces no teach setting, launch argument or schema change.
 
 On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
 the pickup Stop acknowledgement. With `grip_onpick=false`, the first lift to
@@ -1168,8 +1165,9 @@ preserves actual stopped X/Y/attitude; the entry uses M's X/Y/attitude. Both use
 so admission marks the correct candidate
 ACTIVE; a Pause there retains M for Continue. The same geometry helper supplies
 Pause's `park_transit`, which neutralizes its I/O. Unheld Continue reuses that
-already-confirmed entry transit. Missed retries and put-back retain both entry and exit
-transits queued. Both are blended under CP (default 100%) and can be rounded without an
+already-confirmed entry transit. Missed retries retain both entry and exit
+transits queued. Shared item return uses its Home-Z approach and retract. Both
+are blended under CP (default 100%) and can be rounded without an
 intermediate arrival wait or dwell; coincident coordinates still get separate
 requests. Direct Stop can always prevent later requests from being sent.
 At 80% of the first rise the group enters EXHAUST. At 0% of the second rise it

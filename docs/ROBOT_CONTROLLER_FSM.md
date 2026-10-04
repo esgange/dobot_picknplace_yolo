@@ -1,5 +1,20 @@
 # Robot Controller — Finite State Machine
 
+Shared item-return review: **2026-10-04**, baseline **`f405420`** plus rule **212**.
+Paused explicit Return Item is the reference for every return: optional current-XY
+rise to Home Z → source approach at Home Z → exact saved pre-pick release →
+vertical retract to Home Z. Release is motion-timed at 90% descent; all four
+outputs become neutral at 0% retract. Speed is 100%, with taught travel/approach/
+retract acceleration per segment. There is no separate exhaust pulse or midpoint
+arrival/release wait. Explicit Return and paused drop append joint Home; active
+drop appends the next eligible saved entry/clearance/pre-pick/pick in the same
+queue, with no Home. Retain the dropped source until advancing execution reaches
+the next clearance's returned MovL ID and neutral/raw-DI1-LOW evidence follows
+retract issuance. This arms new acquisition without treating old suction as pickup.
+Exhaustion confirms the shared retract above the bin. Preview/validation share
+this geometry; Home Z must exceed saved pre-pick Z. Keep continuous 50 ms drop
+monitoring, Stop/reply containment and explicit Recover's cancel-without-replay.
+
 Continuous drop-interrupt review: **2026-10-04**, baseline **`f2fb54d`** plus
 rule **211**. The latest specification restores the shared **50 ms** DI1-loss
 interval, superseding rule 210. From pickup through lifts, travel, idle holding,
@@ -10,10 +25,10 @@ OFF does. Planned release is exempt, and a late release cannot erase a latched d
 
 Resolve every issued command response within its original deadline, acknowledge
 Stop, then send a final Stop and confirm stationary joints/empty queue. Keep the
-saved source and original batch. Put back at exact pre-pick, OPEN and exhaust for
-50 ms, then neutralize on the upward retreat and exit transit. **No Home belongs
-to this active automatic return route.** Join the next eligible saved entry/pick
-in order without detection or operator action. Exhaustion confirms the exit above
+saved source and original batch. Rule 212 uses the shared paused Return Item
+90%-descent release and 0%-neutral Home-Z retract. **No Home belongs to this active
+automatic return route.** Join the next eligible saved entry/pick in order without
+detection or operator action. Exhaustion confirms the retract above
 the bin; ordinary Pick's bounded new-batch policy is separate. Auto Run discards
 speculative perception/appended sessions, does not count the dropped placement,
 and places the replacement after a successful retained Pick. Manual Place ends
@@ -104,7 +119,7 @@ Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **19
 Explicit held Return shares placement's approach/drop/retract, 90% finger OPEN/
 suction OFF/exhaust ON and 0% neutral timing, using the saved pre-pick drop target.
 Append exact joint Home in the same queue; confirm final Home and neutral/DI1 LOW. Source/release
-context survives Stop. Automatic drop put-back retains its separate pulse route.
+context survives Stop. Rule 212 extends this same route to automatic drop returns.
 
 Pickup grip review: **2026-10-01**, baseline **`fa9836d`** plus diary rule **190**.
 With use_grip enabled and grip_onpick disabled, close fingers at 50% of the first
@@ -536,9 +551,9 @@ flowchart TD
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
     Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → Safety Z exit → saved Tray Detect joints; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
-    HeldReturn -->|Held DI1 LOW for 50 ms of advancing feedback| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
-    PutBack -->|Eligible saved candidate| Entry
-    PutBack -->|Batch exhausted; upward exit confirmed| Limit
+    HeldReturn -->|Held DI1 LOW for 50 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 90% release / 0% neutral retract; no Home"]
+    PutBack -->|Eligible saved candidate; same queue| Entry
+    PutBack -->|Batch exhausted; retract confirmed| Limit
     Miss --> More{"Another candidate?"}
     More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry transit → next clearance → next pre-pick → final approach"]
     Retry --> Sense
@@ -622,7 +637,7 @@ flowchart TD
     ACTIVE -->|Settling ends without pickup| FAILED
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
-    HELD -->|Put-back release confirmed| RETURNED
+    HELD -->|Return queue complete at Home; neutral and DI1 LOW| RETURNED
     HELD -->|Tray retract confirmed with neutral outputs and DI1 LOW| PLACED
     PENDING -->|Explicit Recover| CANCELED
     ACTIVE -->|Explicit Recover| CANCELED
@@ -635,7 +650,9 @@ item remains **DROPPED**, recording the loss; it does not change to RETURNED.
 Eligible candidates are PENDING or INTERRUPTED in saved order. Thus Continue
 retries the interrupted candidate before later candidates. The ledger and held
 source exist only in memory; process restart does not reconstruct them.
-RETURNED confirms release feedback; retreat/Home may still be in progress.
+RETURNED requires completed return at Home with neutral outputs and DI1 LOW.
+When a dropped return precedes the next pick, defer that candidate's ACTIVE state
+until the execution/neutral boundary; acceptance alone retains the dropped source.
 PLACED records the completed tray queue and clear final grip above the tray, without
 requiring intermediate release evidence or proving the item landed on the tray.
 Put-back separately retains APPROACH, RELEASING or RELEASED progress and its
@@ -677,7 +694,7 @@ flowchart TD
     Depth -. "Held loss before intentional release" .-> Drop
     Pre -. "Held loss" .-> Drop
     Release -. "Held loss before observed suction OFF" .-> Drop["50 ms loss: latch DROPPED; immediate Stop; drain replies; final Stop and empty queue"]
-    Drop --> Source["Saved source pre-pick; OPEN + 50 ms exhaust; upward exit; no Home"]
+    Drop --> Source["Shared Return Item: source approach → pre-pick (90% release) → Home-Z retract (0% neutral); no Home"]
     Source --> Saved["Next eligible original-batch Pick; no detection; HOLDING at Tray Detect, or READY if exhausted"]
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
     Stopped -->|Release command not issued| Retry["Continue reobserves within remaining request budget"]
@@ -860,9 +877,9 @@ flowchart TD
     Place -. "Held loss before suction OFF" .-> Drop
     Append -. "Old item still held: loss" .-> Drop["Immediate Stop; discard worker/new ledger; retain old source and batch; no placement count"]
     Drop --> Contain["Resolve issued replies; final Stop and stationary empty queue"]
-    Contain --> Return["Saved pre-pick release/reset; upward exit; no Home"]
+    Contain --> Return["Shared Return Item: source approach → pre-pick (90% release) → Home-Z retract (0% neutral); no Home"]
     Return --> Saved{"Eligible original poses?"}
-    Saved -->|Yes| SavedPick["Exit directly to next saved entry and Pick; no new detection"]
+    Saved -->|Yes| SavedPick["Same queue: next saved entry and Pick; execution/neutral boundary arms new pickup; no new detection"]
     SavedPick --> Tray
     Saved -->|No| DroppedEnd["READY above bin; partial count"]
 ```
@@ -1051,60 +1068,56 @@ to recheck after physical release, avoiding a latch that prevents clearing alarm
 
 ```mermaid
 flowchart TD
-    Start["Confirmed stopped pose and retained return progress"] --> Kind{"Explicit return with trusted held item?"}
-    Kind -->|Yes| Queue["One queue at speed 100%: optional vertical rise → item XY at Home Z → saved pre-pick drop (90% fingers OPEN, suction OFF, exhaust ON)"]
-    Queue --> Return["Same queue: retract Home Z (neutral at 0% start) → joint Home; no intermediate arrival wait"]
-    Return --> Done["Confirm Home joints + idle/execution + neutral + DI1 LOW; mark RETURNED; READY"]
-    Kind -->|Automatic / dropped| Released{"Release already confirmed?"}
-    Released -->|No| Up["Approach via safety rise and entry park_transit if needed"]
-    Up --> Release["Exact saved pre-pick release pose"]
-    Release --> Pulse["Open fingers; 50 ms exhaust; confirm exhaust OFF and DI1 LOW"]
-    Pulse --> Retreat["First real upward segment neutralizes outputs"]
-    Released -->|Yes; DI1 LOW| Resume["Resume upward from actual pose; skip release"]
-    Resume --> Retreat
-    Retreat --> Exit["Item exit park_transit"]
-    Exit -->|Paused drop only| Home["Joint Home; remain PAUSED"]
-    Exit -->|Active drop; eligible saved poses| Next["Next item's entry transit → clearance → pre-pick → pick; no Home or detection"]
-    Exit -->|Active drop; exhausted| Exhausted["Confirm exit above bin; no Home in return route"]
+    Start["Confirmed stopped pose; trusted retained source"] --> Queue["Shared paused Return Item queue at speed 100%: optional vertical rise → source XY/attitude at Home Z"]
+    Queue --> Release["Exact saved pre-pick; at 90% descent: fingers OPEN, suction OFF, exhaust ON"]
+    Release --> Retract["Vertical retract to Home Z; all four outputs neutral at 0% start"]
+    Retract --> Kind{"Same queue: select endpoint policy"}
+    Kind -->|Explicit Return / paused drop| Home["Append exact joint Home; confirm Home + idle/execution + neutral + DI1 LOW"]
+    Home --> Done["Explicit Return: RETURNED → READY; paused drop: DROPPED → PAUSED"]
+    Kind -->|Active drop; eligible saved poses| Next["Append next entry → clearance → pre-pick → pick; no Home or midpoint arrival wait"]
+    Next --> Boundary["Next-clearance MovL ID + advancing feedback + neutral/DI1 LOW since retract issuance: transfer source; arm new pickup"]
+    Kind -->|Active drop; exhausted| Exhausted["Confirm Home-Z retract above bin + idle/execution + neutral + DI1 LOW"]
+    Queue -. "Stop at any stage" .-> Stop["Retain source/release evidence; explicit Recover cancels and lifts/Homes without replaying release"]
 ```
 
-Both routes use the saved pre-pick pose, **final-pick Z + taught pre-pick height**,
-with its original X/Y and attitude. Explicit Return Item shares the placement
-planner and release observer. Approach/drop/retract use the same 90%-descent
-finger OPEN/suction OFF/EXHAUST and 0%-ascent NEUTRAL events.
-All speeds are 100%; acceleration
-is taught travel / approach / retract respectively, then travel for joint Home.
-Queue optional current-XY vertical rise (if more than 5 mm below Home Z), approach,
-drop, retract and joint Home in one CP (default 100%) group using the confirmed starting
-pose. No intermediate arrival, settling, release-I/O wait or separate 50 ms pulse
-is added. Final
-joint Home/idle/executed queue and
-neutral outputs/DI1 LOW complete the operation. Final completion marks RETURNED;
-Stop before it retains source and observed release state. Explicit Recover
-cancels the interrupted return and never repeats its release.
+Paused **Return Item is the shared reference**, including its approach/drop/retract
+planner, release observer and ordered admission. All variants use exact saved
+pre-pick X/Y/Z/attitude, **final-pick Z + taught pre-pick height**. A vertical rise
+at current X/Y/attitude is included when more than 5 mm below Home Z. Approach
+moves to source X/Y at Home Z, descent releases at pre-pick, and retract returns
+vertically to Home Z. Home Z must exceed saved pre-pick Z; candidate validation
+and preview use this same geometry. No fixed +50 mm release offset is added.
 
-Automatic drop put-back keeps its existing confirmed release and pulse behavior.
-Release height is **final-pick Z + taught pre-pick height**, using the exact
-saved pre-pick attitude/XY. The former fixed +50 mm release/minimum is removed.
-Release commands turn finger-close and suction off, open fingers, then pulse
-exhaust. These are ordered commands, not simultaneous electrical edges.
+At 90% descent: DO2 OFF, DO14 ON, DO13 OFF, DO1 ON. At 0% retract: DO2/DO14/DO1/
+DO13 OFF. All return speeds are 100%; acceleration is taught travel for rise,
+approach and Home, approach for descent, and retract for ascent. Global
+SpeedFactor/CP apply. One complete group is admitted in order, with no intermediate
+arrival, settling, release-I/O wait or separate 50 ms exhaust pulse. Exhaust ends
+as retract begins. CP may blend waypoints; their admission is not physical arrival.
 
-The complete automatic drop route uses **speed 100% / taught travel acceleration**,
-scaled by global SpeedFactor. If clearance equals pre-pick, the rise to exit
-transit carries the neutral events. A real upward retreat must exist. Both entry
-and exit transits are queued, with CP blending permitted. Physical item placement
-is not measured; the controller confirms release feedback and motion completion.
-Stop preserves progress for diagnosis. Explicit Recover cancels it and takes the
-fresh-feedback lift/Home path above, without release or neutralization. The
-automatic/managed put-back paths still require issued-output and release evidence.
-Unexpected I/O changes remain faults. None of this context survives restart.
+Explicit Return and paused drop append joint Home and confirm its execution,
+actual joints, idle state, neutral outputs and raw DI1 LOW. Only completed
+explicit held return marks RETURNED; dropped candidates remain DROPPED. Active
+drop joins the next retained candidate's entry/clearance/pre-pick/pick in the same
+group. Its source stays owned until fresh advancing feedback reaches the returned
+queue ID of the next clearance MovL, with neutral outputs/raw DI1 LOW observed
+after retract issuance. Admission alone cannot clear the source or arm new suction.
+This is feedback supervision while the complete queue executes, not an arrival
+wait before dispatch. Missing neutral evidence faults rather than treating old
+suction as a new pickup. Exhaustion confirms only the shared retract above the bin.
 
-| Why put-back started | After release and retreat |
+Stop retains source, destination and issued/observed release evidence. Explicit
+Recover cancels the interrupted operation and takes its fresh-feedback lift/Home
+route, preserving outputs until Home and never repeating release. Unexpected
+outputs, stale feedback and rejected/unanswered commands remain faults. Physical
+item placement is not measured; source context does not survive restart.
+
+| Why return started | Endpoint policy |
 | --- | --- |
-| Explicit Return Item, including failed tray acquisition | One timed-release queue through Home → READY; ends the interrupted operation. |
-| Held loss in active Pick, idle holding, tray acquisition or placement | Return without Home; join next eligible original-batch candidate. Exhausted return confirms bin exit. Auto Run resumes placement after replacement Pick; manual Place ends at replacement Tray Detect. Ordinary Pick retries remain separately bounded. |
-| Explicit Recover | Does not enter put-back; cancel, preserve grip through lift/Home, then relax at Home. |
-| Held loss during Pause / while PAUSED | Home → PAUSED. Wait for explicit Continue or Stop. |
+| Explicit Return Item, including failed tray acquisition | Shared queue + joint Home → RETURNED / READY. |
+| Held loss in active Pick, idle holding, tray acquisition or placement | Shared queue + next eligible original-batch pick; no Home/detection. Exhausted return ends above bin. Auto Run places the replacement; manual Place ends at replacement Tray Detect. |
+| Held loss during Pause / while PAUSED | Shared queue + joint Home → DROPPED / PAUSED; wait for Continue or Stop. |
+| Explicit Recover | Cancel; preserve grip through lift/Home, then relax at Home. No release replay or automatic next Pick. |
 
 ## 7. Home has two routes
 
@@ -1112,8 +1125,8 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | --- | --- | --- |
 | Explicit Hardware Home / `go_home` | Current XY with taught Home Z/attitude → full taught Cartesian Home, one blended group | Final Cartesian Home; whole move skipped if already within 5 mm / 1° |
 | Pick's Home after pose acquisition, or before its empty-result retry | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if idle and every Home joint is within ±1° |
-| Explicit held Return Item | One queue: optional rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → joint Home | Final Home joints / idle / execution with neutral outputs / DI1 LOW |
-| Final exhausted miss or paused-drop Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
+| Explicit Return Item or paused drop | Shared queue: optional rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → joint Home | Final Home joints / idle / execution with neutral outputs / DI1 LOW |
+| Final exhausted miss | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
 
 Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
 moves directly to saved Tray Detect joints and finishes HOLDING there.

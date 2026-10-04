@@ -126,6 +126,8 @@ class FakeTransport:
         self.acquisition_eligible = False
         self.late_miss_suction = False
         self.on_move = lambda _targets, _kwargs: None
+        self.on_target = lambda _target, _kwargs: None
+        self.on_timed_output = lambda _event, _target: None
         self.acquisitions = iter((False, False, False))
 
     def request_stop(self, reason, **_kwargs):
@@ -185,26 +187,44 @@ class FakeTransport:
         self.on_move(targets, kwargs)
         node.log.append(("move", tuple(target.name for target in targets), kwargs))
         release = kwargs.get("placement")
+        bridge = kwargs.get("placement_bridge")
+        if bridge is not None:
+            node.monitor.sequence = node.feed_sequence
+            for index, target in enumerate(targets):
+                bridge.issued(index)
+                bridge.accepted(index, SimpleNamespace(robot_return="{%d}" % (index + 1)))
+                bridge.admitted(target)
         for index, target in enumerate(targets):
             if release is not None:
                 release.issued(index)
-            if not node.managed.executing and node.managed.session is not None:
+            if bridge is None and not node.managed.executing and node.managed.session is not None:
                 node.managed.motion_admitted(target)
             for event in target.motion_io:
-                if release is None:
+                if release is None and bridge is None:
                     self.output(event.channel, event.active)
                 else:
                     node.log.append(("timed_output", event.percent, event.channel, event.active))
                     mask = 1 << (event.channel - 1)
                     node.feed["digital_outputs"] = ((node.feed["digital_outputs"] & ~mask)
                                                     | (mask if event.active else 0))
-            if release is not None:
+                    if bridge is not None and bridge.completed:
+                        node.expected_outputs[event.channel] = event.active
+                    self.on_timed_output(event, target)
+            if release is not None or bridge is not None:
                 if not node.feed["digital_outputs"] & (1 << 12):
                     node.set_di1(False)
+                else:
+                    node.set_di1(bool(node.feed["digital_input_bits"] & 1))
+                node.feed["currentCommandId"] = index + 1
                 node.output_history.append((node.feed_sequence, node.clock,
                                             node.feed["digital_outputs"],
                                             node.feed["digital_input_bits"]))
-                release.observe(node, node.snapshot())
+                if bridge is not None:
+                    bridge.observe(node.snapshot())
+                else:
+                    release.observe(node, node.snapshot())
+            node.feed["tool_vector_actual"] = pose_values(target.matrix)
+            self.on_target(target, kwargs)
         node.feed["tool_vector_actual"] = pose_values(targets[-1].matrix)
         if release is not None:
             release.complete(node, node.snapshot())
@@ -213,6 +233,10 @@ class FakeTransport:
             node.set_di1(True)
         return (acquired, targets[-1].matrix.copy()) if kwargs.get(
             "return_terminal_pose") else acquired
+
+    @staticmethod
+    def _motion_command_id(response):
+        return int(response.robot_return.strip("{}"))
 
 
 def states(rig):
@@ -319,37 +343,20 @@ def test_held_return_and_paused_drop_use_original_candidate_release_and_home(pre
         assert not any(entry[0] in ("output", "pulse", "home") for entry in rig.log)
         assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
         return
-    assert approach[1] == ("park_transit", "return_release")
-    assert ("pulse", 50) in rig.log
-    pulse = rig.log.index(("pulse", 50))
-    assert rig.log.index(("output", 2, False)) < pulse
-    assert rig.log.index(("output", 13, False)) < pulse
-    assert rig.log.index(("output", 14, True)) < pulse
+    assert approach[1] == ("return_pre", "return_release", "return_retract", "home")
+    assert ("timed_output", 90, 1, True) in rig.log
+    assert ("timed_output", 0, 1, False) in rig.log
+    assert not any(entry[0] in ("pulse", "output") for entry in rig.log)
     assert not any(rig.expected_outputs.values())
     assert np.allclose(rig.hardware.current_pose(), rig.configuration.home_matrix)
-    returned = next(entry[1] for entry in rig.log if entry[0] == "home")
-    assert returned["queue_through_home"]
-    retreat = returned["preceding"]
-    assert len(retreat) == 2
-    assert returned["confirmed_start_pose"][2, 3] == pytest.approx(.3 + prepick / 1000)
-    assert len(retreat[0].motion_io) == 4
-    assert retreat[-1].name == "return_park_transit"
-    assert retreat[-1].matrix[2, 3] == pytest.approx(.8)
-    assert np.array_equal(retreat[-1].matrix[:2, 3], retreat[0].matrix[:2, 3])
-    assert not retreat[-1].motion_io
 
 
 @pytest.mark.parametrize("prepick", [20., 50., 80.])
-@pytest.mark.parametrize("dropped", [False, True])
-@pytest.mark.parametrize("continuing", [False, True])
-def test_entire_put_back_uses_full_speed_before_resuming_normal_pick_rates(
-        prepick, dropped, continuing):
+@pytest.mark.parametrize("dropped,continuing", [(False, False), (True, False), (True, True)])
+def test_put_back_uses_reference_return_rates_then_normal_pick_rates(prepick, dropped, continuing):
     rig = Rig(held=True, prepick=prepick, count=2 if continuing else 1)
     rig.global_speed_percent = 37
     rig.configuration.home_joints = (0.1,) * 6
-    rig._home_plan = lambda origin: RobotController._home_plan(rig, origin)
-    rig._execute_home = lambda **kwargs: RobotController._execute_home(rig, **kwargs)
-    rig._preflight_item_state = lambda held: RobotController._preflight_item_state(rig, held)
     rig.wait_for_resume = rig.managed.checkpoint
     rig._candidate_progress = lambda *_args: rig.managed.checkpoint()
     rig.managed.executing = True
@@ -359,34 +366,32 @@ def test_entire_put_back_uses_full_speed_before_resuming_normal_pick_rates(
     batches = []
     rig.hardware.on_move = lambda targets, kwargs: batches.append((targets, kwargs))
     departure = rig.managed._put_back(dropped=dropped, continue_candidates=continuing)
-    assert batches[0][0][0].name == "pause_safety"
-    release_targets = next(targets for targets, kwargs in batches
-                           if kwargs["batch_name"] == "return_item_to_release")
-    assert [target.name for target in release_targets] == ["park_transit", "return_release"]
-    assert np.array_equal(release_targets[-1].matrix,
-                          rig.managed.session.attempts[0].plan[2].matrix)
-    assert all((target.speed_percent, target.acceleration_percent) == (100, 80)
-               for targets, _kwargs in batches for target in targets)
-    assert rig.global_speed_percent == 37
-    assert ("pulse", 50) in rig.log
     if continuing:
-        retreat, origin = departure
-        assert all((target.speed_percent, target.acceleration_percent) == (100, 80)
-                   for target in retreat)
+        assert not batches
+        prefix, origin = departure
         rig.managed.executing = False
-        rig._transition("PICKING", "Continue after put-back")
-        rig.managed.run_pick(
+        rig.hardware.acquisitions = iter([True])
+        result = rig.managed.run_pick(
             [attempt.plan for attempt in rig.managed.session.attempts],
-            check=lambda _index: None, departure=retreat, departure_pose=origin)
-        group = next(targets for targets, kwargs in batches if kwargs.get("stop_on_suction"))
-        assert group[len(retreat)].name == "p2_transit"
-        assert all(target.speed_percent == 100 for target in group[:len(retreat)])
-        assert [target.speed_percent for target in group[len(retreat):]] == [80, 80, 80, 6]
+            check=lambda _index: None, departure=prefix, departure_pose=origin)
+        assert result["picked"]
+        group = batches[0][0]
+        assert [target.name for target in group[len(prefix):]] == [
+            "p2_transit", "p2_initial", "p2_prepick", "p2_pick"]
+        assert [target.speed_percent for target in group[len(prefix):]] == [80, 80, 80, 6]
         assert group[-1].acceleration_percent == 50
     else:
         assert departure is None
-        assert batches[-1][0][-1].name == "home"
-        assert batches[-1][0][-1].joints_rad == (0.1,) * 6
+        assert batches[0][0][-1].name == "home"
+        assert batches[0][0][-1].joints_rad == (0.1,) * 6
+        prefix = batches[0][0][:-1]
+    assert [target.name for target in prefix] == [
+        "return_safety", "return_pre", "return_release", "return_retract"]
+    assert [(target.speed_percent, target.acceleration_percent) for target in prefix] == [
+        (100, 80), (100, 80), (100, 50), (100, 50)]
+    assert np.array_equal(prefix[2].matrix, rig.managed.session.attempts[0].plan[2].matrix)
+    assert ("timed_output", 90, 1, True) in rig.log
+    assert not any(entry[0] == "pulse" for entry in rig.log)
     assert rig.global_speed_percent == 37
 
 
@@ -439,7 +444,7 @@ def test_drop_during_pause_rise_stops_and_puts_back_even_if_di1_bounces_high():
     rig.managed.request("pause")
     rig.managed.handle()
     assert states(rig)[0] == "DROPPED"
-    assert ("pulse", 50) in rig.log
+    assert ("timed_output", 90, 1, True) in rig.log
     assert not rig.holding_item
     assert any(entry[0] == "stop" and "Suction lost" in entry[1] for entry in rig.log)
 
@@ -553,9 +558,9 @@ def test_return_geometry_uses_exact_taught_prepick_including_standoff(prepick):
     release, retreat = return_targets(plan)
     assert release.matrix[2, 3] == pytest.approx(.312 + prepick / 1000)
     assert np.array_equal(release.matrix, plan[2].matrix)
-    assert not release.motion_io
-    assert [target.name for target in retreat] == ["return_clearance", "return_park_transit"]
-    assert retreat[0].matrix[2, 3] == pytest.approx(release.matrix[2, 3] + .05)
+    assert all(event.percent == 90 for event in release.motion_io)
+    assert [target.name for target in retreat] == ["return_retract"]
+    assert retreat[0].matrix[2, 3] == pytest.approx(home[2, 3])
     assert not plan[2].motion_io and not plan[5].motion_io
     above = matrix(x=.5, z=1.0)
     assert np.array_equal(safety_target(above, matrix(z=.8), profile()).matrix, above)
@@ -635,13 +640,14 @@ def test_return_requested_from_confirmed_pause_has_no_continue_or_new_pick():
                    for entry in rig.log)
 
 
-def test_dropped_item_pulse_failure_stops_before_retract_home_and_keeps_source_context():
+def test_dropped_item_release_failure_stops_execution_and_keeps_source_context():
     rig = Rig(held=True)
     rig.lose_suction()
 
-    def fail():
-        raise FeedbackFailure("Exhaust OFF not confirmed")
-    rig.hardware.exhaust_pulse = fail
+    def fail(target, kwargs):
+        if target.name == "return_release":
+            raise FeedbackFailure("Exhaust OFF not confirmed")
+    rig.hardware.on_target = fail
     rig.managed.request("return")
     with pytest.raises(FeedbackFailure, match="Exhaust OFF"):
         rig.managed.handle()
@@ -697,10 +703,10 @@ def test_completed_picks_paused_drop_continues_retained_candidates_after_home():
     assert states(rig) == ["DROPPED", "FAILED"]
     assert rig.machine.state == "READY"
     assert not rig.operation_lock.locked()
-    pulse = next(i for i, entry in enumerate(rig.log) if entry[0] == "pulse")
+    release = rig.log.index(("timed_output", 90, 1, True))
     next_pick = next(i for i, entry in enumerate(rig.log)
                      if entry[0] == "move" and "p2_pick" in entry[1])
-    assert pulse < next_pick
+    assert release < next_pick
 
 
 def test_idle_ready_pause_never_routes_to_old_pending_candidates():
@@ -730,7 +736,7 @@ def test_feedback_callback_latches_confirmed_paused_drop_even_after_di1_recovers
     rig.managed.request("pause")
     rig.managed.handle()
     assert states(rig)[0] == "DROPPED"
-    assert ("pulse", 50) in rig.log
+    assert ("timed_output", 90, 1, True) in rig.log
 
 
 @pytest.mark.parametrize("count", [1, 2])
@@ -897,7 +903,7 @@ def test_return_requested_at_paused_drop_releases_once_and_finishes_ready():
         rig.managed.handle()
     assert rig.machine.state == "READY"
     assert states(rig)[0] == "DROPPED"
-    assert sum(entry[0] == "pulse" for entry in rig.log) == 1
+    assert rig.log.count(("timed_output", 90, 1, True)) == 1
 
 
 @pytest.mark.parametrize("prepick", [20., 50., 80.])
@@ -908,7 +914,7 @@ def test_put_back_never_sends_release_events_on_zero_distance_retreat(prepick):
     release, retreat = return_targets(plan)
     assert np.array_equal(release.matrix, plan[2].matrix)
     assert len(retreat) == 1
-    assert retreat[0].name == "return_park_transit"
+    assert retreat[0].name == "return_retract"
     assert retreat[0].matrix[2, 3] == .8 > release.matrix[2, 3]
     assert {event.channel for event in retreat[0].motion_io} == {1, 2, 13, 14}
     assert all(event.percent == 0 and not event.active for event in retreat[0].motion_io)
@@ -918,5 +924,5 @@ def test_put_back_rejects_geometry_without_any_upward_neutral_retreat():
     settings = profile(50.)
     settings["motion"]["retract_height"] = 0.
     plan = pick_targets(matrix(z=.35), matrix(z=.3), settings, 1)
-    with pytest.raises(ValueError, match="clearance or safety Z above the taught pre-pick"):
+    with pytest.raises(ValueError, match="Home Z must be above"):
         return_targets(plan)

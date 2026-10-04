@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass, replace
 
-from .motion import (Target, candidate_exit_transit, candidate_transit, gripper_neutral_events,
-                     vacuum_neutral_events)
+from .motion import Target, candidate_transit
+from .release import release_targets
 
 
 @dataclass
@@ -86,25 +86,13 @@ def transit_from_safety(current, plan):
     return replace(candidate_transit(current, plan), name="park_transit", motion_io=())
 
 
-def approach_from_safety(current, plan):
-    """Put-back approach uses full commanded speed and taught travel acceleration."""
-    return (replace(transit_from_safety(current, plan), speed_percent=100),
-            replace(plan[2], name="park_prepick", speed_percent=100, motion_io=()))
-
-
 def return_targets(plan):
-    """Release at the taught pre-pick pose; neutralize on the first real rise."""
-    rates = {"speed_percent": 100, "acceleration_percent": plan[0].acceleration_percent}
-    release = replace(plan[2], name="return_release", motion_io=(), **rates)
-    neutral = gripper_neutral_events(0) + vacuum_neutral_events(0)
-    retreat = []
-    if plan[5].matrix[2, 3] > release.matrix[2, 3] + 1e-9:
-        retreat.append(replace(plan[5], name="return_clearance", motion_io=(), **rates))
-    origin = retreat[-1].matrix if retreat else release.matrix
-    retreat.append(replace(candidate_exit_transit(origin, plan),
-                           name="return_park_transit", **rates))
-    if retreat[0].matrix[2, 3] <= release.matrix[2, 3] + 1e-9:
-        raise ValueError("Put-back requires clearance or safety Z above the taught "
-                         "pre-pick release pose for upward retreat")
-    retreat[0] = replace(retreat[0], motion_io=neutral)
-    return release, tuple(retreat)
+    """Preview/validate the same saved pre-pick release and Home-Z retract as Return Item."""
+    settings = {"acceleration": {
+        "travel_percent": plan[0].acceleration_percent,
+        "approach_percent": plan[3].acceleration_percent,
+        "retract_percent": plan[4].acceleration_percent,
+    }}
+    _approach, release, retract = release_targets(
+        plan[2].matrix, settings, plan[0].matrix, prefix="return")
+    return release, (retract,)

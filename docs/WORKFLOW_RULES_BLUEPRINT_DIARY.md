@@ -8444,6 +8444,58 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the controller manually to load this behavior. Preserve `.env`, calibration,
   offline/runtime teach files, models and the unrelated RViz edit.
 
+### 2026-10-04 — Rule 212: use paused Return Item as every return's reference
+
+- User identified that automatic drop return differed from paused Return Item and
+  explicitly selected the paused sequence as the reference. Replace the separate
+  automatic pre-pick-arrival/DO/pulse/clearance routine with the existing shared
+  ItemReturnOperation and release planner/observer. Supersede rules 111–113/211's
+  automatic pulse route and all-travel acceleration; preserve rule 211's continuous
+  50 ms DI1-loss interrupt, Stop/reply containment and original-batch continuation.
+- Every return now queues optional current-XY/attitude rise when more than 5 mm
+  below Home Z, approach over the saved source at Home Z, exact saved pre-pick
+  release and vertical retract to Home Z. At 90% descent send DO2 OFF, DO14 ON,
+  DO13 OFF, DO1 ON; at 0% retract send all four OFF. Speed 100%; acceleration is
+  taught travel for rise/approach/Home, approach for descent and retract for ascent.
+  Preserve global SpeedFactor/CP. No explicit release DO calls, separate 50 ms
+  exhaust pulse or intermediate arrival/release-I/O wait. Exhaust ends at retract.
+- Explicit held Return and paused drop append joint Home in the same group and
+  require its physical execution/idle/neutral/DI1-LOW completion. Explicit Return
+  ends RETURNED/READY; paused drop remains DROPPED/PAUSED. Active drop instead
+  appends the next original-batch entry/clearance/pre-pick/pick directly after
+  retract in one ordered group, without Home, new detection or operator action.
+  Exhaustion confirms the shared retract above the source; ordinary Pick's
+  bounded batch policy remains separate. Retain source coordinates and order.
+- The return-to-pick execution observer retains the dropped source through queue
+  admission. Transfer ownership and arm new acquisition only after advancing
+  feedback reaches the returned next-clearance MovL ID and neutral outputs/raw
+  DI1 LOW have been observed after retract issuance. New pick outputs cannot be
+  mistaken for an uncommanded old release transition; early neutral feedback
+  cannot arm acquisition. Source handoff is serialized with the managed lock.
+  Direct Stop can interrupt every admission; preserve issued release/source
+  evidence for explicit Recover, which cancels without repeating release.
+- Preview and candidate geometry validation share the Return Item release/retract
+  helper. Home Z must exceed exact saved pre-pick Z so retract is upward, including
+  zero taught retract-height cases. No teach schema, interface, configuration or
+  perception change. Remove the obsolete separate return-progress/approach code.
+- Validation: **1053 controller tests passed**, including **17 shared-return
+  transport cases** comparing actual requests against paused Return Item at three
+  starting heights and two initial output states. Cover one-group next-pick
+  admission before feedback, exact 90%/0% tuples, rates/source/order, absent/early
+  neutral evidence, Stop at each of seven combined-group commands, repeated
+  losses, paused drop, interrupted release/Recover and preview geometry. Existing
+  Pick, placement, Auto Run, feedback and safety suites pass. Production/new-test
+  and changed-test-line flake8, whitespace checks and sourced controller symlink
+  build pass.
+- Updated root/package READMEs, AGENTS and controller FSM, including shared-return,
+  Pick and Auto Run diagrams and endpoint/guard descriptions. Regenerated and
+  visually reviewed **9 diagrams / 9 A3 PDF pages**; HTML/full-source and all PDF
+  footer hashes match SHA-256 `921fb0bfa0ff5013a00bae7fc2355c5bcef0d54eab6751860f5104936ea264a5`.
+  No hardware commands, production restart or physical-cycle validation. Restart
+  the controller manually to load the change; no profile re-save is needed.
+  Preserved root `.env`, calibration, offline/runtime teach artifacts, weights
+  and the unrelated RViz edit.
+
 ### Future entry template
 
 ```text

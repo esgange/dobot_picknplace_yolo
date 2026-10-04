@@ -282,26 +282,19 @@ Accelerations are travel, approach, retract and travel respectively. There is
 no separate 50 ms pulse or release-I/O/clearance wait. Return after failed
 tray acquisition uses the same sequence, without another perception request.
 
-Suction loss during Pause invokes the existing automatic put-back, even if the
-item may already have fallen; it then remains PAUSED at Home. Continue tries the
-remaining latched candidates. That automatic route releases at the original taught pre-pick
-pose (`final-pick Z + prepick_height`), opens fingers, and issues a
-controller-timed 50 ms exhaust pulse. OPEN is commanded before the pulse; these
-are separate commands, not simultaneous electrical edges. Exhaust OFF and DI1
-clear must be confirmed before retreat. The first real upward `MovLIO` segment
-neutralizes the outputs, then the route passes clearance and an explicit exit
-`park_transit` before exact joint Home. Put-back also queues its entry
-`park_transit` before descending to pre-pick/release. There is no fixed 50 mm
-release offset or minimum pre-pick height. If clearance equals pre-pick, the
-rise to exit transit carries the neutral events; clearance or safety Z must
-still provide a real upward retreat. The pulse is independent of the
-taught final-pick settling interval.
+Paused **Return Item is the reference for every item return**. Automatic drop
+recovery uses the same optional rise, Home-Z approach, exact saved pre-pick
+release and Home-Z retract, with identical 90%/0% timed outputs and segment
+accelerations. There is no separate exhaust pulse or release-arrival wait.
+Home Z must be above saved pre-pick so the retract is upward; no fixed 50 mm
+release offset or minimum pre-pick height is introduced. All return speeds are
+100%, scaled by global SpeedFactor.
 
-The complete automatic drop put-back route uses commanded speed 100% with taught travel
-acceleration: safety rise, entry transit, taught pre-pick release, neutral
-retreat and exit transit. Paused drop additionally returns Home; active drop
-continues directly through the saved batch. Explicit Recover uses taught travel rates. The global SpeedFactor still scales
-these movements; returning an item does not change the slider setting.
+A drop during Pause appends taught Home and remains PAUSED. Active automatic
+recovery instead joins the next saved candidate directly after the shared
+retract, in the same ordered queue. It retains the dropped source until execution
+crosses into the next clearance and neutral outputs/DI1 LOW have been observed;
+queue acceptance alone cannot transfer ownership or arm the next pickup.
 
 After pickup, monitor continuously through lifting, travel, idle holding, tray
 acquisition and placement approach/descent. A confirmed 50 ms DI1 loss immediately
@@ -311,11 +304,11 @@ OFF does. Planned release is never classified as a drop.
 
 Resolve all issued command replies, then send a final Stop and confirm stationary
 joints and an empty queue before automatic put-back. Preserve the original source
-and mark its candidate DROPPED even if DI1 returns HIGH. Return through the necessary
-safety rise/entry transit to its exact saved pre-pick pose, open fingers, pulse
-exhaust for 50 ms and retreat upward through the exit transit. **No Home is included
-in this automatic return route.** Join that retreat directly to the next eligible
-saved candidate in original order, without a detection request or operator action.
+and mark its candidate DROPPED even if DI1 returns HIGH. Execute the shared paused
+Return Item approach, 90%-descent release and 0%-neutral retract to Home Z.
+**No Home is included in this active automatic return route.** Join the retract
+directly to the next eligible saved candidate in original order, without a
+detection request or operator action.
 A fully exhausted return ends above the bin; active Pick's existing bounded
 new-batch policy can then acquire more poses and ensure Home before approaching.
 
@@ -429,7 +422,8 @@ of transit and SUCK at 20% of final descent. DI1 is eligible only after SUCK and
 is evaluated while the final pose, queue-idle state and commanded outputs remain
 coherent for the taught `pick_settling` time. This one profile-driven interval
 replaces the fixed 300 ms final-pick gate and has no later suction wait.
-Missed picks and put-back queue entry and exit `park_transit` targets. On an
+Missed picks queue entry and exit `park_transit` targets. Item returns use the
+shared Home-Z approach/retract described above. On an
 intermediate miss, one group rises through the old item's pre-pick and clearance
 at `v=100`, then queues the old item's exit transit followed by the next item's
 entry transit before descending through its clearance and pre-pick to final pick.
@@ -549,8 +543,9 @@ successful pickup, the first lift from final pick to pre-pick uses taught retrac
 speed and acceleration. Without a picked item, that retract uses speed 100% and
 taught travel acceleration. The following clearance rise also uses speed 100%
 and travel acceleration in both cases. Successful Pick travel to Tray Detect and
-missed-pick exit-transit/Home moves use taught travel rates. Every automatic drop put-back motion,
-including its release approach, empty retreat and Home, uses speed 100% with taught travel acceleration.
+missed-pick exit-transit/Home moves use taught travel rates. Every item return uses
+speed 100%: approach/rise/Home use travel acceleration, release descent uses
+approach acceleration, and upward retract uses retract acceleration.
 Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
 The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height

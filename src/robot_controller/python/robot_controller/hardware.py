@@ -1345,6 +1345,9 @@ class DobotTransport:
             extra = {"issuing": placement.issued} if placement is not None else {}
             if placement_bridge is not None:
                 extra["accepted"] = placement_bridge.accepted
+                issuing = getattr(placement_bridge, "issued", None)
+                if issuing is not None:
+                    extra["issuing"] = issuing
             replies = self.call_group(
                 calls, progress=progress, outputs_by_call=outputs_by_call,
                 admitted=lambda index: (

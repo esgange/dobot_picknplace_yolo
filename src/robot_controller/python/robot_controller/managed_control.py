@@ -1,23 +1,13 @@
 """Single-owner Pause parking, Continue replanning and intentional item return."""
 
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 import threading
 
 from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost, HeldUnknown,
                      ManagedInterruption, PausedItemDropped, ReturnedToHome)
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, PickExecutor, pick_tray_target, pose_reached
-from .item_return import ItemReturnOperation
-from .pick_session import (approach_from_safety, return_targets, safety_target,
-                           transit_from_safety)
-
-
-@dataclass
-class ReturnProgress:
-    index: int
-    dropped: bool
-    continue_candidates: bool
-    phase: str = "APPROACH"
-    pending_outputs: dict = field(default_factory=dict)
+from .item_return import ItemReturnOperation, ReturnPickBridge
+from .pick_session import safety_target, transit_from_safety
 
 
 class ManagedControl:
@@ -218,21 +208,14 @@ class ManagedControl:
 
     def motion_admitted(self, target):
         self.session.admitted(target)
-        progress = self.return_progress
-        if progress is not None and progress.phase == "RELEASED":
-            if any(attempt.state == "ACTIVE" and target.name in {
-                    point.name for point in attempt.plan[:4]}
-                   for attempt in self.session.attempts):
-                # The next candidate owns execution only after its entry was
-                # admitted. Stop during the old retreat still retains progress.
-                self.session.held_index = None
-                self.return_progress = None
 
     def run_pick(self, plans, *, check, departure=(), departure_pose=None,
                  queued_home=(), placement_bridge=None):
         """Keep confirmed held loss inside the owning Pick and its saved batch."""
         node = self.node
         while True:
+            if departure and isinstance(self.return_progress, ItemReturnOperation):
+                placement_bridge = ReturnPickBridge(node, self.return_progress, departure_pose)
             try:
                 return PickExecutor(node.hardware, finish_home=True).run(
                     plans, node.configuration.profile,
@@ -255,7 +238,8 @@ class ManagedControl:
                     return {"picked": False, "candidate": None, "holding_item": False}
                 departure, departure_pose = returned
                 self.session.resuming = False
-                node._transition("PICKING", "Item returned; trying next retained candidate")
+                node._transition("RETURNING_ITEM",
+                                 "Queueing return followed by next retained candidate")
 
     def _return_after_suction_loss(self):
         self.node.raise_if_cancelled()
@@ -320,7 +304,8 @@ class ManagedControl:
             return False
         self.session.resuming = False
         self.node.active_action = "pick"
-        self.node._transition("PICKING", "Item returned; trying next retained candidate")
+        self.node._transition("RETURNING_ITEM",
+                              "Queueing return followed by next retained candidate")
 
         def check(_index):
             self.node.raise_if_cancelled()
@@ -465,92 +450,21 @@ class ManagedControl:
     def _put_back(self, *, dropped, continue_candidates=False, home_if_exhausted=True):
         node = self.node
         attempt = self._candidate()
-        if (self.kind == "return" and not dropped and attempt.state == "HELD"
-                and self.return_progress is None):
-            self.return_progress = ItemReturnOperation(
-                index=self.session.held_index, phase="APPROACH")
-        if isinstance(self.return_progress, ItemReturnOperation):
-            self.return_progress.run(node)
-            return None
         if self.return_progress is None:
-            self.return_progress = ReturnProgress(
-                self.session.held_index, dropped, continue_candidates)
-        progress = self.return_progress
-        if progress.index != self.session.held_index:
-            raise HeldUnknown("Return progress does not match the retained candidate")
-        progress.dropped |= attempt.state == "DROPPED"
-        dropped = progress.dropped
-        plan = attempt.plan
-        release, retreat = return_targets(plan)
-        node._transition("RETURNING_ITEM", "Completing the saved item-return route")
-        node.configuration.validate_sources(node.root)
-        current = node.hardware.current_pose()
-        if progress.phase != "RELEASED":
-            if progress.phase == "APPROACH" or not pose_reached(
-                    current, release.matrix, translation_m=0.001, rotation_deg=0.5):
-                held = node.holding_item and not dropped
-                current = self._rise(current, holding=held, preserve_outputs=not held,
-                                     full_speed=True)
-                approach = approach_from_safety(current, plan)
-                approach = approach[:-1] + (release,)
-                node.hardware.move_batch(approach, batch_name="return_item_to_release",
-                                         require_suction=held, preserve_outputs=not held,
-                                         confirmed_start_pose=current)
-            progress.phase = "RELEASING"
-            node.operation_progress("RELEASE", "Opening fingers and pulsing exhaust for 50 ms")
-            # Intentional loss is expected, but the source and each issued output
-            # survive cancellation until release and the return route are confirmed.
-            node.holding_item = False
-            for channel, active in ((2, False), (13, False), (14, True), (1, False)):
-                node.hardware.output(channel, active)
-                progress.pending_outputs.pop(channel, None)
-            node.hardware.exhaust_pulse()
-            progress.pending_outputs.clear()
-            progress.phase = "RELEASED"
-            if not dropped:
-                self.session.set_state(self.session.held_index, "RETURNED")
-            current = release.matrix
-        else:
-            if node.monitor.snapshot(require_enabled=True).feed["digital_input_bits"] & 1:
-                raise HeldUnknown("DI1 HIGH after confirmed release; clear item or obstruction")
-            # Stop may interrupt any part of retreat/Home. Replan upward at the
-            # measured XY/attitude; never descend back to an already released item.
-            resumed = []
-            origin = current
-            neutral = retreat[0].motion_io
-            for target in retreat:
-                matrix = origin.copy()
-                matrix[2, 3] = max(origin[2, 3], target.matrix[2, 3])
-                events = neutral if matrix[2, 3] > origin[2, 3] + 1e-9 else ()
-                if events:
-                    neutral = ()
-                resumed.append(replace(target, matrix=matrix, motion_io=events))
-                origin = matrix
-            retreat = tuple(resumed)
-            if neutral:
-                # The previous route already reached safety height. Its release
-                # is confirmed; finish neutralization while stopped and DI1 LOW.
-                self._neutral(require_clear=True)
-        continuing = progress.continue_candidates and self.session.next_eligible is not None
-        if not continuing:
-            if home_if_exhausted:
-                node._execute_home(preceding=retreat, require_suction=False, forbid_suction=True,
-                                   confirmed_start_pose=current,
-                                   queue_through_home=True, full_speed=True,
-                                   batch_name="return_item_to_home")
-            else:
-                node.hardware.move_batch(retreat, batch_name="return_item_exit",
-                                         forbid_suction=True, confirmed_start_pose=current)
-        self.session.parked_index = None
-        if not continuing:
-            self.session.held_index = None
-            self.return_progress = None
-        node.events.record("INFO", "item_return_completed",
-                           "Release confirmed; physical placement not measured",
-                           candidate_id=attempt.identifier, dropped=dropped,
-                           continuing_candidates=continuing,
-                           home_confirmed=not continuing and home_if_exhausted)
-        return (retreat, current) if continuing else None
+            self.return_progress = ItemReturnOperation(
+                index=self.session.held_index, phase="APPROACH",
+                dropped=dropped or attempt.state == "DROPPED",
+                continue_candidates=continue_candidates)
+        operation = self.return_progress
+        continuing = (operation.continue_candidates
+                      and self.session.next_eligible is not None)
+        if continuing:
+            current = operation.prepare(node, finish_home=False)
+            # The shared return prefix and next candidate are dispatched in one
+            # ordered group. No release/retract arrival wait separates them.
+            return operation.plan, current
+        operation.run(node, finish_home=home_if_exhausted)
+        return None
 
     def _check_parked(self, sample):
         node = self.node

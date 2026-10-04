@@ -91,7 +91,7 @@ def test_pick_preview_includes_success_tray_and_missed_or_put_back_home_branches
     for index in (1, 2):
         for suffix in ("transit", "initial", "prepick", "pick", "retract", "final",
                        "transit_exit", "return_home", "put_back_return_release",
-                       "put_back_return_clearance", "put_back_return_park_transit"):
+                       "put_back_return_retract"):
             assert f"p{index}_{suffix}" in targets
         item = np.eye(4)
         item[:3, 3] = [.1 * (index - 1), .2, .3]

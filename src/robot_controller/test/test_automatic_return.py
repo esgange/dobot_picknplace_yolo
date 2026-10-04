@@ -120,17 +120,18 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
     stop = next(i for i, entry in enumerate(rig.log) if entry[0] == "stop_confirmed")
     release = next(i for i, entry in enumerate(rig.log)
                    if entry[0] == "move" and "return_release" in entry[1])
-    pulse = rig.log.index(("pulse", 50))
-    assert stop < release < pulse
-    assert rig.log[release][1] == ("park_transit", "return_release")
-    assert rig.log[release][2]["preserve_outputs"]
-    release_pose = next(targets[-1].matrix for targets, kwargs in rig.batches
-                        if kwargs["batch_name"] == "return_item_to_release")
-    assert release_pose[2, 3] == pytest.approx(.3 + prepick / 1000)
-    following = next(entry for entry in rig.log[pulse + 1:] if entry[0] == "move")
-    assert following[1][:2] == ("return_clearance", "return_park_transit")
-    assert following[1][2:] == (() if count == 1 else (
+    assert stop < release
+    names = rig.log[release][1]
+    offset = int(names[0] == "return_safety")
+    assert names[offset:offset + 3] == ("return_pre", "return_release", "return_retract")
+    assert names[offset + 3:] == (() if count == 1 else (
         "p2_transit", "p2_initial", "p2_prepick", "p2_pick"))
+    release_pose = next(target.matrix for targets, _kwargs in rig.batches
+                        for target in targets if target.name == "return_release")
+    assert release_pose[2, 3] == pytest.approx(.3 + prepick / 1000)
+    assert ("timed_output", 90, 1, True) in rig.log
+    assert ("timed_output", 0, 1, False) in rig.log
+    assert not any(entry[0] == "pulse" for entry in rig.log)
     assert rig.startup_complete
     assert not rig.operation_lock.locked()
 
@@ -141,7 +142,7 @@ def test_repeated_losses_consume_each_saved_candidate_once(monkeypatch):
     assert result.outcome == result.NO_PICK and result.final_state == "READY"
     assert rig.lost == [1, 2, 3]
     assert [a.state for a in rig.seen_sessions[0].attempts] == ["DROPPED"] * 3
-    assert sum(entry[0] == "pulse" for entry in rig.log) == 3
+    assert rig.log.count(("timed_output", 90, 1, True)) == 3
     assert rig.requests == ["detect"] * 3
 
 
@@ -159,7 +160,12 @@ def test_auto_return_failure_blocks_later_pick_and_requires_recovery(monkeypatch
     elif failure == "pending":
         rig.hardware.ensure_no_pending_response = fail
     elif failure == "release":
-        rig.hardware.exhaust_pulse = fail
+        def reject_return(targets, kwargs):
+            if any(target.name == "return_release" for target in targets):
+                fail()
+            lose(targets, kwargs)
+        lose = rig.hardware.on_move
+        rig.hardware.on_move = reject_return
     else:
         lose = rig.hardware.on_move
 
@@ -181,9 +187,9 @@ def test_auto_return_failure_blocks_later_pick_and_requires_recovery(monkeypatch
     assert not rig.operation_lock.locked()
 
 
-@pytest.mark.parametrize("phase", ["return_item_to_release", "return_item_to_candidate_2_pick"])
+@pytest.mark.parametrize("phase", ["return_item_queued_retract", "return_item_to_candidate_2_pick"])
 def test_direct_stop_preempts_automatic_return_and_continuation(monkeypatch, phase):
-    rig = action_rig(monkeypatch)
+    rig = action_rig(monkeypatch, count=1 if phase == "return_item_queued_retract" else 2)
     lose = rig.hardware.on_move
 
     def stop(targets, kwargs):
@@ -195,33 +201,28 @@ def test_direct_stop_preempts_automatic_return_and_continuation(monkeypatch, pha
     result = rig.execute()
     assert result.outcome == result.CANCELED
     assert result.final_state == "RECOVERY_REQUIRED"
-    assert states(rig)[1] == "PENDING"
+    assert all(state == "PENDING" for state in states(rig)[1:])
     assert not any(entry[0] == "move" and "p2_pick" in entry[1] for entry in rig.log)
-    if phase == "return_item_to_release":
+    if phase == "return_item_queued_retract":
         assert not any(entry[0] == "pulse" for entry in rig.log)
 
 
-@pytest.mark.parametrize("entry_admitted", [False, True])
-def test_pause_after_automatic_release_resumes_next_candidate_without_releasing_twice(
-        monkeypatch, entry_admitted):
+def test_pause_after_return_boundary_resumes_next_candidate_without_second_release(monkeypatch):
     rig = action_rig(monkeypatch)
-    lose = rig.hardware.on_move
     paused = []
 
-    def pause(targets, kwargs):
-        if kwargs.get("batch_name") == "return_item_to_candidate_2_pick" and not paused:
+    def pause(target, kwargs):
+        if target.name == "p2_initial" and not paused:
             paused.append(True)
-            if entry_admitted:
-                rig.managed.motion_admitted(next(t for t in targets if t.name == "p2_transit"))
+            assert rig.managed.return_progress is None
             rig.managed.request("pause")
             rig.managed.checkpoint()
-        lose(targets, kwargs)
-    rig.hardware.on_move = pause
+    rig.hardware.on_target = pause
     result = rig.execute()
     assert result.outcome == result.SUCCESS and rig.finished == ["success"]
     assert states(rig) == ["DROPPED", "HELD"]
     assert ("state", "PAUSED") in rig.log
-    assert sum(entry[0] == "pulse" for entry in rig.log) == 1
+    assert rig.log.count(("timed_output", 90, 1, True)) == 1
 
 
 def test_direct_stop_at_automatic_return_handover_leaves_no_managed_owner(monkeypatch):

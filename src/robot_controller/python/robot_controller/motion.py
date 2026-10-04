@@ -263,8 +263,8 @@ class PickExecutor:
                 origin["confirmed_start_pose"] = placement_bridge.origin
                 origin["placement_bridge"] = placement_bridge
             if departure:
-                # Put-back release has confirmed DI1 clear; neutralize during
-                # retreat, then open at the next transit and attempt its pick.
+                # Queue the shared return before the next entry/pick. Its bridge
+                # confirms release execution and DI1 clear before new acquisition.
                 transit = candidate_transit(departure[-1].matrix, plan)
                 forward = (*departure, transit, plan[1], plan[2], plan[3])
                 origin["confirmed_start_pose"] = departure_pose

@@ -1385,6 +1385,21 @@ Preserve direct Stop, strict feedback/output/source/reply gates and paused-drop
 policy. Exhaustion finishes the return exit; ordinary Pick retry policy is separate.
 
 
+Rule 212 makes paused explicit Return Item the shared reference for every item
+return, superseding the separate automatic pulse/clearance route. One ordered
+queue: optional current-XY rise to Home Z, source XY/attitude at Home Z, exact
+saved pre-pick with OPEN/suction OFF/exhaust ON at 90%, then Home-Z retract with
+all outputs neutral at 0%. Speed 100%; acceleration travel/approach/retract by
+segment. Explicit Return and paused drop append joint Home; active drop appends
+eligible original-batch entry/clearance/pre-pick/pick in the same group, without
+Home or intermediate arrival waits. Exhaustion confirms retract above the bin.
+Retain DROPPED/source until advancing execution crosses the next clearance's
+MovL queue ID with neutral/raw-DI1-LOW evidence after retract issuance. Preserve
+50 ms loss debounce, Stop/reply containment, strict I/O and source gates; explicit
+Recover cancels interrupted returns without repeating release. Preview and
+candidate validation use this same geometry; Home Z must exceed saved pre-pick.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.
