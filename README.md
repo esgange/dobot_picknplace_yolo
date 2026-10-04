@@ -253,7 +253,7 @@ without an extra Stop click. HIGH or unavailable feedback never permits an
 unheld output reset. Close competing maintenance applications such as Gripper
 Diagnostics before controller recovery.
 
-Held-item DI1 loss has a fixed 300 ms falling-edge debounce, stored in the
+Held-item DI1 loss has a fixed 50 ms falling-edge debounce, stored in the
 controller rather than a teach file. Advancing FeedInfo
 must continue reporting LOW for that interval; HIGH cancels the pending loss
 immediately. One shared filter covers held motion, Home preflight, Stop/recovery,
@@ -299,21 +299,32 @@ taught final-pick settling interval.
 
 The complete automatic drop put-back route uses commanded speed 100% with taught travel
 acceleration: safety rise, entry transit, taught pre-pick release, neutral
-retreat, exit transit and Home. This applies to paused drop
-and active-Pick suction-loss return. Explicit Recover uses taught travel rates. The global SpeedFactor still scales
+retreat and exit transit. Paused drop additionally returns Home; active drop
+continues directly through the saved batch. Explicit Recover uses taught travel rates. The global SpeedFactor still scales
 these movements; returning an item does not change the slider setting.
 
-During an active Pick's held lift/tray travel, confirmed suction loss immediately
-requests Stop and automatically starts put-back after stationary/empty-queue
-confirmation. The same Pick action stays active; no error popup or Recovery
-click is needed for this loss alone. It uses the saved source, taught pre-pick release,
-finger OPEN and confirmed 50 ms exhaust, then the next eligible saved candidate
-or exact Home when none remain. It preserves the original batch and both transit
-waypoints. Repeated losses consume candidates until one succeeds or the batch
-is exhausted; at Home the same limit of three nonempty batches plus one
-empty-result retry governs fresh detection.
-SUCCESS/NO_PICK remain normal completion. No disable/enable/settings
-sequence is added. Direct Stop and cancellation still pre-empt this routine.
+After pickup, monitor continuously through lifting, travel, idle holding, tray
+acquisition and placement approach/descent. A confirmed 50 ms DI1 loss immediately
+sends Stop from the feedback callback and blocks further interrupted commands.
+Submission of a timed release does not end monitoring: observed commanded suction
+OFF does. Planned release is never classified as a drop.
+
+Resolve all issued command replies, then send a final Stop and confirm stationary
+joints and an empty queue before automatic put-back. Preserve the original source
+and mark its candidate DROPPED even if DI1 returns HIGH. Return through the necessary
+safety rise/entry transit to its exact saved pre-pick pose, open fingers, pulse
+exhaust for 50 ms and retreat upward through the exit transit. **No Home is included
+in this automatic return route.** Join that retreat directly to the next eligible
+saved candidate in original order, without a detection request or operator action.
+A fully exhausted return ends above the bin; active Pick's existing bounded
+new-batch policy can then acquire more poses and ensure Home before approaching.
+
+Auto Run discards speculative next-bin results and any appended next-pick session
+when the old item drops. It retains the old batch, does not count that placement,
+and resumes placement after a successful replacement pick. Manual Place ends its
+interrupted placement and leaves a successful replacement pick at Tray Detect.
+Direct Stop and cancellation still pre-empt every stage; Pause retains its existing
+paused-drop policy. No enable, disable or settings commands are added.
 
 Only confirmed held DI1 loss uses this path. A service rejection/timeout,
 unconfirmed Stop, changed source, invalid/stale feedback or output fault still

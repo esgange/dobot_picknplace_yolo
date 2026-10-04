@@ -1,13 +1,24 @@
 # Robot Controller — Finite State Machine
 
-Suction-loss debounce review: **2026-10-04**, baseline **`4466aa4`** plus rule **210**.
-The shared controller constant is now **300 ms**, superseding rule 107's 50 ms
-falling-edge interval. Confirm held DI1 loss only with advancing LOW feedback
-spanning that interval; HIGH resets the timer immediately. Frozen or stale inputs
-cannot complete it. This is not a teach-file field and adds no sleep. Pickup HIGH,
-raw release/reset LOW, output/freshness gates and direct Stop remain immediate;
-the exhaust pulse remains 50 ms. Existing phase coverage and drop-recovery routes
-are unchanged; this does not extend drop handling into the queued placement phase.
+Continuous drop-interrupt review: **2026-10-04**, baseline **`f2fb54d`** plus
+rule **211**. The latest specification restores the shared **50 ms** DI1-loss
+interval, superseding rule 210. From pickup through lifts, travel, idle holding,
+tray acquisition and placement approach/descent, confirmed loss latches DROPPED
+and sends Stop in the feedback callback. Normal dispatch shares the latch lock.
+Submission of release motion does not end monitoring; observed commanded suction
+OFF does. Planned release is exempt, and a late release cannot erase a latched drop.
+
+Resolve every issued command response within its original deadline, acknowledge
+Stop, then send a final Stop and confirm stationary joints/empty queue. Keep the
+saved source and original batch. Put back at exact pre-pick, OPEN and exhaust for
+50 ms, then neutralize on the upward retreat and exit transit. **No Home belongs
+to this active automatic return route.** Join the next eligible saved entry/pick
+in order without detection or operator action. Exhaustion confirms the exit above
+the bin; ordinary Pick's bounded new-batch policy is separate. Auto Run discards
+speculative perception/appended sessions, does not count the dropped placement,
+and places the replacement after a successful retained Pick. Manual Place ends
+its interrupted placement and leaves a replacement at Tray Detect. Preserve
+strict output/source/feedback/reply gates, direct Stop and paused-drop behavior.
 
 Depth coverage review: **2026-10-04**, baseline **`14e4dfd`** plus rule **208**.
 Item schema 11 removes the fixed depth sample-count field. Item poses and tray
@@ -512,7 +523,7 @@ flowchart TD
     EmptyBudget -->|No| RetryHome["Reserve retry; confirm Home or skip if matched; Pause retains budget"]
     RetryHome --> Detect
     Limit{"Three nonempty batches physically exhausted?"}
-    Limit -->|Yes| Empty
+    Limit -->|Yes| NoPick["READY / NO_PICK; Home after misses or bin exit after final drop"]
     Limit -->|No| Next["Advance attempt; discard old batch"]
     Next --> Detect
     Any -->|Yes| Home["Retain poses; fresh idle + Home joints: skip queue, otherwise reach Home"]
@@ -525,9 +536,9 @@ flowchart TD
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
     Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → Safety Z exit → saved Tray Detect joints; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
-    HeldReturn -->|Held DI1 LOW for 300 ms of advancing feedback| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
+    HeldReturn -->|Held DI1 LOW for 50 ms of advancing feedback| PutBack["Stop → RETURNING_ITEM → confirmed put-back"]
     PutBack -->|Eligible saved candidate| Entry
-    PutBack -->|Batch exhausted; Home confirmed| Limit
+    PutBack -->|Batch exhausted; upward exit confirmed| Limit
     Miss --> More{"Another candidate?"}
     More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry transit → next clearance → next pre-pick → final approach"]
     Retry --> Sense
@@ -663,6 +674,11 @@ flowchart TD
     Monitor -->|Fault or Stop| Stop
     Queue -. "Monitor throughout" .-> Feedback["Command acceptance, fresh enabled feedback, robot faults, opposing outputs and motion watchdogs; no release-confirmation gate"]
     Feedback -->|Fault| Stop
+    Depth -. "Held loss before intentional release" .-> Drop
+    Pre -. "Held loss" .-> Drop
+    Release -. "Held loss before observed suction OFF" .-> Drop["50 ms loss: latch DROPPED; immediate Stop; drain replies; final Stop and empty queue"]
+    Drop --> Source["Saved source pre-pick; OPEN + 50 ms exhaust; upward exit; no Home"]
+    Source --> Saved["Next eligible original-batch Pick; no detection; HOLDING at Tray Detect, or READY if exhausted"]
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
     Stopped -->|Release command not issued| Retry["Continue reobserves within remaining request budget"]
     Retry --> Observe
@@ -760,8 +776,10 @@ arrival or idle. Require advancing joint/status, final joint-FK arrival, idle/em
 queue and execution evidence only at final retract. There is no timed settling or
 extra origin wait. No intermediate finger-open/exhaust/
 DI12/DI1 confirmation gate is added in either mode.
-Missing/late release feedback, suction changes and bounded-history gaps do not
-stop the queue. Retain coherent finger-open/exhaust ON, finger-close/suction OFF and DI1
+Missing intermediate release evidence and bounded-history gaps alone do not
+stop the queue. Confirmed held DI1 loss before observed commanded suction OFF
+always interrupts it. Finger transitions and release admission do not disable
+this monitor; unknown/uncommanded output transitions remain faults. Retain coherent finger-open/exhaust ON, finger-close/suction OFF and DI1
 LOW as release evidence for diagnostics and interruption recovery only; DI12 is
 not a release-confirmation gate. Auto Run requires a trusted held item before
 queue start; explicit Place accepts either initial item state. Preserve ordered command
@@ -831,17 +849,27 @@ flowchart TD
     Append --> Boundary["Home queue ID reached/passed + observed neutral/DI1 LOW: count old placement and switch source"]
     Boundary --> Next["Acquire next item; normal retries/lifts"]
     Next --> Tray
-    Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK at Home; report partial count"]
+    Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK; Home after misses or bin exit after final drop; partial count"]
     Next -->|3 physical batches or empty retry exhausted| Empty
     Observe -->|3 requests exhausted| Fail["Stop containment; end run with partial count"]
     Place -->|Rejected, unanswered or Stop; discard worker| Fail
     Ready -->|Detector error| Fail
     Append -->|Fault or Stop| Fail
+    Tray -. "Held loss" .-> Drop
+    Observe -. "Held loss" .-> Drop
+    Place -. "Held loss before suction OFF" .-> Drop
+    Append -. "Old item still held: loss" .-> Drop["Immediate Stop; discard worker/new ledger; retain old source and batch; no placement count"]
+    Drop --> Contain["Resolve issued replies; final Stop and stationary empty queue"]
+    Contain --> Return["Saved pre-pick release/reset; upward exit; no Home"]
+    Return --> Saved{"Eligible original poses?"}
+    Saved -->|Yes| SavedPick["Exit directly to next saved entry and Pick; no new detection"]
+    SavedPick --> Tray
+    Saved -->|No| DroppedEnd["READY above bin; partial count"]
 ```
 
 Only one read-only candidate worker overlaps placement planning, admission and execution;
-all hardware dispatch remains
-in the owning action thread, and the ROS executor still has exactly two threads.
+normal hardware dispatch remains
+in the owning action thread; feedback may dispatch independent Stop, and the ROS executor still has exactly two threads.
 The worker uses the existing validated request path and immutable configuration.
 One batch belongs to the next Pick, is consumed once, and is discarded on Stop,
 source change or run failure. A repeated batch ID is rejected across the whole run.
@@ -905,8 +933,8 @@ flowchart TD
     Stay --> Paused
     Paused -->|Continue accepted| Resume["Restore owning operation and replan from actual parked pose"]
     Paused -->|Held item: Return Item| Return["RETURNING_ITEM → Home → READY"]
-    Paused -->|Held DI1 LOW for 300 ms| Drop["Put back saved item → Home → remain PAUSED"]
-    Rise -->|Held DI1 LOW for 300 ms during rise| Drop
+    Paused -->|Held DI1 LOW for 50 ms| Drop["Put back saved item → Home → remain PAUSED"]
+    Rise -->|Held DI1 LOW for 50 ms during rise| Drop
     Drop --> Paused
 ```
 
@@ -1035,8 +1063,9 @@ flowchart TD
     Released -->|Yes; DI1 LOW| Resume["Resume upward from actual pose; skip release"]
     Resume --> Retreat
     Retreat --> Exit["Item exit park_transit"]
-    Exit --> Home["Joint Home"]
-    Exit --> Next["Next item's entry transit → clearance → pre-pick → pick"]
+    Exit -->|Paused drop only| Home["Joint Home; remain PAUSED"]
+    Exit -->|Active drop; eligible saved poses| Next["Next item's entry transit → clearance → pre-pick → pick; no Home or detection"]
+    Exit -->|Active drop; exhausted| Exhausted["Confirm exit above bin; no Home in return route"]
 ```
 
 Both routes use the saved pre-pick pose, **final-pick Z + taught pre-pick height**,
@@ -1073,7 +1102,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | Why put-back started | After release and retreat |
 | --- | --- |
 | Explicit Return Item, including failed tray acquisition | One timed-release queue through Home → READY; ends the interrupted operation. |
-| Held suction loss during active Pick | Next eligible saved candidate, or Home then fresh detection within three nonempty batches plus one empty-result retry; exhaustion → READY/NO_PICK. Original Pick stays active. |
+| Held loss in active Pick, idle holding, tray acquisition or placement | Return without Home; join next eligible original-batch candidate. Exhausted return confirms bin exit. Auto Run resumes placement after replacement Pick; manual Place ends at replacement Tray Detect. Ordinary Pick retries remain separately bounded. |
 | Explicit Recover | Does not enter put-back; cancel, preserve grip through lift/Home, then relax at Home. |
 | Held loss during Pause / while PAUSED | Home → PAUSED. Wait for explicit Continue or Stop. |
 
@@ -1084,7 +1113,7 @@ Unexpected I/O changes remain faults. None of this context survives restart.
 | Explicit Hardware Home / `go_home` | Current XY with taught Home Z/attitude → full taught Cartesian Home, one blended group | Final Cartesian Home; whole move skipped if already within 5 mm / 1° |
 | Pick's Home after pose acquisition, or before its empty-result retry | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if idle and every Home joint is within ±1° |
 | Explicit held Return Item | One queue: optional rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → joint Home | Final Home joints / idle / execution with neutral outputs / DI1 LOW |
-| Final exhausted miss or automatic drop put-back Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
+| Final exhausted miss or paused-drop Home return | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
 
 Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
 moves directly to saved Tray Detect joints and finishes HOLDING there.
@@ -1140,7 +1169,7 @@ and READY, or failure containment. Clients must observe status for that outcome.
 
 | I/O | Meaning |
 | --- | --- |
-| DI1 | Suction detection: acquisition HIGH is immediate; held HIGH→LOW loss is debounced 300 ms with advancing feedback |
+| DI1 | Suction detection: acquisition HIGH is immediate; held HIGH→LOW loss is debounced 50 ms with advancing feedback |
 | DI12 | Finger fully open feedback, shown on the GUI; LOW does not prove fingers are closed |
 | DO1 / DO13 | Exhaust / suction; both OFF is neutral; both ON is invalid |
 | DO2 / DO14 | Finger close / open; both OFF is neutral; both ON is invalid |

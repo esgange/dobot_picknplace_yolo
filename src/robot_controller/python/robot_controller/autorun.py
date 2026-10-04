@@ -3,7 +3,7 @@
 from concurrent.futures import Future
 import threading
 
-from .errors import CommandRejected, FeedbackFailure, OperationCanceled
+from .errors import CommandRejected, FeedbackFailure, HeldSuctionLost, OperationCanceled
 from .pick_session import PickSession, return_targets
 from .placement import PlacementOperation, validate_target
 from .recovery import GRIP_MASK
@@ -247,10 +247,26 @@ class AutoRunOperation:
             self.node, self.configuration, self.save_debug_images)
 
     def run(self):
+        while True:
+            try:
+                return self._run_cycles()
+            except HeldSuctionLost:
+                self.node.raise_if_cancelled()
+                # Discard speculative perception and appended motion. Recovery
+                # retains managed.session, the batch owning the dropped item.
+                self.close()
+                self.bridge = None
+                if not self.node.managed.continue_after_loss():
+                    return False
+                self.resume_held = True
+
+    def _run_cycles(self):
         node = self.node
         batch, bridge = None, None
         while self.completed < self.quantity:
-            if not self._pick(batch, bridge):
+            picked = getattr(self, "resume_held", False)
+            self.resume_held = False
+            if not picked and not self._pick(batch, bridge):
                 return False
             node.raise_if_cancelled()
             node.active_action = "place"

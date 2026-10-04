@@ -34,9 +34,13 @@ class ManagedControl:
         self.session = None
         self.parked_pose = None
         self.return_progress = None
+        self.held_loss_pending = False
+        self.containing_loss = False
 
     def checkpoint(self):
         self.node.raise_if_cancelled()
+        if self.held_loss_pending and not self.containing_loss:
+            raise HeldSuctionLost("Confirmed held suction loss interrupted the operation")
         if self.executing:
             if self.drop_pending:
                 raise PausedItemDropped("Suction lost during Pause parking")
@@ -163,6 +167,28 @@ class ManagedControl:
                 return True
         return False
 
+    def interrupt_held_loss(self, sample):
+        """Feedback-side latch/Stop; the existing operation owner performs recovery."""
+        with self.lock:
+            if (self.containing_loss or self.kind is not None or self.executing
+                    or self.node.machine.state in ("FAULT", "STOPPING", "INACTIVE")
+                    or self.node.active_action == "recover"
+                    or not self.node.holding_item or sample.suction_present
+                    or self.session is None or self.session.held_index is None):
+                return
+            self.note_suction_loss(sample)
+            if not self.held_loss_pending:
+                self.held_loss_pending = True
+                self.node.hardware.request_stop("Confirmed held suction loss")
+
+    def observe_continuous(self, sample):
+        placement = getattr(self.node, "placement", None)
+        if placement is not None and placement.observing:
+            # FeedInfo may latch/send Stop, but operation exceptions belong to
+            # the command owner, including after an explicit cancellation.
+            placement.observe(self.node, sample, raise_on_loss=False)
+        self.interrupt_held_loss(sample)
+
     def note_suction_loss(self, sample):
         """Retain the source and loss even if DI1 returns before put-back."""
         with self.lock:
@@ -219,6 +245,10 @@ class ManagedControl:
                     departure=departure, departure_pose=departure_pose,
                     queued_home=queued_home, placement_bridge=placement_bridge)
             except HeldSuctionLost:
+                if placement_bridge is not None and not placement_bridge.completed:
+                    # The queued next Pick does not own the old held item/batch.
+                    # Auto Run must discard that speculative session first.
+                    raise
                 queued_home, placement_bridge = (), None
                 returned = self._return_after_suction_loss()
                 if returned is None:
@@ -228,14 +258,27 @@ class ManagedControl:
                 node._transition("PICKING", "Item returned; trying next retained candidate")
 
     def _return_after_suction_loss(self):
+        self.node.raise_if_cancelled()
+        self.containing_loss = True
+        try:
+            return self._contain_and_return_loss()
+        finally:
+            self.containing_loss = False
+
+    def _contain_and_return_loss(self):
         node = self.node
-        self.checkpoint()
+        node.raise_if_cancelled()
         attempt = self._candidate()
-        if (not node.holding_item or attempt.state not in ("HELD", "DROPPED")
-                or node.active_action != "pick"):
-            raise HeldUnknown("Automatic put-back requires the active Pick's held source")
+        if not node.holding_item or attempt.state not in ("HELD", "DROPPED"):
+            raise HeldUnknown("Automatic put-back requires a trusted held source")
+        self.session.set_state(self.session.held_index, "DROPPED")
+        self.held_loss_pending = True
         future = node.hardware.request_stop("Held suction lost; discard return queue for put-back")
-        node.hardware.ensure_no_pending_response()
+        node.hardware._acknowledge_stop(future, check_cancel=True)
+        node.hardware.resolve_interrupted_commands()
+        # A command submitted concurrently with the first Stop must also be
+        # discarded. All replies precede this final Stop/empty-queue barrier.
+        future = node.hardware.request_stop("Discard resolved interrupted queue", fresh=True)
         node.configuration.validate_sources(node.root)
         node.hardware.confirm_stop(future, allow_suction_loss=True)
         self.checkpoint()
@@ -257,11 +300,38 @@ class ManagedControl:
                 "WARNING", "automatic_item_return_started",
                 "Stop confirmed; putting back item before continuing saved batch",
                 candidate_id=attempt.identifier)
+            placement = getattr(node, "placement", None)
+            if placement is not None:
+                placement.close_pending()
+                placement.observing = False
+                node.placement = None
             self._mark_drop()
-            return self._put_back(dropped=True, continue_candidates=True)
+            self.held_loss_pending = False
+            return self._put_back(dropped=True, continue_candidates=True, home_if_exhausted=False)
         finally:
             with self.lock:
                 self.executing = False
+
+    def continue_after_loss(self):
+        """Return to the saved source and resume only its ordered eligible poses."""
+        departure = self._return_after_suction_loss()
+        if departure is None:
+            self.node._transition("READY", "Dropped item returned; saved batch exhausted")
+            return False
+        self.session.resuming = False
+        self.node.active_action = "pick"
+        self.node._transition("PICKING", "Item returned; trying next retained candidate")
+
+        def check(_index):
+            self.node.raise_if_cancelled()
+            self.node.configuration.validate_sources(self.node.root)
+
+        result = self.run_pick([attempt.plan for attempt in self.session.attempts],
+                               check=check, departure=departure[0],
+                               departure_pose=departure[1])
+        self.node._transition("HOLDING" if result["picked"] else "READY",
+                              "Retained batch Pick complete after dropped-item return")
+        return result["picked"]
 
     def recover_item_and_continue(self):
         """Explicit recovery owns put-back, then the remaining retained batch."""
@@ -392,7 +462,7 @@ class ManagedControl:
                                          batch_name="pause_to_next_transit",
                                          confirmed_start_pose=current)
 
-    def _put_back(self, *, dropped, continue_candidates=False):
+    def _put_back(self, *, dropped, continue_candidates=False, home_if_exhausted=True):
         node = self.node
         attempt = self._candidate()
         if (self.kind == "return" and not dropped and attempt.state == "HELD"
@@ -463,10 +533,14 @@ class ManagedControl:
                 self._neutral(require_clear=True)
         continuing = progress.continue_candidates and self.session.next_eligible is not None
         if not continuing:
-            node._execute_home(preceding=retreat, require_suction=False, forbid_suction=True,
-                               confirmed_start_pose=current,
-                               queue_through_home=True, full_speed=True,
-                               batch_name="return_item_to_home")
+            if home_if_exhausted:
+                node._execute_home(preceding=retreat, require_suction=False, forbid_suction=True,
+                                   confirmed_start_pose=current,
+                                   queue_through_home=True, full_speed=True,
+                                   batch_name="return_item_to_home")
+            else:
+                node.hardware.move_batch(retreat, batch_name="return_item_exit",
+                                         forbid_suction=True, confirmed_start_pose=current)
         self.session.parked_index = None
         if not continuing:
             self.session.held_index = None
@@ -474,7 +548,8 @@ class ManagedControl:
         node.events.record("INFO", "item_return_completed",
                            "Release confirmed; physical placement not measured",
                            candidate_id=attempt.identifier, dropped=dropped,
-                           continuing_candidates=continuing, home_confirmed=not continuing)
+                           continuing_candidates=continuing,
+                           home_confirmed=not continuing and home_if_exhausted)
         return (retreat, current) if continuing else None
 
     def _check_parked(self, sample):
@@ -606,3 +681,14 @@ class ManagedControl:
             self.node._contain_queue_control_failure("Managed pause/return", exc)
         finally:
             self.node._end_operation()
+
+    def start_loss_worker(self):
+        def recover():
+            try:
+                self.continue_after_loss()
+            except Exception as exc:
+                self.node._contain_queue_control_failure("Held-item drop recovery", exc)
+            finally:
+                self.node._end_operation()
+        self.thread = threading.Thread(target=recover, daemon=True)
+        self.thread.start()

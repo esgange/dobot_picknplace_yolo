@@ -530,7 +530,7 @@ def test_prefetch_requires_successful_pick_and_confirmed_tray_arrival(monkeypatc
     assert not order and not workers and node.placement is None
 
 
-@pytest.mark.parametrize("interruption", ["tray_exhausted", "stop", "held_loss"])
+@pytest.mark.parametrize("interruption", ["tray_exhausted", "stop"])
 def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, interruption):
     from robot_controller.errors import HeldSuctionLost
     from robot_controller.tray_client import TrayAcquisitionExhausted
@@ -775,7 +775,7 @@ def test_stop_after_tray_reply_before_worker_start_prevents_request():
         run.close()
 
 
-@pytest.mark.parametrize("interruption", ["stop", "held_loss"])
+@pytest.mark.parametrize("interruption", ["stop"])
 def test_executing_placement_failure_discards_inflight_next_item_result(monkeypatch, interruption):
     from robot_controller.errors import HeldSuctionLost
 

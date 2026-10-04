@@ -335,8 +335,9 @@ still pre-empt. This worker adds no ROS executor thread.
 
 Rule 170 removes intermediate release-confirmation gates in both modes. Send the
 entire approach → pre-pick-equivalent drop → retract queue without waiting
-for finger-open/exhaust, DI12 or DI1 transitions. Missing/late release evidence, suction
-changes and gaps in output history do not interrupt this queue. Any observed
+for finger-open/exhaust, DI12 or DI1 transitions. Missing intermediate release evidence and history gaps alone do not interrupt
+the queue. Rule 211 interrupts confirmed held loss before observed commanded
+suction OFF; release admission and finger transitions do not disable monitoring. Any observed
 coherent release feedback is retained as diagnostic/recovery evidence only.
 Keep command acceptance/order, live enabled/error/collision/freshness checks,
 opposing-output protection, motion watchdogs and direct Stop/Pause. These are
@@ -776,7 +777,7 @@ idle READY Pause remains stationary.
 
 Held Pause preserves the outputs and rises vertically at current X/Y/attitude
 to Home Z, without descending if already above it. Paused feedback, actual pose,
-DI1 and outputs remain supervised. DI1 LOW lasting 300 ms on advancing feedback
+DI1 and outputs remain supervised. DI1 LOW lasting 50 ms on advancing feedback
 during the rise requests Stop; confirmed loss while parked also starts the
 same put-back routine described below. A shorter LOW followed by HIGH cancels
 the pending loss. Confirmed loss is latched even if DI1 rises again.
@@ -861,21 +862,33 @@ accepted response and stationary empty queue; a DI1 loss is logged separately
 and does not mislabel a successful Stop or poison later Stop confirmation.
 Freshness and output-integrity failures retain their strict handling.
 
-During active Pick, rule 111 keeps that loss inside the original action. Request
-Stop immediately, resolve any in-flight admission, confirm a stationary empty
-queue and preserved outputs, and require fresh enabled feedback and unchanged
-sources before returning to the saved item. Use the normal safety rise, entry
-transit, original taught pre-pick release, OPEN and confirmed 50 ms exhaust.
-Queue neutral retreat and the old exit transit before the next eligible item's
-entry/clearance/pre-pick/pick, or before exact Home if none remain. Both transits
-retain CP (default 100%). The lost candidate stays DROPPED even if DI1 returns HIGH.
-Repeated losses advance through the retained batch; after exhaustion and confirmed
-Home, rules 180/200 allow fresh detection within the same limit of three nonempty
-batches plus one empty-result retry.
-The action completes normally with SUCCESS or NO_PICK, so this loss alone does
-not open the GUI's Action ended dialog and needs no Recovery click. No automatic
-disable, enable, ClearError or settings sequence is issued. This also applies
-to active picking resumed through Continue. Explicit Recover cancels the batch.
+Rule 211 extends automatic loss interruption from pickup through lifting, travel,
+idle holding, tray detection and placement approach/descent. Advancing DI1 LOW for
+50 ms latches DROPPED and sends Stop directly in the FeedInfo callback. Command
+admission shares the latch lock; no further interrupted command can be submitted.
+Resolve outstanding replies within their original deadlines, acknowledge Stop,
+then send a final Stop and confirm stationary joints/empty queue before returning.
+Feedback/source/output failures or rejected/unanswered commands block recovery.
+
+Monitoring ends only on observed, issued suction OFF, never on release-command
+submission or finger motion. Planned release is exempt. Once loss is latched,
+DI1 HIGH or a late planned release cannot erase it or mark the candidate PLACED.
+Keep its original source plan. Use the safety rise, entry transit, exact pre-pick
+release, OPEN and confirmed 50 ms exhaust; neutralize during upward retreat and
+queue the old exit before the next eligible entry/clearance/pre-pick/pick. Preserve
+saved order and exclude failed/dropped/returned poses. No Home, new detection or
+operator action is inserted while eligible poses remain. Exhausted automatic
+return confirms the exit above the bin; active Pick may then use its existing
+bounded new-batch policy and ensure Home before new candidate motion.
+
+Auto Run cancels its speculative detector worker and appended next-session ledger,
+retains the old source/batch and leaves its placement count unchanged. It places
+the replacement item after a successful retained Pick. Manual Place cancels its
+interrupted placement and leaves the replacement at Tray Detect; an already
+accepted Place result remains acceptance-only and status reports the recovery.
+Idle HOLDING uses the same recovery under exclusive operation ownership. Direct
+Stop/cancel always wins. Paused drop and explicit Return retain their existing
+Home/paused endpoints. Explicit Recover cancels the batch.
 
 The dedicated held-suction-loss condition cannot turn output/readiness faults,
 invalid feedback, service failures or missing source context into automatic
@@ -903,7 +916,7 @@ The GUI has separate managed Pause/Return and permanent STOP controls. See the
 operator button policy above. The two gripper LEDs show raw DI1 Suction and DI12
 Finger open as Detected / Not detected / Unknown. DO commands and logical holding
 do not drive these LEDs. DI12 Not detected does not prove that fingers are closed.
-The held-item decision retains its 300 ms loss debounce independently of the raw
+The held-item decision retains its 50 ms loss debounce independently of the raw
 DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
 Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the smaller
@@ -1101,10 +1114,10 @@ is the complete final-pick confirmation interval; there is no fixed 300 ms pick
 gate before it or separate sensor wait after it. If DI1 is still low when the
 interval ends, that attempt is irrevocably missed.
 
-DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.300` filter owned
+DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.050` filter owned
 by the canonical feedback monitor, not a teach-file setting. After HIGH has been
 seen, the first advancing LOW sample starts a monotonic timer. Advancing LOW feedback
-at least 300 ms later
+at least 50 ms later
 confirms loss; any HIGH resets the pending interval immediately. Re-reading a
 snapshot or publishing the same controller timer cannot complete the debounce.
 A feedback gap beyond the existing freshness limit cannot count toward it, and
@@ -1138,7 +1151,7 @@ The final command is joint-target MovL, restoring the saved Tray Detect attitude
 Confirm only its saved joints (±1°), fresh idle RobotStatus and executed/empty
 queue after admission; no midpoint wait or fixed arrival dwell is added.
 SUCK stays ON without reissuing it; no EXHAUST/NEUTRAL release events are sent.
-Holding/output checks and the 300 ms DI1 loss debounce remain active throughout.
+Holding/output checks and the 50 ms DI1 loss debounce remain active throughout.
 Held Continue moves directly from the confirmed safety-height parked pose to
 Tray Detect, without replaying the pick, lifts or a Home detour. Successful Pick
 requests no tray observation and does not place; the next Place checks saved

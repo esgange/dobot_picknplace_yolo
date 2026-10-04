@@ -138,6 +138,12 @@ class FakeTransport:
     def ensure_no_pending_response(self):
         pass
 
+    def resolve_interrupted_commands(self):
+        self.ensure_no_pending_response()
+
+    def _acknowledge_stop(self, _future, **_kwargs):
+        pass
+
     def current_pose(self):
         return pose_matrix(self.node.feed["tool_vector_actual"])
 
@@ -391,7 +397,7 @@ def test_brief_di1_low_during_pause_never_drops_or_releases_the_item(during_rise
     def bounce():
         rig.set_di1(False)
         assert not rig.managed.observe(rig.snapshot())
-        rig.set_di1(False, 0.299)
+        rig.set_di1(False, 0.049)
         assert not rig.managed.observe(rig.snapshot())
         assert rig.holding_item
 

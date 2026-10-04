@@ -928,7 +928,7 @@ def test_held_consumers_share_di1_debounce_but_outputs_fail_immediately(consumer
 
     emit(0.0, True)
     check(emit(0.010, False))
-    pending = emit(0.010 + 0.299999, False)
+    pending = emit(0.010 + 0.049999, False)
     check(pending)
     pending.feed["digital_outputs"] = 0
     with pytest.raises((FeedbackFailure, HeldUnknown), match="DO13"):

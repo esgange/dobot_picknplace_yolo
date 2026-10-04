@@ -35,6 +35,7 @@ class HomeRecovery:
                 placement.observing = False
             node.placement = None
             node.managed.return_progress = None
+            node.managed.held_loss_pending = False
             node.managed._clear_request()
             if session is not None:
                 session.cancel_remaining()

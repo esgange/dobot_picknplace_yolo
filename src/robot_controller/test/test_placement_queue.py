@@ -9,7 +9,7 @@ import pytest
 from rclpy.task import Future
 
 from robot_controller.controller import RobotController
-from robot_controller.errors import FeedbackFailure, OperationCanceled
+from robot_controller.errors import FeedbackFailure, HeldSuctionLost, OperationCanceled
 from robot_controller.hardware import DobotTransport
 from robot_controller.kinematics import pose_values
 from robot_controller.motion import Target
@@ -210,12 +210,15 @@ def test_opposing_outputs_fail_during_queue():
         rig.run()
 
 
-def test_suction_loss_during_queue_does_not_block_retract_or_claim_release_evidence():
+def test_confirmed_suction_loss_during_queue_stops_before_retract():
     rig = QueueRig()
     rig.script = ([dict(outputs=HELD, inputs=0)] * 8
                   + [dict(outputs=0, inputs=0, retract=True)])
-    rig.run()
-    assert rig.node.placement.phase == 'DONE'
+    with pytest.raises(HeldSuctionLost):
+        rig.run()
+    assert rig.node.managed.held_loss_pending
+    assert rig.node.managed.session.attempts[0].state == 'DROPPED'
+    assert rig.requests[-1][0] == 'Stop'
     assert not rig.node.placement.release_confirmed
 
 

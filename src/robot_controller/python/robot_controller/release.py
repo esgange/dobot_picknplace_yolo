@@ -70,25 +70,40 @@ class ReleaseQueue:
         elif index == self.neutral_index:
             self.neutral_issued = True
 
-    def observe(self, node, sample):
-        """Record available release evidence; never gate the queue on DI1/DI12."""
+    def observe(self, node, sample, *, raise_on_loss=True):
+        """Monitor held loss until the commanded suction-off is observed."""
         if not self.observing:
             return
         with node.managed.lock:
             mask = (1 << 13) | (1 << 12) | 3
-            # History is diagnostic only. A gap or unobserved release interval
-            # must not interrupt the admitted approach/drop/retract queue.
+            # Missing an intermediate release sample is not a completion gate.
+            # Reconcile only issued transitions before checking held suction.
             for sequence, _timer, outputs, inputs in node.monitor.output_history(
                     self.history_sequence):
                 if sequence > sample.sequence:
                     break
                 bits = outputs & mask
+                # Only issued timed transitions can end held monitoring. Do not
+                # adopt an unexpected suction-off as an intentional release.
+                released_bits = (1 << 13) | 1
+                for channel in (1, 2, 13, 14):
+                    bit = 1 << (channel - 1)
+                    allowed = {bool(self.initial_outputs & bit)}
+                    if self.release_issued:
+                        allowed.add(bool(released_bits & bit))
+                    if self.neutral_issued:
+                        allowed.add(False)
+                    if bool(bits & bit) not in allowed:
+                        raise FeedbackFailure(f"Uncommanded release output DO{channel}")
                 self.history_sequence = sequence
-                if self.release_issued and bits != self.initial_outputs:
+                releasing = (self.release_issued and not bits & (1 << 12)
+                             and bits != self.initial_outputs)
+                interrupted = node.managed.held_loss_pending
+                if releasing and not interrupted:
                     node.holding_item = False
                     if not self.release_confirmed:
                         self.phase = "RELEASING"
-                if (self.release_issued and bits == ((1 << 13) | 1)
+                if (not interrupted and self.release_issued and bits == ((1 << 13) | 1)
                         and bits != self.initial_outputs
                         and not inputs & 1):
                     if not self.release_confirmed:
@@ -99,6 +114,10 @@ class ReleaseQueue:
                             "Queued release feedback observed")
                 node.expected_outputs.update({ch: bool(bits & (1 << (ch - 1)))
                                               for ch in (1, 2, 13, 14)})
+            node.managed.interrupt_held_loss(sample)
+            if (raise_on_loss and node.managed.held_loss_pending
+                    and not node.managed.containing_loss):
+                node.managed.checkpoint()
 
     def complete(self, node, sample):
         # The owner calls this after physical arrival at final retract or Home.

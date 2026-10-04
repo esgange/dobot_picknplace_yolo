@@ -8392,6 +8392,58 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No hardware commands, production restarts or local artifact/config changes.
   Manually restart the controller to load the new constant; no teach re-save.
 
+### 2026-10-04 — Rule 211: continuous drop interruption and direct saved-batch continuation
+
+- User requested continuous post-pick suction monitoring through lift, travel,
+  tray acquisition and placement approach/descent, immediate Stop on confirmed
+  loss, queue discard and direct source return/next saved pick. The latest request
+  explicitly says 50 ms, so restore the shared constant to 0.050 seconds,
+  superseding rule 210's immediately preceding 300 ms change. No teach-file field,
+  schema, interface or `.env` key is added. Exhaust remains a separate 50 ms pulse.
+- FeedInfo now latches held loss and sends the independent Stop without waiting
+  for the action/perception owner. Normal dispatch shares the latch lock and
+  checks it immediately before submission. Preserve raw pickup/release checks,
+  advancing-feedback debounce, output/freshness gates and direct Stop priority.
+  Observe commanded suction OFF to end monitoring: release admission and finger
+  transitions cannot end it. Planned release is exempt; an uncommanded output
+  change fails. DI1 recovery or late issued release cannot erase an earlier drop.
+- Preserve DROPPED and the exact source plan. The owner acknowledges Stop, resolves
+  all issued replies within their original deadlines, then sends a final Stop
+  and confirms stationary joints/empty queue before returning. Reconcile only
+  issued output transitions during containment. Missing/rejected replies, source
+  changes, stale/invalid feedback, output faults or unconfirmed Stop still block
+  automatic motion. No enable, disable, ClearError or settings calls are added.
+- Automatic active return keeps the measured safety rise, source entry transit,
+  exact saved pre-pick release, OPEN/50 ms exhaust and neutral upward retreat/exit.
+  It includes no Home. Queue the old exit directly before the next eligible saved
+  entry/clearance/pre-pick/pick, retaining order and excluding attempted failures,
+  drops and returns. No new detection or operator action while eligible poses
+  remain. Exhaustion confirms the bin exit; the ordinary Pick action's existing
+  bounded new-batch policy is separate and ensures Home before new candidate motion.
+- Auto Run cancels/discards its speculative worker/result and any appended next
+  session, retaining the batch owning the dropped item. A queued Home/next Pick
+  cannot switch source or count the old placement after loss. Resume placement
+  after a successful retained Pick. Manual Place cancels its interrupted placement
+  and finishes replacement Pick at Tray Detect; after queue acceptance the owned
+  completion worker reports recovery through status. Idle HOLDING reserves the
+  same exclusive owner for automatic return/continuation. Preserve managed Pause's
+  existing drop policy and explicit Return/Recover endpoints.
+- Validation: **1040 controller tests passed**, including **30 continuous-drop
+  tests**. Synthetic cases cover the real FeedInfo callback, detection/approach/
+  descent, each pending placement reply, already-appended Home/Pick, original
+  source/order/counting, DI1 bounce/recovery, planned/late/uncommanded release,
+  Stop-time output reconciliation, no-Home continuation/exhaustion, idle ownership,
+  manual Place before/after acceptance, response rejection/timeout, direct Stop
+  and live feedback after action cancellation.
+  Existing pick, Pause, Stop, recovery, feedback and Auto Run suites pass. Scoped
+  production/new-test flake8, whitespace checks and sourced controller build pass.
+- Updated root/package READMEs, AGENTS and FSM review, diagrams and tables.
+  Regenerated and visually reviewed **9 diagrams / 9 A3 PDF pages** with matching
+  source SHA-256 `3573fe6a5fd4097c6501ef2ba135be0feb95ddcd41efe959727844de7a4c5c32`.
+  No physical hardware commands, production restart or cycle validation. Restart
+  the controller manually to load this behavior. Preserve `.env`, calibration,
+  offline/runtime teach files, models and the unrelated RViz edit.
+
 ### Future entry template
 
 ```text

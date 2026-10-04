@@ -5,11 +5,13 @@ import math
 import re
 import threading
 import time
+from contextlib import nullcontext
 
 import numpy as np
 
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
-                     HeldSuctionLost, HeldUnknown, OperationCanceled, StopUnconfirmed,
+                     HeldSuctionLost, HeldUnknown, ManagedInterruption,
+                     OperationCanceled, StopUnconfirmed,
                      UNKNOWN_ITEM_GUIDANCE, EmergencyStopPressed, EMERGENCY_STOP_GUIDANCE,
                      alarm_ids, command_failure_message, command_rejection)
 from .feedback import enabled_blockers
@@ -233,6 +235,36 @@ class DobotTransport:
                 if self.pending_group is group:
                     self.pending_group = None
 
+    def resolve_interrupted_commands(self):
+        """Drain and validate every issued reply before the final discard Stop."""
+        with self.response_lock:
+            pending = list(self.pending_group or ())
+            if self.pending_response is not None:
+                pending.append(self.pending_response)
+        for name, future, audit in pending:
+            deadline = audit["started"] + COMMAND_RESPONSE_TIMEOUT_SEC
+            while not future.done():
+                self.node.raise_if_cancelled()
+                self.monitor.snapshot(require_enabled=False)
+                if time.monotonic() >= deadline:
+                    raise CommandResponseTimeout(
+                        f"Unresolved interrupted {name}; automatic return blocked")
+                self.node.wait_control(.02)
+            result = future.result()
+            if result is None or result.res != 0:
+                raise command_rejection(name, result)
+            self._finish_service_audit(audit, "accepted", result=result)
+        self.ensure_no_pending_response()
+
+    def _dispatch_normal(self, client, request, *, check_cancel=True, issuing=None):
+        managed = getattr(self.node, "managed", None)
+        with getattr(managed, "lock", nullcontext()):
+            if check_cancel:
+                self._wait_for_resume()
+            if issuing is not None:
+                issuing()
+            return client.call_async(request)
+
     def call(self, name, *, check_cancel=True, progress=None, **fields):
         if check_cancel:
             self._wait_for_resume()
@@ -257,7 +289,9 @@ class DobotTransport:
             request = self.types[name].Request(**fields)
             audit = self._begin_service_audit(name, fields)
             try:
-                future = client.call_async(request)
+                future = self._dispatch_normal(client, request, check_cancel=check_cancel)
+            except (HeldSuctionLost, ManagedInterruption, OperationCanceled):
+                raise
             except Exception as exc:
                 self._finish_service_audit(
                     audit, "dispatch_error", detail=str(exc), level="ERROR")
@@ -355,11 +389,12 @@ class DobotTransport:
                     if self.suction_interrupted:
                         break
                     audit = self._begin_service_audit(name, fields)
-                    if issuing is not None:
-                        issuing(len(group))
                     try:
-                        future = self.clients[name].call_async(
-                            self.types[name].Request(**fields))
+                        future = self._dispatch_normal(
+                            self.clients[name], self.types[name].Request(**fields),
+                            issuing=(lambda: issuing(len(group))) if issuing is not None else None)
+                    except (HeldSuctionLost, ManagedInterruption, OperationCanceled):
+                        raise
                     except Exception as exc:
                         self._finish_service_audit(
                             audit, "dispatch_error", detail=str(exc), level="ERROR")

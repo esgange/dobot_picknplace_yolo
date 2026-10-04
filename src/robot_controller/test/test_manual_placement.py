@@ -36,7 +36,7 @@ def test_explicit_place_admission_allows_empty_or_held_in_either_mode(headless, 
 
 @pytest.mark.parametrize('during_reply', [False, True])
 @pytest.mark.parametrize('held_context,outputs,inputs', [
-    (False, 0, 0), (False, HELD, 1), (True, HELD, 0), (True, HELD, 1),
+    (False, 0, 0), (False, HELD, 1), (True, HELD, 1),
 ])
 def test_manual_queue_reaches_retract_regardless_of_initial_item_presence(
         during_reply, held_context, outputs, inputs):

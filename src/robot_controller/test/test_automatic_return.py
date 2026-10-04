@@ -129,7 +129,7 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
     assert release_pose[2, 3] == pytest.approx(.3 + prepick / 1000)
     following = next(entry for entry in rig.log[pulse + 1:] if entry[0] == "move")
     assert following[1][:2] == ("return_clearance", "return_park_transit")
-    assert following[1][2:] == (("home",) if count == 1 else (
+    assert following[1][2:] == (() if count == 1 else (
         "p2_transit", "p2_initial", "p2_prepick", "p2_pick"))
     assert rig.startup_complete
     assert not rig.operation_lock.locked()

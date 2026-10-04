@@ -208,14 +208,18 @@ class RobotController(Node):
     def _on_feed(self, message):
         try:
             self.monitor.update_feed(message.data)
+            self.managed.observe_continuous(self.monitor.snapshot(require_enabled=False))
             if self.managed.kind == "pause" and self.placement is None:
                 self.managed.observe(self.monitor.snapshot(require_enabled=False))
+        except HeldSuctionLost:
+            # The feedback callback has sent Stop; the command owner recovers.
+            pass
         except FeedbackFailure as exc:
             self.events.record("WARNING", "invalid_feed_feedback", str(exc))
         except (StopUnconfirmed, CommandRejected) as exc:
             self.cancel_event.set()
             self.startup_complete = False
-            self._transition("FAULT", f"Paused-drop Stop dispatch failed: {exc}")
+            self._transition("FAULT", f"Held-drop Stop dispatch failed: {exc}")
 
     def _sole_publisher(self, topic):
         endpoints = self.get_publishers_info_by_topic(topic)
@@ -961,7 +965,8 @@ class RobotController(Node):
             result.outcome = result.SUCCESS if success else result.NO_PICK
             result.completed_quantity = run.completed
             result.message = (f"Auto Run {'completed' if success else 'ended: no item picked'}; "
-                              f"{run.completed}/{run.quantity} placements completed; robot Home")
+                              f"{run.completed}/{run.quantity} placements completed"
+                              + ("; robot Home" if success else ""))
             result.final_state = self.machine.state
             self._transition("READY", result.message)
             goal.succeed()
@@ -1019,6 +1024,14 @@ class RobotController(Node):
                     return result
                 except ManagedInterruption:
                     self.placement.handle_pause(self)
+                except HeldSuctionLost:
+                    self.managed.continue_after_loss()
+                    result.outcome = result.CANCELED
+                    result.message = (
+                        "Placement interrupted by drop; retained candidate recovery completed")
+                    result.final_state = self.machine.state
+                    goal.abort()
+                    return result
         except ReturnedToHome as exc:
             result.outcome, result.message = result.CANCELED, str(exc)
             result.final_state = self.machine.state
@@ -1033,9 +1046,6 @@ class RobotController(Node):
             if queued:
                 try:
                     self.active_goal = None
-                    self.operation_progress(
-                        "PLACE_QUEUED", "Queue accepted; supervising final retract",
-                        waypoint="place_retract")
                     self.placement_thread = threading.Thread(
                         target=self._finish_placement_queue, daemon=True)
                     self.placement_thread.start()
@@ -1046,9 +1056,10 @@ class RobotController(Node):
                                      f"{self.machine.message}")
                     self._end_operation()
             else:
-                self.placement.close_pending()
-                if not self.placement.needs_recovery:
-                    self.placement = None
+                if self.placement is not None:
+                    self.placement.close_pending()
+                    if not self.placement.needs_recovery:
+                        self.placement = None
                 self._end_operation()
 
     def _finish_placement_queue(self):
@@ -1056,6 +1067,9 @@ class RobotController(Node):
         try:
             while True:
                 try:
+                    self.operation_progress(
+                        "PLACE_QUEUED", "Queue accepted; supervising final retract",
+                        waypoint="place_retract")
                     if self.placement.pending_motion is not None:
                         self.placement.finish_pending(self)
                     elif self.placement.phase != "DONE":
@@ -1067,15 +1081,19 @@ class RobotController(Node):
                     return
                 except ManagedInterruption:
                     self.placement.handle_pause(self)
+                except HeldSuctionLost:
+                    self.managed.continue_after_loss()
+                    return
         except Exception as exc:
             self._contain_queue_control_failure("Queued placement", exc)
             self._transition(self.machine.state, f"Queued placement failed: {exc}; "
                              f"{self.machine.message}")
             self.events.record("ERROR", "placement_queue_failed", str(exc))
         finally:
-            self.placement.close_pending()
-            if not self.placement.needs_recovery:
-                self.placement = None
+            if self.placement is not None:
+                self.placement.close_pending()
+                if not self.placement.needs_recovery:
+                    self.placement = None
             self._end_operation()
 
     def _preflight_item_state(self, expected_holding=None):
@@ -1202,6 +1220,29 @@ class RobotController(Node):
 
     def _action_failure(self, goal, result, exc, outcome):
         session = getattr(getattr(self, "managed", None), "session", None)
+        if (isinstance(exc, HeldSuctionLost) and not self.cancel_event.is_set()
+                and getattr(self, "auto_run", None) is None
+                and session is not None and session.held_index is not None):
+            try:
+                picked = self.managed.continue_after_loss()
+                if hasattr(result, "selected_candidate_id"):
+                    result.outcome = result.SUCCESS if picked else result.NO_PICK
+                    result.attempted_candidates = session.attempted_count
+                    result.selected_candidate_id = (
+                        session.attempts[session.held_index - 1].identifier if picked else "")
+                    goal.succeed()
+                else:
+                    result.outcome = result.CANCELED
+                    goal.abort()
+                result.message = "Operation interrupted by drop; retained batch recovery completed"
+                result.final_state = self.machine.state
+                self.events.record("INFO", "action_result", result.message,
+                                   operation=self.active_action, outcome=int(result.outcome),
+                                   state=result.final_state)
+                return result
+            except Exception as recovery_exc:
+                exc = recovery_exc
+                outcome = self._failure_outcome(result, exc)
         if session is not None and hasattr(result, "attempted_candidates"):
             result.attempted_candidates = session.attempted_count
         message = str(exc)
@@ -1459,7 +1500,7 @@ class RobotController(Node):
                             completed_batches += 1
                             self.events.record(
                                 "INFO", "pick_batch_exhausted",
-                                "Candidate batch exhausted at Home",
+                                "Candidate batch exhausted",
                                 attempt=completed_batches, max_attempts=3,
                                 batch_id=batch.identifier, attempted=result.attempted_candidates)
                             if completed_batches < 3:
@@ -1470,7 +1511,7 @@ class RobotController(Node):
                                 continue
                             self._transition(
                                 "READY", "All 3 Pick attempts exhausted; "
-                                "no item picked; robot Home")
+                                "no item picked")
                             result.outcome = result.NO_PICK
                         result.message = self.machine.message
                         result.final_state = self.machine.state
@@ -1549,8 +1590,9 @@ class RobotController(Node):
                 return
             suction = bool(feed["digital_input_bits"] & 1)
             if self.holding_item and not snapshot.suction_present:
-                self.managed.note_suction_loss(snapshot)
-                raise HeldUnknown("DI1 lost while controller expected a held item")
+                self.managed.interrupt_held_loss(snapshot)
+                if not self.managed.held_loss_pending:
+                    raise HeldUnknown("DI1 lost without a recoverable held source")
             if not self.holding_item and suction:
                 self._transition("HELD_UNKNOWN", UNKNOWN_ITEM_GUIDANCE)
                 return
@@ -1559,6 +1601,13 @@ class RobotController(Node):
                 if actual != expected:
                     raise FeedbackFailure(
                         f"Unexpected DO{channel}={int(actual)}; expected {int(expected)}")
+            if self.managed.held_loss_pending:
+                self._begin_operation("pick")
+                try:
+                    self.managed.start_loss_worker()
+                except Exception:
+                    self._end_operation()
+                    raise
         except Exception as exc:
             if self.machine.state in ("READY", "HOLDING"):
                 self._transition("FAULT", f"Runtime supervision failed: {exc}")
