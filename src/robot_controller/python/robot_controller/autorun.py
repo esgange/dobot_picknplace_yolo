@@ -95,13 +95,8 @@ class PlacementBridge:
         if self.completed:
             return
         node = self.node
-        if self.old_session is not None and self.old_session.held_index is not None:
-            index = self.old_session.held_index
-            if self.old_session.attempts[index - 1].state == "HELD":
-                self.old_session.set_state(index, "PLACED")
-            self.old_session.held_index = None
         if self.old_session is not None:
-            self.old_session.cancel_remaining()
+            self.old_session.complete_release("PLACED")
         self.placement.phase = "DONE"
         self.placement.observing = False
         node.holding_item = False
@@ -130,6 +125,7 @@ class AutoRunOperation:
         self.prefetch = None
         self.bridge = None
         self.seen_batches = set()
+        self.resume_held = False
 
     def placement_completed(self):
         self.completed += 1
@@ -283,7 +279,7 @@ class AutoRunOperation:
         node = self.node
         batch, bridge = None, None
         while self.completed < self.quantity:
-            picked = getattr(self, "resume_held", False)
+            picked = self.resume_held
             self.resume_held = False
             if not picked and not self._pick(batch, bridge):
                 return False

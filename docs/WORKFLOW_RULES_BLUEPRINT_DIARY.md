@@ -8726,6 +8726,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Restart Robot Controller to apply. Preserved station artifacts, `.env`, weights
   and the unrelated operator RViz edit.
 
+### 2026-10-05 — Audit and cleanup of today's controller and perception changes
+
+- Audited today's rules 215–218 against the final source, installed entry points,
+  active station profiles and complete package suites. Confirmed Auto Run starts
+  one fresh bin request after valid tray pose/depth and observation-position checks,
+  before placement planning/admission. Every placement reply must be accepted
+  before fresh Home/Pick dispatch. Original poses/source remain available through
+  interrupted recovery; successful placement invalidates unused old candidates.
+  Manual cycles request fresh poses on the next Pick. No sequence mismatch found.
+- Confirmed active saved and deployed Item/Tray profiles all pass their strict
+  loaders and paired model hashes with image_size 448. Installed Item/Tray defaults
+  are 448; their shared CPU worker still uses square padding and original RGB/depth
+  geometry. Item Teach/Detect's explicit calibration selections match controller
+  source hashes. Installed controller, teach and headless detector entry points
+  match the workspace sources. No configuration/model/calibration edits needed.
+- Consolidated confirmed-release ledger updates in PickSession.complete_release:
+  manual placement, automatic handoff and Return Item share the same state update.
+  Placement cancels unused poses; Return preserves them; DROPPED remains terminal.
+  Both callers retain their existing physical execution and I/O guards. Initialize
+  Auto Run's held-recovery flag explicitly instead of using a dynamic fallback.
+- Tray Teach now renders exactly the active live/captured/simulated status branch
+  per GUI tick, preserving precedence and displayed content. Removed the obsolete
+  temporary depth LIVE label that the correct snapshot status immediately replaced.
+  No new worker, inference, timer or ROS request. Item perception needed no further
+  source changes after its audit.
+- Fixed the two previously documented RViz fixture false failures by allowing
+  only 1e-9 m absolute rounding in the 0.01 m display-size assertion (relative
+  tolerance zero). RViz writes 0.009999999776482582 from its float32 field; actual
+  voxel size changes still fail. Preserved the operator's RViz file exactly.
+- Validation: **1853 tests passed** — 1092 Robot Controller, 523 Item Perception
+  and 238 Tray Perception. Built all three packages from the sourced workspace
+  with symlink-install; scoped flake8 and whitespace checks pass. Controller FSM
+  behavior is unchanged, so no source/export rewrite was needed. Verified current
+  HTML/full-source hash and all nine PDF page footers against
+  `825ff8a37ca0eab321d5ec84d6cd9909038323f41b61e6cecc7852d946531501`.
+- No audited application process was running. This is source/installed-artifact
+  validation with synthetic/offscreen tests, not a physical production-cycle audit
+  or inference-speed measurement. No node was started/restarted and no hardware
+  command was sent. Restart Robot Controller and Tray Teach to load the cleanup.
+  Preserved `.env`, teach/model/calibration artifacts and unrelated user changes.
+
 ### Future entry template
 
 ```text

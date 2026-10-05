@@ -68,6 +68,15 @@ class PickSession:
             if attempt.state == "ACTIVE":
                 self.set_state(index, "INTERRUPTED")
 
+    def complete_release(self, state):
+        """Record an owner-confirmed release; tray placement expires unused poses."""
+        if self.held_index is not None:
+            if self.attempts[self.held_index - 1].state == "HELD":
+                self.set_state(self.held_index, state)
+            self.held_index = None
+        if state == "PLACED":
+            self.cancel_remaining()
+
     def cancel_remaining(self):
         for index, attempt in enumerate(self.attempts, 1):
             if attempt.state in ("PENDING", "ACTIVE", "INTERRUPTED"):

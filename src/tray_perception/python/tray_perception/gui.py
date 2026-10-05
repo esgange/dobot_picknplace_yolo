@@ -1215,8 +1215,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
         else:
             self.depth_canvas.image = None
             self.depth_canvas.update()
-        self.depth_status.setText("Registered depth — LIVE | " + (
-            view.get("depth_error", "") or "200–1000 mm; black = outside range"))
 
     def _show_live_status(self):
         view = self.last_view
@@ -1347,15 +1345,17 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.camera_status.setToolTip("\n".join(f"/{prefix}/{topic}" for topic in (
             "color/image_raw", "depth/image_raw", "color/camera_info", "depth/camera_info"))
             if prefix else "Connect RGB first")
-        self._show_live_status()
-        if self.plane_view is not None:
+        if self.simulation_view is not None:
+            self._show_simulation_status()
+        elif self.plane_view is not None:
             age = max(0., (self.node.get_clock().now().nanoseconds -
                            self.plane_view["rgb"]["stamp_ns"]) / 1e9)
             self.rgb_status.setText(
                 f"RGB — CAPTURED {age:.1f} s ago | select four corners\n"
                 "Create or Cancel returns to live view; camera streams keep running")
             self.depth_status.setText("Depth — CAPTURED | matching corner sample evidence")
-        self._show_simulation_status()
+        else:
+            self._show_live_status()
         if self.node.plane is not None:
             stored = "saved in teach file" if self.node.plane == self.saved_plane else \
                 "not saved — Save Tray Teach"

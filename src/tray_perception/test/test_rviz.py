@@ -141,7 +141,9 @@ def test_canonical_rviz_has_independent_matching_tray_display(prefix):
     displays = config["Visualization Manager"]["Displays"]
     cloud = next(d for d in displays if d.get("Topic", {}).get("Value") ==
                  f"{prefix}/voxel_cloud")
-    assert cloud["Enabled"] and cloud["Decay Time"] == 0 and cloud["Size (m)"] == .01
+    assert cloud["Enabled"] and cloud["Decay Time"] == 0
+    # RViz serializes its float32 size as 0.009999999776482582 when saving.
+    assert cloud["Size (m)"] == pytest.approx(.01, rel=0, abs=1e-9)
     assert cloud["Topic"]["Durability Policy"] == "Transient Local"
     assert cloud["Topic"]["Reliability Policy"] == "Reliable" and cloud["Topic"]["Depth"] == 1
 
