@@ -1441,6 +1441,15 @@ and preserves other saved poses for later explicit work. No disk pose cache,
 new configuration/schema/interface, motion/I/O change or executor thread is added.
 Update the diary, FSM/exports and tests for reuse, exhaustion and source ownership.
 
+Rule 216 aligns Tray Teach's camera diagnostic bands with Item Teach: detection
+and valid-tray counts, frame/inference timing, STALE/RESULT SNAPSHOT after 0.5 s,
+RViz voxel status/refresh age/reason, and the displayed request's confidence,
+IoU/cap/size-color legend. Refresh ages during worker activity; show independent
+depth age/unavailability and preview failures. Preserve explicit YOLO OFF/paused
+states and captured-corner/simulated-result headings. This is GUI-only metadata;
+keep inference, pose acquisition, saved settings, headless and controller behavior
+unchanged, with no extra worker, timer, native prediction or ROS request.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

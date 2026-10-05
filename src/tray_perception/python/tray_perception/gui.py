@@ -117,6 +117,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.preview_settings = self.last_view = None
         self.preview_due = None
         self.preview_error = self.geometry_error = ""
+        self.preview_wait_reason = ""
         self.filling = False
         self.profile_path = None
         self.profile_digest = ""
@@ -331,14 +332,22 @@ class TrayTeachWindow(QtWidgets.QWidget):
         images.setChildrenCollapsible(False)
         images.setHandleWidth(6)
         for title, canvas in (
-                ("RGB — LIVE", self.canvas), ("Registered depth — LIVE", self.depth_canvas)):
+                ("RGB / Tray size · click to inspect pose", self.canvas),
+                ("DEPTH / Registered pixels · tray size", self.depth_canvas)):
             panel = QtWidgets.QWidget()
             layout = QtWidgets.QVBoxLayout(panel)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
-            label = QtWidgets.QLabel(title)
+            heading = QtWidgets.QLabel(title)
+            heading.setObjectName("viewHeading")
+            layout.addWidget(heading)
+            label = QtWidgets.QLabel("Waiting for camera observation")
+            label.setTextFormat(QtCore.Qt.PlainText)
             label.setWordWrap(True)
-            label.setObjectName("viewHeading")
+            label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+            label.setStyleSheet(
+                "background: #111; color: white; padding: 8px 12px; font-weight: bold;")
+            label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Minimum)
             layout.addWidget(label)
             layout.addWidget(canvas, 1)
             images.addWidget(panel)
@@ -459,6 +468,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self._refresh_preview_settings()
 
     def _invalidate_preview(self, *_args):
+        self.preview_wait_reason = ""
         if self.simulation_view is not None:
             self._resume_live()
         if self.future is not None and self.job_kind == "preview":
@@ -1173,6 +1183,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self.node.requests.validate_view(view)
         if self.simulation_view is None:
             self.node.accept_view(view)
+        self.preview_wait_reason = ""
         self.last_view = view
         if self.plane_view is None:
             self._display_view(view)
@@ -1207,6 +1218,66 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.depth_status.setText("Registered depth — LIVE | " + (
             view.get("depth_error", "") or "200–1000 mm; black = outside range"))
 
+    def _show_live_status(self):
+        view = self.last_view
+        if view is not None and view["generation"] != self.node.generation:
+            view = None
+        result = {} if view is None else view["result"]
+        now = self.node.get_clock().now().nanoseconds
+        age = None if view is None else max(0., (now - view["rgb"]["stamp_ns"]) / 1e9)
+        if not self.preview_toggle.isChecked():
+            title = "YOLO OFF — RGB view"
+        elif self.preview_due is not None:
+            title = "YOLO PREVIEW PAUSED — updating/checking settings"
+        elif self.preview_error:
+            title = "YOLO PREVIEW PAUSED — " + self.preview_error
+        elif "count" in result:
+            valid = sum(d["valid"] for d in result["detections"])
+            title = f"DETECTIONS: {result['count']} | {valid} valid trays"
+            if age > .5:
+                title = "RESULT SNAPSHOT — " + title
+        else:
+            title = "YOLO ON — waiting for annotated result"
+        frame = "Frame age unavailable — waiting for RGB"
+        if age is not None:
+            frame = f"{'STALE ' if age > .5 else ''}Frame age {age:.2f}s"
+            timing = result.get("inference_ms")
+            if timing is not None:
+                frame += f" | inference {timing:.1f}ms"
+        cloud = self.node.rviz.status()
+        if cloud["status"] == "waiting":
+            rviz = "RViz waiting for next valid frame: " + cloud["reason"]
+        else:
+            rviz = (f"RViz 1 Hz: {cloud['status']} | {cloud['point_count']} "
+                    f"{cloud['voxel_size_mm']:g} mm voxels")
+            if cloud["refresh_age_sec"] is not None:
+                rviz += f" | refresh age {cloud['refresh_age_sec']:.2f}s"
+            if cloud["reason"]:
+                rviz += " | " + cloud["reason"]
+        lines = [title, frame, rviz]
+        if self.preview_wait_reason and self.preview_wait_reason != cloud["reason"]:
+            lines.append("Preview waiting for next valid frame: " + self.preview_wait_reason)
+        settings = None if view is None else view.get("preview_settings")
+        if settings is not None:
+            yolo = settings["yolo"]
+            lines.append(f"conf {yolo['confidence']:g} / IoU {yolo['iou']:g} / "
+                         f"cap {yolo['max_detections']} | "
+                         "size: green OK, red outside, gray unchecked")
+        if view is not None and view["metric_error"]:
+            lines.append(view["metric_error"])
+        if self.geometry_error:
+            lines.append("Size filter inactive: " + self.geometry_error)
+        self.rgb_status.setText("\n".join(lines))
+        depth = None if view is None else view.get("depth")
+        if depth is None:
+            reason = "" if view is None else view.get("depth_error", "")
+            depth_note = "Depth unavailable" + (" — " + reason if reason else "")
+        else:
+            depth_age = max(0., (now - depth["stamp_ns"]) / 1e9)
+            depth_note = (f"{'STALE ' if depth_age > .5 else ''}Depth age {depth_age:.2f}s | "
+                          "200–1000 mm; black = outside range")
+        self.depth_status.setText("\n".join(lines[:2] + [depth_note] + lines[2:]))
+
     def _tick(self):
         if self.closing:
             return
@@ -1240,6 +1311,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                     self.node.selected = None
                     self._message(message, error=True)
                     if kind == "preview":
+                        self.preview_wait_reason = message
                         self.result_label.setText(f"No current tray pose: {exc}")
                 if terminal:
                     self.node.fatal_error = str(exc)
@@ -1275,16 +1347,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.camera_status.setToolTip("\n".join(f"/{prefix}/{topic}" for topic in (
             "color/image_raw", "depth/image_raw", "color/camera_info", "depth/camera_info"))
             if prefix else "Connect RGB first")
-        error = self.preview_error or (
-            "Size filter inactive: " + self.geometry_error if self.geometry_error else "")
-        mode = ("YOLO paused: " + self.preview_error if self.preview_error else
-                "YOLO ON" if self.preview_toggle.isChecked() else "YOLO OFF — raw RGB")
-        metric = "" if self.last_view is None else self.last_view["metric_error"]
-        cloud = self.node.rviz.status()
-        detail = "\n".join(text for text in (metric, error) if text)
-        self.rgb_status.setText(
-            f"RGB /{prefix or 'not connected'} — LIVE | {mode}\n{detail}\n"
-            f"RViz: {cloud['status']} — {cloud['point_count']} voxels {cloud['reason']}")
+        self._show_live_status()
         if self.plane_view is not None:
             age = max(0., (self.node.get_clock().now().nanoseconds -
                            self.plane_view["rgb"]["stamp_ns"]) / 1e9)
@@ -1313,7 +1376,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                     if self.preview_toggle.isChecked() else None)
         generation = self.node.generation
         self._job(lambda: self.node.preview(settings, generation=generation),
-                  self._show_view, "preview")
+                  lambda view: self._show_view({**view, "preview_settings": settings}), "preview")
 
     def closeEvent(self, event):
         if self.closing:

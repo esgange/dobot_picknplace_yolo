@@ -46,6 +46,16 @@ standalone inspection with another explicitly selected calibrated camera.
 Drag the divider between RGB and registered depth to adjust their widths, just
 like Item Teach. Each pane keeps its own status heading and scales the image to
 fit; live updates preserve your chosen split.
+Both camera panes now use Item Teach's black diagnostic band: detection/valid-tray
+counts, frame age, inference time, RViz voxel status and waiting reason, confidence,
+IoU, detection cap and the size-color legend. Depth also shows its own timestamp
+age or unavailable reason. Ages update while inference is busy; observations older
+than 0.5 seconds show **STALE**, with **RESULT SNAPSHOT** on annotated results.
+Settings describe the displayed result's actual request. YOLO OFF and invalid or
+pending settings have explicit status; no inference time is invented for raw RGB.
+Corner capture and simulated requests retain their **CAPTURED/FROZEN** headings.
+These labels add no inference or pose request; restart Tray Teach after rebuilding
+to apply the display update.
 
 1. Browse a local YOLO `.pt` model to automatically load it and enable 1 Hz preview when RGB is
    ready. **YOLO Detect ON/OFF** controls inference; OFF retains RGB/depth/voxel

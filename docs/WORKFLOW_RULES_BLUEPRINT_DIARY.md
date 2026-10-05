@@ -8616,6 +8616,40 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the controller after rebuilding to apply. Preserved `.env`, calibration,
   offline/runtime teach/model artifacts and the unrelated RViz edit.
 
+### 2026-10-05 — Rule 216: matching Tray Teach camera diagnostics
+
+- User requested the same information above Tray Teach's camera stream as Item
+  Teach. Give RGB/depth the same separate title and black diagnostic band. Show
+  YOLO detection and valid-tray counts, frame age, measured inference time, RViz
+  waiting/retained/grey status, voxel count/size/refresh age and reason, confidence,
+  IoU, detection cap and green/red/grey size legend. Depth also reports its own
+  timestamp age or explicit unavailable reason.
+- Refresh diagnostic ages from the displayed observation on the existing 100 ms
+  GUI timer, including during worker activity. Match Item Teach's 0.5 s STALE and
+  annotated RESULT SNAPSHOT labels; do not label retained inference results LIVE.
+  Keep settings with the preview callback's original request so they cannot be
+  confused with later edits. Invalid/pending settings and YOLO OFF remain explicit;
+  raw RGB has no invented inference measurement. Show transient acquisition errors
+  until a new accepted view replaces them, without repeating the same RViz reason.
+- Preserve captured-corner and simulated-request headings, frozen timestamps,
+  countdowns, details and existing invalidation/arming. No inference, native-worker,
+  headless detector, pose acquisition, saved artifact, schema, configuration,
+  controller or hardware behavior changes. No new timer, prediction, ROS request
+  or executor thread. Controller FSM/exports do not change for this GUI-only work.
+- Validation: **78 existing GUI/node tests passed** after the final UI change.
+  The full tray suite had **236 passed and 2 unrelated RViz fixture failures**:
+  the operator's pre-existing RViz save serializes 0.01 m as
+  `0.009999999776482582`, failing the tests' exact equality. Both checks pass when
+  reading the committed RViz configuration in memory; the local file was preserved.
+  The initial full run used unsupported Fast DDS domain 233; reran on isolated
+  domain 231. Scoped flake8, whitespace checks and sourced tray symlink build pass.
+  Synthetic offscreen inspection verified fresh/stale frame ages while busy,
+  retained voxels, preview errors, settings invalidation and YOLO OFF; reviewed
+  the camera headings visually. No new tests for this display-only change.
+- Restart Tray Teach to apply. No running production process was restarted and
+  no hardware command was issued. Preserved station `.env`, calibration,
+  offline/runtime teach/model artifacts and the unrelated RViz edit.
+
 ### Future entry template
 
 ```text
