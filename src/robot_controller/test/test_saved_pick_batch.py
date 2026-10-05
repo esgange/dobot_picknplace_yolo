@@ -1,4 +1,4 @@
-"""Drain saved bin candidates across placements without early source handoff."""
+"""Refresh after placement; preserve original candidates for retries and returns."""
 
 import copy
 from types import SimpleNamespace
@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from robot_controller.autorun import AutoRunOperation
+from robot_controller.controller import RobotController
 from robot_controller.errors import FeedbackFailure, HeldSuctionLost, OperationCanceled
 from robot_controller.motion import pick_targets
 from robot_controller.pick_session import PickSession
@@ -35,6 +36,7 @@ def next_manual_pick(node):
 def manual_rig(monkeypatch, counts, acquisitions):
     node = action_rig(monkeypatch, losses=())
     node.hardware.acquisitions = iter(acquisitions)
+    node._plan_candidate_batch = lambda batch: RobotController._plan_candidate_batch(node, batch)
 
     def detect(*_args, **_kwargs):
         assert not node.holding_item
@@ -48,66 +50,94 @@ def manual_rig(monkeypatch, counts, acquisitions):
     return node
 
 
-def test_manual_placements_drain_one_batch_then_request_again(monkeypatch):
-    node = manual_rig(monkeypatch, [3, 1], [True] * 4)
-    session = None
+def test_manual_placement_discards_remaining_poses_and_next_pick_requests_fresh(monkeypatch):
+    node = manual_rig(monkeypatch, [3, 3, 3, 3], [True] * 4)
+    sessions = []
     for index in range(4):
         result = node.execute() if index == 0 else next_manual_pick(node)
         assert result.outcome == result.SUCCESS and result.attempted_candidates == 1
-        assert result.selected_candidate_id == (f'b1:{index + 1}' if index < 3 else 'b2:1')
-        assert len(node.requests) == (1 if index < 3 else 2)
-        if index == 0:
-            session = node.managed.session
-        assert (node.managed.session is session) == (index < 3)
+        assert result.selected_candidate_id == f'b{index + 1}:1'
+        assert len(node.requests) == index + 1
+        session = node.managed.session
+        assert all(session is not previous for previous in sessions)
+        sessions.append(session)
+        assert session.reusable(node.configuration)  # Available for held-drop recovery.
         placement_completed(node)
-    assert [a.state for a in session.attempts] == ['PLACED'] * 3
+        assert not session.reusable(node.configuration) and session.held_index is None
+        assert [a.state for a in session.attempts] == ['PLACED', 'CANCELED', 'CANCELED']
 
 
-def test_manual_missed_and_dropped_poses_stay_excluded_between_successes(monkeypatch):
-    node = manual_rig(monkeypatch, [5], [False, True, True, True, True])
-    node.lost = []  # Drop on candidate 3's held lift; recovery picks candidate 4.
+@pytest.mark.parametrize('blocked', ['suction', 'outputs'])
+def test_unconfirmed_placement_does_not_invalidate_recovery_poses(monkeypatch, blocked):
+    node = manual_rig(monkeypatch, [3], [True])
+    result = node.execute()
+    assert result.outcome == result.SUCCESS
+    session = node.managed.session
+    node.feed['digital_input_bits'] = 1 if blocked == 'suction' else 0
+    node.feed['digital_outputs'] = 1 if blocked == 'outputs' else 0
+    with pytest.raises(FeedbackFailure, match='neutral and DI1 LOW'):
+        ReleaseQueue().complete(node, node.snapshot())
+    assert session.held_index == 1 and session.reusable(node.configuration)
+    assert [a.state for a in session.attempts] == ['HELD', 'PENDING', 'PENDING']
+
+
+def test_misses_and_drops_retry_original_batch_until_successful_placement(monkeypatch):
+    node = manual_rig(monkeypatch, [5, 2], [False, True, True, True])
     original = node.hardware.on_move
 
     def drop(targets, policy):
         original(targets, policy)
-        if policy.get('require_suction') and node.managed.session.held_index == 3:
+        if policy.get('require_suction') and node.managed.session.held_index == 2:
             if not node.lost:
-                node.lost.append(3)
+                node.lost.append(2)
                 node.lose_suction()
                 raise HeldSuctionLost('synthetic confirmed drop')
     node.hardware.on_move = drop
     first = node.execute()
-    assert first.selected_candidate_id == 'b1:2' and first.attempted_candidates == 2
-    placement_completed(node)
-    second = next_manual_pick(node)
-    assert second.selected_candidate_id == 'b1:4' and second.attempted_candidates == 2
-    placement_completed(node)
-    third = next_manual_pick(node)
-    assert third.selected_candidate_id == 'b1:5' and third.attempted_candidates == 1
+    assert first.selected_candidate_id == 'b1:3' and first.attempted_candidates == 3
+    session = node.managed.session
     assert len(node.requests) == 1
-    assert [a.state for a in node.managed.session.attempts] == [
-        'FAILED', 'PLACED', 'DROPPED', 'PLACED', 'HELD']
+    assert [a.state for a in session.attempts] == [
+        'FAILED', 'DROPPED', 'HELD', 'PENDING', 'PENDING']
+    placement_completed(node)
+    assert [a.state for a in session.attempts] == [
+        'FAILED', 'DROPPED', 'PLACED', 'CANCELED', 'CANCELED']
+    second = next_manual_pick(node)
+    assert second.selected_candidate_id == 'b2:1' and second.attempted_candidates == 1
+    assert len(node.requests) == 2
 
 
-def test_saved_batch_can_continue_from_manual_to_auto_and_back(monkeypatch):
-    node = manual_rig(monkeypatch, [3], [True] * 3)
+def test_successful_placement_refreshes_between_manual_and_auto_picks(monkeypatch):
+    node = manual_rig(monkeypatch, [3, 3, 3], [True] * 3)
     assert node.execute().selected_candidate_id == 'b1:1'
     placement_completed(node)
     session = node.managed.session
     node._begin_operation('auto_run')
     run = AutoRunOperation(node, request(1))
     assert run._pick()
-    assert session.held_index == 2 and node.managed.session is session
+    assert node.managed.session is not session and node.managed.session.held_index == 1
+    assert node.managed.session.attempts[0].identifier == 'b2:1'
     placement_completed(node)
     node._end_operation()
-    assert next_manual_pick(node).selected_candidate_id == 'b1:3'
-    assert len(node.requests) == 1 and node.managed.session is session
+    assert next_manual_pick(node).selected_candidate_id == 'b3:1'
+    assert len(node.requests) == 3
 
 
-def test_pause_before_reused_manual_pick_continues_saved_pose_without_home_detour(monkeypatch):
+def item_returned(node):
+    """Explicit return keeps unattempted poses; tray placement invalidation does not apply."""
+    from robot_controller.item_return import ItemReturnOperation
+    node._transition('RETURNING_ITEM', 'Item return')
+    node.lose_suction()
+    node.feed['digital_outputs'] = 0
+    ItemReturnOperation(index=node.managed.session.held_index, phase='RELEASED',
+                        release_confirmed=True).complete(node, node.snapshot())
+    node._transition('READY', 'Item returned')
+
+
+def test_pause_before_pick_after_return_retries_saved_pose_without_home_detour(monkeypatch):
     node = manual_rig(monkeypatch, [2], [True, True])
     assert node.execute().selected_candidate_id == 'b1:1'
-    placement_completed(node)
+    item_returned(node)
     node._begin_operation('pick')
     node.managed.request('pause')
     node._execute_home = Mock(side_effect=AssertionError('Continue uses its parked pose'))
@@ -121,7 +151,7 @@ def test_saved_retry_skips_terminal_candidates_instead_of_reactivating_them(
         monkeypatch, terminal):
     node = manual_rig(monkeypatch, [4], [True, False, True])
     assert node.execute().selected_candidate_id == 'b1:1'
-    placement_completed(node)
+    item_returned(node)
     session = node.managed.session
     session.set_state(3, 'ACTIVE')
     if terminal != 'FAILED':
@@ -131,7 +161,7 @@ def test_saved_retry_skips_terminal_candidates_instead_of_reactivating_them(
     result = next_manual_pick(node)
     assert result.outcome == result.SUCCESS and result.selected_candidate_id == 'b1:4'
     assert result.attempted_candidates == 2 and len(node.requests) == 1
-    assert [a.state for a in session.attempts] == ['PLACED', 'FAILED', terminal, 'HELD']
+    assert [a.state for a in session.attempts] == ['RETURNED', 'FAILED', terminal, 'HELD']
 
 
 @pytest.mark.parametrize('invalidation', ['reload', 'recover', 'source_error'])
@@ -159,22 +189,22 @@ def test_old_configuration_or_canceled_batch_cannot_supply_a_new_manual_pick(
 
 @pytest.mark.parametrize('quantity', [1, 2, 3, 4, 7])
 @pytest.mark.parametrize('slow', [False, True])
-def test_auto_run_reuses_saved_order_and_prefetches_only_after_batch_exhaustion(
+def test_auto_run_refreshes_every_successful_placement_even_with_unused_poses(
         monkeypatch, quantity, slow):
     run, node, order, workers = cycle_rig(monkeypatch, quantity, slow=slow)
     sessions, picked = [], []
 
     def pick(batch, bridge):
-        session = node.managed.session
-        if session is None or batch is not None:
-            assert session is None or session.next_eligible is None
-            identifiers = [f'b{len(sessions) + 1}:{i}' for i in range(1, 4)]
-            session = PickSession(identifiers, [()] * 3, configuration=node.configuration,
-                                  batch=SimpleNamespace(identifier=identifiers[0]))
-            sessions.append(session)
-        else:
-            assert session.reusable(node.configuration)
+        if sessions:
+            assert batch is not None  # Never reuse leftover poses after a placement.
+        identifiers = [f'b{len(sessions) + 1}:{i}' for i in range(1, 4)]
+        session = PickSession(identifiers, [()] * 3, configuration=node.configuration,
+                              batch=SimpleNamespace(identifier=identifiers[0]))
+        sessions.append(session)
         if bridge is not None:
+            assert bridge.old_session is sessions[-2]
+            assert bridge.old_session.held_index == 1
+            assert bridge.old_session.attempts[1].state == 'PENDING'
             bridge.next_session = session
             order.append('append next Pick')
             bridge.home_id = 4
@@ -183,27 +213,19 @@ def test_auto_run_reuses_saved_order_and_prefetches_only_after_batch_exhaustion(
             node.managed.session = session
             node._transition('PICKING', 'Pick')
             order.append('Pick')
-        index = session.next_eligible
-        session.set_state(index, 'ACTIVE')
-        session.set_state(index, 'HELD')
-        picked.append(session.attempts[index - 1].identifier)
+        assert len(sessions) == 1 or not sessions[-2].reusable(node.configuration)
+        session.set_state(1, 'ACTIVE')
+        session.set_state(1, 'HELD')
+        picked.append(identifiers[0])
         node._transition('HOLDING', 'Tray Detect reached')
         return True
 
     run._pick = pick
-    finish = node.hardware.finish_batch
-
-    def finish_placement(pending, *, handoff):
-        if node.managed.session.reusable(node.configuration):
-            assert handoff() and run.prefetch is None
-        else:
-            finish(pending, handoff=handoff)
-    node.hardware.finish_batch = finish_placement
     assert run.run() and run.completed == quantity
-    assert len(workers) == (quantity - 1) // 3
-    assert picked == [f'b{i // 3 + 1}:{i % 3 + 1}' for i in range(quantity)]
-    assert [a.state for s in sessions for a in s.attempts] == (
-        ['PLACED'] * quantity + ['PENDING'] * (len(sessions) * 3 - quantity))
+    assert len(workers) == quantity - 1
+    assert picked == [f'b{i + 1}:1' for i in range(quantity)]
+    assert all([a.state for a in session.attempts] == ['PLACED', 'CANCELED', 'CANCELED']
+               for session in sessions)
     assert all(worker.closed for worker in workers)
     assert order[-1] == 'append final Home'
 
@@ -236,22 +258,47 @@ def shared_queue():
     return rig, run, bridge, session
 
 
-def test_real_transport_appends_saved_pick_before_placement_arrival_and_defers_ownership():
+def test_final_home_boundary_discards_unused_poses_only_after_confirmed_placement():
     rig, run, bridge, session = shared_queue()
+
+    def admission(_index):
+        assert session.attempts[0].state == 'HELD'
+        assert session.attempts[1].state == 'PENDING'
+    rig.on_request = admission
+    rig.steps = iter([
+        dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
+        dict(outputs=0, inputs=OPEN, currentCommandId=3),
+        dict(outputs=0, inputs=OPEN, currentCommandId=4),
+        dict(outputs=0, inputs=OPEN, home=True),
+    ])
+    run.finish_home(bridge)
+    assert run.completed == 1 and session.held_index is None
+    assert [a.state for a in session.attempts] == ['PLACED', 'CANCELED', 'CANCELED']
+    assert not session.reusable(rig.node.configuration)
+    rig.node.candidates.request.assert_not_called()
+
+
+def test_ready_fresh_batch_appends_before_arrival_and_replaces_old_unused_poses():
+    rig, run, bridge, old = shared_queue()
     node = rig.node
+    pose = np.eye(4)
+    pose[:3, 3] = [.2, .2, .25]
+    plan = pick_targets(node.configuration.home_matrix, pose, node.configuration.profile, 1)
+    batch = SimpleNamespace(identifier='fresh', candidates=[SimpleNamespace(identifier='fresh:1')])
+    node._plan_candidate_batch = Mock(return_value=[plan])
     move = node.hardware.move_batch
 
     def dispatch(targets, **kwargs):
-        if kwargs['batch_name'] == 'candidate_2_pick_to_tray':
-            raise OperationCanceled('Reached saved candidate 2')
-        assert session.held_index == 1 and session.attempts[0].state == 'HELD'
-        assert [t.name for t in targets] == ['home', 'p2_transit', 'p2_prepick', 'p2_pick']
+        if kwargs['batch_name'] == 'candidate_1_pick_to_tray':
+            raise OperationCanceled('Reached fresh candidate')
+        assert node.managed.session is old and old.held_index == 1
+        assert [t.name for t in targets] == ['home', 'p1_transit', 'p1_prepick', 'p1_pick']
         return move(targets, **kwargs)
     node.hardware.move_batch = dispatch
 
     def admission(index):
         if index <= 7:
-            assert session.held_index == 1 and session.attempts[1].state == 'PENDING'
+            assert old.held_index == 1 and old.attempts[1].state == 'PENDING'
     rig.on_request = admission
     rig.steps = iter([
         dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
@@ -259,15 +306,16 @@ def test_real_transport_appends_saved_pick_before_placement_arrival_and_defers_o
         dict(outputs=0, inputs=OPEN, currentCommandId=4),
         dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
     ])
-    with pytest.raises(OperationCanceled, match='Reached saved'):
-        run._pick(None, bridge)
-    assert run.completed == 1 and node.managed.session is session
-    assert [a.state for a in session.attempts] == ['PLACED', 'HELD', 'PENDING']
-    assert session.held_index == 2
+    with pytest.raises(OperationCanceled, match='Reached fresh'):
+        run._pick(batch, bridge)
+    assert run.completed == 1 and node.managed.session is bridge.next_session
+    assert node.managed.session.batch is batch
+    assert node.managed.session.attempts[0].identifier == 'fresh:1'
+    assert node.managed.session.attempts[0].state == 'HELD'
+    assert [a.state for a in old.attempts] == ['PLACED', 'CANCELED', 'CANCELED']
     assert rig.order[:7] == [name for name, _ in rig.requests[:7]]
     node.candidates.request.assert_not_called()
     run.close()
-    assert session.attempts[2].state == 'PENDING'
 
 
 def test_drop_before_shared_placement_boundary_keeps_remaining_candidates():

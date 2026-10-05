@@ -1458,6 +1458,22 @@ is explicitly updated; never silently override loaded values. Reload Teach and
 restart headless consumers/controller after deployment edits to refresh pinned
 profile hashes. Camera settings, weights, motion and controller FSM are unchanged.
 
+Rule 218 supersedes rule 215's pose reuse across successful tray placements.
+Mark the placed candidate PLACED and cancel unused old poses for manual and Auto
+Run cycles. Auto Run starts a fresh next-bin request immediately after valid tray
+pose/depth and observation-position validation whenever another item remains,
+even if old eligible poses exist, in parallel with placement planning/admission.
+Require all placement replies accepted before appending Home/next fresh Pick;
+add no placement-arrival wait. Keep the old source/batch until execution crosses
+Home with neutral outputs/DI1 LOW (or final retract completes), then invalidate
+unused poses, count placement and install the fresh ledger. Manual Place waits
+for the next explicit Pick to request new poses. Misses, Pause, tray failure and
+drop return retain original candidates until successful placement; drop continues
+eligible original poses without Home/detection. Return Item keeps other poses;
+Recover/reload/restart invalidate them. Preserve slow-result supervision, retry
+limits, source/Stop/I/O gates, final-item Home and the existing one-worker limit.
+No schema, detector, configuration, motion rate or executor change is added.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

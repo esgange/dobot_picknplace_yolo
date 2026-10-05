@@ -100,6 +100,8 @@ class PlacementBridge:
             if self.old_session.attempts[index - 1].state == "HELD":
                 self.old_session.set_state(index, "PLACED")
             self.old_session.held_index = None
+        if self.old_session is not None:
+            self.old_session.cancel_remaining()
         self.placement.phase = "DONE"
         self.placement.observing = False
         node.holding_item = False
@@ -252,9 +254,6 @@ class AutoRunOperation:
 
     def _start_prefetch(self):
         self.node.raise_if_cancelled()
-        session = self.node.managed.session
-        if session is not None and session.reusable(self.configuration):
-            return  # Drain the saved batch before asking the camera again.
         if self.prefetch is not None:
             raise FeedbackFailure("Auto Run already has a next-bin request")
         self.node.operation_progress(
@@ -311,15 +310,6 @@ class AutoRunOperation:
                 return True
             node.raise_if_cancelled()
             pending, placement.pending_motion = placement.pending_motion, None
-            session = node.managed.session
-            if session is not None and session.reusable(self.configuration):
-                # The next pose is already ready. Keep the same ledger/source
-                # until the appended Home proves placement execution/release.
-                node.hardware.finish_batch(pending, handoff=lambda: True)
-                if placement.phase == "DONE":
-                    bridge.complete_idle()
-                    self.bridge = bridge = None
-                continue
             node.hardware.finish_batch(pending, handoff=self.prefetch.future.done)
             if placement.phase == "DONE":
                 bridge.complete_idle()

@@ -133,6 +133,11 @@ class ReleaseQueue:
             if session.attempts[session.held_index - 1].state == "HELD":
                 session.set_state(session.held_index, self.candidate_state)
             session.held_index = None
+        if session is not None and self.candidate_state == "PLACED":
+            # A successful tray placement ends this observation's lifetime.
+            # Keep the source/remaining candidates until physical completion so
+            # an interrupted placement can still recover using its original batch.
+            session.cancel_remaining()
         node.events.record(
             "INFO", self.completion_event, self.completion_message,
             release_feedback_observed=self.release_confirmed)

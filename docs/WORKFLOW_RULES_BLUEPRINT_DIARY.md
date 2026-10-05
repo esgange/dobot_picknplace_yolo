@@ -8683,6 +8683,49 @@ Never use a floating “latest” version in an issue, script, or deployment not
   artifact hashes. No controller behavior/source or FSM/export change; camera
   `.env`, calibration, model weights and the unrelated RViz edit are preserved.
 
+### 2026-10-05 — Rule 218: fresh bin poses for each successful placement cycle
+
+- User reversed successful-cycle saved-pose reuse and explicitly retained the
+  earlier parallel timing: immediately after validated tray pose/placement depth
+  and the observation-position check, start fresh next-item detection alongside
+  placement planning and service dispatch. Do this whenever another Auto Run item
+  is needed, regardless of unused eligible candidates in the old batch. This
+  supersedes rule 215's exhaustion-only trigger and restores rule 209's overlap.
+- Remove Auto Run's saved-pose shortcut after placement admission. Consume the
+  fresh result only after every placement command is accepted, then append
+  Home/next Pick with no placement-arrival wait. Keep the single read-only worker,
+  post-trigger snapshots, ordered motion acceptance, slow-result idle supervision,
+  bounded retries, late-result cancellation and no next-bin request for the final
+  requested item. Final Home still queues immediately behind placement.
+- At confirmed successful placement, mark the source candidate PLACED and cancel
+  unused old candidates. Apply this both to manual final-retract completion and
+  Auto Run's advancing Home queue-ID plus neutral/DI1-LOW execution boundary.
+  Install the fresh candidate ledger only after that boundary; old held DI1
+  cannot acquire the new item. Manual Place starts no speculative detection;
+  its next explicit Pick requests fresh poses. Manual/Auto Run transitions obey
+  the same invalidation rule.
+- Preserve original source/poses until successful placement. Misses, Pause,
+  unavailable tray observations and interrupted drop recovery keep eligible
+  original candidates. Active drop still Stops, returns directly to its source
+  and tries the next original pose without Home or a new detection request.
+  Explicit Return Item keeps other poses; Recover/reload/restart invalidate them.
+  No pose provider, interface, schema, motion geometry/rate, I/O timing, camera,
+  model/profile artifact or extra worker/executor changes.
+- Validation: **1092 controller tests passed**, including refreshed manual/Auto
+  cycle cases with leftover old poses and fast/slow inference, final-Home
+  invalidation, retained miss/drop/return behavior, unconfirmed placement guards,
+  and real transport admission of a fresh Pick before placement arrival while
+  retaining the old source until the execution boundary. Existing tests retain
+  all-placement-replies-before-next-motion, tray Pause and Stop coverage. Sourced
+  controller symlink build, scoped flake8 and whitespace checks pass.
+- Updated root/package READMEs, AGENTS and FSM. Regenerated nine diagrams and
+  nine A3 PDF pages; reviewed the candidate ledger and Auto Run exports, and
+  verified the HTML source hash and every PDF footer against
+  `825ff8a37ca0eab321d5ec84d6cd9909038323f41b61e6cecc7852d946531501`.
+  No hardware command, live cycle benchmark or production restart was performed.
+  Restart Robot Controller to apply. Preserved station artifacts, `.env`, weights
+  and the unrelated operator RViz edit.
+
 ### Future entry template
 
 ```text

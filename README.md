@@ -41,24 +41,26 @@ The motion controls form one four-button grid:
 
 **Auto Run**, below this grid, takes a quantity of 1–10000 and uses the displayed
 placement X/Y/rotation for every cycle. Start from unheld READY with both detectors
-available. It consumes the saved bin poses in order across successful placements,
-skipping every placed, failed, dropped or returned candidate. Each cycle still
-confirms Tray Detect and acquires fresh tray pose/depth. While saved bin poses
-remain, no next-bin request is made. After all three placement commands are
-accepted, append Home and the next saved Pick immediately;
-no intermediate idle/arrival wait is added. After the last
-placement, append Home immediately and finish only at confirmed Home. The displayed
-count requires placement execution and neutral/released feedback, not acceptance
-alone. Auto Run disables manual controls during motion; permanent STOP remains
-available. Three unavailable tray observations pause at Tray Detect with the item
-held and the count retained. **Continue** retries tray detection for that item;
-**Return Item** puts it back and ends the run at Home/READY with its partial count.
-Three exhausted Pick batches, robot faults and STOP end the run; no automatic restart.
-Only when the saved batch is exhausted and another item is needed does a read-only
-bin request overlap placement planning/admission/execution. Keep the fixed bin
-camera clear then. Separate manual Pick → Place cycles and later Auto Runs share
-remaining poses from the same loaded configuration. Reload/recovery or process
-restart invalidates that saved batch; no poses are persisted to disk.
+available. Each cycle confirms Tray Detect and acquires fresh tray pose/depth.
+If another item is needed, immediately start a fresh bin pose request while
+planning and sending the placement approach/release/retract queue. Once all
+placement commands are accepted and the fresh poses are ready, append Home and
+the next Pick without waiting for placement to finish. Successful placement
+cancels any unused poses from its old batch. After the last placement, append
+Home immediately and finish only at confirmed Home; no extra bin request is made.
+The displayed count requires placement execution and neutral/released feedback,
+not acceptance alone. Auto Run disables manual controls during motion; permanent
+STOP remains available. Three unavailable tray observations pause at Tray Detect
+with the item held and the count retained. **Continue** retries tray detection
+for that item; **Return Item** puts it back and ends the run at Home/READY with
+its partial count. Three exhausted Pick batches, robot faults and STOP end the
+run; no automatic restart.
+Keep the fixed bin camera clear during placement-time detection. Missed picks,
+Pause/Continue and automatic drop return keep eligible original poses until
+successful placement. Separate manual Pick → Place cycles also discard unused
+poses on placement; the next explicit Pick requests a fresh batch.
+Reload/recovery or process restart invalidates the retained batch; no poses are
+persisted to disk.
 Rebuild interfaces/controller and manually restart their clients after upgrading.
 
 **Preview ON** makes all three motion buttons publish planned TF targets without
