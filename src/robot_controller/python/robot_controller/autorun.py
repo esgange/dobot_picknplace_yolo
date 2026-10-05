@@ -170,7 +170,15 @@ class AutoRunOperation:
             if bridge is None:
                 node._transition("PICKING", "Auto Run: starting Pick")
                 node._preflight_item_state(False)
-            while True:
+            session = node.managed.session
+            reuse = batch is None and session is not None and session.reusable(config)
+            if reuse:
+                batch = session.batch
+                self.seen_batches.add(batch.identifier)
+                session.begin_pick(attempted)
+                node.operation_progress(
+                    "SAVED_POSES", "Using next eligible pose from the saved bin batch")
+            while not reuse:
                 node.raise_if_cancelled()
                 if batch is None:
                     node.operation_progress("DETECT", f"Auto Run Pick attempt {attempt}/3")
@@ -207,10 +215,14 @@ class AutoRunOperation:
             if bridge is None:
                 node._execute_home()
             node.candidate_total = len(batch.candidates)
-            plans = node._plan_candidate_batch(batch)
-            session = PickSession(
-                [candidate.identifier for candidate in batch.candidates], plans,
-                node._attempt_changed, previous_attempted=attempted)
+            if reuse:
+                plans = [candidate.plan for candidate in session.attempts]
+            else:
+                plans = node._plan_candidate_batch(batch)
+                session = PickSession(
+                    [candidate.identifier for candidate in batch.candidates], plans,
+                    node._attempt_changed, previous_attempted=attempted,
+                    batch=batch, configuration=config)
             for plan in plans:
                 return_targets(plan)
             extra = {}
@@ -240,6 +252,9 @@ class AutoRunOperation:
 
     def _start_prefetch(self):
         self.node.raise_if_cancelled()
+        session = self.node.managed.session
+        if session is not None and session.reusable(self.configuration):
+            return  # Drain the saved batch before asking the camera again.
         if self.prefetch is not None:
             raise FeedbackFailure("Auto Run already has a next-bin request")
         self.node.operation_progress(
@@ -273,6 +288,7 @@ class AutoRunOperation:
             self.resume_held = False
             if not picked and not self._pick(batch, bridge):
                 return False
+            batch = None
             node.raise_if_cancelled()
             node.active_action = "place"
             node._transition("PLACING", "Auto Run: waiting for stable Tray Detect and tray pose")
@@ -295,6 +311,15 @@ class AutoRunOperation:
                 return True
             node.raise_if_cancelled()
             pending, placement.pending_motion = placement.pending_motion, None
+            session = node.managed.session
+            if session is not None and session.reusable(self.configuration):
+                # The next pose is already ready. Keep the same ledger/source
+                # until the appended Home proves placement execution/release.
+                node.hardware.finish_batch(pending, handoff=lambda: True)
+                if placement.phase == "DONE":
+                    bridge.complete_idle()
+                    self.bridge = bridge = None
+                continue
             node.hardware.finish_batch(pending, handoff=self.prefetch.future.done)
             if placement.phase == "DONE":
                 bridge.complete_idle()
@@ -318,5 +343,6 @@ class AutoRunOperation:
             self.prefetch = None
         if self.node.placement is not None:
             self.node.placement.close_pending()
-        if self.bridge is not None and self.bridge.next_session is not None:
+        if (self.bridge is not None and self.bridge.next_session is not None
+                and self.bridge.next_session is not self.bridge.old_session):
             self.bridge.next_session.cancel_remaining()

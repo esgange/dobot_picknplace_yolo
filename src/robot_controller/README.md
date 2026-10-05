@@ -24,8 +24,10 @@ normal acquisition Pause and permits Continue or Return Item, as described below
 Other manual queue-control requests reject while Auto Run is active.
 Preview cannot start Auto Run. Launch/prefill never starts it.
 
-The first Pick requests a fresh batch before the normal Home skip/arrival, candidate plans,
-timed I/O, acquisition Stop acknowledgement, lifts and saved Tray Detect destination.
+Pick first uses eligible saved poses bound to the same loaded configuration;
+only an absent/exhausted batch requests fresh bin poses before Home. Preserve
+normal Home skip/arrival, candidate plans, timed I/O, acquisition Stop
+acknowledgement, lifts and saved Tray Detect destination.
 Tray pose acquisition begins only after Pick confirms saved tray joints and idle
 feedback. Auto Run always requires the trusted picked item for placement, including
 in GUI mode. Placement retains its existing approach/release/retract queue and rates.
@@ -33,7 +35,8 @@ in GUI mode. Placement retains its existing approach/release/retract queue and r
 After Pick confirms Tray Detect joints/idle, acquire the tray pose and placement
 depth first, including any of the three allowed observation attempts. After the
 validated result and observation-position check, start one read-only worker requesting
-the next bin candidate batch if another item is needed (rule 209 supersedes rule 206).
+the next bin candidate batch only if another item is needed and the saved batch
+has no eligible poses (rule 215 narrows rule 209's trigger).
 It runs while the owning action plans and sends the placement approach/release/retract
 queue, overlapping command admission and execution. The worker never sends hardware
 commands. Require ordered acceptance of all three placement commands before consuming
@@ -44,13 +47,22 @@ RGB/depth/TF observation.
 Keep the fixed bin camera's view clear during placement; no automatic occlusion
 test is added. Manual Pick/Place do not launch this lookahead.
 
+While saved poses remain, do not run that worker. Retain their order and candidate
+states across successful placements, and append the next saved Pick as soon as
+all placement commands are accepted. Skip PLACED, FAILED, DROPPED, RETURNED and
+CANCELED candidates; an INTERRUPTED candidate stays eligible under the existing
+Pause rules. Keep original plans/identifiers and the held item's source until
+the placement execution/release boundary. Saved poses are not replanned or
+reranked between successful picks.
+
 Consume the result using the existing handoff/error path. When valid poses are ready,
 append joint Home → next entry → pre-pick → final pick **without waiting for placement
 to finish or Home to become stationary**. The dashboard executes those requests in
 accepted order behind placement, with the selected global CP. Home starts from the planned
 placement retract at Home Z. If detection is slower than placement, finish normal
 retract supervision and wait for the batch, then use normal Home/Pick. The batch is
-bound to that next Pick, consumed once, and never shared with a manual operation.
+retained until all its eligible candidates are used. Manual Pick → Place cycles
+and later Auto Runs may continue it while the same configuration stays loaded.
 Source/hash/attitude checks and three nonempty batches per Pick remain in force.
 Each Pick has one retry for an empty pose result: confirm Home before requesting
 again. An empty prefetch uses the owned placement-to-Home route and counts the
@@ -61,8 +73,9 @@ The handoff retains the previous placement and source until advancing FeedInfo
 reports the appended Home's returned queue ID (or a later ID), with observed neutral
 gripper outputs and DI1 LOW since placement admission. This proves execution passed
 the placement queue without inventing a MovLIO queue ID or requiring a midpoint
-stop. Only then count that placement, mark the old candidate PLACED, install the
-next candidate ledger and permit its suction acquisition. Old held DI1 cannot
+stop. Only then count that placement, mark the old candidate PLACED, activate the
+next candidate and permit its suction acquisition. When saved poses remain, keep
+the same ledger rather than replacing it. Old held DI1 cannot
 trigger the next Pick. Missing boundary/release evidence faults and Stops the run.
 An interrupted handoff retains the correct source for explicit Recover. Counted
 placement is robot execution/release evidence, not camera proof of item delivery.
@@ -88,7 +101,9 @@ explicit recovery; no fourth physical-pick batch, extra empty-result retry
 or automatic restart is granted. STOP
 cancels the run and outstanding prefetch, discarding its result. Tray exhaustion
 prevents prefetch; held loss or another fault during placement discards it.
-The batch cannot survive into recovery or Return Item. Manual Place shares this
+Explicit Recover cancels remaining poses; reloading configuration and process
+restart invalidate reuse. Successful Return Item excludes the returned candidate
+but retains remaining poses for a later explicit Pick/Auto Run. Manual Place shares this
 acquisition-pause/retry workflow. Rebuild and manually restart controller/GUI
 after this change; no teach-file or interface changes are required.
 
@@ -451,17 +466,21 @@ Actions:
   one-shot `save_debug_images` flag. Candidate count cannot be supplied by the
   caller; it comes from Item Teach `retry.pose_candidates`. Each full candidate
   nonempty batch is one physical-pick attempt, with **three attempts total**.
-  Request poses first, then ensure Home before candidate motion. A valid empty
+  Use eligible saved poses first; request bin poses only when none remain, then
+  ensure Home before candidate motion. A valid empty
   result grants one Home-and-acquisition retry per Pick, preserved across Pause
   and later physical misses. Another empty result ends READY/NO_PICK at Home.
   Empty results do not consume physical-pick attempts. After exhausting a
   nonempty batch, confirm Home and request a fresh batch.
   Success ends immediately in HOLDING; three exhausted nonempty batches end
   READY/NO_PICK at Home. `attempted_candidates` totals actual candidate attempts
-  across all batches, including canceled/faulted results. Pause/Continue retains
+  in that Pick action across all batches, including canceled/faulted results.
+  Successful placement retains unattempted poses for the next manual/Auto Run Pick.
+  Pause/Continue retains
   the current batch and attempt count; direct Stop/Recover ends the action.
   Item detector errors/timeouts, source/pose validation failures and robot faults
-  remain terminal. Never replay an earlier batch ID. No teach schema, retry
+  remain terminal. Reject reused IDs in new detector replies; intentionally
+  continuing the retained batch is permitted. No teach schema, retry
   setting or action-interface field is added; progress reports attempt N/3.
 
 Services:
@@ -772,8 +791,11 @@ Pause marks the active candidate `INTERRUPTED` and keeps it eligible for retry.
 Continue retries that same candidate; its next accepted approach marks it
 `ACTIVE` again. Repeated Pause does not consume it or increase the distinct
 attempted-candidate count. Confirmed suction marks `HELD`; a paused loss marks
-`DROPPED`; a completed intentional held return marks `RETURNED`. FAILED, DROPPED
-and RETURNED candidates remain ineligible.
+`DROPPED`; a completed intentional held return marks `RETURNED`, and confirmed
+placement marks `PLACED`. FAILED, DROPPED, RETURNED, PLACED and CANCELED
+candidates remain ineligible. Successful placement retains the other poses for
+later manual/Auto Run picks under the exact same configuration object; source
+validation still runs before use. Reload/recovery/restart invalidates reuse.
 Parking never marks a candidate attempted or changes an interrupted state.
 The ledger and source plans are in memory, never written into teach artifacts.
 
@@ -890,7 +912,8 @@ operator action is inserted while eligible poses remain. Exhausted automatic
 return confirms the exit above the bin; active Pick may then use its existing
 bounded new-batch policy and ensure Home before new candidate motion.
 
-Auto Run cancels its speculative detector worker and appended next-session ledger,
+Auto Run cancels its speculative detector worker and a separate appended next-session
+ledger; it preserves the shared saved ledger when continuing that same batch,
 retains the old source/batch and leaves its placement count unchanged. It places
 the replacement item after a successful retained Pick. Manual Place cancels its
 interrupted placement and leaves the replacement at Tray Detect; an already
@@ -1026,16 +1049,18 @@ finishes at Tray Detect instead of Home.
 Pick requires `READY`, DI1 clear and a loaded Tray Teach with recorded detect
 joints. Its tray detector need not be armed; Pick only travels to the saved pose:
 
-1. request one fresh profile/model/camera/platform/bin-hash-matched batch from
-   `/item_detect/get_item_poses`, advertised by exactly one root node: headless
-   `/item_detect` or explicitly Armed `/item_teach`;
-2. run the same Home function after poses arrive, skipping motion when already
+1. use the next eligible saved pose under the same loaded configuration; only
+   when none remain, request a fresh profile/model/camera/platform/bin-hash-matched
+   batch from `/item_detect/get_item_poses`, advertised by exactly one root node:
+   headless `/item_detect` or explicitly Armed `/item_teach`;
+2. run the same Home function once poses are available, skipping motion when already
    matched. If the result is empty, confirm Home and retry acquisition once per
    Pick; another empty result ends NO_PICK at Home;
-3. transform platform-relative targets into base coordinates;
+3. for a new batch, transform platform-relative targets into base coordinates;
 4. offset Link6 green/Y by the taught `pick_rotation` from each item's short-axis
    line while preserving taught tool Z;
-5. attempt up to Item Teach `pose_candidates` in detector rank order;
+5. attempt eligible saved candidates in detector rank order, excluding terminal
+   states; new batch size still comes from Item Teach `pose_candidates`;
 6. after an intermediate miss, retract to that candidate's final clearance and
    proceed through the next candidate's safety-Z transit, clearance, pre-pick
    and final pick without returning Home;

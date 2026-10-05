@@ -1423,6 +1423,24 @@ or held loss while awaiting the operator must not automatically resume the run.
 Keep three-request batches, motion/release timing and schemas/interfaces unchanged.
 Update the FSM, its generated exports and GUI status/control tests.
 
+Rule 215 drains each saved bin batch across successful manual Pick/Place cycles
+and Auto Run cycles, including later operations under the same loaded configuration.
+Preserve plans, IDs, order and terminal candidate states; use the next PENDING or
+eligible INTERRUPTED pose. Request fresh bin poses only when no eligible saved
+pose remains. Tray pose/depth remains fresh per placement. Auto Run skips prefetch
+while saved poses remain and appends Home/next Pick only after complete placement
+queue acceptance, without a placement-arrival wait. Retain the old held source
+until execution crosses appended Home with neutral outputs and DI1 LOW; then mark
+PLACED and activate the next candidate in that same ledger. Cleanup before this
+boundary must not cancel remaining saved poses needed for automatic drop return.
+Exhaustion permits the existing parallel next-bin request and bounded retry policy.
+Manual Pick reports attempts for that action without resetting candidate states.
+Explicit Recover cancels remaining poses; reload/source checks and process restart
+prevent reuse across invalid context. Return Item excludes the returned candidate
+and preserves other saved poses for later explicit work. No disk pose cache,
+new configuration/schema/interface, motion/I/O change or executor thread is added.
+Update the diary, FSM/exports and tests for reuse, exhaustion and source ownership.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

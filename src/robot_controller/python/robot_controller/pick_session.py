@@ -14,7 +14,8 @@ class Attempt:
 
 
 class PickSession:
-    def __init__(self, identifiers, plans, changed=None, *, previous_attempted=0):
+    def __init__(self, identifiers, plans, changed=None, *, previous_attempted=0,
+                 batch=None, configuration=None):
         if len(identifiers) != len(plans):
             raise ValueError("Candidate identifiers and plans must match")
         self.attempts = [Attempt(name, tuple(plan)) for name, plan in zip(identifiers, plans)]
@@ -23,6 +24,18 @@ class PickSession:
         self.parked_index = None
         self.resuming = False
         self.previous_attempted = previous_attempted
+        self.batch = batch
+        self.configuration = configuration
+
+    def reusable(self, configuration):
+        """Saved candidates belong to this exact loaded configuration and process."""
+        return (self.batch is not None and self.configuration is configuration
+                and self.next_eligible is not None)
+
+    def begin_pick(self, previous_attempted=0):
+        """Count this Pick's attempts without resetting the saved candidate states."""
+        self.previous_attempted = previous_attempted - sum(
+            attempt.state != "PENDING" for attempt in self.attempts)
 
     def set_state(self, index, state):
         attempt = self.attempts[index - 1]

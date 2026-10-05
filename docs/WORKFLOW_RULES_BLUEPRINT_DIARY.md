@@ -8565,6 +8565,57 @@ Never use a floating “latest” version in an issue, script, or deployment not
   restart controller and GUI to apply. Preserved `.env`, calibration, offline/
   runtime teach/model artifacts and the unrelated RViz edit.
 
+### 2026-10-05 — Rule 215: consume saved bin poses across successful placements
+
+- User requested normal successful cycles to keep using queued item poses and
+  request fresh poses only after exhaustion. Confirmed that this applies to both
+  Auto Run and separate manual Pick Item → Place Item cycles. Preserve the existing
+  Home → next Pick route and all queue-admission/feedback requirements.
+- Retain the accepted batch and its exact loaded configuration with the existing
+  PickSession. Preserve candidate identifiers, plans, ordering and state history
+  across successes. Select the next eligible PENDING/INTERRUPTED candidate;
+  PLACED, FAILED, DROPPED, RETURNED and CANCELED remain excluded. Retry traversal
+  also skips terminal entries rather than blindly taking the next numeric index.
+  Manual Pick action attempt counts restart without resetting candidate states.
+  A saved batch may continue between manual and automatic actions in this process.
+- Auto Run starts no bin worker while an eligible saved pose remains. After the
+  complete approach/release/retract queue is accepted, append Home/next saved Pick
+  without waiting for placement arrival. Use the original ledger for the next
+  attempt, but preserve the old HELD source and defer next-candidate activation
+  until advancing execution passes appended Home with neutral outputs and DI1 LOW.
+  Only then mark the old candidate PLACED, clear that held index and count placement.
+  Old held suction cannot acquire the next item. Drop cleanup preserves remaining
+  poses in a shared ledger; a separate speculative ledger is still discarded.
+- Only an absent/exhausted eligible batch requests fresh bin poses. After the last
+  saved pose is picked, a needed replacement batch may use the existing single
+  worker during placement planning/admission/execution after valid tray pose/depth.
+  Preserve empty-result and three-nonempty-batch retry limits, duplicate-response
+  rejection, tray-failure Pause, direct Stop, source checks and drop recovery.
+  Tray pose and placement depth remain fresh per placement. Final quantity still
+  finishes through confirmed Home; unused poses remain available for later explicit
+  work. No saved pose triggers motion by itself.
+- Explicit Return Item excludes the returned candidate but preserves other poses.
+  Recover cancels remaining candidates; configuration-object replacement on reload
+  and process restart prevent reuse across those boundaries. Invalid source files
+  fail closed. Saved coordinates have no additional age expiry and are never
+  written to disk. No teach schema, settings, interface, rate, I/O, extra executor
+  thread or motion geometry changes are introduced. This supersedes rules 73/189's
+  per-Pick batch lifetime and narrows rule 209's next-bin trigger to exhaustion.
+- Validation: **1089 controller tests passed**, including **23 new saved-batch
+  cases** covering multi-cycle
+  reuse/exhaustion, manual/Auto Run transitions, misses/drops and terminal-state
+  skipping, per-action counts, reload/recovery/source rejection, Pause before a
+  reused Pick, real transport admission before placement arrival, deferred source
+  ownership and drop cleanup preserving the same ledger. Updated root/package
+  READMEs, AGENTS and FSM. Sourced controller symlink build, scoped flake8 and
+  whitespace checks pass. Regenerated **9 diagrams / 9 A3 PDF pages** and visually
+  reviewed the updated Pick/Auto Run flows and candidate ledger; verified
+  HTML/full-source and every PDF footer against SHA-256
+  `5ecd907b6745f726e41beffcd4c838e095d2ed2c9ae5513047cca3f9abd96e5b`.
+- No hardware commands, production restart or physical-cycle validation. Restart
+  the controller after rebuilding to apply. Preserved `.env`, calibration,
+  offline/runtime teach/model artifacts and the unrelated RViz edit.
+
 ### Future entry template
 
 ```text

@@ -41,12 +41,11 @@ The motion controls form one four-button grid:
 
 **Auto Run**, below this grid, takes a quantity of 1–10000 and uses the displayed
 placement X/Y/rotation for every cycle. Start from unheld READY with both detectors
-available. It picks and confirms stable Tray Detect, acquires tray pose and placement
-depth, then starts one read-only next-item bin request if another item is needed.
-That request runs while the controller plans and sends the approach/release/retract
-queue, overlapping command admission and placement execution. Keep the fixed bin
-camera's view clear during that observation. Only after all three placement commands
-are accepted and the next batch is ready may Home and the next Pick be appended;
+available. It consumes the saved bin poses in order across successful placements,
+skipping every placed, failed, dropped or returned candidate. Each cycle still
+confirms Tray Detect and acquires fresh tray pose/depth. While saved bin poses
+remain, no next-bin request is made. After all three placement commands are
+accepted, append Home and the next saved Pick immediately;
 no intermediate idle/arrival wait is added. After the last
 placement, append Home immediately and finish only at confirmed Home. The displayed
 count requires placement execution and neutral/released feedback, not acceptance
@@ -55,6 +54,11 @@ available. Three unavailable tray observations pause at Tray Detect with the ite
 held and the count retained. **Continue** retries tray detection for that item;
 **Return Item** puts it back and ends the run at Home/READY with its partial count.
 Three exhausted Pick batches, robot faults and STOP end the run; no automatic restart.
+Only when the saved batch is exhausted and another item is needed does a read-only
+bin request overlap placement planning/admission/execution. Keep the fixed bin
+camera clear then. Separate manual Pick → Place cycles and later Auto Runs share
+remaining poses from the same loaded configuration. Reload/recovery or process
+restart invalidates that saved batch; no poses are persisted to disk.
 Rebuild interfaces/controller and manually restart their clients after upgrading.
 
 **Preview ON** makes all three motion buttons publish planned TF targets without
@@ -129,8 +133,9 @@ the tray. Missing intermediate DI12/DI1 release evidence cannot stop this queue.
 Stop, robot faults, command responses and feedback freshness remain supervised;
 failures after acceptance appear in status and logs.
 Pick Item requires an available armed Item Teach or
-headless Item Detect provider. Pick **requests poses before Home**, then ensures
-Home before approaching a candidate. The first valid empty result grants one
+headless Item Detect provider. Pick first reuses an eligible saved pose; only an
+absent/exhausted batch requests fresh bin poses before Home. Then ensure Home
+before approaching the candidate. The first valid empty result grants one
 Home-and-acquisition retry per Pick; another empty result ends READY/NO_PICK at
 Home. An empty result does not consume a physical-pick batch. Pick uses at most
 **three nonempty candidate batches**:
@@ -179,7 +184,7 @@ Saved capture history stays unchanged; see the [tray calibration workflow](src/t
 
 Home and Pick are native ROS actions, and each goal carries the exact active
 configuration SHA-256 so stale clients cannot execute replaced teach files.
-Each Pick attempt requests one fresh hash-matched batch from the sole canonical provider:
+When no eligible saved pose remains, Pick requests a fresh hash-matched batch from the sole provider:
 headless `item_detect`, or explicitly Armed `item_teach` during attended use.
 They share `/item_detect/get_item_poses`; running both providers is rejected.
 Candidate count always comes from Item Teach `pose_candidates`. Typed Startup,
@@ -317,8 +322,9 @@ detection request or operator action.
 A fully exhausted return ends above the bin; active Pick's existing bounded
 new-batch policy can then acquire more poses and ensure Home before approaching.
 
-Auto Run discards speculative next-bin results and any appended next-pick session
-when the old item drops. It retains the old batch, does not count that placement,
+Auto Run discards speculative next-bin results and any separate appended next-pick
+session when the old item drops. A shared saved ledger is preserved with its
+remaining candidates. It retains the old batch, does not count that placement,
 and resumes placement after a successful replacement pick. Manual Place ends its
 interrupted placement and leaves a successful replacement pick at Tray Detect.
 Direct Stop and cancellation still pre-empt every stage; Pause retains its existing

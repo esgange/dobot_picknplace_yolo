@@ -1436,12 +1436,27 @@ class RobotController(Node):
             empty_retry_used = False
             retry_home_pending = False
             seen_batches = set()
-            self.managed.session = None
+            session = self.managed.session
+            reuse_home_pending = session is not None and session.reusable(config)
+            if reuse_home_pending:
+                batch = session.batch
+                plans = [attempt.plan for attempt in session.attempts]
+                seen_batches.add(batch.identifier)
+                session.begin_pick()
+                self.candidate_total = len(plans)
+            else:
+                self.managed.session = None
             while True:
                 try:
                     with self.managed.lock:
                         self.wait_for_resume()
                         self._transition("PICKING", "Pick action started")
+                    if reuse_home_pending:
+                        self.operation_progress(
+                            "SAVED_POSES", "Using next eligible pose from the saved bin batch")
+                        reuse_home_pending = False
+                        self._preflight_item_state(False)
+                        self._execute_home()
                     if self.managed.session is None:
                         if retry_home_pending:
                             self._execute_home()
@@ -1481,7 +1496,8 @@ class RobotController(Node):
                         self.managed.session = PickSession(
                             [candidate.identifier for candidate in batch.candidates], plans,
                             self._attempt_changed,
-                            previous_attempted=result.attempted_candidates)
+                            previous_attempted=result.attempted_candidates,
+                            batch=batch, configuration=config)
                         for plan in plans:
                             return_targets(plan)
 
@@ -1537,6 +1553,9 @@ class RobotController(Node):
                     return result
                 except ManagedInterruption:
                     self.managed.handle()
+                    # Pause already replanned/parked this retained candidate;
+                    # Continue must descend from there, not revisit initial Home.
+                    reuse_home_pending = False
         except ReturnedToHome as exc:
             result.outcome = result.CANCELED
             result.message = str(exc)

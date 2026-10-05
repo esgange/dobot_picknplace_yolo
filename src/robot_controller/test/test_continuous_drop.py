@@ -256,7 +256,7 @@ def test_auto_run_discards_speculative_batch_and_keeps_original_source(monkeypat
     session = node.managed.session
     run = node.auto_run = AutoRunOperation(node, request(2))
     speculative = PickSession(["new-camera-pose"], [session.attempts[1].plan])
-    run.bridge = SimpleNamespace(next_session=speculative)
+    run.bridge = SimpleNamespace(next_session=speculative, old_session=session)
     worker = run.prefetch = SimpleNamespace(close=Mock())
     run._run_cycles = Mock(side_effect=[HeldSuctionLost("lost before release"), True])
     assert run.run()

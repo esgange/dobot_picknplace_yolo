@@ -1,5 +1,21 @@
 # Robot Controller — Finite State Machine
 
+Saved-batch review: **2026-10-05**, baseline **`f6636b8`** plus rule **215**.
+Successful placement keeps unattempted bin poses for subsequent manual Pick/Place
+cycles and Auto Runs under the same loaded configuration. Preserve the original
+plans, identifiers, order and candidate states. Request bin poses only when no
+eligible saved candidate remains; PLACED/FAILED/DROPPED/RETURNED/CANCELED stay
+excluded. Tray pose/depth is still fresh for every placement. Auto Run appends
+Home/next saved Pick after all placement replies are accepted, without a physical
+placement wait or camera request. Keep the old held source until advancing
+execution passes into appended Home with neutral outputs and DI1 LOW, then mark
+PLACED and activate the next saved candidate in the same ledger. When the batch
+is exhausted, the existing parallel bin request and bounded retry rules apply.
+Manual action attempt counts restart without clearing candidate states. Return
+Item preserves other poses; explicit Recover cancels them. Reload and process
+restart prevent reuse across configuration/lifetime boundaries; source validation
+still fails closed. No persistent pose cache, schema/interface or motion/I/O change.
+
 Tray-failure Pause review: **2026-10-04**, baseline **`72073dc`** plus rule **214**.
 Three unavailable tray observations now confirm Stop and enter PAUSED at Tray
 Detect in both manual Place and Auto Run. Keep the held source, outputs, original
@@ -51,7 +67,8 @@ saved source and original batch. Rule 212 uses the shared paused Return Item
 automatic return route.** Join the next eligible saved entry/pick in order without
 detection or operator action. Exhaustion confirms the retract above
 the bin; ordinary Pick's bounded new-batch policy is separate. Auto Run discards
-speculative perception/appended sessions, does not count the dropped placement,
+speculative perception/separate appended sessions, preserving a shared saved ledger
+under rule 215. It does not count the dropped placement,
 and places the replacement after a successful retained Pick. Manual Place ends
 its interrupted placement and leaves a replacement at Tray Detect. Preserve
 strict output/source/feedback/reply gates, direct Stop and paused-drop behavior.
@@ -67,7 +84,8 @@ and Save. No motion, I/O, freshness, source-binding or retry behavior changes.
 
 Parallel acquisition review: **2026-10-04**, baseline **`8982d9f`** plus rule **209**.
 After Pick confirms Tray Detect, acquire and validate tray pose/depth, recheck the
-observation position, then start the single next-bin worker if another item remains.
+observation position, then start the single next-bin worker if another item remains
+and the saved batch is exhausted (rule 215).
 The read-only request overlaps placement planning, ordered command admission and
 execution, superseding rule 206's post-admission trigger. All three placement commands
 must be accepted before Home/next-Pick motion, even if poses are ready earlier.
@@ -149,7 +167,8 @@ Immediate grip_onpick closing, no-grip behavior, motion rates, Stop acknowledgem
 and direct Tray Detect completion remain unchanged for manual Pick and Auto Run.
 
 Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
-One counted action owns Pick/Place and final Home. Prefetch the next bin batch
+One counted action owns Pick/Place and final Home. When saved poses are exhausted
+(rule 215), prefetch the next bin batch
 after validated tray/depth acquisition (rule 209), overlapping placement admission
 and execution; all placement commands must be accepted before Home/next Pick.
 Append Home/next Pick when the batch is ready, without
@@ -554,7 +573,10 @@ typed status and failed service responses include the complete guidance.
 
 ```mermaid
 flowchart TD
-    Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Detect["Request fresh item poses before Home"]
+    Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible saved pose in same loaded configuration?"}
+    Saved -->|No| Detect["Request fresh item poses before Home"]
+    Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
+    Reuse --> Entry
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
     Validate -->|Valid| Any{"Any valid candidates?"}
@@ -589,20 +611,26 @@ flowchart TD
 - The pose provider is exactly one of headless `item_detect` or explicitly armed
   `item_teach`, through `/item_detect/get_item_poses`. Inference is requested for
   the batch; Pause/Continue keeps its poses and the three-attempt limit. Recover cancels it.
-- One physical attempt covers all eligible poses in a nonempty batch. Request
-  poses first, then ensure Home before candidate motion. The first valid empty
+- One physical attempt covers all eligible poses in a nonempty batch. Reuse saved
+  poses first; only when none remain, request fresh poses. Then ensure Home before
+  candidate motion. The first valid empty
   result grants exactly one retry after Home confirmation; another empty result
   ends READY/NO_PICK at Home. Empty results do not consume physical attempts,
   and the empty-result allowance survives Pause and later misses. Three nonempty
   batches plus one empty observation permit at most four requests per Pick.
   After physical exhaustion, confirm Home before requesting a fresh batch.
-  First held success ends the action; three physically exhausted batches finish
-  READY/NO_PICK. Reused batch IDs, item-service failures/timeouts, source changes
+  First held success ends the action while retaining its batch; three physically
+  exhausted batches finish READY/NO_PICK. Reused IDs in new replies, item-service failures/timeouts, source changes
   and robot faults remain terminal. Result `attempted_candidates` sums candidates
   across all batches, including failure/cancellation results. Per-batch ranking,
   taught `pose_candidates`, routes, I/O and settling remain unchanged.
-- The accepted batch belongs to this Pick; there is no result-age expiry during
-  its operation. Source/hash checks still apply before later work.
+- The accepted batch stays in memory across successful manual/Auto Run placements
+  until all eligible poses are used. Keep original plans, identifiers and order;
+  there is no result-age expiry. Source/hash checks apply before every later use.
+  Explicit Recover cancels remaining candidates; reloading configuration or
+  restarting the process prevents reuse. Action attempt counts count only work
+  in that Pick without resetting prior candidate states. Return Item excludes
+  the returned candidate and preserves other saved poses for later explicit work.
 - Both pose request and response evidence must declare
   `item_short_x_long_y_v1`. A missing or mismatched convention rejects the batch
   before candidate planning; it cannot produce a pick target. Detector and
@@ -870,16 +898,20 @@ handling, and use trusted held-item placement even when launched from the GUI.
 
 ```mermaid
 flowchart TD
-    Start["READY: Auto Run quantity and placement target"] --> Pick["Request poses first, then ensure Home; normal bounded Pick"]
+    Start["READY: Auto Run quantity and placement target"] --> Pick["Use saved poses; request bin batch only when none remain; ensure Home; bounded Pick"]
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
     Tray --> Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
-    Observe --> Prefetch["If another item remains: start one read-only next-bin worker"]
+    Observe --> SavedBatch{"Another item needed and eligible saved pose?"}
+    SavedBatch -->|Yes: no bin request| Place
+    SavedBatch -->|No| Prefetch["If another item needed and saved batch exhausted: start next-bin worker"]
     Prefetch --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
     Prefetch -.-> Capture["In parallel: fresh post-trigger RGB/depth/TF; retain result"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append Home behind placement"]
     Home --> Done["Count placement execution/release; confirm final Home + neutral + DI1 LOW; READY"]
-    Last -->|No, and not canceled| Ready{"Next-bin request finished?"}
+    Last -->|No| Reuse{"Saved pose available?"}
+    Reuse -->|Yes| Append
+    Reuse -->|No| Ready{"Next-bin request finished?"}
     Capture -.-> Ready
     Ready -->|No| Wait["Supervise placement or unheld idle while awaiting result"]
     Wait --> Ready
@@ -889,7 +921,7 @@ flowchart TD
     RetryHome --> Retried{"Poses returned?"}
     Retried -->|Yes| Next
     Retried -->|No| Empty
-    Append --> Boundary["Home queue ID reached/passed + observed neutral/DI1 LOW: count old placement and switch source"]
+    Append --> Boundary["Home queue ID reached/passed + neutral/DI1 LOW: mark old PLACED; count once; activate next pose"]
     Boundary --> Next["Acquire next item; normal retries/lifts"]
     Next --> Tray
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK; Home after misses or bin exit after final drop; partial count"]
@@ -904,7 +936,7 @@ flowchart TD
     Tray -. "Held loss" .-> Drop
     Observe -. "Held loss" .-> Drop
     Place -. "Held loss before suction OFF" .-> Drop
-    Append -. "Old item still held: loss" .-> Drop["Immediate Stop; discard worker/new ledger; retain old source and batch; no placement count"]
+    Append -. "Old item still held: loss" .-> Drop["Immediate Stop; discard worker/separate new ledger; preserve shared saved batch/source; no placement count"]
     Drop --> Contain["Resolve issued replies; final Stop and stationary empty queue"]
     Contain --> Return["Shared Return Item: source approach → pre-pick (80% release) → Home-Z retract (0% neutral); no Home"]
     Return --> Saved{"Eligible original poses?"}
@@ -913,12 +945,23 @@ flowchart TD
     Saved -->|No| DroppedEnd["READY above bin; partial count"]
 ```
 
-Only one read-only candidate worker overlaps placement planning, admission and execution;
+If saved eligible poses remain, do not start a bin request. Keep their original
+plans, ranking, identifiers and candidate states. Once placement admission is
+complete, immediately append Home/next eligible Pick using the same ledger and
+without a placement-completion wait. The next pose remains PENDING/INTERRUPTED
+until the placement execution/release boundary activates its accepted commands.
+Do not clear the old held source merely because next-pick commands were accepted.
+
+Only when no eligible saved pose remains may one read-only candidate worker
+overlap placement planning, admission and execution;
 normal hardware dispatch remains
 in the owning action thread; feedback may dispatch independent Stop, and the ROS executor still has exactly two threads.
 The worker uses the existing validated request path and immutable configuration.
-One batch belongs to the next Pick, is consumed once, and is discarded on Stop,
-source change or run failure. A repeated batch ID is rejected across the whole run.
+The accepted batch belongs to the loaded configuration and stays available across
+successful manual/Auto Run cycles until all eligible candidates are used. A
+repeated batch ID in a new detector response is rejected across the whole run;
+intentional reuse of the saved ledger does not make a new request. Recover cancels
+remaining candidates, and reloading configuration/process restart invalidates reuse.
 Pick confirms saved Tray Detect joints/idle, then the owner acquires and validates
 tray pose/depth and rechecks the observation position before starting the worker.
 The owner continues placement planning and ordered dispatch without waiting for
@@ -945,7 +988,8 @@ joint-target Home MovL. Its returned queue ID supplies the execution boundary
 that MovLIO cannot return. The old placement/source remains authoritative until
 advancing FeedInfo reaches or passes that ID and output history shows neutral
 DO1/DO2/DO13/DO14 with DI1 LOW since placement admission. Then mark the old item
-PLACED, increment once, and activate the next ledger. Old held DI1 cannot trigger
+PLACED, increment once, and activate the next candidate in the same ledger, or
+install the fresh ledger after exhaustion. Old held DI1 cannot trigger
 the next pickup. Missing neutral/release evidence at the boundary fails closed;
 Stop before it retains the old source, and Stop after it retains the next source.
 There is no stationary midpoint or separate physical Home confirmation before
@@ -1188,8 +1232,9 @@ Names below are relative to `/robot_controller/`.
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
-| Auto Run next-bin request (internal) | Owning action has confirmed Tray Detect, validated tray pose/depth and rechecked observation position; another item remains; no cancellation; starts before placement planning/admission |
-| Auto Run next Home/Pick motion (internal) | All three placement commands have received ordered acceptance; next batch validated and available; no cancellation; no physical placement-completion wait |
+| Saved bin-pose reuse (manual / Auto Run) | Same loaded configuration object, validated unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained; no bin request |
+| Auto Run next-bin request (internal) | No eligible saved poses; owning action has confirmed Tray Detect, validated tray pose/depth and rechecked observation position; another item remains; no cancellation; starts before placement planning/admission |
+| Auto Run next Home/Pick motion (internal) | All three placement commands have received ordered acceptance; saved eligible pose or validated new batch available; no cancellation; no physical placement-completion wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback; during Auto Run, only exhausted-acquisition Pause |

@@ -220,6 +220,10 @@ class PickExecutor:
             return {"picked": False, "candidate": None, "holding_item": False}
         settling = settings["timing"]["pick_settling"]
         held = session.held_index if session else None
+        if placement_bridge is not None:
+            # Placement still owns the old HELD source until its execution
+            # boundary. Queue the next eligible pose without clearing that source.
+            held = None
         if held is not None and session.attempts[held - 1].state != "HELD":
             held = None
         start_index = held or (session.next_eligible if session else 1)
@@ -273,7 +277,10 @@ class PickExecutor:
                                      else f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
                 return_terminal_pose=True, **origin)
-        for index in range(start_index, len(plans) + 1):
+        indices = [index for index in range(start_index, len(plans) + 1)
+                   if session is None or index == start_index
+                   or session.attempts[index - 1].state in ("PENDING", "INTERRUPTED")]
+        for offset, index in enumerate(indices):
             plan = plans[index - 1]
             if session is not None:
                 session.set_state(index, "HELD" if acquired else "FAILED")
@@ -328,7 +335,7 @@ class PickExecutor:
                     confirmed_start_pose=return_origin,
                     batch_name=f"candidate_{index}_pick_to_tray")
                 return {"picked": True, "candidate": index, "holding_item": True}
-            if index == len(plans):
+            if offset == len(indices) - 1:
                 # Complete EXHAUST -> NEUTRAL and queue the remaining Home route.
                 # DI1 was sampled through settling already; any later change is
                 # deliberately not reclassified as this candidate's success.
@@ -344,11 +351,11 @@ class PickExecutor:
                         upward, batch_name=f"candidate_{index}_miss_retract",
                         confirmed_start_pose=return_origin)
                 break
-            next_index = index + 1
+            next_index = indices[offset + 1]
             if progress is not None:
                 progress("CANDIDATE", f"Attempting candidate {next_index}", next_index)
             check(next_index)
-            next_plan = plans[index]
+            next_plan = plans[next_index - 1]
             if remember_prepick is not None:
                 remember_prepick(next_plan[2], settings["gripper"])
             # Queue the old exit and next entry at the same safety Z before descent.
