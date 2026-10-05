@@ -61,7 +61,12 @@ to apply the display update.
    ready. **YOLO Detect ON/OFF** controls inference; OFF retains RGB/depth/voxel
    preview. Show all model classes under the current confidence, IoU and detection
    cap; checked classes determine pose eligibility. Defaults are 0.25 / 0.70 / 100
-   and internal inference size 640; loaded profiles retain their inference size.
+   and internal inference size 448; loaded profiles retain their inference size.
+   CPU predictions use square 448 × 448 input for new profiles. Existing saved
+   and deployed profiles need `settings.yolo.image_size: 448` to use that size;
+   camera resolution and original RGB/depth geometry remain independent.
+   Reload Teach and restart headless Detect/controller after deployed profile
+   edits so every consumer loads the same updated profile hash.
    Edits apply after 300 ms without typing. Invalid inference values pause YOLO
    with an inline reason; correction resumes it, with no old-value fallback.
    Segmentation masks and OBB models support metric poses; box-only models remain

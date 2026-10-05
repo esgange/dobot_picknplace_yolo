@@ -1450,6 +1450,14 @@ states and captured-corner/simulated-result headings. This is GUI-only metadata;
 keep inference, pose acquisition, saved settings, headless and controller behavior
 unchanged, with no extra worker, timer, native prediction or ROS request.
 
+Rule 217 sets new Item Teach and Tray Teach profiles and initial YOLO previews
+to shared 448 × 448 CPU inference. Preserve square padding (`rect=False`),
+explicit saved image sizes, original-resolution RGB/depth pose sampling and all
+pose gates. Existing profiles use 448 only after their saved/deployed image_size
+is explicitly updated; never silently override loaded values. Reload Teach and
+restart headless consumers/controller after deployment edits to refresh pinned
+profile hashes. Camera settings, weights, motion and controller FSM are unchanged.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -19,7 +19,7 @@ from .core import (
     validate_geometry, validate_preview, write_session)
 from .documents import detection_profile, open_document, save_document, validate_name
 from item_perception_yolo.item_preview import SIMULATION_HOLD_SEC, validate_prefix
-from item_perception_yolo.item_teach_core import file_sha256
+from item_perception_yolo.item_teach_core import file_sha256, NEW_PROFILE_IMAGE_SIZE
 from .node import TrayTeachNode
 from .contract import SERVICE_NAME
 from .execution import spin_checked
@@ -133,7 +133,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.last_session = None
         self.buttons = []
         self.pending_ids = []
-        self.image_size = 640
+        self.image_size = NEW_PROFILE_IMAGE_SIZE
         self.points = []
         self.next_preview = 0.
         self.setWindowTitle("Tray Teach")

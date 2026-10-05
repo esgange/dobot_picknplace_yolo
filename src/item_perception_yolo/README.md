@@ -65,7 +65,13 @@ ros2 launch item_perception_yolo item_teach.launch.py
    It displays every model class, including size failures. Home and a saved item
    profile are not needed for preview. Visible confidence, IoU and detection cap
    apply immediately after a typing pause. First-run fields start at 0.25,
-   0.70 and 100; new profiles use internal size 640, loaded ones retain their size.
+   0.70 and 100; new profiles use internal size 448, loaded ones retain their size.
+   CPU inference uses square 448 × 448 input for new profiles, independently of
+   camera resolution. Existing saved/deployed profiles must also have
+   `yolo.image_size: 448` to use that size; loading preserves their explicit value.
+   Reload Teach and restart headless Detect/controller after editing deployed
+   profiles so their profile hashes match. Weights, camera resolution and original
+   RGB/depth pose sampling are unchanged.
    Displaying all means detections under those settings, not every raw proposal.
    No platform/bin/depth, home or saved item file is required to see detections.
    OFF stops inference and shows raw RGB; it also removes the pose service.
@@ -125,7 +131,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
    black, rejected points red inside the sampling circle. Blank/invalid required
    fields or failed checks show a reason and publish no selected pose.
    Confidence/IoU are 0–1 (e.g. 0.40/0.35, not 40/35);
-   the editable `image_size` field has been removed. New profiles use 640 internally;
+   the editable `image_size` field has been removed. New profiles use 448 internally;
    loading a profile retains its exact validated saved inference size.
    Confidence/IoU/cap, class, size, quality and geometry-output edits update an already
    enabled preview after 300 ms without further typing, without an OFF/ON click.
@@ -410,7 +416,7 @@ Unreadable/ambiguous YAML clears all fields; no partial parser guesses. Clear ol
 home records are cleared as a whole, never filled with zero joints. Unverified
 paired weights leave the model field empty; browse a trusted model explicitly.
 The warning/Activity log explains every cleared field. Missing internal
-`image_size` requires explicitly browsing a model to establish new-profile 640.
+`image_size` requires explicitly browsing a model to establish new-profile 448.
 Recovery also applies to named-file startup prefill; any independently verified
 paired model then loads automatically. Missing/changed pairs never execute.
 No recovered draft can simulate, arm or be validated in the controller until

@@ -132,7 +132,8 @@ def recover_item_fields(path, *, root=None):
     if size is not None and size % 32:
         accept("image_size", size, False, "must be a multiple of 32")
     if draft.values["image_size"] is None:
-        draft.issues.append("Browse a model explicitly to start with the new-profile 640 px size")
+        draft.issues.append("Browse a model explicitly to start with the new-profile "
+                            f"{core.NEW_PROFILE_IMAGE_SIZE} px size")
     ids = group("yolo").get("class_ids")
     valid_ids = (type(ids) is list and bool(ids)
                  and all(type(i) is int and i >= 0 for i in ids))

@@ -1777,7 +1777,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _yolo_settings(self):
         if self.profile_image_size is None:
-            raise ValueError("Recovered image_size is unknown; Browse a model to start at 640 px")
+            raise ValueError("Recovered image_size is unknown; Browse a model to start at "
+                             f"{NEW_PROFILE_IMAGE_SIZE} px")
         return {
             "confidence": self._number("confidence"),
             "iou": self._number("iou"),

@@ -62,7 +62,7 @@ def test_single_view_starts_with_blank_dimensions_and_no_production_profile(wind
     assert window.node.settings is None  # No production parser needed.
     assert "image_size" not in window.inputs
     assert "result_max_age_sec" not in window.inputs
-    assert window.profile_image_size == 640
+    assert window.profile_image_size == 448
     assert window.node.preview_geometry is None  # Explicit gray/unchecked size, no guess.
     assert window.node.preview_quality == gui.QUALITY_DEFAULTS
     window.node.arm.assert_not_called()
@@ -477,7 +477,7 @@ def test_live_yolo_edits_debounce_apply_exact_values_and_disarm(window, monkeypa
     window._refresh_video()
     assert window.node.yolo_enabled and not window.preview_settings_paused
     assert window.node.preview_yolo == {"confidence": .9, "iou": .35,
-                                        "max_detections": 20, "image_size": 640,
+                                        "max_detections": 20, "image_size": 448,
                                         "class_ids": [1, 4]}
     assert window.node.settings is None  # No production/depth settings required in All.
     assert "confidence 0.9, IoU 0.35" in window.preview_help.text()

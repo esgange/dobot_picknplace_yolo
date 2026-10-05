@@ -36,7 +36,7 @@ from .platform_teach_core import (
 from .item_teach_core import (file_sha256, load_item_profile, settings_from_profile,
                               validate_detection_settings, detection_settings, validate_quality,
                               validate_bin_clearance, inset_bin_roi, BIN_CLEARANCE_FIELDS,
-                              validate_home, depth_coverage_ok)
+                              validate_home, depth_coverage_ok, NEW_PROFILE_IMAGE_SIZE)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
 from .item_native_client import NativeClient
 from .pick_planning import Cr10Kinematics, rigid_matrix
@@ -50,7 +50,7 @@ from .runtime_teach import runtime_teach_catalog
 
 SERVICE_NAME = "/item_detect/get_item_poses"
 # Visible initial form values, never a fallback for invalid/missing inputs.
-INITIAL_PREVIEW_YOLO = {"confidence": 0.25, "iou": 0.7, "image_size": 640,
+INITIAL_PREVIEW_YOLO = {"confidence": 0.25, "iou": 0.7, "image_size": NEW_PROFILE_IMAGE_SIZE,
                         "max_detections": 100}
 PREVIEW_MAX_AGE_SEC = 0.5
 

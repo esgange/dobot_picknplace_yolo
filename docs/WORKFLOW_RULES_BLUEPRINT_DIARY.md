@@ -8650,6 +8650,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   no hardware command was issued. Preserved station `.env`, calibration,
   offline/runtime teach/model artifacts and the unrelated RViz edit.
 
+### 2026-10-05 — Rule 217: 448-square CPU inference for item and tray
+
+- User selected 448 × 448 model input to reduce CPU inference work. Set the
+  shared new-profile image-size constant to 448 and use it for initial Item
+  preview and Tray Teach defaults. Recovery guidance uses the same constant.
+  Keep the existing native worker's CPU execution and square padding
+  (`rect=False`). Explicit loaded profile sizes remain authoritative; camera
+  resolution, original RGB/depth pose sampling, pose gates and weights do not
+  change. Input pixel count is 49% of 640-square, not a measured latency claim.
+- Explicitly updated this station's current saved and deployed Item/Tray YAMLs
+  and Tray Teach's last-session draft to 448. Archived profiles retain their
+  existing sizes. Backed up all five original files with before/after SHA-256 in
+  `logs/item_perception_yolo/input_448_backup_20261005T132235Z/manifest.json`.
+  These local station artifacts are excluded from the source commit.
+- Validation exposed a pre-existing schema-10 deployed Item YAML rejected by
+  the current strict loader. Updated only its schema to the existing schema 11
+  and removed obsolete `quality.minimum_depth_samples`, retaining its existing
+  `minimum_depth_fraction: 0.5` under rule 208. Preserved that deployed file's
+  own taught joints, poses, speeds and timing; it was not replaced with the
+  differing offline profile. No automatic migration/fallback reader was added.
+- Validation: **396 existing targeted item/tray tests passed**, including
+  preview, detector, profile, document and GUI/node checks. All four updated
+  profiles pass their strict loaders and paired model hashes; the complete
+  deployed controller configuration and source-hash validation pass read-only.
+  Both perception packages build successfully with the sourced workspace and
+  symlink-install. Scoped flake8 (existing style exclusions) and whitespace
+  checks pass. Updated existing default-value assertions; no new tests needed
+  for this default/configuration change.
+- No hardware command, production restart or live inference benchmark was run.
+  Reload Teach and restart headless detectors/controller to load the updated
+  artifact hashes. No controller behavior/source or FSM/export change; camera
+  `.env`, calibration, model weights and the unrelated RViz edit are preserved.
+
 ### Future entry template
 
 ```text
