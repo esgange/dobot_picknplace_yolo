@@ -275,7 +275,7 @@ without an extra Stop click. HIGH or unavailable feedback never permits an
 unheld output reset. Close competing maintenance applications such as Gripper
 Diagnostics before controller recovery.
 
-Held-item DI1 loss has a fixed 50 ms falling-edge debounce, stored in the
+Held-item DI1 loss has a fixed 500 ms falling-edge debounce, stored in the
 controller rather than a teach file. Advancing FeedInfo
 must continue reporting LOW for that interval; HIGH cancels the pending loss
 immediately. One shared filter covers held motion, Home preflight, Stop/recovery,
@@ -318,8 +318,11 @@ retract, in the same ordered queue. It retains the dropped source until executio
 crosses into the next clearance and neutral outputs/DI1 LOW have been observed;
 queue acceptance alone cannot transfer ownership or arm the next pickup.
 
-After pickup, monitor continuously through lifting, travel, idle holding, tray
-acquisition and placement approach/descent. A confirmed 50 ms DI1 loss immediately
+After pickup, defer drop detection until fresh joint feedback reaches the first
+retract/pre-pick height. LOW during that lift does not count toward the 500 ms
+debounce. Keep the complete lift/clearance/Tray Detect queue; no midpoint wait is
+added. Then monitor continuously through travel, idle holding, tray acquisition
+and placement approach/descent. A confirmed 500 ms DI1 loss immediately
 sends Stop from the feedback callback and blocks further interrupted commands.
 Submission of a timed release does not end monitoring: observed commanded suction
 OFF does. Planned release is never classified as a drop.

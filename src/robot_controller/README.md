@@ -832,8 +832,9 @@ idle READY Pause remains stationary.
 
 Held Pause preserves the outputs and rises vertically at current X/Y/attitude
 to Home Z, without descending if already above it. Paused feedback, actual pose,
-DI1 and outputs remain supervised. DI1 LOW lasting 50 ms on advancing feedback
-during the rise requests Stop; confirmed loss while parked also starts the
+DI1 and outputs remain supervised. Drop monitoring activates when first-retract
+height is reached, including during this parking rise. DI1 LOW lasting 500 ms
+after activation requests Stop; confirmed loss while parked also starts the
 same put-back routine described below. A shorter LOW followed by HIGH cancels
 the pending loss. Confirmed loss is latched even if DI1 rises again.
 Stale feedback or output faults are not
@@ -911,9 +912,10 @@ accepted response and stationary empty queue; a DI1 loss is logged separately
 and does not mislabel a successful Stop or poison later Stop confirmation.
 Freshness and output-integrity failures retain their strict handling.
 
-Rule 211 extends automatic loss interruption from pickup through lifting, travel,
-idle holding, tray detection and placement approach/descent. Advancing DI1 LOW for
-50 ms latches DROPPED and sends Stop directly in the FeedInfo callback. Command
+Rule 211's automatic loss interruption uses rule 223's delayed activation and
+500 ms debounce: after first-retract height, monitor clearance/travel, idle
+holding, tray detection and placement approach/descent. Confirmed loss latches
+DROPPED and sends Stop directly in the FeedInfo callback. Command
 admission shares the latch lock; no further interrupted command can be submitted.
 Resolve outstanding replies within their original deadlines, acknowledge Stop,
 then send a final Stop and confirm stationary joints/empty queue before returning.
@@ -966,7 +968,7 @@ The GUI has separate managed Pause/Return and permanent STOP controls. See the
 operator button policy above. The two gripper LEDs show raw DI1 Suction and DI12
 Finger open as Detected / Not detected / Unknown. DO commands and logical holding
 do not drive these LEDs. DI12 Not detected does not prove that fingers are closed.
-The held-item decision retains its 50 ms loss debounce independently of the raw
+The held-item decision uses its 500 ms loss debounce independently of the raw
 DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
 Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the smaller
@@ -1191,14 +1193,25 @@ detected after 300 ms settling and the 20% upward-lift check.` for a 0.3-second
 setting; milliseconds always use the loaded `pick_settling`. The event's
 `candidate_state` field and typed status remain `FAILED`.
 
-DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.050` filter owned
-by the canonical feedback monitor, not a teach-file setting. After HIGH has been
-seen, the first advancing LOW sample starts a monotonic timer. Advancing LOW feedback
-at least 50 ms later
+DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.500` filter owned
+by the canonical feedback monitor, not a teach-file setting. On pickup, retain
+HELD/source context but defer loss detection until a fresh joint-FK sample reaches
+the first retract/pre-pick height, or the higher actual pickup origin. Observe
+the upward crossing even during CP blending; do not split the lift/clearance/Tray
+Detect queue or wait at a midpoint. LOW time before that crossing does not count.
+At activation, start a new timer if DI1 is already LOW; otherwise the next LOW
+starts it. Advancing LOW feedback at least 500 ms later
 confirms loss; any HIGH resets the pending interval immediately. Re-reading a
 snapshot or publishing the same controller timer cannot complete the debounce.
 A feedback gap beyond the existing freshness limit cannot count toward it, and
 stale/invalid feedback keeps its existing failure handling.
+
+Zero remaining first lift arms on new position feedback at that height. Pause
+acquisition uses the same gate, and a parking rise may complete it. Direct Stop
+retains the pending height. Suction OFF clears pending deferral so release/reset
+cannot carry it into another item. Raw acquisition, release and output guards
+remain unchanged. Events `drop_detection_deferred` and `drop_detection_armed`
+record the height and 500 ms threshold for run auditing.
 
 The internal snapshot's `suction_present` value is used after acquisition Stop
 and throughout held motion, motion-origin/Home checks, Stop/recovery, idle
@@ -1248,7 +1261,8 @@ The final command is joint-target MovL, restoring the saved Tray Detect attitude
 Confirm only its saved joints (±1°), fresh idle RobotStatus and executed/empty
 queue after admission; no midpoint wait or fixed arrival dwell is added.
 SUCK stays ON without reissuing it; no EXHAUST/NEUTRAL release events are sent.
-Holding/output checks and the 50 ms DI1 loss debounce remain active throughout.
+Holding/output checks remain active throughout. DI1-loss detection begins at
+measured first-retract height, then uses the shared 500 ms debounce.
 Held Continue moves directly from the confirmed safety-height parked pose to
 Tray Detect, without replaying the pick, lifts or a Home detour. Successful Pick
 requests no tray observation and does not place; the next Place checks saved

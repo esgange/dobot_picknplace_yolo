@@ -19,7 +19,7 @@ from test_placement_queue import QueueRig, HELD, RELEASE
 from test_recovery_return import RecoveryRig
 
 
-def low_feedback(rig, outputs=HELD, count=8):
+def low_feedback(rig, outputs=HELD, count=52):
     for _ in range(count):
         sample = rig.emit(outputs=outputs, inputs=0)
         try:
@@ -53,7 +53,7 @@ def test_feedback_stops_during_detection_approach_and_descent_and_latches(phase,
 
 def test_feed_callback_dispatches_stop_without_waiting_for_action_owner():
     rig = QueueRig()
-    for _ in range(8):
+    for _ in range(52):
         rig.clock += .01
         rig.timer += 1
         RobotController._on_feed(rig.node, SimpleNamespace(data=feed(
@@ -161,7 +161,7 @@ def test_drop_during_admission_resolves_reply_but_blocks_all_later_commands(pend
     def wait(_seconds):
         low_feedback(rig, count=1)
         iterations.append(1)
-        if len(iterations) >= 8:
+        if len(iterations) >= 52:
             pending.set_result(SimpleNamespace(res=0, robot_return="{4}"))
     node.wait_control = wait
     with pytest.raises(HeldSuctionLost):
@@ -313,7 +313,7 @@ def test_idle_held_loss_reserves_the_existing_hardware_owner_before_worker():
     node.machine = ControllerStateMachine(initial="HOLDING")
     node._begin_operation = Mock()
     node.managed.start_loss_worker = Mock()
-    for _ in range(8):
+    for _ in range(52):
         node.managed.observe_continuous(rig.emit(outputs=HELD, inputs=0, running=0))
     RobotController._supervise(node)
     node._begin_operation.assert_called_once_with("pick")

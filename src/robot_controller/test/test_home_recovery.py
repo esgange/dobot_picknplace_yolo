@@ -1,6 +1,6 @@
 """Fresh Stop feedback replaces expired placement history only on explicit Recover.
 
-QueueRig advances 10 ms per sample; 32 samples exceed the 300 ms suction-loss filter.
+QueueRig advances 10 ms per sample; 52 samples exceed the 500 ms suction-loss filter.
 """
 
 from types import SimpleNamespace
@@ -63,7 +63,7 @@ def test_expired_placement_history_does_not_trap_explicit_recovery_or_claim_plac
 ])
 def test_stop_adopts_stable_current_outputs_without_neutralizing(held, outputs, inputs):
     rig = QueueRig()
-    for _ in range(32):
+    for _ in range(52):
         rig.emit(outputs=outputs, inputs=inputs, running=0)
     recovery = HomeRecovery.cancel_action(rig.node)
     confirm_fresh_stop(rig, recovery, outputs=outputs, inputs=inputs)
@@ -101,11 +101,11 @@ def test_opposing_outputs_block_recovery_before_enable(outputs):
 def test_recovery_monitor_keeps_outputs_and_suction_guards(change):
     rig = QueueRig()
     held = change != 'unexpected_suction'
-    for _ in range(32):
+    for _ in range(52):
         rig.emit(outputs=HELD if held else 0, inputs=int(held), running=0)
     recovery = HomeRecovery.cancel_action(rig.node)
     confirm_fresh_stop(rig, recovery, outputs=HELD if held else 0, inputs=int(held))
-    for _ in range(32):
+    for _ in range(52):
         sample = rig.emit(outputs=(1 << 12) if change == 'outputs' else HELD if held else 0,
                           inputs=0 if change == 'lost_suction' else 1, running=0)
     error = {'outputs': FeedbackFailure, 'lost_suction': HeldSuctionLost,
@@ -129,7 +129,7 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
     joints.position[0] = .2
     rig.monitor.update_joints(joints)
     outputs, inputs = (HELD, 1) if holding else (0, 0)
-    for _ in range(32):
+    for _ in range(52):
         rig.emit(outputs=outputs, inputs=inputs, running=0)
     recovery = node.recovery_home = HomeRecovery.cancel_action(node)
     real_wait = rig.monitor.wait
@@ -183,7 +183,7 @@ def test_reset_at_home_waits_out_its_own_io_queue_without_false_position_failure
     node = rig.node
     node.active_action = 'recover'
     node.configuration.home_joints = (0.,) * 6
-    for _ in range(32):
+    for _ in range(52):
         rig.emit(outputs=0, inputs=0, home=True)
     recovery = node.recovery_home = HomeRecovery.cancel_action(node)
     recovery.capture(node, rig.monitor.snapshot(require_enabled=True))

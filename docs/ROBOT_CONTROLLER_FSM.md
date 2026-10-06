@@ -1,5 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Deferred drop-monitoring review: **2026-10-06**, baseline **`09ed60a`** plus rule
+**223**. The shared falling-edge debounce is now **500 ms**. On pickup, retain
+HELD/source context but defer loss monitoring until fresh joint FK reaches the
+first retract/pre-pick height (at least the actual pickup origin Z). Observe
+height while the full lift/clearance/Tray Detect queue executes; no midpoint
+arrival wait or queue split. Ignore pre-retract LOW time and start a fresh
+500 ms interval at activation; HIGH resets it immediately. Zero remaining lift
+arms on a new position sample at that height. Pause acquisition uses the same
+gate; a parking rise may cross it, and direct Stop preserves it. Suction OFF
+clears a pending gate. Raw I/O, acquisition/probe, output/freshness checks,
+intentional release and confirmed-drop containment remain unchanged. Log
+`drop_detection_deferred` and `drop_detection_armed` with height and 500 ms.
+
 Pickup probe review: **2026-10-06**, baseline **`beae161`** plus rule **222**.
 After final-pick settling expires without DI1, keep the candidate ACTIVE and
 command a last-chance upward lift through 20% of the remaining distance from
@@ -90,13 +103,13 @@ queue, with no Home. Retain the dropped source until advancing execution reaches
 the next clearance's returned MovL ID and neutral/raw-DI1-LOW evidence follows
 retract issuance. This arms new acquisition without treating old suction as pickup.
 Exhaustion confirms the shared retract above the bin. Preview/validation share
-this geometry; Home Z must exceed saved pre-pick Z. Keep continuous 50 ms drop
+this geometry; Home Z must exceed saved pre-pick Z. Keep the rule-223 drop
 monitoring, Stop/reply containment and explicit Recover's cancel-without-replay.
 
 Continuous drop-interrupt review: **2026-10-04**, baseline **`f2fb54d`** plus
-rule **211**. The latest specification restores the shared **50 ms** DI1-loss
-interval, superseding rule 210. From pickup through lifts, travel, idle holding,
-tray acquisition and placement approach/descent, confirmed loss latches DROPPED
+rule **211**, with activation/debounce superseded by rule **223**. After first
+retract height, monitor 500 ms DI1 loss through clearance, travel, idle holding,
+tray acquisition and placement approach/descent. Confirmed loss latches DROPPED
 and sends Stop in the feedback callback. Normal dispatch shares the latch lock.
 Submission of release motion does not end monitoring; observed commanded suction
 OFF does. Planned release is exempt, and a late release cannot erase a latched drop.
@@ -643,7 +656,8 @@ flowchart TD
     Acquire --> Fingers["grip_onpick: close now, independent of use_grip"]
     Fingers --> HeldReturn["Pre-pick lift: 50% relax if use_grip OFF, otherwise delayed close; clearance → Safety Z exit → Tray Detect; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
-    HeldReturn -->|Held DI1 LOW for 50 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
+    HeldReturn -.-> DropGate["At measured pre-pick height: arm drop detection; no queue split; start fresh LOW timer"]
+    DropGate -->|DI1 LOW for 500 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
     PutBack -->|Eligible saved candidate; same queue| Entry
     PutBack -->|Batch exhausted; retract confirmed| Limit
     Miss --> More{"Another candidate?"}
@@ -708,6 +722,11 @@ flowchart TD
 - Success first lifts to pre-pick at taught retract rates. Empty retract and
   the clearance rise use speed 100% with taught travel acceleration. Other Pick
   travel uses its taught rates; global SpeedFactor scales all motion.
+  Drop supervision starts only when fresh joint FK reaches first-retract Z;
+  it remains deferred during this first lift. No LOW time from lifting counts
+  toward the subsequent 500 ms debounce. Source/HELD context and output guards
+  remain active. Monitor crossing the height within the same blended queue;
+  Pause parking may complete that rise and direct Stop retains its pending gate.
 - `grip_onpick=true` sends DO14 OFF then DO2 ON, with output confirmation before
   lifting, independently of `use_grip`. With `use_grip=false`, the first held lift
   uses MovLIO `{0,50,2,0}` then `{0,50,14,0}`: both finger outputs OFF at 50%.
@@ -803,7 +822,7 @@ flowchart TD
     Fingers -. "Held loss" .-> Drop
     Fingers -. "Direct Stop" .-> Stop
     Pre -. "Held loss" .-> Drop
-    Release -. "Held loss before observed suction OFF" .-> Drop["50 ms loss: latch DROPPED; immediate Stop; drain replies; final Stop and empty queue"]
+    Release -. "Held loss before observed suction OFF" .-> Drop["500 ms loss: latch DROPPED; immediate Stop; drain replies; final Stop and empty queue"]
     Drop --> Source["Shared Return Item: source approach → pre-pick (80% release) → Home-Z retract (0% neutral); no Home"]
     Source --> Saved["Next eligible original-batch Pick; no detection; HOLDING at Tray Detect, or READY if exhausted"]
     Queue -. "Pause/Stop" .-> Stopped["Stop in place; preserve outputs and release evidence"]
@@ -1094,8 +1113,8 @@ flowchart TD
     Stay --> Paused
     Paused -->|Continue accepted| Resume["Restore owning operation and replan from actual parked pose"]
     Paused -->|Held item: Return Item| Return["RETURNING_ITEM → Home → READY"]
-    Paused -->|Held DI1 LOW for 50 ms| Drop["Put back saved item → Home → remain PAUSED"]
-    Rise -->|Held DI1 LOW for 50 ms during rise| Drop
+    Paused -->|Armed DI1 LOW for 500 ms| Drop["Put back saved item → Home → remain PAUSED"]
+    Rise -->|After first-retract height: DI1 LOW for 500 ms| Drop
     Drop --> Paused
 ```
 
@@ -1296,6 +1315,7 @@ Names below are relative to `/robot_controller/`.
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
+| Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run next Home/Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
@@ -1329,7 +1349,7 @@ and READY, or failure containment. Clients must observe status for that outcome.
 
 | I/O | Meaning |
 | --- | --- |
-| DI1 | Suction detection: acquisition HIGH is immediate; held HIGH→LOW loss is debounced 50 ms with advancing feedback |
+| DI1 | Acquisition HIGH is immediate; held loss is deferred until first-retract height, then debounced 500 ms with advancing feedback |
 | DI12 | Finger fully open feedback, shown on the GUI; LOW does not prove fingers are closed |
 | DO1 / DO13 | Exhaust / suction; both OFF is neutral; both ON is invalid |
 | DO2 / DO14 | Finger close / open; both OFF is neutral; both ON is invalid |

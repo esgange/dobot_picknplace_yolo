@@ -120,6 +120,9 @@ class Rig:
 
 
 class FakeTransport:
+    def defer_pickup_drop(self, retract_pose, sample):
+        self.deferred_drop_height = max(retract_pose[2, 3], self.pose_from_snapshot(sample)[2, 3])
+
     def __init__(self, node):
         self.node = node
         self.acquisition_eligible = False
@@ -523,6 +526,8 @@ def test_suction_acquired_during_pause_stop_is_retained_as_trusted_held_context(
     assert rig.holding_item
     assert states(rig)[0] == "HELD"
     assert not any(entry[0] == "pulse" for entry in rig.log)
+    assert rig.hardware.deferred_drop_height == pytest.approx(
+        rig.managed.session.attempts[0].plan[4].matrix[2, 3])
 
 
 def test_untrusted_di1_blocks_managed_motion():

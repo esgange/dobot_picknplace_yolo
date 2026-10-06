@@ -240,7 +240,7 @@ def test_confirmed_drop_during_tray_reopen_stops_before_placement():
 
     def drop(index):
         if index == 1:
-            for _ in range(8):
+            for _ in range(52):
                 sample = rig.emit(outputs=1 << 12, inputs=0, running=0)
                 rig.node.managed.observe_continuous(sample)
     rig.on_request = drop
@@ -289,7 +289,7 @@ def test_opposing_outputs_fail_during_queue():
 
 def test_confirmed_suction_loss_during_queue_stops_before_retract():
     rig = QueueRig()
-    rig.script = ([dict(outputs=HELD, inputs=0)] * 8
+    rig.script = ([dict(outputs=HELD, inputs=0)] * 52
                   + [dict(outputs=0, inputs=0, retract=True)])
     with pytest.raises(HeldSuctionLost):
         rig.run()

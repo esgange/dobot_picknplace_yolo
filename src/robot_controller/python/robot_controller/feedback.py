@@ -11,7 +11,7 @@ from .errors import FeedbackFailure, OperationCanceled
 
 
 FEEDBACK_MAX_AGE_SEC = 1.0
-SUCTION_LOSS_DEBOUNCE_SEC = 0.050
+SUCTION_LOSS_DEBOUNCE_SEC = 0.500
 REQUIRED_FEED_KEYS = (
     "robot_mode", "digital_input_bits", "digital_outputs", "controller_timer",
     "isRunQueuedCmd", "RunningStatus", "ErrorStatus", "CollisionStates",
@@ -56,7 +56,7 @@ class MotionObservation:
 
 
 class SuctionLossDebounce:
-    """Immediate HIGH, with LOW confirmed by advancing feedback spanning 300 ms."""
+    """Immediate HIGH; enabled loss needs 500 ms of advancing LOW feedback."""
 
     def __init__(self):
         self.present = False
@@ -64,10 +64,12 @@ class SuctionLossDebounce:
         self.timer = None
         self.advanced_at = None
 
-    def update(self, detected, controller_timer, received_at):
+    def update(self, detected, controller_timer, received_at, *, loss_enabled=True):
         advancing = controller_timer != self.timer
         if detected:
             self.present = True
+            self.low_since = None
+        elif not loss_enabled:
             self.low_since = None
         elif advancing and self.present:
             if (self.low_since is None or self.advanced_at is None
@@ -97,6 +99,7 @@ class FeedbackMonitor:
         self._flags = deque(maxlen=16)
         self._outputs = deque(maxlen=1000)
         self._suction = SuctionLossDebounce()
+        self._pickup_retract = None
         self._motion = None
 
     @property
@@ -159,8 +162,14 @@ class FeedbackMonitor:
             self._sequence += 1
             self._revision += 1
             self._feed = feed, now
+            if self._pickup_retract is not None and not feed["digital_outputs"] & (1 << 12):
+                # A release/reset must not carry this pickup's deferral into
+                # another item. Unexpected vacuum OFF still fails output guards.
+                self._pickup_retract = None
+                self._suction.low_since = None
             self._suction.update(bool(feed["digital_input_bits"] & 1),
-                                 feed["controller_timer"], now)
+                                 feed["controller_timer"], now,
+                                 loss_enabled=self._pickup_retract is None)
             self._flags.append((self._sequence, feed["isPauseCmdFlag"],
                                 feed["ErrorStatus"], feed["CollisionStates"]))
             self._outputs.append((self._sequence, feed["controller_timer"],
@@ -186,11 +195,23 @@ class FeedbackMonitor:
         with self._condition:
             return tuple(sample for sample in self._outputs if sample[0] > after_sequence)
 
+    def defer_suction_loss_until_retract(self, height_m, *, height_from_joints, on_armed=None):
+        """Keep acquired context through first lift; raw DI/DO remain unchanged."""
+        if not math.isfinite(height_m) or not callable(height_from_joints):
+            raise FeedbackFailure("Pickup retract requires a finite height and joint FK")
+        with self._condition:
+            if (self._joints is None or self._feed is None or not self._suction.present
+                    or not self._feed[0]["digital_outputs"] & (1 << 12)):
+                raise FeedbackFailure("Drop deferral requires acquired suction and DO13 ON")
+            self._pickup_retract = (height_m, self._joints[1], height_from_joints, on_armed)
+            self._suction.low_since = None
+
     def snapshot(self, *, require_enabled=False, allow_paused=False):
         with self._condition:
             joints, status, feedback = self._joints, self._status, self._feed
             sequence, progress = self._sequence, self._controller_progress_at
             suction_present = self._suction.present
+            pickup_retract = self._pickup_retract
             status_sequence, revision = self._status_sequence, self._revision
         now = self._monotonic()
         if joints is None or status is None or feedback is None:
@@ -209,6 +230,20 @@ class FeedbackMonitor:
             blockers = enabled_blockers(feed, status_enabled, allow_paused=allow_paused)
             if blockers:
                 raise FeedbackFailure("Robot readiness blocked: " + "; ".join(blockers))
+        if pickup_retract is not None and source_stamp > pickup_retract[1]:
+            height = pickup_retract[2](values)
+            if height >= pickup_retract[0]:
+                armed = False
+                with self._condition:
+                    if self._pickup_retract is pickup_retract:
+                        self._pickup_retract = None
+                        # LOW during lifting cannot consume the post-retract
+                        # debounce. Begin a fresh interval at this observation.
+                        self._suction.low_since = (
+                            None if self._feed[0]["digital_input_bits"] & 1 else now)
+                        armed = True
+                if armed and pickup_retract[3] is not None:
+                    pickup_retract[3](height)
         return FeedbackSnapshot(feed, values, connected, status_enabled, sequence,
                                 feed_received, suction_present, source_stamp,
                                 status_sequence, revision)

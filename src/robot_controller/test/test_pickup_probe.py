@@ -62,6 +62,7 @@ def test_di1_during_probe_takes_normal_acquisition_stop_without_waiting(monkeypa
     assert "mdis" not in fields
     assert rig.transport.node.expected_outputs[13]
     assert not rig.transport.late_miss_suction
+    assert rig.monitor._pickup_retract[0] == pytest.approx(.14)
     assert not any(a[1] == "motion_batch_completed" for a, _k in rig.events)
 
 
@@ -90,6 +91,7 @@ def test_normal_pickup_does_not_add_probe(monkeypatch):
     acquired, origin = pick_with_probe(rig)
     assert acquired and origin[2, 3] == .11
     assert len(rig.calls) == 1
+    assert rig.monitor._pickup_retract[0] == pytest.approx(.14)
     assert not any(a[1] == "pickup_probe_started" for a, _k in rig.events)
 
 

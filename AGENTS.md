@@ -1523,6 +1523,21 @@ Pause/Stop gates remain. Apply to every shared Pick path without new settings,
 schema or detector requests. Supersedes rules 94/97/99/221's settling-only miss
 decision; update diary/FSM/exports and verify with synthetic feedback only.
 
+Rule 223 changes held DI1-loss debounce to a fixed 500 ms and defers drop
+detection until the first successful upward retract reaches saved pre-pick Z
+(or the higher actual pickup origin). Arm from fresh joint-FK height feedback,
+including passage through the height during CP blending, without splitting the
+queued lift/clearance/Tray Detect route or waiting at a midpoint. Keep held/source
+context through this lift; LOW time before arming never consumes the new 500 ms
+interval. HIGH resets it immediately. A Pause parking rise crossing the same
+height also arms; Stop preserves the pending height. Acquisition during Pause
+uses the same deferral. Suction OFF clears pending deferral so release/reset
+cannot leak it to another item. Keep raw DI/DO, output/freshness guards, pickup
+acquisition/probe, intentional release and confirmed-drop Stop/return unchanged.
+Log deferral and physical activation with height and threshold. No new setting,
+schema, executor or robot wait; supersede rules 107/111/211's 50 ms and immediate
+post-pick drop activation. Update diary/FSM/exports and test without hardware.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

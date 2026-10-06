@@ -8900,6 +8900,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Controller to apply. Preserved `.env`, station artifacts and the unrelated
   operator RViz edit. This is not an offline-transfer milestone.
 
+### 2026-10-06 — Rule 223: 500 ms loss debounce, armed after first pickup retract
+
+- Following the latest-run audit, the user requested a 500 ms drop debounce and
+  activation after retract. The retained run showed three accepted HELD pickups
+  followed by DROPPED during lifting, with suction DO13 still ON. Updated the
+  shared constant from 0.050 to 0.500 seconds and corrected its stale 300 ms
+  docstring. No teach-file value or configuration key is added.
+- After normal or probe acquisition Stop acknowledgement, retain HELD/source
+  context but defer loss confirmation until a fresh joint-FK sample reaches the
+  first upward retract/pre-pick height, clamped to at least actual pickup Z.
+  Observe crossing within the existing blended lift/clearance/Tray Detect queue;
+  no additional command, split queue, midpoint wait or executor thread. A new
+  position sample at the height also handles zero remaining first lift.
+- LOW during this first lift never counts toward the post-retract timer. Start
+  a full 500 ms interval at activation when already LOW; HIGH immediately resets
+  it. The shared internal suction-presence filter preserves held context while
+  deferred. Raw DI/DO and histories remain untouched, including GUI LEDs,
+  acquisition, release/reset and unheld guards. Output faults and stale feedback
+  still fail immediately. Gate activation requires validated fresh feedback.
+- Eligible pickup during managed Pause gets the same deferral. A held parking
+  rise crossing the height activates monitoring; direct Stop preserves the
+  pending height. Observed suction OFF clears it so intentional release/reset
+  cannot carry deferral into another candidate. Confirmed-drop Stop containment,
+  retained source, return/continuation and intentional-release behavior remain.
+  New events record `drop_detection_deferred` and `drop_detection_armed`, target/
+  actual height and 500 ms. Supersedes rules 107/111/211 only for interval/start.
+- Validation: **1164 controller tests passed**, including eight new synthetic
+  cases covering sustained LOW during lift, exact 500 ms boundary after activation,
+  HIGH reset, CP passage past the height, stale/unchanged position, zero lift,
+  Pause/Stop, vacuum-OFF guard/reset and a subsequent pickup's independent gate.
+  Existing loss fixtures now supply enough advancing LOW samples for 500 ms;
+  acquisition tests verify normal/probe pickup installs the proper height.
+  The final targeted acquisition/boundary run passed 27 tests. Controller symlink
+  build, scoped flake8 and whitespace checks pass. No real robot commands or
+  production restarts were performed; restart Robot Controller to apply.
+- Updated AGENTS, root/package README and FSM review/diagrams/guard table.
+  Regenerated nine adjacent HTML/PDF diagrams; reviewed Pick, Placement and Pause.
+  Verified the HTML source hash and every PDF footer against
+  `5b22231fd565491bd501acfdde83cbc8c8d740a638cfdb96f2dce89eedef0522`.
+  Preserved `.env`, station artifacts and the unrelated operator RViz edit.
+
 ### Future entry template
 
 ```text

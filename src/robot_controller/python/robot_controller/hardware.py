@@ -15,7 +15,7 @@ from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
                      OperationCanceled, StopUnconfirmed,
                      UNKNOWN_ITEM_GUIDANCE, EmergencyStopPressed, EMERGENCY_STOP_GUIDANCE,
                      alarm_ids, command_failure_message, command_rejection)
-from .feedback import enabled_blockers
+from .feedback import SUCTION_LOSS_DEBOUNCE_SEC, enabled_blockers
 from .kinematics import pose_values
 from .motion import CARTESIAN_POSITION_TOLERANCE_M, pose_reached
 from .recovery import GRIP_MASK
@@ -1161,6 +1161,23 @@ class DobotTransport:
             return batch
         return self.finish_batch(batch)
 
+    def defer_pickup_drop(self, retract_pose, sample):
+        """Arm loss detection at actual first-lift height without a queue barrier."""
+        height = max(retract_pose[2, 3], self.pose_from_snapshot(sample)[2, 3])
+
+        def armed(actual_height):
+            self.node.events.record(
+                "INFO", "drop_detection_armed", "First retract height reached; monitor DI1 loss",
+                retract_z_m=height, actual_z_m=actual_height,
+                debounce_ms=SUCTION_LOSS_DEBOUNCE_SEC * 1000)
+
+        self.monitor.defer_suction_loss_until_retract(
+            height, height_from_joints=lambda joints: self.node.kinematics.forward(joints)[2, 3],
+            on_armed=armed)
+        self.node.events.record(
+            "INFO", "drop_detection_deferred", "Defer DI1 loss monitoring until first retract",
+            retract_z_m=height, debounce_ms=SUCTION_LOSS_DEBOUNCE_SEC * 1000)
+
     @staticmethod
     def finish_batch(batch, *, handoff=None):
         """Resume the admitted group's existing guards and physical completion loop."""
@@ -1305,6 +1322,8 @@ class DobotTransport:
             self.node.expected_outputs.update(expected_outputs)
             self.pending_motion_outputs = {}
             return_origin = self.pose_from_snapshot(sample)
+            if pickup_retract_pose is not None:
+                self.defer_pickup_drop(pickup_retract_pose, sample)
             self.node.events.record(
                 "INFO", "pickup_stop_acknowledged",
                 "Pickup accepted; queue return without stationary confirmation",

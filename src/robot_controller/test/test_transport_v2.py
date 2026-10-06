@@ -928,13 +928,13 @@ def test_held_consumers_share_di1_debounce_but_outputs_fail_immediately(consumer
 
     emit(0.0, True)
     check(emit(0.010, False))
-    pending = emit(0.010 + 0.049999, False)
+    pending = emit(0.010 + 0.499999, False)
     check(pending)
     pending.feed["digital_outputs"] = 0
     with pytest.raises((FeedbackFailure, HeldUnknown), match="DO13"):
         check(pending)
     with pytest.raises((FeedbackFailure, HeldUnknown), match="lost"):
-        check(emit(0.010 + 0.300, False))
+        check(emit(0.010 + 0.500, False))
 
 
 def test_startup_sequence_is_explicit_and_never_calls_home():
