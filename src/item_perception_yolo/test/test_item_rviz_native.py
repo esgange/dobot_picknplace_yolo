@@ -103,16 +103,17 @@ def exercise_all_candidates():
                    "polygon": (rectangle + [x, 240]).tolist()}
                   for i, x in enumerate((180, 280, 380, 480, 580))]
     request = {"width": 640, "height": 480, "generation": 7, "context": context,
-               "nearby_overlay": False,
+               "nearby_overlay": False, "candidate_limit": 3,
                "base_from_platform": np.eye(4).tolist(), "quality": dict(QUALITY_DEFAULTS),
                "settings": settings, "detections": detections}
     result, data = teaching_rviz(request, rgb.tobytes() + depth.tobytes(), cv2, np)
     assert result["generation"] == 7 and len(data) == result["point_count"] * 16
     assert 0 < result["point_count"] < depth.size
-    assert {c["source_index"] for c in result["candidates"]} == {0, 1, 2, 3}
+    assert [c["source_index"] for c in result["candidates"]] == [1, 2, 0]
+    assert result["unchecked"] == [3]
     assert len(result["rejected"]) == 1 and result["rejected"][0]["source_index"] == 4
     # Each pose is exactly the existing full-resolution clicked-pose result.
-    for detection in detections[:4]:
+    for detection in detections[:3]:
         _, _, candidates, rejected = selected_pose(
             detection, rgb, depth, context, settings, cv2, np)
         assert not rejected

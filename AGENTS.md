@@ -1700,6 +1700,24 @@ evidence, ranking, schemas, settings, freshness gates, RViz clouds/TF or motion.
 No new thread, inference, hardware command, automatic archive or restart.
 
 
+Rule 236 moves nearby-height checking after ordinary geometry and final rank
+selection during candidate acquisition. Check in centroid-distance/confidence/
+source-index order; skip blocked candidates and stop as soon as the requested
+number pass, or exhaust the list. Lazily build the original depth scene once;
+do not scan leftover candidates. Return only checked poses and report remaining
+geometric source IDs as unchecked, distinct from rejection. valid_count is the
+checked returned count, not an exhaustive image count. Live teaching/RViz uses
+the taught pose_candidates limit too, superseding rule 133's all-valid-poses
+preview. Preserve all-class image annotations; only checked poses get TF/markers
+and nearby overlays. Click inspection still checks that one selected item.
+Keep rejection diagnostics for tested blockers, including an empty batch.
+Share GUI, Simulate Trigger and headless acquisition. Preserve item-surface
+height reference, radius/height inclusivity, original depth points, geometry,
+ranking order, candidate evidence, schemas and controller motion/retry queues.
+No extra inference, per-pick validation service, controller depth scan, new
+setting, hardware command, automatic artifact deployment or process restart.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

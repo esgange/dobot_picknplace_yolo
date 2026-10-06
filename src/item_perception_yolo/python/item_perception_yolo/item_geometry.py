@@ -524,11 +524,12 @@ def nearby_depth_check(scene, item_xyz, geometry, np, *, visualization=None):
 
 
 def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
-                        *, display_detections=None, candidate_limit=None, nearby_views=None):
+                        *, display_detections=None, candidate_limit=None, nearby_views=None,
+                        unchecked=None):
     from .nearby_depth_overlay import draw_nearby_depth_overlays
     if candidate_limit is not None and (type(candidate_limit) is not int
                                         or not 1 <= candidate_limit <= 1000):
-        raise RuntimeError("Invalid candidate overlay limit")
+        raise RuntimeError("Invalid candidate acquisition limit")
     camera = context["camera"]
     depth_camera = context["depth_camera"]
     transform = np.asarray(context["platform_from_optical"], dtype=np.float64)
@@ -568,6 +569,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     candidates, rejected = [], []
     samples = {}
     camera_plans = {}
+    candidate_bases = {}
     nearby_checks = {}
     scene_depth = None
     for item in objects:
@@ -650,14 +652,6 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 raise ValueError("Robot-camera pick-planning context is missing or malformed")
             item_in_base = candidate_pose_in_base(
                 planning["base_from_platform"], position, quaternion)
-            if scene_depth is None:
-                scene_depth = usable_scene_depth(depth_mm, context, quality, cv2, np)
-            # Standoff compensates Link6/tool length; it must not raise the
-            # obstacle threshold above the detected item's actual surface.
-            nearby_checks[item["index"]] = {}
-            nearby_evidence = nearby_depth_check(
-                scene_depth, item_in_base[:3, 3], geometry, np,
-                visualization=nearby_checks[item["index"]])
             attitude = select_pick_attitude(
                 planning["home_matrix"], item_in_base, planning["pick_rotation_deg"],
                 planning["standoff_height_mm"], planning["base_from_platform"],
@@ -673,6 +667,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                         mirrored, False, cv2, np)
                 raise ValueError(
                     "robot-camera body extends outside bin ROI for normal and 180-degree attitudes")
+            candidate_bases[item["index"]] = item_in_base[:3, 3]
             draw_pick_geometry(overlay, item["rectangle"], cv2, np)
             draw_robot_camera_footprint(
                 overlay, context, attitude.selected_camera_footprint_xy,
@@ -691,7 +686,6 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 "accepted_depth_count": good, "rejected_depth_count": total - good,
                 "pixel": center.tolist(),
                 "planned_link6_matrix": attitude.planned_link6.tolist(),
-                "nearby_depth_filter": nearby_evidence,
                 "robot_camera_clearance": {
                     "mirrored": attitude.mirrored,
                     "normal_platform_xy": list(attitude.normal_camera_platform_xy),
@@ -720,10 +714,30 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                                      max(22, round(float(center[1])) - 15)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     candidates.sort(key=lambda c: (c["center_distance"], -c["confidence"], c["source_index"]))
+    ranked, candidates = candidates, []
+    for index, candidate in enumerate(ranked):
+        if candidate_limit is not None and len(candidates) == candidate_limit:
+            if unchecked is not None:
+                unchecked.extend(entry["source_index"] for entry in ranked[index:])
+            break
+        # Select in final rank order, then scan nearby depth only until the
+        # requested batch is full. Later geometric candidates stay unchecked.
+        if scene_depth is None:
+            scene_depth = usable_scene_depth(depth_mm, context, quality, cv2, np)
+        source_id = candidate["source_index"]
+        nearby_checks[source_id] = {}
+        try:
+            candidate["nearby_depth_filter"] = nearby_depth_check(
+                scene_depth, candidate_bases[source_id], geometry, np,
+                visualization=nearby_checks[source_id])
+        except ValueError as exc:
+            rejected.append({"source_index": source_id, "reason": str(exc)})
+            continue
+        candidates.append(candidate)
     if candidate_limit is not None:
-        # Render from the untouched pair AFTER ranking/capping. Only the chosen
+        # Render from the untouched pair AFTER acquisition. Only the chosen
         # items get pick annotations; blocked nearby checks remain diagnostic.
-        chosen = candidates[:candidate_limit]
+        chosen = candidates
         by_id = {item["index"]: item for item in objects}
         chosen_objects = [by_id[c["source_index"]] for c in chosen]
         overlay = (shade_masks(rgb, [o["polygon"] for o in chosen_objects], cv2, np)
@@ -756,12 +770,9 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             draw_robot_camera_footprint(
                 depth_view, {**context, "camera": depth_camera},
                 attitude.selected_camera_footprint_xy, attitude.mirrored, True, cv2, np)
-        # All candidates/diagnostics still describe the uncapped valid set.
-        # The shared response builder selects the identical leading subset.
-        chosen_ids = {c["source_index"] for c in chosen}
-        visible_checks = {key: value for key, value in nearby_checks.items()
-                          if key in chosen_ids or value["blocked"]}
-        draw_nearby_depth_overlays((overlay, depth_view), context, visible_checks, cv2, np)
+        draw_nearby_depth_overlays(
+            (overlay, depth_view) if nearby_views is None else nearby_views,
+            context, nearby_checks, cv2, np)
         return overlay, depth_view, candidates, rejected
     for rank, candidate in enumerate(candidates, 1):
         cv2.putText(overlay, f"P{rank}", tuple(np.rint(candidate["pixel"]).astype(int) + [8, 20]),

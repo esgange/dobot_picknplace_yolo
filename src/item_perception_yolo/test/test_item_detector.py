@@ -89,7 +89,8 @@ def service_node(monkeypatch, tmp_path):
                      "mirrored_platform_xy": [.01, .02],
                      "selected_platform_xy": [.01, .02],
                      "rotation_from_home_deg": 0., "offset_direction": "none"}}
-    result = {"candidates": [candidate], "rejected": [], "count": 1, "inference_ms": 10.}
+    result = {"candidates": [candidate], "rejected": [], "unchecked": [],
+              "count": 1, "inference_ms": 10.}
     clearance = candidate["robot_camera_clearance"]
     clearance["body_reference_frame"] = "robot_camera_color_optical_frame"
     clearance["body_size_color_optical_m"] = [.09, .025, .03]
@@ -244,17 +245,43 @@ def test_debug_saving_does_not_expire_an_accepted_batch(service_node, monkeypatc
     assert result.success and len(result.candidates) == 1
 
 
-def test_pose_candidates_caps_returned_batch_without_adding_a_first_attempt(service_node):
+def test_pose_candidates_stops_acquisition_with_remaining_poses_unchecked(service_node):
     node, candidate = service_node
     node.infer.return_value["metadata"]["candidates"] = [
-        {**candidate, "source_index": index} for index in range(5)]
+        {**candidate, "source_index": index} for index in range(3)]
     node.infer.return_value["metadata"]["count"] = 5
+    node.infer.return_value["metadata"]["unchecked"] = [3, 4]
     result = call(node, count=3)
-    assert result.success and len(result.candidates) == 3 and result.valid_count == 5
+    assert result.success and len(result.candidates) == 3 and result.valid_count == 3
+    assert json.loads(result.diagnostics_json)["unchecked"] == [3, 4]
+    assert node.infer.call_args.kwargs["candidate_limit"] == 3
     assert [c.priority for c in result.candidates] == [1, 2, 3]
     node.pose_candidates = 2
     result = call(node, count=3)
     assert not result.success and not result.candidates and "pose_candidates" in result.message
+
+
+def test_native_acquisition_partition_never_promotes_unchecked_candidates():
+    result = {"candidates": [{"source_index": i} for i in (1, 2, 3)],
+              "rejected": [{"source_index": 0, "reason": "nearby depth obstacle"}],
+              "unchecked": [4, 5]}
+    detector.validate_candidate_selection(result, 3, source_ids=range(6))
+    for changes in ({"unchecked": [3, 4, 5]}, {"unchecked": [4, 4, 5]},
+                    {"unchecked": [True, 5]}, {"unchecked": [4]},
+                    {"candidates": result["candidates"][:2]},
+                    {"rejected": [{"source_index": 0, "reason": ""}]}):
+        with pytest.raises(RuntimeError):
+            detector.validate_candidate_selection({**result, **changes}, 3, source_ids=range(6))
+    with pytest.raises(RuntimeError):
+        detector.validate_candidate_selection(result, 2, source_ids=range(6))
+
+
+def test_provider_must_honor_acquisition_limit_before_response(service_node):
+    node, candidate = service_node
+    node.infer.return_value["metadata"]["candidates"] = [candidate] * 4
+    result = call(node, count=3)
+    assert not result.success and not result.candidates
+    assert "exceeded requested candidate acquisition count" in result.message
 
 
 def test_disarmed_busy_mismatch_count_and_no_valid_items(service_node):
@@ -373,13 +400,13 @@ def test_simulation_uses_real_batch_rules_and_never_arms(service_node, armed, va
     service = node.service
     node.last_view = {"old": "preview must not become a request"}
     node.infer.return_value["metadata"].update(
-        candidates=[{**candidate, "source_index": i} for i in range(valid_count)],
-        count=valid_count)
+        candidates=[{**candidate, "source_index": i} for i in range(min(3, valid_count))],
+        count=valid_count, unchecked=list(range(3, valid_count)))
     result = simulate(node)
     response = result["response"]
     assert response.success and response.status == status
     assert len(response.candidates) == min(3, valid_count)
-    assert response.valid_count == valid_count
+    assert response.valid_count == min(3, valid_count)
     assert result["view"]["metadata"] is node.infer.return_value["metadata"]
     assert result["view"]["simulation_profile"] == ("profile.yaml", "a"*64)
     assert node._snapshot.call_args.args[0] == 100_200_000_000

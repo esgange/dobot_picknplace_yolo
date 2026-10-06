@@ -151,8 +151,12 @@ ros2 launch item_perception_yolo item_teach.launch.py
    radius and at least that high above the detected item surface. Exclude
    `motion.standoff_height` from this obstacle reference; it only compensates robot
    motion. Distances use robot-base XY/Z, not camera depth or
-   platform-normal height. This check runs before candidate ranking/capping in
-   clicked poses, teaching preview, Simulate Trigger and headless requests.
+   platform-normal height. Rank geometrically eligible poses first, then check
+   nearby height one candidate at a time. Skip each blocked candidate and stop
+   when `pose_candidates` (or the request's smaller count) have passed. Stop with
+   SHORTAGE/NO_VALID_ITEMS if exhausted. Leave remaining poses unchecked. Clicked
+   inspection checks only the selected item; teaching preview, Simulate Trigger
+   and headless acquisition share the ranked batch logic.
    Save/load the exact complete
    item profile, then **Armed ON**
    to advertise `/item_detect/get_item_poses`. OFF removes the service. GUI and
@@ -165,7 +169,7 @@ After an automatic model load, Item Teach enables YOLO preview when its
 camera/settings are ready. Available model selections restored at startup also
 load, while arming remains explicit. At most once per second, one worker job runs YOLO,
 then reuses that exact RGB/depth/TF observation for a calibrated colored 10 mm
-voxel cloud and every valid candidate. Slow processing lowers the rate; jobs
+voxel cloud and the validated candidate batch. Slow processing lowers the rate; jobs
 never accumulate or catch up. There is no second YOLO prediction, additional
 executor or automatic image saving.
 
@@ -174,7 +178,7 @@ executor or automatic image saving.
 | `PointCloud2` | `/item_teach/voxel_cloud` | Valid depth view including bin surroundings, 10 mm centroids with averaged original RGB, `base_link`, source stamp |
 | `MarkerArray` | `/item_teach/valid_items` | All valid pose XYZ axes, without text/number overlays |
 | TF | `base_link -> item_teach_live_candidate_N` | Frame-local ranked item poses; 1 Hz, not tracked identities |
-| `String` JSON | `/item_teach/rviz_diagnostics` | Source timestamps/age, voxel count, every candidate and rejection reason |
+| `String` JSON | `/item_teach/rviz_diagnostics` | Source timestamps/age, voxel count, checked candidates, rejection reasons and unchecked source IDs |
 
 The canonical `dobot_rviz` configuration enables the cloud and marker displays.
 Cloud transport is reliable, transient-local, depth one; markers/diagnostics
@@ -183,8 +187,11 @@ distortion models. Complete platform/camera transforms preserve station tilt
 and height. Only visualization
 points are voxelized: pose depth sampling stays full resolution and retains
 class, dimensions, green/light-blue borders, MAD/quality and robot-camera
-clearance checks. All valid poses up to YOLO `max_detections` are included;
-production `pose_candidates` does not truncate this preview. Selected classes,
+clearance checks. Nearby scans stop once `pose_candidates` valid poses are found;
+only these fully checked poses receive TF/markers. Remaining geometric candidates
+appear as `unchecked` source IDs in diagnostics and a count in the UI, never as
+validated poses or rejections. All-class RGB size annotations remain visible.
+Selected classes, a valid `pose_candidates` count,
 dimensions, recorded Home, pick rotation and standoff are required for valid
 poses. With incomplete pose settings or YOLO OFF, the calibrated cloud can still
 run and the view explains which pose prerequisites are missing.
@@ -267,12 +274,13 @@ returns to live automatically. Queue/inference time does not consume this hold;
 the headings show a countdown. Click RGB to resume sooner. Each replacement
 simulation starts a new hold; the timer also applies to empty results. Ordinary
 clicked-item inspection keeps its click-to-resume lifetime.
-The frozen images contain **only returned candidates**,
+The frozen images give pick annotations to **only returned candidates**,
 ranked P1…Pn and capped by `retry.pose_candidates`. Retain their mask shading,
 one green rectangle, X/Y axes, center dot, cyan metric sampling rings, black/red
 accepted/rejected depth pixels, the green loaded bin ROI and any configured
-light-blue pick clearance. Rejected or excess
-valid objects leave no overlays behind. Null depth is excluded before MAD; it
+light-blue pick clearance. Nearby-blocked candidates retain their diagnostic
+circles/points/labels; unchecked later candidates have no pick or nearby overlays.
+Null depth is excluded before MAD; it
 never contributes to the pose. Top bands report counts, source age and the first
 three poses in platform_reference (XYZ, yaw, size and depth counts); all returned
 poses have on-image priority labels and full details in the bounded Activity log.
@@ -294,7 +302,8 @@ It also stops simulated TF/pose-guide publication after the same 10-second hold
 using monotonic time independently of Qt or ROS clock changes. Expiry clears only
 the teaching visualization, leaving armed services and real candidate batches valid.
 SHORTAGE and NO_VALID_ITEMS are explicit successful outcomes; zero items freezes
-just the pair/bin ROI and publishes no candidate frames. ROS/RViz can retain old
+the pair/bin ROI plus any measured nearby rejection and publishes no candidate frames.
+ROS/RViz can retain old
 TF frames in their buffers until timeout/reset after publication stops.
 
 Click RGB to cancel/resume; image margins and status bands do nothing. Settings,
@@ -677,8 +686,10 @@ blocking service request. All native operations are serialized in one worker.
   and the same snapshot's complete optical-to-base transform. Use original pixels,
   including outside the candidate mask and green bin ROI. No global MAD, minimum
   cluster count, subsampling or RViz voxels apply to this check. Build that scene
-  once per batch; evaluate each detected item's base-XY circle and base-Z surface
-  height, before standoff. Rejections identify the depth pixel, horizontal distance
+  once, lazily when the first ranked geometric candidate needs a nearby check.
+  Evaluate base-XY radius/base-Z surface height in rank order until the requested
+  number pass; skip blocked candidates and never scan later unneeded candidates.
+  The reference remains before standoff. Rejections identify the depth pixel, horizontal distance
   and height above the item surface. Native candidates carry validated radius/height/
   count and `maximum_height_above_item_mm` evidence. Old Link6-relative evidence is
   rejected. Restart Item Teach/headless workers together after this change; saved
@@ -697,8 +708,10 @@ blocking service request. All native operations are serialized in one worker.
   Live all-class preview keeps its existing size/class annotations; click an
   item to isolate this diagnostic on the same frozen observation. Simulate Trigger
   and requested debug PNG pairs show the same diagnostics. Capped production
-  images retain blocked nearby checks, including empty batches, while valid
-  candidates excluded by the cap receive no annotations of their own.
+  images retain blocked nearby checks, including empty batches, while
+  unchecked later candidates receive no annotations of their own. The worker
+  explicitly reports their source IDs in `unchecked`; they are neither valid
+  poses nor rejected candidates. `valid_count` is the checked returned count.
   The native worker reuses its existing 1 Hz teaching pose calculation; there is
   no additional inference, cloud resampling, pose request, thread or hardware
   command. Invalidated worker results cannot update the displayed images. Restart

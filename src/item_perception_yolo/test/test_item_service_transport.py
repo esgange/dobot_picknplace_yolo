@@ -99,12 +99,13 @@ def exercise_service():
 
         def infer(rgb, depth, context, **_):
             observed.append((rgb["stamp_ns"], depth["stamp_ns"], context))
-            candidate = {"source_index": 0, "class_id": 1, "class_name": "part", "confidence": .9,
-                "position": [.01,.02,.1], "quaternion": [0.,0.,0.,1.], "length": .1,
+            candidate = {
+                "source_index": 0, "class_id": 1, "class_name": "part", "confidence": .9,
+                "position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.], "length": .1,
                 "width": .05, "center_distance": .02, "filtered_camera_depth": .7,
                 "depth_sigma": .001, "accepted_depth_count": 100, "rejected_depth_count": 2}
             return {"metadata": {"count": 1, "candidates": [candidate], "rejected": [],
-                                  "inference_ms": 1.}}
+                                 "unchecked": [], "inference_ms": 1.}}
         detector.infer = infer
         start = sensor.get_clock().now().nanoseconds
         future = client.call_async(GetItemPoses.Request(

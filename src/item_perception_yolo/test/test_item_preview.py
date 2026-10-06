@@ -368,7 +368,7 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         # Default teaching RViz operation reuses this exact pair/detection without
         # another prediction, model argument or production pose request.
         visualization = {"operation": "teaching_rviz", "generation": 2,
-                         "nearby_overlay": False,
+                         "nearby_overlay": False, "candidate_limit": 3,
                          "width": 320, "height": 240, "context": header["context"],
                          "base_from_platform": header["context"]["pick_planning"][
                              "base_from_platform"], "quality": dict(QUALITY_DEFAULTS),

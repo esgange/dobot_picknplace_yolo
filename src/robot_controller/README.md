@@ -1170,7 +1170,10 @@ This pick-pose body check does not model mounts/cables or the swept travel path.
 Item Teach schema 12 also requires the nearby depth radius/height settings
 (defaults 150/60 mm). The detector rejects any candidate with a usable depth
 point within/on its base-XY radius and at least the configured base-Z height above
-the detected item surface, excluding standoff, before ranking. Hardware and Preview receive
+the detected item surface, excluding standoff. During acquisition the detector ranks
+geometrically eligible candidates, then checks nearby height one by one until the
+requested number pass or all are exhausted. Blocked candidates are skipped; later
+unneeded candidates remain unchecked. Hardware and Preview receive
 only the filtered profile-bound batch; the controller has no depth subscription
 or separate scene scan. Open older profiles in Item Teach, review the proposed
 new defaults, Save and manually redeploy/reload matching profiles. Motion and

@@ -13,6 +13,14 @@ axis. It is not measured surface tilt or a robot TCP command. Robot Controller
 uses local X only as an undirected gripper-heading line while retaining its
 taught tool-Z attitude.
 
+Acquisition ranks geometrically eligible poses first, then checks nearby depth
+in rank order. Skip blocked candidates and stop when `max_candidates` pass or
+the list is exhausted. `valid_count` equals the number of fully checked returned
+poses; it is not an exhaustive count of all usable objects in the image.
+`diagnostics_json.unchecked` lists the remaining geometric source indices whose
+nearby-height check was not needed. These are neither returned poses nor failures.
+The controller receives the same checked retry batch without a per-pick scan.
+
 Requests must set `pose_convention` to the generated request constant
 `POSE_CONVENTION` (`item_short_x_long_y_v1`). Successful replies repeat that
 value in `diagnostics_json`; Robot Controller requires an exact match before

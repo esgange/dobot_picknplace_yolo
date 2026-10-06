@@ -66,9 +66,12 @@ def teaching_rviz(request, data, cv2, np):
     cloud = colored_voxels(rgb, depth, request["context"], request["base_from_platform"],
                            quality, cv2, np)
     settings = request["settings"]
-    candidates, rejected = [], []
+    candidates, rejected, unchecked = [], [], []
     if settings is not None:
         validate_detection_settings(settings, geometry_required=True)
+        limit = request["candidate_limit"]
+        if type(limit) is not int or not 1 <= limit <= settings["yolo"]["max_detections"]:
+            raise RuntimeError("Invalid teaching candidate acquisition count")
         objects = []
         for item in request["detections"]:
             rectangle = np.asarray(item["rectangle"], dtype=np.float32)
@@ -81,11 +84,13 @@ def teaching_rviz(request, data, cv2, np):
                             "class_name": item["class_name"], "confidence": item["confidence"],
                             "polygon": polygon, "rectangle": rectangle,
                             "center": rectangle.mean(axis=0)})
-        # No pose_candidates truncation: include every valid object from this YOLO result.
+        # Match acquisition: stop nearby scans once the taught batch is full.
         _, _, candidates, rejected = generate_candidates(
-            objects, rgb, depth, request["context"], settings, cv2, np, nearby_views=views)
+            objects, rgb, depth, request["context"], settings, cv2, np, nearby_views=views,
+            candidate_limit=limit, unchecked=unchecked)
     result = {"state": "ok", "generation": request["generation"],
               "nearby_overlay": overlay_requested,
-              "point_count": len(cloud), "candidates": candidates, "rejected": rejected}
+              "point_count": len(cloud), "candidates": candidates, "rejected": rejected,
+              "unchecked": unchecked}
     return result, cloud.tobytes() + (b"" if views is None else b"".join(
         view.tobytes() for view in views))

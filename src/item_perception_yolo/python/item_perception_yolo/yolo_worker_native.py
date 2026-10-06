@@ -235,6 +235,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
             if results[0].obb is not None or model.task == "obb":
                 available.append("obb")
             candidates, rejected, depth_view, detections = [], [], None, []
+            unchecked = []
             roi_status = {"visible": False, "reason": "No calibrated bin ROI applied"}
             if preview:
                 from .item_geometry import (
@@ -284,13 +285,13 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 limit = request.get("candidate_limit")
                 if limit is not None and (type(limit) is not int
                                           or not 1 <= limit <= settings["max_detections"]):
-                    raise RuntimeError("Invalid requested candidate overlay count")
+                    raise RuntimeError("Invalid requested candidate acquisition count")
                 objects = objects_from_result(results[0], request["settings"]["geometry_source"],
                                               names, settings["max_detections"], cv2, np)
                 depth = np.frombuffer(data[rgb_bytes:], dtype="<u2").reshape(height, width)
                 overlay, depth_view, candidates, rejected = generate_candidates(
                     objects, rgb, depth, context, request["settings"], cv2, np,
-                    candidate_limit=limit)
+                    candidate_limit=limit, unchecked=unchecked)
                 roi_status = draw_bin_roi(overlay, context, "", cv2, np)
                 draw_bin_clearance(overlay, context, request["settings"]["bin_clearance"],
                                    cv2, np)
@@ -299,6 +300,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 "height": height, "count": count, "task": model.task,
                 "inference_ms": round((time.monotonic() - start) * 1000, 1),
                 "geometry_sources": available, "candidates": candidates, "rejected": rejected,
+                "unchecked": unchecked,
                 "has_depth_view": depth_view is not None,
                 "detections": detections,
                 "roi_overlay": roi_status,

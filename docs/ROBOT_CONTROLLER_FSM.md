@@ -1,9 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Ranked nearby-depth acquisition: **2026-10-06**, baseline **`15642f9`** plus rule
+**236**. The detector first ranks geometrically eligible poses, then checks nearby
+height one by one. Skip blocked candidates and stop when the requested number
+pass (for example, three), or exhaust the list. Only checked poses go to the
+controller; later geometric candidates are explicitly unchecked. `valid_count`
+is the returned checked count. Live teaching uses the same taught batch limit;
+clicked inspection checks one item. No new controller service, per-attempt
+depth scan, motion wait, retry rule or candidate-ledger change is introduced.
+
 Nearby-obstacle reference correction: **2026-10-06**, baseline **`32ca95d`** plus
 rule **234**. The shared item detector measures obstacle height above the detected
 item surface in base Z, excluding standoff. Within the saved base-XY radius, any
-usable point at/above the saved height rejects before ranking. The latest collision
+usable point at/above the saved height rejects during ranked acquisition. The latest collision
 candidate's recorded maximum was 8.616 mm above Link6 plus 70 mm standoff, or
 78.616 mm above the item: it now fails the saved 50 mm limit. All pose-generation
 paths share this reference; native evidence uses `maximum_height_above_item_mm`
@@ -55,7 +64,7 @@ remains in place.
 
 Nearby-depth eligibility review: **2026-10-06**, baseline **`f717319`** plus rule
 **229**. Schema-12 Item Teach profiles require a nearby radius/height (defaults
-150/60 mm). Before ranking, the shared detector rejects a candidate if any usable
+150/60 mm). During ranked acquisition, the shared detector rejects a candidate if any usable
 original depth pixel lies inside/on that base-XY radius and at least that base-Z
 height above the detected item surface, excluding standoff (rule 234). Include outside-mask/ROI
 points, with depth-range validation and the original depth CameraInfo/transform;
@@ -729,7 +738,7 @@ typed status and failed service responses include the complete guidance.
 ```mermaid
 flowchart TD
     Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible poses retained after interruption or Return Item?"}
-    Saved -->|No| Detect["Fresh item poses before Home; detector filters nearby height above item surface before ranking; optional debug images"]
+    Saved -->|No| Detect["Fresh item batch before Home; rank poses then check nearby height until requested count passes; optional debug images"]
     Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
     Reuse --> Entry
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
@@ -1451,7 +1460,7 @@ Names below are relative to `/robot_controller/`.
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
-| Pick nearby-depth eligibility (perception) | No usable original depth point within/on the saved base-XY radius reaches the saved base-Z height above detected item surface, excluding standoff; schema-12 defaults 150/60 mm; filtered before ranking and consumed as a profile-bound batch |
+| Pick nearby-depth eligibility (perception) | No usable original depth point within/on the saved base-XY radius reaches the saved base-Z height above detected item surface, excluding standoff; schema-12 defaults 150/60 mm; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |

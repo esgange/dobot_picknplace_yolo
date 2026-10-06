@@ -13,7 +13,7 @@ from std_msgs.msg import String
 from tf2_ros import TransformException
 from visualization_msgs.msg import Marker, MarkerArray
 
-from .item_detector import validate_pair, validate_candidates
+from .item_detector import validate_pair, validate_candidates, validate_candidate_selection
 from .pose_guides import pose_guide_markers
 
 
@@ -98,6 +98,7 @@ class TeachingRvizPreview:
                       "width": rgb["width"], "height": rgb["height"], "context": context,
                       "base_from_platform": applied.platform.base_from_platform.tolist(),
                       "quality": options["quality"], "settings": options["settings"],
+                      "candidate_limit": options["candidate_limit"],
                       "detections": view.get("metadata", {}).get("detections", [])}
             payload = rgb["rgb"] + depth["depth"]
             if overlay_requested:
@@ -106,7 +107,7 @@ class TeachingRvizPreview:
                 header, payload, options["quality"]["request_timeout_sec"])
             try:
                 if (set(result) != {"state", "generation", "point_count", "candidates", "rejected",
-                                    "nearby_overlay"}
+                                    "nearby_overlay", "unchecked"}
                         or result["state"] != "ok" or result["generation"] != epoch
                         or result["nearby_overlay"] is not overlay_requested
                         or type(result["point_count"]) is not int
@@ -114,24 +115,20 @@ class TeachingRvizPreview:
                         or len(data) != result["point_count"] * 16 + (
                             len(rgb["rgb"]) * 2 if overlay_requested else 0)
                         or type(result["candidates"]) is not list
-                        or type(result["rejected"]) is not list):
+                        or type(result["rejected"]) is not list
+                        or type(result["unchecked"]) is not list):
                     raise RuntimeError("Malformed RViz preview response")
                 cloud_end = result["point_count"] * 16
                 points = np.frombuffer(data[:cloud_end], "<f4").reshape(-1, 4)
                 if not np.isfinite(points[:, :3]).all():
                     raise RuntimeError("Non-finite RViz point cloud")
                 if options["settings"] is None:
-                    if result["candidates"] or result["rejected"]:
+                    if result["candidates"] or result["rejected"] or result["unchecked"]:
                         raise RuntimeError("Unexpected RViz poses without valid settings")
                 else:
                     validate_candidates(result, options["settings"])
                     ids = {entry["source_index"] for entry in header["detections"]}
-                    actual = [entry["source_index"]
-                              for entry in result["candidates"] + result["rejected"]]
-                    if (len(actual) != len(ids) or set(actual) != ids
-                            or any(type(entry["reason"]) is not str or not entry["reason"]
-                                   for entry in result["rejected"])):
-                        raise RuntimeError("RViz candidate/rejection identities changed")
+                    validate_candidate_selection(result, options["candidate_limit"], source_ids=ids)
             except (ValueError, KeyError, TypeError, RuntimeError) as exc:
                 node.native.failed = True
                 node.native.close()
@@ -209,7 +206,8 @@ class TeachingRvizPreview:
             "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
             "refresh_age_sec": max(0., time.monotonic() - self.displayed_at),
             "voxel_size_mm": 10, "point_count": sample["point_count"],
-            "candidates": [], "rejected": [], "pose_error": self.waiting_reason})))
+            "candidates": [], "rejected": [], "unchecked": [],
+            "pose_error": self.waiting_reason})))
 
     def tick(self):
         """Keep the cached cloud, greying it when refresh stops or its sources invalidate."""
@@ -287,4 +285,5 @@ class TeachingRvizPreview:
                 "voxel_size_mm": 10, "point_count": sample["point_count"],
                 "blue_guide": "upward_surface_normal_not_pose_z",
                 "candidates": sample["candidates"], "rejected": sample["rejected"],
+                "unchecked": sample["unchecked"],
                 "pose_error": sample["pose_error"]}, allow_nan=False)))

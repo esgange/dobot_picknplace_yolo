@@ -40,8 +40,8 @@ Item overlays keep mask shading, one mask-derived rectangle (or native OBB),
 short-X/long-Y centered axes and a pick dot, with no extra axis-aligned YOLO box.
 The green bin border coexists with detections and also works with YOLO OFF.
 The canonical RViz viewer also displays Item Teach's default 1 Hz colored 10 mm
-scene voxel cloud and all valid detected-item pose frames/markers. Complete the
-class, geometry, Home and planning settings for poses; missing settings have a
+scene voxel cloud and the checked candidate batch's pose frames/markers. Complete the
+class, geometry, Home, planning and `pose_candidates` settings for poses; missing settings have a
 visible reason. Pose sampling uses full-resolution depth. Slow inference reduces
 the rate without queuing work. The latest cloud stays visible indefinitely,
 turning grey after five seconds without new validated voxel data; a fresh
@@ -75,8 +75,9 @@ preserves the exact saved value.
 Armed exposes the pose service only for an exact saved profile with valid inputs.
 The main row now includes **Simulate Trigger** between YOLO Detect and Armed.
 After saving a complete profile and enabling YOLO, use it to freeze a fresh
-RGB/depth pair showing only the ranked candidates a request would return, capped
-by `pose_candidates`, with the bin border. It uses production filters, works
+RGB/depth pair showing the ranked candidates a request would return, with the bin
+border and measured nearby-obstacle rejections. Nearby checks run in rank order
+until `pose_candidates` pass; remaining candidates stay unchecked. It uses production filters, works
 with Armed OFF and never commands the robot. SHORTAGE/NO_VALID_ITEMS are explicit;
 click RGB again to resume. The armed service never returns a frozen preview batch.
 See the README for headless `item_detect.launch.py`, quality limits and the

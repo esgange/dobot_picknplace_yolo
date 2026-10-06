@@ -9417,6 +9417,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Python package and verify its import; keep the live private native runtime
   untouched rather than rebuilding/re-extracting it beneath a running worker.
 
+### 2026-10-06 — Rule 236: stop nearby scans when acquisition is complete
+
+- User clarified that the optimization belongs to candidate acquisition: choose
+  candidates in rank order, measure nearby depth, skip failures and continue until
+  three (or the requested configured count) pass, then send those poses to the
+  controller. Do not add a controller-time scan or inspect every unused candidate.
+- Separate ordinary class/size/depth/ROI/camera-body geometry from nearby-height
+  checking. Retain exact centroid-distance, descending-confidence, source-index
+  ranking. Lazily back-project the original depth scene once when the first
+  geometric candidate needs checking, then stop scanning immediately when the
+  requested number pass. With no ordinary candidates, never build that scene.
+  Preserve original usable-point coverage, inclusive radius/height, item-surface
+  reference before standoff, pose values and all existing eligibility conditions.
+- Native production/teaching results explicitly distinguish checked candidates,
+  rejections and remaining `unchecked` source indices. Validate disjoint identities,
+  complete source coverage and requested count; unchecked leftovers are only
+  legal when the requested batch is full. Every returned candidate still requires
+  successful nearby evidence. Report `valid_count` as the checked returned count,
+  without claiming an exhaustive count of usable items in the image. Preserve
+  SHORTAGE/NO_VALID_ITEMS when the ranked list is exhausted and the same ROS fields.
+- Live Item Teach/RViz uses the taught pose_candidates limit, superseding the old
+  all-valid-poses preview. Retain all-class size imagery; only checked candidates
+  get pose TF/markers and nearby diagnostics. Report unchecked counts/IDs in the
+  live UI, simulated result and diagnostics. Editing the count invalidates old
+  preview and uses the existing 300 ms edit debounce. Clicking any item still
+  checks that one selected snapshot item independently. Tested nearby failures
+  keep their visualization; later unneeded candidates never get a pass label.
+- Validation: isolated Item Perception build passes. The complete item/controller/
+  tray suite passes **2028 tests**, no failures/skips. Instrumented native checks
+  prove reversed detector order is reranked: first blocked plus three safe requires
+  four scans, first three safe requires three scans, and no later scan occurs.
+  Cover smaller requests, exhaustion/shortage, one scene build, no unused scene,
+  unmeasured obstacle not annotated, strict unchecked partitions, live count edits,
+  synthetic service transport and unchanged controller behavior. Changed-line
+  lint and whitespace checks pass. No camera or physical robot test was performed.
+- Update AGENTS, root/item/interface/controller documentation and the FSM's
+  acquisition description. Regenerate nine HTML/PDF diagrams, verify source hashes
+  and inspect the Pick page. FSM SHA-256:
+  895ff327f7f96a63d7553bfbae10d232e36143268d8a221c588e1f14be433edb.
+  Canonical installed Python links resolve to updated sources. Restart Item Teach/
+  Item Detect to load the strict updated native protocol; no controller motion,
+  queue, retry, schema or teach-setting change, new inference/service/thread,
+  hardware command, automatic restart/deployment or offline-transfer milestone.
+  Preserve operator artifacts and unrelated RViz edits.
+
 ### Future entry template
 
 ```text

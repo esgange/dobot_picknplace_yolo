@@ -595,8 +595,12 @@ Item Teach section **4  Item size / pick depth** adds **Nearby depth radius filt
 horizontal radius and at least that far above the detected item surface, measured
 in robot-base XY/Z. Standoff/tool-length compensation is excluded from this check.
 Include points outside the item mask/bin ROI; the check is independent of RViz
-voxels and runs before ranking in
-teaching and headless detection. Schema 12 saves these as
+voxels. First rank candidates that pass the ordinary geometry checks, then measure
+nearby height in that order. Skip blocked candidates and stop immediately once
+the requested number pass (for example, three), or the ranked list is exhausted.
+Later candidates stay unchecked; the controller receives only checked poses.
+Teaching preview, Simulate Trigger and headless detection share this sequence.
+Schema 12 saves these as
 `geometry.nearby_depth_radius_mm` and `geometry.nearby_depth_height_mm`.
 Older profiles open as recovery drafts proposing the new defaults for review.
 Save and manually redeploy the pair, then reload all consumers; runtime readers
@@ -612,6 +616,10 @@ these overlays, including blocked items when no valid poses remain. Enable
 **Save item/tray debug RGB/depth** on the controller to save request images.
 The existing 1 Hz teaching snapshot supplies the overlays without another YOLO
 prediction. Restart Item Teach/headless Item Detect after updating their workers.
+The preview uses `pose_candidates` as its acquisition limit and reports how many
+remaining candidates were left unchecked. Clicking an unchecked item measures
+that selected item only. `valid_count` reports validated returned poses, not an
+exhaustive count of every potentially usable item in the image.
 
 Item Teach schema 12 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured

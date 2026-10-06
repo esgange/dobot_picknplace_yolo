@@ -624,7 +624,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         retry.addRow("pose_candidates", limit)
         explanation = QtWidgets.QLabel(
             "Maximum ranked poses requested for the controller to use for retries.\n"
-            "YOLO detection cap is separate. Robot retry execution is not implemented."
+            "Check nearby height in rank order until this many pass; leave the rest unchecked."
         )
         explanation.setWordWrap(True)
         retry.addRow(explanation)
@@ -710,7 +710,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.activity_toggle.toggled.connect(lambda checked: self.activity_toggle.setArrowType(
             QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow))
         outer.addWidget(self.status)
-        live_fields = {"confidence", "iou", "max_detections", *GEOMETRY_FIELDS,
+        live_fields = {"confidence", "iou", "max_detections", "pose_candidates", *GEOMETRY_FIELDS,
                        *BIN_CLEARANCE_FIELDS, *QUALITY_DEFAULTS}
         for key in live_fields:
             self.inputs[key].textChanged.connect(self._detection_settings_changed)
@@ -923,7 +923,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         threading.Thread(target=run, daemon=True).start()
 
     def _rviz_options(self):
-        options = {"settings": None, "planning": None, "pose_error": "Enable YOLO for item poses"}
+        options = {"settings": None, "planning": None, "candidate_limit": None,
+                   "pose_error": "Enable YOLO for item poses"}
         try:
             options["quality"] = self._quality_settings()
             validate_quality(options["quality"])
@@ -933,11 +934,15 @@ class ItemTeachWindow(QtWidgets.QWidget):
             try:
                 settings = self._inference_settings()
                 validate_detection_settings(settings, geometry_required=True)
+                limit = self._number("pose_candidates", int)
+                if not 1 <= limit <= settings["yolo"]["max_detections"]:
+                    raise ValueError("pose_candidates must be from 1 through max_detections")
                 if self.home is None:
                     raise ValueError("Record or load Home for robot-camera clearance checks")
                 planning = self.node.pick_planning_context(
                     self.home, self._number("pick_rotation"), self._number("standoff_height"))
-                options.update(settings=settings, planning=planning, pose_error="")
+                options.update(settings=settings, planning=planning, candidate_limit=limit,
+                               pose_error="")
             except (ValueError, OSError) as exc:
                 options["pose_error"] = str(exc)
         return options
@@ -1405,7 +1410,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     self.rviz_status = (
                         f"RViz 1 Hz: {snapshot['point_count']} colored 10 mm voxels | "
                         f"{len(snapshot['candidates'])} valid poses | "
-                        f"{len(snapshot['rejected'])} rejected")
+                        f"{len(snapshot['rejected'])} rejected | "
+                        f"{len(snapshot['unchecked'])} nearby unchecked")
                     if snapshot["pose_error"]:
                         self.rviz_status += " | Poses waiting: " + snapshot["pose_error"]
                 self.preview_error = ""
@@ -1571,6 +1577,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 "RViz TF: base_link → item_teach_candidate_1"
                 + (f"…{count}" if count > 1 else "") + " (frozen)" if count else
                 "RViz TF: no candidate frames (empty batch)")
+            if metadata.get("unchecked"):
+                batch_lines.append(f"Nearby unchecked: {len(metadata['unchecked'])} "
+                                   "remaining candidates; requested batch is complete")
             for candidate in batch.candidates[:3]:
                 batch_lines.append(self._batch_candidate_text(candidate))
             camera_rejections = [entry for entry in metadata.get("rejected", [])

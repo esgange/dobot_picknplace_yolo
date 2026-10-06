@@ -46,6 +46,7 @@ def snapshot():
             "depth_stamp_ns": 100_000_000_000, "quality": dict(QUALITY_DEFAULTS),
             "base_from_platform": np.eye(4).tolist(), "point_count": 1,
             "data": bytes.fromhex("0000803f000000400000404078563400"), "pose_error": "",
+            "unchecked": [5, 6],
             "candidates": [{"position": [.1 * i, 0., .1], "quaternion": [0., 0., 0., 1.],
                             "class_name": "part", "confidence": .9} for i in range(4)],
             "rejected": [{"source_index": 4, "reason": "synthetic depth rejection"}]}
@@ -99,6 +100,7 @@ def test_all_frames_markers_cloud_and_diagnostics_share_snapshot(preview):
     assert all(m.lifetime.sec == 2 for m in markers[1:])
     diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
     assert diagnostic["rejected"] == snapshot()["rejected"]
+    assert diagnostic["unchecked"] == [5, 6]
     assert len(diagnostic["candidates"]) == 4 and diagnostic["voxel_size_mm"] == 10
     clock[0] += .1
     visual.publish(snapshot())  # Completed job cannot bypass the 1 Hz publishing bound.
@@ -251,10 +253,10 @@ def test_exact_observation_used_without_second_yolo_or_production_request(previe
     view = {"metadata": {"detections": []}, "observation": {
         "epoch": 3, "camera_generation": 4, "rgb": node._image, "depth": node._depth,
         "context": context, "error": ""}}
-    options = {"quality": dict(QUALITY_DEFAULTS), "settings": None,
+    options = {"quality": dict(QUALITY_DEFAULTS), "settings": None, "candidate_limit": None,
                "planning": None, "pose_error": "Select item settings"}
     node.native.call.return_value = ({"state": "ok", "generation": 3, "point_count": 0,
-                                      "nearby_overlay": False,
+                                      "nearby_overlay": False, "unchecked": [],
                                       "candidates": [], "rejected": []}, b"")
     result = visual.compute(view, options)
     assert result["stamp_ns"] == node._image["stamp_ns"]
@@ -278,10 +280,10 @@ def test_corrupt_native_cloud_is_terminal(preview):
     visual, node, _ = preview
     view = {"observation": {"epoch": 3, "camera_generation": 4, "rgb": node._image,
                             "depth": node._depth, "context": {}, "error": ""}}
-    options = {"quality": dict(QUALITY_DEFAULTS), "settings": None,
+    options = {"quality": dict(QUALITY_DEFAULTS), "settings": None, "candidate_limit": None,
                "planning": None, "pose_error": ""}
     node.native.call.return_value = ({"state": "ok", "generation": 3, "point_count": 1,
-                                      "nearby_overlay": False,
+                                      "nearby_overlay": False, "unchecked": [],
                                       "candidates": [], "rejected": []}, b"truncated")
     with pytest.raises(RuntimeError, match="Invalid native RViz"):
         visual.compute(view, options)
@@ -298,14 +300,15 @@ def test_nearby_overlay_updates_only_its_validated_source_view(preview, invalida
                 "depth": node._depth, "context": {
                     "camera": node._color_info, "depth_camera": node._depth_info}, "error": ""}}
     options = {"quality": dict(QUALITY_DEFAULTS), "settings": {"yolo": {"max_detections": 20}},
-               "planning": {}, "pose_error": ""}
+               "planning": {}, "pose_error": "", "candidate_limit": 3}
     rendered_rgb, rendered_depth = bytes([19]*12), bytes([23]*12)
     cloud = snapshot()["data"]
 
     def reply(*_):
         if invalidated:
             node.arm_epoch += 1
-        return ({"state": "ok", "generation": 3, "point_count": 1, "nearby_overlay": True,
+        return ({"state": "ok", "generation": 3, "point_count": 1,
+                 "nearby_overlay": True, "unchecked": [],
                  "candidates": [], "rejected": []}, cloud + rendered_rgb + rendered_depth)
 
     node.native.call.side_effect = reply

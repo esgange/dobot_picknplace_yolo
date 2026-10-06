@@ -259,6 +259,28 @@ def validate_candidates(result, settings):
         last_key = key
 
 
+def validate_candidate_selection(result, candidate_limit, *, source_ids=None):
+    """Unchecked geometric poses are diagnostics only, never validated candidates."""
+    unchecked = result["unchecked"]
+    if (type(unchecked) is not list or any(type(index) is not int or index < 0
+                                           for index in unchecked)
+            or (unchecked and candidate_limit is None)
+            or (candidate_limit is not None and (
+                len(result["candidates"]) > candidate_limit
+                or (unchecked and len(result["candidates"]) != candidate_limit)))):
+        raise RuntimeError("Malformed candidate acquisition limit/unchecked diagnostics")
+    rejected = result["rejected"]
+    if (type(rejected) is not list or any(
+            type(entry) is not dict or set(entry) != {"source_index", "reason"}
+            or type(entry["source_index"]) is not int or entry["source_index"] < 0
+            or type(entry["reason"]) is not str or not entry["reason"] for entry in rejected)):
+        raise RuntimeError("Malformed candidate rejection diagnostics")
+    actual = [entry["source_index"] for entry in result["candidates"] + rejected] + unchecked
+    if (len(actual) != len(set(actual))
+            or (source_ids is not None and set(actual) != set(source_ids))):
+        raise RuntimeError("Candidate acquisition identities changed or overlap")
+
+
 def stamp_ns(stamp):
     if stamp.sec < 0 or not 0 <= stamp.nanosec < 1_000_000_000:
         raise ValueError("Invalid timestamp")
@@ -723,7 +745,7 @@ class ItemDetectNode(Node):
         frame_bytes = len(rgb["rgb"])
         required_fields = {"state", "generation", "width", "height", "count", "task",
                            "inference_ms", "geometry_sources", "candidates", "rejected",
-                           "has_depth_view", "detections", "roi_overlay"}
+                           "has_depth_view", "detections", "roi_overlay", "unchecked"}
         if (set(result) != required_fields
                 or result.get("width") != rgb["width"] or result.get("height") != rgb["height"]
                 or result.get("generation") != header["generation"]
@@ -744,6 +766,9 @@ class ItemDetectNode(Node):
                     or not math.isfinite(result["inference_ms"]) or result["inference_ms"] < 0):
                 raise RuntimeError("Invalid native task/source/timing diagnostics")
             validate_candidates(result, settings)
+            validate_candidate_selection(
+                result, candidate_limit,
+                source_ids=range(result["count"]) if context is not None else ())
             validate_roi_status(result["roi_overlay"])
             validate_preview_detections(result["detections"], result["count"],
                                         settings["yolo"]["class_ids"])
@@ -1046,6 +1071,8 @@ class ItemDetectNode(Node):
             view = self.infer(rgb, depth, context, timeout=max(0.001, deadline-time.monotonic()),
                               candidate_limit=request.max_candidates)
             result = view["metadata"]
+            if len(result["candidates"]) > request.max_candidates:
+                raise RuntimeError("Detector exceeded requested candidate acquisition count")
             check_active()
             self._validate_sources()
             if file_sha256(profile_path) != profile_digest:
@@ -1059,7 +1086,7 @@ class ItemDetectNode(Node):
             response.depth_stamp = Time(nanoseconds=depth["stamp_ns"]).to_msg()
             response.detected_count = result["count"]
             response.valid_count = len(result["candidates"])
-            for index, value in enumerate(result["candidates"][:request.max_candidates]):
+            for index, value in enumerate(result["candidates"]):
                 candidate = ItemCandidate()
                 candidate.id = f"{response.batch_id}:{value['source_index']}"
                 candidate.priority = index + 1
@@ -1111,6 +1138,7 @@ class ItemDetectNode(Node):
                         "platform_sha256": self.applied.platform.sha256,
                         "bin_sha256": self.bin_artifact.sha256, "snapshot_context": context,
                         "rejected": result["rejected"], "inference_ms": result["inference_ms"],
+                        "unchecked": result["unchecked"],
                         "debug_capture": debug_capture}
             response.diagnostics_json = json.dumps(evidence, allow_nan=False)
             if simulated:
@@ -1122,7 +1150,7 @@ class ItemDetectNode(Node):
                                response.message,
                                batch_id=response.batch_id, status=response.status,
                                evidence=evidence,
-                               candidates=result["candidates"][:request.max_candidates])
+                               candidates=result["candidates"])
         except Exception as exc:
             response.success, response.status, response.message = False, "ERROR", str(exc)
             response.candidates = []

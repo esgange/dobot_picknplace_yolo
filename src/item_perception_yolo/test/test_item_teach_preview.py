@@ -891,6 +891,22 @@ def finish_model_job(window):
     window._refresh_video()
 
 
+def test_live_nearby_acquisition_uses_taught_count_and_invalidates_edits(window, paired_teach):
+    window._load_dialog()
+    finish_model_job(window)
+    assert window._rviz_options()["candidate_limit"] == 3
+    window.node.last_view = {"old": "snapshot"}
+    window.inputs["pose_candidates"].setText("2")
+    assert window.node.last_view is None and window.preview_settings_paused
+    window._apply_live_detection_settings()
+    assert window._rviz_options()["candidate_limit"] == 2
+    window.inputs["pose_candidates"].setText("0")
+    window._apply_live_detection_settings()
+    options = window._rviz_options()
+    assert options["settings"] is None and options["candidate_limit"] is None
+    assert "pose_candidates" in options["pose_error"]
+
+
 @pytest.mark.parametrize("busy_preview", [False, True])
 def test_explicit_teach_load_automatically_loads_exact_pair(window, paired_teach, busy_preview):
     path, profile, settings, _, question = paired_teach

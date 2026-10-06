@@ -600,7 +600,7 @@ def exercise_candidate_batch_overlay():
         config = {**settings, "geometry_source": source}
         rgb1, depth1, valid, rejected = generate_candidates(
             objects, rgb, depth, context, config, cv2, np, candidate_limit=1)
-        assert [c["source_index"] for c in valid] == [1, 0, 2]  # Center, then confidence tie.
+        assert [c["source_index"] for c in valid] == [1]
         assert rejected == [{"source_index": 3, "reason": "class not selected"}]
         baseline_depth = render_depth(depth, config["quality"], cv2, np)
         only_rgb, only_depth, _, _ = generate_candidates(
@@ -618,7 +618,8 @@ def exercise_candidate_batch_overlay():
         assert np.allclose(valid[0]["position"], [0, 0, .1])
         rgb3, depth3, all_valid, _ = generate_candidates(
             objects, rgb, depth, context, config, cv2, np, candidate_limit=3)
-        assert valid == all_valid  # Rendering cap never changes candidate math/ranking.
+        assert [c["source_index"] for c in all_valid] == [1, 0, 2]
+        assert valid == all_valid[:1]  # Early termination keeps the same ranked prefix.
         assert not np.array_equal(rgb3[220:270, 130:230], rgb1[220:270, 130:230])
         assert not np.array_equal(depth3[220:270, 130:230], depth1[220:270, 130:230])
         # No items is a frozen raw pair + bin ROI, not all rejected-object overlays.
@@ -813,6 +814,74 @@ def exercise_nearby_depth_filter():
         raise AssertionError("Tilted geometry must still use base XY and base Z")
 
 
+def exercise_ranked_nearby_acquisition():
+    import cv2
+    import numpy as np
+    from unittest.mock import patch
+    from item_perception_yolo import item_geometry as geometry
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+    camera = {"k": [1000., 0., 320., 0., 1000., 240., 0., 0., 1.], "d": [0.] * 5}
+    transform = np.diag([1., -1., -1., 1.])
+    transform[2, 3] = .8
+    context = {"camera": camera, "depth_camera": camera,
+               "platform_from_optical": transform.tolist(),
+               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]],
+               "pick_planning": {"home_matrix": np.eye(4).tolist(),
+                                 "base_from_platform": np.eye(4).tolist(),
+                                 "link6_from_robot_camera": np.eye(4).tolist(),
+                                 "pick_rotation_deg": 0., "standoff_height_mm": 70.}}
+    settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
+                "geometry": {"nearby_depth_radius_mm": 20., "nearby_depth_height_mm": 60.,
+                             "height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.},
+                "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
+                "yolo": {"class_ids": [1], "confidence": .5}}
+    rgb = np.full((480, 640, 3), 80, np.uint8)
+    depth = np.full((480, 640), 700, np.uint16)
+    polygon = np.array([[-50, -20], [50, -20], [50, 20], [-50, 20]], np.float32)
+    items = [{"index": i, "class_id": 1, "class_name": "part", "confidence": .7,
+              "center": np.array([320.+40*i, 240.]), "polygon": polygon+[320+40*i, 240],
+              "rectangle": polygon+[320+40*i, 240]} for i in range(6)]
+    # Only candidates 0 and 5 are obstructed. Reverse detector order to prove
+    # that selection follows exact depth-derived rank rather than YOLO order.
+    depth[240, 300] = depth[240, 540] = 640
+    for limit, expected, checked, deferred in (
+            (1, [1], 2, [2, 3, 4, 5]), (3, [1, 2, 3], 4, [4, 5]),
+            (5, [1, 2, 3, 4], 6, [])):
+        unchecked = []
+        with patch.object(geometry, "nearby_depth_check",
+                          wraps=geometry.nearby_depth_check) as scan:
+            with patch.object(geometry, "usable_scene_depth", wraps=geometry.usable_scene_depth) \
+                    as scene:
+                overlay, _, candidates, rejected = geometry.generate_candidates(
+                    items[::-1], rgb, depth, context, settings, cv2, np,
+                    candidate_limit=limit, unchecked=unchecked)
+        assert [candidate["source_index"] for candidate in candidates] == expected
+        assert unchecked == deferred
+        assert scan.call_count == checked and scene.call_count == 1
+        assert np.allclose([call.args[1][0] for call in scan.call_args_list],
+                           np.arange(checked) * .028)
+        assert [entry["source_index"] for entry in rejected] == ([0, 5] if limit == 5 else [0])
+        assert all("nearby_depth_filter" in candidate for candidate in candidates)
+        assert overlay[240, 300].tolist() == [255, 0, 0]
+        assert (overlay[240, 540].tolist() == [255, 0, 0]) is (limit == 5)
+    depth[240, 300] = 700
+    with patch.object(geometry, "nearby_depth_check", wraps=geometry.nearby_depth_check) as scan:
+        unchecked = []
+        _, _, candidates, rejected = geometry.generate_candidates(
+            items[::-1], rgb, depth, context, settings, cv2, np,
+            candidate_limit=3, unchecked=unchecked)
+        assert scan.call_count == 3 and not rejected
+        assert [candidate["source_index"] for candidate in candidates] == [0, 1, 2]
+        assert unchecked == [3, 4, 5]
+    # No scene back-projection at all when ordinary geometry rejects every item.
+    with patch.object(geometry, "usable_scene_depth", side_effect=AssertionError("unused scan")):
+        _, _, candidates, rejected = geometry.generate_candidates(
+            items, rgb, depth, context,
+            {**settings, "yolo": {"class_ids": [9], "confidence": .5}}, cv2, np,
+            candidate_limit=3)
+        assert not candidates and len(rejected) == 6
+
+
 def exercise_nearby_overlay_projection():
     import cv2
     import numpy as np
@@ -870,7 +939,8 @@ def exercise_nearby_overlay_projection():
 @pytest.mark.parametrize("exercise", [
     "exercise_geometry", "exercise_registered_depth", "exercise_resolution_depth_coverage",
     "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking",
-    "exercise_nearby_depth_filter", "exercise_nearby_overlay_projection"])
+    "exercise_nearby_depth_filter", "exercise_nearby_overlay_projection",
+    "exercise_ranked_nearby_acquisition"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"
