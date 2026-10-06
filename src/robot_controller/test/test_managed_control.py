@@ -772,7 +772,8 @@ def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, co
         bin=SimpleNamespace(points=[]))
     attitude = SimpleNamespace(accepted=True, rotation=np.eye(3), offset_direction="cw",
                                rotation_from_home_deg=0., mirrored=False,
-                               selected_camera_platform_xy=(0., 0.))
+                               selected_camera_platform_xy=(0., 0.),
+                               selected_camera_footprint_xy=())
     monkeypatch.setattr(controller_module, "select_pick_attitude", lambda *_a: attitude)
     candidates = [SimpleNamespace(identifier=f"candidate{i}", position_m=(i * .1, 0., .3),
                                   quaternion=(0., 0., 0., 1.)) for i in range(count)]

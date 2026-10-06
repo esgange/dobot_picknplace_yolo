@@ -433,13 +433,21 @@ modulo-180° line directions. Every candidate independently minimizes rotation
 from Home, so retry rotations never accumulate. Platform tilt never
 becomes TCP tilt and waypoint heights remain in base Z. The latest strict
 `Link6 <- robot_camera_link` calibration is transform-only: no robot-camera
-stream is subscribed. The calibrated camera origin at the planned pick height
-must lie inside/on the green Bin ROI; otherwise the equivalent 180° tool-Z
-mirror is tested. If both are outside, the detector removes that pose before
+stream is subscribed. A 100 × 30 × 30 mm housing is centered on that camera
+origin (camera-link XYZ size 30/100/30 mm). At the planned pick height, project
+all eight rotated corners onto platform XY and require the entire outline
+inside/on the green Bin ROI; otherwise test the equivalent 180° tool-Z mirror.
+If neither body fits, the detector removes that pose before
 ranking so the next safe item is eligible, and the controller independently
 rejects a disagreement before motion. A magenta `CAM`/`CAM 180` footprint is
 shown on bin-camera RGB/depth; light blue remains pick-point-only. A confirmed
 miss advances to another candidate; Pause/Continue retries an interrupted approach.
+The read-only `robot_camera_box` node publishes a magenta CUBE marker on
+`/robot_controller/robot_camera_body`, attached to live Link6 using the same
+calibration and dimensions. GUI controller launch starts it automatically;
+`ros2 run robot_controller robot_camera_box` runs it separately for teaching.
+Canonical RViz includes the display. Reload its configuration if already open.
+This is a pick-pose footprint check, not a swept-path or full robot collision planner.
 No-I/O moves use MovL, real timed-output
 moves use non-empty MovLIO. The conditional rise for initial/shared Home uses
 RelMovLUser; item exit transits use Cartesian MovL.

@@ -1,5 +1,17 @@
 # Robot Controller — Finite State Machine
 
+Camera-body clearance review: **2026-10-06**, baseline **`cf7dea4`** plus rule
+**226**. Replace the camera-origin test with a centered 100×30×30 mm housing
+(camera-link XYZ 30/100/30 mm). At each planned pick, transform all eight corners
+through the calibrated mount and platform frame and require the projected convex
+outline inside/on green. Prefer the normal attitude, then exact tool-Z 180° mirror;
+reject if neither fits. Item Teach, headless detection, preview and hardware use
+the same pure planner; native results validate body dimensions and outlines.
+Keep blue pick-point checks independent. RGB/depth draw the actual projected
+body outline. The optional read-only robot_camera_box node displays that same
+body frame-locked to live Link6 in RViz, without new TF or robot commands. This
+checks pick-pose containment only; it is not a swept-path collision planner.
+
 Recovery ordering review: **2026-10-06**, baseline **`1ce58c9`** plus rule **225**.
 Explicit Recover requires Stop acceptance, then validates/adopts fresh gripper
 I/O without waiting for stationary joints or queue-idle feedback. Conditional
@@ -656,7 +668,7 @@ flowchart TD
     Limit -->|No| Next["Advance attempt; discard old batch"]
     Next --> Detect
     Any -->|Yes| Home["Retain poses; fresh idle + Home joints: skip queue, otherwise reach Home"]
-    Home --> Plan["Save ordered plans and PENDING ledger"]
+    Home --> Plan["Recheck full 100×30×30 mm camera footprint: normal or 180°; save ordered plans and ledger"]
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
     Sense -->|Yes| Acquire["Send Stop; await acceptance only; fresh joint pose; mark HELD"]
@@ -1337,6 +1349,7 @@ Names below are relative to `/robot_controller/`.
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
+| Pick camera-body clearance (perception / preview / hardware) | All eight corners of the centered 100 × 30 × 30 mm camera box, transformed through the planned Link6 pose and saved mounting, project inside or onto the convex green bin boundary; try normal attitude, then exact 180° tool-Z mirror; reject if neither fits |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |

@@ -8999,6 +8999,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Restart Robot Controller to apply. Preserved station artifacts, `.env` and the
   unrelated operator RViz edit.
 
+### 2026-10-06 — Rule 226: full camera housing clearance and RViz box
+
+- The user specified a 100×30×30 mm camera centered on the existing calibrated
+  camera point. Model its non-optical camera-link XYZ size as 30/100/30 mm:
+  X forward/depth, Y left/width and Z up/height. Retain the saved mounting
+  transform with no center offset, extra margin or new teach/environment setting.
+- Replace the shared origin-only test with all eight transformed housing corners
+  and their convex platform-XY outline. Require the entire footprint inside/on
+  the convex green Bin Teach quadrilateral, normal Home-relative attitude first,
+  then the existing exact 180° local-tool-Z mirror. Reject both-unsafe poses before
+  candidate ranking. Item Teach, headless Item Detect, controller preview and
+  hardware planning share this implementation, including camera/platform tilt.
+  Blue inset containment remains a separate pick-point check. This checks the
+  planned pick pose; mounts, cables and the swept travel path are not modeled.
+- RGB/depth overlays now draw the complete projected housing. Native candidate
+  evidence includes and validates body dimensions and normal/mirrored/selected
+  outlines, rejecting old point-only results. Keep source/hash bindings and
+  controller revalidation; ROS pose contracts and saved artifact schemas do not
+  change. Restart active perception/controller consumers together after updating.
+- Add optional read-only `/robot_camera_box`, publishing a translucent magenta
+  CUBE on `/robot_controller/robot_camera_body`. It uses the same dimensions and
+  controller's strict latest robot-camera calibration, frame-locked to live
+  Link6 through the saved mount; no competing camera TF or robot clients.
+  GUI controller launch starts it; headless does not. Standalone teaching use:
+  `ros2 run robot_controller robot_camera_box`. Reload calibration at 1 Hz, hide
+  invalid geometry and expire the marker after three seconds without updates.
+- Intentional vendor integration patch: add only that Marker display to
+  `src/DOBOT_6Axis_ROS2_V4/dobot_rviz/rviz/urdf.rviz` and document it in the
+  adjacent README. The upstream snapshot is unchanged. Preserve the operator's
+  existing RViz edits in the working tree and stage only the new display block.
+  Already-open RViz needs its configuration reloaded or this Marker topic added.
+- Validation: **1721 controller/item-perception tests passed**. Added boundary,
+  safe-mirror, both-unsafe, narrow-bin, rotated/tilted-body, native-protocol,
+  controller/preview agreement and marker-pose cases. Controller symlink build,
+  scoped flake8 and whitespace checks pass. An isolated ROS-domain smoke test
+  received calibrated ADD/DELETE markers at the correct size and verified the
+  display node has no service clients. No physical robot commands or production
+  process restarts were performed. `.env`, calibration and teach/model artifacts
+  remain unchanged and excluded from the commit.
+- Updated AGENTS, root/package READMEs and FSM review, Pick diagram and guard
+  table. Regenerated all nine HTML/PDF diagrams, visually checked the Pick page
+  and verified HTML/all PDF source footers against
+  `bc4cdecaa507561936c3d036530d80e9b32fe53ad1add100970f4166bf5fdd95`.
+
 ### Future entry template
 
 ```text

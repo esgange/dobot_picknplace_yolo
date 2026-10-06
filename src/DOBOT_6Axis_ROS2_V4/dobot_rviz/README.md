@@ -54,6 +54,16 @@ configuration only. The RViz fixed frame is `base_link`; the RobotModel display
 shows the CR10 and the TF display shows the robot frames plus any additional TF
 published by other local ROS nodes.
 
+The optional **Robot camera - 100 x 30 x 30 mm body** Marker display subscribes
+to `/robot_controller/robot_camera_body`. The separate read-only
+`robot_camera_box` node (started by the controller GUI launch, or with
+`ros2 run robot_controller robot_camera_box`) draws a translucent magenta box
+centered on the calibrated camera origin, with the 100 mm width along camera Y.
+It follows live Link6 TF using the same mounting pose and dimensions as camera
+clearance planning. It publishes no TF or hardware commands. Missing calibration
+hides the box; stopping the node expires it after three seconds. Reload this
+configuration or add that Marker topic to an already-open RViz window.
+
 The bundled configuration also subscribes to Item Teach's optional 1 Hz
 `/item_teach/voxel_cloud` (colored 10 mm boxes) and `/item_teach/valid_items`
 (validated pose guides without text/number overlays). These displays stay empty until

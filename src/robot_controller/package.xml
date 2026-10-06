@@ -15,6 +15,7 @@
   <depend>tray_perception_interfaces</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>dobot_msgs_v4</depend>

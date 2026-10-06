@@ -90,7 +90,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Select a new bin-camera calibration after camera movement; retain the taught
    platform and bin when the robot base, platform and bin stayed fixed. The robot-camera file
    must be strict schema 7, `camera_on_hand`, and exactly
-   `Link6 <- robot_camera_link`. It supplies only the camera-origin offset for
+   `Link6 <- robot_camera_link`. It supplies the rigid camera-body placement for
    pick clearance; no robot-camera RGB/depth/CameraInfo/TF subscription is added.
    Invalid choices leave `.env` unchanged and show the reason. Canceling a file
    dialog changes nothing. Missing or changed files never select a replacement.
@@ -480,15 +480,24 @@ candidate outside the blue/green overlay.
 The shared click, Simulate Trigger, Armed and headless candidate pipeline applies
 this before ranking; the controller receives the resulting filtered list.
 At the planned pick Link6 pose (`item Z + standoff_height`), the shared planner
-uses taught Home and the calibrated Link6-relative robot-camera origin. If the
-normal shortest pick attitude places that origin outside green, it checks the
-equivalent 180° tool-Z mirror; when neither origin is inside/on green, the item
+uses taught Home and the calibrated Link6-relative camera pose. The housing is
+a centered 100 × 30 × 30 mm box: non-optical camera-link XYZ dimensions are
+30/100/30 mm (X depth, Y width, Z height), with no center offset or added margin.
+Transform all eight corners, including camera/platform tilt, and project their
+convex outline onto platform XY. If the normal shortest attitude's entire body
+does not fit inside/on green, check the equivalent 180° tool-Z mirror; if neither fits, the item
 is rejected before ranking/capping and the next safe pose can take its place.
-Green is the robot-camera-origin constraint, independent of the blue pick-point
+Green is the robot-camera-body constraint, independent of the blue pick-point
 inset. A magenta `CAM` or `CAM 180` footprint shows the selected projected
-camera origin on both bin RGB and registered depth, with camera-clearance
-rejection reasons in result diagnostics. The camera housing is not modeled;
-allow sufficient physical margin inside the taught green ROI.
+housing outline on both bin RGB and registered depth, with camera-clearance
+rejection reasons in result diagnostics. Native result validation requires the
+same body dimensions and normal/mirrored/selected outlines, rejecting old
+point-only evidence. The same pure planner runs in headless detection and both
+controller preview and hardware planning. Restart all these processes together
+after updating. Teach-file schemas/settings and pose-service interfaces are unchanged.
+This models the housing at the pick pose, without mount/cable geometry or swept-path checks.
+The controller's optional read-only `robot_camera_box` node also displays the
+same dimensions attached to live Link6 in RViz; it never affects pose generation.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
 in robot base Z. zheight_offset is removed. GUI-only old-file recovery leaves
 old retract_height blank because its reference changed; correction/Save is

@@ -32,4 +32,7 @@ def generate_launch_description():
             package="robot_controller", executable="robot_controller_gui",
             name="robot_controller_gui", condition=UnlessCondition(headless),
             output="screen", on_exit=Shutdown(reason="Controller GUI stopped")),
+        Node(
+            package="robot_controller", executable="robot_camera_box",
+            name="robot_camera_box", condition=UnlessCondition(headless), output="screen"),
     ])

@@ -1406,7 +1406,7 @@ class RobotController(Node):
             if not attitude.accepted:
                 raise FeedbackFailure(
                     "Detector returned a candidate whose normal and 180-degree "
-                    "robot-camera attitudes are outside the Bin ROI")
+                    "robot-camera bodies extend outside the Bin ROI")
             plan = pick_targets(
                 config.home_matrix, item_pose, config.profile, index,
                 rotation=attitude.rotation)
@@ -1424,6 +1424,8 @@ class RobotController(Node):
                 robot_camera_mirrored=attitude.mirrored,
                 robot_camera_platform_xy=list(
                     attitude.selected_camera_platform_xy),
+                robot_camera_footprint_platform_xy=[list(p) for p in
+                                                   attitude.selected_camera_footprint_xy],
                 robot_camera_sha256=config.selection.robot_camera.sha256,
                 target_rpy_deg=pose_values(plan[0].matrix)[3:])
         return plans

@@ -199,7 +199,7 @@ class RobotControllerPreview(rclpy.node.Node):
                     if not attitude.accepted:
                         raise ValueError(
                             "Detector returned a candidate whose normal and 180-degree "
-                            "robot-camera attitudes are outside the Bin ROI")
+                            "robot-camera bodies extend outside the Bin ROI")
                     plan = pick_targets(
                         config.home_matrix, item_pose, config.profile, index,
                         rotation=attitude.rotation)

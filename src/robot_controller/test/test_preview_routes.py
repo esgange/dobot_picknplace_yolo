@@ -76,6 +76,28 @@ def test_home_preview_matches_both_cartesian_commands_from_actual_joint_pose(pre
     assert all(m.header.frame_id == "base_link" for m in messages)
 
 
+def test_preview_and_hardware_reject_center_inside_but_camera_housing_outside(preview, monkeypatch):
+    from item_perception_yolo.pick_planning import select_pick_attitude
+    from robot_controller.controller import RobotController
+    config = preview.config
+    config.home_matrix = np.eye(4)
+    config.selection.robot_camera.reference_from_camera_link = np.eye(4)
+    config.selection.bin.points = [SimpleNamespace(x_m=x, y_m=y)
+                                   for x, y in ((-.2, -.15), (.2, -.15),
+                                                (.2, .15), (-.2, .15))]
+    candidate = SimpleNamespace(identifier='edge', position_m=(.195, 0., .1),
+                                quaternion=(0., 0., np.sqrt(.5), np.sqrt(.5)))
+    batch = SimpleNamespace(candidates=[candidate])
+    node = SimpleNamespace(configuration=config)
+    with pytest.raises(FeedbackFailure, match='robot-camera bodies'):
+        RobotController._plan_candidate_batch(node, batch)
+    monkeypatch.setattr(preview_module, 'select_pick_attitude', select_pick_attitude)
+    preview.client.request.return_value = batch
+    result = preview.run(Preview.Request.PICK)
+    assert not result.success and 'robot-camera bodies' in result.message
+    assert not preview.targets
+
+
 def test_home_preview_skips_motion_when_already_at_cartesian_home(preview):
     preview.kinematics.forward.return_value = preview.config.home_matrix.copy()
     result = preview.run(Preview.Request.HOME)

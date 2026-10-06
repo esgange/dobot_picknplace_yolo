@@ -39,7 +39,7 @@ from .item_teach_core import (file_sha256, load_item_profile, settings_from_prof
                               validate_home, depth_coverage_ok, NEW_PROFILE_IMAGE_SIZE)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
 from .item_native_client import NativeClient
-from .pick_planning import Cr10Kinematics, rigid_matrix
+from .pick_planning import CAMERA_BODY_SIZE_M, Cr10Kinematics, rigid_matrix
 from .station_calibration import (
     latest_robot_camera_calibration, validate_robot_camera_calibration)
 from .item_teach_calibration import (
@@ -178,6 +178,9 @@ def validate_candidates(result, settings):
                 or type(clearance) is not dict
                 or set(clearance) != {"mirrored", "normal_platform_xy",
                                       "mirrored_platform_xy", "selected_platform_xy",
+                                      "body_size_camera_link_m", "normal_footprint_platform_xy",
+                                      "mirrored_footprint_platform_xy",
+                                      "selected_footprint_platform_xy",
                                       "rotation_from_home_deg", "offset_direction"}
                 or type(clearance["mirrored"]) is not bool
                 or clearance["offset_direction"] not in ("none", "cw", "ccw")
@@ -191,11 +194,26 @@ def validate_candidates(result, settings):
                                       clearance["mirrored_platform_xy"],
                                       clearance["selected_platform_xy"]))):
             raise RuntimeError("Malformed robot-camera clearance plan")
+        if clearance["body_size_camera_link_m"] != list(CAMERA_BODY_SIZE_M):
+            raise RuntimeError("Native robot-camera body dimensions differ from the shared model")
+        for key in ("normal_footprint_platform_xy", "mirrored_footprint_platform_xy",
+                    "selected_footprint_platform_xy"):
+            outline = clearance[key]
+            if (type(outline) is not list or not 3 <= len(outline) <= 8
+                    or any(type(point) is not list or len(point) != 2
+                           or any(type(v) not in (int, float) or not math.isfinite(v)
+                                  for v in point) for point in outline)):
+                raise RuntimeError("Malformed robot-camera body footprint")
         rigid_matrix(planned, "Native planned Link6 pose")
         chosen = (clearance["mirrored_platform_xy"] if clearance["mirrored"] else
                   clearance["normal_platform_xy"])
         if chosen != clearance["selected_platform_xy"]:
             raise RuntimeError("Native robot-camera footprint conflicts with selected attitude")
+        chosen_outline = clearance[("mirrored" if clearance["mirrored"] else "normal")
+                                   + "_footprint_platform_xy"]
+        if chosen_outline != clearance["selected_footprint_platform_xy"]:
+            raise RuntimeError("Native robot-camera body footprint conflicts with "
+                               "selected attitude")
         if abs(sum(v*v for v in candidate["quaternion"]) - 1) > 1e-6:
             raise RuntimeError("Native quaternion is not normalized")
         for name in ("confidence", "length", "width", "center_distance",

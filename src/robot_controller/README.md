@@ -1130,18 +1130,33 @@ visibly instead of being interpreted as a new item frame.
 
 The current station also requires the latest strict schema-7 robot-camera
 transform `Link6 <- robot_camera_link` (transform only). For every candidate,
-preview and hardware independently compose its calibrated camera-link origin
+preview and hardware independently compose its calibrated camera-link body
 at Link6's pick height (`item Z + standoff_height`) into `platform_reference`.
-The normal Home-relative pick attitude is used if that origin is inside/on the
+Use the shared centered 100 × 30 × 30 mm housing, camera-link XYZ size
+30/100/30 mm. Transform all eight corners and project their convex outline onto
+platform XY, including mount/platform tilt. The normal Home-relative pick
+attitude is used if the entire outline is inside/on the
 green Bin Teach ROI; otherwise the exact 180° tool-Z mirror is used if safe.
 The mirror preserves the undirected short-axis line and unchanged tool Z but
-may exceed the normal 90° Home-relative travel limit. If both origins are
-outside, planning fails before hardware candidate motion; the detector must
+may exceed the normal 90° Home-relative travel limit. If neither body fits,
+planning fails before hardware candidate motion; the detector must
 have excluded that pose before ranking, allowing the next safe candidate to
 take its place. Robot-camera calibration SHA-256 is part of configuration and
-detector evidence. This origin-only constraint does not model the housing;
-maintain actual physical safety margin inside green. Blue inset checks still
+detector evidence. Blue inset checks still
 apply solely to the item pick point.
+
+GUI controller launch also starts the read-only `/robot_camera_box` node. It
+publishes `/robot_controller/robot_camera_body` as a translucent magenta CUBE
+using the same strict latest robot-camera calibration and shared dimensions.
+The box is centered on the calibrated camera-link origin, with width along its
+Y axis, and frame-locked to live `Link6`. It adds no camera TF, command client,
+RGB/depth subscription or hardware action. Canonical RViz has a Marker display
+for this topic; reload its config if already open. Run it separately with
+`ros2 run robot_controller robot_camera_box` when teaching without the controller.
+The optional node rereads calibration at 1 Hz, hides the box on invalid calibration,
+and expires the marker after three seconds if stopped. It does not change a loaded
+controller's configuration. Headless launch creates no visualization node.
+This pick-pose body check does not model mounts/cables or the swept travel path.
 
 The schema-11 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel

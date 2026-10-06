@@ -16,6 +16,51 @@ from camera_calibration_gui.calibration_core import quaternion_to_rotation_matri
 from .item_teach_core import JOINT_NAMES, file_sha256
 
 
+# Housing centered on robot_camera_link as specified by the operator.
+# Non-optical camera axes: X forward/depth, Y left/width, Z up/height.
+CAMERA_BODY_SIZE_M = (0.030, 0.100, 0.030)
+
+
+def camera_body_corners(camera_transform):
+    """Eight housing corners in the destination frame, including mounting tilt."""
+    transform = rigid_matrix(camera_transform, "Camera body transform")
+    half = np.asarray(CAMERA_BODY_SIZE_M) / 2
+    corners = np.array([[x, y, z] for x in (-half[0], half[0])
+                        for y in (-half[1], half[1]) for z in (-half[2], half[2])])
+    return corners @ transform[:3, :3].T + transform[:3, 3]
+
+
+def camera_body_footprint(camera_transform):
+    """Convex projected outline on destination XY, in boundary order."""
+    points = sorted(set(map(tuple, camera_body_corners(camera_transform)[:, :2])))
+
+    def cross(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def chain(values):
+        result = []
+        for point in values:
+            while len(result) >= 2 and cross(result[-2], result[-1], point) <= 0:
+                result.pop()
+            result.append(point)
+        return result
+
+    return tuple(chain(points)[:-1] + chain(reversed(points))[:-1])
+
+
+def camera_body_fits(footprint, bin_roi):
+    """Full containment in the validated convex Bin Teach quadrilateral."""
+    polygon = np.asarray(bin_roi, dtype=float)
+    if polygon.shape != (4, 2) or not np.isfinite(polygon).all():
+        raise ValueError("Camera-body clearance requires a finite convex bin quadrilateral")
+    edges = np.roll(polygon, -1, axis=0) - polygon
+    following = np.roll(edges, -1, axis=0)
+    turns = edges[:, 0] * following[:, 1] - edges[:, 1] * following[:, 0]
+    if not (np.all(turns > 0) or np.all(turns < 0)):
+        raise ValueError("Camera-body clearance requires a convex bin quadrilateral")
+    return all(point_in_polygon(point, polygon) for point in footprint)
+
+
 def rigid_matrix(value, label):
     matrix = np.asarray(value, dtype=float)
     if (matrix.shape != (4, 4) or not np.all(np.isfinite(matrix))
@@ -196,11 +241,14 @@ class PickAttitudeSelection:
     normal_camera_platform_xy: tuple
     mirrored_camera_platform_xy: tuple
     selected_camera_platform_xy: tuple | None
+    normal_camera_footprint_xy: tuple
+    mirrored_camera_footprint_xy: tuple
+    selected_camera_footprint_xy: tuple | None
 
 
 def select_pick_attitude(home, item_in_base, pick_rotation_deg, standoff_height_mm,
                          base_from_platform, link6_from_robot_camera, bin_roi):
-    """Select normal or exact tool-Z 180-degree mirror by camera-origin clearance."""
+    """Select normal or exact tool-Z 180-degree mirror by full camera-body clearance."""
     home = rigid_matrix(home, "Home")
     item = rigid_matrix(item_in_base, "Base-relative candidate pose")
     base_from_platform = rigid_matrix(base_from_platform, "Platform transform")
@@ -220,21 +268,23 @@ def select_pick_attitude(home, item_in_base, pick_rotation_deg, standoff_height_
         link6[2, 3] += float(standoff_height_mm) / 1000.0
         camera_in_platform = platform_from_base @ link6 @ link6_from_camera
         point = tuple(map(float, camera_in_platform[:2, 3]))
-        return link6, point
+        return link6, point, camera_body_footprint(camera_in_platform)
 
-    normal_link6, normal_point = planned(normal_rotation)
+    normal_link6, normal_point, normal_footprint = planned(normal_rotation)
     # Post-multiplication is exactly 180 degrees around unchanged local tool Z.
     mirror_rotation = normal_rotation @ np.diag([-1.0, -1.0, 1.0])
-    mirror_link6, mirror_point = planned(mirror_rotation)
-    if point_in_polygon(normal_point, bin_roi):
+    mirror_link6, mirror_point, mirror_footprint = planned(mirror_rotation)
+    if camera_body_fits(normal_footprint, bin_roi):
         return PickAttitudeSelection(
             True, normal_rotation, normal_degrees, direction, False, normal_link6,
-            normal_point, mirror_point, normal_point)
-    if point_in_polygon(mirror_point, bin_roi):
+            normal_point, mirror_point, normal_point,
+            normal_footprint, mirror_footprint, normal_footprint)
+    if camera_body_fits(mirror_footprint, bin_roi):
         mirror_degrees = (normal_degrees + 180.0 + 180.0) % 360.0 - 180.0
         return PickAttitudeSelection(
             True, mirror_rotation, mirror_degrees, direction, True, mirror_link6,
-            normal_point, mirror_point, mirror_point)
+            normal_point, mirror_point, mirror_point,
+            normal_footprint, mirror_footprint, mirror_footprint)
     return PickAttitudeSelection(
         False, None, None, direction, None, None,
-        normal_point, mirror_point, None)
+        normal_point, mirror_point, None, normal_footprint, mirror_footprint, None)

@@ -195,7 +195,12 @@ def exercise_geometry():
     tiny_roi = {**context, "roi": [[-.02, -.02], [-.02, .02], [.02, .02], [.02, -.02]],
                 "pick_planning": {**context["pick_planning"],
                                   "link6_from_robot_camera": np.eye(4).tolist()}}
-    # Containment in either direction is overlap, and the exact pick point is inside.
+    # Item overlap/pick-point gates pass, but a 100 mm camera cannot fit in 40 mm.
+    tiny_result = generate_candidates([item], rgb, depth, tiny_roi, settings, cv2, np)
+    assert not tiny_result[2] and "robot-camera body" in tiny_result[3][0]["reason"]
+    # Mount width vertically: its 30×30 mm projection fits and overlap stays eligible.
+    tiny_roi["pick_planning"]["link6_from_robot_camera"] = [
+        [1., 0., 0., 0.], [0., 0., -1., 0.], [0., 1., 0., 0.], [0., 0., 0., 1.]]
     assert len(generate_candidates([item], rgb, depth, tiny_roi, settings, cv2, np)[2]) == 1
     values = np.array([699., 700., 700., 700., 701., 999., 0., np.nan, np.inf])
     accepted, median, sigma = filter_depth(values, 200, 1000, cv2, np)
@@ -647,14 +652,14 @@ def exercise_robot_camera_rejects_before_ranking():
     objects = [{"index": index, "class_id": 1, "class_name": "part", "confidence": .8,
                 "rectangle": rect + [x, 240], "polygon": rect + [x, 240],
                 "center": np.array([x, 240.])}
-               for index, x in ((0, 320), (1, 400))]
+               for index, x in ((0, 320), (1, 420))]
     rgb = np.full((480, 640, 3), 80, np.uint8)
     depth = np.full((480, 640), 700, np.uint16)
     overlay, depth_view, candidates, rejected = generate_candidates(
         objects, rgb, depth, context, settings, cv2, np, candidate_limit=1)
     assert [entry["source_index"] for entry in candidates] == [1]
     assert rejected == [{"source_index": 0, "reason":
-                         "robot-camera origin outside bin ROI for normal and "
+                         "robot-camera body extends outside bin ROI for normal and "
                          "180-degree attitudes"}]
     selected = candidates[0]["robot_camera_clearance"]
     assert selected["mirrored"] is True

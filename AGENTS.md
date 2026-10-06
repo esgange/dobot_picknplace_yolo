@@ -1557,6 +1557,21 @@ Startup, managed Pause and drop containment keep physical Stop confirmation.
 No drag command, new setting/schema, automatic retry or launch behavior change;
 update diary/FSM/exports and validate collision/rejection/timeout cases synthetically.
 
+Rule 226 replaces rule 83's camera-origin test with full projected containment
+of a centered 100×30×30 mm housing in the green Bin ROI. Camera-link XYZ size
+is 30/100/30 mm (Y width). Transform all eight corners with the calibrated mount,
+planned Link6 and platform transforms; test the convex footprint, normal first,
+then exact 180° tool-Z mirror, rejecting both-unsafe candidates before ranking.
+Use one pure geometry implementation in Item Teach/headless detection/controller
+preview/hardware. Keep the blue pick-point inset separate. Native diagnostics and
+RGB/depth overlays include the real body outline and validated size evidence.
+The optional read-only robot_camera_box node uses those same dimensions and the
+controller's strict latest calibration for a CUBE Marker frame-locked to Link6;
+GUI launch starts it, headless does not. No competing camera TF, robot clients,
+new configuration/schema or swept-path collision guarantee. Preserve operator
+RViz edits; stage only the new canonical display. Update diary/FSM/exports and
+test geometry, provider/controller agreement and marker placement synthetically.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

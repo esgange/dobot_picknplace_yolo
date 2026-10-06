@@ -87,6 +87,11 @@ def service_node(monkeypatch, tmp_path):
                      "selected_platform_xy": [.01, .02],
                      "rotation_from_home_deg": 0., "offset_direction": "none"}}
     result = {"candidates": [candidate], "rejected": [], "count": 1, "inference_ms": 10.}
+    clearance = candidate["robot_camera_clearance"]
+    clearance["body_size_camera_link_m"] = [.03, .1, .03]
+    for key in ("normal", "mirrored", "selected"):
+        clearance[key + "_footprint_platform_xy"] = [
+            [-.005, -.03], [.025, -.03], [.025, .07], [-.005, .07]]
     node = SimpleNamespace(request_lock=threading.Lock(), operation_lock=threading.Lock(),
                            root=tmp_path,
                            preview_mode="all",
@@ -305,6 +310,22 @@ def test_native_protocol_candidate_checks(service_node):
     with pytest.raises(RuntimeError, match="duplicate"):
         detector.validate_candidates(
             {"candidates": [candidate, copy.deepcopy(candidate)]}, node.settings)
+
+
+@pytest.mark.parametrize("invalid", ["old_point_only", "size", "outline", "selection"])
+def test_native_protocol_requires_matching_camera_body_evidence(service_node, invalid):
+    node, candidate = service_node
+    plan = candidate["robot_camera_clearance"]
+    if invalid == "old_point_only":
+        del plan["body_size_camera_link_m"]
+    elif invalid == "size":
+        plan["body_size_camera_link_m"] = [.03, .01, .03]
+    elif invalid == "outline":
+        plan["normal_footprint_platform_xy"] = [[float("nan"), 0.]] * 4
+    else:
+        plan["selected_footprint_platform_xy"][0][0] += .01
+    with pytest.raises(RuntimeError, match="robot-camera"):
+        detector.validate_candidates({"candidates": [candidate]}, node.settings)
 
 
 def simulate(node, **kwargs):

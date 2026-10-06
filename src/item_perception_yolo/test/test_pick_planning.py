@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from item_perception_yolo.pick_planning import (
+    CAMERA_BODY_SIZE_M, camera_body_corners, camera_body_footprint,
     candidate_pose_in_base, pick_attitude, point_in_polygon, rpy_matrix, select_pick_attitude)
 
 
@@ -32,10 +33,11 @@ def choose(candidate, camera=None):
 
 def test_normal_inside_is_retained_and_boundary_is_inclusive():
     normal = choose(item(0.0))
-    boundary = choose(item(0.15))
+    boundary = choose(item(0.135))  # Camera center .185 + 15 mm depth half-size touches .2.
     assert normal.accepted and normal.mirrored is False
     assert boundary.accepted and boundary.mirrored is False
-    assert boundary.selected_camera_platform_xy == pytest.approx((0.2, 0.0))
+    assert boundary.selected_camera_platform_xy == pytest.approx((0.185, 0.0))
+    assert max(p[0] for p in boundary.selected_camera_footprint_xy) == pytest.approx(.2)
     assert point_in_polygon((0.2, 0.0), ROI)
 
 
@@ -58,6 +60,57 @@ def test_both_attitudes_outside_rejects_candidate():
     assert selected.rotation is None and selected.planned_link6 is None
     assert not point_in_polygon(selected.normal_camera_platform_xy, ROI)
     assert not point_in_polygon(selected.mirrored_camera_platform_xy, ROI)
+
+
+def test_center_inside_but_housing_crosses_edge_uses_safe_mirror():
+    selected = choose(item(.15))
+    assert point_in_polygon(selected.normal_camera_platform_xy, ROI)
+    assert selected.accepted and selected.mirrored
+    assert max(x for x, _ in selected.normal_camera_footprint_xy) > .2
+    assert all(point_in_polygon(p, ROI) for p in selected.selected_camera_footprint_xy)
+
+
+def test_both_centers_inside_but_bodies_outside_rejects_candidate():
+    selected = choose(item(.195), camera=np.eye(4))
+    assert point_in_polygon(selected.normal_camera_platform_xy, ROI)
+    assert point_in_polygon(selected.mirrored_camera_platform_xy, ROI)
+    assert not selected.accepted and selected.selected_camera_footprint_xy is None
+
+
+def test_camera_width_is_local_y_and_rotates_with_mounting():
+    pose = np.eye(4)
+    corners = camera_body_corners(pose)
+    assert np.ptp(corners, axis=0) == pytest.approx(CAMERA_BODY_SIZE_M)
+    pose[:3, :3] = rpy_matrix(0, 0, np.pi / 2)
+    assert np.ptp(camera_body_corners(pose), axis=0) == pytest.approx((.100, .030, .030))
+
+
+def test_tilted_housing_projects_all_eight_corners_in_platform_frame():
+    base_platform, camera = np.eye(4), np.eye(4)
+    base_platform[:3, :3] = rpy_matrix(.2, -.3, .4)
+    base_platform[:3, 3] = [.2, -.1, .1]
+    camera[:3, :3] = rpy_matrix(.7, .3, -.4)
+    camera[:3, 3] = [.05, .02, -.03]
+    roi = [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]
+    selected = select_pick_attitude(
+        np.eye(4), item(), 0., 90., base_platform, camera, roi)
+    expected = np.linalg.inv(base_platform) @ selected.planned_link6 @ camera
+    corners = camera_body_corners(expected)
+    footprint = selected.selected_camera_footprint_xy
+    assert len(footprint) == 6
+    assert footprint == camera_body_footprint(expected)
+    assert all(point_in_polygon(p[:2], footprint) for p in corners)
+    assert np.ptp(np.asarray(footprint), axis=0) == pytest.approx(np.ptp(corners[:, :2], axis=0))
+
+
+def test_camera_body_cannot_cross_narrow_bin_even_with_center_inside():
+    with pytest.raises(ValueError, match="convex"):
+        select_pick_attitude(np.eye(4), item(), 0., 0., np.eye(4), np.eye(4),
+                             [[-1., -1.], [1., -1.], [0., 0.], [-1., 1.]])
+    selected = select_pick_attitude(
+        np.eye(4), item(), 0., 0., np.eye(4), np.eye(4),
+        [[-.2, -.04], [.2, -.04], [.2, .04], [-.2, .04]])
+    assert not selected.accepted  # 100 mm body does not fit in an 80 mm bin.
 
 
 def test_each_candidate_is_planned_independently_from_home_with_offset():

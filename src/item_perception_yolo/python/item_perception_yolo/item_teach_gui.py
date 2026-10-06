@@ -1549,7 +1549,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             for candidate in batch.candidates[:3]:
                 batch_lines.append(self._batch_candidate_text(candidate))
             camera_rejections = [entry for entry in metadata.get("rejected", [])
-                                 if "robot-camera origin" in entry.get("reason", "")]
+                                 if "robot-camera body" in entry.get("reason", "")]
             if camera_rejections:
                 batch_lines.append(
                     f"Camera clearance excluded {len(camera_rejections)} item(s): "
@@ -1595,7 +1595,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 rgb_lines.extend([f"platform_reference XYZ [mm]: {xyz}",
                                   f"Yaw: {yaw:+.2f}° | Teaching snapshot TF — no motion"])
                 camera_plan = pose["robot_camera_clearance"]
-                camera_note = ("Robot camera origin: "
+                camera_note = ("Robot camera body 100×30×30 mm: "
                                + ("CAM 180 mirrored" if camera_plan["mirrored"] else
                                   "CAM normal")
                                + " | green ROI")
