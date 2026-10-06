@@ -70,6 +70,29 @@ def test_single_view_starts_with_blank_dimensions_and_no_production_profile(wind
     assert window.node.service is None
 
 
+def test_nearby_filter_fields_live_edit_in_item_size_section(window):
+    group = window.inputs["nearby_depth_radius_mm"].parentWidget()
+    assert group.title().startswith("4  Item size")
+    assert group.layout().labelForField(window.inputs["nearby_depth_radius_mm"]).text() == \
+        "Nearby depth radius filter (mm)"
+    for key, value in core.NEARBY_DEPTH_DEFAULTS.items():
+        assert float(window.inputs[key].text()) == value
+    for key, value in (("height", "80"), ("width", "40"), ("tolerance", "5")):
+        window.inputs[key].setText(value)
+    window.yolo_toggle.setChecked(True)
+    window.node.disarm.reset_mock()
+    window.inputs["nearby_depth_radius_mm"].setText("175")
+    window.inputs["nearby_depth_height_mm"].setText("45")
+    assert not window.node.yolo_enabled
+    window.node.disarm.assert_called()
+    window._apply_live_detection_settings()
+    assert window.node.preview_geometry["nearby_depth_radius_mm"] == 175.
+    assert window.node.preview_geometry["nearby_depth_height_mm"] == 45.
+    window.inputs["nearby_depth_radius_mm"].setText("0")
+    window._apply_live_detection_settings()
+    assert not window.node.yolo_enabled and window.preview_settings_paused
+
+
 def test_live_preview_starts_at_most_once_per_second_without_backlog(window, monkeypatch):
     now = [100.]
     monkeypatch.setattr(gui.time, "monotonic", lambda: now[0])
@@ -825,7 +848,8 @@ def paired_teach(window, tmp_path, monkeypatch):
         "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": .5}, "gripper": {"use_grip": True, "grip_onpick": True},
         "retry": {"pose_candidates": 3},
-        "geometry": {"height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 45.},
+        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                     "height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 45.},
         "yolo": {"confidence": .63, "iou": .35, "max_detections": 17,
                  "image_size": 1280, "class_ids": [1]},
     }
@@ -1112,7 +1136,7 @@ def test_depth_percentage_load_recovery_and_save(
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
     window._save()
     saved, _ = core.load_item_profile(path, root=tmp_path)
-    assert saved["schema_version"] == 11
+    assert saved["schema_version"] == 12
     assert saved["quality"]["minimum_depth_fraction"] == .75
     assert "minimum_depth_samples" not in saved["quality"]
     window._load(path, prefill=True)
@@ -1153,7 +1177,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 11 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 12 and saved["retry"] == {"pose_candidates": 3}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings

@@ -331,12 +331,12 @@ That initial Pick route skips its lower clearance/initial point. For surface Z
 approach/retract Z 800 mm. The final pose stays above the tray at this height
 with the detect-relative attitude; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
-blocks the placement queue. Require a complete schema-11 Item Teach profile with
+blocks the placement queue. Require a complete schema-12 Item Teach profile with
 a finite, nonnegative `trayplace_height`. To use older profiles, open them in
 Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
 the updated pair. Production readers do not supply a fallback height.
 Schema-10 profiles retain that height during GUI recovery; review the retained
-**Minimum valid depth (%)** and Save as schema 11 to remove the fixed-count field.
+**Minimum valid depth (%)** and Save as schema 12 to remove the fixed-count field.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
 Then send three Cartesian commands in one queue:
@@ -1161,7 +1161,16 @@ of Item Teach's display. Canonical RViz includes the new topic; reload its confi
 if already open. No camera TF, command client or hardware action is added.
 This pick-pose body check does not model mounts/cables or the swept travel path.
 
-The schema-11 geometry uses pick Z equal to item Z plus `standoff_height`,
+Item Teach schema 12 also requires the nearby depth radius/height settings
+(defaults 150/60 mm). The detector rejects any candidate with a usable depth
+point within/on its base-XY radius and at least the configured base-Z height above
+the final pick, including standoff, before ranking. Hardware and Preview receive
+only the filtered profile-bound batch; the controller has no depth subscription
+or separate scene scan. Open older profiles in Item Teach, review the proposed
+new defaults, Save and manually redeploy/reload matching profiles. Motion and
+tray placement filtering are unchanged.
+
+The schema-12 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed

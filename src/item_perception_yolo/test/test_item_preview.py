@@ -293,7 +293,8 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         "geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
         "bin_clearance": {"p1_p2": None, "p2_p3": None,
                           "p3_p4": None, "p4_p1": None},
-        "geometry": {"height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 30.}}
+        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                     "height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 30.}}
     header["context"] = {
         "camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},
         "depth_camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},

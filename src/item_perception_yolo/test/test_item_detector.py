@@ -79,6 +79,9 @@ def service_node(monkeypatch, tmp_path):
                  "length": .1, "width": .05, "center_distance": .01,
                  "filtered_camera_depth": .7, "depth_sigma": .001,
                  "accepted_depth_count": 100, "rejected_depth_count": 10, "pixel": [100., 100.],
+                 "nearby_depth_filter": {"radius_mm": 150., "height_mm": 60.,
+                                         "usable_point_count": 1000, "nearby_point_count": 500,
+                                         "maximum_height_above_pick_mm": 20.},
                  "planned_link6_matrix": [[1., 0., 0., 0.], [0., 1., 0., 0.],
                                           [0., 0., 1., .1], [0., 0., 0., 1.]],
                  "robot_camera_clearance": {
@@ -100,6 +103,8 @@ def service_node(monkeypatch, tmp_path):
                            service=object(), arm_epoch=1, yolo_enabled=True, pose_candidates=3,
                            profile_digest="a"*64, profile_path="profile.yaml", native=SimpleNamespace(failed=False),
                            settings={"quality": dict(QUALITY_DEFAULTS), "geometry_source": "mask",
+                                     "geometry": {"nearby_depth_radius_mm": 150.,
+                                                  "nearby_depth_height_mm": 60.},
                                      "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                                        "p3_p4": None, "p4_p1": None},
                                      "yolo": {"max_detections": 20, "class_ids": [1], "confidence": .6}},
@@ -314,6 +319,23 @@ def test_native_protocol_candidate_checks(service_node):
             {"candidates": [candidate, copy.deepcopy(candidate)]}, node.settings)
 
 
+@pytest.mark.parametrize("change", [None, {"radius_mm": 100.}, {"height_mm": 70.},
+                                   {"nearby_point_count": 1001},
+                                   {"usable_point_count": 0, "nearby_point_count": 0,
+                                    "maximum_height_above_pick_mm": None},
+                                   {"maximum_height_above_pick_mm": 60.},
+                                   {"maximum_height_above_pick_mm": float("nan")},
+                                   {"maximum_height_above_pick_mm": None}])
+def test_native_protocol_requires_current_nearby_filter_evidence(service_node, change):
+    node, candidate = service_node
+    if change is None:
+        del candidate["nearby_depth_filter"]
+    else:
+        candidate["nearby_depth_filter"].update(change)
+    with pytest.raises(RuntimeError, match="nearby-depth"):
+        detector.validate_candidates({"candidates": [candidate]}, node.settings)
+
+
 @pytest.mark.parametrize("invalid", ["old_point_only", "size", "outline", "selection",
                                      "center", "frame"])
 def test_native_protocol_requires_matching_camera_body_evidence(service_node, invalid):
@@ -523,7 +545,8 @@ def test_enable_yolo_rejects_clearance_that_collapses_current_bin():
     )
     settings = {
         "model_task": "segment", "geometry_source": "mask",
-        "geometry": {"height": 80., "width": 40., "tolerance": 5.,
+        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                     "height": 80., "width": 40., "tolerance": 5.,
                      "pickdepth_radius": 30.},
         "quality": dict(QUALITY_DEFAULTS),
         "yolo": {"confidence": .5, "iou": .35, "image_size": 640,
@@ -566,7 +589,8 @@ def test_selected_pose_snapshot_contract(service_node, failure):
     node, candidate = service_node
     node._camera_generation = 1
     node.settings.update(model_task="segment", geometry_source="mask",
-                         geometry={"height": 100., "width": 50., "tolerance": 1.,
+                         geometry={"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                                   "height": 100., "width": 50., "tolerance": 1.,
                                    "pickdepth_radius": 30.})
     node.settings["yolo"].update(iou=.35, image_size=640)
     rgb = {"stamp_ns": 100_000_000_000, "width": 2, "height": 2, "rgb": bytes(12)}
@@ -615,7 +639,8 @@ def test_selected_pose_does_not_expire_after_snapshot_was_accepted(service_node)
     node, candidate = service_node
     node._camera_generation = 1
     node.settings.update(model_task="segment", geometry_source="mask",
-                         geometry={"height": 100., "width": 50., "tolerance": 1.,
+                         geometry={"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                                   "height": 100., "width": 50., "tolerance": 1.,
                                    "pickdepth_radius": 30.})
     node.settings["yolo"].update(iou=.35, image_size=640)
     rgb = {"stamp_ns": 1_000_000_000, "width": 2, "height": 2, "rgb": bytes(12)}

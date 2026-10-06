@@ -1,5 +1,17 @@
 # Robot Controller — Finite State Machine
 
+Nearby-depth eligibility review: **2026-10-06**, baseline **`f717319`** plus rule
+**229**. Schema-12 Item Teach profiles require a nearby radius/height (defaults
+150/60 mm). Before ranking, the shared detector rejects a candidate if any usable
+original depth pixel lies inside/on that base-XY radius and at least that base-Z
+height above final Link6 pick (item Z plus standoff). Include outside-mask/ROI
+points, with depth-range validation and the original depth CameraInfo/transform;
+no voxel/cluster reduction. Teaching and headless use the same check and reject
+missing/mismatched native evidence. Controller Hardware/Preview consume the
+filtered profile-bound batch without their own depth scan. Motion, candidate
+ledger, retry and tray placement behavior stay unchanged. Older profiles require
+explicit GUI review/Save and manual deployment/reload.
+
 Visualization ownership review: **2026-10-06**, baseline **`17f43b0`** plus rule
 **228**. Item Teach launch owns the separate read-only robot_camera_box process
 in item_perception_yolo; controller launches no longer start it. It displays
@@ -664,7 +676,7 @@ typed status and failed service responses include the complete guidance.
 ```mermaid
 flowchart TD
     Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible poses retained after interruption or Return Item?"}
-    Saved -->|No| Detect["Request fresh item poses before Home; optional debug RGB/depth"]
+    Saved -->|No| Detect["Fresh item poses before Home; detector filters nearby high depth before ranking; optional debug images"]
     Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
     Reuse --> Entry
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
@@ -1361,6 +1373,7 @@ Names below are relative to `/robot_controller/`.
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
+| Pick nearby-depth eligibility (perception) | No usable original depth point within/on the saved base-XY radius reaches the saved base-Z height above final Link6 pick, including standoff; schema-12 defaults 150/60 mm; filtered before ranking and consumed as a profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |

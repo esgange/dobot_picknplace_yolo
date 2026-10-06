@@ -142,6 +142,16 @@ ros2 launch item_perception_yolo item_teach.launch.py
    replies; they always disarm and invalidate saved-profile eligibility. Preview
    uses all classes; manual poses and production require checked classes.
    Other form edits clear the selection/TF and disarm without stopping detection.
+
+   Section **4  Item size / pick depth — mm** also contains **Nearby depth radius
+   filter (mm)** (default **150**) and **Maximum nearby height above pick (mm)**
+   (default **60**). Save them as `geometry.nearby_depth_radius_mm` and
+   `geometry.nearby_depth_height_mm`; both must be finite and greater than zero.
+   A candidate fails if even one usable depth point is within/on that horizontal
+   radius and at least that high above its final Link6 pick position, including
+   `motion.standoff_height`. Distances use robot-base XY/Z, not camera depth or
+   platform-normal height. This check runs before candidate ranking/capping in
+   clicked poses, teaching preview, Simulate Trigger and headless requests.
    Save/load the exact complete
    item profile, then **Armed ON**
    to advertise `/item_detect/get_item_poses`. OFF removes the service. GUI and
@@ -239,7 +249,7 @@ The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
 Armed ON is highlighted red so advertised production pose-service state cannot
 be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
-a complete saved/loaded schema-11 profile, its verified model, matching current
+a complete saved/loaded schema-12 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
 first. It neither advertises/calls the pose service nor issues robot commands.
 
@@ -297,7 +307,7 @@ recorded only in the existing bounded package events.
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict production item schema 11, class filters and quality gates remain enforced.
+strict production item schema 12, class filters and quality gates remain enforced.
 
 ### Pick-oriented RGB overlays
 
@@ -404,7 +414,7 @@ if weight replacement precedes a YAML write failure, restore the original model.
 YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
 never silently load. A success dialog names both files; the original external
 model remains untouched and the pair works without it.
-**Load Item Teach** accepts only that directory. Complete schema-11 files load
+**Load Item Teach** accepts only that directory. Complete schema-12 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
 verification, YOLO ON and fresh station inputs remain mandatory. Loading
@@ -420,7 +430,7 @@ The warning/Activity log explains every cleared field. Missing internal
 Recovery also applies to named-file startup prefill; any independently verified
 paired model then loads automatically. Missing/changed pairs never execute.
 No recovered draft can simulate, arm or be validated in the controller until
-reviewed and saved as a strict schema-11 pair. Same known item name overwrites
+reviewed and saved as a strict schema-12 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
@@ -462,7 +472,7 @@ zero means the detected surface. Placement drop Z = detected tray surface Z +
 `trayplace_height`, independent of pick heights. Robot Controller and Preview
 use this same endpoint; approach/retract remain at taught Home Z above it.
 New profiles start with this height blank. Schema-9 and older files recover with
-it blank too; enter the intended clearance and Save a valid schema-11 pair before
+it blank too; enter the intended clearance and Save a valid schema-12 pair before
 controller use or runtime deployment. Loading never invents or writes a height.
 `pick_rotation` is a separate required 0–90° value. It is an unsigned offset
 from the detected short-axis line; Robot Controller chooses the lower-travel
@@ -535,7 +545,7 @@ percentages: travel/Home, final approach, pick-to-prepick retract. All must be
 integers 1–100. New-profile speed is explicitly 100/6/6 and acceleration
 100/100/100; loaded profiles retain their exact values. Speed and acceleration
 edits disarm and invalidate saved eligibility without interrupting read-only
-inference or automatically saving/commanding hardware. Save writes schema 11 with
+inference or automatically saving/commanding hardware. Save writes schema 12 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
 global SpeedFactor starts at 100% and the controller can adjust it explicitly
@@ -661,6 +671,14 @@ blocking service request. All native operations are serialized in one worker.
   only valid pick candidates receive the rectangle and pick axes/dot.
   Depth shows **accepted pixels black**, **rejected pixels red**, sampling
   boundaries, counts, filtered camera depth, platform Z and frame age.
+- For nearby-height rejection, back-project all finite, positive depth pixels
+  within the saved inclusive depth range, using registered depth's own CameraInfo
+  and the same snapshot's complete optical-to-base transform. Use original pixels,
+  including outside the candidate mask and green bin ROI. No global MAD, minimum
+  cluster count, subsampling or RViz voxels apply to this check. Build that scene
+  once per batch; evaluate each final pick's base-XY circle and base-Z height.
+  Rejections identify the depth pixel, horizontal distance and height above pick.
+  Native candidates carry validated radius/height/count/maximum-height evidence.
 - Rank valid positions by XY distance to the bin polygon's area centroid;
   confidence descending then source index break exact distance ties. Return up
   to the requested number, explicitly reporting SHORTAGE or NO_VALID_ITEMS.
@@ -693,9 +711,12 @@ original depth pixel in the physical sampling circle. Empty footprints and
 zero valid pixels fail. There is no additional fixed pixel-count minimum.
 Tray placement uses this same saved percentage, with tray containment instead
 of the item mask. Plane-based tray pose measurement itself needs no live depth.
-Schema 11 removes `minimum_depth_samples`. Open an older profile in Item Teach,
-review the retained percentage and Save; then reload the controller and manually
-deploy the updated pair before headless startup. Recovery does not save or arm.
+Schema 11 removed `minimum_depth_samples`; current schema 12 additionally requires
+the nearby depth radius and height. Open older profiles in Item Teach, review the
+retained percentage and the proposed 150/60 mm defaults for absent new fields,
+then Save, reload the controller and manually deploy the updated pair before
+headless startup. Missing/invalid schema-12 fields remain blank in recovery;
+production readers reject incomplete or older profiles. Recovery never saves or arms.
 There is no
 result-age field: an accepted batch remains valid until invalidated or replaced.
 Edit and save these fields deliberately; a file missing them is rejected.

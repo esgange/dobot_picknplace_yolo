@@ -22,7 +22,7 @@ from .item_teach_core import (
     GRIPPER_FIELDS, MODEL_TASKS, MOTION_FIELDS,
     item_directory, load_item_profile, record_home, save_item_profile,
     settings_from_profile, item_save_target, file_sha256,
-    GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS,
+    GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS, NEARBY_DEPTH_DEFAULTS,
     NEW_PROFILE_IMAGE_SIZE, SPEED_FIELDS, NEW_PROFILE_SPEED, NEW_PROFILE_ACCELERATION,
     NEW_PROFILE_PICK_ROTATION_DEG, BIN_CLEARANCE_FIELDS, inset_bin_roi,
     validate_detection_settings, validate_quality,
@@ -635,14 +635,24 @@ class ItemTeachWindow(QtWidgets.QWidget):
             if key == "pickdepth_radius":
                 field.setText(str(DEFAULT_PICKDEPTH_DIAMETER_MM))
                 field.setToolTip("Sampling circle DIAMETER in mm, despite the variable name")
+            if key in NEARBY_DEPTH_DEFAULTS:
+                field.setText(str(NEARBY_DEPTH_DEFAULTS[key]))
+                field.setToolTip(
+                    "Reject if any usable depth point within this horizontal radius is at "
+                    "least this height above the final Link6 pick position (robot base Z). "
+                    "Uses original depth pixels, including outside the item mask/bin ROI.")
             self.inputs[key] = field
             label = {"height": "Length Y / height", "width": "Width X",
-                     "tolerance": "Size tolerance ±"}
+                     "tolerance": "Size tolerance ±",
+                     "nearby_depth_radius_mm": "Nearby depth radius filter (mm)",
+                     "nearby_depth_height_mm": "Maximum nearby height above pick (mm)"}
             geometry.addRow(label.get(key, key), field)
         geometry_help = QtWidgets.QLabel(
             "Item X: short axis; item Y: long axis.\n"
             "pickdepth_radius is the circle DIAMETER (default 30 mm).\n"
-            "Length/width use platform Z=0; depth supplies the pick point."
+            "Length/width use platform Z=0; depth supplies the pick point.\n"
+            "Nearby filter: reject any usable point ≥60 mm above the final pick\n"
+            "within a 150 mm horizontal radius (editable defaults; robot base frame)."
         )
         geometry_help.setWordWrap(True)
         geometry.addRow(geometry_help)

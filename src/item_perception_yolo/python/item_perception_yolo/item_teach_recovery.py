@@ -106,6 +106,12 @@ def recover_item_fields(path, *, root=None):
         value = group("gripper").get(key)
         accept(key, value, type(value) is bool)
     for key in core.GEOMETRY_FIELDS:
+        if (payload["schema_version"] < 12 and key in core.NEARBY_DEPTH_DEFAULTS
+                and key not in group("geometry")):
+            draft.values[key] = core.NEARBY_DEPTH_DEFAULTS[key]
+            draft.issues.append(
+                f"{key}: new filter; proposed {draft.values[key]:g} mm default; review and Save")
+            continue
         number("geometry", key, low=0 if key == "tolerance" else 0.000001,
                unit=("distance", "mm"))
     clearance = group("bin_clearance")

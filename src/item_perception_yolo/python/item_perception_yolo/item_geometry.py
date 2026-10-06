@@ -6,7 +6,7 @@ from .planar_bin_roi import border_in_optical
 from .item_teach_core import depth_coverage_ok, inset_bin_roi
 from .pick_planning import (
     CAMERA_BODY_CENTER_RGB_M, CAMERA_BODY_REFERENCE_FRAME, CAMERA_BODY_SIZE_RGB_M,
-    candidate_pose_in_base, select_pick_attitude)
+    candidate_pose_in_base, rigid_matrix, select_pick_attitude)
 
 
 BIN_CLEARANCE_COLOR = (102, 204, 255)
@@ -471,6 +471,48 @@ def selected_pose(item, rgb, depth, context, settings, cv2, np, *, display_detec
                                display_detections=display_detections)
 
 
+def usable_scene_depth(depth_mm, context, quality, cv2, np):
+    """Original range-valid depth pixels in base_link; no mask, ROI or voxel reduction."""
+    usable = (np.isfinite(depth_mm) & (depth_mm > 0)
+              & (depth_mm >= quality["depth_min_mm"])
+              & (depth_mm <= quality["depth_max_mm"]))
+    yy, xx = np.nonzero(usable)
+    pixels = np.column_stack((xx, yy))
+    if not len(pixels):
+        return pixels, np.empty((0, 3), dtype=np.float64)
+    optical = rays(pixels, context["depth_camera"], cv2, np) * depth_mm[yy, xx, None] / 1000.
+    base_from_optical = (
+        rigid_matrix(context["pick_planning"]["base_from_platform"], "base-from-platform")
+        @ rigid_matrix(context["platform_from_optical"], "platform-from-optical"))
+    points = optical @ base_from_optical[:3, :3].T + base_from_optical[:3, 3]
+    valid = np.isfinite(points).all(axis=1)
+    return pixels[valid], points[valid]
+
+
+def nearby_depth_check(scene, pick_xyz, geometry, np):
+    """Inclusive base-XY radius and base-Z height test, referenced to final Link6 pick."""
+    pixels, points = scene
+    radius_mm = geometry["nearby_depth_radius_mm"]
+    height_mm = geometry["nearby_depth_height_mm"]
+    dx, dy = points[:, 0] - pick_xyz[0], points[:, 1] - pick_xyz[1]
+    distance_squared = dx*dx + dy*dy
+    nearby = np.flatnonzero(distance_squared <= ((radius_mm + 1e-6) / 1000.)**2)
+    maximum = None
+    if len(nearby):
+        index = nearby[np.argmax(points[nearby, 2])]
+        maximum = float((points[index, 2] - pick_xyz[2]) * 1000.)
+        if maximum >= height_mm - 1e-6:
+            x, y = pixels[index]
+            raise ValueError(
+                f"nearby depth point ({x}, {y}): {maximum:.2f} mm above final pick "
+                f"at {math.sqrt(distance_squared[index])*1000:.2f} mm radius; "
+                f"limits {height_mm:g} mm / "
+                f"{radius_mm:g} mm (base_link)")
+    return {"radius_mm": radius_mm, "height_mm": height_mm,
+            "usable_point_count": len(points), "nearby_point_count": len(nearby),
+            "maximum_height_above_pick_mm": maximum}
+
+
 def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                         *, display_detections=None, candidate_limit=None):
     if candidate_limit is not None and (type(candidate_limit) is not int
@@ -515,6 +557,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     candidates, rejected = [], []
     samples = {}
     camera_plans = {}
+    scene_depth = None
     for item in objects:
         center = item["center"]
         label = f"#{item['index']} {item['class_name']} {item['confidence']:.2f}"
@@ -595,6 +638,11 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 raise ValueError("Robot-camera pick-planning context is missing or malformed")
             item_in_base = candidate_pose_in_base(
                 planning["base_from_platform"], position, quaternion)
+            if scene_depth is None:
+                scene_depth = usable_scene_depth(depth_mm, context, quality, cv2, np)
+            pick_xyz = item_in_base[:3, 3].copy()
+            pick_xyz[2] += planning["standoff_height_mm"] / 1000.
+            nearby_evidence = nearby_depth_check(scene_depth, pick_xyz, geometry, np)
             attitude = select_pick_attitude(
                 planning["home_matrix"], item_in_base, planning["pick_rotation_deg"],
                 planning["standoff_height_mm"], planning["base_from_platform"],
@@ -628,6 +676,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 "accepted_depth_count": good, "rejected_depth_count": total - good,
                 "pixel": center.tolist(),
                 "planned_link6_matrix": attitude.planned_link6.tolist(),
+                "nearby_depth_filter": nearby_evidence,
                 "robot_camera_clearance": {
                     "mirrored": attitude.mirrored,
                     "normal_platform_xy": list(attitude.normal_camera_platform_xy),

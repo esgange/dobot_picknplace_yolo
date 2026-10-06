@@ -234,6 +234,25 @@ def validate_candidates(result, settings):
                 or not depth_coverage_ok(good, good+bad,
                                          settings["quality"]["minimum_depth_fraction"])):
             raise RuntimeError("Native candidate failed depth-quality contract")
+        nearby = candidate.get("nearby_depth_filter")
+        if (type(nearby) is not dict or set(nearby) != {
+                "radius_mm", "height_mm", "usable_point_count", "nearby_point_count",
+                "maximum_height_above_pick_mm"}
+                or any(type(nearby[key]) not in (int, float)
+                       or nearby[key] != settings["geometry"][setting]
+                       for key, setting in (("radius_mm", "nearby_depth_radius_mm"),
+                                            ("height_mm", "nearby_depth_height_mm")))
+                or any(type(nearby[key]) is not int or nearby[key] < 0
+                       for key in ("usable_point_count", "nearby_point_count"))
+                or nearby["usable_point_count"] < good
+                or nearby["nearby_point_count"] > nearby["usable_point_count"]):
+            raise RuntimeError("Malformed nearby-depth filter evidence")
+        maximum = nearby["maximum_height_above_pick_mm"]
+        if ((nearby["nearby_point_count"] == 0 and maximum is not None)
+                or (nearby["nearby_point_count"] > 0 and (
+                    type(maximum) not in (int, float) or not math.isfinite(maximum)
+                    or maximum >= nearby["height_mm"] - 1e-6))):
+            raise RuntimeError("Native candidate failed nearby-depth height contract")
         key = (candidate["center_distance"], -candidate["confidence"], index)
         if last_key is not None and key < last_key:
             raise RuntimeError("Native candidates are not in priority order")

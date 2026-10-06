@@ -50,7 +50,8 @@ def exercise_geometry():
     settings = {"geometry_source": "mask",
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
-                "geometry": {"height": 80., "width": 32., "tolerance": .1,
+                "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                             "height": 80., "width": 32., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "quality": dict(QUALITY_DEFAULTS), "yolo": {"class_ids": [1], "confidence": .5}}
     rgb = np.full((480, 640, 3), 80, np.uint8)
@@ -430,7 +431,8 @@ def exercise_resolution_depth_coverage():
                          [.04, .016, 0.], [-.04, .016, 0.]])
     settings = {"geometry_source": "mask", "bin_clearance": dict.fromkeys(
         ("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
-        "geometry": {"height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 10.},
+        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                     "height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 10.},
         "quality": dict(QUALITY_DEFAULTS), "yolo": {"class_ids": [1], "confidence": .5}}
     for scale in (1, 2):
         width, height, focal = 640 * scale, 360 * scale, 300. * scale
@@ -536,7 +538,8 @@ def exercise_registered_depth():
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
                 "yolo": {"class_ids": [1], "confidence": .5},
-                "geometry": {"height": length*1000, "width": width*1000,
+                "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                             "height": length*1000, "width": width*1000,
                              "tolerance": .1, "pickdepth_radius": 30.}}
     rgb = np.zeros((480, 848, 3), np.uint8)
     _, view, candidates, rejected = generate_candidates(
@@ -580,7 +583,8 @@ def exercise_candidate_batch_overlay():
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
-                "geometry": {"height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.},
+                "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                             "height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5}}
     rgb = np.full((480, 640, 3), 80, np.uint8)
     depth = np.full((480, 640), 700, np.uint16)
@@ -646,7 +650,8 @@ def exercise_robot_camera_rejects_before_ranking():
                    "pick_rotation_deg": 0., "standoff_height_mm": 90.}}
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
-                "geometry": {"height": 80., "width": 32., "tolerance": .1,
+                "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                             "height": 80., "width": 32., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5}}
     rect = np.array([[-50, -20], [50, -20], [50, 20], [-50, 20]], np.float32)
@@ -672,9 +677,103 @@ def exercise_robot_camera_rejects_before_ranking():
     assert np.any(np.all(depth_view == [255, 0, 255], axis=2))
 
 
+def exercise_nearby_depth_filter():
+    import copy
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import (
+        generate_candidates, nearby_depth_check, selected_pose, usable_scene_depth, rays)
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+    from item_perception_yolo.pick_planning import rpy_matrix
+    cv2.setNumThreads(1)
+    geometry = {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                "height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.}
+    # Inclusive cylinder boundaries: horizontal radius, not 3D distance.
+    for point, rejected in [([.150, 0., .060], True), ([.15001, 0., .100], False),
+                            ([.100, 0., .05999], False), ([0., .150, .200], True),
+                            ([0., 0., -.100], False)]:
+        scene = (np.array([[42, 12]]), np.array([point]))
+        try:
+            evidence = nearby_depth_check(scene, np.zeros(3), geometry, np)
+        except ValueError as exc:
+            assert rejected and "(42, 12)" in str(exc)
+        else:
+            assert not rejected, evidence
+    camera = {"k": [1000., 0., 320., 0., 1000., 240., 0., 0., 1.], "d": [0.] * 5}
+    transform = np.diag([1., -1., -1., 1.])
+    transform[2, 3] = .8
+    context = {"camera": camera, "depth_camera": camera,
+               "platform_from_optical": transform.tolist(),
+               "roi": [[-.2, -.15], [-.2, .15], [.2, .15], [.2, -.15]],
+               "pick_planning": {"home_matrix": np.eye(4).tolist(),
+                                 "base_from_platform": np.eye(4).tolist(),
+                                 "link6_from_robot_camera": np.eye(4).tolist(),
+                                 "pick_rotation_deg": 0., "standoff_height_mm": 0.}}
+    settings = {"geometry_source": "mask", "geometry": geometry,
+                "quality": dict(QUALITY_DEFAULTS),
+                "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
+                "yolo": {"class_ids": [1], "confidence": .5}}
+    rgb = np.full((480, 640, 3), 80, np.uint8)
+    depth = np.full((480, 640), 700, np.uint16)
+    polygon = np.array([[270, 220], [370, 220], [370, 260], [270, 260]], np.float32)
+    item = {"index": 0, "class_id": 1, "class_name": "test", "confidence": .7,
+            "polygon": polygon, "rectangle": polygon, "center": np.array([320., 240.])}
+    second = {**item, "index": 1, "polygon": polygon - [120, 0],
+              "rectangle": polygon - [120, 0], "center": np.array([200., 240.])}
+    # A single depth point OUTSIDE the item and its sampling circle rejects the
+    # best-ranked candidate. The farther saved candidate is still returned.
+    depth[240, 554] = 640  # base XY = (149.76, 0) mm; Z = pick + 60 mm.
+    _, _, candidates, rejected = generate_candidates(
+        [item, second], rgb, depth, context, settings, cv2, np, candidate_limit=1)
+    assert [c["source_index"] for c in candidates] == [1]
+    assert len(rejected) == 1 and "60.00 mm above final pick" in rejected[0]["reason"]
+    clicked = {**item, "source_index": item["index"]}
+    _, _, candidates, reasons = selected_pose(clicked, rgb, depth, context, settings, cv2, np)
+    assert not candidates and reasons == rejected  # Same clicked/service filter.
+    # Walls/out-of-ROI points count, and the rejection applies to OBB as well.
+    narrower = {**context, "roi": [[-.14, -.14], [-.14, .14], [.14, .14], [.14, -.14]]}
+    _, _, candidates, reasons = generate_candidates(
+        [item], rgb, depth, narrower, {**settings, "geometry_source": "obb"}, cv2, np)
+    assert not candidates and "nearby depth" in reasons[0]["reason"]
+    # Height is above the final compensated pick, not the object's raw surface.
+    raised = copy.deepcopy(context)
+    raised["pick_planning"]["standoff_height_mm"] = 1.
+    _, _, candidates, reasons = generate_candidates([item], rgb, depth, raised, settings, cv2, np)
+    assert not reasons and len(candidates) == 1
+    assert abs(candidates[0]["nearby_depth_filter"]["maximum_height_above_pick_mm"] - 59) < 1e-6
+    # Custom settings really alter eligibility; no hidden 150/60 constants.
+    for changes in ({"nearby_depth_radius_mm": 149.}, {"nearby_depth_height_mm": 61.}):
+        _, _, candidates, reasons = generate_candidates(
+            [item], rgb, depth, context, {**settings, "geometry": {**geometry, **changes}}, cv2, np)
+        assert not reasons and len(candidates) == 1
+    # Only finite, positive, in-range original depth samples are usable. Do not
+    # suppress a high reading as a statistical outlier or use RGB distortion.
+    depth = np.zeros((480, 640), np.float64)
+    depth[240, 554:561] = [640, 0, float("nan"), float("inf"), -1, 199, 1001]
+    tilted = copy.deepcopy(context)
+    tilted["camera"]["d"] = [.3, .1, 0., 0., 0.]
+    tilted["depth_camera"] = {**camera, "d": [.02, -.01, 0., 0., 0.]}
+    base = np.eye(4)
+    base[:3, :3] = rpy_matrix(.3, -.5, .2)
+    base[:3, 3] = [.4, -.2, .7]
+    tilted["pick_planning"]["base_from_platform"] = base.tolist()
+    pixels, points = usable_scene_depth(depth, tilted, settings["quality"], cv2, np)
+    assert pixels.tolist() == [[554, 240]]
+    optical = rays([[554, 240]], tilted["depth_camera"], cv2, np)[0] * .640
+    expected = base @ transform @ np.r_[optical, 1.]
+    assert np.allclose(points[0], expected[:3])
+    try:
+        nearby_depth_check((pixels, points), points[0] - [.15, 0., .06], geometry, np)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Tilted geometry must still use base XY and base Z")
+
+
 @pytest.mark.parametrize("exercise", [
     "exercise_geometry", "exercise_registered_depth", "exercise_resolution_depth_coverage",
-    "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking"])
+    "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking",
+    "exercise_nearby_depth_filter"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

@@ -22,7 +22,7 @@ import yaml
 from camera_calibration_gui.calibration_core import workspace_root
 
 
-ITEM_SCHEMA_VERSION = 11
+ITEM_SCHEMA_VERSION = 12
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height", "trayplace_height")
@@ -32,7 +32,8 @@ NEW_PROFILE_ACCELERATION = dict.fromkeys(SPEED_FIELDS, 100)
 GRIPPER_FIELDS = ("use_grip", "grip_onpick")
 YOLO_FIELDS = ("confidence", "iou", "image_size", "max_detections", "class_ids")
 NEW_PROFILE_IMAGE_SIZE = 448  # Not an operator field; loaded profiles retain their exact value.
-GEOMETRY_FIELDS = ("height", "width", "tolerance", "pickdepth_radius")
+NEARBY_DEPTH_DEFAULTS = {"nearby_depth_radius_mm": 150.0, "nearby_depth_height_mm": 60.0}
+GEOMETRY_FIELDS = ("height", "width", "tolerance", "pickdepth_radius", *NEARBY_DEPTH_DEFAULTS)
 BIN_CLEARANCE_FIELDS = ("p1_p2", "p2_p3", "p3_p4", "p4_p1")
 DEFAULT_PICKDEPTH_DIAMETER_MM = 30.0
 NEW_PROFILE_PICK_ROTATION_DEG = 0.0
@@ -368,9 +369,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 11 "
-            "(percentage-only depth coverage); "
-            "schemas 1–10 require review and Save in Item Teach; no compatibility reader")
+            "Item teach schema_version must be exactly 12 "
+            "(nearby depth radius/height filter); "
+            "schemas 1–11 require review and Save in Item Teach; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",

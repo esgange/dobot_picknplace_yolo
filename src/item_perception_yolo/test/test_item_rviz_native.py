@@ -89,7 +89,8 @@ def exercise_all_candidates():
     settings = {"model_task": "segment", "geometry_source": "mask",
                 "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
-                "geometry": {"height": 80., "width": 32., "tolerance": .1,
+                "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                             "height": 80., "width": 32., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5, "iou": .7,
                          "max_detections": 100, "image_size": 640}}

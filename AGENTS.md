@@ -1596,6 +1596,23 @@ Teach launch exit stops the display; its own marker retains a three-second
 expiry. Keep shared geometry, controller/headless clearance and calibration
 selection unchanged. No hardware clients, inference dependency or new config.
 
+Rule 229 adds schema-12 required geometry.nearby_depth_radius_mm (default 150)
+and geometry.nearby_depth_height_mm (default 60), editable in Item Teach section
+4 as Nearby depth radius filter (mm) and Maximum nearby height above pick (mm).
+Both are finite positive distances. From the same synchronized original depth
+frame, back-project every finite positive in-range pixel with its own depth
+CameraInfo and exact base transform. Reject a candidate when any point is inside
+or on the base-XY radius and at least the taught base-Z height above final Link6
+pick (item base Z plus standoff). Include points outside item masks/green ROI;
+do not voxelize, interpolate, globally MAD-filter or require a point cluster.
+Compute the scene once per candidate batch and filter before ranking/capping.
+Share clicked, teaching preview, simulation and headless production geometry;
+require matching native filter evidence and provide pixel/radius/height reasons.
+Runtime readers require schema 12. GUI recovery of older profiles proposes
+150/60 only for missing new fields, visibly requiring review and Save; malformed
+current fields remain blank. Never rewrite/deploy operator artifacts automatically.
+Controller uses the filtered, profile-bound batch; no new motion or tray filter.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

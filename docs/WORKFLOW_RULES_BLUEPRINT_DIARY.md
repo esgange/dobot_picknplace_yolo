@@ -9130,6 +9130,56 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and reload RViz's configuration to use the new topic. Preserve `.env`,
   calibration and teach artifacts.
 
+### 2026-10-06 — Rule 229: reject nearby depth above the final pick
+
+- Add Item Teach section 4 fields **Nearby depth radius filter (mm)**, default
+  150, and **Maximum nearby height above pick (mm)**, default 60. Save required
+  finite positive `geometry.nearby_depth_radius_mm` and
+  `geometry.nearby_depth_height_mm` in strict schema 12. Edits use the existing
+  debounce/disarm/invalidation path. Older profiles open only as GUI recovery
+  drafts proposing these defaults for absent new fields, with an explicit review
+  notice; missing/invalid current-schema fields stay blank. Runtime readers reject
+  older/incomplete profiles; no operator artifact is converted or deployed.
+- In the shared native candidate generator, back-project every finite positive
+  pixel within the saved inclusive depth range, using registered depth's own
+  distortion/intrinsics and the same snapshot's full optical-to-base transform.
+  Build this full-resolution scene once per batch. Include points outside the
+  item mask and green bin; no scene MAD, cluster count, interpolation, voxel or
+  additional inference. Reject when any point's base-XY distance is at most the
+  radius and its base-Z is at least the height above final Link6 pick (item base Z
+  plus standoff). Boundaries are inclusive with only 1e-6 mm numerical tolerance.
+- Apply before ranking/capping in clicked poses, all-candidate teaching preview,
+  Simulate Trigger and headless requests. Rejections name the depth pixel, height
+  above pick and horizontal radius. Accepted native poses include checked
+  settings/counts/maximum nearby height; the parent rejects missing, mismatched
+  or failing evidence. Controller Hardware/Preview consume the filtered,
+  profile-bound batch. No motion, ledger, tray-placement filter, ROS interface,
+  sensor acquisition or executor changes.
+- Validation: **1992 item/controller/tray tests passed**. After replacing the
+  all-point 3D subtraction/hypot with squared XY distances, **198 relevant tests
+  passed** again. Tests cover exact radius/height boundaries, one-pixel obstacles,
+  outside-mask/ROI points, mask/OBB and click/service parity, rejection before
+  ranking, standoff, custom settings, tilted base transforms, separate depth
+  distortion, invalid/range-excluded depths, native evidence, strict schema,
+  GUI field placement/live edits and explicit recovery without writes. A final
+  protocol guard also rejects impossible usable-scene counts below the accepted
+  pick-sample count; all **68 detector tests passed** after that check.
+- Both packages built under `build/nearby_depth_check` and
+  `install/nearby_depth_check`; an active Item Teach/native worker was left
+  running and its private runtime was not replaced. Canonical installed Python
+  symlinks already resolve the changed source for the next launch. Synthetic
+  CPU measurement at 640×360 with 230400 valid pixels and 20 picks: median
+  scene projection 35.8 ms, radius/height checks 18.2 ms, total 54.0 ms; this is
+  filter overhead, not a live end-to-end latency guarantee. No extra YOLO call.
+- Updated AGENTS, READMEs and FSM review/diagram/guard; regenerated nine HTML/PDF
+  diagrams, inspected the Pick page and verified all source footers against
+  `93e49213e6b033131d28326084ea9ca9720acc3852116af2fb644fdd606083e2`.
+  Changed-line lint and whitespace checks pass. Restart Item Teach, review and
+  Save the two new fields, then manually deploy/reload the matching schema-12
+  pair and restart detector/controller consumers. No physical commands or
+  production restarts; `.env`, calibration/teach artifacts and operator RViz
+  edits remain outside the change. No vendor patch or upstream refresh.
+
 ### Future entry template
 
 ```text
