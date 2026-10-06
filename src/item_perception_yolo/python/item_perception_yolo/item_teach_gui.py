@@ -1556,6 +1556,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
         suffix = "" if timing is None else f" | inference {timing:.1f}ms"
         frame_note = f"{'STALE ' if age > 0.5 else ''}Frame age {age:.2f}s{suffix}"
         rgb_lines = [title, frame_note, self.rviz_status]
+        nearby_legend = ("Nearby: yellow radius / orange height above item surface / red X obstacle"
+                         " | NEAR OK is this check only")
+        if selected or mode == "simulated" or view.get("nearby_overlay"):
+            rgb_lines.append(nearby_legend)
+        elif mode == "all":
+            rgb_lines.append("Nearby overlay waiting for calibrated depth and valid pick settings")
         batch_lines = []
         if mode == "simulated":
             batch_lines = [f"Frozen teaching batch | {batch.valid_count} valid / "
@@ -1646,6 +1652,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                  QtGui.QImage.Format_RGB888).copy()
             depth_age = (self.node.get_clock().now().nanoseconds - view["depth_stamp_ns"]) / 1e9
             depth_lines = [title, f"Depth age: {depth_age:.2f}s | Accepted BLACK / Rejected RED"]
+            if selected or mode == "simulated" or view.get("nearby_overlay"):
+                depth_lines.append(nearby_legend)
             depth_lines.extend(batch_lines)
             if selected:
                 depth_lines.append(item_note)

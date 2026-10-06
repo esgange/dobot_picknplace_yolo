@@ -602,6 +602,17 @@ Older profiles open as recovery drafts proposing the new defaults for review.
 Save and manually redeploy the pair, then reload all consumers; runtime readers
 require complete schema 12. Existing operator artifacts are not rewritten.
 
+To inspect this check, Item Teach overlays both RGB and registered depth:
+solid yellow = radius at the item surface, dashed orange = the height limit
+above it, red depth points/X = blocking obstacles. Labels show the detection ID,
+`NEAR OK` or `NEAR BLOCKED`, and the highest nearby point's measured height.
+`NEAR OK` only passes this filter. Click an item to isolate its check; click again
+to resume the live view. Simulate Trigger and saved `debug/pick_img/` pairs include
+these overlays, including blocked items when no valid poses remain. Enable
+**Save item/tray debug RGB/depth** on the controller to save request images.
+The existing 1 Hz teaching snapshot supplies the overlays without another YOLO
+prediction. Restart Item Teach/headless Item Detect after updating their workers.
+
 Item Teach schema 12 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
 valid inset is projected in light blue on both RGB and registered depth. The

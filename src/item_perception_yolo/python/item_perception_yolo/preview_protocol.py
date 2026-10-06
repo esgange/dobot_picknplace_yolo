@@ -4,7 +4,9 @@ import json
 import struct
 
 MAX_HEADER = 4 * 1024 * 1024
-MAX_IMAGE_BYTES = 4096 * 4096 * 6
+# Largest teaching reply: one 16-byte point per source pixel plus two RGB8
+# overlays. Per-operation validators still require exact dimensions/layouts.
+MAX_IMAGE_BYTES = 4096 * 4096 * 22
 
 
 def read_exact(stream, size):

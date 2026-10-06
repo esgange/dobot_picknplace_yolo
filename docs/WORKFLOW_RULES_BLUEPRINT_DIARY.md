@@ -9370,6 +9370,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   build/nearby_depth_check and install/nearby_depth_check trees. No hardware
   commands, production restarts, vendor changes or offline-transfer milestone.
 
+### 2026-10-06 — Rule 235: visible nearby-obstacle decisions
+
+- Add shared native RGB/registered-depth overlays for the exact nearby-depth
+  checks. Solid yellow is the base-XY radius at detected item surface; dashed
+  orange is that radius at surface Z plus the saved height threshold, with four
+  vertical connectors. Project each pane with its own intrinsics/distortion and
+  complete optical/base transform. Clip visible segments and omit geometry behind
+  the camera without changing candidate eligibility.
+- Reuse each check's original usable points and inclusive comparisons. Paint
+  offending points red; mark the highest blocker with a red/white X and measured
+  height. Source-ID labels show NEAR OK/BLOCKED and maximum nearby height above
+  item surface. NEAR OK means only this filter passed. Earlier class/size/depth
+  failures receive no invented nearby result. Standoff remains excluded.
+- Live Item Teach adds these diagnostics to its existing all-class RGB/depth
+  annotations using the current 1 Hz RViz pose calculation, with no additional
+  inference, scene acquisition or thread. Clicking an item isolates its check
+  from the original frozen observation. Top feedback bands explain the legend;
+  native image legends also make saved PNGs independently understandable.
+  Preserve the cyan sampling circle and black/red local MAD samples.
+- Simulate Trigger and optional production debug pairs retain blocked nearby
+  diagnostics, including NO_VALID_ITEMS. Valid candidates excluded by the cap
+  still have no annotations of their own; chosen candidates keep their ordinary
+  pick overlays. No rejected candidate becomes a returned pose or TF.
+- Extend the strict teaching-only worker packet with the annotated pair, split
+  its bytes from the cloud and check the response flag, dimensions, candidate
+  identities and source generation before updating images. Bound packet payloads
+  for the maximum cloud plus two RGB panes (22 bytes per allowed source pixel);
+  per-operation dimensions/layout checks stay strict. Production candidate
+  evidence/schema and cloud/TF geometry are unchanged. Batch line drawing keeps
+  solid outlines continuous, and the live diagnostic pair is drawn only once.
+- Validation: isolated Item Perception build passes. Full Item/Tray Perception
+  suites pass **813 tests**. Regression coverage includes inclusive boundaries,
+  individual original blocker pixels, capped/empty/clicked images, standoff
+  independence, rotated transforms and separate distortion models, clipped/behind
+  projections, cloud-byte preservation, discarded invalidated results, top-band
+  legends and a real lifetime native-worker image/cloud round trip. Changed-line
+  and new-module lint and whitespace checks pass. Inspect a synthetic RGB/depth
+  render in ignored logs; no recorded collision image was available or invented.
+- Update AGENTS and root/package READMEs. Controller behavior/FSM is unchanged,
+  so no FSM export regeneration is needed. Restart Item Teach/Item Detect workers
+  to activate the new code/protocol; no automatic restart, robot command, new
+  teach/.env key, artifact deployment or offline-transfer milestone. Preserve
+  operator calibration/profile/model files and the unrelated RViz edits.
+  Add the new drawing module's normal source symlink to the canonical installed
+  Python package and verify its import; keep the live private native runtime
+  untouched rather than rebuilding/re-extracting it beneath a running worker.
+
 ### Future entry template
 
 ```text

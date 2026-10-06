@@ -1683,6 +1683,23 @@ No automatic artifact deployment, hardware commands or process restarts. This
 observed-point filter does not certify end-effector or swept-path clearance.
 
 
+Rule 235 visualizes the exact nearby-depth checks on Item Teach RGB/depth and
+requested item debug PNGs. Project a solid yellow base-XY radius at item surface,
+a dashed orange circle at surface Z plus height threshold, and connecting lines;
+highlight blocking original depth points red, with the highest blocker marked X.
+Labels give source ID, NEAR OK/BLOCKED and maximum height above item surface;
+NEAR OK must not imply complete pick eligibility. Use each pane's intrinsics/
+distortion and original snapshot; clipped/behind-camera drawing changes no check.
+Reuse the existing 1 Hz native teaching pose calculation for live overlays, and
+isolate the selected item's check on click without another prediction. Preserve
+all-class size annotations and cyan depth-sampling semantics. Simulated/capped
+request images retain blocked nearby diagnostics even for empty batches; valid
+items excluded by the cap still receive no annotations of their own. Extend the
+strict teaching-only image/cloud protocol without changing production candidate
+evidence, ranking, schemas, settings, freshness gates, RViz clouds/TF or motion.
+No new thread, inference, hardware command, automatic archive or restart.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

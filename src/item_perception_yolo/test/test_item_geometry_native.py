@@ -603,11 +603,12 @@ def exercise_candidate_batch_overlay():
         assert [c["source_index"] for c in valid] == [1, 0, 2]  # Center, then confidence tie.
         assert rejected == [{"source_index": 3, "reason": "class not selected"}]
         baseline_depth = render_depth(depth, config["quality"], cv2, np)
-        for x, y in ((180, 240), (460, 240), (460, 350)):
-            # No mask, outline, sample dots, label or axes left on non-returned items.
-            assert np.array_equal(rgb1[y-25:y+28, x-55:x+55], rgb[y-25:y+28, x-55:x+55])
-            assert np.array_equal(depth1[y-25:y+28, x-55:x+55],
-                                  baseline_depth[y-25:y+28, x-55:x+55])
+        only_rgb, only_depth, _, _ = generate_candidates(
+            [objects[1]], rgb, depth, context, config, cv2, np, candidate_limit=1)
+        # The chosen item's radius can cross another item. No pick annotations
+        # or separate nearby rings remain for valid items excluded by the cap.
+        assert np.array_equal(rgb1, only_rgb)
+        assert np.array_equal(depth1, only_depth)
         assert rgb1[250, 270].tolist() == [0, 255, 0]  # Single valid-size rectangle.
         assert rgb1[240, 320].tolist() == [255, 255, 255]
         assert depth1[240, 320].tolist() == [255, 0, 0]  # Null never enters MAD.
@@ -693,12 +694,18 @@ def exercise_nearby_depth_filter():
                             ([.100, 0., .05999], False), ([0., .150, .200], True),
                             ([0., 0., -.100], False)]:
         scene = (np.array([[42, 12]]), np.array([point]))
+        drawing = {}
         try:
-            evidence = nearby_depth_check(scene, np.zeros(3), geometry, np)
+            evidence = nearby_depth_check(scene, np.zeros(3), geometry, np,
+                                          visualization=drawing)
         except ValueError as exc:
             assert rejected and "(42, 12)" in str(exc)
         else:
             assert not rejected, evidence
+        assert drawing["blocked"] is rejected
+        assert len(drawing["blocking_points"]) == int(rejected)
+        if rejected:
+            assert np.array_equal(drawing["blocking_points"][0], point)
     camera = {"k": [1000., 0., 320., 0., 1000., 240., 0., 0., 1.], "d": [0.] * 5}
     transform = np.diag([1., -1., -1., 1.])
     transform[2, 3] = .8
@@ -723,13 +730,29 @@ def exercise_nearby_depth_filter():
     # A single depth point OUTSIDE the item and its sampling circle rejects the
     # best-ranked candidate. The farther saved candidate is still returned.
     depth[240, 554] = 640  # base XY = (149.76, 0) mm; Z = pick + 60 mm.
-    _, _, candidates, rejected = generate_candidates(
+    overlay, depth_view, candidates, rejected = generate_candidates(
         [item, second], rgb, depth, context, settings, cv2, np, candidate_limit=1)
     assert [c["source_index"] for c in candidates] == [1]
     assert len(rejected) == 1 and "60.00 mm above item surface" in rejected[0]["reason"]
+    from item_perception_yolo.nearby_depth_overlay import RADIUS_COLOR, HEIGHT_COLOR
+    for pixels in (overlay, depth_view):
+        # A rejected item remains explainable even after the valid batch is capped.
+        assert pixels[240, 554].tolist() == [255, 0, 0]
+        assert np.any(np.linalg.norm(pixels.astype(float) - RADIUS_COLOR, axis=2) < 30)
+        assert np.any(np.linalg.norm(pixels.astype(float) - HEIGHT_COLOR, axis=2) < 30)
     clicked = {**item, "source_index": item["index"]}
-    _, _, candidates, reasons = selected_pose(clicked, rgb, depth, context, settings, cv2, np)
+    clicked_rgb, clicked_depth, candidates, reasons = selected_pose(
+        clicked, rgb, depth, context, settings, cv2, np)
     assert not candidates and reasons == rejected  # Same clicked/service filter.
+    assert clicked_rgb[240, 554].tolist() == [255, 0, 0]
+    assert clicked_depth[240, 554].tolist() == [255, 0, 0]
+    # Production NO_VALID_ITEMS images still identify the blocking point.
+    for limit in (None, 1):
+        blocked_rgb, blocked_depth, poses, reasons = generate_candidates(
+            [item], rgb, depth, context, settings, cv2, np, candidate_limit=limit)
+        assert not poses and reasons == rejected
+        assert blocked_rgb[240, 554].tolist() == [255, 0, 0]
+        assert blocked_depth[240, 554].tolist() == [255, 0, 0]
     # Walls/out-of-ROI points count, and the rejection applies to OBB as well.
     narrower = {**context, "roi": [[-.14, -.14], [-.14, .14], [.14, .14], [.14, -.14]]}
     _, _, candidates, reasons = generate_candidates(
@@ -790,10 +813,64 @@ def exercise_nearby_depth_filter():
         raise AssertionError("Tilted geometry must still use base XY and base Z")
 
 
+def exercise_nearby_overlay_projection():
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import nearby_depth_check
+    from item_perception_yolo.nearby_depth_overlay import (
+        draw_nearby_depth_overlays, projected_base_points)
+    from item_perception_yolo.pick_planning import rpy_matrix
+    camera = {"k": [500., 0., 320., 0., 500., 240., 0., 0., 1.],
+              "d": [.3, -.1, 0., 0., 0.]}
+    depth_camera = {**camera, "d": [0.] * 5}
+    transform = np.eye(4)
+    transform[:3, :3] = rpy_matrix(.3, -.2, .1)
+    transform[:3, 3] = [.4, -.2, .8]
+    optical_point = np.array([.2, .03, .7])
+    point = transform[:3, :3] @ optical_point + transform[:3, 3]
+    for calibration in (camera, depth_camera):
+        actual = projected_base_points([point], transform, calibration, cv2, np)
+        expected, _ = cv2.projectPoints(
+            optical_point.reshape(1, 3), np.zeros(3), np.zeros(3),
+            np.asarray(calibration["k"]).reshape(3, 3), np.asarray(calibration["d"]))
+        assert np.allclose(actual, expected[:, 0, :])
+    # Different RGB/depth distortion locates the same blocker in different pixels.
+    assert not np.allclose(projected_base_points([point], transform, camera, cv2, np),
+                           projected_base_points([point], transform, depth_camera, cv2, np))
+    geometry = {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 50.}
+    check = {}
+    with pytest.raises(ValueError):
+        nearby_depth_check((np.array([[1, 1]]), np.array([point])),
+                           point - [.1, 0., .06], geometry, np, visualization=check)
+    context = {"camera": camera, "depth_camera": depth_camera,
+               "platform_from_optical": transform.tolist(),
+               "pick_planning": {"base_from_platform": np.eye(4).tolist()}}
+    views = tuple(np.zeros((480, 640, 3), np.uint8) for _ in range(2))
+    draw_nearby_depth_overlays(views, context, {2: check}, cv2, np)
+    for view, calibration in zip(views, (camera, depth_camera)):
+        pixel = np.rint(projected_base_points([point], transform, calibration, cv2, np)[0])
+        assert view[int(pixel[1]), int(pixel[0])].tolist() == [255, 0, 0]
+    # A 150 mm radius at surface depth 700 mm is not a 150-pixel circle.
+    top_down = np.diag([1., -1., -1., 1.])
+    top_down[2, 3] = .8
+    edges = projected_base_points([[.15, 0., .1], [.15, 0., .15]],
+                                  top_down, depth_camera, cv2, np)
+    assert np.allclose(edges[:, 0], 320. + 500. * .15 / np.array([.7, .65]))
+    # Even partially clipped / behind-camera rings cannot reject a valid pose.
+    check["item_xyz"] = transform[:3, 3]
+    check["evidence"]["height_mm"] = 10000.
+    draw_nearby_depth_overlays(views, context, {2: check}, cv2, np)
+    hidden = transform[:3, 3] - transform[:3, 2]
+    assert np.isnan(projected_base_points([hidden], transform, camera, cv2, np)).all()
+    unchanged = views[0].copy()
+    draw_nearby_depth_overlays(views, context, {}, cv2, np)
+    assert np.array_equal(views[0], unchanged)
+
+
 @pytest.mark.parametrize("exercise", [
     "exercise_geometry", "exercise_registered_depth", "exercise_resolution_depth_coverage",
     "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking",
-    "exercise_nearby_depth_filter"])
+    "exercise_nearby_depth_filter", "exercise_nearby_overlay_projection"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

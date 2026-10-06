@@ -684,6 +684,25 @@ blocking service request. All native operations are serialized in one worker.
   rejected. Restart Item Teach/headless workers together after this change; saved
   schema-12 keys and values are unchanged. This filters observed nearby points; it
   does not model the complete end-effector or swept approach path.
+- Nearby-check overlays use the exact checked scene in RGB and registered depth:
+  solid yellow is the base-XY radius at the detected surface; dashed orange is
+  the same radius at surface Z plus the saved height limit. Short orange lines
+  connect the planes. These are metric 3D projections, not fixed pixel circles;
+  RGB and depth use their own distortion models. Red points are the offending
+  usable depth samples; a red/white X marks the highest blocker and its height.
+  Labels identify the detection source index, `NEAR BLOCKED` or `NEAR OK`, and
+  maximum height above the item. `NEAR OK` is only this check, not pick eligibility.
+  Candidates rejected before depth/geometry validation have no nearby result.
+  The cyan sampling circle and its black/red MAD samples retain their meaning.
+  Live all-class preview keeps its existing size/class annotations; click an
+  item to isolate this diagnostic on the same frozen observation. Simulate Trigger
+  and requested debug PNG pairs show the same diagnostics. Capped production
+  images retain blocked nearby checks, including empty batches, while valid
+  candidates excluded by the cap receive no annotations of their own.
+  The native worker reuses its existing 1 Hz teaching pose calculation; there is
+  no additional inference, cloud resampling, pose request, thread or hardware
+  command. Invalidated worker results cannot update the displayed images. Restart
+  Item Teach/Item Detect after updating the native/parent visualization protocol.
 - Rank valid positions by XY distance to the bin polygon's area centroid;
   confidence descending then source index break exact distance ties. Return up
   to the requested number, explicitly reporting SHORTAGE or NO_VALID_ITEMS.

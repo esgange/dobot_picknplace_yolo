@@ -435,7 +435,7 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
             "depth_rgb": bytes([160, 80, 20]) * (width * height),
             "width": width, "height": height, "stamp_ns": 99_000_000_000,
             "depth_stamp_ns": 99_050_000_000, "sequence": 1, "preview_mode": "all",
-            "metadata": {"detections": [], "inference_ms": 555.}}
+            "metadata": {"detections": [], "inference_ms": 555.}, "nearby_overlay": True}
     window.node.last_view = view
     window.resize(*window_size)
     window.show()
@@ -452,6 +452,8 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
         (window.depth_feedback, window.depth_video, view["depth_rgb"]),
     ):
         assert feedback.isVisible() and feedback.wordWrap()
+        assert "orange height above item surface" in feedback.text()
+        assert "NEAR OK is this check only" in feedback.text()
         assert feedback.textFormat() == gui.QtCore.Qt.PlainText
         assert feedback.parent() is image.parent()
         assert feedback.geometry().bottom() < image.geometry().top()

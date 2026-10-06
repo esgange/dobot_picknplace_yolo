@@ -45,15 +45,24 @@ def colored_voxels(rgb, depth, context, base_from_platform, quality, cv2, np):
 def teaching_rviz(request, data, cv2, np):
     """Use the displayed detections and exact RGB/depth snapshot without another YOLO call."""
     width, height = request["width"], request["height"]
+    overlay_requested = request["nearby_overlay"]
     if (type(width) is not int or type(height) is not int
+            or type(overlay_requested) is not bool
             or not 0 < width <= 4096 or not 0 < height <= 4096
-            or len(data) != width * height * 5):
+            or len(data) != width * height * (11 if overlay_requested else 5)
+            or (overlay_requested and request["settings"] is None)):
         raise RuntimeError("Malformed teaching RViz RGB/depth snapshot")
     quality = request["quality"]
     validate_quality(quality)
     rgb_bytes = width * height * 3
     rgb = np.frombuffer(data[:rgb_bytes], np.uint8).reshape(height, width, 3)
-    depth = np.frombuffer(data[rgb_bytes:], "<u2").reshape(height, width)
+    source_end = width * height * 5
+    depth = np.frombuffer(data[rgb_bytes:source_end], "<u2").reshape(height, width)
+    views = None
+    if overlay_requested:
+        views = tuple(np.frombuffer(pixels, np.uint8).reshape(height, width, 3).copy()
+                      for pixels in (data[source_end:source_end+rgb_bytes],
+                                     data[source_end+rgb_bytes:]))
     cloud = colored_voxels(rgb, depth, request["context"], request["base_from_platform"],
                            quality, cv2, np)
     settings = request["settings"]
@@ -74,7 +83,9 @@ def teaching_rviz(request, data, cv2, np):
                             "center": rectangle.mean(axis=0)})
         # No pose_candidates truncation: include every valid object from this YOLO result.
         _, _, candidates, rejected = generate_candidates(
-            objects, rgb, depth, request["context"], settings, cv2, np)
+            objects, rgb, depth, request["context"], settings, cv2, np, nearby_views=views)
     result = {"state": "ok", "generation": request["generation"],
+              "nearby_overlay": overlay_requested,
               "point_count": len(cloud), "candidates": candidates, "rejected": rejected}
-    return result, cloud.tobytes()
+    return result, cloud.tobytes() + (b"" if views is None else b"".join(
+        view.tobytes() for view in views))

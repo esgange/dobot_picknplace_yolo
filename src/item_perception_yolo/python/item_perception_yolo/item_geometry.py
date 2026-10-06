@@ -489,7 +489,7 @@ def usable_scene_depth(depth_mm, context, quality, cv2, np):
     return pixels[valid], points[valid]
 
 
-def nearby_depth_check(scene, item_xyz, geometry, np):
+def nearby_depth_check(scene, item_xyz, geometry, np, *, visualization=None):
     """Inclusive base-XY radius and base-Z height above the detected item surface."""
     pixels, points = scene
     radius_mm = geometry["nearby_depth_radius_mm"]
@@ -498,23 +498,34 @@ def nearby_depth_check(scene, item_xyz, geometry, np):
     distance_squared = dx*dx + dy*dy
     nearby = np.flatnonzero(distance_squared <= ((radius_mm + 1e-6) / 1000.)**2)
     maximum = None
+    index = None
     if len(nearby):
         index = nearby[np.argmax(points[nearby, 2])]
         maximum = float((points[index, 2] - item_xyz[2]) * 1000.)
-        if maximum >= height_mm - 1e-6:
-            x, y = pixels[index]
-            raise ValueError(
-                f"nearby depth point ({x}, {y}): {maximum:.2f} mm above item surface "
-                f"at {math.sqrt(distance_squared[index])*1000:.2f} mm radius; "
-                f"limits {height_mm:g} mm / "
-                f"{radius_mm:g} mm (base_link)")
-    return {"radius_mm": radius_mm, "height_mm": height_mm,
-            "usable_point_count": len(points), "nearby_point_count": len(nearby),
-            "maximum_height_above_item_mm": maximum}
+    evidence = {"radius_mm": radius_mm, "height_mm": height_mm,
+                "usable_point_count": len(points), "nearby_point_count": len(nearby),
+                "maximum_height_above_item_mm": maximum}
+    blocked = maximum is not None and maximum >= height_mm - 1e-6
+    if visualization is not None:
+        # Reuse the exact tested points/boundaries, including rejected candidates.
+        # These arrays stay inside the native worker; they are not pose evidence.
+        blockers = nearby[(points[nearby, 2] - item_xyz[2])*1000. >= height_mm - 1e-6]
+        visualization.update(evidence=evidence, item_xyz=np.array(item_xyz, copy=True),
+                             blocking_points=points[blockers], blocked=blocked,
+                             maximum_point=None if index is None else points[index])
+    if blocked:
+        x, y = pixels[index]
+        raise ValueError(
+            f"nearby depth point ({x}, {y}): {maximum:.2f} mm above item surface "
+            f"at {math.sqrt(distance_squared[index])*1000:.2f} mm radius; "
+            f"limits {height_mm:g} mm / "
+            f"{radius_mm:g} mm (base_link)")
+    return evidence
 
 
 def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
-                        *, display_detections=None, candidate_limit=None):
+                        *, display_detections=None, candidate_limit=None, nearby_views=None):
+    from .nearby_depth_overlay import draw_nearby_depth_overlays
     if candidate_limit is not None and (type(candidate_limit) is not int
                                         or not 1 <= candidate_limit <= 1000):
         raise RuntimeError("Invalid candidate overlay limit")
@@ -557,6 +568,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     candidates, rejected = [], []
     samples = {}
     camera_plans = {}
+    nearby_checks = {}
     scene_depth = None
     for item in objects:
         center = item["center"]
@@ -642,7 +654,10 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 scene_depth = usable_scene_depth(depth_mm, context, quality, cv2, np)
             # Standoff compensates Link6/tool length; it must not raise the
             # obstacle threshold above the detected item's actual surface.
-            nearby_evidence = nearby_depth_check(scene_depth, item_in_base[:3, 3], geometry, np)
+            nearby_checks[item["index"]] = {}
+            nearby_evidence = nearby_depth_check(
+                scene_depth, item_in_base[:3, 3], geometry, np,
+                visualization=nearby_checks[item["index"]])
             attitude = select_pick_attitude(
                 planning["home_matrix"], item_in_base, planning["pick_rotation_deg"],
                 planning["standoff_height_mm"], planning["base_from_platform"],
@@ -706,8 +721,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     candidates.sort(key=lambda c: (c["center_distance"], -c["confidence"], c["source_index"]))
     if candidate_limit is not None:
-        # Render from the untouched pair AFTER ranking/capping. Excluded items
-        # must leave no masks, boxes, sampling points, labels or pose axes behind.
+        # Render from the untouched pair AFTER ranking/capping. Only the chosen
+        # items get pick annotations; blocked nearby checks remain diagnostic.
         chosen = candidates[:candidate_limit]
         by_id = {item["index"]: item for item in objects}
         chosen_objects = [by_id[c["source_index"]] for c in chosen]
@@ -743,6 +758,10 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 attitude.selected_camera_footprint_xy, attitude.mirrored, True, cv2, np)
         # All candidates/diagnostics still describe the uncapped valid set.
         # The shared response builder selects the identical leading subset.
+        chosen_ids = {c["source_index"] for c in chosen}
+        visible_checks = {key: value for key, value in nearby_checks.items()
+                          if key in chosen_ids or value["blocked"]}
+        draw_nearby_depth_overlays((overlay, depth_view), context, visible_checks, cv2, np)
         return overlay, depth_view, candidates, rejected
     for rank, candidate in enumerate(candidates, 1):
         cv2.putText(overlay, f"P{rank}", tuple(np.rint(candidate["pixel"]).astype(int) + [8, 20]),
@@ -755,4 +774,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                     cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(depth_view, "Accepted BLACK | Rejected RED | MAD 3 sigma", (10, 25),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+    draw_nearby_depth_overlays(
+        (overlay, depth_view) if nearby_views is None else nearby_views,
+        context, nearby_checks, cv2, np)
     return overlay, depth_view, candidates, rejected

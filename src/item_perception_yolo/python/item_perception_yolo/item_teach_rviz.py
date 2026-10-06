@@ -90,23 +90,34 @@ class TeachingRvizPreview:
                     depth = dict(node._depth)
                     context["depth_camera"] = copy.deepcopy(node._depth_info)
             context["pick_planning"] = options["planning"]
+            overlay_requested = bool(options["settings"] is not None
+                                     and view.get("preview_mode") == "all"
+                                     and view.get("depth_rgb"))
             header = {"operation": "teaching_rviz", "generation": epoch,
+                      "nearby_overlay": overlay_requested,
                       "width": rgb["width"], "height": rgb["height"], "context": context,
                       "base_from_platform": applied.platform.base_from_platform.tolist(),
                       "quality": options["quality"], "settings": options["settings"],
                       "detections": view.get("metadata", {}).get("detections", [])}
+            payload = rgb["rgb"] + depth["depth"]
+            if overlay_requested:
+                payload += view["rgb"] + view["depth_rgb"]
             result, data = node.native.call(
-                header, rgb["rgb"] + depth["depth"], options["quality"]["request_timeout_sec"])
+                header, payload, options["quality"]["request_timeout_sec"])
             try:
-                if (set(result) != {"state", "generation", "point_count", "candidates", "rejected"}
+                if (set(result) != {"state", "generation", "point_count", "candidates", "rejected",
+                                    "nearby_overlay"}
                         or result["state"] != "ok" or result["generation"] != epoch
+                        or result["nearby_overlay"] is not overlay_requested
                         or type(result["point_count"]) is not int
                         or not 0 <= result["point_count"] <= rgb["width"] * rgb["height"]
-                        or len(data) != result["point_count"] * 16
+                        or len(data) != result["point_count"] * 16 + (
+                            len(rgb["rgb"]) * 2 if overlay_requested else 0)
                         or type(result["candidates"]) is not list
                         or type(result["rejected"]) is not list):
                     raise RuntimeError("Malformed RViz preview response")
-                points = np.frombuffer(data, "<f4").reshape(-1, 4)
+                cloud_end = result["point_count"] * 16
+                points = np.frombuffer(data[:cloud_end], "<f4").reshape(-1, 4)
                 if not np.isfinite(points[:, :3]).all():
                     raise RuntimeError("Non-finite RViz point cloud")
                 if options["settings"] is None:
@@ -128,7 +139,12 @@ class TeachingRvizPreview:
             node._validate_sources()
             if epoch != node.arm_epoch or generation != node._camera_generation:
                 raise ValueError("RViz preview invalidated during processing")
-            return {**result, "data": data, "epoch": epoch, "camera_generation": generation,
+            if overlay_requested:
+                view["rgb"] = data[cloud_end:cloud_end+len(rgb["rgb"])]
+                view["depth_rgb"] = data[cloud_end+len(rgb["rgb"]):]
+                view["nearby_overlay"] = True
+            return {**result, "data": data[:cloud_end], "epoch": epoch,
+                    "camera_generation": generation,
                     "stamp_ns": rgb["stamp_ns"], "depth_stamp_ns": depth["stamp_ns"],
                     "base_from_platform": header["base_from_platform"],
                     "camera": context["camera"], "depth_camera": context["depth_camera"],

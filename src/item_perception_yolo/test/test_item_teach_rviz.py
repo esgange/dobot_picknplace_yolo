@@ -254,6 +254,7 @@ def test_exact_observation_used_without_second_yolo_or_production_request(previe
     options = {"quality": dict(QUALITY_DEFAULTS), "settings": None,
                "planning": None, "pose_error": "Select item settings"}
     node.native.call.return_value = ({"state": "ok", "generation": 3, "point_count": 0,
+                                      "nearby_overlay": False,
                                       "candidates": [], "rejected": []}, b"")
     result = visual.compute(view, options)
     assert result["stamp_ns"] == node._image["stamp_ns"]
@@ -280,11 +281,46 @@ def test_corrupt_native_cloud_is_terminal(preview):
     options = {"quality": dict(QUALITY_DEFAULTS), "settings": None,
                "planning": None, "pose_error": ""}
     node.native.call.return_value = ({"state": "ok", "generation": 3, "point_count": 1,
+                                      "nearby_overlay": False,
                                       "candidates": [], "rejected": []}, b"truncated")
     with pytest.raises(RuntimeError, match="Invalid native RViz"):
         visual.compute(view, options)
     assert node.native.failed and not node.operation_lock.locked()
     node.native.close.assert_called_once()
+
+
+@pytest.mark.parametrize("invalidated", [False, True])
+def test_nearby_overlay_updates_only_its_validated_source_view(preview, invalidated):
+    visual, node, _ = preview
+    view = {"preview_mode": "all", "rgb": bytes(12), "depth_rgb": bytes(12),
+            "metadata": {"detections": []}, "observation": {
+                "epoch": 3, "camera_generation": 4, "rgb": node._image,
+                "depth": node._depth, "context": {
+                    "camera": node._color_info, "depth_camera": node._depth_info}, "error": ""}}
+    options = {"quality": dict(QUALITY_DEFAULTS), "settings": {"yolo": {"max_detections": 20}},
+               "planning": {}, "pose_error": ""}
+    rendered_rgb, rendered_depth = bytes([19]*12), bytes([23]*12)
+    cloud = snapshot()["data"]
+
+    def reply(*_):
+        if invalidated:
+            node.arm_epoch += 1
+        return ({"state": "ok", "generation": 3, "point_count": 1, "nearby_overlay": True,
+                 "candidates": [], "rejected": []}, cloud + rendered_rgb + rendered_depth)
+
+    node.native.call.side_effect = reply
+    result = visual.compute(view, options)
+    header, payload, _ = node.native.call.call_args.args
+    assert header["nearby_overlay"] is True
+    assert payload == node._image["rgb"] + node._depth["depth"] + bytes(24)
+    if invalidated:
+        assert "invalidated" in result["error"]
+        assert view["rgb"] == view["depth_rgb"] == bytes(12)
+        assert "nearby_overlay" not in view
+    else:
+        assert result["data"] == cloud  # Image bytes must never enter PointCloud2.
+        assert view["rgb"] == rendered_rgb and view["depth_rgb"] == rendered_depth
+        assert view["nearby_overlay"] is True
 
 
 def test_gap_retains_the_published_cloud_not_an_unpublished_result(preview):

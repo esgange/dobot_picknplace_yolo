@@ -103,6 +103,7 @@ def exercise_all_candidates():
                    "polygon": (rectangle + [x, 240]).tolist()}
                   for i, x in enumerate((180, 280, 380, 480, 580))]
     request = {"width": 640, "height": 480, "generation": 7, "context": context,
+               "nearby_overlay": False,
                "base_from_platform": np.eye(4).tolist(), "quality": dict(QUALITY_DEFAULTS),
                "settings": settings, "detections": detections}
     result, data = teaching_rviz(request, rgb.tobytes() + depth.tobytes(), cv2, np)
@@ -120,6 +121,25 @@ def exercise_all_candidates():
         {**request, "settings": None}, rgb.tobytes() + depth.tobytes(), cv2, np)
     assert not cloud_only["candidates"] and not cloud_only["rejected"]
     assert cloud_data == data
+    # Live all-class imagery keeps its existing annotations and receives only
+    # nearby diagnostics from the same full-resolution check, with no inference.
+    annotated = rgb.copy()
+    annotated[200:205, 300:310] = (12, 34, 56)
+    visual, payload = teaching_rviz(
+        {**request, "nearby_overlay": True},
+        rgb.tobytes() + depth.tobytes() + annotated.tobytes() + annotated.tobytes(), cv2, np)
+    assert visual["nearby_overlay"] is True
+    assert visual["candidates"] == result["candidates"]
+    assert visual["rejected"] == result["rejected"]
+    assert payload[:len(data)] == data
+    assert len(payload) == len(data) + rgb.nbytes * 2
+    for start in (len(data), len(data) + rgb.nbytes):
+        pixels = np.frombuffer(payload[start:start+rgb.nbytes], np.uint8).reshape(rgb.shape)
+        assert np.array_equal(pixels[200:205, 300:310], annotated[200:205, 300:310])
+        assert not np.array_equal(pixels, annotated)
+    with pytest.raises(RuntimeError, match="Malformed"):
+        teaching_rviz({**request, "nearby_overlay": True},
+                      rgb.tobytes() + depth.tobytes(), cv2, np)
 
 
 @pytest.mark.parametrize("exercise", ["exercise_voxels", "exercise_all_candidates"])

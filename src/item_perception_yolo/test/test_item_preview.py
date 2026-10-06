@@ -368,6 +368,7 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         # Default teaching RViz operation reuses this exact pair/detection without
         # another prediction, model argument or production pose request.
         visualization = {"operation": "teaching_rviz", "generation": 2,
+                         "nearby_overlay": False,
                          "width": 320, "height": 240, "context": header["context"],
                          "base_from_platform": header["context"]["pick_planning"][
                              "base_from_platform"], "quality": dict(QUALITY_DEFAULTS),
@@ -378,6 +379,15 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         assert scene["candidates"] == selected["candidates"] and not scene["rejected"]
         assert 0 < scene["point_count"] < 320 * 240
         assert len(cloud) == 16 * scene["point_count"] and child.poll() is None
+        send_packet(child.stdin, {**visualization, "nearby_overlay": True},
+                    pixels + depth + preview_pixels)
+        annotated, cloud_and_images = receive_packet(child.stdout)
+        assert annotated["state"] == "ok" and annotated["nearby_overlay"] is True
+        assert annotated["candidates"] == scene["candidates"]
+        assert cloud_and_images[:len(cloud)] == cloud
+        assert len(cloud_and_images) == len(cloud) + 2*len(pixels)
+        assert cloud_and_images[len(cloud):] != preview_pixels
+        assert child.poll() is None
         # Other displayed items remain overlaid, but only the clicked item gets a pose.
         send_packet(child.stdin, click, pixels + bytes(len(depth)))
         rejected, _pixels = receive_packet(child.stdout)
