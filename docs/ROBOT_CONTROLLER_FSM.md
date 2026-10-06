@@ -1,12 +1,20 @@
 # Robot Controller — Finite State Machine
 
-Failed-pick diagnostic review: **2026-10-06**, baseline **`8d1d8e9`** plus rule
-**221**. After the existing final-pick settling interval expires without DI1
-acquisition, operator and candidate-event messages read `FAILED — no DI1 pickup
-detected before N ms settling expired.` N is the loaded `pick_settling` duration
-in milliseconds (300 for 0.3 seconds). Preserve plain FAILED in the event's
-`candidate_state` field and typed status. Classification, timing, retract,
-late-DI1 handling, I/O and retry behavior are unchanged.
+Pickup probe review: **2026-10-06**, baseline **`beae161`** plus rule **222**.
+After final-pick settling expires without DI1, keep the candidate ACTIVE and
+command a last-chance upward lift through 20% of the remaining distance from
+actual settled Z to saved pre-pick Z, at final-approach speed/acceleration.
+Preserve measured XY/attitude, suction and finger outputs. Acquisition stays
+armed across settling, probe admission and travel; DI1 HIGH uses the existing
+Stop/reply containment and held continuation from the latest pose. Only the
+fresh executed/idle probe endpoint without DI1 latches FAILED, with no second
+settling interval. Zero available rise skips motion and never descends. This
+applies to all shared Pick paths, including retries and Auto Run. Keep source
+retention, Pause/Stop, failed retract/retry and post-failure late-DI1 isolation.
+Messages read `FAILED — no DI1 pickup detected after N ms settling and the 20%
+upward-lift check.` N comes from loaded `pick_settling`; typed state remains
+FAILED. Probe events include actual distance/rates, including zero rise. This
+supersedes the rule-221 settling-only message and miss boundary.
 
 Shared debug-capture review: **2026-10-06**, baseline **`aa59259`** plus rule **220**.
 The controller's Save item/tray debug RGB/depth checkbox passes one action-scoped
@@ -629,7 +637,9 @@ flowchart TD
     Sense -->|Yes| Acquire["Send Stop; await acceptance only; fresh joint pose; mark HELD"]
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
-    Settle -->|Interval ends with no pickup| Miss["Latch FAILED; log no DI1 pickup before taught settling expired"]
+    Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 20% toward pre-pick at approach rates; fingers unchanged"]
+    Probe -->|DI1 HIGH| Acquire
+    Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; log settling + upward-lift check without DI1"]
     Acquire --> Fingers["grip_onpick: close now, independent of use_grip"]
     Fingers --> HeldReturn["Pre-pick lift: 50% relax if use_grip OFF, otherwise delayed close; clearance → Safety Z exit → Tray Detect; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
@@ -677,7 +687,7 @@ flowchart TD
   Numerically equal offset travel (within 1e-12 radians) prefers CCW, preventing
   frame relabeling roundoff from changing an otherwise equivalent choice.
 - Final approach uses taught approach speed/acceleration. DI1 acquisition is
-  immediate once armed: HIGH during descent or settling sends Stop to discard
+  immediate once armed: HIGH during descent, settling or the probe lift sends Stop to discard
   the old trajectory. Await its command acknowledgement, then mark HELD and
   queue the lifts/Tray Detect from the latest fresh joint-derived pose. No
   stationary, idle, empty-queue or remaining-settling wait precedes this return.
@@ -686,9 +696,15 @@ flowchart TD
   and the first Stop reply, send and acknowledge a final Stop to discard a
   potentially later-admitted command. Normal delayed callbacks cannot send a
   redundant Stop into the return queue. Rejection/timeout blocks the return.
-  If there is no early pickup, taught `timing.pick_settling` is the last-chance
-  final stationary/idle observation interval. DI1 HIGH interrupts it immediately;
-  only expiry without acquisition latches a miss. No extra suction wait applies.
+  If there is no early pickup, observe taught `timing.pick_settling` at the final
+  stationary/idle pose. Expiry without acquisition starts a 20% upward probe to
+  saved pre-pick Z at taught approach rates, keeping measured XY/attitude and
+  unchanged suction/finger outputs. Keep the same acquisition filter and ACTIVE
+  candidate throughout; HIGH immediately interrupts either phase. Require the
+  probe's returned queue ID, fresh idle endpoint and unchanged outputs before
+  latching a miss. There is no second settling wait. Zero upward distance skips
+  motion. Failed retract or successful held lift then uses the measured pose;
+  the original saved source remains unchanged.
 - Success first lifts to pre-pick at taught retract rates. Empty retract and
   the clearance rise use speed 100% with taught travel acceleration. Other Pick
   travel uses its taught rates; global SpeedFactor scales all motion.
@@ -724,7 +740,7 @@ flowchart TD
     PENDING -->|Motion accepted| ACTIVE
     ACTIVE -->|Unheld Pause| INTERRUPTED
     INTERRUPTED -->|Continue same candidate| ACTIVE
-    ACTIVE -->|Settling ends without pickup| FAILED
+    ACTIVE -->|Settling + 20% upward-lift check end without pickup| FAILED
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
     HELD -->|Return queue complete at Home; neutral and DI1 LOW| RETURNED
@@ -1279,6 +1295,7 @@ Names below are relative to `/robot_controller/`.
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
+| Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run next Home/Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |

@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from contextlib import nullcontext
+from dataclasses import replace
 
 import numpy as np
 
@@ -1140,7 +1141,7 @@ class DobotTransport:
         if stop_on_suction and suction_armed:
             if detected and not self.suction_interrupted:
                 self.suction_interrupted = True
-                self.suction_stop_future = self.request_stop("DI1 acquired during final approach")
+                self.suction_stop_future = self.request_stop("DI1 acquired during pickup")
             if not vacuum and before_suction is not None:
                 before_suction()
 
@@ -1177,7 +1178,7 @@ class DobotTransport:
                     before_suction=None, pick_settling_sec=0.0,
                     require_suction_reset=False, return_terminal_pose=False,
                     confirmed_start_pose=None, preserve_outputs=False, placement=None,
-                    placement_bridge=None):
+                    placement_bridge=None, pickup_retract_pose=None):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction,
@@ -1186,6 +1187,8 @@ class DobotTransport:
                     or not math.isfinite(pick_settling_sec) or pick_settling_sec < 0)
                 or (pick_settling_sec and not stop_on_suction)
                 or (require_suction_reset and not stop_on_suction)
+                or (pickup_retract_pose is not None and (
+                    not stop_on_suction or not self._valid_rigid_matrix(pickup_retract_pose)))
                 or (placement_bridge is not None and (
                     placement is not None or require_suction or forbid_suction
                     or require_suction_reset or confirmed_start_pose is None))
@@ -1228,6 +1231,7 @@ class DobotTransport:
         suction_clear_seen = (not require_suction_reset
                               and not bool(initial.feed["digital_input_bits"] & 1))
         suction_armed = False
+        probe_started = False
         self.pending_motion_outputs = {}
         self.moving = True
         started = time.monotonic()
@@ -1252,7 +1256,8 @@ class DobotTransport:
             for channel, active in fixed_outputs.items():
                 actual = bool(snapshot.feed["digital_outputs"] & (1 << (channel - 1)))
                 if actual != active:
-                    raise FeedbackFailure(f"Return output DO{channel} changed before release")
+                    context = "Pickup probe" if probe_started else "Return"
+                    raise FeedbackFailure(f"{context} output DO{channel} changed before release")
             if require_suction_reset:
                 vacuum = bool(snapshot.feed["digital_outputs"] & (1 << 12))
                 detected = bool(snapshot.feed["digital_input_bits"] & 1)
@@ -1279,7 +1284,7 @@ class DobotTransport:
             self.node.events.record(
                 "INFO", "motion_batch_interrupted", batch_name,
                 batch=batch_name, queued_targets=queued_targets,
-                reason="DI1 acquired during final approach")
+                reason="DI1 acquired during pickup")
             # Retire any outstanding Stop before dispatching the return. When
             # pickup interrupted admission, a second ordered Stop must discard
             # the command that could have been admitted after the first Stop.
@@ -1432,6 +1437,68 @@ class DobotTransport:
                         and now - stable_since >= terminal_stable_sec
                         and (terminal_stable_sec == 0
                              or self._fresh_position(snapshot, settle_origin))):
+                    if pickup_retract_pose is not None and not probe_started:
+                        # Keep this attempt and its acquisition filter alive across
+                        # settling and the last-chance lift. Do not latch a miss,
+                        # reset arming, release vacuum or move the fingers here.
+                        probe_started = True
+                        actual = self.pose_from_snapshot(snapshot)
+                        lift = .2 * max(0., pickup_retract_pose[2, 3] - actual[2, 3])
+                        bits = snapshot.feed["digital_outputs"]
+                        if not suction_armed or not bits & (1 << 12):
+                            raise FeedbackFailure("Pickup probe requires armed suction DO13 ON")
+                        fixed_outputs.update({
+                            channel: bool(bits & (1 << (channel - 1)))
+                            for channel in (1, 2, 13, 14)})
+                        self.node.events.record(
+                            "INFO", "pickup_probe_started", "Settling expired; try 20% upward lift",
+                            batch=batch_name, settling_sec=pick_settling_sec,
+                            lift_mm=lift * 1000, speed_percent=tail.speed_percent,
+                            acceleration_percent=tail.acceleration_percent)
+                        # A zero-height first retract offers no upward travel.
+                        # Never invent a clearance or command a downward probe.
+                        if lift <= 0:
+                            break
+                        destination = actual.copy()
+                        destination[2, 3] += lift
+                        tail = replace(tail, name=f"{tail.name}_pickup_probe", matrix=destination,
+                                       motion_io=(), joints_rad=None, relative_z=False)
+                        fields = dict(zip("abcdef", map(float, self._target_values(tail))))
+                        fields.update(mode=False, param_value=[
+                            "user=0", "tool=0", f"v={tail.speed_percent}",
+                            f"a={tail.acceleration_percent}"])
+                        self._wait_for_resume()
+                        self.node.raise_if_cancelled()
+                        progress(self._ready_snapshot())
+                        if self.suction_interrupted:
+                            return finish_suction_interrupt()
+                        self.node.operation_progress(
+                            "MOTION", "No DI1 after settling; trying 20% upward lift",
+                            waypoint=tail.name)
+                        replies = self.call_group(
+                            [("MovL", fields)], progress=progress, outputs_by_call=[{}],
+                            admitted=lambda _index: self._target_admitted(tail))
+                        if replies:
+                            queued_targets.append(tail.name)
+                            self.node.events.record(
+                                "INFO", "motion_queued", tail.name, batch=batch_name,
+                                speed_percent=tail.speed_percent,
+                                acceleration_percent=tail.acceleration_percent, motion_io=[])
+                        if self.suction_interrupted:
+                            return finish_suction_interrupt()
+                        if len(replies) != 1:
+                            raise FeedbackFailure("Pickup probe was not admitted")
+                        terminal_command_id = self._motion_command_id(replies[0])
+                        accepted = self.monitor.snapshot(require_enabled=True)
+                        self.node.events.record(
+                            "INFO", "pickup_probe_queued", tail.name, batch=batch_name,
+                            terminal_command_id=terminal_command_id)
+                        terminal_stable_sec = 0.
+                        stable_since = settle_origin = output_wait_since = None
+                        last_progress = time.monotonic()
+                        last_vector = np.asarray(accepted.joints, dtype=float)
+                        sequence = accepted.revision
+                        continue
                     if placement is not None:
                         placement.complete(self.node, snapshot)
                     break
@@ -1462,7 +1529,7 @@ class DobotTransport:
             self.node.events.record(
                 "INFO", "motion_batch_completed", batch_name,
                 batch=batch_name, terminal_target=tail.name,
-                targets=[target.name for target in targets],
+                targets=queued_targets, pickup_probe_attempted=probe_started,
                 terminal_stable_sec=terminal_stable_sec,
                 suction_confirmed=acquired_at_settle)
             stopped_pose = self.pose_from_snapshot(snapshot)

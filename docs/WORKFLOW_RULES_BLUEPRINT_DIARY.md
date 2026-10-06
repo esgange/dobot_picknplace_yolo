@@ -8859,6 +8859,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `4cce0fd2fef6e56f163001113222f5fb090f6b3ed75e9f70da05f93520423e0a`.
   Preserved station artifacts, `.env` and the unrelated RViz edit.
 
+### 2026-10-06 — Rule 222: last-chance 20% pickup lift before declaring a miss
+
+- Final-pick settling without DI1 now retains the ACTIVE candidate and armed
+  acquisition filter. Command one upward MovL through 20% of the remaining
+  distance from actual settled Z to the saved first retract/pre-pick Z, using
+  taught final-approach speed and acceleration and measured XY/attitude. A
+  40 mm remaining lift gives 8 mm. Keep suction and finger outputs unchanged;
+  reject unexpected output changes during the probe. Zero available rise skips
+  motion, never inventing a height or descending. No new profile setting/schema.
+- Monitor DI1 across settling, the transition, ordered admission and probe
+  travel. HIGH takes the existing acquisition Stop/acknowledgement path and
+  continues held lifting/Tray Detect from the fresh actual pose. Resolve an
+  outstanding probe reply and acknowledge another Stop when required before
+  held continuation. Preserve original source coordinates, managed Pause and
+  direct Stop; no extra detection, candidate, attempt count or worker is added.
+- A miss latches only after the probe's returned queue ID, fresh idle endpoint
+  and output checks pass without DI1, with no second settling interval. Existing
+  failed retract/retry/Home runs from the measured probe endpoint; its release
+  events and post-failure late-DI1 isolation remain. The shared executor enables
+  this for first candidates, retries, resumed unheld picks, return continuations
+  and queued Auto Run picks. Successful acquisition keeps existing gripper rules.
+- Failed-candidate operator/event text now reads `FAILED — no DI1 pickup
+  detected after N ms settling and the 20% upward-lift check.` Derive N from
+  loaded pick_settling and retain plain FAILED in typed state. Probe events record
+  actual lift/rates and queue ID, including zero-rise checks. This supersedes
+  rules 94/97/99/221's settling-only failure boundary and wording.
+- Validation: **1156 Robot Controller tests passed**, including 19 new synthetic
+  checks for normal acquisition, probe acquisition/miss, real queue-ID and idle
+  completion, actual XY/attitude, ACTIVE→HELD/FAILED and continuation origin,
+  Stop/Pause at the phase boundary, outstanding probe reply containment, output
+  changes, zero/downward travel and failure messages. Existing retry tests also
+  assert the correct candidate's retract target is supplied. Symlink build,
+  scoped flake8 and whitespace checks pass; installed imports resolve to source.
+- Updated root/package READMEs, AGENTS and FSM review/diagrams/guard table.
+  Regenerated nine adjacent HTML/PDF diagrams, visually reviewed Pick and the
+  candidate ledger, and verified the HTML hash and every PDF footer against
+  `04db6ef5393e583c4f79a655a348b380585b8cca3d57210af7d52b1d994bc0f2`.
+  No hardware motion or production restart was performed; restart Robot
+  Controller to apply. Preserved `.env`, station artifacts and the unrelated
+  operator RViz edit. This is not an offline-transfer milestone.
+
 ### Future entry template
 
 ```text

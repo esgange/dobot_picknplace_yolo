@@ -177,8 +177,7 @@ def pick_targets(home, item_in_base, settings, candidate_index, *, rotation=None
         matrix[:3, 3] = [position[0], position[1], z]
         events = ()
         if name == "transit":
-            # OPEN is the universal presentation state.  use_grip controls
-            # whether CLOSE is ever requested; it does not suppress OPEN.
+            # OPEN is the universal presentation state before pickup.
             events = gripper_open_events(50)
         elif name == "pick":
             events = vacuum_suck_events(20)
@@ -281,7 +280,7 @@ class PickExecutor:
                 forward, batch_name=(f"return_item_to_candidate_{start_index}_pick" if departure
                                      else f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
-                return_terminal_pose=True, **origin)
+                return_terminal_pose=True, pickup_retract_pose=plan[4].matrix, **origin)
         indices = [index for index in range(start_index, len(plans) + 1)
                    if session is None or index == start_index
                    or session.attempts[index - 1].state in ("PENDING", "INTERRUPTED")]
@@ -307,7 +306,7 @@ class PickExecutor:
                 matrix[2, 3] = max(origin_z, target.matrix[2, 3])
                 events = ()
                 if not acquired:
-                    # Once final-pose settling has returned False, this attempt
+                    # Once settling and the pickup probe return False, this attempt
                     # is latched missed.  Its later DI1 changes are irrelevant.
                     if not upward:
                         events = vacuum_exhaust_events(80)
@@ -375,5 +374,6 @@ class PickExecutor:
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
                 pick_settling_sec=settling, return_terminal_pose=True,
+                pickup_retract_pose=next_plan[4].matrix,
                 confirmed_start_pose=return_origin)
         return {"picked": False, "candidate": None, "holding_item": False}

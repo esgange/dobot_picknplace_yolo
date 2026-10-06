@@ -804,7 +804,7 @@ admission prevents all parking/return commands; late responses retain Stop
 containment. Vendor Pause and Continue clients are removed.
 
 Each new batch initializes `PENDING` candidates. The first accepted approach
-command marks `ACTIVE`; final-pick settling without suction marks `FAILED`;
+command marks `ACTIVE`; settling followed by the 20% pickup lift without suction marks `FAILED`;
 Pause marks the active candidate `INTERRUPTED` and keeps it eligible for retry.
 Continue retries that same candidate; its next accepted approach marks it
 `ACTIVE` again. Repeated Pause does not consume it or increase the distinct
@@ -1168,11 +1168,28 @@ within tolerance with advancing queue-idle feedback and the commanded final
 outputs for the profile's `pick_settling` interval while DI1 is monitored. This
 is the complete final-pick confirmation interval; there is no fixed 300 ms pick
 gate before it or separate sensor wait after it. If DI1 is still low when the
-interval ends, that attempt is irrevocably missed. The operator log and structured
-candidate event report `FAILED — no DI1 pickup detected before 300 ms settling expired.`
-for a 0.3-second setting; the displayed milliseconds always use the loaded
-`pick_settling` value. The event's `candidate_state` field and typed status remain
-`FAILED`. This message does not change the subsequent retract or late-DI1 policy.
+interval ends, keep the attempt ACTIVE and suction ON. At taught final-approach
+speed and acceleration, command one upward MovL through **20% of the remaining
+distance from actual settled Z to saved pre-pick Z**, preserving measured XY and
+attitude. A 40 mm remaining retract gives an 8 mm lift. Keep all finger/vacuum
+outputs unchanged and eligible DI1 monitored throughout the transition, admission
+and lift. DI1 HIGH takes the same acquisition Stop path and starts the normal held
+lift/Tray Detect queue from the actual stopped pose; gripper behavior begins only
+after acquisition. Stop and Pause still pre-empt, retaining the original source.
+
+Only fresh feedback confirming the probe queue ID, endpoint and idle state without
+DI1 latches FAILED; no second settling interval is added. With no upward distance
+available, skip the probe instead of inventing a height or descending. Events
+record actual lift millimetres and rates, including a zero-distance check. Existing
+failed retract/retry/Home runs from the probe endpoint, with its existing release
+events and late-DI1 isolation after failure. This applies to first candidates,
+retries, resumed unheld picks, return continuations and queued Auto Run picks.
+No new setting, schema, detection request or attempt count is added.
+
+The operator log and structured candidate event report `FAILED — no DI1 pickup
+detected after 300 ms settling and the 20% upward-lift check.` for a 0.3-second
+setting; milliseconds always use the loaded `pick_settling`. The event's
+`candidate_state` field and typed status remain `FAILED`.
 
 DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.050` filter owned
 by the canonical feedback monitor, not a teach-file setting. After HIGH has been

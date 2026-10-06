@@ -488,8 +488,8 @@ class RobotController(Node):
         message = attempt.state
         if attempt.state == "FAILED":
             settling_ms = self.configuration.profile["timing"]["pick_settling"] * 1000
-            message = (f"FAILED — no DI1 pickup detected before {settling_ms:g} ms "
-                       "settling expired.")
+            message = (f"FAILED — no DI1 pickup detected after {settling_ms:g} ms "
+                       "settling and the 20% upward-lift check.")
         self.events.record("INFO", "candidate_state", message, candidate_state=attempt.state,
                            candidate_index=index, candidate_id=attempt.identifier)
         self.publish_operator_log(

@@ -299,6 +299,7 @@ def test_success_closes_only_after_suction_and_finishes_at_tray_holding():
     assert forward[2]["batch_name"] == "candidate_1_home_to_pick"
     assert forward[2]["pick_settling_sec"] == pytest.approx(0.2)
     assert forward[2]["return_terminal_pose"] is True
+    assert np.array_equal(forward[2]["pickup_retract_pose"], plan[4].matrix)
     assert forward[1] == ("p1_transit", "p1_prepick", "p1_pick")
     assert ("output", 14, False) in hardware.log
     assert ("output", 2, True) in hardware.log
@@ -501,6 +502,7 @@ def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_
     assert retry[1] == ("p1_retract", "p1_final", "p1_transit_exit", "p2_transit",
                         "p2_initial", "p2_prepick", "p2_pick")
     assert retry[2]["stop_on_suction"] is True
+    assert np.array_equal(retry[2]["pickup_retract_pose"], plans[1][4].matrix)
     assert retry[2]["require_suction_reset"] is True
     assert retry[2]["pick_settling_sec"] == pytest.approx(0.2)
     assert retry[2]["return_terminal_pose"] is True

@@ -101,8 +101,10 @@ execution, queue completion, faults and I/O. Joint/status callbacks wake checks
 immediately; no fixed arrival dwell is added outside taught final-pick settling.
 Eligible DI1 HIGH during Pick sends Stop immediately and starts the lift/Tray
 Detect return after command acknowledgement, without stationary confirmation.
-Final-pick settling is only the last chance to receive DI1; acquisition interrupts
-it immediately. Pending motion admission is resolved and discarded before return.
+If final-pick settling ends without DI1, keep suction on and try a last-chance
+lift through 20% of the remaining distance to pre-pick at final-approach rates.
+DI1 interrupts settling or this lift immediately; only completing the lift without
+DI1 fails the candidate. Pending motion admission is resolved and discarded before return.
 Explicit Recover cancels the interrupted action, preserves current gripper
 outputs during a confirmed vertical lift to Home height and return to taught Home.
 At Home, Recover / Clear Error relaxes both finger outputs and switches suction and

@@ -1508,6 +1508,21 @@ in the operator log and candidate_state event; retain the plain candidate state
 in the event's candidate_state field and typed status. This is diagnostic only:
 no timing, failure classification, late-DI1 handling, retract, I/O or retry change.
 
+Rule 222 keeps a candidate ACTIVE after final-pick settling expires without DI1.
+With suction and finger outputs unchanged, lift 20% of the remaining upward
+distance from the actual settled pose to saved pre-pick Z, keeping measured
+XY/attitude and taught final-approach speed/acceleration. Monitor eligible DI1
+continuously across the transition, admission and lift; HIGH uses the existing
+acquisition Stop/reply containment and held continuation from the latest pose.
+Only confirmed probe endpoint/queue completion without DI1 latches FAILED; no
+second settling interval. Zero available rise skips motion, never inventing a
+height or descending. Log the settling duration and upward-lift check, plus
+actual probe distance/rates in events. Existing failed retract/retry, late-DI1
+isolation after failure, source retention, gripper-on-success behavior and
+Pause/Stop gates remain. Apply to every shared Pick path without new settings,
+schema or detector requests. Supersedes rules 94/97/99/221's settling-only miss
+decision; update diary/FSM/exports and verify with synthetic feedback only.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
