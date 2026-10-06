@@ -45,6 +45,7 @@ install(PROGRAMS
   scripts/bin_teach
   scripts/platform_teach
   scripts/item_teach
+  scripts/robot_camera_box
   scripts/item_detect
   scripts/item_preview_worker
   DESTINATION lib/${PROJECT_NAME})

@@ -55,14 +55,16 @@ shows the CR10 and the TF display shows the robot frames plus any additional TF
 published by other local ROS nodes.
 
 The optional **Robot camera - 90 x 25 x 30 mm body** Marker display subscribes
-to `/robot_controller/robot_camera_body`. The separate read-only
-`robot_camera_box` node (started by the controller GUI launch, or with
-`ros2 run robot_controller robot_camera_box`) draws a translucent magenta box
+to `/item_teach/robot_camera_body`. The separate read-only
+`item_perception_yolo/robot_camera_box` node, started by Item Teach launch,
+draws a translucent magenta box from Item Teach's validated calibration selection
 with its center (+11, 0, −12.79) mm from the RGB optical origin and XYZ sizes
 90/25/30 mm in RGB optical axes. It follows live Link6 TF using the same saved
 mounting pose, nominal RGB-to-link bridge and offset body as camera
-clearance planning. It publishes no TF or hardware commands. Missing calibration
-hides the box; stopping the node expires it after three seconds. Reload this
+clearance planning. It publishes no TF or hardware commands. Selection changes,
+invalid calibration or missing Item Teach updates hide the box. Closing Item
+Teach stops its display process; stopping that node expires its marker after
+three seconds. Controller launch does not start it. Reload this
 configuration or add that Marker topic to an already-open RViz window.
 
 The bundled configuration also subscribes to Item Teach's optional 1 Hz

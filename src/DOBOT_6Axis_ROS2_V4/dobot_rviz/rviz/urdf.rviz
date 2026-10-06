@@ -81,7 +81,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /robot_controller/robot_camera_body
+        Value: /item_teach/robot_camera_body
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Name: Item Teach - live XY and blue UP guides

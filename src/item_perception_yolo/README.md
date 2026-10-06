@@ -510,8 +510,21 @@ outlines, rejecting old centered-body evidence. The same pure planner runs in he
 controller preview and hardware planning. Restart all these processes together
 after updating. Teach-file schemas/settings and pose-service interfaces are unchanged.
 This models the housing at the pick pose, without mount/cable geometry or swept-path checks.
-The controller's optional read-only `robot_camera_box` node also displays the
-same dimensions attached to live Link6 in RViz; it never affects pose generation.
+Item Teach launch starts the separate read-only `item_perception_yolo/robot_camera_box`
+node, displaying the same offset housing on `/item_teach/robot_camera_body` in
+RViz. Item Teach publishes its validated selected camera mount at 1 Hz on
+`/item_teach/robot_camera_mount` (`geometry_msgs/PoseArray`, frame `Link6`): one
+pose is `Link6 <- robot_camera_link`, an empty array clears the display.
+Selection edits, failed validation and closing Item Teach clear the mount;
+each heartbeat rechecks the selected camera file's hash without scanning for a
+newer file. A changed file stays invalid until explicitly reloaded. The display
+rejects malformed, repeated, future or older-than-2.5-second mounting messages
+and expires when updates stop. Both topics use reliable transient-local depth-one
+transport. The marker remains frame-locked to live Link6 with a three-second
+lifetime if its own process stops. Item Teach closing shuts down its launched
+display process. No trusted model, bin selection, inference or camera stream is
+needed to show a validated mounting pose. Controller/headless launches do not
+start this node; shared clearance checks never depend on visualization.
 Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
 in robot base Z. zheight_offset is removed. GUI-only old-file recovery leaves
 old retract_height blank because its reference changed; correction/Save is

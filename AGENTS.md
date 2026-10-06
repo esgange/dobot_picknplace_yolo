@@ -1584,6 +1584,18 @@ live TF dependency, calibration rewrite, teach schema or configuration key.
 Document Orbbec geometry sources, update FSM/exports and test independent
 RGB/link bounds, rotated offsets, mirror decisions and marker/planner agreement.
 
+Rule 228 moves robot_camera_box into item_perception_yolo and starts it only
+alongside Item Teach, removing controller launch/package ownership. Item Teach
+publishes its exact validated selected Link6-relative mounting as one stamped
+PoseArray pose (empty means clear) on /item_teach/robot_camera_mount at 1 Hz.
+Edits, failed validation and shutdown clear it; recheck the selected file hash
+without independent discovery or automatic replacement. The separate read-only
+node publishes /item_teach/robot_camera_body, rejects invalid/nonadvancing/stale
+mounting evidence and hides it after 2.5 seconds without fresh updates. Item
+Teach launch exit stops the display; its own marker retains a three-second
+expiry. Keep shared geometry, controller/headless clearance and calibration
+selection unchanged. No hardware clients, inference dependency or new config.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

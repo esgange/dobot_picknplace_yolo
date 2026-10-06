@@ -39,6 +39,7 @@ def test_preview_constants_and_three_process_launch():
     assert 'executable="robot_controller"' in launch
     assert 'executable="robot_controller_preview"' in launch
     assert 'executable="robot_controller_gui"' in launch
+    assert 'robot_camera_box' not in launch
     assert "UnlessCondition(headless)" in launch
     assert "item_teach_file" not in launch
     assert "bin_teach_file" not in launch

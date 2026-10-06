@@ -444,12 +444,16 @@ ranking so the next safe item is eligible, and the controller independently
 rejects a disagreement before motion. A magenta `CAM`/`CAM 180` footprint is
 shown on bin-camera RGB/depth; light blue remains pick-point-only. A confirmed
 miss advances to another candidate; Pause/Continue retries an interrupted approach.
-The read-only `robot_camera_box` node publishes a magenta CUBE marker on
-`/robot_controller/robot_camera_body`, attached to live Link6 using the same
+Item Teach launch starts the separate read-only `robot_camera_box` node in
+`item_perception_yolo`. It publishes a magenta CUBE marker on
+`/item_teach/robot_camera_body`, attached to live Link6 using Item Teach's selected
 calibration, RGB-referenced dimensions and center offset. RGB/aligned-depth
 measurements retain their actual factory optical TF; the nominal mechanical
-transform is used only for the housing. GUI controller launch starts it automatically;
-`ros2 run robot_controller robot_camera_box` runs it separately for teaching.
+transform is used only for the housing. Item Teach sends its validated mounting
+pose at 1 Hz; edits, failed validation and shutdown clear it. The display expires
+after 2.5 seconds without fresh mounting evidence and stops with Item Teach's
+launch. It never chooses a calibration independently. Controller and headless
+launches create no camera-body display; their clearance checks remain independent.
 Canonical RViz includes the display. Reload its configuration if already open.
 This is a pick-pose footprint check, not a swept-path or full robot collision planner.
 No-I/O moves use MovL, real timed-output

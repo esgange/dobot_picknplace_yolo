@@ -41,6 +41,7 @@ from .item_teach_calibration import (
     saved_calibration_paths, load_calibration_selection, save_calibration_selection)
 from .item_teach_rviz import PERIOD_SEC, TeachingRvizPreview
 from .pose_guides import PoseGuidePublisher
+from .camera_box import TeachingCameraMount
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -93,6 +94,7 @@ class ItemTeachNode(ItemDetectNode):
         self.pose_guides = PoseGuidePublisher(
             self, "/item_teach/selected_pose_guides", "item_selected")
         self.rviz = TeachingRvizPreview(self, build_selected_pose_transform)
+        self.camera_mount = TeachingCameraMount(self)
         self.create_timer(0.1, self._broadcast_selected_pose)
         self.create_subscription(
             JointState, "/joint_states", self._on_joints, qos_profile_sensor_data,
@@ -182,6 +184,7 @@ class ItemTeachNode(ItemDetectNode):
             self.pose_guides.publish(transforms)
 
     def close_runtime(self):
+        self.camera_mount.close()
         self.rviz.clear("Item Teach closed")
         self.clear_selected_pose()
         super().close_runtime()
@@ -1126,6 +1129,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Selection changed; validating the complete calibration selection automatically…")
 
     def _clear_station_preview(self):
+        self.node.camera_mount.clear()
         self.yolo_toggle.setChecked(False)
         self.node.disarm()
         self.armed_toggle.setChecked(False)
@@ -1171,6 +1175,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.auto_preview_pending = resume and self.node.model_config is not None
             saved_message = "Calibration selection saved to .env. " if persist else ""
             if not bin_path:
+                self.node.camera_mount.set_camera(robot_camera)
                 self.station_status.setText(
                     saved_message + "Selected calibrations loaded. "
                     "Select a bin teach to display its ROI.")
@@ -1179,6 +1184,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 platform, bin_path, expected_station=selected,
                 expected_robot_camera=robot_camera, robot_camera_path=robot_camera.path)
             self._sync_bin_clearance_preview()
+            self.node.camera_mount.set_camera(robot_camera)
             self.camera_prefix.setText(self.node.camera_prefix)
             write_item_station_state(ui_state_path(), Path(platform).name, Path(bin_path).name)
             write_item_preview_state(ui_state_path(), self.node.camera_prefix)
@@ -1211,6 +1217,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         except (ValueError, OSError, RuntimeError) as exc:
             if all(paths) and any(not Path(path).is_file() for path in paths):
                 self.calibration_waiting = paths, persist
+            self.node.camera_mount.clear()
             self.node.disarm()
             self.node.applied = self.node.bin_artifact = self.node.robot_camera = None
             self.node.last_view = None

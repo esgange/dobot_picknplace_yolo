@@ -1,5 +1,13 @@
 # Robot Controller — Finite State Machine
 
+Visualization ownership review: **2026-10-06**, baseline **`17f43b0`** plus rule
+**228**. Item Teach launch owns the separate read-only robot_camera_box process
+in item_perception_yolo; controller launches no longer start it. It displays
+/item_teach/robot_camera_body from Item Teach's validated selected camera mount,
+clearing on edits/failure/shutdown or stale updates. Controller/headless planning
+still use the shared body geometry and their own validated calibration, with no
+dependency on the teaching display or its mount topic. Motion guards are unchanged.
+
 Camera-body clearance review: **2026-10-06**, baseline **`bb366fb`** plus rule
 **227**, superseding rule 226's centered housing dimensions. Model Gemini 335
 in RGB optical axes: size 90/25/30 mm, center (+11, 0, −12.79) mm. Compose the
@@ -11,7 +19,7 @@ outline inside/on green. Prefer the normal attitude, then exact tool-Z 180° mir
 reject if neither fits. Item Teach, headless detection, preview and hardware use
 the same pure planner; native results validate RGB frame, size, offset and outlines.
 Keep blue pick-point checks independent. RGB/depth draw the actual projected
-body outline. The optional read-only robot_camera_box node displays that same
+body outline. Item Teach's separate read-only robot_camera_box node displays that same
 body frame-locked to live Link6 in RViz, without new TF or robot commands. This
 checks pick-pose containment only; it is not a swept-path collision planner.
 

@@ -13,4 +13,6 @@ def generate_launch_description():
     return LaunchDescription([
         Node(package="item_perception_yolo", executable="item_teach", name="item_teach",
              output="screen", on_exit=Shutdown(reason="Item teach stopped")),
+        Node(package="item_perception_yolo", executable="robot_camera_box",
+             name="robot_camera_box", output="screen"),
     ])

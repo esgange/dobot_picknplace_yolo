@@ -7,7 +7,6 @@ install(PROGRAMS
   scripts/robot_controller
   scripts/robot_controller_gui
   scripts/robot_controller_preview
-  scripts/robot_camera_box
   DESTINATION lib/${PROJECT_NAME})
 install(FILES launch/robot_controller.launch.py DESTINATION share/${PROJECT_NAME}/launch)
 install(FILES README.md DESTINATION share/${PROJECT_NAME})

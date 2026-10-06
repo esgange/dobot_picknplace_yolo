@@ -688,7 +688,7 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         item_platform_filename=None, item_bin_filename=None,
     ))
     node = SimpleNamespace(events=MagicMock(), robot_ip="192.168.20.205",
-                           rviz=MagicMock(),
+                           rviz=MagicMock(), camera_mount=MagicMock(),
                            applied=None, last_view=None,
                            disarm=MagicMock(), close_runtime=MagicMock(), service=None,
                            clear_selected_pose=MagicMock(),

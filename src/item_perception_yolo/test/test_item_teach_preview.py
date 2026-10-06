@@ -25,6 +25,7 @@ def window(tmp_path, monkeypatch):
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "warning", MagicMock())
     node = SimpleNamespace(
         events=MagicMock(), disarm=MagicMock(), arm=MagicMock(), close_runtime=MagicMock(),
+        camera_mount=MagicMock(),
         rviz=MagicMock(compute=MagicMock(return_value=None)),
         clear_selected_pose=MagicMock(), show_selected_pose=MagicMock(), clicked_pose=MagicMock(),
         show_simulated_poses=MagicMock(),
@@ -1497,6 +1498,8 @@ def test_station_files_automatically_enable_roi_when_stream_arrives(window, monk
     assert "Platform teach…" not in buttons
     window._update_station_preview()
     window.node.apply_station.assert_not_called()
+    window.node.camera_mount.set_camera.assert_called_with(
+        gui.load_calibration_selection.return_value[1])
     assert "Select a bin teach" in window.station_status.text()
     assert window.platform_path.isReadOnly() and window.calibration_camera_path.isReadOnly()
     window.bin_path.setText("/selected/bin_teach_test.yaml")
@@ -1677,11 +1680,14 @@ def test_invalid_explicit_load_clears_preview_but_keeps_chosen_paths(window, mon
     window.node.last_view = {"old": "snapshot"}
     window.node.disarm.reset_mock()
     window.node.clear_selected_pose.reset_mock()
+    window.node.camera_mount.reset_mock()
     gui.save_calibration_selection.side_effect = ValueError("Selected calibration is invalid")
     window._calibration_selection_changed()
+    window.node.camera_mount.clear.assert_called_once()
     window.calibration_due = 0
     window._refresh_video()
     assert window.node.applied is None and window.node.last_view is None
+    window.node.camera_mount.set_camera.assert_not_called()
     assert not window.yolo_toggle.isChecked() and not window.armed_toggle.isChecked()
     window.node.disarm.assert_called()
     window.node.clear_selected_pose.assert_called()
@@ -1708,10 +1714,13 @@ def test_calibration_browse_cancel_preserves_binding_and_does_not_save(window, m
     selected_station_fixture(window, monkeypatch)
     window.bin_path.setText("/selected/bin_teach_test.yaml")
     applied = window.node.applied
+    window.node.camera_mount.reset_mock()
     gui.save_calibration_selection.reset_mock()
     monkeypatch.setattr(gui.QtWidgets.QFileDialog, "getOpenFileName", lambda *_args: ("", ""))
     window._choose_calibration_file(window.platform_path)
     assert window.node.applied is applied
+    window.node.camera_mount.clear.assert_not_called()
+    window.node.camera_mount.set_camera.assert_not_called()
     gui.save_calibration_selection.assert_not_called()
 
 

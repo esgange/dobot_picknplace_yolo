@@ -9091,6 +9091,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and the camera-box display to apply; `.env`, calibration and teach artifacts
   remain unchanged. The model excludes mounting hardware/cables and swept paths.
 
+### 2026-10-06 — Rule 228: Item Teach owns camera-body visualization
+
+- Move the read-only `robot_camera_box` module, executable and tests from
+  `robot_controller` to `item_perception_yolo`. Item Teach launch now starts
+  the display alongside its GUI and closes it when Item Teach exits. Controller
+  GUI/headless launches no longer own a camera-body process. The shared housing
+  geometry and independent detection/controller clearance checks are unchanged.
+- Item Teach publishes only its exact validated selected robot-camera mounting
+  on `/item_teach/robot_camera_mount`: a stamped `PoseArray` in `Link6`, one pose
+  for the mount or an empty array to clear. Selection edits, validation failure
+  and shutdown clear immediately. A 1 Hz heartbeat revalidates the selected
+  file/hash without catalog discovery or newer-file substitution; invalidation
+  requires explicit reload. No model, bin selection or inference is needed.
+- The separate node publishes the same RGB-referenced magenta housing marker on
+  `/item_teach/robot_camera_body`, following live Link6. Reject malformed,
+  nonadvancing, future or stale mount messages and hide after 2.5 seconds without
+  fresh evidence. Both topics use reliable transient-local depth-one transport;
+  retain the marker's three-second expiry if the display itself stops. Add no
+  hardware clients, camera subscriptions, competing TF, config key or schema.
+- Intentional vendor integration patch: rename only the canonical camera-body
+  Marker topic in `dobot_rviz/rviz/urdf.rviz` and update its README. Preserve
+  operator RViz changes outside the staged one-line patch; no upstream refresh.
+  Rebuild both packages and remove only the obsolete generated broken symlinks
+  for the old controller executable/module from this workspace's install tree.
+- Validation: full controller/item-perception suite **1736 passed**; focused
+  tests, both package builds, scoped flake8 and whitespace checks pass. An
+  isolated ROS domain verifies selected calibration publication, immediate
+  clear/reload, expiry after owner disappearance and no robot service clients.
+  Launch inspection confirms Item Teach owns the box and controller does not.
+  Updated GUI fixtures to include the newly owned publisher; initial full run
+  found one missing fixture field, with all other tests passing.
+- Updated AGENTS, root/package READMEs and FSM ownership review; regenerated
+  all nine HTML/PDF diagrams and verified every source footer against
+  `e25e91e9e344be59a099eefc178341471e58a0d9ab9642285626ef2783eb5aa9`.
+  No physical commands or production restarts. Restart Item Teach; close any
+  old controller-owned camera-box process by restarting its controller launch,
+  and reload RViz's configuration to use the new topic. Preserve `.env`,
+  calibration and teach artifacts.
+
 ### Future entry template
 
 ```text
