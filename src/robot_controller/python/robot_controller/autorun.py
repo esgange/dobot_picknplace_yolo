@@ -140,9 +140,10 @@ class AutoRunOperation:
 
     def queued_home(self, bridge):
         targets = self.node._home_plan(bridge.origin)
-        # Placement retract is already at Home Z. The first appended MovL must
+        # Placement retract is already at Home Z. The first appended MovJ must
         # expose a queue ID that proves execution passed every placement command.
-        if len(targets) != 1 or targets[0].joints_rad is None or targets[0].motion_io:
+        if (len(targets) != 1 or not targets[0].joint_motion
+                or targets[0].joints_rad is None or targets[0].motion_io):
             raise CommandRejected("Auto Run requires a direct joint Home after placement retract")
         return targets
 

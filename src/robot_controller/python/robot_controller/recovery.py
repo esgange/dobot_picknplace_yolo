@@ -124,7 +124,7 @@ class HomeRecovery:
         self.check(node.monitor.snapshot(require_enabled=True))
         if not node.hardware.home_already_reached(config.home_joints):
             home = Target("recovery_home", config.home_matrix.copy(), speed, acceleration,
-                          tuple(config.home_joints))
+                          tuple(config.home_joints), joint_motion=True)
             node.operation_progress("RECOVERY_HOME", "Moving to taught Home; grip preserved",
                                     waypoint=home.name)
             self.motion_started = True

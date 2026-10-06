@@ -55,9 +55,9 @@ def test_return_queues_all_targets_before_waiting_for_home(height, approach_spee
     rig.node.managed._put_back(dropped=False)
     offset = int(height < .795)
     assert [name for name, _ in rig.requests] == ["MovL"] * offset + [
-        "MovL", "MovLIO", "MovLIO", "MovL"]
+        "MovL", "MovLIO", "MovLIO", "MovJ"]
     assert rig.order[:4 + offset] == (["MovL"] * offset + [
-        "MovL", "MovLIO", "MovLIO", "MovL"])
+        "MovL", "MovLIO", "MovLIO", "MovJ"])
     approach, release, retract, home = [request for _, request in rig.requests[offset:]]
     assert (release.a, release.b, release.c) == pytest.approx(source[2].matrix[:3, 3] * 1000)
     assert (approach.a, approach.b, approach.c) == pytest.approx((120., -230., 800.))

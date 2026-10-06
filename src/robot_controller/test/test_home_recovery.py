@@ -145,7 +145,7 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
             node.configuration.tray.detect_matrix[2, 3] = .8
             rig.emit(outputs=outputs, inputs=inputs, running=0, currentCommandId=3)
         else:
-            assert [name for name, _ in rig.requests] == ['RelMovLUser', 'MovL']
+            assert [name for name, _ in rig.requests] == ['RelMovLUser', 'MovJ']
             rig.monitor.update_joints(joint_message())
             rig.emit(outputs=outputs, inputs=inputs, home=True)
         completions.append(rig.monitor.sequence)
@@ -172,7 +172,7 @@ def test_recovery_encodes_vertical_then_joint_home_through_real_transport(holdin
     rig.on_request = reset_echo
     rig.monitor.wait_next = reset_echo
     recovery.relax(node)
-    assert [name for name, _ in rig.requests] == ['RelMovLUser', 'MovL'] + ['DO'] * 4
+    assert [name for name, _ in rig.requests] == ['RelMovLUser', 'MovJ'] + ['DO'] * 4
     assert [request.index for _, request in rig.requests[-4:]] == [1, 2, 13, 14]
     assert node.monitor.snapshot().feed['digital_outputs'] == 0
     assert not node.holding_item and node.managed.session.held_index is None

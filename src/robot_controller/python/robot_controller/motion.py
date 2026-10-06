@@ -72,6 +72,7 @@ class Target:
     joints_rad: tuple | None = None
     relative_z: bool = False
     motion_io: tuple = ()
+    joint_motion: bool = False
 
     def __post_init__(self):
         if type(self.speed_percent) is not int or not 1 <= self.speed_percent <= 100:
@@ -83,6 +84,14 @@ class Target:
         if type(self.motion_io) is not tuple or any(
                 not isinstance(event, MotionIO) for event in self.motion_io):
             raise ValueError("Target motion I/O must be a tuple of validated events")
+        if type(self.joint_motion) is not bool:
+            raise ValueError("Joint motion selection must be an explicit boolean")
+        if self.joint_motion:
+            if (self.joints_rad is None or len(self.joints_rad) != 6
+                    or not all(math.isfinite(value) for value in self.joints_rad)):
+                raise ValueError("Joint motion requires six finite absolute joint angles")
+            if self.relative_z or self.motion_io:
+                raise ValueError("Joint motion cannot carry relative-Z or timed linear I/O")
         states = {}
         for event in self.motion_io:
             key = (event.percent, event.channel)
@@ -99,21 +108,14 @@ class Target:
 
 
 def home_targets(current, home, joints, *, speed_percent, acceleration_percent):
-    final = Target("home", home.copy(), speed_percent, acceleration_percent, tuple(joints))
+    final = Target("home", home.copy(), speed_percent, acceleration_percent, tuple(joints),
+                   joint_motion=True)
     if current[2, 3] >= home[2, 3] - CARTESIAN_POSITION_TOLERANCE_M:
         return (final,)
     height = current.copy()
     height[2, 3] = home[2, 3]
     return (Target("home_height", height, speed_percent, acceleration_percent, relative_z=True),
             final)
-
-
-def cartesian_home_targets(current, home, *, speed_percent, acceleration_percent):
-    """Standalone Hardware Home: current XY with Home Z/attitude, then Home XYZ/attitude."""
-    alignment = home.copy()
-    alignment[:2, 3] = current[:2, 3]
-    return (Target("home_align", alignment, speed_percent, acceleration_percent),
-            Target("home", home.copy(), speed_percent, acceleration_percent))
 
 
 def tray_detect_targets(destination, joints, *, speed_percent, acceleration_percent):

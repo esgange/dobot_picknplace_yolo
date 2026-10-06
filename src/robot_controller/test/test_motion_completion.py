@@ -58,7 +58,7 @@ class MotionRig:
     def dispatch(self, calls, **_kwargs):
         self.calls.extend(calls)
         self.during_admission()
-        return tuple(SimpleNamespace(res=0, robot_return="{7}") if name == "MovL"
+        return tuple(SimpleNamespace(res=0, robot_return="{7}") if name in ("MovJ", "MovL")
                      else SimpleNamespace(res=0) for name, _fields in calls)
 
     def next_sample(self, *_args, **_kwargs):
@@ -221,3 +221,22 @@ def test_pick_settling_cannot_finish_on_frozen_joint_and_status_samples(monkeypa
 def test_invalid_queue_ids_fail_closed(value):
     with pytest.raises(FeedbackFailure, match="queued command ID"):
         DobotTransport._motion_command_id(SimpleNamespace(robot_return=value))
+
+
+def test_movj_home_requires_its_queue_id_and_exact_unwrapped_joints():
+    rig = MotionRig()
+    rig.transport.node.holding_item = False
+    # The fake FK can match while the absolute joint angle is still one turn away.
+    rig.transport.node.kinematics.forward = lambda _joints: np.eye(4)
+    rig.emit(z=-2 * np.pi)
+    rig.steps = iter([
+        {"z": -2 * np.pi, "command_id": 7},  # Right pose/ID, wrong turn count.
+        {"z": 0., "command_id": 6},  # Right joints, wrong queued command.
+        {"z": 0., "command_id": 7, "running": 1},  # Still executing.
+        {"z": 0., "command_id": 7},
+    ])
+    assert not rig.transport.home_already_reached((0.,) * 6)
+    rig.run(targets=(Target("home", np.eye(4), 75, 60, (0.,) * 6, joint_motion=True),))
+    assert rig.calls[0][0] == "MovJ"
+    assert len(rig.waited) == 4
+    assert rig.transport.home_already_reached((0.,) * 6)

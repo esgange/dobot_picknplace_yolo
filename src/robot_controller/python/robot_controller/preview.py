@@ -29,7 +29,7 @@ from .events import PackageEventLogger
 from .errors import FeedbackFailure, OperationCanceled
 from .feedback import FeedbackMonitor
 from .kinematics import Cr10Kinematics
-from .motion import (candidate_pose_in_base, candidate_exit_transit, cartesian_home_targets,
+from .motion import (candidate_pose_in_base, candidate_exit_transit,
                      home_targets, pick_targets, pick_tray_target, pose_reached,
                      tray_detect_targets)
 from .pick_session import return_targets
@@ -176,9 +176,9 @@ class RobotControllerPreview(rclpy.node.Node):
             targets = []
             tray_travel_only = False
             if request.operation == request.HOME:
-                if not pose_reached(current, config.home_matrix,
-                                    translation_m=.005, rotation_deg=1.):
-                    targets.extend(cartesian_home_targets(current, config.home_matrix, **rates))
+                if not at_home:
+                    targets.extend(home_targets(current, config.home_matrix,
+                                                config.home_joints, **rates))
             if request.operation == request.PICK:
                 tray_target = pick_tray_target(config.tray, config.profile)
                 if not at_home:

@@ -11,7 +11,7 @@ from robot_controller.hardware import (
     HOME_JOINT_TOLERANCE_RAD, MOTION_HARD_CAP_SEC, MOTION_NO_PROGRESS_SEC,
     OUTPUT_FEEDBACK_TIMEOUT_SEC, READY_STABLE_SEC, SERVICE_DISCOVERY_TIMEOUT_SEC)
 from robot_controller.motion import (
-    MotionIO, PickExecutor, Target, candidate_pose_in_base, cartesian_home_targets,
+    MotionIO, PickExecutor, Target, candidate_pose_in_base,
     gripper_close_events, gripper_neutral_events, gripper_open_events, home_targets,
     pick_attitude, pick_targets, pick_tray_target, pose_reached, vacuum_exhaust_events,
     vacuum_neutral_events, vacuum_suck_events)
@@ -76,6 +76,7 @@ def test_home_rises_only_when_below_and_finishes_at_exact_joint_target():
     assert plan[0].relative_z
     assert plan[0].matrix[2, 3] == 0.7
     assert plan[1].joints_rad == joints
+    assert plan[1].joint_motion and not plan[0].joint_motion
     assert [target.name for target in home_targets(
         matrix(0.8), home, joints, speed_percent=100,
         acceleration_percent=100)] == ["home"]
@@ -105,22 +106,16 @@ def test_home_height_skip_uses_five_mm_boundary(below_home_m, needs_rise):
         assert plan[0].relative_z
 
 
-@pytest.mark.parametrize("current_z", [0.2, 0.8])
-def test_hardware_home_uses_current_xy_then_full_cartesian_home(current_z):
-    current = item_pose(x=0.12, y=-0.18, z=current_z, yaw_deg=-45)
-    home = item_pose(x=0.30, y=-0.40, z=0.35, yaw_deg=30)
-    first, final = cartesian_home_targets(
-        current, home, speed_percent=75, acceleration_percent=60)
-
-    assert [first.name, final.name] == ["home_align", "home"]
-    assert np.allclose(first.matrix[:2, 3], current[:2, 3])
-    assert first.matrix[2, 3] == pytest.approx(home[2, 3])
-    assert np.allclose(first.matrix[:3, :3], home[:3, :3])
-    assert np.allclose(final.matrix, home)
-    assert all(target.joints_rad is None and not target.relative_z
-               and not target.motion_io for target in (first, final))
-    assert [(target.speed_percent, target.acceleration_percent)
-            for target in (first, final)] == [(75, 60), (75, 60)]
+@pytest.mark.parametrize("fields", [
+    {"joints_rad": None}, {"joints_rad": (0.,) * 5},
+    {"joints_rad": (float("nan"),) * 6}, {"relative_z": True},
+    {"motion_io": (MotionIO(50, 14, True),)}, {"joint_motion": "yes"},
+])
+def test_joint_motion_rejects_invalid_angles_or_linear_options(fields):
+    options = dict(joints_rad=(0.,) * 6, joint_motion=True)
+    options.update(fields)
+    with pytest.raises(ValueError):
+        Target("home", matrix(), 75, 60, **options)
 
 
 def test_pick_geometry_rates_and_real_timed_io():

@@ -9180,6 +9180,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   production restarts; `.env`, calibration/teach artifacts and operator RViz
   edits remain outside the change. No vendor patch or upstream refresh.
 
+### 2026-10-06 — Rule 230: absolute joint MovJ for every Home destination
+
+- The operator narrowed the requested change to Home motion first; retain the
+  Auto Run Home detour after placement. Audit found Home used joint-target MovL
+  (and explicit Home used Cartesian MovL), despite saved/current J6 differing by
+  a full turn. The accepted linear command made no measurable progress in the
+  recorded failure. Change the command type, preserving exact taught joint
+  arrival rather than masking the mismatch with modulo-360 comparison.
+- Add explicit validated joint-motion selection to shared targets. Every final
+  Home now sends canonical MovJ with mode=true and six saved angles converted
+  from radians to degrees: initial/empty-retry/exhausted Pick, item return,
+  recovery and queued Auto Run Home. Leave Tray Detect joint-target MovL and
+  all Cartesian approach/release/retract/transit commands unchanged. No vendor
+  patch: the existing MovJ request and parser already support joint mode and
+  return a queue ID.
+- Explicit Home and Preview now reuse the conditional shared Home plan: below
+  Home Z by more than 5 mm, preserve XY/attitude during a separately confirmed
+  upward RelMovLUser, then joint MovJ Home. At/above the threshold skip the rise.
+  Skip Home itself only with fresh idle feedback and all six raw joint errors
+  within ±1°. Recover keeps its existing stricter below-Home rise condition.
+  Preserve held I/O, taught rates/full-speed return overrides, CP, Stop and all
+  source/feedback gates. Preview describes endpoints, not the swept joint path.
+- Register MovJ as a required owned motion service and include it in late-reply
+  Stop containment. Validate its returned command ID before admitting another
+  command; final completion requires that ID plus advancing actual joint/idle
+  feedback. Auto Run still appends Home only after all placement replies, and
+  uses that Home ID for release/source handoff without a midpoint arrival wait.
+- Validation: controller build and colcon test pass, **1194 pytest tests** with
+  no failures/skips. Tests cover exact unwrapped joints despite matching FK,
+  degree-valued joint requests, retained linear clearance and failure barriers,
+  Home/preview parity, recovery, queued return, Auto Run ordering/source/drop,
+  Stop cancellation, malformed queue IDs and late accepted replies. Initial
+  test failures were outdated MovL expectations and incomplete new fixtures;
+  corrected without weakening runtime guards. Changed-line lint and whitespace
+  checks pass. No physical commands, process restarts or hardware motion test.
+- Updated AGENTS, root/controller READMEs and FSM; regenerated nine diagrams in
+  HTML/PDF, inspected the recovery diagram and verified export hash footers
+  against `c628e3bd990319da1496b1059d2cecd6eb73af15160147ed90359fa8d501fa32`.
+  Restart controller/preview to apply; verify physical MovJ turn behavior during
+  the operator's next run. Preserve `.env`, calibration/teach/model artifacts
+  and existing operator RViz edits. No offline-transfer milestone claimed.
+
 ### Future entry template
 
 ```text

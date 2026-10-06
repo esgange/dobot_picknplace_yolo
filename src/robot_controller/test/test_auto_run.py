@@ -72,7 +72,7 @@ def test_next_home_and_pick_are_admitted_before_placement_finishes_without_old_d
         confirmed_start_pose=bridge.origin, placement_bridge=bridge)
     assert acquired
     assert [name for name, _ in rig.requests] == [
-        "MovL", "MovLIO", "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO", "Stop"]
+        "MovL", "MovLIO", "MovLIO", "MovJ", "MovLIO", "MovL", "MovLIO", "Stop"]
     # No new feedback/arrival wait between placement admission and all next targets.
     assert rig.order[:7] == [name for name, _ in rig.requests[:7]]
     assert run.completed == 1
@@ -91,8 +91,8 @@ def test_final_home_is_queued_behind_placement_and_success_waits_only_at_final_h
         dict(outputs=0, inputs=OPEN, home=True),
     ])
     run.finish_home(bridge)
-    assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovL"]
-    assert rig.order[:4] == ["MovL", "MovLIO", "MovLIO", "MovL"]
+    assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovJ"]
+    assert rig.order[:4] == ["MovL", "MovLIO", "MovLIO", "MovJ"]
     assert run.completed == 1 and rig.node.machine.state == "READY"
     assert rig.monitor.snapshot().robot_enabled
     rig.node._preflight_item_state.assert_called_with(False)
@@ -139,7 +139,7 @@ def test_direct_stop_during_append_keeps_old_source_and_never_counts_the_placeme
     with pytest.raises(OperationCanceled):
         rig.transport.move_batch((*run.queued_home(bridge), *run.queued_home(bridge)),
                                  confirmed_start_pose=bridge.origin, placement_bridge=bridge)
-    assert [name for name, _ in rig.requests].count("MovL") == 2
+    assert [name for name, _ in rig.requests].count("MovJ") == 1
     assert rig.node.managed.session is old_session and old_session.held_index == 1
     assert run.completed == 0
 
@@ -390,7 +390,7 @@ def test_empty_prefetch_finishes_queued_home_before_its_single_retry():
         assert rig.monitor.snapshot().robot_enabled
         assert np.allclose(rig.transport.pose_from_snapshot(rig.monitor.snapshot()),
                            rig.node.configuration.home_matrix)
-        assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovL"]
+        assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovJ"]
         return SimpleNamespace(identifier="retry-empty", candidates=[])
     rig.node.candidates = SimpleNamespace(request=Mock(side_effect=detect))
     assert not run._pick(SimpleNamespace(identifier="prefetched-empty", candidates=[]), bridge)
@@ -668,10 +668,10 @@ def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply,
             run.run()
         names = [name for name, _ in rig.requests]
         if reply == "accepted":
-            assert names == ["MovL", "MovLIO", "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO",
+            assert names == ["MovL", "MovLIO", "MovLIO", "MovJ", "MovLIO", "MovL", "MovLIO",
                              "Stop"]
-            assert rig.order.index("placement accepted") < rig.order.index("MovL", 2)
-            assert rig.order.index("feedback") > rig.order.index("MovL", 2)
+            assert rig.order.index("placement accepted") < rig.order.index("MovJ")
+            assert rig.order.index("feedback") > rig.order.index("MovJ")
             assert run.completed == 1
         else:
             assert names[:pending_index] == ["MovL", "MovLIO", "MovLIO"][:pending_index]

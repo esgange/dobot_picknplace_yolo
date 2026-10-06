@@ -74,7 +74,8 @@ def test_runtime_continue_replans_without_vendor_queue_resume_or_empty_movlio():
     assert "InverseKin" not in runtime
     assert "_call_queue_control" not in runtime
     assert "self.managed.continue_operation()" in runtime
-    assert 'service = "MovLIO" if events else "MovL"' in runtime
+    assert ('service = "MovJ" if target.joint_motion else '
+            '("MovLIO" if events else "MovL")') in runtime
     assert 'fields["mdis"] = events' in runtime
 
 

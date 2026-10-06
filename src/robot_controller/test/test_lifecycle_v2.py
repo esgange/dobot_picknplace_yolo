@@ -427,90 +427,69 @@ def test_shared_initial_home_skips_all_motion_when_joint_gate_is_already_met():
 
 
 @pytest.mark.parametrize("holding", [False, True])
-def test_hardware_home_queues_two_cartesian_waypoints_in_one_group(holding):
+@pytest.mark.parametrize("below", [False, True])
+def test_home_uses_exact_joints_and_confirms_linear_clearance_first(holding, below):
     calls = []
-    current = np.eye(4)
-    current[:3, 3] = [0.1, 0.2, 0.1]
     home = np.eye(4)
-    home[:3, 3] = [0.3, -0.4, 0.5]
+    home[2, 3] = .5
+    current = home.copy()
+    current[2, 3] -= .2 if below else 0.
+    # Same Cartesian pose can still require Home when the wrist is a turn away.
     config = SimpleNamespace(
-        home_matrix=home,
+        home_matrix=home, home_joints=tuple(np.deg2rad([-32., 5., -129., 34., 90., 12.476])),
         profile={"speed": {"travel_percent": 75},
                  "acceleration": {"travel_percent": 60}},
-        validate_sources=lambda _root: calls.append(("validate",)))
-    hardware = SimpleNamespace(
-        current_pose=lambda: calls.append(("current_pose",)) or current,
-        move_batch=lambda targets, **kwargs: calls.append(("move", targets, kwargs)))
+        validate_sources=lambda _root: None)
     node = SimpleNamespace(
-        root="/unused", hardware=hardware, configuration=config,
-        holding_item=holding, raise_if_cancelled=lambda: None,
-        wait_for_resume=lambda: None,
-        _preflight_item_state=lambda expected: calls.append(("preflight", expected)),
-        operation_progress=lambda phase, message, **fields: calls.append(
-            ("progress", phase, message, fields)))
-
-    targets = RobotController._execute_cartesian_home(node)
-    moves = [call for call in calls if call[0] == "move"]
-    assert len(moves) == 1
-    assert [target.name for target in moves[0][1]] == ["home_align", "home"]
-    assert all(target.joints_rad is None and not target.relative_z
-               for target in moves[0][1])
-    assert moves[0][2] == {"batch_name": "home", "require_suction": holding,
-                           "forbid_suction": not holding,
-                           "confirmed_start_pose": current}
-    assert targets == moves[0][1]
-    assert calls.index(("preflight", holding)) < calls.index(moves[0])
-    assert calls.count(("preflight", holding)) == 1
-    assert calls.count(("current_pose",)) == 1
-
-
-def test_hardware_home_skips_when_cartesian_feedback_is_already_within_tolerance():
-    home = np.eye(4)
-    current = home.copy()
-    current[0, 3] = 0.004
-    moves = []
-    node = SimpleNamespace(
-        root="/unused", holding_item=False,
-        configuration=SimpleNamespace(
-            home_matrix=home, validate_sources=lambda _root: None),
-        hardware=SimpleNamespace(
-            current_pose=lambda: current,
-            move_batch=lambda *_args, **_kwargs: moves.append("move")),
+        root=None, holding_item=holding, configuration=config,
+        hardware=SimpleNamespace(home_already_reached=lambda _joints: False,
+                                 current_pose=lambda: current,
+                                 move_batch=lambda targets, **kw: calls.append((targets, kw))),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
         _preflight_item_state=lambda _holding: None,
         operation_progress=lambda *_args, **_kwargs: None)
+    node._home_plan = lambda pose: RobotController._home_plan(node, pose)
+    targets = RobotController._execute_home(node)
+    assert len(calls) == 1 + below
+    assert calls[-1][0][0].joint_motion
+    assert calls[-1][0][0].joints_rad == config.home_joints
+    assert targets[-1] is calls[-1][0][0]
+    assert all(kw["require_suction"] == holding and kw["forbid_suction"] != holding
+               for _targets, kw in calls)
+    if below:
+        assert calls[0][0][0].relative_z and not calls[0][0][0].joint_motion
+        assert np.array_equal(calls[0][0][0].matrix, home)
+        assert calls[-1][1]["confirmed_start_pose"] is None
 
-    assert RobotController._execute_cartesian_home(node) == ()
-    assert moves == []
 
-
-def test_hardware_home_group_failure_is_propagated():
-    home = np.eye(4)
-    home[:3, 3] = [0.3, -0.4, 0.5]
+def test_failed_clearance_prevents_joint_home():
     calls = []
+    home = np.eye(4)
+    home[2, 3] = .5
 
     def move(targets, **_kwargs):
         calls.append(tuple(target.name for target in targets))
-        raise FeedbackFailure("Home group failed")
+        raise FeedbackFailure("Home clearance failed")
 
     node = SimpleNamespace(
-        root="/unused", holding_item=False,
+        root=None, holding_item=False,
         configuration=SimpleNamespace(
-            home_matrix=home,
+            home_matrix=home, home_joints=(0.,) * 6,
             profile={"speed": {"travel_percent": 100},
                      "acceleration": {"travel_percent": 100}},
             validate_sources=lambda _root: None),
-        hardware=SimpleNamespace(current_pose=lambda: np.eye(4), move_batch=move),
+        hardware=SimpleNamespace(home_already_reached=lambda _joints: False,
+                                 current_pose=lambda: np.eye(4), move_batch=move),
         raise_if_cancelled=lambda: None, wait_for_resume=lambda: None,
         _preflight_item_state=lambda _holding: None,
         operation_progress=lambda *_args, **_kwargs: None)
+    node._home_plan = lambda pose: RobotController._home_plan(node, pose)
+    with pytest.raises(FeedbackFailure, match="Home clearance failed"):
+        RobotController._execute_home(node)
+    assert calls == [("home_height",)]
 
-    with pytest.raises(FeedbackFailure, match="Home group failed"):
-        RobotController._execute_cartesian_home(node)
-    assert calls == [("home_align", "home")]
 
-
-def test_home_action_uses_cartesian_route_without_changing_pick_home():
+def test_home_action_uses_shared_joint_home_route():
     calls = []
     machine = SimpleNamespace(message="")
 
@@ -522,8 +501,7 @@ def test_home_action_uses_cartesian_route_without_changing_pick_home():
         root="/unused", active_goal=None, holding_item=False, machine=machine,
         configuration=SimpleNamespace(validate_sources=lambda _root: None),
         _transition=transition,
-        _execute_cartesian_home=lambda: calls.append(("cartesian_home",)),
-        _execute_home=lambda: pytest.fail("Pick's shared Home was called"),
+        _execute_home=lambda: calls.append(("joint_home",)),
         managed=SimpleNamespace(lock=threading.RLock()),
         wait_for_resume=lambda: None,
         events=SimpleNamespace(record=lambda *_args, **_kwargs: None),
@@ -533,7 +511,7 @@ def test_home_action_uses_cartesian_route_without_changing_pick_home():
     result = RobotController._execute_home_action(node, goal)
     assert result.outcome == GoHome.Result.SUCCESS
     assert result.final_state == "READY"
-    assert calls == [("state", "HOMING"), ("cartesian_home",),
+    assert calls == [("state", "HOMING"), ("joint_home",),
                      ("state", "READY"), ("succeed",), ("end",)]
 
 

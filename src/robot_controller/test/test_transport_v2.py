@@ -9,7 +9,7 @@ import robot_controller.hardware as hardware_module
 from robot_controller.errors import (CommandRejected, CommandResponseTimeout,
                                      FeedbackFailure, HeldSuctionLost, HeldUnknown)
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
-from robot_controller.motion import MotionIO, Target, cartesian_home_targets
+from robot_controller.motion import MotionIO, Target, home_targets
 
 
 class EventLog:
@@ -168,14 +168,15 @@ def test_move_batch_queues_both_transits_before_only_terminal_arrival_check(coin
     assert events.entries[-1][1]["terminal_stable_sec"] == 0.0
 
 
-def test_hardware_home_waypoints_dispatch_cartesian_movl_only():
+def test_home_dispatches_linear_clearance_then_absolute_movj():
     transport = object.__new__(DobotTransport)
     current = np.eye(4)
     current[:3, 3] = [0.1, 0.2, 0.1]
     home = np.eye(4)
     home[:3, 3] = [0.3, -0.4, 0.5]
-    targets = cartesian_home_targets(
-        current, home, speed_percent=75, acceleration_percent=60)
+    joints = tuple(np.deg2rad([-32., 5., -129., 34., 90., 12.476]))
+    targets = home_targets(
+        current, home, joints, speed_percent=75, acceleration_percent=60)
     sequence = iter(range(1, 20))
     transport.node = SimpleNamespace(
         events=EventLog(), expected_outputs={}, raise_if_cancelled=lambda: None,
@@ -199,16 +200,18 @@ def test_hardware_home_waypoints_dispatch_cartesian_movl_only():
     transport.suction_stop_future = None
     transport.moving = False
     attach_batch_monitor(transport)
+    transport.node.kinematics.forward = lambda _joints: home
 
     assert transport.move_batch(targets, batch_name="home") is False
 
-    assert [name for name, _fields in calls] == ["MovL", "MovL"]
-    assert all(fields["mode"] is False and "mdis" not in fields
+    assert [name for name, _fields in calls] == ["RelMovLUser", "MovJ"]
+    assert all("mdis" not in fields
                and fields["param_value"] == ["user=0", "tool=0", "v=75", "a=60"]
                for _name, fields in calls)
-    assert [fields["a"] for _name, fields in calls] == pytest.approx([100., 300.])
-    assert [fields["b"] for _name, fields in calls] == pytest.approx([200., -400.])
-    assert [fields["c"] for _name, fields in calls] == pytest.approx([500., 500.])
+    rise, final = [fields for _name, fields in calls]
+    assert [rise[key] for key in "abcdef"] == pytest.approx([0., 0., 400., 0., 0., 0.])
+    assert final["mode"] is True
+    assert [final[key] for key in "abcdef"] == pytest.approx(np.rad2deg(joints))
     assert set(reached) == {"home"}
 
 
@@ -409,7 +412,8 @@ def test_motion_group_completion_callbacks_do_not_wait_for_group_lock():
     assert all(future.callback_done.is_set() for future in futures)
 
 
-def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeypatch):
+@pytest.mark.parametrize("service", ["MovJ", "MovL"])
+def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeypatch, service):
     class DeferredFuture:
         def __init__(self):
             self.callbacks = []
@@ -442,8 +446,8 @@ def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeyp
     transport.pending_response = None
     transport.pending_group = None
     transport.clients = {
-        "MovL": SimpleNamespace(service_is_ready=lambda: True, call_async=dispatch)}
-    transport.types = {"MovL": SimpleNamespace(Request=lambda **fields: fields)}
+        service: SimpleNamespace(service_is_ready=lambda: True, call_async=dispatch)}
+    transport.types = {service: SimpleNamespace(Request=lambda **fields: fields)}
     stops = []
     late_stops = []
     events = EventLog()
@@ -470,11 +474,11 @@ def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeyp
     monkeypatch.setattr(
         hardware_module, "time", SimpleNamespace(monotonic=lambda: 6.0))
 
-    with pytest.raises(CommandResponseTimeout, match="MovL response timeout"):
+    with pytest.raises(CommandResponseTimeout, match=f"{service} response timeout"):
         transport.call_group((
-            ("MovL", {"a": 1.0}),
-            ("MovL", {"a": 2.0}),
-            ("MovL", {"a": 3.0}),
+            (service, {"a": 1.0}),
+            (service, {"a": 2.0}),
+            (service, {"a": 3.0}),
         ))
 
     assert len(dispatches) == 1
@@ -1450,3 +1454,22 @@ def test_pause_unwinds_output_feedback_wait_and_preserves_commanded_transition()
     transport.monitor = StopMonitor(snapshot(di1=True, outputs=1 << 12))
     transport.confirm_stop(CompletedFuture(), allow_suction_loss=True)
     assert not node.expected_outputs[14]
+
+
+@pytest.mark.parametrize("service", ["MovJ", "MovL"])
+def test_invalid_queue_id_stops_admission_before_any_later_command(service):
+    from rclpy.task import Future
+    from test_placement_queue import QueueRig
+    rig = QueueRig()
+    original = rig.transport.clients[service].call_async
+
+    def invalid_id(request):
+        original(request)
+        future = Future()
+        future.set_result(SimpleNamespace(res=0, robot_return="{}"))
+        return future
+
+    rig.transport.clients[service].call_async = invalid_id
+    with pytest.raises(FeedbackFailure, match="queued command ID"):
+        rig.transport.call_group(((service, {"mode": True}), ("MovL", {"mode": False})))
+    assert [name for name, _ in rig.requests] == [service, "Stop"]

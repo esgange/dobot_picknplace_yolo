@@ -1,5 +1,15 @@
 # Robot Controller — Finite State Machine
 
+Home-motion review: **2026-10-06**, baseline **`c2c3501`** plus rule **230**.
+Every final Home destination uses absolute joint `MovJ(mode=true)` with the six
+exact taught angles. Explicit Home/Preview now share the conditional upward-only
+Home-Z clearance then joint Home; keep existing linear safety/transit/release
+segments. Required MovJ ownership, ordered acceptance, returned queue-ID execution,
+Stop/late-response containment and exact ±1° per-joint arrival apply. Never wrap
+a full wrist turn or substitute Cartesian arrival. Initial/recovery/return and
+Auto Run Home all use MovJ; Tray Detect stays joint-target MovL. The inter-cycle
+Home detour and placement-before-next-pick acceptance boundary remain in place.
+
 Nearby-depth eligibility review: **2026-10-06**, baseline **`f717319`** plus rule
 **229**. Schema-12 Item Teach profiles require a nearby radius/height (defaults
 150/60 mm). Before ranking, the shared detector rejects a candidate if any usable
@@ -523,8 +533,8 @@ There is no fallback when the preview service is unavailable. Its process create
 only read-only perception clients, never Dobot command clients, and can plan from
 fresh feedback while disabled without running Startup.
 
-Home uses joint FK for its actual origin and shares Cartesian alignment/final
-targets and arrival skips. Pick shares the conditional initial joint-Home route,
+Home uses joint FK for its actual origin and shares the conditional vertical
+clearance, absolute MovJ Home target and exact joint arrival skip. Pick shares that route,
 all accepted candidates, their successful Tray Detect target, missed transits
 and Home/put-back branches. It previews one fresh batch at nominal endpoints;
 actual early-contact poses and future retry batches require live execution and are not invented.
@@ -657,7 +667,7 @@ typed status and failed service responses include the complete guidance.
 | `INACTIVE` | Files loaded; Configure continues into preparation. Headless waits for external Startup. |
 | `STARTING` | Startup initialization in progress; READY, HELD_UNKNOWN or FAULT follows. |
 | `READY` | Available and unheld; can Pick, Home, Tray Detect Position, GUI-mode Place, Pause, reload or change global speed/CP. |
-| `HOMING` | Explicit Cartesian GoHome action is executing. |
+| `HOMING` | Explicit joint-target MovJ GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
 | `PLACING` | Checking observation position, observing tray/depth, admitting placement or supervising retract after action SUCCESS. |
 | `PICKING` | Poses before Home; one empty-result retry at Home; up to three nonempty physical-pick batches; success ends at Tray Detect. |
@@ -1037,14 +1047,14 @@ flowchart TD
     Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
     Prefetch -.-> Capture["In parallel: fresh post-trigger RGB/depth/TF; retain result"]
     Place -->|All accepted| Last{"Last required item?"}
-    Last -->|Yes| Home["Immediately append Home behind placement"]
+    Last -->|Yes| Home["Immediately append MovJ Home behind placement"]
     Home --> Done["PLACED; cancel unused poses; count execution/release; confirm Home + neutral + DI1 LOW; READY"]
     Last -->|No| Ready{"Fresh next-bin request finished?"}
     Capture -.-> Ready
     Ready -->|No| Wait["Supervise placement or unheld idle while awaiting result"]
     Wait --> Ready
     Ready -->|Yes| Poses{"Any valid poses?"}
-    Poses -->|Yes| Append["Append Home → entry → pre-pick → pick; no placement/Home idle wait"]
+    Poses -->|Yes| Append["Append MovJ Home → entry → pre-pick → pick; no placement/Home idle wait"]
     Poses -->|No| RetryHome["Finish owned Home; count placement; retry acquisition once"]
     RetryHome --> Retried{"Poses returned?"}
     Retried -->|Yes| Next
@@ -1112,7 +1122,7 @@ If observation is slower than placement, finish normal retract
 supervision, then wait for the request while supervising unheld idle feedback.
 
 The planned retract is at Home Z, so the first appended target is an ordinary
-joint-target Home MovL. Its returned queue ID supplies the execution boundary
+joint-target Home MovJ. Its returned queue ID supplies the execution boundary
 that MovLIO cannot return. The old placement/source remains authoritative until
 advancing FeedInfo reaches or passes that ID and output history shows neutral
 DO1/DO2/DO13/DO14 with DI1 LOW since placement admission. Then mark the old item
@@ -1211,7 +1221,7 @@ flowchart TD
     Stationary -->|Failure or Stop| Fault
     Stationary -->|Yes| Settings["Restore speed/CP and settings; confirm readiness"]
     Settings --> Lift["Below Home Z: vertical lift at current XY/attitude; physically confirm"]
-    Lift --> Home["Move to exact taught Home; preserve grip"]
+    Lift --> Home["MovJ to exact taught Home joints; preserve grip"]
     Home --> Relax["Idle + Home joints: DO1, DO2, DO13, DO14 OFF; confirm each"]
     Relax --> Confirm["Up to 5 s: fresh Home joints + RobotStatus idle; output queue finished"]
     Confirm -->|Neutral outputs and DI1 LOW| Ready["READY at Home; gripper relaxed; old batch cancelled"]
@@ -1261,7 +1271,7 @@ Pause and drop containment retain their original physical Stop order.
 Keep the last confirmed global speed and CP (each 100% if unset;
 CP=0 remains valid). Preserve outputs
 during travel. Below Home Z, issue and physically confirm an upward-only
-RelMovLUser with unchanged XY/attitude; then a separate joint-target MovL to taught
+RelMovLUser with unchanged XY/attitude; then a separate joint-target MovJ to taught
 Home. Use taught travel rates. Already-high skips the rise; already-at-Home skips
 its move. Monitor unchanged outputs and held/clear suction throughout. Direct
 Stop pre-empts recovery; another Recover replans from a new Stop and current pose.
@@ -1340,11 +1350,11 @@ item placement is not measured; source context does not survive restart.
 | Held loss during Pause / while PAUSED | Shared queue + joint Home → DROPPED / PAUSED; wait for Continue or Stop. |
 | Explicit Recover | Cancel; preserve grip through lift/Home, then relax at Home. No release replay or automatic next Pick. |
 
-## 7. Home has two routes
+## 7. Home uses exact taught joint motion
 
 | Request | Planned route | Completion check |
 | --- | --- | --- |
-| Explicit Hardware Home / `go_home` | Current XY with taught Home Z/attitude → full taught Cartesian Home, one blended group | Final Cartesian Home; whole move skipped if already within 5 mm / 1° |
+| Explicit Hardware Home / `go_home` | Conditional unchanged-XY/attitude rise to Home Z, separately confirmed → absolute joint MovJ Home | Exact taught joints within ±1° each, execution/idle; skip only when those joints already match |
 | Pick's Home after pose acquisition, or before its empty-result retry | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if idle and every Home joint is within ±1° |
 | Explicit Return Item or paused drop | Shared queue: optional rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → joint Home | Final Home joints / idle / execution with neutral outputs / DI1 LOW |
 | Final exhausted miss | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
@@ -1353,8 +1363,13 @@ Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
 moves directly to saved Tray Detect joints and finishes HOLDING there.
 
 Shared joint-Home planning skips its preliminary rise when current/planned Z is
-within 5 mm below Home Z or higher. Explicit Cartesian Home uses its own alignment
-target; its attitude and queue behavior must not be inferred from the joint route.
+within 5 mm below Home Z or higher. Every final Home command is MovJ in absolute
+joint mode, including all rows above and Auto Run. Linear clearance, approach,
+release and retract segments retain their existing services and barriers.
+Home arrival compares raw angles without modulo wrapping: the same tool pose with
+a different wrist turn count is insufficient. Preview shows endpoints, not a
+collision-checked swept path; final Home uses joint interpolation.
+
 
 ## 8. What drives transitions
 
@@ -1443,7 +1458,7 @@ Every queued group's terminal check requires a newer joint source timestamp and
 newer RobotStatus receipt after the last acceptance, idle RobotStatus, actual
 endpoint tolerance and confirmed I/O. Joint targets use ±1° per joint; Cartesian
 targets use joint FK within 5 mm/1°. Empty-queue and execution evidence remain
-separate command guards. For a terminal MovL, require
+separate command guards. For a terminal MovJ or MovL, require
 the returned queue ID to equal the stream's currentCommandId. The fixed vendor
 MovLIO/RelMovLUser interfaces return only res; these instead require execution
 evidence latched from live running/queue flags, changed currentCommandId or

@@ -1614,6 +1614,20 @@ current fields remain blank. Never rewrite/deploy operator artifacts automatical
 Controller uses the filtered, profile-bound batch; no new motion or tray filter.
 
 
+Rule 230 sends every final controller Home target using MovJ with mode=true and
+all six exact taught joint angles (no modulo wrapping). This includes explicit
+Home, initial/empty-retry/exhausted Pick, Return Item, Recover and Auto Run Home.
+Explicit Home and its preview now reuse the shared conditional upward-only
+Home-Z clearance then joint Home, superseding rules 90/93's Cartesian alignment.
+Keep necessary linear clearance/release/transit segments and their existing
+barriers; all other joint-target motion, including Tray Detect, remains MovL.
+Retain taught rates, ordered acceptance, CP, I/O/Stop/feedback gates and the ±1°
+per-joint Home check. MovJ is a required owned motion service, participates in
+late-response Stop containment and uses its returned queue ID for completion
+and Auto Run handoff. Same Cartesian pose with a different wrist turn is not
+Home. Keep the Home detour between placements and next picks for this change.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

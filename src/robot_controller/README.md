@@ -155,7 +155,7 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | Queue admission | One complete ordered group; no drop-arrival wait | Same |
 | MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
 | At 0% ascent (start) | DO2/DO14/DO1/DO13 OFF | Same |
-| Final MovL | Exact taught Home joints | None for manual Place |
+| Final MovJ | Exact taught Home joints | None for manual Place |
 | Physical completion | Home joints/idle/execution, neutral outputs and DI1 LOW | Final retract/idle/execution, neutral outputs and DI1 LOW |
 
 Return uses one ordered CP (default 100%) group: approach/drop/retract/Home. When
@@ -652,8 +652,8 @@ The separate typed hardware API retains its existing guards and behavior.
 The preview process has no Dobot command clients. It reads the same three canonical
 robot feedback streams, requires fresh stationary/empty-queue inputs, and obtains
 the current Link6 pose from joint FK. It can preview while the robot is disabled;
-it never enables it. Shared planners supply Cartesian Home alignment/final targets,
-Pick's conditional initial rise/joint Home, every candidate's approach/retract,
+it never enables it. Shared planners supply the conditional vertical clearance
+and exact joint Home for both Home and Pick, every candidate's approach/retract,
 successful Tray Detect, missed entry/exit transits and Home/put-back targets, and
 Place's three approach/drop/retract targets when already at Tray Detect. Away from
 the saved joints, Place preview shows only its observation-travel TF and explains
@@ -770,7 +770,7 @@ Use the original accepted Stop; do not send another Stop just for this check.
 Restore settings/readiness, then issue an upward-only RelMovLUser at unchanged
 XY/attitude if below Home Z. Direct Stop, managed Pause, drop containment and
 Startup retain their existing physical Stop confirmation order.
-Confirm that lift before a separate queued joint-target MovL to taught Home.
+Confirm that lift before a separate queued joint-target MovJ to taught Home.
 Use taught travel speed/acceleration and the last confirmed global speed and CP (each 100%
 if unset, preserving CP=0). Already at/above Home height skips the lift; already at taught Home
 skips its move. Current outputs and suction policy are monitored throughout travel.
@@ -1033,35 +1033,23 @@ actions/services, or `events.jsonl`.
 
 ## Home and Pick
 
-The explicit Home action is permitted from `READY` and trusted
-`HOLDING`. It obtains current Link6 XYZ/RPY from fresh canonical `/joint_states`
-through the existing CR10 forward kinematics, with idle RobotStatus.
-Unless that Cartesian pose is already within 5 mm/1° of the FK-derived taught
-Home pose, it sends exactly two Cartesian-mode `MovL` targets in one named
-motion group: `(current X, current Y, Home Z, Home Rx, Home Ry, Home Rz)`, then
-`(Home X, Home Y, Home Z, Home Rx, Home Ry, Home Rz)`. Each service must return
-`res=0` before the next is sent, without an added delay, so both enter the Dobot
-queue in order and inherit global CP (default 100%). Only the final Home target receives
-the 5 mm/1° stationary, empty-queue physical confirmation. Both use the taught
-travel `v`/`a`, no timed I/O, and preserve/monitor suction when holding.
-The same fresh stationary pose used to plan `home_align` is passed into the
-motion group as its confirmed origin; the action does not acquire a duplicate
-origin sample before dispatch.
-This action does not send `RelMovLUser` or joint-mode Home. Cartesian arrival
-does not prove the joints match the recorded Home tuple. The first segment may
-rotate the tool or descend at current XY; the controller has no collision model
-for an arbitrary starting pose, and CP may round that alignment control point,
-so the operator must verify that the complete blended path is clear.
+The explicit Home action is permitted from `READY` and trusted `HOLDING`.
+It now uses the same conditional vertical-clearance and exact joint Home plan
+as Pick. Preview shows those same endpoints. Every final Home command uses
+`/dobot_bringup_ros2/srv/MovJ`, `mode=true`, with the six unwrapped taught angles
+in degrees, taught travel `v`/`a`, and no timed I/O. Return routes that already
+use speed 100% retain that rate. All final Home destinations, including recovery,
+missed-pick exhaustion, item return and Auto Run, use this joint interpolation.
+Tray Detect retains its existing joint-target `MovL` service.
 
-Pick's initial Home and standalone shared Home calls use the joint-Home rule. The
-initial step skips if all six fresh actual joints are within ±1° of the taught
+The initial step skips if all six fresh actual joints are within ±1° of the taught
 tuple in fresh canonical joint feedback with RobotStatus idle,
 `EnableStatus=1`, fault/collision clear, user/tool zero and held-item I/O intact
 where applicable. Queue/execution confirmation remains required for sent moves.
 Otherwise, more than 5 mm below taught Home Z, `RelMovLUser` first rises at current XY/attitude and confirms
 5 mm/1° Cartesian arrival plus stationary/empty-queue feedback. Within 5 mm
 below Home Z or anywhere above it, skip that preliminary rise and send exact
-taught Home joints directly using joint-mode `MovL` and ±1° joint confirmation.
+taught Home joints directly using joint-mode `MovJ` and ±1° joint confirmation.
 The planner and first dispatch share one fresh confirmed joint-derived pose, so a
 second origin reading cannot turn a planned upward correction into a rejected
 downward move. When a rise is needed, final joint Home acquires its origin after
@@ -1335,7 +1323,7 @@ transits are blended control points. Later DI1 cannot reclassify the latched mis
 as success. Successful Pick instead uses the two lifts, Safety Z exit and Tray
 Detect route above; its held-item outputs and monitoring remain active.
 
-All `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
+All `MovJ`, `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
 in target order. Each must return `res=0` before the next is sent, with no
 additional inter-command delay. This is an admission barrier, not an
 intermediate physical-arrival wait: it prevents separate ROS services from
@@ -1362,8 +1350,8 @@ Serialized service responses may let
 a short pick segment decelerate even at global CP 100%; queue order takes
 precedence over uninterrupted blending.
 
-No-I/O targets use `MovL`. `MovLIO` is used only for a real non-empty timed DO
-tuple. Initial/shared Home's conditional rise uses `RelMovLUser`; item exit
+Final Home targets use `MovJ(mode=true)`; other no-I/O targets use `MovL`.
+`MovLIO` is used only for a real non-empty timed DO tuple. Initial/shared Home's conditional rise uses `RelMovLUser`; item exit
 transits use Cartesian `MovL`. The controller never calls
 `InverseKin` or vendor `Continue`; controller Continue rebuilds the remaining route.
 Service acknowledgement is acceptance only; actual
@@ -1376,6 +1364,9 @@ commanded green axis, configured offset, selected CW/CCW side, rotation from the
 taught Home reference, and target RPY.
 
 Joint Home and Tray Detect completion use ±1° independently on every joint.
+Home never wraps angles modulo 360°: a matching tool pose with J6 one turn away
+must still execute the exact saved joint target. MovJ uses joint interpolation;
+the final Home path is not constrained to a straight Cartesian line.
 Cartesian targets use 5 mm Euclidean translation and 1° orientation, calculated
 from the same canonical `/joint_states` sample using the existing CR10 model.
 RobotStatus `is_enable` is the vendor's mode-5 idle indication. Home, clearance
@@ -1384,7 +1375,7 @@ update after the complete group's acceptance. Require a newer joint source stamp
 and a newer RobotStatus receipt; duplicate/backward joint stamps cannot refresh
 position evidence. Both topic callbacks wake the wait immediately, independently
 of FeedInfo updates. There is no added stability interval.
-`MovL` exposes its queue ID in the existing reply: require that exact
+`MovJ` and `MovL` expose their queue ID in the existing reply: require that exact
 `FeedInfo.currentCommandId` at completion. The fixed vendor `MovLIO` and
 `RelMovLUser` response schemas expose only `res`; those endpoints instead require
 live execution evidence latched during dispatch/travel (running/queued status,

@@ -285,7 +285,7 @@ def test_drop_after_next_motion_admission_keeps_old_source_and_does_not_count_pl
     with pytest.raises(HeldSuctionLost):
         rig.transport.finish_batch(appended)
     assert [name for name, _ in rig.requests][:7] == [
-        "MovL", "MovLIO", "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO"]
+        "MovL", "MovLIO", "MovLIO", "MovJ", "MovLIO", "MovL", "MovLIO"]
     assert node.managed.session is old and old.held_index == 1
     assert old.attempts[0].state == "DROPPED"
     assert not bridge.completed and run.completed == 0

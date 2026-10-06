@@ -50,7 +50,7 @@ def test_whole_route_is_queued_but_completion_still_requires_final_pose_and_idle
         return advance(*args, **kwargs)
     rig.monitor.wait_next = next_sample
     run()
-    commands = ["MovL", "MovLIO", "MovLIO"] + (["MovL"] if returning else [])
+    commands = ["MovL", "MovLIO", "MovLIO"] + (["MovJ"] if returning else [])
     assert received == [len(commands)] * 4
     assert rig.order[:len(commands)] == commands
     completed = [call for call in rig.node.events.record.call_args_list

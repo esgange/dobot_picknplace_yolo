@@ -13,7 +13,7 @@ import robot_controller.preview as preview_module
 from robot_controller.preview import RobotControllerPreview
 from robot_controller.errors import FeedbackFailure
 from robot_controller.kinematics import pose_matrix
-from robot_controller.motion import cartesian_home_targets, pick_targets
+from robot_controller.motion import home_targets, pick_targets
 from robot_controller.placement import place_targets
 from test_feedback_v2 import feed, primed_monitor
 from test_placement import operation_node
@@ -58,16 +58,18 @@ def preview(monkeypatch):
     return node
 
 
-def test_home_preview_matches_both_cartesian_commands_from_actual_joint_pose(preview):
+def test_home_preview_matches_linear_clearance_and_absolute_joint_home(preview):
     result = preview.run(Preview.Request.HOME)
     assert result.success
-    assert [t.name for t in preview.targets] == ["home_align", "home"]
-    expected = cartesian_home_targets(
-        preview.kinematics.forward(()), preview.config.home_matrix,
+    assert [t.name for t in preview.targets] == ["home_height", "home"]
+    expected = home_targets(
+        preview.kinematics.forward(()), preview.config.home_matrix, preview.config.home_joints,
         speed_percent=preview.config.profile["speed"]["travel_percent"],
         acceleration_percent=preview.config.profile["acceleration"]["travel_percent"])
     assert all(np.allclose(a.matrix, b.matrix) for a, b in zip(preview.targets, expected))
-    assert all(t.joints_rad is None for t in preview.targets)
+    assert preview.targets[0].relative_z
+    assert preview.targets[-1].joint_motion
+    assert preview.targets[-1].joints_rad == preview.config.home_joints
     preview.client.request.assert_not_called()
     preview.trays.request.assert_not_called()
     preview._broadcast()
@@ -98,7 +100,8 @@ def test_preview_and_hardware_reject_center_inside_but_camera_housing_outside(pr
     assert not preview.targets
 
 
-def test_home_preview_skips_motion_when_already_at_cartesian_home(preview):
+def test_home_preview_skips_motion_only_when_at_taught_joints(preview):
+    preview.config.home_joints = tuple(preview.monitor.snapshot().joints)
     preview.kinematics.forward.return_value = preview.config.home_matrix.copy()
     result = preview.run(Preview.Request.HOME)
     assert result.success and not result.tf_frames
@@ -175,7 +178,7 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle):
         "place_pre", "place_release", "place_retract"]
     expected = place_targets(preview.config.tray.detect_matrix, [.3, .2, .25],
                              preview.config.profile, angle, preview.config.home_matrix)
-    assert all(t.joints_rad is None for t in preview.targets)
+    assert all(t.joints_rad is None and not t.joint_motion for t in preview.targets)
     assert preview.targets[1].matrix[2, 3] == pytest.approx(.2925)
     assert all(np.allclose(a.matrix, b.matrix) for a, b in zip(preview.targets, expected))
     preview.trays.request.call_args.kwargs["check_state"]()
@@ -251,3 +254,13 @@ def test_read_only_tray_requests_keep_retry_bound_without_requiring_robot_enable
     assert stationary.call_count >= 6
     rig.node.monitor.snapshot.assert_not_called()
     rig.node._preflight_item_state.assert_not_called()
+
+
+def test_home_preview_keeps_joint_target_when_pose_matches_but_wrist_turn_differs(preview):
+    preview.config.home_joints = tuple(preview.monitor.snapshot().joints[:5]) + (2 * np.pi,)
+    preview.kinematics.forward.return_value = preview.config.home_matrix.copy()
+    result = preview.run(Preview.Request.HOME)
+    assert result.success
+    assert [target.name for target in preview.targets] == ["home"]
+    assert preview.targets[-1].joint_motion
+    assert preview.targets[-1].joints_rad[-1] == 2 * np.pi

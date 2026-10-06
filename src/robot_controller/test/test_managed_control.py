@@ -863,7 +863,7 @@ def test_pause_before_home_action_executor_starts_runs_no_motion_until_continue(
     rig.active_action = "home"
     rig.wait_for_resume = rig.managed.checkpoint
     rig._end_operation = lambda: rig.operation_lock.release()
-    rig._execute_cartesian_home = lambda: rig.log.append(("action_home",))
+    rig._execute_home = lambda: rig.log.append(("action_home",))
     rig._failure_outcome = RobotController._failure_outcome
     rig._action_failure = lambda *_args: pytest.fail(str(_args[2]))
 

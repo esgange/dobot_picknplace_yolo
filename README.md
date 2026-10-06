@@ -72,9 +72,10 @@ and `robot_controller`, then restart controller and GUI together after this upda
 because `PlaceItem` now carries `save_debug_images`.
 
 **Preview ON** makes all three motion buttons publish planned TF targets without
-moving the robot or changing gripper outputs. Home shows its alignment and final
-pose; Pick shows a fresh batch's candidate, entry/exit and return targets; Place
-shows its approach, drop and retract targets from the saved Tray Detect position.
+moving the robot or changing gripper outputs. Home shows any required vertical
+clearance and its final taught joint target; Pick shows a fresh batch's candidate,
+entry/exit and return targets; Place shows its approach, drop and retract targets
+from the saved Tray Detect position.
 Preview uses fresh canonical joint feedback for the current pose and the same
 geometry as hardware.
 Pick/Place still need their armed read-only detector and fresh visible targets;
@@ -92,6 +93,12 @@ See the [controller FSM and workflow diagrams](docs/ROBOT_CONTROLLER_FSM.md)
 for the current lifecycle, Pick, Pause/Continue, Stop/Recovery and item-return paths.
 Open the [visual HTML](docs/ROBOT_CONTROLLER_FSM.html) in a browser or the
 [visual PDF](docs/ROBOT_CONTROLLER_FSM.pdf) directly; both work offline.
+
+Every final Home destination uses `MovJ(mode=true)` with the exact six taught
+joint angles, including the Home button, recovery, returns and Auto Run. Necessary
+vertical clearance remains linear. Home confirmation compares each joint within
+±1° without wrapping full turns; matching the tool pose alone is insufficient.
+Auto Run still queues Home between placement and the next pick.
 
 Motion groups retain CP (default 100%) blending and confirm their final endpoint using
 fresh RobotStatus idle and joint feedback after acceptance. Saved joint targets
@@ -393,15 +400,13 @@ value, including 0. The setting is not saved across process restarts or reloads.
 Rebuild interfaces/controller and restart the controller, preview and GUI together
 for the added CP status field.
 
-The explicit Home action derives the current Link6 pose from fresh `/joint_states`
-with the canonical CR10 model and idle RobotStatus. Unless already within
-5 mm/1° of taught Home, it queues two Cartesian `MovL` targets in one
-group using the selected global CP (default 100%): current X/Y with taught Home
-Z/attitude, then full taught Home XYZ/attitude. Each service must return `res=0` in order, but only final
-Home is physically confirmed. The same fresh stationary pose is used both to
-plan the group and as its confirmed motion origin, without a duplicate origin
-acquisition. The first control point can be rounded, rotate or descend at
-current XY and is not collision-checked for an arbitrary starting pose. A
+The explicit Home action uses the shared Home route. With fresh idle feedback,
+skip only when all six actual joints match their taught values within ±1°.
+Otherwise obtain the current Link6 pose from canonical joint FK; if more than
+5 mm below Home Z, confirm an upward-only linear rise at unchanged X/Y/attitude.
+Then send `MovJ(mode=true)` to the six exact saved Home angles, preserving grip
+and taught travel rates. Confirm its returned command ID, exact joint arrival
+and an empty queue. Final Home uses joint interpolation. A
 successful Pick queues actual stopped pose → pre-pick lift → clearance lift →
 vertical Safety Z exit → saved Tray Detect joints in one CP (default 100%) group.
 Safety Z is taught Home Z or the higher actual height; the exit preserves current
@@ -456,7 +461,7 @@ launch. It never chooses a calibration independently. Controller and headless
 launches create no camera-body display; their clearance checks remain independent.
 Canonical RViz includes the display. Reload its configuration if already open.
 This is a pick-pose footprint check, not a swept-path or full robot collision planner.
-No-I/O moves use MovL, real timed-output
+Final Home moves use MovJ in absolute joint mode; other no-I/O moves use MovL. Timed-output
 moves use non-empty MovLIO. The conditional rise for initial/shared Home uses
 RelMovLUser; item exit transits use Cartesian MovL.
 Continue replans the remaining operation from its confirmed parked pose;
@@ -505,12 +510,9 @@ prevents any later group command from being sent.
 Pick's initial Home skip uses fresh idle RobotStatus and every actual joint within
 ±1° of its taught value, with no added wait. Queued joint Home and Tray Detect
 arrivals additionally require post-acceptance advancing position feedback and
-empty-queue/execution evidence. Explicit Cartesian Home uses 5 mm Euclidean
-translation and 1° orientation with the same one-sample final feedback gates;
-its first alignment target is a CP-blended control point and is not separately
-confirmed. Home skips motion when its fresh stationary Cartesian pose
-is already within that tolerance; Pick's initial shared-Home step instead
-applies the joint Home gate. Queued return-to-Home paths after a pick attempt
+empty-queue/execution evidence. Explicit Home uses the same exact joint gate;
+Cartesian tool-pose agreement cannot hide a full wrist-turn difference.
+Queued return-to-Home paths after a pick attempt
 are not skipped. Each independently acquired motion-origin pose waits up to two
 seconds for stationary idle feedback with advancing joint/status streams, with
 no added dwell; stale or frozen feedback cannot supply a motion origin. The
@@ -608,7 +610,7 @@ speed 100%: approach/rise/Home use travel acceleration, release descent uses
 approach acceleration, and upward retract uses retract acceleration.
 Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
-The controller passes each target's `v=`/`a=` to MovL, MovLIO or the Home-height
+The controller passes each target's `v=`/`a=` to MovJ, MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
