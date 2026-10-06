@@ -9325,6 +9325,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   together after rebuilding. No production restart, hardware command, vendor edit
   or offline-transfer milestone. Preserve operator configuration/teach/model/RViz edits.
 
+### 2026-10-06 — Rule 234: nearby-obstacle height above item surface
+
+- Audit the latest recorded Auto Run, 2026-10-06 11:15:16–11:16:56 UTC:
+  requested 20, completed 10, elapsed 100.070 s. The next Pick entered Stop
+  at 11:16:53; its 11:16:56 failure reports mode 11 / CollisionStates=1 and
+  a timed-out Stop confirmation.
+  Its candidate was 660b911c430246d497185123b441de87:16. All eleven detection
+  batches used saved profile bdd218c9277a8d15593711b6e86d4797550acc99e95b3bc7ebde49baf9a07367
+  through Item Teach, with radius 150 mm, height 50 mm and standoff 70 mm.
+- The filter was active: two nearby-depth exclusions are recorded. The collided
+  attempt's candidate checked 4358 nearby points out of 78775 usable pixels,
+  with maximum 8.616 mm above final Link6. Because the old check included
+  standoff, this is 78.616 mm above the detected item surface, yet it passed the
+  50 mm setting. Across the 30 returned candidates, 24 recorded maxima exceed
+  50 mm when referenced to item surface; these are candidate observations, not
+  24 physical attempts. Debug capture was disabled, so no saved image/raw-depth
+  replay proves the exact physical contact object. Do not claim complete path
+  collision avoidance from these logs.
+- User explicitly chose detected item surface as the reference. Compare the
+  scene's base XYZ against item_in_base before adding motion.standoff_height.
+  Keep inclusive base-XY radius/base-Z height, original finite positive in-range
+  depth pixels, outside-mask/ROI coverage, ranking and every existing pose gate.
+  Clicked poses, teaching preview, Simulate Trigger and headless requests share
+  this correction. No change to Link6 targets, approach heights, speeds or queues.
+- Rename native evidence to maximum_height_above_item_mm; the parent rejects old
+  Link6-relative evidence rather than silently accepting its changed meaning.
+  Clarify UI label/tooltips/help as height above item surface, excluding standoff.
+  Schema 12, saved keys/defaults/values and operator artifacts are unchanged.
+  Saved GUI profile is current; runtime_teach still contains schema 11 and needs
+  explicit manual deployment before headless use, independent of this correction.
+- Validation: isolated Item Perception build passes; focused geometry/protocol/GUI
+  tests pass (183). Added standoff-invariance checks for blocked and accepted
+  candidates, clicked/capped/uncapped parity, the recorded 78.616 mm/50 mm case,
+  and rejection of legacy native evidence. The complete item/controller/tray
+  suite passes **2021 tests**, no failures/skips. Changed-line lint and whitespace
+  checks pass; operator saved-profile hash is unchanged.
+- Update AGENTS, root/item/controller documentation and FSM; regenerate nine
+  HTML/PDF diagrams, verify source hashes and inspect the Pick page.
+  FSM SHA-256: f73923f3fe6584b5a062faaab18109febea308b2217b34a70586579736bed320.
+  Canonical installed Python links resolve to updated source. Restart Item Teach/
+  headless workers and reload/restart controller to discard old candidate batches.
+  Keep the production native runtime intact; build in the existing isolated
+  build/nearby_depth_check and install/nearby_depth_check trees. No hardware
+  commands, production restarts, vendor changes or offline-transfer milestone.
+
 ### Future entry template
 
 ```text

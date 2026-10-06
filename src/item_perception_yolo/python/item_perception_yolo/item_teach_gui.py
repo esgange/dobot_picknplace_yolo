@@ -639,20 +639,22 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 field.setText(str(NEARBY_DEPTH_DEFAULTS[key]))
                 field.setToolTip(
                     "Reject if any usable depth point within this horizontal radius is at "
-                    "least this height above the final Link6 pick position (robot base Z). "
+                    "least this height above the detected item surface (robot base Z). "
+                    "Standoff/tool length is excluded from this height reference. "
                     "Uses original depth pixels, including outside the item mask/bin ROI.")
             self.inputs[key] = field
             label = {"height": "Length Y / height", "width": "Width X",
                      "tolerance": "Size tolerance ±",
                      "nearby_depth_radius_mm": "Nearby depth radius filter (mm)",
-                     "nearby_depth_height_mm": "Maximum nearby height above pick (mm)"}
+                     "nearby_depth_height_mm": "Maximum nearby height above item surface (mm)"}
             geometry.addRow(label.get(key, key), field)
         geometry_help = QtWidgets.QLabel(
             "Item X: short axis; item Y: long axis.\n"
             "pickdepth_radius is the circle DIAMETER (default 30 mm).\n"
             "Length/width use platform Z=0; depth supplies the pick point.\n"
-            "Nearby filter: reject any usable point ≥60 mm above the final pick\n"
-            "within a 150 mm horizontal radius (editable defaults; robot base frame)."
+            "Nearby filter: height is above the detected item surface, excluding standoff.\n"
+            "Reject any usable point at/above the height limit within the horizontal radius.\n"
+            "Editable defaults: 150 mm radius / 60 mm height; robot base frame."
         )
         geometry_help.setWordWrap(True)
         geometry.addRow(geometry_help)

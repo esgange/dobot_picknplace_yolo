@@ -81,7 +81,7 @@ def service_node(monkeypatch, tmp_path):
                  "accepted_depth_count": 100, "rejected_depth_count": 10, "pixel": [100., 100.],
                  "nearby_depth_filter": {"radius_mm": 150., "height_mm": 60.,
                                          "usable_point_count": 1000, "nearby_point_count": 500,
-                                         "maximum_height_above_pick_mm": 20.},
+                                         "maximum_height_above_item_mm": 20.},
                  "planned_link6_matrix": [[1., 0., 0., 0.], [0., 1., 0., 0.],
                                           [0., 0., 1., .1], [0., 0., 0., 1.]],
                  "robot_camera_clearance": {
@@ -319,17 +319,20 @@ def test_native_protocol_candidate_checks(service_node):
             {"candidates": [candidate, copy.deepcopy(candidate)]}, node.settings)
 
 
-@pytest.mark.parametrize("change", [None, {"radius_mm": 100.}, {"height_mm": 70.},
-                                   {"nearby_point_count": 1001},
-                                   {"usable_point_count": 0, "nearby_point_count": 0,
-                                    "maximum_height_above_pick_mm": None},
-                                   {"maximum_height_above_pick_mm": 60.},
-                                   {"maximum_height_above_pick_mm": float("nan")},
-                                   {"maximum_height_above_pick_mm": None}])
+@pytest.mark.parametrize("change", [
+    None, "legacy_link6", {"radius_mm": 100.}, {"height_mm": 70.},
+    {"nearby_point_count": 1001},
+    {"usable_point_count": 0, "nearby_point_count": 0, "maximum_height_above_item_mm": None},
+    {"maximum_height_above_item_mm": 60.},
+    {"maximum_height_above_item_mm": float("nan")},
+    {"maximum_height_above_item_mm": None}])
 def test_native_protocol_requires_current_nearby_filter_evidence(service_node, change):
     node, candidate = service_node
     if change is None:
         del candidate["nearby_depth_filter"]
+    elif change == "legacy_link6":
+        evidence = candidate["nearby_depth_filter"]
+        evidence["maximum_height_above_pick_mm"] = evidence.pop("maximum_height_above_item_mm")
     else:
         candidate["nearby_depth_filter"].update(change)
     with pytest.raises(RuntimeError, match="nearby-depth"):

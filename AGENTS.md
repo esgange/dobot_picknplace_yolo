@@ -1671,6 +1671,18 @@ blocking timer, motion call or changed count/queue/Stop policy is permitted.
 Rebuild interfaces/controller and restart status/action clients together.
 
 
+Rule 234 changes nearby-obstacle height reference to the detected item surface,
+superseding rule 229's final Link6/standoff reference. Compare original depth
+points to the item's base XYZ before tool/standoff compensation; retain inclusive
+base-XY radius/base-Z height, saved distances and all original depth/ranking gates.
+Share clicked, preview, Simulate Trigger and headless production logic. Rename
+native maximum evidence to maximum_height_above_item_mm and reject old Link6
+protocol evidence; no alias. UI label/help explicitly say item surface, excluding
+standoff. Preserve schema 12, keys, defaults, operator values and robot targets.
+No automatic artifact deployment, hardware commands or process restarts. This
+observed-point filter does not certify end-effector or swept-path clearance.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

@@ -590,11 +590,12 @@ Save before loading the new profile into the controller or deploying it for
 headless use. No automatic sum of pick heights or default is substituted.
 
 Item Teach section **4  Item size / pick depth** adds **Nearby depth radius filter
-(mm)**, default **150**, and **Maximum nearby height above pick (mm)**, default
+(mm)**, default **150**, and **Maximum nearby height above item surface (mm)**, default
 **60**. Reject a candidate if any usable original depth pixel lies within/on that
-horizontal radius and at least that far above the final Link6 pick position
-(including standoff), measured in robot-base XY/Z. Include points outside the item
-mask/bin ROI; the check is independent of RViz voxels and runs before ranking in
+horizontal radius and at least that far above the detected item surface, measured
+in robot-base XY/Z. Standoff/tool-length compensation is excluded from this check.
+Include points outside the item mask/bin ROI; the check is independent of RViz
+voxels and runs before ranking in
 teaching and headless detection. Schema 12 saves these as
 `geometry.nearby_depth_radius_mm` and `geometry.nearby_depth_height_mm`.
 Older profiles open as recovery drafts proposing the new defaults for review.

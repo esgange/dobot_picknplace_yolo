@@ -75,8 +75,11 @@ def test_nearby_filter_fields_live_edit_in_item_size_section(window):
     assert group.title().startswith("4  Item size")
     assert group.layout().labelForField(window.inputs["nearby_depth_radius_mm"]).text() == \
         "Nearby depth radius filter (mm)"
+    assert group.layout().labelForField(window.inputs["nearby_depth_height_mm"]).text() == \
+        "Maximum nearby height above item surface (mm)"
     for key, value in core.NEARBY_DEPTH_DEFAULTS.items():
         assert float(window.inputs[key].text()) == value
+        assert "Standoff/tool length is excluded" in window.inputs[key].toolTip()
     for key, value in (("height", "80"), ("width", "40"), ("tolerance", "5")):
         window.inputs[key].setText(value)
     window.yolo_toggle.setChecked(True)

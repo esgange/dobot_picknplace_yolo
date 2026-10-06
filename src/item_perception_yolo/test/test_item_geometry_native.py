@@ -726,7 +726,7 @@ def exercise_nearby_depth_filter():
     _, _, candidates, rejected = generate_candidates(
         [item, second], rgb, depth, context, settings, cv2, np, candidate_limit=1)
     assert [c["source_index"] for c in candidates] == [1]
-    assert len(rejected) == 1 and "60.00 mm above final pick" in rejected[0]["reason"]
+    assert len(rejected) == 1 and "60.00 mm above item surface" in rejected[0]["reason"]
     clicked = {**item, "source_index": item["index"]}
     _, _, candidates, reasons = selected_pose(clicked, rgb, depth, context, settings, cv2, np)
     assert not candidates and reasons == rejected  # Same clicked/service filter.
@@ -735,12 +735,32 @@ def exercise_nearby_depth_filter():
     _, _, candidates, reasons = generate_candidates(
         [item], rgb, depth, narrower, {**settings, "geometry_source": "obb"}, cv2, np)
     assert not candidates and "nearby depth" in reasons[0]["reason"]
-    # Height is above the final compensated pick, not the object's raw surface.
+    # Tool/standoff compensation cannot turn an obstructed item into a valid one.
     raised = copy.deepcopy(context)
-    raised["pick_planning"]["standoff_height_mm"] = 1.
-    _, _, candidates, reasons = generate_candidates([item], rgb, depth, raised, settings, cv2, np)
-    assert not reasons and len(candidates) == 1
-    assert abs(candidates[0]["nearby_depth_filter"]["maximum_height_above_pick_mm"] - 59) < 1e-6
+    for standoff in (1., 70., 200.):
+        raised["pick_planning"]["standoff_height_mm"] = standoff
+        for limit in (None, 1):
+            _, _, candidates, reasons = generate_candidates(
+                [item], rgb, depth, raised, settings, cv2, np, candidate_limit=limit)
+            assert not candidates and reasons == rejected
+        _, _, candidates, reasons = selected_pose(
+            clicked, rgb, depth, raised, settings, cv2, np)
+        assert not candidates and reasons == rejected
+    # Last collision batch recorded 8.616 mm above Link6 with 70 mm standoff:
+    # the same nearby maximum is 78.616 mm above the item and exceeds 50 mm.
+    measured = 78.6163444482813
+    collision_scene = (np.array([[42, 12]]), np.array([[.1, 0., measured / 1000.]]))
+    with pytest.raises(ValueError, match="78.62 mm above item surface"):
+        nearby_depth_check(collision_scene, np.zeros(3),
+                           {**geometry, "nearby_depth_height_mm": 50.}, np)
+    # Increasing standoff must not alter accepted evidence either.
+    safe_settings = {**settings, "geometry": {**geometry, "nearby_depth_height_mm": 61.}}
+    for standoff in (0., 70.):
+        raised["pick_planning"]["standoff_height_mm"] = standoff
+        _, _, candidates, reasons = generate_candidates(
+            [item], rgb, depth, raised, safe_settings, cv2, np)
+        assert not reasons and len(candidates) == 1
+        assert abs(candidates[0]["nearby_depth_filter"]["maximum_height_above_item_mm"] - 60) < 1e-6
     # Custom settings really alter eligibility; no hidden 150/60 constants.
     for changes in ({"nearby_depth_radius_mm": 149.}, {"nearby_depth_height_mm": 61.}):
         _, _, candidates, reasons = generate_candidates(

@@ -237,7 +237,7 @@ def validate_candidates(result, settings):
         nearby = candidate.get("nearby_depth_filter")
         if (type(nearby) is not dict or set(nearby) != {
                 "radius_mm", "height_mm", "usable_point_count", "nearby_point_count",
-                "maximum_height_above_pick_mm"}
+                "maximum_height_above_item_mm"}
                 or any(type(nearby[key]) not in (int, float)
                        or nearby[key] != settings["geometry"][setting]
                        for key, setting in (("radius_mm", "nearby_depth_radius_mm"),
@@ -247,7 +247,7 @@ def validate_candidates(result, settings):
                 or nearby["usable_point_count"] < good
                 or nearby["nearby_point_count"] > nearby["usable_point_count"]):
             raise RuntimeError("Malformed nearby-depth filter evidence")
-        maximum = nearby["maximum_height_above_pick_mm"]
+        maximum = nearby["maximum_height_above_item_mm"]
         if ((nearby["nearby_point_count"] == 0 and maximum is not None)
                 or (nearby["nearby_point_count"] > 0 and (
                     type(maximum) not in (int, float) or not math.isfinite(maximum)

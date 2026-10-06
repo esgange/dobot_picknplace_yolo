@@ -144,12 +144,13 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Other form edits clear the selection/TF and disarm without stopping detection.
 
    Section **4  Item size / pick depth — mm** also contains **Nearby depth radius
-   filter (mm)** (default **150**) and **Maximum nearby height above pick (mm)**
+   filter (mm)** (default **150**) and **Maximum nearby height above item surface (mm)**
    (default **60**). Save them as `geometry.nearby_depth_radius_mm` and
    `geometry.nearby_depth_height_mm`; both must be finite and greater than zero.
    A candidate fails if even one usable depth point is within/on that horizontal
-   radius and at least that high above its final Link6 pick position, including
-   `motion.standoff_height`. Distances use robot-base XY/Z, not camera depth or
+   radius and at least that high above the detected item surface. Exclude
+   `motion.standoff_height` from this obstacle reference; it only compensates robot
+   motion. Distances use robot-base XY/Z, not camera depth or
    platform-normal height. This check runs before candidate ranking/capping in
    clicked poses, teaching preview, Simulate Trigger and headless requests.
    Save/load the exact complete
@@ -676,9 +677,13 @@ blocking service request. All native operations are serialized in one worker.
   and the same snapshot's complete optical-to-base transform. Use original pixels,
   including outside the candidate mask and green bin ROI. No global MAD, minimum
   cluster count, subsampling or RViz voxels apply to this check. Build that scene
-  once per batch; evaluate each final pick's base-XY circle and base-Z height.
-  Rejections identify the depth pixel, horizontal distance and height above pick.
-  Native candidates carry validated radius/height/count/maximum-height evidence.
+  once per batch; evaluate each detected item's base-XY circle and base-Z surface
+  height, before standoff. Rejections identify the depth pixel, horizontal distance
+  and height above the item surface. Native candidates carry validated radius/height/
+  count and `maximum_height_above_item_mm` evidence. Old Link6-relative evidence is
+  rejected. Restart Item Teach/headless workers together after this change; saved
+  schema-12 keys and values are unchanged. This filters observed nearby points; it
+  does not model the complete end-effector or swept approach path.
 - Rank valid positions by XY distance to the bin polygon's area centroid;
   confidence descending then source index break exact distance ties. Return up
   to the requested number, explicitly reporting SHORTAGE or NO_VALID_ITEMS.

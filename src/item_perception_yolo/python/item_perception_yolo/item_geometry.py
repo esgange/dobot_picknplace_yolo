@@ -489,28 +489,28 @@ def usable_scene_depth(depth_mm, context, quality, cv2, np):
     return pixels[valid], points[valid]
 
 
-def nearby_depth_check(scene, pick_xyz, geometry, np):
-    """Inclusive base-XY radius and base-Z height test, referenced to final Link6 pick."""
+def nearby_depth_check(scene, item_xyz, geometry, np):
+    """Inclusive base-XY radius and base-Z height above the detected item surface."""
     pixels, points = scene
     radius_mm = geometry["nearby_depth_radius_mm"]
     height_mm = geometry["nearby_depth_height_mm"]
-    dx, dy = points[:, 0] - pick_xyz[0], points[:, 1] - pick_xyz[1]
+    dx, dy = points[:, 0] - item_xyz[0], points[:, 1] - item_xyz[1]
     distance_squared = dx*dx + dy*dy
     nearby = np.flatnonzero(distance_squared <= ((radius_mm + 1e-6) / 1000.)**2)
     maximum = None
     if len(nearby):
         index = nearby[np.argmax(points[nearby, 2])]
-        maximum = float((points[index, 2] - pick_xyz[2]) * 1000.)
+        maximum = float((points[index, 2] - item_xyz[2]) * 1000.)
         if maximum >= height_mm - 1e-6:
             x, y = pixels[index]
             raise ValueError(
-                f"nearby depth point ({x}, {y}): {maximum:.2f} mm above final pick "
+                f"nearby depth point ({x}, {y}): {maximum:.2f} mm above item surface "
                 f"at {math.sqrt(distance_squared[index])*1000:.2f} mm radius; "
                 f"limits {height_mm:g} mm / "
                 f"{radius_mm:g} mm (base_link)")
     return {"radius_mm": radius_mm, "height_mm": height_mm,
             "usable_point_count": len(points), "nearby_point_count": len(nearby),
-            "maximum_height_above_pick_mm": maximum}
+            "maximum_height_above_item_mm": maximum}
 
 
 def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
@@ -640,9 +640,9 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 planning["base_from_platform"], position, quaternion)
             if scene_depth is None:
                 scene_depth = usable_scene_depth(depth_mm, context, quality, cv2, np)
-            pick_xyz = item_in_base[:3, 3].copy()
-            pick_xyz[2] += planning["standoff_height_mm"] / 1000.
-            nearby_evidence = nearby_depth_check(scene_depth, pick_xyz, geometry, np)
+            # Standoff compensates Link6/tool length; it must not raise the
+            # obstacle threshold above the detected item's actual surface.
+            nearby_evidence = nearby_depth_check(scene_depth, item_in_base[:3, 3], geometry, np)
             attitude = select_pick_attitude(
                 planning["home_matrix"], item_in_base, planning["pick_rotation_deg"],
                 planning["standoff_height_mm"], planning["base_from_platform"],
