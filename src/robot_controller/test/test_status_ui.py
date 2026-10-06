@@ -129,6 +129,21 @@ def window(tmp_path):
     app.processEvents()
 
 
+@pytest.mark.parametrize("action", ["pick", "place", "auto_run"])
+@pytest.mark.parametrize("save_images", [False, True])
+def test_debug_checkbox_is_forwarded_to_each_detection_action(window, action, save_images):
+    sent = []
+    window.node.action_clients[action] = SimpleNamespace(
+        server_is_ready=lambda: True,
+        send_goal_async=lambda goal, **_kwargs: sent.append(goal) or object())
+    window.node.status = status(tray_position_recorded=True, manual_placement_enabled=True)
+    window._refresh()
+    window.debug_images.setChecked(save_images)
+    assert "item/tray" in window.debug_images.text()
+    window._action(action)
+    assert len(sent) == 1 and sent[0].save_debug_images is save_images
+
+
 def test_placement_controls_send_typed_offsets_and_allow_empty_or_held(window):
     sent = []
     window.node.action_clients = {"place": SimpleNamespace(

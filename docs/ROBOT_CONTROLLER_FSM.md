@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Shared debug-capture review: **2026-10-06**, baseline **`aa59259`** plus rule **220**.
+The controller's Save item/tray debug RGB/depth checkbox passes one action-scoped
+choice to both detectors. Pick Item uses item requests; Place Item now carries
+`save_debug_images` and forwards it to tray pose/depth requests; Auto Run uses its
+existing flag for initial item detection, next-bin prefetch and every tray
+observation. Retries and Pause/Continue retain that choice. Existing request
+writers save into `debug/pick_img/` and `debug/tray_img/`; unchecked and Preview
+requests save nothing. No extra inference/worker or motion/I/O/Stop changes.
+Rebuild interfaces/controller and restart controller/GUI together for the new
+PlaceItem goal; perception service definitions remain unchanged.
+
 Independent finger settings review: **2026-10-06**, baseline **`757c79c`** plus
 rule **219**. `grip_onpick=true` closes immediately after confirmed suction pickup
 regardless of `use_grip`. At 50% of the first held lift, `use_grip=false` relaxes
@@ -589,7 +600,7 @@ typed status and failed service responses include the complete guidance.
 ```mermaid
 flowchart TD
     Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible poses retained after interruption or Return Item?"}
-    Saved -->|No| Detect["Request fresh item poses before Home"]
+    Saved -->|No| Detect["Request fresh item poses before Home; optional debug RGB/depth"]
     Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
     Reuse --> Entry
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
@@ -738,7 +749,7 @@ claim PLACED or RETURNED.
 ```mermaid
 flowchart TD
     Request["PlaceItem: READY/HOLDING, empty or held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
-    Observe -->|Yes immediately| Depth["Fresh tray pose/depth; valid pixels meet taught percentage; at most 3 attempts"]
+    Observe -->|Yes immediately| Depth["Fresh tray pose/depth; optional debug RGB/depth; valid pixels meet taught percentage; at most 3 attempts"]
     Observe -->|No| Travel["Direct joint-target MovL to Tray Detect; speed 100%; preserve outputs"]
     Travel --> Arrive["Confirm execution, saved joints and idle before detection"]
     Arrive --> Depth
@@ -930,7 +941,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 flowchart TD
     Start["READY: Auto Run quantity and placement target"] --> Pick["Fresh batch after prior placement; ensure Home; bounded Pick"]
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
-    Tray --> Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
+    Tray --> Observe["Fresh tray pose then placement depth; optional debug RGB/depth; at most 3 complete attempts"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
     Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
     Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]

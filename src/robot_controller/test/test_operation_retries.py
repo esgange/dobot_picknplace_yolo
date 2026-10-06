@@ -305,15 +305,18 @@ class TrayRig:
     GetTrayPose.Response(status="BUSY", message="Previous request active"),
 ])
 @pytest.mark.parametrize("require_held_item", [True, False])
+@pytest.mark.parametrize("save_images", [False, True])
 def test_tray_retries_missing_pose_or_reply_and_accepts_third_fresh_result(
-        monkeypatch, failure, require_held_item):
+        monkeypatch, failure, require_held_item, save_images):
     rig = TrayRig(monkeypatch, [failure, failure, "valid"])
-    assert rig.request(require_held_item=require_held_item) == pytest.approx([.13, .24, .25])
+    assert rig.request(require_held_item=require_held_item, save_debug_images=save_images
+                       ) == pytest.approx([.13, .24, .25])
     assert rig.client.call_async.call_count == rig.attempts.count == 3
     assert rig.observer.pending is None
     requests = [call.args[0] for call in rig.client.call_async.call_args_list]
     assert len({id(request) for request in requests}) == 3
     assert all(request.sample_placement_depth for request in requests)
+    assert all(request.save_debug_images is save_images for request in requests)
     if failure == "timeout":
         assert all(f.cancelled() for f in rig.futures[:2])
     if require_held_item:

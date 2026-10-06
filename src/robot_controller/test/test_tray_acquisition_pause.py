@@ -107,8 +107,10 @@ def test_exhaustion_pauses_in_place_preserving_outputs_source_and_ownership(
     assert node.trays.pending is None
 
 
-def test_continue_explicitly_grants_new_three_request_budget(monkeypatch):
+@pytest.mark.parametrize("save_images", [False, True])
+def test_continue_explicitly_grants_new_three_request_budget(monkeypatch, save_images):
     node, tray = acquisition_rig(monkeypatch, [None] * 5 + ["valid"])
+    node.placement.save_debug_images = save_images
     exhaust(node)
     old_budget = node.placement.tray_attempts
     node.on_wait = node.managed.continue_operation
@@ -124,6 +126,8 @@ def test_continue_explicitly_grants_new_three_request_budget(monkeypatch):
     assert node.placement.tray_attempts.count == 3
     assert node.hardware.move_batch.call_count == 1
     assert node.hardware.move_batch.call_args.kwargs["queue_only"]
+    assert all(call.args[0].save_debug_images is save_images
+               for call in tray.client.call_async.call_args_list)
 
 
 def test_another_exhausted_budget_pauses_again_without_automatic_fourth_request(monkeypatch):

@@ -63,6 +63,14 @@ Reload/recovery or process restart invalidates the retained batch; no poses are
 persisted to disk.
 Rebuild interfaces/controller and manually restart their clients after upgrading.
 
+**Save item/tray debug RGB/depth** applies to Pick Item, Place Item and Auto Run.
+Checked requests save item images under `debug/pick_img/` and tray images under
+`debug/tray_img/`, using the detectors' existing per-request capture. The choice
+is retained through acquisition retries and Pause/Continue; unchecked requests
+and controller Preview do not save images. Rebuild `robot_controller_interfaces`
+and `robot_controller`, then restart controller and GUI together after this update
+because `PlaceItem` now carries `save_debug_images`.
+
 **Preview ON** makes all three motion buttons publish planned TF targets without
 moving the robot or changing gripper outputs. Home shows its alignment and final
 pose; Pick shows a fresh batch's candidate, entry/exit and return targets; Place

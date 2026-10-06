@@ -60,6 +60,7 @@ class PlacementOperation(ReleaseQueue):
     y_mm: float
     rotation_deg: float
     require_held_item: bool = True
+    save_debug_images: bool = False
     tray_attempts: TrayAttempts = field(default_factory=TrayAttempts)
     pending_motion: object = None
     acquisition_failure: str = ""
@@ -115,6 +116,7 @@ class PlacementOperation(ReleaseQueue):
         node.hardware.wait_tray_position(config.tray.detect_joints)
         try:
             surface = node.trays.request(config, self.x_mm, self.y_mm,
+                                         save_debug_images=self.save_debug_images,
                                          require_held_item=self.require_held_item,
                                          attempts=self.tray_attempts,
                                          check_state=lambda: self.check_observation(node))

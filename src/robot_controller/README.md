@@ -460,6 +460,16 @@ service.
 
 ## Typed API
 
+The **Save item/tray debug RGB/depth** checkbox is captured when Pick Item,
+Place Item or Auto Run starts. Item requests save under `debug/pick_img/`;
+tray requests save under `debug/tray_img/`. Auto Run passes the same flag to
+initial/next-item detection and every tray acquisition. Tray observation retries
+and Pause/Continue retain the original choice. Unchecked requests and controller
+Preview do not save images. Saving uses each detector's existing request snapshot
+and diagnostic error reporting, without another inference or background archive.
+`PlaceItem` now includes `bool save_debug_images`; rebuild interfaces/controller
+and restart controller and GUI together. Detector service definitions are unchanged.
+
 Actions:
 
 - `/robot_controller/go_home` — goal contains `configuration_id`.
@@ -485,6 +495,11 @@ Actions:
   remain terminal. Reject reused IDs in new detector replies; intentionally
   continuing the retained batch is permitted. No teach schema, retry
   setting or action-interface field is added; progress reports attempt N/3.
+
+- `/robot_controller/place_item` — goal contains `configuration_id`, placement
+  `x_mm`, `y_mm`, `rotation_deg` and `save_debug_images`. The debug flag is passed
+  to every `/tray_detect/get_tray_pose_v3` observation for the action, including
+  explicit acquisition retries. It does not change motion or release timing.
 
 Services:
 

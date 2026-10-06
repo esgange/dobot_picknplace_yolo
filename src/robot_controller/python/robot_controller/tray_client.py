@@ -107,7 +107,7 @@ class TrayClient:
                                   "headless tray_detect provider in the root namespace")
 
     def request(self, config, x_mm, y_mm, *, require_held_item=True, attempts=None,
-                check_state=None):
+                check_state=None, save_debug_images=False):
         node = self.node
         attempts = attempts if attempts is not None else TrayAttempts()
 
@@ -146,7 +146,7 @@ class TrayClient:
                     "Tray pose v2 service is unavailable; restart tray and controller applications "
                     "after updating, then arm Tray Teach or start Tray Detect")
             try:
-                return self._observe(config, sampling, check_item, attempts)
+                return self._observe(config, sampling, check_item, attempts, save_debug_images)
             except TrayObservationUnavailable as exc:
                 attempts.reason = str(exc)
                 node.events.record(
@@ -160,9 +160,10 @@ class TrayClient:
         raise TrayAcquisitionExhausted(
             f"Tray observation failed after 3 attempts: {attempts.reason}")
 
-    def _observe(self, config, sampling, check_item, attempts):
+    def _observe(self, config, sampling, check_item, attempts, save_debug_images):
         node = self.node
         request = GetTrayPose.Request(profile_sha256=config.tray.sha256,
+                                      save_debug_images=bool(save_debug_images),
                                       sample_placement_depth=True,
                                       placement=PlacementDepthRequest(**sampling))
         node.operation_progress("TRAY_DEPTH", f"Tray observation attempt {attempts.count + 1}/3: "

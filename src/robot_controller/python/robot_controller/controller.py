@@ -1011,7 +1011,8 @@ class RobotController(Node):
         self.active_goal = goal
         request = goal.request
         self.placement = PlacementOperation(*validate_target(
-            request.x_mm, request.y_mm, request.rotation_deg), require_held_item=False)
+            request.x_mm, request.y_mm, request.rotation_deg), require_held_item=False,
+            save_debug_images=bool(request.save_debug_images))
         result = PlaceItem.Result()
         queued = False
         try:

@@ -1489,6 +1489,18 @@ retract neutral. Item Teach keeps both existing booleans editable independently;
 no schema, saved setting, rate, geometry, runtime artifact or executor change.
 Update README, diary and FSM/exports and validate without hardware commands.
 
+Rule 220 makes the controller checkbox Save item/tray debug RGB/depth apply to
+manual Pick Item, manual Place Item and all Auto Run item/tray observations.
+Add save_debug_images to the typed PlaceItem goal and retain it in each placement
+operation through retries and Pause/Continue. Forward it to the existing tray
+pose/depth service; Auto Run reuses its one goal flag for item acquisition,
+prefetch and each tray request. Use existing detector writers and directories
+debug/pick_img and debug/tray_img; no extra inference, capture worker, automatic
+archive, persisted setting or perception service change. Preview and unchecked
+requests keep saving disabled. Preserve acquisition, motion, release and Stop
+contracts. Rebuild interfaces/controller and restart controller/GUI together;
+update README, diary and FSM/exports and validate without hardware commands.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

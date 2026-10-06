@@ -231,7 +231,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_item = QtWidgets.QPushButton("Place Item")
         self.place_item.setToolTip(
             "Move to Tray Detect if needed, observe tray, then place and retract; item optional")
-        self.debug_images = QtWidgets.QCheckBox("Save Pick debug RGB/depth")
+        self.debug_images = QtWidgets.QCheckBox("Save item/tray debug RGB/depth")
+        self.debug_images.setToolTip(
+            "Save detection images for Pick Item, Place Item and Auto Run. "
+            "Item images: debug/pick_img; tray images: debug/tray_img.")
         self.preview_toggle.toggled.connect(self._toggle_preview)
         self.home_button.clicked.connect(lambda: self._action("home"))
         self.pick_item.clicked.connect(lambda: self._action("pick"))
@@ -662,7 +665,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             except (ValueError, OSError) as exc:
                 QtWidgets.QMessageBox.warning(self, "Placement target", str(exc))
                 return
-        if name in ("pick", "auto_run"):
+        if name in ("pick", "place", "auto_run"):
             goal.save_debug_images = self.debug_images.isChecked()
         if name == "auto_run":
             goal.quantity = self.auto_quantity.value()

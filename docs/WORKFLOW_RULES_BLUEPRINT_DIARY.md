@@ -8806,6 +8806,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Robot Controller and Item Teach to apply. Preserved the unrelated RViz edit
   and all station artifacts.
 
+### 2026-10-06 — Rule 220: controller debug checkbox covers item and tray detection
+
+- Renamed the controller checkbox to **Save item/tray debug RGB/depth** and
+  forward its checked state in Pick Item, Place Item and Auto Run goals. Added
+  `bool save_debug_images` to the typed PlaceItem goal. Each PlacementOperation
+  retains the flag through observation retries and Pause/Continue; Auto Run
+  forwards its existing goal flag to both item requests/prefetch and every tray
+  observation. TrayClient passes it to the existing GetTrayPose service.
+- Reused the item and tray nodes' existing request-scoped capture writers:
+  `debug/pick_img/` and `debug/tray_img/`. No detector runtime change, extra
+  inference/capture worker, continuous archive, saved setting, pose validation,
+  motion timing, I/O or Stop change. Unchecked and controller Preview requests
+  keep capture off; image-write failures retain existing diagnostic semantics.
+- Validation: **1183 tests passed** — 1137 complete Robot Controller tests and
+  46 tray request tests. Covered checkbox ON/OFF in all three GUI actions,
+  generated PlaceItem goals through placement, all tray acquisition retries and
+  Pause/Continue, every counted Auto Run placement plus next-item prefetch, and
+  actual RGB/depth PNG files from the tray request writer with one inference.
+  Tests use synthetic services/feedback and offscreen Qt only. Rebuilt
+  robot_controller_interfaces and robot_controller with symlink-install; scoped
+  flake8 and whitespace checks pass.
+- Updated root/package/interface READMEs, AGENTS and FSM review/diagrams;
+  regenerated all nine adjacent HTML/PDF diagrams and visually reviewed Pick,
+  Placement and Auto Run. Verified the HTML source hash and all PDF footers
+  against `1087b042c6a25a76522d1406396ef079e391f422d7972c84315568fe86b7c142`.
+  Controller and GUI must
+  restart together after the PlaceItem interface update; detector service
+  definitions are unchanged and already support capture. No hardware command or
+  production process restart was performed. Preserved station artifacts, `.env`
+  and the unrelated operator RViz edit.
+
 ### Future entry template
 
 ```text

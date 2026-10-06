@@ -287,7 +287,8 @@ class AutoRunOperation:
             node.raise_if_cancelled()
             node.active_action = "place"
             node._transition("PLACING", "Auto Run: waiting for stable Tray Detect and tray pose")
-            placement = PlacementOperation(*self.target, require_held_item=True)
+            placement = PlacementOperation(*self.target, require_held_item=True,
+                                           save_debug_images=self.save_debug_images)
             node.placement = placement
             last_item = self.completed + 1 == self.quantity
             while True:

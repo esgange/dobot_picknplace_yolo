@@ -203,7 +203,7 @@ def test_external_manual_queue_controls_are_rejected_during_auto_run(command):
     assert not node.managed.mock_calls
 
 
-def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
+def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False, save_images=False):
     from robot_controller.motion import Target
     from robot_controller.state_machine import ControllerStateMachine
 
@@ -218,7 +218,7 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
     class Placement:
         def __init__(self, *_args, **kwargs):
-            assert kwargs == {"require_held_item": True}
+            assert kwargs == {"require_held_item": True, "save_debug_images": save_images}
             self.phase = "OBSERVE"
             self.plan = (Target("retract", np.eye(4), 100, 100),)
             self.observing = True
@@ -237,6 +237,7 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
     class Worker:
         def __init__(self, *_args):
+            assert _args[-1] is save_images
             assert node.machine.state == "PLACING" and node.placement.phase == "OBSERVE"
             assert order[-1] == "tray acquisition"
             order.append("prefetch")
@@ -253,7 +254,9 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
     monkeypatch.setattr(auto_module, "PlacementOperation", Placement)
     monkeypatch.setattr(auto_module, "CandidatePrefetch", Worker)
-    run = AutoRunOperation(node, request(quantity))
+    goal = request(quantity)
+    goal.save_debug_images = save_images
+    run = AutoRunOperation(node, goal)
 
     def pick(batch, bridge):
         if batch is not None:
@@ -292,9 +295,11 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False):
 
 @pytest.mark.parametrize("quantity", [1, 2, 4])
 @pytest.mark.parametrize("slow", [False, True])
+@pytest.mark.parametrize("save_images", [False, True])
 def test_counted_cycles_prefetch_only_when_needed_and_append_final_home(
-        monkeypatch, quantity, slow):
-    run, node, order, workers = cycle_rig(monkeypatch, quantity, slow=slow)
+        monkeypatch, quantity, slow, save_images):
+    run, node, order, workers = cycle_rig(
+        monkeypatch, quantity, slow=slow, save_images=save_images)
     assert run.run()
     assert run.completed == quantity
     assert order.count("place queued") == quantity

@@ -425,17 +425,20 @@ def test_generated_configure_includes_optional_tray_file():
     assert Configure.Request().tray_teach_file == ""
 
 
-def test_place_action_acknowledges_queue_with_a_typed_result():
+@pytest.mark.parametrize("save_images", [False, True])
+def test_place_action_acknowledges_queue_with_a_typed_result(save_images):
     node = operation_node()
     node._end_operation = Mock()
-    goal = SimpleNamespace(request=PlaceItem.Goal(x_mm=30., y_mm=40., rotation_deg=-90.),
-                           succeed=Mock())
+    goal = SimpleNamespace(
+        request=PlaceItem.Goal(x_mm=30., y_mm=40., rotation_deg=-90.,
+                               save_debug_images=save_images), succeed=Mock())
     result = RobotController._execute_place_action(node, goal)
     assert result.outcome == PlaceItem.Result.SUCCESS and result.final_state == "PLACING"
     node.placement_thread.join(timeout=1.)
     assert node.placement is None and not node.holding_item
     goal.succeed.assert_called_once()
     node._end_operation.assert_called_once()
+    assert node.trays.request.call_args.kwargs["save_debug_images"] is save_images
 
 
 def test_controller_recovery_cancels_placement_then_relaxes_after_home():

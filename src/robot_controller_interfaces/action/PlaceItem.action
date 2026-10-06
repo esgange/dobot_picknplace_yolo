@@ -3,6 +3,7 @@ float64 x_mm
 float64 y_mm
 # Saved Tray Detect Pose tool orientation followed by this local tool-Z rotation.
 float64 rotation_deg
+bool save_debug_images
 ---
 # SUCCESS acknowledges all placement commands accepted through final retract.
 # ControllerStatus remains PLACING/operation_active until supervised completion;

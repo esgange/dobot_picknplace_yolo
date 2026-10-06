@@ -120,7 +120,9 @@ def test_cleanup_evidence_survives_request_and_event_log(backend, simulated):
 
 
 @pytest.mark.parametrize("usable", [True, False])
-def test_placement_request_uses_one_fresh_observation_and_reports_depth(backend, usable):
+@pytest.mark.parametrize("save_images", [False, True])
+def test_placement_request_uses_one_fresh_observation_and_reports_depth(
+        backend, usable, save_images):
     node, path, digest = backend
     ordinary = node.snapshot.side_effect
 
@@ -131,6 +133,9 @@ def test_placement_request_uses_one_fresh_observation_and_reports_depth(backend,
         return view
 
     node.snapshot.side_effect = snapshot
+    preview = node.preview.side_effect
+    node.preview.side_effect = lambda *args, **kwargs: {
+        **preview(*args, **kwargs), "depth_overlay": bytes(12)}
     sample = {"x_mm": 20., "y_mm": 30., "diameter_mm": 30., **QUALITY_DEFAULTS}
     result = ({"state": "ok", "surface_base": [.12, .13, .24],
                "accepted_samples": 50, "total_samples": 60, "median_mm": 700., "sigma_mm": 1.}
@@ -138,15 +143,27 @@ def test_placement_request_uses_one_fresh_observation_and_reports_depth(backend,
     node.native.call = MagicMock(return_value=(result, b""))
     arm(backend)
     response = node.requests.handle(GetTrayPose.Request(
-        profile_sha256=digest, sample_placement_depth=True,
+        profile_sha256=digest, sample_placement_depth=True, save_debug_images=save_images,
         placement=PlacementDepthRequest(**sample)), GetTrayPose.Response())
     assert response.success is usable and response.placement.valid is usable
     node.snapshot.assert_called_with(depth_required=True, quality=sample)
     node.preview.assert_called_once()
+    assert node.preview.call_args.kwargs["visualize"] is save_images
     assert node.native.call.call_args.args[0]["sampling"] == sample
     if usable:
         assert response.placement.surface_base.z == .24
         assert json.loads(response.diagnostics_json)["placement_sampling"] == sample
+        capture = json.loads(response.diagnostics_json)["debug_capture"]
+        assert capture["requested"] is save_images
+        assert not capture["error"]
+        if save_images:
+            for key in ("rgb_path", "depth_path"):
+                image = Path(capture[key])
+                assert image.parent == node.root / "debug/tray_img"
+                assert image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        else:
+            assert not capture["rgb_path"] and not capture["depth_path"]
+            assert not (node.root / "debug").exists()
     else:
         assert "Insufficient" in response.message and not node.native.failed
         assert node.requests.service is not None  # Bad depth must not disarm the provider.
