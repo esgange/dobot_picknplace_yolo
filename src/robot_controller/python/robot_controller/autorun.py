@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future
 import threading
+from time import monotonic
 
 from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost,
                      ManagedInterruption, OperationCanceled)
@@ -145,6 +146,20 @@ class AutoRunOperation:
         self.bridge = None
         self.seen_batches = set()
         self.resume_held = False
+        self.started_at = monotonic()
+        self.finished_elapsed_sec = None
+
+    @property
+    def elapsed_sec(self):
+        """Elapsed duration includes pauses and retries; reading never waits."""
+        if self.finished_elapsed_sec is not None:
+            return self.finished_elapsed_sec
+        return monotonic() - self.started_at
+
+    def finish_timer(self):
+        if self.finished_elapsed_sec is None:
+            self.finished_elapsed_sec = self.elapsed_sec
+        return self.finished_elapsed_sec
 
     def placement_completed(self):
         self.completed += 1
@@ -153,6 +168,7 @@ class AutoRunOperation:
         self.node.events.record(
             "INFO", "auto_run_placement_completed", "Placement sequence completed",
             completed=self.completed, requested=self.quantity,
+            elapsed_sec=self.elapsed_sec,
             boundary_command_id=self.bridge.boundary_id if self.bridge is not None else None)
         self.node.operation_progress(
             "AUTO_COUNT", f"Auto Run: {self.completed}/{self.quantity} placements completed")

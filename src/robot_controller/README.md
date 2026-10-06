@@ -8,7 +8,7 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 
 `robot_controller` is the sole production application-level authority for the
 physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle,
-plus Auto Run with an adjacent quantity field and completed count.
+plus Auto Run with an adjacent quantity field, completed count and elapsed seconds.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.
 
 ## Auto Run
@@ -90,6 +90,17 @@ MovJ Home immediately after placement admission without
 requesting another item batch. Confirm final Home, neutral outputs and DI1 LOW
 before Auto Run SUCCESS/READY. Status publishes `auto_run_active`, requested and
 completed quantities; the action result preserves the final/partial count.
+
+The controller starts a monotonic elapsed timer when the accepted run begins.
+It includes detection, retries, pauses, all movement and final Home, or failure/
+Stop handling if the run ends early. The GUI shows one decimal second beside the
+count, using periodic status with no local motion timer, extra thread or wait.
+`AutoRun` feedback/result carry `elapsed_sec`; status carries
+`auto_run_elapsed_sec`. On any terminal outcome the duration freezes and the GUI
+shows **Total**. The last count/time remain in controller memory for reconnecting
+clients until a new run replaces them or the controller restarts. Rebuild both
+interfaces and controller, then restart controller/GUI/status/action clients together.
+
 Three exhausted nonempty Pick batches, or an empty result after the one Home
 acquisition retry is used, end READY/NO_PICK at Home. Three unavailable tray
 requests confirm Stop and enter **PAUSED at Tray Detect**, retaining the item,

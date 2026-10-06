@@ -14,8 +14,10 @@ bool holding_item
 bool operation_active
 string operation
 bool auto_run_active
+# Current run, or last finished run until the next run/controller restart.
 uint32 auto_run_requested
 uint32 auto_run_completed
+float64 auto_run_elapsed_sec
 string phase
 string waypoint
 uint32 candidate_index

@@ -9294,6 +9294,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   milestone. Restart Robot Controller/Preview to apply. Preserve operator RViz,
   .env, calibration, teach and model artifacts; physical travel remains untested.
 
+### 2026-10-06 — Rule 233: Auto Run elapsed and total seconds
+
+- Add one controller-owned monotonic start time when an accepted Auto Run begins.
+  Read elapsed seconds without waiting; include detection, retries, acquisition
+  pauses/Continue, motion and final Home. Early NO_PICK, Stop/fault and completed
+  Return Item results freeze elapsed time after their normal termination handling.
+  A new run starts at zero; no motion, queue, placement count or Stop policy changes.
+- Add float64 elapsed_sec to AutoRun feedback/result and auto_run_elapsed_sec to
+  ControllerStatus. Publish current time through the existing status timer and
+  action progress; record it with placement-count events and terminal results.
+  Retain the last result's count/time in memory after releasing Auto Run ownership,
+  so reconnecting GUI/headless clients can read it. A controller restart clears
+  the summary; no disk store, extra executor/thread or blocking timer is added.
+- Show elapsed seconds to one decimal beside the Auto Run count, then label the
+  frozen duration Total. This measures the whole run through final Home, including
+  pauses, rather than only motion time. Mark missing/stale controller status
+  unavailable and do not advance a separate GUI clock. Result messages include
+  the same duration; failed/partial runs retain their actual completed count.
+- Validation: interfaces/controller build pass. Focused timing, action, Pause/
+  Return and GUI tests pass (153); full controller colcon test passes **1211
+  pytest tests**, no failures/skips. Synthetic clocks cover pause/retry/Home,
+  final freezing, next-run reset, terminal outcomes and retained headless status.
+  Changed-line/new-test lint and whitespace checks pass. Inspect the offscreen
+  Auto Run display using synthetic status only; no ROS/hardware node is started.
+- Update AGENTS, root/package/interface READMEs and FSM. Regenerate all nine
+  HTML/PDF diagrams, verify source hashes and inspect the Auto Run diagram.
+  FSM SHA-256: 24a92d2db7c202a0a6e0156e22ad64a4d07d8e5d17f500d66a0c6f418daed591.
+  Interface fields changed: restart controller, GUI and every status/action client
+  together after rebuilding. No production restart, hardware command, vendor edit
+  or offline-transfer milestone. Preserve operator configuration/teach/model/RViz edits.
+
 ### Future entry template
 
 ```text

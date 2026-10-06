@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Auto Run timing review: **2026-10-06**, baseline **`bd5f2f5`** plus rule
+**233**. The controller starts a monotonic timer when the accepted Auto Run begins.
+Seconds include perception, retries, pauses and final Home or early termination
+handling. Freeze and log time with every final/partial result. Native feedback and
+result publish `elapsed_sec`; status publishes `auto_run_elapsed_sec` and retains
+the last count/time until the next run or controller restart. GUI shows Elapsed
+while active and Total afterward, to one decimal second. Existing status updates
+carry the timer; no extra thread, blocking wait, motion or state guard is added.
+
 Tray Detect joint-motion review: **2026-10-06**, baseline **`c467a0f`** plus
 rule **232**. After a successful Pick's linear lifts and Safety Z exit, the saved
 Tray Detect target uses absolute joint `MovJ(mode=true)` with the six exact taught
@@ -1062,7 +1071,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 
 ```mermaid
 flowchart TD
-    Start["READY: Auto Run quantity and placement target"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
+    Start["READY: Auto Run quantity and placement target; start elapsed timer"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Pick --> Tray["Linear lifts and exit; MovJ Tray Detect; confirm joints and idle"]
     Tray --> Observe["Fresh tray pose then placement depth; optional debug RGB/depth; at most 3 complete attempts"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
@@ -1071,7 +1080,7 @@ flowchart TD
     Prefetch -.-> Capture["In parallel: fresh post-trigger RGB/depth/TF; retain result"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append MovJ Home behind placement"]
-    Home --> Done["PLACED; cancel unused poses; count execution/release; confirm Home + neutral + DI1 LOW; READY"]
+    Home --> Done["PLACED; cancel unused poses; count execution/release; confirm Home + neutral + DI1 LOW; freeze total seconds; READY"]
     Last -->|No| Ready{"Fresh next-bin request finished?"}
     Capture -.-> Ready
     Ready -->|No| Wait["Supervise retract; count if completed; wait unheld for result"]
@@ -1090,7 +1099,7 @@ flowchart TD
     Observe -->|3 requests exhausted| Paused["Confirm Stop; PAUSED at Tray Detect; retain item, target, owner and count"]
     Paused -->|Continue / Place Item Retry| Observe
     Paused -->|Return Item| PutBack["Shared return queue through Home; READY / CANCELED; unchanged partial count"]
-    Paused -->|Stop or safety fault| Fail["Stop containment; end run with partial count"]
+    Paused -->|Stop or safety fault| Fail["Stop containment; end run with partial count and total seconds"]
     Fingers -->|Rejected, unanswered or Stop; discard worker| Fail
     Place -->|Rejected, unanswered or Stop; discard worker| Fail
     Ready -->|Detector error| Fail
@@ -1164,6 +1173,18 @@ and ordered acceptance are preserved. Initial Pick, final quantity and empty-res
 recovery still use Home. Final Home requires actual saved-joint/idle/execution
 confirmation and neutral/DI1 LOW.
 Counts mean placement execution/release evidence, not measured physical delivery.
+
+Auto Run owns one monotonic elapsed timer from action execution start to its
+terminal result, including retries, acquisition pauses and final Home or early
+termination handling. `AutoRun` feedback/results include `elapsed_sec` and status
+includes `auto_run_elapsed_sec`. The timer never pauses or restarts for an item
+retry/Continue. At SUCCESS, NO_PICK, fault, Stop/cancel or completed Return Item,
+freeze/log the duration with the full or partial count. Periodic status retains
+that summary for GUI reconnects and headless clients until the next run starts or
+the controller restarts. No disk persistence or separate timing worker is used.
+GUI displays elapsed seconds to one decimal beside the count and labels the
+frozen duration Total; unavailable status is labelled unavailable. This measures
+whole-run time through final Home, not individual inference or placement latency.
 
 The UI exposes AUTO RUN with completed/requested counts and locks manual controls
 and inputs during execution, except permanent STOP. Three unavailable tray requests

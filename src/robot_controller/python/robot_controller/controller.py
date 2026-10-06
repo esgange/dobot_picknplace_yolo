@@ -102,6 +102,7 @@ class RobotController(Node):
         self.placement = None
         self.placement_thread = None
         self.auto_run = None
+        self.last_auto_run_result = None
         self.recovery_home = None
 
         self.monitor = FeedbackMonitor(lambda: self.get_clock().now().nanoseconds)
@@ -331,6 +332,7 @@ class RobotController(Node):
             if auto is not None:
                 feedback.requested_quantity = auto.quantity
                 feedback.completed_quantity = auto.completed
+                feedback.elapsed_sec = auto.elapsed_sec
             elif self.active_action == "pick":
                 feedback.candidate_index = self.candidate_index
                 feedback.candidate_total = self.candidate_total
@@ -366,6 +368,13 @@ class RobotController(Node):
             status.operation = "auto_run"
             status.auto_run_requested = auto.quantity
             status.auto_run_completed = auto.completed
+            status.auto_run_elapsed_sec = auto.elapsed_sec
+        else:
+            last_run = getattr(self, "last_auto_run_result", None)
+            if last_run is not None:
+                status.auto_run_requested = last_run.requested_quantity
+                status.auto_run_completed = last_run.completed_quantity
+                status.auto_run_elapsed_sec = last_run.elapsed_sec
         status.candidate_index, status.candidate_total = (
             self.candidate_index, self.candidate_total)
         session = self.managed.session
@@ -974,10 +983,9 @@ class RobotController(Node):
                               f"{run.completed}/{run.quantity} placements completed"
                               + ("; robot Home" if success else ""))
             result.final_state = self.machine.state
+            self._record_auto_run_result(run, result, "INFO")
             self._transition("READY", result.message)
             goal.succeed()
-            self.events.record("INFO", "auto_run_result", result.message,
-                               completed=run.completed, requested=run.quantity)
             return result
         except ReturnedToHome as exc:
             result.outcome = result.CANCELED
@@ -985,18 +993,15 @@ class RobotController(Node):
             result.message = (f"{exc}; Auto Run ended by Return Item with "
                               f"{run.completed}/{run.quantity} placements completed")
             result.final_state = self.machine.state
+            self._record_auto_run_result(run, result, "INFO")
             goal.abort()
-            self.events.record("INFO", "auto_run_result", result.message,
-                               completed=run.completed, requested=run.quantity)
             return result
         except Exception as exc:
             result.completed_quantity = run.completed if run is not None else 0
             result = self._action_failure(goal, result, exc, self._failure_outcome(result, exc))
             result.message += (f"; Auto Run completed {result.completed_quantity}/"
                                f"{result.requested_quantity} placements")
-            self.events.record("ERROR", "auto_run_result", result.message,
-                               completed=result.completed_quantity,
-                               requested=result.requested_quantity)
+            self._record_auto_run_result(run, result, "ERROR")
             return result
         finally:
             try:
@@ -1009,6 +1014,14 @@ class RobotController(Node):
                     self.placement = None
                 self.auto_run = None
                 self._end_operation()
+
+    def _record_auto_run_result(self, run, result, level):
+        result.elapsed_sec = run.finish_timer() if run is not None else 0.
+        result.message += f"; elapsed {result.elapsed_sec:.1f} s"
+        self.last_auto_run_result = result
+        self.events.record(level, "auto_run_result", result.message,
+                           completed=result.completed_quantity,
+                           requested=result.requested_quantity, elapsed_sec=result.elapsed_sec)
 
     def _execute_place_action(self, goal):
         self.active_goal = goal

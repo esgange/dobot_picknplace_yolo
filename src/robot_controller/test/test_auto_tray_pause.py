@@ -71,6 +71,8 @@ def test_continue_retries_same_held_item_and_count_after_confirmed_pause(
 
 def test_return_from_auto_pause_finishes_ready_and_cancels_run_without_counting(monkeypatch):
     node, tray, run = paused_run(monkeypatch, [None] * 3)
+    node._record_auto_run_result = lambda *args: RobotController._record_auto_run_result(
+        node, *args)
     monkeypatch.setattr(controller_module, 'AutoRunOperation', lambda *_args: run)
     goal = SimpleNamespace(request=request(3), succeed=Mock(), abort=Mock())
     node._action_failure = Mock(side_effect=AssertionError('Return is not a controller fault'))
@@ -86,6 +88,8 @@ def test_return_from_auto_pause_finishes_ready_and_cancels_run_without_counting(
     assert result.outcome == result.CANCELED and result.final_state == 'READY'
     assert result.completed_quantity == 2 and result.requested_quantity == 3
     assert 'Return Item' in result.message
+    assert result.elapsed_sec == run.elapsed_sec
+    assert node.last_auto_run_result is result
     assert node.managed.session.attempts[0].state == 'RETURNED'
     assert not node.holding_item and not node.operation_lock.locked()
     assert node.auto_run is None and node.placement is None

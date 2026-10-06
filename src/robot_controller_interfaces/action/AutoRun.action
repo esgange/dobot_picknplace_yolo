@@ -17,9 +17,12 @@ string message
 string final_state
 uint32 completed_quantity
 uint32 requested_quantity
+# Total elapsed seconds, including retries, pauses and final Home/termination.
+float64 elapsed_sec
 ---
 string phase
 string waypoint
 string message
 uint32 completed_quantity
 uint32 requested_quantity
+float64 elapsed_sec

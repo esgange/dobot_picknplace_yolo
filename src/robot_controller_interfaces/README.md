@@ -22,10 +22,10 @@ exact configuration ID, a quantity of 1–10000, placement X/Y/rotation and debu
 choice for both item and tray requests. It requires unheld READY, a complete
 Item/Bin/Tray configuration and both canonical pose providers. One operation
 owner combines Pick/Place, prefetches one
-next bin batch during placement, and appends Home/next Pick as soon as it is ready,
-without waiting for intermediate placement/Home arrival. Final Home is confirmed.
-Feedback and result include requested/completed quantities; SUCCESS means all
-requested placements and final Home completed. NO_PICK ends after three exhausted
+next bin batch during placement, and appends the next Pick as soon as it is ready,
+without Home between cycles or waiting for placement arrival. Final Home is confirmed.
+Feedback and result include requested/completed quantities and `elapsed_sec`;
+SUCCESS means all requested placements and final Home completed. NO_PICK ends after three exhausted
 Pick batches; other failures/cancellation retain a partial count and use normal
 Stop containment. The manual Place action's acceptance-only result is unchanged.
 
@@ -37,9 +37,15 @@ retained through Pause/Continue; Preview never requests captures. Rebuild this
 package and Robot Controller, then restart controller and GUI together: the
 `PlaceItem` goal definition has changed. Perception service definitions are unchanged.
 
-`ControllerStatus.auto_run_active`, `auto_run_requested`, `auto_run_completed` and
-operation `auto_run` identify the owner while lifecycle states describe its current
-phase. Manual Pause/Continue/Return reject during Auto Run; direct Stop and action
+`ControllerStatus.auto_run_active`, `auto_run_requested`, `auto_run_completed`,
+`auto_run_elapsed_sec` and operation `auto_run` identify the owner while lifecycle states describe its current
+phase. Timing starts when the accepted action begins, uses the controller's
+monotonic clock, includes retries, pauses and final Home or failure/Stop handling,
+and freezes at the terminal result. Status retains the finished quantities/time
+while `auto_run_active=false`, until the next run/controller restart; a zero
+requested quantity means no run yet. No timer state is written to disk.
+Manual Pause/Continue/Return reject during normal Auto Run; the confirmed tray
+acquisition Pause permits Continue/Return Item. Direct Stop and action
 cancellation always pre-empt. This is a wire-interface change: rebuild interfaces
 and controller, and manually restart every status/action client together.
 

@@ -191,13 +191,14 @@ def test_auto_ui_sends_count_and_offsets_and_locks_all_manual_controls(window): 
     assert len(sent) == 1 and isinstance(sent[0], AutoRun.Goal)
     assert sent[0].quantity == 7 and (sent[0].x_mm, sent[0].y_mm) == (30., 40.)
     window.node.status = status(state="PLACING", operation_active=True, operation="auto_run",
-                                auto_run_active=True, auto_run_requested=7, auto_run_completed=2)
+                                auto_run_active=True, auto_run_requested=7, auto_run_completed=2,
+                                auto_run_elapsed_sec=42.5)
     window.pending_goal = None
     window._refresh()
     assert all(window._availability().values())
     assert window.stop.isEnabled()
     assert not window.auto_quantity.isEnabled() and not window.place_x.isEnabled()
-    assert window.auto_progress.text() == "2/7 completed"
+    assert window.auto_progress.text() == "2/7 completed · Elapsed: 42.5 s"
     assert window.status.text() == "AUTO RUN"
 
 
@@ -461,23 +462,28 @@ def test_preview_never_dispatches_auto_run(window):  # noqa: F811
     send.assert_not_called()
 
 
-@pytest.mark.parametrize("outcome", ["success", "no_pick", "failure"])
+@pytest.mark.parametrize("outcome", ["success", "no_pick", "failure", "stop"])
 def test_native_auto_action_reports_quantity_and_releases_its_one_owner(monkeypatch, outcome):
     import robot_controller.controller as controller_module
 
     run = SimpleNamespace(quantity=3, completed=3 if outcome == "success" else 1,
-                          close=Mock())
+                          close=Mock(), finish_timer=Mock(return_value=45.6))
     run.run = Mock(return_value=outcome == "success")
     if outcome == "failure":
         run.run.side_effect = FeedbackFailure("tray acquisition exhausted")
+    elif outcome == "stop":
+        run.run.side_effect = OperationCanceled("Operator Stop")
     monkeypatch.setattr(controller_module, "AutoRunOperation", lambda *_args: run)
     node = SimpleNamespace(
         machine=SimpleNamespace(state="READY"), placement=None, events=Mock(),
         raise_if_cancelled=Mock(), _transition=Mock(), _end_operation=Mock(),
         _failure_outcome=RobotController._failure_outcome)
+    node._record_auto_run_result = lambda *args: RobotController._record_auto_run_result(
+        node, *args)
 
     def fail(goal, result, exc, code):
-        result.outcome, result.message = code, str(exc)
+        result.outcome = result.CANCELED if isinstance(exc, OperationCanceled) else code
+        result.message = str(exc)
         goal.abort()
         return result
 
@@ -486,11 +492,15 @@ def test_native_auto_action_reports_quantity_and_releases_its_one_owner(monkeypa
     result = RobotController._execute_auto_run_action(node, goal)
     assert result.completed_quantity == run.completed and result.requested_quantity == 3
     assert result.outcome == {"success": result.SUCCESS, "no_pick": result.NO_PICK,
-                              "failure": result.FEEDBACK_FAILURE}[outcome]
+                              "failure": result.FEEDBACK_FAILURE, "stop": result.CANCELED}[outcome]
     assert node.auto_run is None
     node._end_operation.assert_called_once()
-    assert goal.succeed.called is (outcome != "failure")
+    assert goal.succeed.called is (outcome in ("success", "no_pick"))
     assert f"{run.completed}/3" in result.message
+    assert result.elapsed_sec == 45.6 and "elapsed 45.6 s" in result.message
+    assert node.last_auto_run_result is result
+    assert node.events.record.call_args.kwargs["elapsed_sec"] == 45.6
+    run.finish_timer.assert_called_once()
 
 
 def test_final_home_suction_reappearance_faults_after_counted_placement():

@@ -55,6 +55,15 @@ with the item held and the count retained. **Continue** retries tray detection
 for that item; **Return Item** puts it back and ends the run at Home/READY with
 its partial count. Three exhausted Pick batches, robot faults and STOP end the
 run; no automatic restart.
+
+Auto Run displays elapsed seconds beside its completed count, then retains the
+total when it ends. Time includes detection, retries, pauses and final Home (or
+failure/Stop handling); it resets for the next run. The controller owns this
+monotonic timer, so headless clients and a reopened GUI receive the same duration.
+The final/partial count and time remain available until the next run or controller
+restart. Rebuild `robot_controller_interfaces` and `robot_controller`, then restart
+controller, GUI and other status/action clients together for the new timing fields.
+
 Keep the fixed bin camera clear during placement-time detection. Missed picks,
 Pause/Continue and automatic drop return keep eligible original poses until
 successful placement. Separate manual Pick → Place cycles also discard unused

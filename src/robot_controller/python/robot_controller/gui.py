@@ -276,7 +276,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.auto_quantity.setRange(1, 10000)
         self.auto_quantity.setValue(1)
         self.auto_quantity.setAccessibleName("Auto Run quantity")
-        self.auto_progress = QtWidgets.QLabel("0 completed")
+        self.auto_progress = QtWidgets.QLabel("0 completed · Elapsed: 0.0 s")
+        self.auto_progress.setToolTip(
+            "Total run time, including retries, pauses and final Home. Resets on the next run.")
         auto_row.addWidget(self.auto_run_button, 1)
         auto_row.addWidget(QtWidgets.QLabel("Quantity"))
         auto_row.addWidget(self.auto_quantity)
@@ -760,7 +762,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 self.feedback_message = f"Result {result.outcome}: {result.message}"
                 if hasattr(result, "completed_quantity"):
                     self.auto_progress.setText(
-                        f"{result.completed_quantity}/{result.requested_quantity} completed")
+                        f"{result.completed_quantity}/{result.requested_quantity} completed"
+                        f" · Total: {result.elapsed_sec:.1f} s")
                 if (result.outcome not in (result.SUCCESS, getattr(result, "NO_PICK", -1))
                         or hasattr(result, "completed_quantity")
                         and result.outcome != result.SUCCESS):
@@ -891,9 +894,15 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     and self.pending_goal is None and self.result_future is None)
         for field in (self.place_x, self.place_y, self.place_rotation, self.auto_quantity):
             field.setEnabled(editable)
-        if state is not None and getattr(state, "auto_run_active", False):
+        if state is None:
+            self.auto_progress.setText("Auto Run status unavailable")
+        elif state.auto_run_requested:
+            timing = "Elapsed" if state.auto_run_active else "Total"
             self.auto_progress.setText(
-                f"{state.auto_run_completed}/{state.auto_run_requested} completed")
+                f"{state.auto_run_completed}/{state.auto_run_requested} completed"
+                f" · {timing}: {state.auto_run_elapsed_sec:.1f} s")
+        else:
+            self.auto_progress.setText("0 completed · Elapsed: 0.0 s")
         for field in (self.item_path, self.bin_path, self.tray_path, *self.teach_browse_buttons):
             field.setEnabled(editable and current in ("UNCONFIGURED", "INACTIVE", "READY"))
         self.debug_images.setEnabled(not self.preview_mode and editable)
