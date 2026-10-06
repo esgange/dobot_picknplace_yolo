@@ -400,7 +400,7 @@ def tray_visuals(request, data, cv2, np):
         # Base is the intermediate frame; no platform artifact is involved.
         cloud_context = {**context, "platform_from_optical": context["base_from_optical"]}
         cloud = colored_voxels(rgb, depth, cloud_context, np.eye(4),
-                               QUALITY_DEFAULTS, cv2, np).tobytes()
+                               QUALITY_DEFAULTS, cv2, np, item_minimum=False).tobytes()
     return {"state": "ok", "width": width, "height": height,
             "point_count": len(cloud) // 16, "samples": samples}, \
         overlay.tobytes() + rgb_overlay.tobytes() + cloud

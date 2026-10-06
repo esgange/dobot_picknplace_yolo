@@ -81,7 +81,9 @@ def service_node(monkeypatch, tmp_path):
                  "accepted_depth_count": 100, "rejected_depth_count": 10, "pixel": [100., 100.],
                  "nearby_depth_filter": {"radius_mm": 150., "height_mm": 60.,
                                          "usable_point_count": 1000, "nearby_point_count": 500,
-                                         "maximum_height_above_item_mm": 20.},
+                                         "reference": "platform_floor_camera_z_v1",
+                                         "candidate_height_mm": 100., "maximum_nearby_height_mm": 120.,
+                                         "maximum_height_difference_mm": 20.},
                  "planned_link6_matrix": [[1., 0., 0., 0.], [0., 1., 0., 0.],
                                           [0., 0., 1., .1], [0., 0., 0., 1.]],
                  "robot_camera_clearance": {
@@ -98,7 +100,7 @@ def service_node(monkeypatch, tmp_path):
     for key in ("normal", "mirrored", "selected"):
         clearance[key + "_footprint_platform_xy"] = [
             [-.005, -.03], [.025, -.03], [.025, .07], [-.005, .07]]
-    node = SimpleNamespace(request_lock=threading.Lock(), operation_lock=threading.Lock(),
+    node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False, request_lock=threading.Lock(), operation_lock=threading.Lock(),
                            root=tmp_path,
                            preview_mode="all",
                            service=object(), arm_epoch=1, yolo_enabled=True, pose_candidates=3,
@@ -117,9 +119,11 @@ def service_node(monkeypatch, tmp_path):
                            robot_camera=SimpleNamespace(sha256="f"*64),
                            bin_artifact=SimpleNamespace(sha256="e"*64),
                            get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=100_200_000_000)))
-    frame = {"stamp_ns": 100_200_000_000}
+    frame = {"stamp_ns": 100_200_000_000, "median_ms": 0., "capture_span_ms": 66.,
+             "frame_stamps_ns": [100_134_000_000, 100_167_000_000, 100_200_000_000]}
     node._snapshot = MagicMock(return_value=(frame, frame, {"synthetic": True}))
-    node.infer = MagicMock(return_value={"metadata": result})
+    result["timings_ms"] = {"yolo_ms": 5., "geometry_ms": 3., "clearance_ms": 1., "rendering_ms": 1.}
+    node.infer = MagicMock(return_value={"metadata": result, "native_roundtrip_ms": 11., "rgb": b""})
     node._pose_batch = lambda *a, **kw: detector.ItemDetectNode._pose_batch(node, *a, **kw)
     profile = {"retry": {"pose_candidates": 3}, "home": {"positions_rad": [0.]*6},
                "pick_rotation": 0., "motion": {"standoff_height": 90.}}
@@ -312,7 +316,8 @@ def test_disarm_invalidates_request_but_old_accepted_observation_remains_valid(s
     assert not result.success and not result.candidates
     assert "disarmed" in result.message
     node.infer.side_effect = None
-    old = {"stamp_ns": 95_000_000_000}
+    old = {"stamp_ns": 95_000_000_000, "median_ms": 0., "capture_span_ms": 0.,
+           "frame_stamps_ns": [95_000_000_000]}
     node._snapshot.return_value = (old, old, {})
     result = call(node)
     assert result.success and len(result.candidates) == 1
@@ -334,7 +339,7 @@ def test_native_depth_contract_uses_coverage_without_fixed_count(service_node, g
 
 def test_native_protocol_candidate_checks(service_node):
     node, candidate = service_node
-    result = {"candidates": [candidate]}
+    result = {"candidates": [candidate], "rejected": []}
     detector.validate_candidates(result, node.settings)
     for changes in ({"class_id": 20}, {"position": [float("nan"), 0., 1.]},
                     {"quaternion": [0., 0., 0., 0.]}, {"accepted_depth_count": 0}):
@@ -349,17 +354,17 @@ def test_native_protocol_candidate_checks(service_node):
 @pytest.mark.parametrize("change", [
     None, "legacy_link6", {"radius_mm": 100.}, {"height_mm": 70.},
     {"nearby_point_count": 1001},
-    {"usable_point_count": 0, "nearby_point_count": 0, "maximum_height_above_item_mm": None},
-    {"maximum_height_above_item_mm": 60.},
-    {"maximum_height_above_item_mm": float("nan")},
-    {"maximum_height_above_item_mm": None}])
+    {"usable_point_count": 0, "nearby_point_count": 0, "maximum_height_difference_mm": None},
+    {"maximum_height_difference_mm": 60.},
+    {"maximum_height_difference_mm": float("nan")},
+    {"maximum_height_difference_mm": None}])
 def test_native_protocol_requires_current_nearby_filter_evidence(service_node, change):
     node, candidate = service_node
     if change is None:
         del candidate["nearby_depth_filter"]
     elif change == "legacy_link6":
         evidence = candidate["nearby_depth_filter"]
-        evidence["maximum_height_above_pick_mm"] = evidence.pop("maximum_height_above_item_mm")
+        evidence["maximum_height_above_pick_mm"] = evidence.pop("maximum_height_difference_mm")
     else:
         candidate["nearby_depth_filter"].update(change)
     with pytest.raises(RuntimeError, match="nearby-depth"):
@@ -498,7 +503,7 @@ def test_frozen_simulation_drops_changed_sources_but_not_aged_display(service_no
 def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
     from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
     rgb = {"stamp_ns": 100_000_000_000, "received_at": time.monotonic()}
-    node = SimpleNamespace(
+    node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False,
         yolo_enabled=True, preview_mode="all", preview_source="mask", arm_epoch=1,
         request_lock=threading.Lock(), operation_lock=threading.Lock(),
         settings=None, model_config={"path": "verified.pt"},
@@ -510,7 +515,7 @@ def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
         _snapshot=MagicMock(side_effect=AssertionError("Must not request depth")),
         infer=MagicMock(return_value={"rgb": b"preview"}),
         condition=threading.Condition(), _depth=None, _color_info=None, _depth_info=None,
-        _camera_generation=1,
+        _camera_generation=1, _depth_window=MagicMock(side_effect=ValueError("No depth")),
     )
     yolo = {**detector.INITIAL_PREVIEW_YOLO, "confidence": .9, "iou": .35,
             "max_detections": 20, "class_ids": []}
@@ -545,14 +550,20 @@ def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
              "d": [.007, -.048, -.0002, .0002, .033], "distortion_model": "plumb_bob"}
     node._color_info = color
     node._depth_info = {**color, "d": [0.] * 5}
-    node._depth = {**rgb, "depth": b"native depth"}
+    node._depth = {**rgb, "depth": b"\xbc\x02" * (rgb["width"]*rgb["height"]),
+                   "color_info": copy.deepcopy(color), "depth_info": copy.deepcopy(node._depth_info)}
+    from collections import deque
+    node._depth_history = deque([node._depth])
+    node.preview_frame_count = 1
+    node._depth_window = lambda *args: detector.ItemDetectNode._depth_window(node, *args)
+    node._snapshot_context = lambda rgb, frames, color, depth, quality: {"camera": color, "depth_camera": depth}
     node._measurement_context.return_value = {"camera": copy.deepcopy(color)}
     view = detector.ItemDetectNode.preview_once(node)
     context = view["observation"]["context"]
     assert not view["depth_error"]
     assert context["camera"]["d"] == color["d"]
     assert context["depth_camera"]["d"] == [0.] * 5
-    assert view["observation"]["depth"]["depth"] == b"native depth"
+    assert view["observation"]["depth"]["encoding"] == "32FC1_mm"
     node._depth_info["d"][0] = .1
     assert context["depth_camera"]["d"] == [0.] * 5  # Snapshot owns its metadata.
     node._depth_info = {**node._depth_info, "k": [400., 0., 424., 0., 400., 240., 0., 0., 1.]}
@@ -575,7 +586,7 @@ def test_enable_yolo_rejects_clearance_that_collapses_current_bin():
     )
     settings = {
         "model_task": "segment", "geometry_source": "mask",
-        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+        "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                      "height": 80., "width": 40., "tolerance": 5.,
                      "pickdepth_radius": 30.},
         "quality": dict(QUALITY_DEFAULTS),
@@ -619,12 +630,12 @@ def test_selected_pose_snapshot_contract(service_node, failure):
     node, candidate = service_node
     node._camera_generation = 1
     node.settings.update(model_task="segment", geometry_source="mask",
-                         geometry={"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                         geometry={"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                                    "height": 100., "width": 50., "tolerance": 1.,
                                    "pickdepth_radius": 30.})
     node.settings["yolo"].update(iou=.35, image_size=640)
     rgb = {"stamp_ns": 100_000_000_000, "width": 2, "height": 2, "rgb": bytes(12)}
-    depth = {"stamp_ns": 100_000_000_000, "depth": bytes(8)}
+    depth = {"stamp_ns": 100_000_000_000, "depth": bytes(16), "encoding": "32FC1_mm"}
     detection = {"source_index": 4}
     observation = {"rgb": rgb, "depth": depth, "context": {"frozen": True},
                    "epoch": 1, "camera_generation": 1, "error": "Depth missing"}
@@ -669,12 +680,12 @@ def test_selected_pose_does_not_expire_after_snapshot_was_accepted(service_node)
     node, candidate = service_node
     node._camera_generation = 1
     node.settings.update(model_task="segment", geometry_source="mask",
-                         geometry={"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                         geometry={"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                                    "height": 100., "width": 50., "tolerance": 1.,
                                    "pickdepth_radius": 30.})
     node.settings["yolo"].update(iou=.35, image_size=640)
     rgb = {"stamp_ns": 1_000_000_000, "width": 2, "height": 2, "rgb": bytes(12)}
-    depth = {"stamp_ns": 1_000_000_000, "depth": bytes(8)}
+    depth = {"stamp_ns": 1_000_000_000, "depth": bytes(16), "encoding": "32FC1_mm"}
     detection = {"source_index": 4}
     view = {"observation": {
         "rgb": rgb, "depth": depth, "context": {"frozen": True},
@@ -692,7 +703,7 @@ def test_selected_pose_does_not_expire_after_snapshot_was_accepted(service_node)
 def test_roi_off_uses_same_worker_and_never_infers():
     rgb = {"stamp_ns": 100_000_000_000, "received_at": time.monotonic(),
             "width": 2, "height": 2, "rgb": b"x" * 12}
-    node = SimpleNamespace(
+    node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False,
         yolo_enabled=False, applied=object(), arm_epoch=2,
         request_lock=threading.Lock(), operation_lock=threading.Lock(),
         camera_snapshot=lambda: (rgb, "live"),

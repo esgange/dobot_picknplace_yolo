@@ -22,8 +22,9 @@ class Selection:
     robot_camera: object
     deployment: bool
 
-    def validate(self, root):
-        profile, digest = load_item_profile(self.item_path, root=root, deployment=self.deployment)
+    def validate(self, root, *, item_snapshot=None):
+        profile, digest = (load_item_profile(self.item_path, root=root, deployment=self.deployment)
+                           if item_snapshot is None else item_snapshot)
         if digest != self.item_sha256 or profile != self.item:
             raise ValueError("Selected Item Teach/model changed; reload before using it")
         validate_applied_sources(self.station, root=root)

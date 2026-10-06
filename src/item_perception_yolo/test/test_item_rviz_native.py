@@ -89,20 +89,20 @@ def exercise_all_candidates():
     settings = {"model_task": "segment", "geometry_source": "mask",
                 "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
-                "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+                "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                              "height": 80., "width": 32., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5, "iou": .7,
                          "max_detections": 100, "image_size": 640}}
     rgb = np.full((480, 640, 3), 80, np.uint8)
-    depth = np.full((480, 640), 700, np.uint16)
+    depth = np.full((480, 640), 700, np.float32)
     rectangle = np.array([[-50, -20], [50, -20], [50, 20], [-50, 20]], np.float32)
     detections = [{"source_index": i, "class_id": 1 if i < 4 else 2,
                    "class_name": "part", "confidence": .9 - i * .05,
                    "rectangle": (rectangle + [x, 240]).tolist(),
                    "polygon": (rectangle + [x, 240]).tolist()}
                   for i, x in enumerate((180, 280, 380, 480, 580))]
-    request = {"width": 640, "height": 480, "generation": 7, "context": context,
+    request = {"depth_encoding": "32FC1_mm", "width": 640, "height": 480, "generation": 7, "context": context,
                "nearby_overlay": False, "candidate_limit": 3,
                "base_from_platform": np.eye(4).tolist(), "quality": dict(QUALITY_DEFAULTS),
                "settings": settings, "detections": detections}

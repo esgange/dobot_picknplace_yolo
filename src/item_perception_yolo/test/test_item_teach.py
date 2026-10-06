@@ -29,7 +29,7 @@ def settings():
         "timing": {"pick_settling": 0.5},
         "gripper": {"use_grip": True, "grip_onpick": True},
         "retry": {"pose_candidates": 3},
-        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+        "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                      "height": 100.0, "width": 50.0, "tolerance": 5.0,
                      "pickdepth_radius": 30.0},
         "bin_clearance": dict.fromkeys(core.BIN_CLEARANCE_FIELDS),
@@ -69,7 +69,7 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
-    assert profile["schema_version"] == 12
+    assert profile["schema_version"] == 13
     assert profile["pick_rotation"] == 15.0
     assert profile["motion"]["trayplace_height"] == 40.0
     assert "result_max_age_sec" not in profile["quality"]
@@ -259,13 +259,13 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    for old_version in range(1, 12):
+    for old_version in range(1, 13):
         profile["schema_version"] = old_version
-        with pytest.raises(ValueError, match="exactly 12"):
+        with pytest.raises(ValueError, match="exactly 13"):
             core.validate_profile(profile)
 
 
-@pytest.mark.parametrize("schema", [9, 10, 11, 12])
+@pytest.mark.parametrize("schema", [9, 10, 11, 12, 13])
 def test_deployed_reader_requires_explicit_current_placement_height(pair, schema):
     root, _, path, profile = pair
     directory = root / "runtime_teach"
@@ -276,8 +276,8 @@ def test_deployed_reader_requires_explicit_current_placement_height(pair, schema
         del profile["motion"]["trayplace_height"]
     deployed.write_text(yaml.safe_dump(profile))
     deployed.with_suffix(".pt").write_bytes(path.with_suffix(".pt").read_bytes())
-    if schema < 12:
-        with pytest.raises(ValueError, match="exactly 12"):
+    if schema < 13:
+        with pytest.raises(ValueError, match="exactly 13"):
             core.load_item_profile(deployed, root=root, deployment=True)
     else:
         loaded, _ = core.load_item_profile(deployed, root=root, deployment=True)
@@ -325,7 +325,7 @@ def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair)
     assert draft.model_path == path.with_suffix(".pt")
     assert draft.model_sha256 == profile["model"]["sha256"]
     assert "retry_limit" in " ".join(draft.issues)
-    with pytest.raises(ValueError, match="exactly 12"):
+    with pytest.raises(ValueError, match="exactly 13"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -358,7 +358,8 @@ def test_recovery_unknown_units_and_missing_sections_are_not_guessed(pair):
     path.write_text(yaml.safe_dump(profile))
     draft = recover_item_fields(path, root=root)
     assert draft.home is None
-    for key in (*core.MOTION_FIELDS, *core.GEOMETRY_FIELDS, *core.GRIPPER_FIELDS,
+    for key in (*core.MOTION_FIELDS, *(k for k in core.GEOMETRY_FIELDS if k != "depth_frame_count"),
+                *core.GRIPPER_FIELDS,
                 "pick_settling", "pose_candidates", "input_max_age_sec", "depth_min_mm"):
         assert draft.values[key] is None, key
     assert draft.values["iou"] == .5 and draft.values["max_detections"] == 20
@@ -439,7 +440,7 @@ def test_nearby_filter_profile_roundtrip_and_explicit_legacy_review(pair):
         del profile["geometry"][key]
     path.write_text(yaml.safe_dump(profile))
     before = path.read_bytes()
-    with pytest.raises(ValueError, match="exactly 12"):
+    with pytest.raises(ValueError, match="exactly 13"):
         core.load_item_profile(path, root=root)
     draft = recover_item_fields(path, root=root)
     assert {key: draft.values[key] for key in core.NEARBY_DEPTH_DEFAULTS} == \
@@ -483,7 +484,7 @@ def test_schema_nine_recovery_requires_explicit_trayplace_height(pair, extra_fie
     assert draft.home == profile["home"]
     assert draft.model_path == path.with_suffix(".pt")
     assert any("predates explicit trayplace_height" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 12"):
+    with pytest.raises(ValueError, match="exactly 13"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -511,7 +512,7 @@ def test_schema_seven_recovery_requires_explicit_pick_rotation(pair):
     draft = recover_item_fields(path, root=root)
     assert draft.values["pick_rotation"] is None
     assert any("predates explicit pick_rotation" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 12"):
+    with pytest.raises(ValueError, match="exactly 13"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -525,7 +526,7 @@ def test_schema_eight_recovery_requires_explicit_bin_clearance(pair):
     draft = recover_item_fields(path, root=root)
     assert all(draft.values[key] is None for key in core.BIN_CLEARANCE_FIELDS)
     assert any("predates optional bin-wall clearance" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 12"):
+    with pytest.raises(ValueError, match="exactly 13"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -595,7 +596,7 @@ def test_schema_four_recovery_leaves_unknown_rates_blank_and_does_not_write(pair
         assert draft.values[key] is None
         assert draft.values[f"acceleration_{key}"] is None
     assert path.read_bytes() == original
-    with pytest.raises(ValueError, match="exactly 12"):
+    with pytest.raises(ValueError, match="exactly 13"):
         core.load_item_profile(path, root=root)
 
 
@@ -719,7 +720,7 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         item_profile_filename=path.name, item_preview_camera_prefix=None,
         item_platform_filename=None, item_bin_filename=None,
     ))
-    node = SimpleNamespace(events=MagicMock(), robot_ip="192.168.20.205",
+    node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False, events=MagicMock(), robot_ip="192.168.20.205",
                            rviz=MagicMock(), camera_mount=MagicMock(),
                            applied=None, last_view=None,
                            disarm=MagicMock(), close_runtime=MagicMock(), service=None,
@@ -779,3 +780,49 @@ def test_gui_prefill_and_portable_home_do_not_send_commands(pair, monkeypatch):
         window.timer.stop()
         window.close()
         app.processEvents()
+
+
+def test_content_cache_is_immutable_and_rechecks_equal_size_timestamp_tampering(pair):
+    import os
+    from unittest.mock import patch
+    root, _, path, _ = pair
+    core._parsed_item_content.cache_clear()
+    with patch.object(core.yaml, "load", wraps=core.yaml.load) as parser:
+        original, digest = core.load_item_profile(path, root=root)
+        original["geometry"]["depth_frame_count"] = 5
+        current, second_digest = core.load_item_profile(path, root=root)
+        assert current["geometry"]["depth_frame_count"] == 3 and second_digest == digest
+        assert parser.call_count == 1
+        stat = path.stat()
+        contents = path.read_bytes()
+        changed = contents.replace(b"schema_version: 13", b"schema_version: 12")
+        assert len(changed) == len(contents) and changed != contents
+        path.write_bytes(changed)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        with pytest.raises(ValueError, match="schema"):
+            core.load_item_profile(path, root=root)
+        assert parser.call_count == 2
+    # Model contents are verified even when size and mtime still match.
+    path.write_bytes(contents)
+    model = path.with_suffix(".pt")
+    stat = model.stat()
+    data = model.read_bytes()
+    model.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+    os.utime(model, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    with pytest.raises(ValueError, match="SHA-256"):
+        core.load_item_profile(path, root=root)
+
+
+def test_schema_twelve_requires_explicit_floor_and_frame_review_before_save(pair):
+    root, _, path, profile = pair
+    profile["schema_version"] = 12
+    del profile["geometry"]["depth_frame_count"]
+    path.write_text(yaml.safe_dump(profile))
+    contents = path.read_bytes()
+    with pytest.raises(ValueError, match="exactly 13"):
+        core.load_item_profile(path, root=root)
+    draft = recover_item_fields(path, root=root)
+    assert draft.values["depth_frame_count"] == 3
+    assert any("floor-relative" in issue and "500 mm" in issue for issue in draft.issues)
+    assert any("three-frame" in issue for issue in draft.issues)
+    assert path.read_bytes() == contents

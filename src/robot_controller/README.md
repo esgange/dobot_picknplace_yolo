@@ -347,12 +347,12 @@ That initial Pick route skips its lower clearance/initial point. For surface Z
 approach/retract Z 800 mm. The final pose stays above the tray at this height
 with the detect-relative attitude; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
-blocks the placement queue. Require a complete schema-12 Item Teach profile with
+blocks the placement queue. Require a complete schema-13 Item Teach profile with
 a finite, nonnegative `trayplace_height`. To use older profiles, open them in
 Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
 the updated pair. Production readers do not supply a fallback height.
 Schema-10 profiles retain that height during GUI recovery; review the retained
-**Minimum valid depth (%)** and Save as schema 12 to remove the fixed-count field.
+**Minimum valid depth (%)** and Save as schema 13 to remove the fixed-count field.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
 Then send three Cartesian commands in one queue:
@@ -1167,10 +1167,11 @@ of Item Teach's display. Canonical RViz includes the new topic; reload its confi
 if already open. No camera TF, command client or hardware action is added.
 This pick-pose body check does not model mounts/cables or the swept travel path.
 
-Item Teach schema 12 also requires the nearby depth radius/height settings
+Item Teach schema 13 also requires the nearby depth radius/height settings
 (defaults 150/60 mm). The detector rejects any candidate with a usable depth
-point within/on its base-XY radius and at least the configured base-Z height above
-the detected item surface, excluding standoff. During acquisition the detector ranks
+point inside/on the outer bin and camera-XY radius with a floor-relative height
+difference at/above the configured threshold, excluding standoff. The platform
+Z=0 floor is evaluated at each point’s camera XY; height follows camera Z. During acquisition the detector ranks
 geometrically eligible candidates, then checks nearby height one by one until the
 requested number pass or all are exhausted. Blocked candidates are skipped; later
 unneeded candidates remain unchecked. Hardware and Preview receive
@@ -1178,8 +1179,18 @@ only the filtered profile-bound batch; the controller has no depth subscription
 or separate scene scan. Open older profiles in Item Teach, review the proposed
 new defaults, Save and manually redeploy/reload matching profiles. Motion and
 tray placement filtering are unchanged.
+Schema 13 requires `geometry.depth_frame_count` (1, 3 or 5; default 3). The
+controller validates all contributing post-request depth timestamps and the newest
+response depth stamp without aging out an already accepted batch. Detection uses
+one immutable median and an item-only effective minimum of 500 mm.
+`candidate_timing` separates controller validation, detector wait and total latency.
+Within a validation pass, reuse the already verified item/model pair rather than
+reading it twice; all existing content/hash and dynamic binding checks remain.
+After explicit GUI review/Save, manually deploy matching profiles and restart/reload
+consumers. Service/action message layouts, motion queues and bounded empty-result
+Home/reacquisition retries are unchanged.
 
-The schema-12 geometry uses pick Z equal to item Z plus `standoff_height`,
+The schema-13 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed

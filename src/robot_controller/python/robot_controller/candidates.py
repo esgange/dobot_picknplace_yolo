@@ -53,7 +53,9 @@ class CandidateClient:
         if not self.lock.acquire(blocking=False):
             raise FeedbackFailure("A detector candidate request is already active")
         try:
+            request_started = time.monotonic()
             configuration.validate_sources(self.root)
+            validation_before_ms = (time.monotonic() - request_started)*1000.
             if configuration.selection is None:
                 raise FeedbackFailure("Pick requires a configured Bin Teach")
             if not self.client.service_is_ready():
@@ -70,6 +72,8 @@ class CandidateClient:
                 configuration_id=configuration.configuration_id,
                 requested=configuration.pose_candidates,
                 save_debug_images=bool(save_debug_images))
+            sent_at = time.monotonic()
+            requested_at_ns = self.node.get_clock().now().nanoseconds
             future = self.client.call_async(request)
             deadline = time.monotonic() + profile["quality"]["request_timeout_sec"] + 1.0
             while not future.done():
@@ -81,16 +85,26 @@ class CandidateClient:
                     raise FeedbackFailure("Detector response timeout; no automatic retry")
                 self.node.wait_control(0.02)
             result = future.result()
+            received_at = time.monotonic()
             configuration.validate_sources(self.root)
             if result is None or not result.success:
                 status = "no response" if result is None else result.status
                 message = "" if result is None else result.message
                 raise FeedbackFailure(f"Detector {status}: {message}".strip())
-            return self._validate_result(result, configuration, bool(save_debug_images))
+            batch = self._validate_result(result, configuration, bool(save_debug_images),
+                                          requested_at_ns=requested_at_ns)
+            self.node.events.record(
+                "INFO", "candidate_timing", "Validated item acquisition stage timings",
+                batch_id=batch.identifier, validation_before_ms=validation_before_ms,
+                service_wait_ms=(received_at-sent_at)*1000.,
+                validation_after_ms=(time.monotonic()-received_at)*1000.,
+                total_ms=(time.monotonic()-request_started)*1000.,
+                detector_timings_ms=batch.evidence.get("timings_ms", {}))
+            return batch
         finally:
             self.lock.release()
 
-    def _validate_result(self, result, configuration, save_debug_images):
+    def _validate_result(self, result, configuration, save_debug_images, *, requested_at_ns=None):
         profile, selection = configuration.profile, configuration.selection
         try:
             evidence = json.loads(result.diagnostics_json)
@@ -141,6 +155,17 @@ class CandidateClient:
                 "Returned detector observation timestamp is invalid or future-dated")
         if abs(stamps[0] - stamps[1]) / 1e9 > profile["quality"]["sync_tolerance_sec"]:
             raise FeedbackFailure("Detector RGB/depth timestamps are not synchronized")
+        depth_stamps = evidence.get("depth_frame_stamps_ns")
+        if (type(depth_stamps) is not list
+                or len(depth_stamps) != profile["geometry"]["depth_frame_count"]
+                or any(type(stamp) is not int or stamp <= 0 or stamp > now_ns
+                       for stamp in depth_stamps)
+                or any(a >= b for a, b in zip(depth_stamps, depth_stamps[1:]))
+                or depth_stamps[-1] != stamps[1]
+                or any(abs(stamp - stamps[0])/1e9 > profile["quality"]["sync_tolerance_sec"]
+                       for stamp in depth_stamps)
+                or (requested_at_ns is not None and min(*stamps, *depth_stamps) < requested_at_ns)):
+            raise FeedbackFailure("Detector temporal depth capture is invalid or predates request")
         if not result.batch_id or len(result.candidates) > configuration.pose_candidates:
             raise FeedbackFailure("Detector batch ID/count is invalid")
         found = []

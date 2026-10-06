@@ -38,7 +38,7 @@ class ControllerConfiguration:
         if digest != self.profile_sha256 or profile != self.profile:
             raise ValueError("Configured Item Teach/model changed; configure again")
         if self.selection is not None:
-            self.selection.validate(root)
+            self.selection.validate(root, item_snapshot=(profile, digest))
         if self.tray is not None:
             self.tray.validate_sources(root)
 

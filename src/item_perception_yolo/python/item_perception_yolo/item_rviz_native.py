@@ -1,24 +1,23 @@
 """Teaching visualization geometry, called only inside the private native worker."""
 
-from .item_geometry import generate_candidates, rays, reproject_pixels, rectangle_axes
+from .item_geometry import generate_candidates, reproject_pixels, rectangle_axes
+from .floor_clearance import depth_scene
+from .depth_snapshot import DEPTH_ENCODING
 from .item_teach_core import validate_detection_settings, validate_quality
 
 
 VOXEL_METRES = 0.010
 
 
-def colored_voxels(rgb, depth, context, base_from_platform, quality, cv2, np):
+def colored_voxels(rgb, depth, context, base_from_platform, quality, cv2, np, *,
+                   scene=None, item_minimum=True):
     """Centroid/color-average occupied 10 mm cells; never alter pose sampling inputs."""
-    valid = ((depth > 0) & (depth >= quality["depth_min_mm"])
-             & (depth <= quality["depth_max_mm"]))
-    yy, xx = np.nonzero(valid)
+    scene = (depth_scene(depth, context, quality, cv2, np, item_minimum=item_minimum)
+             if scene is None else scene)
+    pixels, platform = scene["pixels"], scene["platform"]
     dtype = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("rgb", "<u4")])
-    if not len(xx):
+    if not len(pixels):
         return np.empty(0, dtype=dtype)
-    pixels = np.column_stack((xx, yy))
-    optical = rays(pixels, context["depth_camera"], cv2, np) * depth[yy, xx, None] / 1000.
-    transform = np.asarray(context["platform_from_optical"], dtype=float)
-    platform = optical @ transform[:3, :3].T + transform[:3, 3]
     color_pixels = np.rint(reproject_pixels(
         pixels, context["depth_camera"], context["camera"], cv2, np)).astype(np.int64)
     height, width = depth.shape
@@ -49,22 +48,24 @@ def teaching_rviz(request, data, cv2, np):
     if (type(width) is not int or type(height) is not int
             or type(overlay_requested) is not bool
             or not 0 < width <= 4096 or not 0 < height <= 4096
-            or len(data) != width * height * (11 if overlay_requested else 5)
+            or request.get("depth_encoding") != DEPTH_ENCODING
+            or len(data) != width * height * (13 if overlay_requested else 7)
             or (overlay_requested and request["settings"] is None)):
         raise RuntimeError("Malformed teaching RViz RGB/depth snapshot")
     quality = request["quality"]
     validate_quality(quality)
     rgb_bytes = width * height * 3
     rgb = np.frombuffer(data[:rgb_bytes], np.uint8).reshape(height, width, 3)
-    source_end = width * height * 5
-    depth = np.frombuffer(data[rgb_bytes:source_end], "<u2").reshape(height, width)
+    source_end = width * height * 7
+    depth = np.frombuffer(data[rgb_bytes:source_end], "<f4").reshape(height, width)
     views = None
     if overlay_requested:
         views = tuple(np.frombuffer(pixels, np.uint8).reshape(height, width, 3).copy()
                       for pixels in (data[source_end:source_end+rgb_bytes],
                                      data[source_end+rgb_bytes:]))
+    scene = depth_scene(depth, request["context"], quality, cv2, np)
     cloud = colored_voxels(rgb, depth, request["context"], request["base_from_platform"],
-                           quality, cv2, np)
+                           quality, cv2, np, scene=scene)
     settings = request["settings"]
     candidates, rejected, unchecked = [], [], []
     if settings is not None:
@@ -87,7 +88,7 @@ def teaching_rviz(request, data, cv2, np):
         # Match acquisition: stop nearby scans once the taught batch is full.
         _, _, candidates, rejected = generate_candidates(
             objects, rgb, depth, request["context"], settings, cv2, np, nearby_views=views,
-            candidate_limit=limit, unchecked=unchecked)
+            candidate_limit=limit, unchecked=unchecked, render_images=False, prepared_scene=scene)
     result = {"state": "ok", "generation": request["generation"],
               "nearby_overlay": overlay_requested,
               "point_count": len(cloud), "candidates": candidates, "rejected": rejected,

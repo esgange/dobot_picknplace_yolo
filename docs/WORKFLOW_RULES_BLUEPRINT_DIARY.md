@@ -9462,6 +9462,79 @@ Never use a floating “latest” version in an issue, script, or deployment not
   hardware command, automatic restart/deployment or offline-transfer milestone.
   Preserve operator artifacts and unrelated RViz edits.
 
+### 2026-10-06 — Rule 237: floor-relative clearance and faster item acquisition
+
+- Implement the approved plan across Item Teach, clicked inspection, Simulate
+  Trigger and headless detection. Treat platform Z=0 as the floor, transform it
+  into optical coordinates and evaluate floor depth at each measured physical
+  camera XY. Height is floor depth minus camera Z, excluding standoff. Inclusive
+  camera-XY radius and maximum height difference use existing 150/60 mm defaults.
+  Each point uses its own depth and registered-depth model. Include outer-bin
+  boundary, inset margin and outside-mask depth; exclude outside-bin points.
+  Invalid floor/calibration/boundaries/depth or empty neighborhoods reject.
+  Preserve ordinary checks, body clearance, ranking and early batch completion.
+- Schema 13 adds geometry.depth_frame_count, default 3 with 1/3/5 supported.
+  Bounded histories require distinct advancing post-request frames, existing
+  freshness/synchronization and exact-time TF. Choose RGB near the bundle midpoint
+  so five frames can satisfy the unchanged 100 ms synchronization limit at 30 FPS.
+  Require all pairwise camera poses within 0.05 mm/0.05 degrees; reacquire moving
+  bundles within the same deadline. CameraInfo/source changes invalidate history
+  and in-flight work. Apply item-only max(500 mm, configured minimum) and configured
+  maximum before a strict-majority per-pixel median. Immutable float32 depth keeps
+  fractional millimetres; all item paths reuse it, including local spatial MAD.
+  Newest depth timestamp is returned and all contributing timestamps are logged.
+  Shared/tray depth behavior is unchanged, including the shared voxel helper.
+- Extend the strict native protocol to float32 and optional image payloads with
+  explicit platform_floor_camera_z_v1 evidence: candidate/maximum heights,
+  difference and counts. Retain measured blocked-check evidence. Reproject radius
+  and floor-relative height surfaces through each pane's own model, highlighting
+  only eligible blockers. Show effective item limits and frame count in the GUI;
+  older schemas require an unarmed recovery draft, explicit review and Save.
+  No saved calibration, profile, model or runtime deployment is rewritten.
+- Instrument validation, preview waiting, capture/median, YOLO, geometry,
+  clearance, rendering, native round-trip/transport and controller validation.
+  Preserve inference_ms as aggregate native processing; GUI calls it processing.
+  Cache parsed calibration/item data by actual read contents and deep-copy before
+  validation. Keep current content/hash/dynamic binding checks, and validate the
+  item/model once per controller pass. Cache camera-only rays/mappings; reuse
+  per-capture original scene geometry while display voxels remain separate.
+  Avoid the large N×4×2 outer-polygon temporary without changing edge tests.
+  Debug-disabled production neither draws nor transfers annotated images.
+- Subscribe Item Teach read-only to existing typed controller status. Fresh Pick,
+  Place or Auto Run suspends new background YOLO/voxel jobs, keeps raw RGB and
+  age-labelled retained visualization, then resumes on fresh idle. Stale/missing
+  status retains existing request priority. In-flight work finishes normally;
+  headless remains independent. No extra executor or hardware command client.
+- Synthetic benchmark: identical 640×480 scene, six fixed detections, three poses,
+  three warmups/30 runs. Baseline 02e139d single-frame mandatory-image processing
+  median/p95 127.8/130.2 ms; new three-frame-median CPU processing 100.1/102.7 ms
+  without debug and 123.3/127.2 ms with debug. Debug-off median preparation 24.4 ms,
+  geometry 29.3 ms, clearance 46.0 ms. The mandatory three-frame capture spans
+  another 66.7 ms at 30 FPS plus first-frame phase. These figures exclude YOLO,
+  source validation, transport and real capture waiting; no end-to-end or robot
+  speedup is claimed. Keep the reproducible benchmark script and README results.
+- Validation: isolated builds of Item Perception, Robot Controller, Tray Perception
+  and Camera Calibration pass. The full item/controller/tray suite passes 2062
+  tests; the package-configured calibration suite passes 243, no failures/skips.
+  Cover tilted/per-point floors, exact boundaries, standoff independence, inset
+  margins/outside-bin exclusion, empty depth, majority/fractional medians, 500 mm
+  and upper limits, moving/duplicate/stale/changed-source frames, five-frame RGB
+  synchronization, GUI/headless parity, early-stop/exhaustive parity, debug on/off,
+  projection-cache parity, preserved-mtime tampering and production suspension.
+  Real private-worker and synthetic ROS service transport tests pass; no camera
+  or robot was commanded. Production modules/new modules/tests pass scoped lint,
+  and whitespace checks pass. FSM exports contain nine diagrams/nine A3 pages;
+  source hash c2398abb6e4f13cf3632ec2cc3addfecf981d631b17b54ae0827a4f75720766e
+  matches HTML/PDF, and the Pick page was visually inspected.
+- Update AGENTS, root/item/interface/controller READMEs and controller acquisition
+  FSM, regenerating adjacent HTML/PDF exports. ROS service/message layouts, YOLO
+  448, motion checks, retries and bounded Home/reacquisition stay unchanged.
+  Build/test only isolated artifacts. No hardware commands, live process restart,
+  canonical private-runtime rebuild or operator artifact changes. Operators must
+  stop applications, rebuild source packages, explicitly review/Save schema 13,
+  manually deploy matching YAML/.pt, then restart/reload consumers. Preserve the
+  unrelated RViz edits. No offline-transfer milestone is claimed.
+
 ### Future entry template
 
 ```text

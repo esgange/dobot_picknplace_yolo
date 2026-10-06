@@ -230,7 +230,7 @@ def test_repeated_catalog_reads_files_but_reuses_identical_prefix_parsing(root, 
     prefix_parses = [call for call in parser.call_args_list
                      if call.kwargs.get("Loader") is station._UniqueKeyLoader]
     assert len(prefix_parses) == 2  # Each unique file parsed once for its prefix.
-    assert len(parser.call_args_list) == 5  # Full selected-artifact parsing still repeats.
+    assert len(parser.call_args_list) == 2  # Verified identical bytes reuse parsed contents.
 
 
 @pytest.mark.parametrize("change", ["prefix", "payload", "duplicate", "missing",

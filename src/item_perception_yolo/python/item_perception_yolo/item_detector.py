@@ -1,6 +1,7 @@
 """Shared GUI/headless read-only detector. No robot command clients or cv2 imports."""
 
 import copy
+from collections import deque
 from datetime import datetime, timezone
 import json
 import math
@@ -48,6 +49,10 @@ from .item_teach_calibration import (
     selected_robot_camera, validate_selected_robot_camera,
     saved_calibration_paths, load_calibration_selection)
 from .runtime_teach import runtime_teach_catalog
+from .depth_snapshot import (
+    DEFAULT_DEPTH_FRAME_COUNT, median_depth_snapshot, validate_depth_frame_count,
+    item_depth_limits, camera_window_stationary)
+from .floor_clearance import REFERENCE
 
 
 SERVICE_NAME = "/item_detect/get_item_poses"
@@ -234,29 +239,45 @@ def validate_candidates(result, settings):
                 or not depth_coverage_ok(good, good+bad,
                                          settings["quality"]["minimum_depth_fraction"])):
             raise RuntimeError("Native candidate failed depth-quality contract")
+        low, high = item_depth_limits(settings["quality"])
+        if not low <= candidate["filtered_camera_depth"]*1000 <= high:
+            raise RuntimeError("Native candidate failed effective item depth limits")
         nearby = candidate.get("nearby_depth_filter")
-        if (type(nearby) is not dict or set(nearby) != {
-                "radius_mm", "height_mm", "usable_point_count", "nearby_point_count",
-                "maximum_height_above_item_mm"}
-                or any(type(nearby[key]) not in (int, float)
-                       or nearby[key] != settings["geometry"][setting]
-                       for key, setting in (("radius_mm", "nearby_depth_radius_mm"),
-                                            ("height_mm", "nearby_depth_height_mm")))
-                or any(type(nearby[key]) is not int or nearby[key] < 0
-                       for key in ("usable_point_count", "nearby_point_count"))
-                or nearby["usable_point_count"] < good
-                or nearby["nearby_point_count"] > nearby["usable_point_count"]):
-            raise RuntimeError("Malformed nearby-depth filter evidence")
-        maximum = nearby["maximum_height_above_item_mm"]
-        if ((nearby["nearby_point_count"] == 0 and maximum is not None)
-                or (nearby["nearby_point_count"] > 0 and (
-                    type(maximum) not in (int, float) or not math.isfinite(maximum)
-                    or maximum >= nearby["height_mm"] - 1e-6))):
+        difference = validate_nearby_evidence(nearby, settings)
+        if difference >= nearby["height_mm"] - 1e-6:
             raise RuntimeError("Native candidate failed nearby-depth height contract")
         key = (candidate["center_distance"], -candidate["confidence"], index)
         if last_key is not None and key < last_key:
             raise RuntimeError("Native candidates are not in priority order")
         last_key = key
+    for rejection in result["rejected"]:
+        if "nearby_depth_filter" in rejection:
+            nearby = rejection["nearby_depth_filter"]
+            if validate_nearby_evidence(nearby, settings) < nearby["height_mm"] - 1e-6:
+                raise RuntimeError("Nearby-depth rejection contradicts its evidence")
+
+
+def validate_nearby_evidence(nearby, settings):
+    if (type(nearby) is not dict or set(nearby) != {
+            "reference", "radius_mm", "height_mm", "usable_point_count", "nearby_point_count",
+            "candidate_height_mm", "maximum_nearby_height_mm", "maximum_height_difference_mm"}
+            or nearby["reference"] != REFERENCE
+            or any(type(nearby[key]) not in (int, float)
+                   or nearby[key] != settings["geometry"][setting]
+                   for key, setting in (("radius_mm", "nearby_depth_radius_mm"),
+                                        ("height_mm", "nearby_depth_height_mm")))
+            or any(type(nearby[key]) is not int or nearby[key] <= 0
+                   for key in ("usable_point_count", "nearby_point_count"))
+            or nearby["nearby_point_count"] > nearby["usable_point_count"]):
+        raise RuntimeError("Malformed floor-relative nearby-depth evidence")
+    for field in ("candidate_height_mm", "maximum_nearby_height_mm",
+                  "maximum_height_difference_mm"):
+        if type(nearby[field]) not in (int, float) or not math.isfinite(nearby[field]):
+            raise RuntimeError("Invalid nearby-depth floor-relative height evidence")
+    difference = nearby["maximum_nearby_height_mm"] - nearby["candidate_height_mm"]
+    if abs(difference - nearby["maximum_height_difference_mm"]) > 1e-6:
+        raise RuntimeError("Inconsistent nearby-depth floor heights")
+    return difference
 
 
 def validate_candidate_selection(result, candidate_limit, *, source_ids=None):
@@ -271,7 +292,8 @@ def validate_candidate_selection(result, candidate_limit, *, source_ids=None):
         raise RuntimeError("Malformed candidate acquisition limit/unchecked diagnostics")
     rejected = result["rejected"]
     if (type(rejected) is not list or any(
-            type(entry) is not dict or set(entry) != {"source_index", "reason"}
+            type(entry) is not dict or set(entry) not in (
+                {"source_index", "reason"}, {"source_index", "reason", "nearby_depth_filter"})
             or type(entry["source_index"]) is not int or entry["source_index"] < 0
             or type(entry["reason"]) is not str or not entry["reason"] for entry in rejected)):
         raise RuntimeError("Malformed candidate rejection diagnostics")
@@ -361,7 +383,10 @@ class ItemDetectNode(Node):
         self.camera_prefix = None
         self._camera_generation = 0
         self._image_sequence = 0
+        self._input_revision = 0
         self._image = self._depth = self._color_info = self._depth_info = None
+        self._depth_history = deque(maxlen=5)
+        self._rgb_history = deque(maxlen=7)
         self._camera_subscriptions = []
         self.camera_status = "Camera not connected"
         self.model_metadata = self.model_config = None
@@ -375,6 +400,7 @@ class ItemDetectNode(Node):
         self.preview_yolo = None
         self.preview_geometry = self.preview_quality = None
         self.preview_depth_diameter = None
+        self.preview_frame_count = DEFAULT_DEPTH_FRAME_COUNT
         self.preview_bin_clearance = dict.fromkeys(BIN_CLEARANCE_FIELDS)
         self.service = None
         self.arm_epoch = 0
@@ -406,6 +432,8 @@ class ItemDetectNode(Node):
             generation = self._camera_generation
             self.camera_prefix = prefix
             self._image = self._depth = self._color_info = self._depth_info = None
+            self._depth_history.clear()
+            self._rgb_history.clear()
             self.last_view = None
             self.condition.notify_all()
         for subscription in self._camera_subscriptions:
@@ -447,19 +475,47 @@ class ItemDetectNode(Node):
                 if generation != self._camera_generation:
                     return
                 setattr(self, field, None)
+                if kind in ("color_info", "depth_info"):
+                    self._depth_history.clear()
+                    self._rgb_history.clear()
+                    self._input_revision += 1
+                    self.arm_epoch += 1
+                    self.last_view = None
                 self.camera_status = str(exc)
                 self.condition.notify_all()
+            if kind in ("color_info", "depth_info"):
+                self.disarm()
             self.events.record("WARNING", "item_message_rejected", str(exc), stream=kind)
             return
+        changed_info = False
         with self.condition:
             if generation != self._camera_generation:
                 return
             if kind == "rgb":
                 self._image_sequence += 1
                 value["sequence"] = self._image_sequence
+                if not self._rgb_history or value["stamp_ns"] > self._rgb_history[-1]["stamp_ns"]:
+                    self._rgb_history.append(value)
+            if kind in ("color_info", "depth_info") and getattr(self, field) != value:
+                self._depth_history.clear()
+                self._rgb_history.clear()
+                if getattr(self, field) is not None:
+                    self._input_revision += 1
+                    self.arm_epoch += 1
+                    self.last_view = None
+                    changed_info = True
+            if kind == "depth":
+                value["color_info"] = copy.deepcopy(self._color_info)
+                value["depth_info"] = copy.deepcopy(self._depth_info)
+                if self._depth_history and value["stamp_ns"] <= self._depth_history[-1]["stamp_ns"]:
+                    self.camera_status = "Ignoring non-advancing depth timestamp"
+                    return
+                self._depth_history.append(value)
             setattr(self, field, value)
             self.camera_status = f"Receiving /{prefix}"
             self.condition.notify_all()
+        if changed_info:
+            self.disarm()
 
     def camera_snapshot(self):
         with self._feedback_lock:
@@ -531,7 +587,8 @@ class ItemDetectNode(Node):
         self.settings = copy.deepcopy(settings)
         self.yolo_enabled = True
 
-    def enable_preview(self, source, yolo, *, geometry, quality, diameter_mm, bin_clearance):
+    def enable_preview(self, source, yolo, *, geometry, quality, diameter_mm, bin_clearance,
+                       depth_frame_count=DEFAULT_DEPTH_FRAME_COUNT):
         if self.model_config is None or self.model_metadata is None:
             raise ValueError("Load/inspect the model first")
         if source != "none" and source not in self.model_metadata["geometry_sources"]:
@@ -553,6 +610,7 @@ class ItemDetectNode(Node):
                                          "geometry_source": source, "geometry": geometry,
                                          "bin_clearance": bin_clearance},
                                         geometry_required=source != "none")
+        self.preview_frame_count = validate_depth_frame_count(depth_frame_count)
         self.preview_yolo = copy.deepcopy(yolo)
         self.preview_geometry = copy.deepcopy(geometry)
         self.preview_quality = copy.deepcopy(quality)
@@ -668,71 +726,103 @@ class ItemDetectNode(Node):
         except TransformException as exc:
             raise ValueError(f"Required TF unavailable: {exc}") from exc
 
+    def _bundle_rgb(self, rgb, count, after_ns=0):
+        """Choose RGB nearest the depth-window midpoint, retaining existing sync limits."""
+        frames = [f for f in self._depth_history if f["stamp_ns"] >= after_ns][-count:]
+        images = [f for f in getattr(self, "_rgb_history", ()) if f["stamp_ns"] >= after_ns]
+        if len(frames) != count or not images:
+            return rgb
+        midpoint = (frames[0]["stamp_ns"] + frames[-1]["stamp_ns"]) / 2
+        return min(images, key=lambda f: abs(f["stamp_ns"] - midpoint))
+
+    def _depth_window(self, rgb, quality, count, after_ns=0):
+        """Called with the frame condition held; capture immutable source identities."""
+        validate_depth_frame_count(count)
+        frames = [frame for frame in self._depth_history if frame["stamp_ns"] >= after_ns]
+        if len(frames) < count:
+            raise ValueError(f"Waiting for {count} distinct depth frames after request")
+        frames = frames[-count:]
+        for frame in frames:
+            validate_pair(rgb, frame, self._color_info, self._depth_info,
+                          self.get_clock().now().nanoseconds, quality)
+            if (frame["color_info"] != self._color_info or frame["depth_info"] != self._depth_info):
+                raise ValueError("CameraInfo changed during temporal depth capture")
+        return frames, copy.deepcopy(self._color_info), copy.deepcopy(self._depth_info)
+
+    def _snapshot_context(self, rgb, frames, color_info, depth_info, quality):
+        camera = self.applied.camera
+        transforms = []
+        now_ns = self.get_clock().now().nanoseconds
+        stamps = [rgb["stamp_ns"]] + [frame["stamp_ns"] for frame in frames]
+        for stamp in stamps:
+            instant = Time(nanoseconds=stamp)
+            internal = self.tf_buffer.lookup_transform(camera.settings.camera_link_frame,
+                                                       camera.settings.optical_frame, instant)
+            robot = None
+            if camera.calibration_mode == "camera_on_hand":
+                robot = self.tf_buffer.lookup_transform("base_link", "Link6", instant)
+                age = (now_ns - stamp_ns(robot.header.stamp)) / 1e9
+                if not 0 <= age <= quality["robot_tf_max_age_sec"]:
+                    raise ValueError("On-hand robot TF is stale/future")
+            base_camera = resolve_base_from_camera_link(
+                camera, None if robot is None else transform_matrix(robot))
+            transforms.append(base_camera @ transform_matrix(internal))
+        if not camera_window_stationary(transforms):
+            raise ValueError("Camera moved during temporal depth capture (0.05 mm / 0.05 deg)")
+        transform = compose_platform_from_optical(
+            self.applied.platform.base_from_platform, transforms[0], np.eye(4))
+        return {"camera": color_info, "depth_camera": depth_info,
+                "platform_from_optical": transform.tolist(),
+                "roi": [[p.x_m, p.y_m] for p in self.bin_artifact.points]}
+
     def _snapshot(self, after_ns, deadline, *, wait, cancelled=None):
         quality = self.settings["quality"]
         if (self.applied is None
                 or self.camera_prefix != self.applied.camera.settings.camera_prefix):
             raise ValueError("Connected camera does not match applied station calibration")
         epoch = self.arm_epoch
-        selected = None
+        revision = getattr(self, "_input_revision", 0)
+        count = self.settings["geometry"]["depth_frame_count"]
         while True:
-            if epoch != self.arm_epoch or (cancelled is not None and cancelled()):
+            if (epoch != self.arm_epoch or revision != getattr(self, "_input_revision", 0)
+                    or (cancelled is not None and cancelled())):
                 raise ValueError("Detector settings/arming changed while acquiring observation")
             if time.monotonic() > deadline:
                 raise ValueError("Observation request deadline exceeded")
-            if selected is None:
-                with self.condition:
-                    rgb, depth = self._image, self._depth
-                    color_info, depth_info = self._color_info, self._depth_info
-                    try:
-                        now_ns = self.get_clock().now().nanoseconds
-                        validate_pair(rgb, depth, color_info, depth_info, now_ns, quality)
-                        if min(rgb["stamp_ns"], depth["stamp_ns"]) < after_ns:
-                            raise ValueError("Waiting for a new observation after request")
-                    except ValueError:
-                        remaining = deadline - time.monotonic()
-                        if not wait or remaining <= 0:
-                            raise
-                        self.condition.wait(timeout=min(remaining, 0.05))
-                        continue
-                    selected = (dict(rgb), dict(depth), copy.deepcopy(color_info),
-                                copy.deepcopy(depth_info))
-            rgb, depth, color_info, depth_info = selected
-            now_ns = self.get_clock().now().nanoseconds
-            validate_pair(rgb, depth, color_info, depth_info, now_ns, quality)
-            camera = self.applied.camera
-            instant = Time(nanoseconds=rgb["stamp_ns"])
             try:
-                internal = self.tf_buffer.lookup_transform(camera.settings.camera_link_frame,
-                                                           camera.settings.optical_frame, instant)
-                robot = None
-                if camera.calibration_mode == "camera_on_hand":
-                    robot = self.tf_buffer.lookup_transform("base_link", "Link6", instant)
-                    age = (now_ns - stamp_ns(robot.header.stamp)) / 1e9
-                    if not 0 <= age <= quality["robot_tf_max_age_sec"]:
-                        raise ValueError("On-hand robot TF is stale/future")
-                base_camera = resolve_base_from_camera_link(
-                    camera, None if robot is None else transform_matrix(robot))
-                transform = compose_platform_from_optical(self.applied.platform.base_from_platform,
-                                                          base_camera, transform_matrix(internal))
-            except (TransformException, ValueError) as exc:
-                if wait and time.monotonic() < deadline:
-                    with self.condition:
-                        self.condition.wait(timeout=0.02)
-                    continue
-                raise ValueError(f"Camera/robot TF unavailable: {exc}") from exc
-            context = {"camera": color_info, "depth_camera": depth_info,
-                       "platform_from_optical": transform.tolist(),
-                       "roi": [[p.x_m, p.y_m] for p in self.bin_artifact.points]}
-            return rgb, depth, context
+                with self.condition:
+                    rgb = self._image
+                    if rgb is None or rgb["stamp_ns"] < after_ns:
+                        raise ValueError("Waiting for a new RGB observation after request")
+                    rgb = self._bundle_rgb(rgb, count, after_ns)
+                    frames, color_info, depth_info = self._depth_window(
+                        rgb, quality, count, after_ns)
+                    rgb = dict(rgb)
+                context = self._snapshot_context(rgb, frames, color_info, depth_info, quality)
+                depth = median_depth_snapshot(frames, quality)
+                # Processing and exact-time TF lookup must not silently age the bundle out.
+                for frame in frames:
+                    validate_pair(rgb, frame, color_info, depth_info,
+                                  self.get_clock().now().nanoseconds, quality)
+                if epoch != self.arm_epoch or revision != getattr(self, "_input_revision", 0):
+                    raise ValueError("Source changed during temporal depth preparation")
+                return rgb, depth, context
+            except (ValueError, TransformException):
+                remaining = deadline - time.monotonic()
+                if not wait or remaining <= 0:
+                    raise
+                with self.condition:
+                    self.condition.wait(timeout=min(remaining, .02))
 
     def infer(self, rgb, depth=None, context=None, timeout=30, *, preview=None,
-              candidate_limit=None):
+              candidate_limit=None, render_images=True):
         settings = copy.deepcopy(self.settings if preview is None else preview["settings"])
         config = {**self.model_config, "yolo": settings["yolo"]}
         header = {"operation": "detect", "generation": self.arm_epoch, "model": config,
                   "width": rgb["width"], "height": rgb["height"], "context": context,
-                  "settings": settings}
+                  "settings": settings, "render_images": render_images,
+                  "depth_encoding": None if depth is None else depth["encoding"],
+                  "camera_generation": self._camera_generation}
         if candidate_limit is not None:
             header["candidate_limit"] = candidate_limit
         if preview is not None:
@@ -741,16 +831,21 @@ class ItemDetectNode(Node):
                           depth_cameras=preview["depth_cameras"] if depth is not None else None,
                           measurement_error=preview["error"], preview_depth=depth is not None)
         payload = rgb["rgb"] + (b"" if depth is None else depth["depth"])
+        native_started = time.monotonic()
         result, pixels = self.native.call(header, payload, timeout)
+        native_roundtrip_ms = (time.monotonic() - native_started)*1000.
         frame_bytes = len(rgb["rgb"])
         required_fields = {"state", "generation", "width", "height", "count", "task",
                            "inference_ms", "geometry_sources", "candidates", "rejected",
-                           "has_depth_view", "detections", "roi_overlay", "unchecked"}
+                           "has_depth_view", "detections", "roi_overlay", "unchecked",
+                           "has_images", "timings_ms"}
         if (set(result) != required_fields
                 or result.get("width") != rgb["width"] or result.get("height") != rgb["height"]
                 or result.get("generation") != header["generation"]
-                or result.get("has_depth_view") is not (depth is not None)
-                or len(pixels) != frame_bytes * (2 if depth is not None else 1)
+                or result.get("has_images") is not render_images
+                or result.get("has_depth_view") is not (depth is not None and render_images)
+                or len(pixels) != (
+                    frame_bytes * (2 if depth is not None else 1) if render_images else 0)
                 or type(result.get("candidates")) is not list
                 or type(result.get("count")) is not int
                 or not 0 <= result["count"] <= settings["yolo"]["max_detections"]):
@@ -765,6 +860,12 @@ class ItemDetectNode(Node):
                     or type(result["rejected"]) is not list
                     or not math.isfinite(result["inference_ms"]) or result["inference_ms"] < 0):
                 raise RuntimeError("Invalid native task/source/timing diagnostics")
+            if (type(result["timings_ms"]) is not dict
+                    or set(result["timings_ms"]) != {
+                        "yolo_ms", "geometry_ms", "clearance_ms", "rendering_ms"}
+                    or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0
+                           for v in result["timings_ms"].values())):
+                raise RuntimeError("Invalid native stage timings")
             validate_candidates(result, settings)
             validate_candidate_selection(
                 result, candidate_limit,
@@ -781,6 +882,7 @@ class ItemDetectNode(Node):
             raise RuntimeError(f"Malformed native result: {exc}") from exc
         self.model_metadata["geometry_sources"] = result["geometry_sources"]
         view = {**rgb, "rgb": pixels[:frame_bytes], "metadata": result,
+                "native_roundtrip_ms": native_roundtrip_ms,
                 "preview_mode": "all" if preview is not None else "filtered",
                 "depth_rgb": pixels[frame_bytes:],
                 "depth_stamp_ns": None if depth is None else depth["stamp_ns"]}
@@ -816,7 +918,8 @@ class ItemDetectNode(Node):
 
     def roi_once(self):
         """YOLO-OFF station inspection; the same lifetime worker projects geometry only."""
-        if self.yolo_enabled or self.applied is None or self.request_lock.locked():
+        if (self.yolo_enabled or self.applied is None or self.request_lock.locked()
+                or self.background_suspended()):
             return None
         if not self.operation_lock.acquire(blocking=False):
             return None
@@ -866,8 +969,11 @@ class ItemDetectNode(Node):
         finally:
             self.operation_lock.release()
 
+    def background_suspended(self):
+        return False  # Headless detection has no controller-status dependency.
+
     def preview_once(self):
-        if not self.yolo_enabled or self.request_lock.locked():
+        if not self.yolo_enabled or self.request_lock.locked() or self.background_suspended():
             return None
         if not self.operation_lock.acquire(blocking=False):
             return None
@@ -883,6 +989,8 @@ class ItemDetectNode(Node):
                     or time.monotonic() - rgb["received_at"] > max_age):
                 raise ValueError("RGB preview is stale")
             if self.preview_mode == "all":
+                with self.condition:
+                    rgb = self._bundle_rgb(rgb, self.preview_frame_count)
                 measurement, error = None, ""
                 try:
                     measurement = self._measurement_context(
@@ -891,19 +999,17 @@ class ItemDetectNode(Node):
                     # Measurement is a separate optional display, not a pick-pose fallback.
                     error = str(exc)
                 depth, depth_error, depth_cameras = None, "", None
-                with self.condition:
-                    try:
-                        validate_pair(rgb, self._depth, self._color_info, self._depth_info,
-                                      self.get_clock().now().nanoseconds, self.preview_quality)
-                        if measurement is not None:
-                            if measurement["camera"] != self._color_info:
-                                raise ValueError("Color CameraInfo changed during observation")
-                            measurement["depth_camera"] = copy.deepcopy(self._depth_info)
-                        depth = dict(self._depth)
-                        depth_cameras = {"camera": copy.deepcopy(self._color_info),
-                                         "depth_camera": copy.deepcopy(self._depth_info)}
-                    except ValueError as exc:
-                        depth_error = str(exc)
+                try:
+                    with self.condition:
+                        frames, color_info, depth_info = self._depth_window(
+                            rgb, self.preview_quality, self.preview_frame_count)
+                    if measurement is not None:
+                        measurement = self._snapshot_context(
+                            rgb, frames, color_info, depth_info, self.preview_quality)
+                    depth = median_depth_snapshot(frames, self.preview_quality)
+                    depth_cameras = {"camera": color_info, "depth_camera": depth_info}
+                except (ValueError, TransformException) as exc:
+                    depth_error = str(exc)
                 preview = {"settings": {"yolo": copy.deepcopy(self.preview_yolo),
                                         "geometry": copy.deepcopy(self.preview_geometry),
                                         "quality": copy.deepcopy(self.preview_quality),
@@ -956,6 +1062,8 @@ class ItemDetectNode(Node):
         try:
             header = {"operation": "selected_pose", "generation": self.arm_epoch,
                       "width": rgb["width"], "height": rgb["height"],
+                      "depth_encoding": depth["encoding"],
+                      "camera_generation": self._camera_generation,
                       "detection": detection, "settings": settings,
                       "display_detections": view["metadata"]["detections"],
                       "context": {**observation["context"], "pick_planning": planning}}
@@ -1013,12 +1121,14 @@ class ItemDetectNode(Node):
             response.status, response.message = "BUSY", "One request is already active"
             return response, None
         epoch = self.arm_epoch
+        revision = getattr(self, "_input_revision", 0)
         acquired = False
         view = None
         simulated = simulation_path is not None
 
         def check_active():
-            if (epoch != self.arm_epoch or not self.yolo_enabled
+            if (epoch != self.arm_epoch or revision != getattr(self, "_input_revision", 0)
+                    or not self.yolo_enabled
                     or (not simulated and self.service is None)
                     or (cancelled is not None and cancelled())):
                 raise ValueError("Detector was disarmed or settings changed during request")
@@ -1048,9 +1158,13 @@ class ItemDetectNode(Node):
             check_active()
             if time.monotonic() >= deadline:
                 raise ValueError("Request deadline exceeded while queued")
+            stage_started = time.monotonic()
+            stages = {}
             acquired = self.operation_lock.acquire(timeout=max(0.001, deadline - time.monotonic()))
             if not acquired:
                 raise ValueError("Request deadline reached waiting for preview")
+            stages["preview_wait_ms"] = (time.monotonic() - stage_started)*1000.
+            stage_started = time.monotonic()
             self._validate_sources()
             check_active()
             _profile, digest = (
@@ -1060,17 +1174,29 @@ class ItemDetectNode(Node):
             if digest != profile_digest:
                 self.disarm()
                 raise ValueError("Item profile changed")
+            stages["validation_before_ms"] = (time.monotonic() - stage_started)*1000.
+            stage_started = time.monotonic()
             options = {"cancelled": cancelled} if simulated else {}
             rgb, depth, context = self._snapshot(start_ns, deadline, wait=True, **options)
+            stages["capture_ms"] = (time.monotonic() - stage_started)*1000.
+            stages["median_ms"] = depth["median_ms"]
+            stage_started = time.monotonic()
             context = {**context, "pick_planning": self.pick_planning_context(
                 _profile["home"], _profile["pick_rotation"],
                 _profile["motion"]["standoff_height"])}
+            stages["planning_validation_ms"] = (time.monotonic() - stage_started)*1000.
             check_active()
             if time.monotonic() >= deadline:
                 raise ValueError("Request deadline exceeded before inference")
             view = self.infer(rgb, depth, context, timeout=max(0.001, deadline-time.monotonic()),
-                              candidate_limit=request.max_candidates)
+                              candidate_limit=request.max_candidates,
+                              render_images=simulated or bool(request.save_debug_images))
             result = view["metadata"]
+            stages.update(result["timings_ms"])
+            stages["native_roundtrip_ms"] = view["native_roundtrip_ms"]
+            stages["native_transport_ms"] = max(
+                0., view["native_roundtrip_ms"] - result["inference_ms"])
+            stage_started = time.monotonic()
             if len(result["candidates"]) > request.max_candidates:
                 raise RuntimeError("Detector exceeded requested candidate acquisition count")
             check_active()
@@ -1080,6 +1206,7 @@ class ItemDetectNode(Node):
                 raise ValueError("Item profile changed during request")
             if time.monotonic() > deadline:
                 raise ValueError("Request deadline exceeded")
+            stages["validation_after_ms"] = (time.monotonic() - stage_started)*1000.
             response.batch_id = uuid.uuid4().hex
             response.header.frame_id = "platform_reference"
             response.header.stamp = Time(nanoseconds=rgb["stamp_ns"]).to_msg()
@@ -1130,13 +1257,18 @@ class ItemDetectNode(Node):
                     raise ValueError("Item profile changed while saving debug images")
                 if time.monotonic() > deadline:
                     raise ValueError("Request deadline exceeded while saving debug images")
-            evidence = {"pose_convention": GetItemPoses.Request.POSE_CONVENTION,
+            stages["detector_total_ms"] = (time.monotonic() - started)*1000.
+            evidence = {"timings_ms": stages, "depth_frame_stamps_ns": depth["frame_stamps_ns"],
+                        "depth_capture_span_ms": depth["capture_span_ms"],
+                        "pose_convention": GetItemPoses.Request.POSE_CONVENTION,
                         "profile_sha256": profile_digest,
                         "model_sha256": self.model_config["sha256"],
                         "camera_sha256": self.applied.camera.sha256,
                         "robot_camera_sha256": self.robot_camera.sha256,
                         "platform_sha256": self.applied.platform.sha256,
                         "bin_sha256": self.bin_artifact.sha256, "snapshot_context": context,
+                        "clearance": [{"source_index": c["source_index"],
+                                       **c["nearby_depth_filter"]} for c in result["candidates"]],
                         "rejected": result["rejected"], "inference_ms": result["inference_ms"],
                         "unchecked": result["unchecked"],
                         "debug_capture": debug_capture}
@@ -1144,7 +1276,7 @@ class ItemDetectNode(Node):
             if simulated:
                 view = {**view, "simulation_profile": (str(profile_path), profile_digest),
                         "simulation_epoch": epoch}
-            if self.preview_mode == "filtered" and not simulated:
+            if self.preview_mode == "filtered" and not simulated and view["rgb"]:
                 self.last_view = view
             self.events.record("INFO", "item_simulated_batch" if simulated else "item_pose_batch",
                                response.message,

@@ -1,6 +1,6 @@
 """Read-only drawing of the exact nearby-depth checks, inside the native worker."""
 
-from .pick_planning import rigid_matrix
+from .floor_clearance import floor_depth
 
 
 RADIUS_COLOR = (255, 210, 0)
@@ -51,12 +51,10 @@ def _text(view, message, origin, color, cv2):
 
 
 def draw_nearby_depth_overlays(views, context, checks, cv2, np):
-    """Draw base-XY circles at surface/limit Z; never change a check or pose."""
+    """Draw camera-XY rings on equal floor-height surfaces; never change eligibility."""
     if not checks:
         return
-    base_from_optical = (
-        rigid_matrix(context["pick_planning"]["base_from_platform"], "base-from-platform")
-        @ rigid_matrix(context["platform_from_optical"], "platform-from-optical"))
+    base_from_optical = np.eye(4)  # Checks already carry camera optical coordinates.
     angles = np.linspace(0., 2*np.pi, 97)
     circle = np.column_stack((np.cos(angles), np.sin(angles), np.zeros(len(angles))))
     # Paint blockers last so other candidates' rings cannot hide an offending pixel.
@@ -68,7 +66,9 @@ def draw_nearby_depth_overlays(views, context, checks, cv2, np):
             evidence, center = check["evidence"], check["item_xyz"]
             radius, height = evidence["radius_mm"], evidence["height_mm"]
             surface = center + circle * radius / 1000.
-            limit = surface + [0., 0., height / 1000.]
+            surface[:, 2] = (floor_depth(surface, check["plane"], np)
+                             - evidence["candidate_height_mm"] / 1000.)
+            limit = surface - [0., 0., height / 1000.]
             lower = projected_base_points(surface, base_from_optical, camera, cv2, np)
             upper = projected_base_points(limit, base_from_optical, camera, cv2, np)
             _lines(view, zip(lower[:-1], lower[1:]), RADIUS_COLOR, cv2, np)
@@ -78,7 +78,7 @@ def draw_nearby_depth_overlays(views, context, checks, cv2, np):
                    HEIGHT_COLOR, cv2, np)
             obstacles.append(projected_base_points(
                 check["blocking_points"], base_from_optical, camera, cv2, np))
-            maximum = evidence["maximum_height_above_item_mm"]
+            maximum = evidence["maximum_height_difference_mm"]
             maximum_text = "no depth" if maximum is None else f"max {maximum:.1f}mm"
             label = f"#{source_id} NEAR {'BLOCKED' if check['blocked'] else 'OK'} | {maximum_text}"
             anchor = projected_base_points([center], base_from_optical, camera, cv2, np)[0]
@@ -111,7 +111,7 @@ def draw_nearby_depth_overlays(views, context, checks, cv2, np):
                       OBSTACLE_COLOR, cv2)
         evidence = next(iter(checks.values()))["evidence"]
         _text(view, f"NEAR: solid R={evidence['radius_mm']:g}mm | "
-              f"dashed H={evidence['height_mm']:g}mm (base +Z)",
+              f"dashed H={evidence['height_mm']:g}mm (camera XY / floor height)",
               (5, view.shape[0]-23), RADIUS_COLOR, cv2)
-        _text(view, "Above item surface | red/X=obstacle | cyan=depth sample",
+        _text(view, "Floor-relative difference | red/X=obstacle | cyan=depth sample",
               (5, view.shape[0]-7), (255, 255, 255), cv2)

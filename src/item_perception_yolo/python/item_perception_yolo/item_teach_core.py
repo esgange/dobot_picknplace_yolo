@@ -15,14 +15,17 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
 
 from camera_calibration_gui.calibration_core import workspace_root
 
+from .depth_snapshot import validate_depth_frame_count, item_depth_limits
 
-ITEM_SCHEMA_VERSION = 12
+
+ITEM_SCHEMA_VERSION = 13
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height", "trayplace_height")
@@ -33,7 +36,8 @@ GRIPPER_FIELDS = ("use_grip", "grip_onpick")
 YOLO_FIELDS = ("confidence", "iou", "image_size", "max_detections", "class_ids")
 NEW_PROFILE_IMAGE_SIZE = 448  # Not an operator field; loaded profiles retain their exact value.
 NEARBY_DEPTH_DEFAULTS = {"nearby_depth_radius_mm": 150.0, "nearby_depth_height_mm": 60.0}
-GEOMETRY_FIELDS = ("height", "width", "tolerance", "pickdepth_radius", *NEARBY_DEPTH_DEFAULTS)
+GEOMETRY_FIELDS = ("height", "width", "tolerance", "pickdepth_radius",
+                   *NEARBY_DEPTH_DEFAULTS, "depth_frame_count")
 BIN_CLEARANCE_FIELDS = ("p1_p2", "p2_p3", "p3_p4", "p4_p1")
 DEFAULT_PICKDEPTH_DIAMETER_MM = 30.0
 NEW_PROFILE_PICK_ROTATION_DEG = 0.0
@@ -218,6 +222,7 @@ def validate_settings(settings):
         _number(settings["geometry"][key], key)
         if key != "tolerance" and settings["geometry"][key] <= 0:
             raise ValueError(f"{key} must be greater than zero millimetres")
+    validate_depth_frame_count(settings["geometry"]["depth_frame_count"])
     validate_yolo_settings(settings["model_task"], settings["yolo"])
     if settings["geometry"]["height"] < settings["geometry"]["width"]:
         raise ValueError("height is the long side and must be >= width")
@@ -225,6 +230,7 @@ def validate_settings(settings):
         raise ValueError("geometry_source must be mask, obb or none (preview only)")
     validate_bin_clearance(settings["bin_clearance"])
     validate_quality(settings["quality"])
+    item_depth_limits(settings["quality"])
     if settings["retry"]["pose_candidates"] > settings["yolo"]["max_detections"]:
         raise ValueError("pose_candidates cannot exceed max_detections")
 
@@ -280,6 +286,8 @@ def validate_detection_settings(settings, *, geometry_required):
         _fields(settings["geometry"], GEOMETRY_FIELDS, "geometry")
         for key, value in settings["geometry"].items():
             _number(value, key, low=0 if key == "tolerance" else 0.000001)
+        validate_depth_frame_count(settings["geometry"]["depth_frame_count"])
+        item_depth_limits(settings["quality"])
         if settings["geometry"]["height"] < settings["geometry"]["width"]:
             raise ValueError("height is the long side and must be >= width")
 
@@ -369,9 +377,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 12 "
-            "(nearby depth radius/height filter); "
-            "schemas 1–11 require review and Save in Item Teach; no compatibility reader")
+            "Item teach schema_version must be exactly 13 "
+            "(floor-relative clearance and temporal depth); "
+            "schemas 1–12 require review and Save in Item Teach; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",
@@ -423,6 +431,11 @@ def _unique_mapping(loader, node, deep=False):
 _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
 
 
+@lru_cache(maxsize=16)
+def _parsed_item_content(content):
+    return yaml.load(content, Loader=_UniqueKeyLoader)
+
+
 def load_item_profile(path: Path, *, root: Path | None = None, deployment=False):
     original = Path(path).expanduser().absolute()
     if original.is_symlink() or original.with_suffix(".pt").is_symlink():
@@ -438,7 +451,7 @@ def load_item_profile(path: Path, *, root: Path | None = None, deployment=False)
         raise ValueError(f"Item YAML must be directly in {location}")
     try:
         content = path.read_bytes()
-        profile = yaml.load(content, Loader=_UniqueKeyLoader)
+        profile = copy.deepcopy(_parsed_item_content(content))
         validate_profile(profile)
     except (OSError, yaml.YAMLError, TypeError, KeyError, UnicodeError) as exc:
         raise ValueError(f"Cannot load item teach: {exc}") from exc

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import time
 
+from .depth_snapshot import DEPTH_ENCODING, item_depth_limits
+from .projection_cache import clear_projection_caches
 from .preview_protocol import receive_packet, send_packet
 
 
@@ -106,8 +108,13 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
         model = None
         selected = None
         fingerprint = None
+        projection_generation = None
         while True:
             request, data = receive_packet(input_stream)
+            current_generation = (request.get("generation"), request.get("camera_generation"))
+            if current_generation != projection_generation:
+                clear_projection_caches()
+                projection_generation = current_generation
             if request.get("operation") not in (
                     "detect", "inspect", "preview", "overlay_roi", "selected_pose",
                     "teaching_rviz", *operations, *predictions):
@@ -129,12 +136,13 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 width, height = request["width"], request["height"]
                 if (type(width) is not int or type(height) is not int
                         or not 0 < width <= 4096 or not 0 < height <= 4096
-                        or len(data) != width * height * 5):
+                        or request.get("depth_encoding") != DEPTH_ENCODING
+                        or len(data) != width * height * 7):
                     raise RuntimeError("Malformed selected RGB/depth snapshot")
                 validate_detection_settings(request["settings"], geometry_required=True)
                 rgb_bytes = width * height * 3
                 rgb = np.frombuffer(data[:rgb_bytes], np.uint8).reshape(height, width, 3)
-                depth = np.frombuffer(data[rgb_bytes:], "<u2").reshape(height, width)
+                depth = np.frombuffer(data[rgb_bytes:], "<f4").reshape(height, width)
                 selected_rgb, depth_view, candidates, rejected = selected_pose(
                     request["detection"], rgb, depth, request["context"],
                     request["settings"], cv2, np, display_detections=request["display_detections"])
@@ -169,6 +177,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
             path = Path(config["path"]).resolve(strict=True)
             key = (str(path), config["sha256"])
             if key != selected:
+                clear_projection_caches()
                 if path.suffix != ".pt" or _digest(path) != config["sha256"]:
                     raise RuntimeError("Selected local model SHA-256 mismatch")
                 before = _fingerprint(path)
@@ -201,7 +210,12 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
             if preview and context is not None:
                 raise RuntimeError("All-detections preview must not receive depth/pose context")
             has_depth = context is not None or (preview and request.get("preview_depth", False))
-            expected_bytes = width * height * (5 if has_depth else 3)
+            expected_bytes = width * height * (7 if has_depth else 3)
+            if has_depth and request.get("depth_encoding") != DEPTH_ENCODING:
+                raise RuntimeError("Item depth requires an immutable float32 median snapshot")
+            render_images = request.get("render_images", True)
+            if type(render_images) is not bool or (preview and not render_images):
+                raise RuntimeError("Invalid item image-rendering policy")
             if (type(width) is not int or type(height) is not int or not 0 < width <= 4096
                     or not 0 < height <= 4096 or len(data) != expected_bytes):
                 raise RuntimeError("Malformed RGB frame dimensions")
@@ -218,6 +232,8 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 save=False, save_txt=False, save_crop=False, show=False, verbose=False,
                 project=str(scratch), name="preview", exist_ok=True, stream=False,
             )
+            yolo_ms = (time.monotonic() - start) * 1000.
+            stages = {"yolo_ms": yolo_ms, "geometry_ms": 0., "clearance_ms": 0., "rendering_ms": 0.}
             if len(results) != 1 or tuple(results[0].orig_shape) != (height, width):
                 raise RuntimeError("Detector result does not match the submitted frame")
             if request["operation"] in predictions:
@@ -226,9 +242,11 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 header["inference_ms"] = round((time.monotonic() - start) * 1000, 1)
                 send_packet(output_stream, header, pixels)
                 continue
-            overlay, count = render_result(
-                results[0], rgb, names, config["task"], settings["max_detections"], cv2, np,
-            )
+            boxes = results[0].obb if model.task == "obb" else results[0].boxes
+            if boxes is None or not 0 <= len(boxes) <= settings["max_detections"]:
+                raise RuntimeError("Malformed detector output count")
+            count = len(boxes)
+            overlay = None
             available = []
             if results[0].masks is not None or model.task == "segment":
                 available.append("mask")
@@ -247,16 +265,16 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 validate_bin_clearance(request["settings"]["bin_clearance"])
                 if source != "none" and source not in available:
                     raise RuntimeError("Selected preview geometry is unavailable")
+                geometry_started = time.monotonic()
                 detections = preview_detections(
                     results[0], source, names, settings["max_detections"],
                     request["measurement_context"], request["measurement_error"], cv2, np,
                     diameter_mm=request["settings"]["pickdepth_radius"])
-                if request["measurement_context"] is not None:
-                    overlay, _ = render_result(
-                        results[0], rgb, names, config["task"], settings["max_detections"],
-                        cv2, np,
-                        included_indices={item["source_index"] for item in detections},
-                    )
+                stages["geometry_ms"] = (time.monotonic() - geometry_started)*1000.
+                overlay, _ = render_result(
+                    results[0], rgb, names, config["task"], settings["max_detections"], cv2, np,
+                    included_indices=({item["source_index"] for item in detections}
+                                      if request["measurement_context"] is not None else None))
                 for item in detections:
                     valid, reason = classify_size(item["measurement"],
                                                   request["settings"].get("geometry"))
@@ -266,8 +284,11 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                                  (255, 0, 0) if valid is False else (180, 180, 180))
                         draw_pick_geometry(overlay, item["rectangle"], cv2, np, color=color)
                 if request.get("preview_depth", False):
-                    depth = np.frombuffer(data[rgb_bytes:], "<u2").reshape(height, width)
-                    depth_view = render_depth(depth, request["settings"]["quality"], cv2, np)
+                    depth = np.frombuffer(data[rgb_bytes:], "<f4").reshape(height, width)
+                    display_quality = {**request["settings"]["quality"],
+                                       "depth_min_mm": item_depth_limits(
+                                           request["settings"]["quality"])[0]}
+                    depth_view = render_depth(depth, display_quality, cv2, np)
                     draw_depth_geometry(depth_view, detections, source,
                                         request["depth_cameras"], request["measurement_context"],
                                         cv2, np,
@@ -278,7 +299,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                                    request["settings"]["bin_clearance"], cv2, np)
             if context is not None:
                 from .item_geometry import (
-                    objects_from_result, generate_candidates, draw_bin_roi, draw_bin_clearance,
+                    objects_from_result, generate_candidates,
                 )
                 from .item_teach_core import validate_detection_settings
                 validate_detection_settings(request["settings"], geometry_required=True)
@@ -288,23 +309,33 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                     raise RuntimeError("Invalid requested candidate acquisition count")
                 objects = objects_from_result(results[0], request["settings"]["geometry_source"],
                                               names, settings["max_detections"], cv2, np)
-                depth = np.frombuffer(data[rgb_bytes:], dtype="<u2").reshape(height, width)
+                depth = np.frombuffer(data[rgb_bytes:], dtype="<f4").reshape(height, width)
                 overlay, depth_view, candidates, rejected = generate_candidates(
                     objects, rgb, depth, context, request["settings"], cv2, np,
-                    candidate_limit=limit, unchecked=unchecked)
-                roi_status = draw_bin_roi(overlay, context, "", cv2, np)
-                draw_bin_clearance(overlay, context, request["settings"]["bin_clearance"],
-                                   cv2, np)
+                    candidate_limit=limit, unchecked=unchecked, render_images=render_images,
+                    timings=stages, roi_status=roi_status)
+                if not render_images:
+                    roi_status = {"visible": False, "reason": "Images not requested"}
+            if preview:
+                stages["rendering_ms"] = ((time.monotonic() - start)*1000.
+                                          - yolo_ms - stages["geometry_ms"])
+            elif context is None and render_images:
+                draw_started = time.monotonic()
+                overlay, _ = render_result(results[0], rgb, names, config["task"],
+                                           settings["max_detections"], cv2, np)
+                stages["rendering_ms"] = (time.monotonic() - draw_started)*1000.
             send_packet(output_stream, {
                 "state": "ok", "generation": request["generation"], "width": width,
                 "height": height, "count": count, "task": model.task,
                 "inference_ms": round((time.monotonic() - start) * 1000, 1),
                 "geometry_sources": available, "candidates": candidates, "rejected": rejected,
+                "has_images": render_images, "timings_ms": stages,
                 "unchecked": unchecked,
                 "has_depth_view": depth_view is not None,
                 "detections": detections,
                 "roi_overlay": roi_status,
-            }, overlay.tobytes() + (b"" if depth_view is None else depth_view.tobytes()))
+            }, (b"" if overlay is None else overlay.tobytes())
+                + (b"" if depth_view is None else depth_view.tobytes()))
     except EOFError:
         return
     except Exception as exc:

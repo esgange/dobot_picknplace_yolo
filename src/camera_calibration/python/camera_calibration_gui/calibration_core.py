@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import os
@@ -7,6 +8,7 @@ import threading
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -1308,11 +1310,17 @@ def write_calibration_yaml(
             temporary_path.unlink(missing_ok=True)
 
 
+@lru_cache(maxsize=16)
+def _parsed_calibration_content(content):
+    """Cache parsing of identical bytes only; callers still read and validate sources."""
+    return yaml.safe_load(content.decode("utf-8"))
+
+
 def load_calibration_yaml(path: Path) -> CalibrationArtifact:
     if not path.is_file():
         raise ValueError(f"Calibration artifact is not a file: {path}")
     try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        payload = copy.deepcopy(_parsed_calibration_content(path.read_bytes()))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ValueError(f"Cannot read calibration artifact {path}: {exc}") from exc
     if (

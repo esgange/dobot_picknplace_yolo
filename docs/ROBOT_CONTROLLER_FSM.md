@@ -1,24 +1,33 @@
 # Robot Controller — Finite State Machine
 
-Ranked nearby-depth acquisition: **2026-10-06**, baseline **`15642f9`** plus rule
-**236**. The detector first ranks geometrically eligible poses, then checks nearby
-height one by one. Skip blocked candidates and stop when the requested number
-pass (for example, three), or exhaust the list. Only checked poses go to the
-controller; later geometric candidates are explicitly unchecked. `valid_count`
-is the returned checked count. Live teaching uses the same taught batch limit;
-clicked inspection checks one item. No new controller service, per-attempt
-depth scan, motion wait, retry rule or candidate-ledger change is introduced.
+Floor-relative acquisition review: **2026-10-06**, baseline **`02e139d`** plus
+rule **237**. Schema-13 Item Teach adds depth-frame count 1/3/5 (default 3).
+One strict-majority float32 median of fresh post-request frames supplies pose,
+clearance and optional debug rendering. Effective item minimum is max(500 mm,
+saved minimum); tray limits stay unchanged. The controller validates every
+contributing depth timestamp, synchronization and newest response depth stamp.
+Accepted batches retain their existing lifetime and retry ledger.
 
-Nearby-obstacle reference correction: **2026-10-06**, baseline **`32ca95d`** plus
-rule **234**. The shared item detector measures obstacle height above the detected
-item surface in base Z, excluding standoff. Within the saved base-XY radius, any
-usable point at/above the saved height rejects during ranked acquisition. The latest collision
-candidate's recorded maximum was 8.616 mm above Link6 plus 70 mm standoff, or
-78.616 mm above the item: it now fails the saved 50 mm limit. All pose-generation
-paths share this reference; native evidence uses `maximum_height_above_item_mm`
-and rejects the old Link6 field. GUI wording is explicit. Robot target geometry,
-queues, Stop gates, profile schema and operator values are unchanged. This is an
-observed nearby-depth filter, not a complete swept-path collision check.
+Express platform Z=0 in camera optical coordinates. At each physical measured XY,
+height is floor depth minus camera Z. Within/on the camera-XY radius, maximum
+nearby height minus candidate surface height must be below the saved threshold.
+Include physical outer-bin boundary/inset margin and outside-mask depth; exclude
+outside-bin points. Standoff is excluded. Degenerate/missing inputs fail closed.
+Native evidence identifies `platform_floor_camera_z_v1` and reports heights,
+difference and point counts. This supersedes rules 229/234’s base-XY/Z and
+outside-bin interpretation. Candidate/body/pick containment checks remain.
+
+Rank geometrically eligible poses first, then skip blocked candidates and stop
+when the requested number pass. Only checked poses enter the controller batch;
+remaining source IDs stay unchecked. `NO_VALID_ITEMS` retains the bounded
+Home-and-reacquisition path. Clicked inspection checks its exact captured item.
+Fresh active controller status pauses new Item Teach background jobs read-only;
+headless detection is independent. Debug-disabled production skips images.
+Timing diagnostics distinguish YOLO, processing, capture and controller validation.
+Verified parsed content and one item/model validation per controller pass reduce
+repeat work without skipping content reads or dynamic source bindings. No service
+layout, motion queue, Stop gate, candidate-ledger or retry behavior changes.
+Older profiles require explicit GUI review/Save, manual deployment and restart.
 
 Auto Run timing review: **2026-10-06**, baseline **`bd5f2f5`** plus rule
 **233**. The controller starts a monotonic timer when the accepted Auto Run begins.
@@ -61,18 +70,6 @@ a full wrist turn or substitute Cartesian arrival. Initial/recovery/return and
 Auto Run Home all use MovJ; Tray Detect now follows rule 232. Rule 231 removes
 the inter-cycle Home detour; the placement-before-next-pick acceptance boundary
 remains in place.
-
-Nearby-depth eligibility review: **2026-10-06**, baseline **`f717319`** plus rule
-**229**. Schema-12 Item Teach profiles require a nearby radius/height (defaults
-150/60 mm). During ranked acquisition, the shared detector rejects a candidate if any usable
-original depth pixel lies inside/on that base-XY radius and at least that base-Z
-height above the detected item surface, excluding standoff (rule 234). Include outside-mask/ROI
-points, with depth-range validation and the original depth CameraInfo/transform;
-no voxel/cluster reduction. Teaching and headless use the same check and reject
-missing/mismatched native evidence. Controller Hardware/Preview consume the
-filtered profile-bound batch without their own depth scan. Motion, candidate
-ledger, retry and tray placement behavior stay unchanged. Older profiles require
-explicit GUI review/Save and manual deployment/reload.
 
 Visualization ownership review: **2026-10-06**, baseline **`17f43b0`** plus rule
 **228**. Item Teach launch owns the separate read-only robot_camera_box process
@@ -738,7 +735,7 @@ typed status and failed service responses include the complete guidance.
 ```mermaid
 flowchart TD
     Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible poses retained after interruption or Return Item?"}
-    Saved -->|No| Detect["Fresh item batch before Home; rank poses then check nearby height until requested count passes; optional debug images"]
+    Saved -->|No| Detect["Post-request median depth before Home; rank poses then floor-clearance checks until batch full; optional debug images"]
     Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
     Reuse --> Entry
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
@@ -1097,7 +1094,7 @@ flowchart TD
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
     Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
     Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
-    Prefetch -.-> Capture["In parallel: fresh post-trigger RGB/depth/TF; retain result"]
+    Prefetch -.-> Capture["In parallel: post-trigger RGB and median depth/TF; retain checked batch"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append MovJ Home behind placement"]
     Home --> Done["PLACED; cancel unused poses; count execution/release; confirm Home + neutral + DI1 LOW; freeze total seconds; READY"]
@@ -1162,7 +1159,8 @@ before the trigger prevents prefetch. Rejected/unanswered placement commands, St
 or other failures after the trigger cancel/discard the worker and its result.
 Never start it for the final item. Keep the fixed bin camera view clear
 during the placement-time observation; no automatic occlusion or tool-height test
-is added. The existing detector requires post-request RGB/depth and matching TF.
+is added. The detector requires post-request RGB plus every median-depth frame and matching
+stationary-camera TF; schema 13 defaults to three depth frames.
 A ready result or detector error uses the existing handoff path. Stop, held loss
 or another run failure closes/discards this worker and its result before another
 operation can own the controller.
@@ -1460,7 +1458,7 @@ Names below are relative to `/robot_controller/`.
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
-| Pick nearby-depth eligibility (perception) | No usable original depth point within/on the saved base-XY radius reaches the saved base-Z height above detected item surface, excluding standoff; schema-12 defaults 150/60 mm; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
+| Pick nearby-depth eligibility (perception) | No usable median-depth point inside/on the physical outer bin and camera-XY radius reaches the saved floor-relative height difference from the candidate surface; evaluate platform Z=0 beneath each point along camera Z; exclude standoff; schema-13 defaults 150/60 mm and three frames; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |

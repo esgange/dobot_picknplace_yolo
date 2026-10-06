@@ -47,7 +47,7 @@ def exercise_service():
         detector._validate_sources = MagicMock()
         detector.pick_planning_context = MagicMock(return_value={"synthetic": "plan"})
         settings = {"model_task": "segment", "geometry_source": "mask",
-            "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+            "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                          "height": 100., "width": 50., "tolerance": 5., "pickdepth_radius": 30.},
             "bin_clearance": {"p1_p2": None, "p2_p3": None,
                               "p3_p4": None, "p4_p1": None},
@@ -103,9 +103,10 @@ def exercise_service():
                 "source_index": 0, "class_id": 1, "class_name": "part", "confidence": .9,
                 "position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.], "length": .1,
                 "width": .05, "center_distance": .02, "filtered_camera_depth": .7,
-                "depth_sigma": .001, "accepted_depth_count": 100, "rejected_depth_count": 2}
-            return {"metadata": {"count": 1, "candidates": [candidate], "rejected": [],
-                                 "unchecked": [], "inference_ms": 1.}}
+                "depth_sigma": .001, "accepted_depth_count": 100, "rejected_depth_count": 2,
+                "nearby_depth_filter": {"reference": "platform_floor_camera_z_v1"}}
+            return {"rgb": b"", "native_roundtrip_ms": 1., "metadata": {"count": 1, "candidates": [candidate], "rejected": [],
+                                 "unchecked": [], "inference_ms": 1., "timings_ms": {}}}
         detector.infer = infer
         start = sensor.get_clock().now().nanoseconds
         future = client.call_async(GetItemPoses.Request(
@@ -131,8 +132,9 @@ def exercise_service():
                 raise module.TransformException("Synthetic delayed TF")
             return real_lookup(target, source, instant)
         detector.tf_buffer.lookup_transform = delayed_lookup
-        detector._snapshot(0, time.monotonic()+1, wait=True)
-        assert len(looked_up) >= 2 and len(set(looked_up)) == 1
+        selected_rgb, selected_depth, _ = detector._snapshot(0, time.monotonic()+1, wait=True)
+        assert set(looked_up[1:]) == {selected_rgb["stamp_ns"], *selected_depth["frame_stamps_ns"]}
+        assert len(selected_depth["frame_stamps_ns"]) == 3
         detector.tf_buffer.lookup_transform = real_lookup
         detector.disarm()
         assert detector.service is None

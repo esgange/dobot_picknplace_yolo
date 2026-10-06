@@ -15,7 +15,8 @@ from python_qt_binding import QtCore, QtGui, QtWidgets
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from robot_controller_interfaces.msg import ControllerStatus
 from tf2_ros import TransformBroadcaster
 
 from .item_teach_core import (
@@ -42,6 +43,7 @@ from .item_teach_calibration import (
 from .item_teach_rviz import PERIOD_SEC, TeachingRvizPreview
 from .pose_guides import PoseGuidePublisher
 from .camera_box import TeachingCameraMount
+from .depth_snapshot import DEFAULT_DEPTH_FRAME_COUNT, item_depth_limits
 
 
 class DetectionImage(QtWidgets.QLabel):
@@ -80,6 +82,11 @@ def draw_sampling_circle(painter, points):
 class ItemTeachNode(ItemDetectNode):
     def __init__(self):
         super().__init__("item_teach")
+        self._production_status = None
+        self.create_subscription(
+            ControllerStatus, "/robot_controller/status", self._on_production_status,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.robot_ip = load_robot_lan1_ip()
         values = _parse_env_file(workspace_root() / ".env")
         name = values["DOBOT_ROBOT_NODE_NAME"]
@@ -100,6 +107,20 @@ class ItemTeachNode(ItemDetectNode):
             JointState, "/joint_states", self._on_joints, qos_profile_sensor_data,
         )
         self.events.record("INFO", "node_started", "Item editor started; no command clients")
+
+    def _on_production_status(self, message):
+        self._production_status = (message, time.monotonic())
+
+    def background_suspended(self):
+        sample = self._production_status
+        if sample is None or time.monotonic() - sample[1] > 1.0:
+            return False
+        message = sample[0]
+        stamp = message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec
+        if not 0 <= (self.get_clock().now().nanoseconds - stamp) / 1e9 <= 1.0:
+            return False
+        return bool(message.auto_run_active or (message.operation_active
+                    and message.operation.lower() in ("pick", "place", "auto_run")))
 
     def clear_selected_pose(self):
         """Clear both clicked and simulated teaching previews; never retain old batch frames."""
@@ -632,6 +653,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
         for key in GEOMETRY_FIELDS:
             field = QtWidgets.QLineEdit()
             field.setPlaceholderText("Required; millimetres")
+            if key == "depth_frame_count":
+                field.setText(str(DEFAULT_DEPTH_FRAME_COUNT))
+                field.setPlaceholderText("1, 3 or 5 frames")
+                field.setToolTip(
+                    "Median of distinct depth frames; each pixel needs a valid majority")
             if key == "pickdepth_radius":
                 field.setText(str(DEFAULT_PICKDEPTH_DIAMETER_MM))
                 field.setToolTip("Sampling circle DIAMETER in mm, despite the variable name")
@@ -639,22 +665,23 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 field.setText(str(NEARBY_DEPTH_DEFAULTS[key]))
                 field.setToolTip(
                     "Reject if any usable depth point within this horizontal radius is at "
-                    "least this height above the detected item surface (robot base Z). "
-                    "Standoff/tool length is excluded from this height reference. "
-                    "Uses original depth pixels, including outside the item mask/bin ROI.")
+                    "least this floor-relative height above the candidate (camera depth axis). "
+                    "Radius uses physical camera XY; standoff is excluded. "
+                    "Includes bin margin and outside-mask depth; excludes outside-bin points.")
             self.inputs[key] = field
             label = {"height": "Length Y / height", "width": "Width X",
                      "tolerance": "Size tolerance ±",
                      "nearby_depth_radius_mm": "Nearby depth radius filter (mm)",
-                     "nearby_depth_height_mm": "Maximum nearby height above item surface (mm)"}
+                     "nearby_depth_height_mm": "Maximum nearby floor-height difference (mm)",
+                     "depth_frame_count": "Depth frames (median)"}
             geometry.addRow(label.get(key, key), field)
         geometry_help = QtWidgets.QLabel(
             "Item X: short axis; item Y: long axis.\n"
             "pickdepth_radius is the circle DIAMETER (default 30 mm).\n"
             "Length/width use platform Z=0; depth supplies the pick point.\n"
-            "Nearby filter: height is above the detected item surface, excluding standoff.\n"
-            "Reject any usable point at/above the height limit within the horizontal radius.\n"
-            "Editable defaults: 150 mm radius / 60 mm height; robot base frame."
+            "Nearby filter: platform plane is the bin floor; compare heights along camera Z.\n"
+            "Scan camera XY inside the outer bin, including its inset margin.\n"
+            "Defaults: 150 mm / 60 mm, three-frame median; item depth at least 500 mm."
         )
         geometry_help.setWordWrap(True)
         geometry.addRow(geometry_help)
@@ -684,8 +711,17 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     "Required valid pixels after depth-range and outlier filtering, as a "
                     "percentage of all pixels in the sampling circle. Used by Item Pick "
                     "and Tray placement depth. Greater than 0 and at most 100%.")
+            if key == "depth_min_mm":
+                field.setToolTip(
+                    "Item acquisition uses max(500 mm, this value); tray sampling uses this value")
             self.inputs[key] = field
             quality.addRow("Minimum valid depth (%)" if percentage else key, field)
+
+        self.item_depth_limits_label = QtWidgets.QLabel()
+        quality.addRow(self.item_depth_limits_label)
+        for key in ("depth_min_mm", "depth_max_mm"):
+            self.inputs[key].textChanged.connect(self._show_item_depth_limits)
+        self._show_item_depth_limits()
 
         for order in sorted(sections):
             form_column.addWidget(sections[order])
@@ -800,15 +836,20 @@ class ItemTeachWindow(QtWidgets.QWidget):
             raise ValueError("The selected model has not finished loading")
         # Incomplete dimensions are explicitly unchecked, not guessed or reused.
         size_fields = ("height", "width", "tolerance")
-        geometry = ({key: self._number(key) for key in GEOMETRY_FIELDS}
+        geometry = ({key: self._number(key, int if key == "depth_frame_count" else float)
+                     for key in GEOMETRY_FIELDS}
                     if all(self.inputs[key].text().strip() for key in size_fields) else None)
         quality = self._quality_settings()
         self.node.enable_preview(self.geometry_source.currentData(), self._yolo_settings(),
                                  geometry=geometry, quality=quality,
                                  diameter_mm=self._number("pickdepth_radius"),
-                                 bin_clearance=self._bin_clearance_settings())
+                                 bin_clearance=self._bin_clearance_settings(),
+                                 depth_frame_count=self._number("depth_frame_count", int))
         yolo = self.node.preview_yolo
+        effective_min, _ = item_depth_limits(quality)
         self.preview_help.setText(
+            f"Item usable depth minimum: {effective_min:g} mm; "
+            f"median {self.node.preview_frame_count} frames.\n"
             f"Active: confidence {yolo['confidence']:g}, IoU {yolo['iou']:g}, "
             f"{yolo['image_size']} px, cap {yolo['max_detections']}; all model classes.\n"
             "Size border: GREEN within tolerance / RED outside / GRAY not checked.\n"
@@ -928,6 +969,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         try:
             options["quality"] = self._quality_settings()
             validate_quality(options["quality"])
+            options["depth_frame_count"] = self._number("depth_frame_count", int)
         except ValueError as exc:
             return {"error": str(exc)}
         if self.node.yolo_enabled:
@@ -1482,6 +1524,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 self._message(self.preview_error)
         frame, camera_status = self.node.camera_snapshot()
         if ((self.node.yolo_enabled or self.node.applied is not None)
+                and not self.node.background_suspended()
                 and not self.preview_settings_paused
                 and not self.model_load_reserved and not self.job_busy and frame is not None
                 and self.pending_simulation is None and not self.simulation_busy
@@ -1494,7 +1537,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
             options = self._rviz_options()
             self._job("preview" if self.node.yolo_enabled else "roi",
                       lambda: self._preview_with_rviz(action, options))
-        view = self.node.last_view if self.node.last_view is not None else frame
+        suspended = self.node.background_suspended()
+        if suspended:
+            self.node.rviz.hold("Production active; background preview suspended")
+            self.preview_status = (
+                "Production active: live RGB; annotations/voxels retained with age")
+        view = (frame if suspended and self.frozen_view is None else
+                self.node.last_view if self.node.last_view is not None else frame)
         roi_note = ""
         if view is not None and self.frozen_view is None:
             age = (self.node.get_clock().now().nanoseconds - view["stamp_ns"]) / 1e9
@@ -1559,10 +1608,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
             if roi_note == "Loaded Bin ROI":
                 roi_note += " (same result snapshot, not a live projection)"
         timing = view.get("metadata", {}).get("inference_ms")
-        suffix = "" if timing is None else f" | inference {timing:.1f}ms"
+        suffix = "" if timing is None else f" | processing {timing:.1f}ms"
         frame_note = f"{'STALE ' if age > 0.5 else ''}Frame age {age:.2f}s{suffix}"
         rgb_lines = [title, frame_note, self.rviz_status]
-        nearby_legend = ("Nearby: yellow radius / orange height above item surface / red X obstacle"
+        nearby_legend = ("Nearby: yellow camera-XY radius / orange floor-height limit / "
+                         "red X obstacle"
                          " | NEAR OK is this check only")
         if selected or mode == "simulated" or view.get("nearby_overlay"):
             rgb_lines.append(nearby_legend)
@@ -1860,8 +1910,18 @@ class ItemTeachWindow(QtWidgets.QWidget):
         except ValueError:
             pass
 
+    def _show_item_depth_limits(self):
+        try:
+            low, high = item_depth_limits({key: self._number(key)
+                                          for key in ("depth_min_mm", "depth_max_mm")})
+            text = f"Effective item depth: {low:g}–{high:g} mm (tray uses saved limits)"
+        except ValueError:
+            text = "Effective item depth: invalid limits; item minimum is at least 500 mm"
+        self.item_depth_limits_label.setText(text)
+
     def _inference_settings(self):
-        geometry = {key: self._number(key) for key in GEOMETRY_FIELDS}
+        geometry = {key: self._number(key, int if key == "depth_frame_count" else float)
+                    for key in GEOMETRY_FIELDS}
         return {"model_task": self.task.currentData(), "yolo": self._yolo_settings(),
                 "geometry": geometry, "geometry_source": self.geometry_source.currentData(),
                 "bin_clearance": self._bin_clearance_settings(),

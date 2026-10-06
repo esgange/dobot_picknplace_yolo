@@ -1,12 +1,16 @@
 """Native-worker geometry. OpenCV/NumPy are passed in from the private runtime."""
 
 import math
+import time
 
 from .planar_bin_roi import border_in_optical
 from .item_teach_core import depth_coverage_ok, inset_bin_roi
 from .pick_planning import (
     CAMERA_BODY_CENTER_RGB_M, CAMERA_BODY_REFERENCE_FRAME, CAMERA_BODY_SIZE_RGB_M,
-    candidate_pose_in_base, rigid_matrix, select_pick_attitude)
+    candidate_pose_in_base, select_pick_attitude)
+from .depth_snapshot import item_depth_limits
+from .floor_clearance import usable_scene_depth, nearby_depth_check
+from .projection_cache import cached_rays, cached_mapping
 
 
 BIN_CLEARANCE_COLOR = (102, 204, 255)
@@ -149,24 +153,14 @@ def draw_robot_camera_footprint(overlay, context, footprint_xy, mirrored, accept
 
 
 def rays(pixels, camera, cv2, np):
-    points = np.asarray(pixels, dtype=np.float64).reshape(-1, 1, 2)
-    xy = cv2.undistortPoints(points, np.asarray(camera["k"]).reshape(3, 3),
-                             np.asarray(camera["d"]))[:, 0, :]
-    return np.column_stack((xy, np.ones(len(xy))))
+    return cached_rays(pixels, camera, cv2, np)
 
 
 def reproject_pixels(pixels, source_camera, target_camera, cv2, np):
-    """Map rays between two pixel models of the SAME registered optical frame."""
+    """Map rays between the two registered camera models, never round mask samples."""
     if len(pixels) == 0:
         return np.empty((0, 2), dtype=np.float64)
-    directions = rays(pixels, source_camera, cv2, np)
-    projected, _ = cv2.projectPoints(
-        directions, np.zeros(3), np.zeros(3),
-        np.asarray(target_camera["k"]).reshape(3, 3), np.asarray(target_camera["d"]))
-    result = projected[:, 0, :]
-    if not np.isfinite(result).all() or np.any(np.abs(result) > 2_000_000_000):
-        raise ValueError("RGB/depth ray projection exceeds safe coordinate range")
-    return result
+    return cached_mapping(pixels, source_camera, target_camera, cv2, np)
 
 
 def on_plane(pixels, camera, transform, cv2, np):
@@ -404,10 +398,11 @@ def classify_size(measurement, geometry):
 
 def render_depth(depth_mm, quality, cv2, np):
     low, high = quality["depth_min_mm"], quality["depth_max_mm"]
-    scaled = np.clip((depth_mm.astype(np.float64) - low) / (high - low), 0, 1)
+    scaled = np.clip((np.nan_to_num(depth_mm.astype(np.float64), nan=low) - low)
+                     / max(high - low, 1.), 0, 1)
     view = cv2.applyColorMap((scaled * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
     view = cv2.cvtColor(view, cv2.COLOR_BGR2RGB)
-    view[(depth_mm < low) | (depth_mm > high)] = (90, 90, 90)
+    view[~np.isfinite(depth_mm) | (depth_mm < low) | (depth_mm > high)] = (90, 90, 90)
     return view
 
 
@@ -471,61 +466,11 @@ def selected_pose(item, rgb, depth, context, settings, cv2, np, *, display_detec
                                display_detections=display_detections)
 
 
-def usable_scene_depth(depth_mm, context, quality, cv2, np):
-    """Original range-valid depth pixels in base_link; no mask, ROI or voxel reduction."""
-    usable = (np.isfinite(depth_mm) & (depth_mm > 0)
-              & (depth_mm >= quality["depth_min_mm"])
-              & (depth_mm <= quality["depth_max_mm"]))
-    yy, xx = np.nonzero(usable)
-    pixels = np.column_stack((xx, yy))
-    if not len(pixels):
-        return pixels, np.empty((0, 3), dtype=np.float64)
-    optical = rays(pixels, context["depth_camera"], cv2, np) * depth_mm[yy, xx, None] / 1000.
-    base_from_optical = (
-        rigid_matrix(context["pick_planning"]["base_from_platform"], "base-from-platform")
-        @ rigid_matrix(context["platform_from_optical"], "platform-from-optical"))
-    points = optical @ base_from_optical[:3, :3].T + base_from_optical[:3, 3]
-    valid = np.isfinite(points).all(axis=1)
-    return pixels[valid], points[valid]
-
-
-def nearby_depth_check(scene, item_xyz, geometry, np, *, visualization=None):
-    """Inclusive base-XY radius and base-Z height above the detected item surface."""
-    pixels, points = scene
-    radius_mm = geometry["nearby_depth_radius_mm"]
-    height_mm = geometry["nearby_depth_height_mm"]
-    dx, dy = points[:, 0] - item_xyz[0], points[:, 1] - item_xyz[1]
-    distance_squared = dx*dx + dy*dy
-    nearby = np.flatnonzero(distance_squared <= ((radius_mm + 1e-6) / 1000.)**2)
-    maximum = None
-    index = None
-    if len(nearby):
-        index = nearby[np.argmax(points[nearby, 2])]
-        maximum = float((points[index, 2] - item_xyz[2]) * 1000.)
-    evidence = {"radius_mm": radius_mm, "height_mm": height_mm,
-                "usable_point_count": len(points), "nearby_point_count": len(nearby),
-                "maximum_height_above_item_mm": maximum}
-    blocked = maximum is not None and maximum >= height_mm - 1e-6
-    if visualization is not None:
-        # Reuse the exact tested points/boundaries, including rejected candidates.
-        # These arrays stay inside the native worker; they are not pose evidence.
-        blockers = nearby[(points[nearby, 2] - item_xyz[2])*1000. >= height_mm - 1e-6]
-        visualization.update(evidence=evidence, item_xyz=np.array(item_xyz, copy=True),
-                             blocking_points=points[blockers], blocked=blocked,
-                             maximum_point=None if index is None else points[index])
-    if blocked:
-        x, y = pixels[index]
-        raise ValueError(
-            f"nearby depth point ({x}, {y}): {maximum:.2f} mm above item surface "
-            f"at {math.sqrt(distance_squared[index])*1000:.2f} mm radius; "
-            f"limits {height_mm:g} mm / "
-            f"{radius_mm:g} mm (base_link)")
-    return evidence
-
-
 def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                         *, display_detections=None, candidate_limit=None, nearby_views=None,
-                        unchecked=None):
+                        unchecked=None, render_images=True, prepared_scene=None, timings=None,
+                        roi_status=None):
+    started = time.monotonic()
     from .nearby_depth_overlay import draw_nearby_depth_overlays
     if candidate_limit is not None and (type(candidate_limit) is not int
                                         or not 1 <= candidate_limit <= 1000):
@@ -547,31 +492,15 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     projected_pick_roi = project_bin_roi(
         {**context, "roi": roi if clearance_roi is None else clearance_roi}, cv2, np)
     quality, geometry = settings["quality"], settings["geometry"]
-    low, high = quality["depth_min_mm"], quality["depth_max_mm"]
-    overlay = (shade_masks(rgb, [item["polygon"] for item in objects], cv2, np)
-               if settings["geometry_source"] == "mask" else rgb.copy())
-    depth_view = render_depth(depth_mm, quality, cv2, np)
-    depth_objects = []
-    for item in objects:
-        try:
-            length, width, _ = plane_dimensions(item["rectangle"], context, cv2, np)
-            measured = {"length_mm": length*1000, "width_mm": width*1000}
-        except ValueError:
-            measured = None
-        valid, _ = classify_size(measured, geometry)
-        depth_objects.append({**item, "size_valid": valid})
-    depth_objects = depth_objects if display_detections is None else display_detections
-    draw_depth_geometry(depth_view, depth_objects, settings["geometry_source"], context,
-                        context, cv2, np, bin_clearance=settings["bin_clearance"])
+    low, high = item_depth_limits(quality)
     center_roi = polygon_centroid(roi, np)
-    draw_bin_roi(overlay, context, "", cv2, np)
-    draw_bin_clearance(overlay, context, settings["bin_clearance"], cv2, np)
+    labels, depth_objects = {}, []
     candidates, rejected = [], []
     samples = {}
     camera_plans = {}
-    candidate_bases = {}
+    candidate_optical = {}
     nearby_checks = {}
-    scene_depth = None
+    scene_depth, scene_error = None, None
     for item in objects:
         center = item["center"]
         label = f"#{item['index']} {item['class_name']} {item['confidence']:.2f}"
@@ -588,6 +517,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             # Perspective can turn a pixel OBB into a quadrilateral. Fit the
             # metric enclosing rectangle on the agreed Z=0 plane, never at depth Z.
             length, width, edges = plane_dimensions(item["rectangle"], context, cv2, np)
+            depth_objects.append({**item, "size_valid": classify_size(
+                {"length_mm": length*1000, "width_mm": width*1000}, geometry)[0]})
             lengths = np.linalg.norm(edges, axis=1)
             axis_index = int(np.argmax(lengths))
             label += f" {length * 1000:.1f}x{width * 1000:.1f}mm"
@@ -621,10 +552,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                                dtype=bool)
             values[~in_item] = np.nan
             accepted, median, sigma = filter_depth(values, low, high, cv2, np)
-            depth_view[pixels[:, 1], pixels[:, 0]] = (255, 0, 0)
-            depth_view[pixels[accepted, 1], pixels[accepted, 0]] = (0, 0, 0)
-            cv2.polylines(depth_view, [np.rint(circle_px).astype(np.int32)], True,
-                          (0, 255, 255), 2)
+            if render_images and nearby_views is None:
+                samples[item["index"]] = (pixels, accepted, circle_px)
             good, total = int(accepted.sum()), len(pixels)
             label += f" depth {good}/{total}"
             if not depth_coverage_ok(good, total, quality["minimum_depth_fraction"]):
@@ -658,23 +587,9 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 planning["link6_from_robot_camera"], roi)
             camera_plans[item["index"]] = attitude
             if not attitude.accepted:
-                for mirrored, point in ((False, attitude.normal_camera_footprint_xy),
-                                        (True, attitude.mirrored_camera_footprint_xy)):
-                    draw_robot_camera_footprint(
-                        overlay, context, point, mirrored, False, cv2, np)
-                    draw_robot_camera_footprint(
-                        depth_view, {**context, "camera": depth_camera}, point,
-                        mirrored, False, cv2, np)
                 raise ValueError(
                     "robot-camera body extends outside bin ROI for normal and 180-degree attitudes")
-            candidate_bases[item["index"]] = item_in_base[:3, 3]
-            draw_pick_geometry(overlay, item["rectangle"], cv2, np)
-            draw_robot_camera_footprint(
-                overlay, context, attitude.selected_camera_footprint_xy,
-                attitude.mirrored, True, cv2, np)
-            draw_robot_camera_footprint(
-                depth_view, {**context, "camera": depth_camera},
-                attitude.selected_camera_footprint_xy, attitude.mirrored, True, cv2, np)
+            candidate_optical[item["index"]] = optical_point
             candidates.append({
                 "source_index": item["index"], "class_id": item["class_id"],
                 "class_name": item["class_name"], "confidence": item["confidence"],
@@ -704,16 +619,14 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                     "offset_direction": attitude.offset_direction,
                 },
             })
-            if candidate_limit is not None:
-                samples[item["index"]] = (pixels, accepted, circle_px)
             label += f" Z={position[2] * 1000:.1f}mm"
         except ValueError as exc:
             rejected.append({"source_index": item["index"], "reason": str(exc)})
             label += " | " + str(exc)
-        cv2.putText(overlay, label, (max(0, round(float(center[0])) - 50),
-                                     max(22, round(float(center[1])) - 15)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+        labels[item["index"]] = label
     candidates.sort(key=lambda c: (c["center_distance"], -c["confidence"], c["source_index"]))
+    geometry_ms = (time.monotonic() - started) * 1000.
+    clearance_started = time.monotonic()
     ranked, candidates = candidates, []
     for index, candidate in enumerate(ranked):
         if candidate_limit is not None and len(candidates) == candidate_limit:
@@ -722,70 +635,93 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             break
         # Select in final rank order, then scan nearby depth only until the
         # requested batch is full. Later geometric candidates stay unchecked.
-        if scene_depth is None:
-            scene_depth = usable_scene_depth(depth_mm, context, quality, cv2, np)
         source_id = candidate["source_index"]
-        nearby_checks[source_id] = {}
+        drawing = {} if render_images or nearby_views is not None else None
         try:
+            if scene_depth is None and scene_error is None:
+                try:
+                    scene_depth = usable_scene_depth(depth_mm, context, quality, cv2, np,
+                                                     prepared_scene=prepared_scene)
+                except ValueError as exc:
+                    scene_error = str(exc)
+            if scene_error is not None:
+                raise ValueError(scene_error)
             candidate["nearby_depth_filter"] = nearby_depth_check(
-                scene_depth, candidate_bases[source_id], geometry, np,
-                visualization=nearby_checks[source_id])
+                scene_depth, candidate_optical[source_id], geometry, np, visualization=drawing)
         except ValueError as exc:
-            rejected.append({"source_index": source_id, "reason": str(exc)})
+            rejection = {"source_index": source_id, "reason": str(exc)}
+            if hasattr(exc, "evidence"):
+                rejection["nearby_depth_filter"] = exc.evidence
+            rejected.append(rejection)
+            if drawing:
+                nearby_checks[source_id] = drawing
             continue
+        if drawing:
+            nearby_checks[source_id] = drawing
         candidates.append(candidate)
-    if candidate_limit is not None:
-        # Render from the untouched pair AFTER acquisition. Only the chosen
-        # items get pick annotations; blocked nearby checks remain diagnostic.
-        chosen = candidates
-        by_id = {item["index"]: item for item in objects}
-        chosen_objects = [by_id[c["source_index"]] for c in chosen]
-        overlay = (shade_masks(rgb, [o["polygon"] for o in chosen_objects], cv2, np)
+    clearance_ms = (time.monotonic() - clearance_started) * 1000.
+    render_started = time.monotonic()
+    overlay = depth_view = None
+    if render_images and nearby_views is None:
+        chosen_ids = {c["source_index"] for c in candidates}
+        shown = (objects if candidate_limit is None
+                 else [o for o in objects if o["index"] in chosen_ids])
+        overlay = (shade_masks(rgb, [o["polygon"] for o in shown], cv2, np)
                    if settings["geometry_source"] == "mask" else rgb.copy())
-        depth_view = render_depth(depth_mm, quality, cv2, np)
-        draw_bin_roi(overlay, context, "", cv2, np)
+        depth_view = render_depth(depth_mm, {**quality, "depth_min_mm": low}, cv2, np)
+        status = draw_bin_roi(overlay, context, "", cv2, np)
+        if roi_status is not None:
+            roi_status.update(status)
         draw_bin_clearance(overlay, context, settings["bin_clearance"], cv2, np)
-        draw_depth_geometry(depth_view, [{**o, "size_valid": True} for o in chosen_objects],
-                            settings["geometry_source"], context, context, cv2, np,
-                            bin_clearance=settings["bin_clearance"])
-        for rank, candidate in enumerate(chosen, 1):
-            item = by_id[candidate["source_index"]]
-            draw_pick_geometry(overlay, item["rectangle"], cv2, np, color=(0, 255, 0))
-            _, _, circle = depth_sampling_circle(
-                item["center"], geometry["pickdepth_radius"], context, cv2, np)
-            pixels, accepted, depth_circle = samples[candidate["source_index"]]
+        shown_depth = (display_detections
+                       if display_detections is not None and candidate_limit is None
+                       else [o for o in depth_objects
+                             if candidate_limit is None or o["index"] in chosen_ids])
+        draw_depth_geometry(depth_view, shown_depth, settings["geometry_source"], context,
+                            context, cv2, np, bin_clearance=settings["bin_clearance"])
+        by_id = {o["index"]: o for o in objects}
+        for source_id, (pixels, accepted, boundary) in samples.items():
+            if candidate_limit is not None and source_id not in chosen_ids:
+                continue
             depth_view[pixels[:, 1], pixels[:, 0]] = (255, 0, 0)
             depth_view[pixels[accepted, 1], pixels[accepted, 0]] = (0, 0, 0)
+            cv2.polylines(depth_view, [np.rint(boundary).astype(np.int32)], True, (0, 255, 255), 2)
+        for source_id, attitude in camera_plans.items():
+            if candidate_limit is not None and source_id not in chosen_ids:
+                continue
+            plans = ([(attitude.mirrored, attitude.selected_camera_footprint_xy)]
+                     if attitude.accepted
+                     else [(False, attitude.normal_camera_footprint_xy),
+                           (True, attitude.mirrored_camera_footprint_xy)])
+            for mirrored, footprint in plans:
+                for image, model in ((overlay, camera), (depth_view, depth_camera)):
+                    draw_robot_camera_footprint(image, {**context, "camera": model}, footprint,
+                                                mirrored, attitude.accepted, cv2, np)
+        for rank, candidate in enumerate(candidates, 1):
+            item = by_id[candidate["source_index"]]
+            draw_pick_geometry(overlay, item["rectangle"], cv2, np,
+                               color=(0, 255, 0) if candidate_limit is not None else (255, 225, 0))
+            _, _, circle = depth_sampling_circle(item["center"], geometry["pickdepth_radius"],
+                                                 context, cv2, np)
+            boundary = samples[candidate["source_index"]][2]
             depth_center = reproject_pixels([candidate["pixel"]], camera, depth_camera, cv2, np)[0]
-            for image, boundary, center in ((overlay, circle, candidate["pixel"]),
-                                            (depth_view, depth_circle, depth_center)):
-                cv2.polylines(image, [np.rint(boundary).astype(np.int32)], True,
-                              (0, 255, 255), 2, cv2.LINE_AA)
+            for image, ring, center in ((overlay, circle, candidate["pixel"]),
+                                        (depth_view, boundary, depth_center)):
+                cv2.polylines(image, [np.rint(ring).astype(np.int32)],
+                              True, (0, 255, 255), 2, cv2.LINE_AA)
                 cv2.putText(image, f"P{rank}", tuple(np.rint(center).astype(int) + [8, 20]),
                             cv2.FONT_HERSHEY_SIMPLEX, .7, (0, 255, 0), 2, cv2.LINE_AA)
-            attitude = camera_plans[candidate["source_index"]]
-            draw_robot_camera_footprint(
-                overlay, context, attitude.selected_camera_footprint_xy,
-                attitude.mirrored, True, cv2, np)
-            draw_robot_camera_footprint(
-                depth_view, {**context, "camera": depth_camera},
-                attitude.selected_camera_footprint_xy, attitude.mirrored, True, cv2, np)
-        draw_nearby_depth_overlays(
-            (overlay, depth_view) if nearby_views is None else nearby_views,
-            context, nearby_checks, cv2, np)
-        return overlay, depth_view, candidates, rejected
-    for rank, candidate in enumerate(candidates, 1):
-        cv2.putText(overlay, f"P{rank}", tuple(np.rint(candidate["pixel"]).astype(int) + [8, 20]),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-        depth_label = (f"P{rank}: Z={candidate['position'][2]*1000:.1f}mm "
-                       f"camera depth={candidate['filtered_camera_depth']*1000:.1f}mm "
-                       f"{candidate['accepted_depth_count']} OK / "
-                       f"{candidate['rejected_depth_count']} rejected")
-        cv2.putText(depth_view, depth_label, (10, 65 + rank * 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(depth_view, "Accepted BLACK | Rejected RED | MAD 3 sigma", (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-    draw_nearby_depth_overlays(
-        (overlay, depth_view) if nearby_views is None else nearby_views,
-        context, nearby_checks, cv2, np)
+        if candidate_limit is None:
+            for item in objects:
+                center = item["center"]
+                cv2.putText(overlay, labels[item["index"]],
+                            (max(0, round(float(center[0]))-50),
+                             max(22, round(float(center[1]))-15)),
+                            cv2.FONT_HERSHEY_SIMPLEX, .55, (255, 255, 255), 1, cv2.LINE_AA)
+        draw_nearby_depth_overlays((overlay, depth_view), context, nearby_checks, cv2, np)
+    elif nearby_views is not None:
+        draw_nearby_depth_overlays(nearby_views, context, nearby_checks, cv2, np)
+    if timings is not None:
+        timings.update(geometry_ms=geometry_ms, clearance_ms=clearance_ms,
+                       rendering_ms=(time.monotonic() - render_started)*1000.)
     return overlay, depth_view, candidates, rejected

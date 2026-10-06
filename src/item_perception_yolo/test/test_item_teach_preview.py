@@ -23,7 +23,7 @@ def window(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "ui_state_path", lambda: tmp_path / "last_session.json")
     monkeypatch.setattr(gui, "workspace_root", lambda: tmp_path)
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "warning", MagicMock())
-    node = SimpleNamespace(
+    node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False,
         events=MagicMock(), disarm=MagicMock(), arm=MagicMock(), close_runtime=MagicMock(),
         camera_mount=MagicMock(),
         rviz=MagicMock(compute=MagicMock(return_value=None)),
@@ -76,10 +76,10 @@ def test_nearby_filter_fields_live_edit_in_item_size_section(window):
     assert group.layout().labelForField(window.inputs["nearby_depth_radius_mm"]).text() == \
         "Nearby depth radius filter (mm)"
     assert group.layout().labelForField(window.inputs["nearby_depth_height_mm"]).text() == \
-        "Maximum nearby height above item surface (mm)"
+        "Maximum nearby floor-height difference (mm)"
     for key, value in core.NEARBY_DEPTH_DEFAULTS.items():
         assert float(window.inputs[key].text()) == value
-        assert "Standoff/tool length is excluded" in window.inputs[key].toolTip()
+        assert "standoff is excluded" in window.inputs[key].toolTip()
     for key, value in (("height", "80"), ("width", "40"), ("tolerance", "5")):
         window.inputs[key].setText(value)
     window.yolo_toggle.setChecked(True)
@@ -154,7 +154,8 @@ def test_teach_has_no_controller_validation_action_or_request_state(window):
     calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)]
     assert not any(isinstance(node.func, ast.Attribute) and node.func.attr == "create_client"
                    for node in calls)
-    assert "/robot_controller/" not in source
+    assert "/robot_controller/status" in source
+    assert "create_client(" not in source
 
 
 def test_arming_from_all_view_still_requires_production_settings(window):
@@ -444,7 +445,7 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
         window._refresh_video()
         gui.QtWidgets.QApplication.processEvents()
     assert "RESULT SNAPSHOT — DETECTIONS: 0" in window.rgb_feedback.text()
-    assert "STALE Frame age 1.10s | inference 555.0ms" in window.rgb_feedback.text()
+    assert "STALE Frame age 1.10s | processing 555.0ms" in window.rgb_feedback.text()
     assert "conf 0.25 / IoU 0.7 / cap 100" in window.rgb_feedback.text()
     assert "Depth age: 1.05s" in window.depth_feedback.text()
     for feedback, image, pixels in (
@@ -452,7 +453,7 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
         (window.depth_feedback, window.depth_video, view["depth_rgb"]),
     ):
         assert feedback.isVisible() and feedback.wordWrap()
-        assert "orange height above item surface" in feedback.text()
+        assert "orange floor-height limit" in feedback.text()
         assert "NEAR OK is this check only" in feedback.text()
         assert feedback.textFormat() == gui.QtCore.Qt.PlainText
         assert feedback.parent() is image.parent()
@@ -853,7 +854,7 @@ def paired_teach(window, tmp_path, monkeypatch):
         "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": .5}, "gripper": {"use_grip": True, "grip_onpick": True},
         "retry": {"pose_candidates": 3},
-        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+        "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                      "height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 45.},
         "yolo": {"confidence": .63, "iou": .35, "max_detections": 17,
                  "image_size": 1280, "class_ids": [1]},
@@ -1157,7 +1158,7 @@ def test_depth_percentage_load_recovery_and_save(
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
     window._save()
     saved, _ = core.load_item_profile(path, root=tmp_path)
-    assert saved["schema_version"] == 12
+    assert saved["schema_version"] == 13
     assert saved["quality"]["minimum_depth_fraction"] == .75
     assert "minimum_depth_samples" not in saved["quality"]
     window._load(path, prefill=True)
@@ -1198,7 +1199,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 12 and saved["retry"] == {"pose_candidates": 3}
+    assert saved["schema_version"] == 13 and saved["retry"] == {"pose_candidates": 3}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
     assert core.settings_from_profile(saved) == settings
@@ -1467,7 +1468,7 @@ def test_slow_inference_keeps_annotated_snapshot_and_its_roi(window, mode):
     assert window.displayed_view is annotated  # Not the newer, unannotated raw RGB.
     text = window.video_status.text()
     assert "RESULT SNAPSHOT" in text and "STALE Frame age 1.00s" in text
-    assert "inference 800.0ms" in text
+    assert "processing 800.0ms" in text
     assert "same result snapshot, not a live projection" in text
     assert ("DETECTIONS: 23" if mode == "all" else "FILTERED: 4 valid picks") in text
     window.job_results.put(("preview", None, RuntimeError("Synthetic TF unavailable")))

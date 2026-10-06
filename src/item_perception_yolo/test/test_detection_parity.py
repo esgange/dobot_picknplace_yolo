@@ -1,3 +1,4 @@
+import json
 """Identical saved teaching/deployment inputs must produce identical pose batches."""
 
 import copy
@@ -51,6 +52,9 @@ def test_saved_gui_and_headless_item_batches_match(
     assert responses[0].batch_id != responses[1].batch_id
     # Request identity is deliberately unique; geometry, ranking, hashes and evidence match.
     for response in responses:
+        evidence = json.loads(response.diagnostics_json)
+        evidence.pop("timings_ms")
+        response.diagnostics_json = json.dumps(evidence, sort_keys=True)
         response.batch_id = ""
         for candidate in response.candidates:
             candidate.id = candidate.id.split(":", 1)[1]

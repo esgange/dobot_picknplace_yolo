@@ -26,7 +26,7 @@ def preview(monkeypatch):
     rgb = {"rgb": bytes(12), "width": 2, "height": 2,
            "stamp_ns": 100_000_000_000, "received_at": 100.}
     depth = {**rgb, "depth": bytes(8)}
-    node = SimpleNamespace(
+    node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False,
         create_publisher=MagicMock(side_effect=lambda *_: MagicMock()), create_timer=MagicMock(),
         _validate_sources=MagicMock(), get_clock=lambda: SimpleNamespace(
             now=lambda: Time(nanoseconds=int(clock[0] * 1e9))),

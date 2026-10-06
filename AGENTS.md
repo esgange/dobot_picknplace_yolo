@@ -1718,6 +1718,40 @@ No extra inference, per-pick validation service, controller depth scan, new
 setting, hardware command, automatic artifact deployment or process restart.
 
 
+Rule 237 adds schema-13 geometry.depth_frame_count (1/3/5, default 3) and
+floor-relative item clearance, superseding rules 229/234's base-XY/Z and
+outside-bin interpretation. Use each original measured point's own depth and
+registered optical model. Express platform Z=0 in camera coordinates; evaluate
+floor depth at each point's physical camera XY and measure height along camera Z.
+Within/on the saved camera-XY radius reject maximum nearby height minus candidate
+surface height at/above the saved threshold (150/60 mm defaults), excluding
+standoff. Include physical outer-bin boundary and inset margin; exclude outside
+outer bin. Preserve candidate containment/body checks and ranked early stopping.
+Invalid calibration/floor/boundaries/candidate/local depth fails closed.
+Production/simulation require distinct advancing post-request frames, existing
+freshness/sync/CameraInfo/source gates and at most 0.05 mm/0.05 degree camera motion
+across the bundle. Reacquire moving bundles within the same deadline. Select RGB
+near the depth midpoint. Apply item-only max(500 mm, configured minimum) and saved
+maximum before a strict-majority per-pixel median. Preserve float32 millimetres,
+invalid pixels, spatial median/MAD and identical snapshot use across pose, clearance,
+teaching, clicked inspection and debug images. Newest depth stamp is returned;
+record all stamps and explicit platform_floor_camera_z_v1 heights/difference/counts.
+Reject incompatible native evidence; ROS layouts stay unchanged. Shared/tray depth
+limits are unchanged. Older profiles require explicit unarmed GUI review/Save and
+manual deployment; never rewrite operator artifacts automatically.
+Measure validation, wait, capture/median, YOLO, geometry, clearance, rendering,
+transport and controller stages; legacy inference_ms remains aggregate processing.
+Skip production images when debug is off. Reuse per-capture original scene geometry
+and bounded camera-only projections; never cache eligibility. Parsed caches key
+verified content, retain boundary content reads/hash and dynamic binding checks,
+and share one verified item/model snapshot within a controller validation pass.
+Fresh typed Pick/Place/Auto Run status suspends new Item Teach background YOLO/voxel
+jobs read-only, preserving raw RGB and age-labelled displays. Existing work finishes;
+fresh idle resumes, missing/stale status falls back to request priority. Headless
+stays independent; no new executor/hardware client, motion/retry change, automatic
+restart or deployment. Preserve YOLO 448 and controller bounded empty-batch retry.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

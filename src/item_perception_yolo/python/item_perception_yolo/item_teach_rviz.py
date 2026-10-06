@@ -13,6 +13,7 @@ from std_msgs.msg import String
 from tf2_ros import TransformException
 from visualization_msgs.msg import Marker, MarkerArray
 
+from .depth_snapshot import DEPTH_ENCODING, median_depth_snapshot
 from .item_detector import validate_pair, validate_candidates, validate_candidate_selection
 from .pose_guides import pose_guide_markers
 
@@ -61,7 +62,8 @@ class TeachingRvizPreview:
             return None
         if options.get("error"):
             return {"error": options["error"]}
-        if node.request_lock.locked() or not node.operation_lock.acquire(blocking=False):
+        if (node.background_suspended() or node.request_lock.locked()
+                or not node.operation_lock.acquire(blocking=False)):
             return {"error": "Pose request has priority; RViz preview waiting"}
         try:
             node._validate_sources()
@@ -83,18 +85,19 @@ class TeachingRvizPreview:
                 context = node._measurement_context(
                     rgb, options["quality"]["robot_tf_max_age_sec"])
                 with node.condition:
-                    validate_pair(rgb, node._depth, node._color_info, node._depth_info,
-                                  node.get_clock().now().nanoseconds, options["quality"])
-                    if context["camera"] != node._color_info:
-                        raise ValueError("Color CameraInfo changed during RViz capture")
-                    depth = dict(node._depth)
-                    context["depth_camera"] = copy.deepcopy(node._depth_info)
+                    rgb = node._bundle_rgb(rgb, options["depth_frame_count"])
+                    frames, color_info, depth_info = node._depth_window(
+                        rgb, options["quality"], options["depth_frame_count"])
+                context = node._snapshot_context(
+                    rgb, frames, color_info, depth_info, options["quality"])
+                depth = median_depth_snapshot(frames, options["quality"])
             context["pick_planning"] = options["planning"]
             overlay_requested = bool(options["settings"] is not None
                                      and view.get("preview_mode") == "all"
                                      and view.get("depth_rgb"))
             header = {"operation": "teaching_rviz", "generation": epoch,
-                      "nearby_overlay": overlay_requested,
+                      "nearby_overlay": overlay_requested, "depth_encoding": DEPTH_ENCODING,
+                      "camera_generation": generation,
                       "width": rgb["width"], "height": rgb["height"], "context": context,
                       "base_from_platform": applied.platform.base_from_platform.tolist(),
                       "quality": options["quality"], "settings": options["settings"],

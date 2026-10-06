@@ -1,3 +1,4 @@
+from collections import deque
 import io
 import os
 from pathlib import Path
@@ -58,7 +59,7 @@ def test_new_camera_subscription_discards_old_generation():
     node = SimpleNamespace(
         _camera_generation=2, _feedback_lock=threading.Lock(), _image=None,
         condition=threading.Condition(),
-        _image_sequence=0, camera_status="waiting", events=MagicMock(),
+        _image_sequence=0, _rgb_history=deque(maxlen=7), camera_status="waiting", events=MagicMock(),
         get_clock=lambda: SimpleNamespace(
             now=lambda: SimpleNamespace(nanoseconds=100_100_000_000)),
     )
@@ -293,7 +294,7 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         "geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
         "bin_clearance": {"p1_p2": None, "p2_p3": None,
                           "p3_p4": None, "p4_p1": None},
-        "geometry": {"nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
+        "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                      "height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 30.}}
     header["context"] = {
         "camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},
@@ -310,7 +311,8 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
             "pick_rotation_deg": 0.0, "standoff_height_mm": 90.0}}
     try:
         pixels = bytes([40, 50, 60] * (320 * 240))
-        depth = struct.pack("<H", 700) * (320 * 240)
+        header["depth_encoding"] = "32FC1_mm"
+        depth = struct.pack("<f", 700) * (320 * 240)
         send_packet(child.stdin, header, pixels + depth)
         result, data = receive_packet(child.stdout)
         assert result["state"] == "ok", result
@@ -324,6 +326,12 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         assert batch_result["state"] == "ok", batch_result
         assert batch_result["has_depth_view"] and len(batch_pixels) == len(pixels)*2
         assert batch_result["candidates"] == result["candidates"]
+        send_packet(child.stdin, {**header, "candidate_limit": 3, "render_images": False}, pixels + depth)
+        compact, no_pixels = receive_packet(child.stdout)
+        assert compact["state"] == "ok" and not no_pixels
+        assert not compact["has_images"] and not compact["has_depth_view"]
+        assert compact["candidates"] == batch_result["candidates"]
+        assert compact["rejected"] == batch_result["rejected"]
         assert child.poll() is None
         # Unified RGB/depth preview does not auto-generate a pose for any item.
         preview_request = {**header, "operation": "preview", "context": None,
@@ -339,7 +347,7 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         assert not preview_result["candidates"] and not preview_result["rejected"]
         # One selected exact-center rectangle: no second YOLO prediction/model load.
         rectangle = [[140, 110], [180, 110], [180, 130], [140, 130]]
-        click = {"operation": "selected_pose", "generation": 2, "width": 320, "height": 240,
+        click = {"depth_encoding": "32FC1_mm", "operation": "selected_pose", "generation": 2, "width": 320, "height": 240,
                  "context": header["context"], "settings": header["settings"],
                  "display_detections": preview_result["detections"],
                  "detection": {"source_index": 7, "class_id": 1, "class_name": "test",
@@ -367,7 +375,7 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         assert depth_overlay[(180*320+260)*3:(180*320+260)*3+3] == bytes([255]*3)
         # Default teaching RViz operation reuses this exact pair/detection without
         # another prediction, model argument or production pose request.
-        visualization = {"operation": "teaching_rviz", "generation": 2,
+        visualization = {"depth_encoding": "32FC1_mm", "operation": "teaching_rviz", "generation": 2,
                          "nearby_overlay": False, "candidate_limit": 3,
                          "width": 320, "height": 240, "context": header["context"],
                          "base_from_platform": header["context"]["pick_planning"][

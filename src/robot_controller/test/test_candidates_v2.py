@@ -17,7 +17,7 @@ class Events:
 
 def configuration():
     profile = {
-        "model": {"sha256": "model"},
+        "model": {"sha256": "model"}, "geometry": {"depth_frame_count": 3},
         "yolo": {"confidence": 0.4, "class_ids": [0, 2]},
         "quality": {"sync_tolerance_sec": 0.1},
     }
@@ -44,7 +44,7 @@ def valid_result(*, candidate_count=1):
         "profile_sha256": "profile", "model_sha256": "model",
         "camera_sha256": "camera", "platform_sha256": "platform",
         "robot_camera_sha256": "robot_camera",
-        "bin_sha256": "bin",
+        "bin_sha256": "bin", "depth_frame_stamps_ns": [99_934_000_000, 99_967_000_000, 100_000_000_000],
         "debug_capture": {
             "requested": False, "rgb_path": "", "depth_path": "", "error": ""},
     })
@@ -135,6 +135,9 @@ def test_candidate_orientation_must_be_platform_plane_yaw(tmp_path):
 def test_synchronized_positive_candidate_timestamps_do_not_expire(tmp_path):
     result = valid_result()
     result.header.stamp.sec = result.depth_stamp.sec = 1
+    evidence = json.loads(result.diagnostics_json)
+    evidence["depth_frame_stamps_ns"] = [940_000_000, 970_000_000, 1_000_000_000]
+    result.diagnostics_json = json.dumps(evidence)
     batch = client(tmp_path)._validate_result(result, configuration(), False)
     assert batch.observation_stamp_ns == 1_000_000_000
 
@@ -171,3 +174,22 @@ def test_detector_cannot_return_more_than_taught_pose_candidates(tmp_path):
     with pytest.raises(FeedbackFailure, match="batch ID/count"):
         client(tmp_path)._validate_result(
             valid_result(candidate_count=4), configuration(), False)
+
+
+@pytest.mark.parametrize("stamps", [[], [100_000_000_000],
+                                    [99_934_000_000, 99_934_000_000, 100_000_000_000],
+                                    [99_800_000_000, 99_967_000_000, 100_000_000_000],
+                                    [99_934_000_000, 99_967_000_000, 100_100_000_000]])
+def test_controller_rejects_incompatible_depth_bundle_evidence(tmp_path, stamps):
+    result = valid_result()
+    evidence = json.loads(result.diagnostics_json)
+    evidence["depth_frame_stamps_ns"] = stamps
+    result.diagnostics_json = json.dumps(evidence)
+    with pytest.raises(FeedbackFailure, match="temporal depth"):
+        client(tmp_path)._validate_result(result, configuration(), False)
+
+
+def test_controller_rejects_pre_request_bundle_even_if_last_frame_is_new(tmp_path):
+    with pytest.raises(FeedbackFailure, match="predates request"):
+        client(tmp_path)._validate_result(valid_result(), configuration(), False,
+                                         requested_at_ns=99_950_000_000)

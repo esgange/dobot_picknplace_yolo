@@ -546,7 +546,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-12 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-13 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -575,36 +575,47 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-12 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-13 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-12 profiles; they never recover old files.
+accept only complete schema-13 profiles; they never recover old files.
 The removed zheight_offset is not recovered. Old retract_height is blank in GUI
 drafts because it now means extra clearance above pre-pick, not above pick.
 Schema-7 and older drafts also leave `pick_rotation` blank; explicitly enter
-0–90° before saving schema 12. Schema-8 and older drafts leave all four optional
+0–90° before saving schema 13. Schema-8 and older drafts leave all four optional
 bin-wall clearance fields blank for explicit review. Schema-9 and older drafts
 leave `trayplace_height` blank; enter the intended tray clearance explicitly and
 Save before loading the new profile into the controller or deploying it for
 headless use. No automatic sum of pick heights or default is substituted.
 
 Item Teach section **4  Item size / pick depth** adds **Nearby depth radius filter
-(mm)**, default **150**, and **Maximum nearby height above item surface (mm)**, default
+(mm)**, default **150**, and **Maximum nearby floor-height difference (mm)**, default
 **60**. Reject a candidate if any usable original depth pixel lies within/on that
-horizontal radius and at least that far above the detected item surface, measured
-in robot-base XY/Z. Standoff/tool-length compensation is excluded from this check.
-Include points outside the item mask/bin ROI; the check is independent of RViz
+camera-XY radius and at least that floor-relative height difference above the item.
+Evaluate the platform Z=0 floor at each point’s physical camera XY and measure
+height parallel to camera Z. Standoff/tool-length compensation is excluded from this check.
+Include the outer bin border and inset margin, including outside masks;
+exclude depth outside the outer bin. The check is independent of RViz
 voxels. First rank candidates that pass the ordinary geometry checks, then measure
 nearby height in that order. Skip blocked candidates and stop immediately once
 the requested number pass (for example, three), or the ranked list is exhausted.
 Later candidates stay unchecked; the controller receives only checked poses.
 Teaching preview, Simulate Trigger and headless detection share this sequence.
-Schema 12 saves these as
+Schema 13 saves these as
 `geometry.nearby_depth_radius_mm` and `geometry.nearby_depth_height_mm`.
 Older profiles open as recovery drafts proposing the new defaults for review.
 Save and manually redeploy the pair, then reload all consumers; runtime readers
-require complete schema 12. Existing operator artifacts are not rewritten.
+require complete schema 13. Existing operator artifacts are not rewritten.
+Schema 13 also requires `geometry.depth_frame_count`: 1, 3 (default) or 5.
+Production/simulation use distinct post-request frames and a strict-majority
+float32 median for all pose, clearance and image paths. Item-only depth limits
+start at max(500 mm, configured minimum); tray limits stay unchanged.
+Review these changed measurements and frame settings explicitly before Save.
+Debug-disabled production skips rendering; fresh active controller status suspends
+new Item Teach background jobs. Source validation still reads/verifies contents.
+See the [capture and timing contract](src/item_perception_yolo/README.md#schema-13-capture-and-request-scheduling)
+for deployment/restart and measurement details.
 
 To inspect this check, Item Teach overlays both RGB and registered depth:
 solid yellow = radius at the item surface, dashed orange = the height limit
@@ -621,7 +632,7 @@ remaining candidates were left unchecked. Clicking an unchecked item measures
 that selected item only. `valid_count` reports validated returned poses, not an
 exhaustive count of every potentially usable item in the image.
 
-Item Teach schema 12 provides optional inward clearances for Bin Teach edges
+Item Teach schema 13 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
 valid inset is projected in light blue on both RGB and registered depth. The
 green ROI ignores a detection only when its platform-plane footprint is fully

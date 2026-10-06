@@ -144,14 +144,18 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Other form edits clear the selection/TF and disarm without stopping detection.
 
    Section **4  Item size / pick depth — mm** also contains **Nearby depth radius
-   filter (mm)** (default **150**) and **Maximum nearby height above item surface (mm)**
+   filter (mm)** (default **150**) and **Maximum nearby floor-height difference (mm)**
    (default **60**). Save them as `geometry.nearby_depth_radius_mm` and
    `geometry.nearby_depth_height_mm`; both must be finite and greater than zero.
    A candidate fails if even one usable depth point is within/on that horizontal
    radius and at least that high above the detected item surface. Exclude
    `motion.standoff_height` from this obstacle reference; it only compensates robot
-   motion. Distances use robot-base XY/Z, not camera depth or
-   platform-normal height. Rank geometrically eligible poses first, then check
+   motion. Radius uses camera optical XY. Height is floor-relative along camera Z,
+   evaluating the platform Z=0 plane beneath each measured point. Include the outer
+   bin border and inset margin, but exclude points outside the outer bin.
+   **Depth frames (1, 3 or 5)** defaults to **3** (`geometry.depth_frame_count`).
+   The effective item minimum is max(500 mm, saved minimum); tray limits are unchanged.
+   Rank geometrically eligible poses first, then check
    nearby height one candidate at a time. Skip each blocked candidate and stop
    when `pose_candidates` (or the request's smaller count) have passed. Stop with
    SHORTAGE/NO_VALID_ITEMS if exhausted. Leave remaining poses unchecked. Clicked
@@ -162,6 +166,109 @@ ros2 launch item_perception_yolo item_teach.launch.py
    to advertise `/item_detect/get_item_poses`. OFF removes the service. GUI and
    headless detector must not advertise it simultaneously. No robot motion is
    performed by either mode.
+
+### Schema 13 capture and request scheduling
+
+Production and Simulate Trigger select 1, 3 or 5 distinct advancing depth frames
+captured after the request. RGB is selected near the depth-window midpoint; every
+frame must satisfy the existing freshness, RGB synchronization and CameraInfo
+checks. Bounded histories are invalidated on camera/source changes. For on-hand
+cameras every pair of RGB/depth-time transforms must remain within 0.05 mm / 0.05°;
+a moving bundle is reacquired within the same request deadline.
+
+The shared acquisition layer masks readings outside `[max(500, depth_min_mm),
+depth_max_mm]` before aggregation. A per-pixel median needs a strict majority
+(two of three); missing support becomes NaN. Immutable float32 millimetres preserve
+fractional values. Pose sampling, clearance, clicked inspection, teaching geometry
+and debug images use that exact median; local spatial median/MAD remains in place.
+The response depth timestamp is the newest contributing frame. Diagnostics record
+all contributing timestamps, capture span and stage timings. Shared depth settings
+and tray capture/processing keep their original behavior.
+
+The existing `inference_ms` is aggregate native processing, including YOLO,
+geometry, clearance and optional rendering. `timings_ms` separates those stages,
+source validation, preview wait, capture (including median), median preparation,
+planning validation, native round-trip/transport and total detector duration.
+Controller `candidate_timing` records validation, service wait and total latency.
+Native transport is the round-trip residual outside measured native processing;
+it also includes dispatch/scheduling and worker preparation.
+Overlapping/nested stage durations must not be summed as independent costs.
+
+Debug-disabled production skips annotated-image generation and transfer. Teaching,
+simulation and requested debug capture render completed geometry once. Camera-only
+rays/mappings are cached by CameraInfo/dimensions, while per-capture original scene
+geometry remains separate from display voxels. Parsed artifact caches use verified
+file bytes; files and model hashes are still read at validation boundaries. File
+size/mtime alone never authorizes reuse of changed artifacts.
+
+Item Teach subscribes read-only to `/robot_controller/status`. Fresh active Pick,
+Place or Auto Run suspends new background YOLO/voxel jobs, retains age-labelled
+visualization and raw RGB, and resumes on fresh idle status. An already-running
+job finishes normally. Missing/stale status uses existing request-priority scheduling;
+headless remains independent. No extra executor, hardware client or worker kill.
+
+Older schemas open only as unarmed recovery drafts. Review changed floor-relative
+measurement, radius/height, proposed three-frame median and effective minimum, then
+explicitly Save the schema-13 pair. Manually deploy matching YAML/.pt to the strict
+flat `runtime_teach/` catalog. Rebuild source packages while applications are stopped,
+then manually restart Item Teach/Item Detect and controller consumers and reload
+matching profiles. Do not run GUI/headless pose providers simultaneously. Code
+installation never rewrites saved profiles, calibration, models or runtime deployment.
+ROS service/message layouts and YOLO's 448 × 448 default are unchanged.
+
+Manual rebuild, after stopping the perception/controller applications:
+
+```bash
+source scripts/source_ros_workspace.bash
+colcon build --symlink-install --packages-select \
+  camera_calibration item_perception_yolo tray_perception robot_controller
+source install/setup.bash
+```
+
+Then open the old Item Teach file in the updated GUI, review recovery fields,
+floor/radius/height and frame count, and explicitly Save. For headless use, copy
+the saved same-stem YAML/.pt pair into `runtime_teach/`, preserving its one-item-pair
+catalog rule and existing Bin/Tray artifacts. Finish deployment before restarting
+headless Item Detect/controller. Reload the matching profile in controller GUI
+mode. Calibration/model selection remains explicit; this change performs none of
+these operator actions automatically.
+
+### Acquisition benchmark (2026-10-06)
+
+The reproducible `scripts/benchmark_item_acquisition.py` uses the same synthetic
+640 × 480, 700 mm depth scene, six fixed detections and three returned poses.
+Compare baseline `02e139d` with this change using the pinned CPU runtime, one
+OpenCV thread, three warmups and 30 measured runs. The benchmark includes CPU
+median preparation in the new acquisition time; it excludes YOLO, artifact
+validation, ROS/native transport and real camera waiting. All returned positions
+and rankings matched. These are synthetic processing measurements, not a robot
+cycle-time or full service-latency claim.
+
+| Processing from supplied captures | Median ms | p95 ms |
+| --- | ---: | ---: |
+| Baseline, single frame, mandatory images | 127.8 | 130.2 |
+| Schema 13, three-frame median, debug off | 100.1 | 102.7 |
+| Schema 13, three-frame median, debug on | 123.3 | 127.2 |
+
+With debug off, median stage durations were median preparation 24.4 ms,
+ordinary geometry 29.3 ms and clearance 46.0 ms; image rendering was below
+0.01 ms. Debug rendering took 23.2 ms median. Nested timings are not additive
+percentile estimates. The strict three-frame window spans another 66.7 ms at
+30 FPS, plus the first-frame arrival phase; that deliberate acquisition wait
+can outweigh the measured CPU savings. Use request `timings_ms` and controller
+`candidate_timing` to measure actual deployment latency before drawing a speed
+conclusion. No recorded capture archive or live hardware benchmark was used.
+
+After sourcing the isolated build, reproduce current measurements with:
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 scripts/benchmark_item_acquisition.py \
+  --runtime install/nearby_depth_check/item_perception_yolo/lib/item_perception_yolo/yolo_runtime
+```
+
+Add `--render` for debug rendering. `--python-root` accepts an exported older
+`item_perception_yolo/python` tree for the identical baseline fixture; exporting
+source must not replace the active installation or operator files.
 
 ### Default 1 Hz RViz preview
 
@@ -257,7 +364,7 @@ The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
 Armed ON is highlighted red so advertised production pose-service state cannot
 be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
-a complete saved/loaded schema-12 profile, its verified model, matching current
+a complete saved/loaded schema-13 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
 first. It neither advertises/calls the pose service nor issues robot commands.
 
@@ -317,7 +424,7 @@ recorded only in the existing bounded package events.
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict production item schema 12, class filters and quality gates remain enforced.
+strict production item schema 13, class filters and quality gates remain enforced.
 
 ### Pick-oriented RGB overlays
 
@@ -424,7 +531,7 @@ if weight replacement precedes a YAML write failure, restore the original model.
 YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
 never silently load. A success dialog names both files; the original external
 model remains untouched and the pair works without it.
-**Load Item Teach** accepts only that directory. Complete schema-12 files load
+**Load Item Teach** accepts only that directory. Complete schema-13 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
 verification, YOLO ON and fresh station inputs remain mandatory. Loading
@@ -440,7 +547,7 @@ The warning/Activity log explains every cleared field. Missing internal
 Recovery also applies to named-file startup prefill; any independently verified
 paired model then loads automatically. Missing/changed pairs never execute.
 No recovered draft can simulate, arm or be validated in the controller until
-reviewed and saved as a strict schema-12 pair. Same known item name overwrites
+reviewed and saved as a strict schema-13 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
@@ -482,7 +589,7 @@ zero means the detected surface. Placement drop Z = detected tray surface Z +
 `trayplace_height`, independent of pick heights. Robot Controller and Preview
 use this same endpoint; approach/retract remain at taught Home Z above it.
 New profiles start with this height blank. Schema-9 and older files recover with
-it blank too; enter the intended clearance and Save a valid schema-12 pair before
+it blank too; enter the intended clearance and Save a valid schema-13 pair before
 controller use or runtime deployment. Loading never invents or writes a height.
 `pick_rotation` is a separate required 0–90° value. It is an unsigned offset
 from the detected short-axis line; Robot Controller chooses the lower-travel
@@ -555,7 +662,7 @@ percentages: travel/Home, final approach, pick-to-prepick retract. All must be
 integers 1–100. New-profile speed is explicitly 100/6/6 and acceleration
 100/100/100; loaded profiles retain their exact values. Speed and acceleration
 edits disarm and invalidate saved eligibility without interrupting read-only
-inference or automatically saving/commanding hardware. Save writes schema 12 with
+inference or automatically saving/commanding hardware. Save writes schema 13 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
 global SpeedFactor starts at 100% and the controller can adjust it explicitly
@@ -681,28 +788,33 @@ blocking service request. All native operations are serialized in one worker.
   only valid pick candidates receive the rectangle and pick axes/dot.
   Depth shows **accepted pixels black**, **rejected pixels red**, sampling
   boundaries, counts, filtered camera depth, platform Z and frame age.
-- For nearby-height rejection, back-project all finite, positive depth pixels
-  within the saved inclusive depth range, using registered depth's own CameraInfo
-  and the same snapshot's complete optical-to-base transform. Use original pixels,
-  including outside the candidate mask and green bin ROI. No global MAD, minimum
-  cluster count, subsampling or RViz voxels apply to this check. Build that scene
-  once, lazily when the first ranked geometric candidate needs a nearby check.
-  Evaluate base-XY radius/base-Z surface height in rank order until the requested
-  number pass; skip blocked candidates and never scan later unneeded candidates.
-  The reference remains before standoff. Rejections identify the depth pixel, horizontal distance
-  and height above the item surface. Native candidates carry validated radius/height/
-  count and `maximum_height_above_item_mm` evidence. Old Link6-relative evidence is
-  rejected. Restart Item Teach/headless workers together after this change; saved
-  schema-12 keys and values are unchanged. This filters observed nearby points; it
-  does not model the complete end-effector or swept approach path.
+- Clearance uses the candidate's measured optical surface position before standoff.
+  Express platform Z=0 as camera plane `nx X + ny Y + nz Z + d = 0` and evaluate
+  `floor_depth(X,Y) = -(nx X + ny Y + d)/nz` at each point's own physical XY.
+  Height is `floor_depth - measured_Z`, parallel to camera Z, including floor slope.
+  Back-project each original median-depth pixel with registered-depth CameraInfo
+  and its own depth. Transform its physical point into platform XY for inclusive
+  outer-bin membership. Include depth outside masks and between the outer border
+  and inset pick boundary; ignore outside-bin depth. Candidate containment and
+  camera-body checks remain unchanged. No percentile, clustering or voxel reduction.
+  Inside/on the saved camera-XY radius, reject if maximum height minus candidate
+  height is at/above the saved height threshold; one qualifying point is sufficient.
+  Invalid calibration, degenerate floor, missing boundaries, invalid candidate
+  depth or no usable neighborhood rejects. Build scene geometry once per capture,
+  then scan ranked candidates until the requested batch is full. Never retain
+  another candidate's result or a previous capture's eligibility.
+  Native evidence is explicitly `platform_floor_camera_z_v1`, carrying candidate
+  height, maximum nearby height, their difference and point counts. Blocked checks
+  retain this evidence in rejection diagnostics. This replaces base-Z measurement
+  and outside-bin obstacle inclusion. It does not model the complete swept path.
 - Nearby-check overlays use the exact checked scene in RGB and registered depth:
-  solid yellow is the base-XY radius at the detected surface; dashed orange is
-  the same radius at surface Z plus the saved height limit. Short orange lines
+  solid yellow is the camera-XY radius on the candidate floor-relative
+  height surface; dashed orange is the rejection-height surface. Short orange lines
   connect the planes. These are metric 3D projections, not fixed pixel circles;
   RGB and depth use their own distortion models. Red points are the offending
   usable depth samples; a red/white X marks the highest blocker and its height.
   Labels identify the detection source index, `NEAR BLOCKED` or `NEAR OK`, and
-  maximum height above the item. `NEAR OK` is only this check, not pick eligibility.
+  maximum floor-relative height difference from the item. `NEAR OK` is only this check, not pick eligibility.
   Candidates rejected before depth/geometry validation have no nearby result.
   The cyan sampling circle and its black/red MAD samples retain their meaning.
   Live all-class preview keeps its existing size/class annotations; click an
@@ -748,11 +860,11 @@ original depth pixel in the physical sampling circle. Empty footprints and
 zero valid pixels fail. There is no additional fixed pixel-count minimum.
 Tray placement uses this same saved percentage, with tray containment instead
 of the item mask. Plane-based tray pose measurement itself needs no live depth.
-Schema 11 removed `minimum_depth_samples`; current schema 12 additionally requires
+Schema 11 removed `minimum_depth_samples`; current schema 13 additionally requires
 the nearby depth radius and height. Open older profiles in Item Teach, review the
 retained percentage and the proposed 150/60 mm defaults for absent new fields,
 then Save, reload the controller and manually deploy the updated pair before
-headless startup. Missing/invalid schema-12 fields remain blank in recovery;
+headless startup. Missing/invalid schema-13 fields remain blank in recovery;
 production readers reject incomplete or older profiles. Recovery never saves or arms.
 There is no
 result-age field: an accepted batch remains valid until invalidated or replaced.

@@ -105,7 +105,19 @@ def recover_item_fields(path, *, root=None):
     for key in core.GRIPPER_FIELDS:
         value = group("gripper").get(key)
         accept(key, value, type(value) is bool)
+    if payload["schema_version"] < 13:
+        draft.issues.append("Schema 13 uses floor-relative camera-Z clearance, camera-XY radius, "
+                            "outer-bin depth and an effective 500 mm item minimum; review and Save")
     for key in core.GEOMETRY_FIELDS:
+        if key == "depth_frame_count":
+            value = group("geometry").get(key)
+            if payload["schema_version"] < 13 and value is None:
+                draft.values[key] = 3
+                draft.issues.append(
+                    "depth_frame_count: proposed three-frame median; review and Save")
+            else:
+                accept(key, value, type(value) is int and value in (1, 3, 5))
+            continue
         if (payload["schema_version"] < 12 and key in core.NEARBY_DEPTH_DEFAULTS
                 and key not in group("geometry")):
             draft.values[key] = core.NEARBY_DEPTH_DEFAULTS[key]
