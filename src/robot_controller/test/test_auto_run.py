@@ -46,7 +46,8 @@ def test_auto_quantity_is_a_bounded_positive_integer(value):
         validate_quantity(value)
 
 
-def test_next_home_and_pick_are_admitted_before_placement_finishes_without_old_di1_acquisition():
+@pytest.mark.parametrize("coalesced", [False, True])
+def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisition(coalesced):
     rig, run, bridge = queue_rig()
     old_session = rig.node.managed.session
     item = np.eye(4)
@@ -60,21 +61,31 @@ def test_next_home_and_pick_are_admitted_before_placement_finishes_without_old_d
     assert rig.node.placement.phase != "DONE"
     assert rig.monitor.snapshot().feed["digital_input_bits"] & 1
     rig.transport.confirm_stop = Mock(side_effect=AssertionError("No stationary pickup wait"))
+    # Real command order: placement 1..3, next entry 4, pre-pick 5, pick 6.
+    original = rig.transport.clients["MovL"].call_async
+
+    def prepick_reply(command):
+        future = original(command)
+        future.result().robot_return = "{5}"
+        return future
+    rig.transport.clients["MovL"].call_async = prepick_reply
     rig.steps = iter([
         dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
         dict(outputs=0, inputs=OPEN, currentCommandId=3),
-        dict(outputs=0, inputs=OPEN, currentCommandId=4),
-        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+        *([] if coalesced else [
+            dict(outputs=1 << 13, inputs=OPEN, currentCommandId=4),
+            dict(outputs=1 << 13, inputs=OPEN, currentCommandId=5)]),
+        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=6),
     ])
     acquired, _origin = rig.transport.move_batch(
-        (*run.queued_home(bridge), plan[0], plan[2], plan[3]),
+        (plan[0], plan[2], plan[3]),
         stop_on_suction=True, pick_settling_sec=10., return_terminal_pose=True,
         confirmed_start_pose=bridge.origin, placement_bridge=bridge)
     assert acquired
     assert [name for name, _ in rig.requests] == [
-        "MovL", "MovLIO", "MovLIO", "MovJ", "MovLIO", "MovL", "MovLIO", "Stop"]
+        "MovL", "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO", "Stop"]
     # No new feedback/arrival wait between placement admission and all next targets.
-    assert rig.order[:7] == [name for name, _ in rig.requests[:7]]
+    assert rig.order[:6] == [name for name, _ in rig.requests[:6]]
     assert run.completed == 1
     assert old_session.attempts[0].state == "PLACED" and old_session.held_index is None
     assert rig.node.managed.session is bridge.next_session
@@ -209,7 +220,7 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False, save_
 
     order, workers = [], []
     node = SimpleNamespace(
-        configuration=object(), managed=SimpleNamespace(session=None),
+        configuration=object(), managed=SimpleNamespace(session=None, lock=threading.RLock()),
         machine=ControllerStateMachine(initial="READY"), placement=None,
         raise_if_cancelled=lambda: None, operation_progress=Mock(), events=Mock(),
         _preflight_item_state=Mock(),
@@ -261,10 +272,10 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False, save_
     def pick(batch, bridge):
         if batch is not None:
             assert batch == f"batch{len(workers)}" and workers[-1].closed
-        if bridge is not None:
+        if bridge is not None and not bridge.completed:
             assert bridge.placement.phase != "DONE"
             order.append("append next Pick")
-            bridge.home_id = 4
+            bridge.boundary_id = 4
             bridge._complete()
         else:
             node._transition("PICKING", "Pick")
@@ -281,7 +292,7 @@ def cycle_rig(monkeypatch, quantity, *, slow=False, detection_error=False, save_
     def home(bridge):
         assert order[-1] == "place queued"
         order.append("append final Home")
-        bridge.home_id = 4
+        bridge.boundary_id = 4
         bridge._complete()
         node._transition("READY", "Home")
         run.bridge = None
@@ -642,14 +653,11 @@ def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply,
         assert node.managed.session is bridge.old_session
         assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO"]
         assert "placement accepted" in rig.order
-        # Append actual Home/Pick transport calls before placement arrival.
+        # Append actual next Pick calls before placement arrival; no Home.
         item = np.eye(4)
         item[:3, 3] = [.4, .1, .25]
         plan = pick_targets(node.configuration.home_matrix, item, node.configuration.profile, 1)
         bridge.next_session = PickSession(["next-item"], [plan])
-        home = home_targets(bridge.origin, node.configuration.home_matrix,
-                            node.configuration.home_joints,
-                            speed_percent=80, acceleration_percent=70)
         rig.steps = iter([
             dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
             dict(outputs=0, inputs=OPEN, currentCommandId=3),
@@ -657,7 +665,7 @@ def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply,
             dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
         ])
         node.hardware.move_batch(
-            (*home, plan[0], plan[2], plan[3]), stop_on_suction=True,
+            (plan[0], plan[2], plan[3]), stop_on_suction=True,
             pick_settling_sec=10., return_terminal_pose=True,
             confirmed_start_pose=bridge.origin, placement_bridge=bridge)
         raise OperationCanceled("test reached next Pick handoff")
@@ -668,10 +676,11 @@ def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply,
             run.run()
         names = [name for name, _ in rig.requests]
         if reply == "accepted":
-            assert names == ["MovL", "MovLIO", "MovLIO", "MovJ", "MovLIO", "MovL", "MovLIO",
+            assert names == ["MovL", "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO",
                              "Stop"]
-            assert rig.order.index("placement accepted") < rig.order.index("MovJ")
-            assert rig.order.index("feedback") > rig.order.index("MovJ")
+            entry_dispatch = [i for i, name in enumerate(rig.order) if name == "MovLIO"][2]
+            assert rig.order.index("placement accepted") < entry_dispatch
+            assert rig.order.index("feedback") > entry_dispatch
             assert run.completed == 1
         else:
             assert names[:pending_index] == ["MovL", "MovLIO", "MovLIO"][:pending_index]
@@ -824,3 +833,81 @@ def test_executing_placement_failure_discards_inflight_next_item_result(monkeypa
     assert run.prefetch is None and not worker.thread.is_alive()
     with pytest.raises(OperationCanceled):
         worker.future.result()
+
+
+@pytest.mark.parametrize("stop_after", [1, 2, 3])
+def test_stop_during_direct_next_pick_admission_keeps_old_source(stop_after):
+    rig, run, bridge = queue_rig()
+    old = bridge.old_session
+    pose = np.eye(4)
+    pose[:3, 3] = [.4, .1, .25]
+    plan = pick_targets(rig.node.configuration.home_matrix, pose,
+                        rig.node.configuration.profile, 1)
+    bridge.next_session = PickSession(["next-item"], [plan])
+    bridge.placement.close_pending()
+    canceled = [False]
+    rig.on_request = lambda index: canceled.__setitem__(0, index >= 3 + stop_after)
+    rig.node.cancel_requested = lambda: canceled[0]
+
+    def check_cancel():
+        if canceled[0]:
+            raise OperationCanceled("operator Stop")
+    rig.node.raise_if_cancelled = check_cancel
+    with pytest.raises(OperationCanceled):
+        rig.transport.move_batch((plan[0], plan[2], plan[3]), stop_on_suction=True,
+                                 confirmed_start_pose=bridge.origin, placement_bridge=bridge)
+    names = [name for name, _ in rig.requests[3:]]
+    assert names[:stop_after] == ["MovLIO", "MovL", "MovLIO"][:stop_after]
+    assert names[stop_after:] and set(names[stop_after:]) == {"Stop"}
+    assert rig.node.managed.session is old and old.held_index == 1
+    assert run.completed == 0 and not bridge.completed
+    run.close()
+    assert bridge.next_session.attempts[0].state == "CANCELED"
+
+
+def test_direct_pick_handoff_waits_for_prepick_id_and_neutral_release_history():
+    rig, run, bridge = queue_rig()
+    plan = pick_targets(rig.node.configuration.home_matrix, np.eye(4),
+                        rig.node.configuration.profile, 1)
+    bridge.next_session = PickSession(["next-item"], [plan])
+    # The entry's acceptance-only reply must not be parsed as an ID.
+    bridge.accepted(0, SimpleNamespace(res=0))
+    assert bridge.boundary_id is None
+    bridge.accepted(1, SimpleNamespace(res=0, robot_return="{5}"))
+    bridge.admitted(plan[0])
+    bridge.observe(rig.emit(outputs=0, inputs=0, currentCommandId=3))
+    bridge.observe(rig.emit(outputs=1 << 13, inputs=OPEN, currentCommandId=4))
+    assert run.completed == 0 and rig.node.managed.session is bridge.old_session
+    # Complete from the new-pick sample itself, without a separate idle sample.
+    rig.node.managed.observe_continuous(rig.emit(
+        outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=6))
+    assert run.completed == 1 and rig.node.managed.session is bridge.next_session
+    assert bridge.next_session.attempts[0].state == "ACTIVE"
+    bridge.observe(rig.monitor.snapshot())
+    assert run.completed == 1
+    bridge.placement.close_pending()
+
+
+def test_late_execution_feedback_cannot_transfer_source_after_direct_stop():
+    rig, run, bridge = queue_rig()
+    bridge.accepted(0, SimpleNamespace(res=0, robot_return="{4}"))
+    rig.node.cancel_requested = lambda: True
+    old = bridge.old_session
+    rig.node.managed.observe_continuous(rig.emit(outputs=0, inputs=0, currentCommandId=4))
+    assert not bridge.completed and run.completed == 0
+    assert rig.node.managed.session is old and old.held_index == 1
+    bridge.placement.close_pending()
+
+
+def test_latched_old_item_drop_cannot_be_counted_as_a_placement_at_handoff():
+    from robot_controller.errors import HeldSuctionLost
+    rig, run, bridge = queue_rig()
+    old = bridge.old_session
+    rig.node.managed.held_loss_pending = True
+    old.set_state(old.held_index, "DROPPED")
+    bridge.accepted(0, SimpleNamespace(res=0, robot_return="{4}"))
+    with pytest.raises(HeldSuctionLost):
+        bridge.observe(rig.emit(outputs=0, inputs=0, currentCommandId=4))
+    assert not bridge.completed and run.completed == 0
+    assert rig.node.managed.session is old and old.held_index == 1
+    bridge.placement.close_pending()

@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Direct Auto Run continuation review: **2026-10-06**, baseline **`12bea53`** plus
+rule **231**. After all placement replies are accepted, append the next fresh
+entry → pre-pick → pick without Home or a placement-arrival wait. Retain OPEN at
+50% entry and SUCK at 20% final descent. The existing pre-pick MovL supplies its
+queue ID for source/ledger/count handoff; entry MovLIO returns no ID. Require
+advancing execution at/past pre-pick plus neutral outputs/raw DI1 LOW in placement
+history; handle handoff before interpreting new-pick feedback as old-item output
+or loss. Slow perception confirms/counts retract, then waits unheld and still
+picks directly. Initial/final Home and empty-result retry Home retain MovJ.
+Parallel fresh detection, ordered admission, Stop/drop and retry guards remain.
+
 Home-motion review: **2026-10-06**, baseline **`c2c3501`** plus rule **230**.
 Every final Home destination uses absolute joint `MovJ(mode=true)` with the six
 exact taught angles. Explicit Home/Preview now share the conditional upward-only
@@ -7,8 +18,9 @@ Home-Z clearance then joint Home; keep existing linear safety/transit/release
 segments. Required MovJ ownership, ordered acceptance, returned queue-ID execution,
 Stop/late-response containment and exact ±1° per-joint arrival apply. Never wrap
 a full wrist turn or substitute Cartesian arrival. Initial/recovery/return and
-Auto Run Home all use MovJ; Tray Detect stays joint-target MovL. The inter-cycle
-Home detour and placement-before-next-pick acceptance boundary remain in place.
+Auto Run Home all use MovJ; Tray Detect stays joint-target MovL. Rule 231 removes
+the inter-cycle Home detour; the placement-before-next-pick acceptance boundary
+remains in place.
 
 Nearby-depth eligibility review: **2026-10-06**, baseline **`f717319`** plus rule
 **229**. Schema-12 Item Teach profiles require a nearby radius/height (defaults
@@ -116,9 +128,9 @@ poses from that observation, for manual cycles and Auto Run. This supersedes rul
 215's reuse across successful placements. After each valid tray pose/depth and
 observation-position check, Auto Run starts a fresh next-bin request when another
 item is needed, in parallel with placement planning/admission/execution. Only after
-all placement replies are accepted may ready fresh poses append Home → next Pick,
+all placement replies are accepted may ready fresh poses append next entry → pre-pick → pick,
 without waiting for placement arrival. Preserve the old source and poses until
-advancing execution reaches Home with neutral outputs/DI1 LOW, then count placement,
+advancing execution reaches next pre-pick with neutral outputs/DI1 LOW history, then count placement,
 cancel unused old poses and install the new ledger. Slow perception uses the
 existing confirmed-retract and supervised idle wait. Final quantity appends Home
 without another request; manual Place acquires new poses on the next Pick click.
@@ -199,9 +211,9 @@ observation position, then start the single next-bin worker whenever another ite
 remains, even with unused old poses (rule 218 supersedes rule 215).
 The read-only request overlaps placement planning, ordered command admission and
 execution, superseding rule 206's post-admission trigger. All three placement commands
-must be accepted before Home/next-Pick motion, even if poses are ready earlier.
+must be accepted before next-Pick motion, even if poses are ready earlier.
 Failed acquisition or pre-trigger Stop prevents the request; later failures discard
-it. Ready poses still append Home/next Pick without waiting for placement completion.
+it. Ready poses still append the next Pick without waiting for placement completion.
 Preserve motion/I/O, retry limits, source/DI1 ownership, slow-result supervision,
 cancellation, final-item behavior and physical counting.
 
@@ -262,7 +274,7 @@ Place Item and explicit held Return Item neutralize DO2/DO14/DO1/DO13 at 0%
 Each routine queues its complete route in one ordered CP (default 100%) group without a
 drop-arrival or settling wait. Keep speed 100% and final neutral/DI1 LOW gates.
 Place acknowledges complete queue acceptance while its worker verifies final
-retract; Return completes only at taught Home. Auto Run can append Home/next
+retract; Return completes only at taught Home. Auto Run can append the next
 Pick behind placement. No slow Drop Retract segment is added.
 
 Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **191**.
@@ -282,10 +294,10 @@ Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
 One counted action owns Pick/Place and final Home. For every next normal cycle,
 prefetch a fresh bin batch after validated tray/depth acquisition (rules 209/218),
 even if old poses remain, overlapping placement admission
-and execution; all placement commands must be accepted before Home/next Pick.
-Append Home/next Pick when the batch is ready, without
+and execution; all placement commands must be accepted before the next Pick.
+Append the next Pick when the batch is ready, without
 an intermediate arrival wait. Keep the old source until placement execution and
-neutral/released feedback cross into the appended Home. Auto Run disables manual
+neutral/released feedback cross into the appended pre-pick. Auto Run disables manual
 controls except direct STOP during execution. Rule 214 adds Continue/Return
 after tray-exhaustion Pause; exhausted Pick retries still end with a partial count.
 
@@ -1039,7 +1051,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 
 ```mermaid
 flowchart TD
-    Start["READY: Auto Run quantity and placement target"] --> Pick["Fresh batch after prior placement; ensure Home; bounded Pick"]
+    Start["READY: Auto Run quantity and placement target"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
     Tray --> Observe["Fresh tray pose then placement depth; optional debug RGB/depth; at most 3 complete attempts"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
@@ -1051,15 +1063,15 @@ flowchart TD
     Home --> Done["PLACED; cancel unused poses; count execution/release; confirm Home + neutral + DI1 LOW; READY"]
     Last -->|No| Ready{"Fresh next-bin request finished?"}
     Capture -.-> Ready
-    Ready -->|No| Wait["Supervise placement or unheld idle while awaiting result"]
+    Ready -->|No| Wait["Supervise retract; count if completed; wait unheld for result"]
     Wait --> Ready
     Ready -->|Yes| Poses{"Any valid poses?"}
-    Poses -->|Yes| Append["Append MovJ Home → entry → pre-pick → pick; no placement/Home idle wait"]
+    Poses -->|Yes| Append["Append entry → pre-pick → pick; no Home or placement idle wait"]
     Poses -->|No| RetryHome["Finish owned Home; count placement; retry acquisition once"]
     RetryHome --> Retried{"Poses returned?"}
     Retried -->|Yes| Next
     Retried -->|No| Empty
-    Append --> Boundary["Home ID reached + neutral/DI1 LOW: old PLACED; cancel unused poses; count; install fresh ledger"]
+    Append --> Boundary["Pre-pick ID + neutral/DI1 LOW history, or already confirmed retract: old PLACED; count once; install fresh ledger"]
     Boundary --> Next["Acquire next item; normal retries/lifts"]
     Next --> Tray
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK; Home after misses or bin exit after final drop; partial count"]
@@ -1104,7 +1116,7 @@ Pick confirms saved Tray Detect joints/idle, then the owner acquires and validat
 tray pose/depth and rechecks the observation position before starting the worker.
 The owner continues placement planning and ordered dispatch without waiting for
 perception. All three placement commands must receive accepted replies before any
-next Home/Pick motion or result handoff, including an early success/error/empty batch.
+next Pick motion or result handoff, including an early success/error/empty batch.
 Tray retries run without a next-item request; exhausted acquisition or cancellation
 before the trigger prevents prefetch. Rejected/unanswered placement commands, Stop
 or other failures after the trigger cancel/discard the worker and its result.
@@ -1119,20 +1131,27 @@ request poses once more. Another empty result ends NO_PICK with the partial coun
 The one empty-result retry belongs to that Pick and cannot reset after a physical
 miss. Empty observations do not consume its three nonempty physical-pick batches.
 If observation is slower than placement, finish normal retract
-supervision, then wait for the request while supervising unheld idle feedback.
+supervision, count the placement and wait for the request while supervising unheld
+idle feedback. Retain that completed placement context: the next nonempty batch
+must also approach directly from tray retract, skipping ordinary initial Home.
 
-The planned retract is at Home Z, so the first appended target is an ordinary
-joint-target Home MovJ. Its returned queue ID supplies the execution boundary
-that MovLIO cannot return. The old placement/source remains authoritative until
-advancing FeedInfo reaches or passes that ID and output history shows neutral
-DO1/DO2/DO13/DO14 with DI1 LOW since placement admission. Then mark the old item
-PLACED, increment once, cancel its unused candidates and install the fresh ledger
-before activating the next candidate. Old held DI1 cannot trigger
-the next pickup. Missing neutral/release evidence at the boundary fails closed;
-Stop before it retains the old source, and Stop after it retains the next source.
-There is no stationary midpoint or separate physical Home confirmation before
-the next descent; CP (default 100%) and ordered acceptance are preserved. Final Home still
-requires actual saved-joint/idle/execution confirmation and neutral/DI1 LOW.
+The planned retract is at Home Z. Append only next entry, pre-pick and final pick,
+preserving OPEN at 50% entry and SUCK at 20% final descent. The second appended
+target, pre-pick MovL, supplies the execution ID that entry MovLIO cannot return.
+The old placement/source remains authoritative until advancing FeedInfo reaches
+or passes that ID and output history shows neutral DO1/DO2/DO13/DO14 with DI1 LOW
+since placement admission. Then mark the old item PLACED, increment once, cancel
+its unused candidates and install the fresh ledger before activating the next
+candidate. Process this boundary before old-placement output/drop checks on the
+same feedback sample, including when it already shows the new pickup's SUCK.
+Old held DI1 cannot trigger new acquisition. Missing neutral/release evidence at
+the boundary fails closed; Stop before it retains the old source, and Stop after
+it retains the next source. Confirmed retract may already have completed this
+placement; never count it twice.
+There is no stationary midpoint or extra waypoint for handoff; CP (default 100%)
+and ordered acceptance are preserved. Initial Pick, final quantity and empty-result
+recovery still use Home. Final Home requires actual saved-joint/idle/execution
+confirmation and neutral/DI1 LOW.
 Counts mean placement execution/release evidence, not measured physical delivery.
 
 The UI exposes AUTO RUN with completed/requested counts and locks manual controls
@@ -1392,7 +1411,7 @@ Names below are relative to `/robot_controller/`.
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
-| Auto Run next Home/Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
+| Auto Run direct next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
 | Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; DO2 OFF then DO14 ON each accepted and echoed before motion; suction preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |

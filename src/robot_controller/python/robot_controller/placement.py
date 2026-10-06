@@ -65,6 +65,13 @@ class PlacementOperation(ReleaseQueue):
     pending_motion: object = None
     acquisition_failure: str = ""
     returning_to_bin: bool = False
+    continuation: object = None
+
+    def observe(self, node, sample, *, raise_on_loss=True):
+        if self.continuation is not None:
+            self.continuation.observe(sample, raise_on_loss=raise_on_loss)
+        else:
+            super().observe(node, sample, raise_on_loss=raise_on_loss)
 
     @property
     def acquisition_paused(self):

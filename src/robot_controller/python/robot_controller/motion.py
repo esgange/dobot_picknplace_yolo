@@ -213,7 +213,7 @@ class PickExecutor:
 
     def run(self, plans, settings, *, tray_target, check, return_home, remember_prepick=None,
             progress=None, holding_changed=None, session=None,
-            departure=(), departure_pose=None, queued_home=(),
+            departure=(), departure_pose=None,
             placement_bridge=None):
         grip = settings["gripper"]["use_grip"]
         close_on_pick = settings["gripper"]["grip_onpick"]
@@ -269,7 +269,6 @@ class PickExecutor:
                 session.parked_index = None
             origin = {}
             if placement_bridge is not None:
-                forward = (*queued_home, *forward)
                 origin["confirmed_start_pose"] = placement_bridge.origin
                 origin["placement_bridge"] = placement_bridge
             if departure:
@@ -280,6 +279,8 @@ class PickExecutor:
                 origin["confirmed_start_pose"] = departure_pose
             acquired, return_origin = self.hardware.move_batch(
                 forward, batch_name=(f"return_item_to_candidate_{start_index}_pick" if departure
+                                     else f"candidate_{start_index}_place_to_pick"
+                                     if placement_bridge is not None
                                      else f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
                 return_terminal_pose=True, pickup_retract_pose=plan[4].matrix, **origin)

@@ -201,13 +201,13 @@ def test_auto_run_refreshes_every_successful_placement_even_with_unused_poses(
         session = PickSession(identifiers, [()] * 3, configuration=node.configuration,
                               batch=SimpleNamespace(identifier=identifiers[0]))
         sessions.append(session)
-        if bridge is not None:
+        if bridge is not None and not bridge.completed:
             assert bridge.old_session is sessions[-2]
             assert bridge.old_session.held_index == 1
             assert bridge.old_session.attempts[1].state == 'PENDING'
             bridge.next_session = session
             order.append('append next Pick')
-            bridge.home_id = 4
+            bridge.boundary_id = 4
             bridge._complete()
         else:
             node.managed.session = session
@@ -230,7 +230,7 @@ def test_auto_run_refreshes_every_successful_placement_even_with_unused_poses(
     assert order[-1] == 'append final Home'
 
 
-def shared_queue():
+def shared_queue(*, slow=False):
     rig, run, bridge = queue_rig()
     node = rig.node
     node.configuration.profile['gripper'] = {'use_grip': False, 'grip_onpick': False}
@@ -251,10 +251,16 @@ def shared_queue():
     node._plan_candidate_batch = Mock(side_effect=AssertionError('Do not replan saved poses'))
     node._execute_home = Mock(side_effect=AssertionError('Home must be queued, not awaited'))
     node._candidate_progress = Mock()
+    node.motion_admitted = lambda target: RobotController.motion_admitted(node, target)
     node._attempt_changed = Mock()
     run.seen_batches.add('original')
     pending, node.placement.pending_motion = node.placement.pending_motion, None
-    node.hardware.finish_batch(pending, handoff=lambda: True)
+    if slow:
+        rig.steps = iter([dict(outputs=0, inputs=OPEN, retract=True)])
+    node.hardware.finish_batch(pending, handoff=lambda: not slow)
+    if slow:
+        bridge.complete_idle()
+        node.hardware.current_pose = lambda: bridge.origin.copy()
     return rig, run, bridge, session
 
 
@@ -278,8 +284,9 @@ def test_final_home_boundary_discards_unused_poses_only_after_confirmed_placemen
     rig.node.candidates.request.assert_not_called()
 
 
-def test_ready_fresh_batch_appends_before_arrival_and_replaces_old_unused_poses():
-    rig, run, bridge, old = shared_queue()
+@pytest.mark.parametrize("slow", [False, True])
+def test_fresh_batch_skips_home_before_or_after_placement_finishes(slow):
+    rig, run, bridge, old = shared_queue(slow=slow)
     node = rig.node
     pose = np.eye(4)
     pose[:3, 3] = [.2, .2, .25]
@@ -291,13 +298,15 @@ def test_ready_fresh_batch_appends_before_arrival_and_replaces_old_unused_poses(
     def dispatch(targets, **kwargs):
         if kwargs['batch_name'] == 'candidate_1_pick_to_tray':
             raise OperationCanceled('Reached fresh candidate')
-        assert node.managed.session is old and old.held_index == 1
-        assert [t.name for t in targets] == ['home', 'p1_transit', 'p1_prepick', 'p1_pick']
+        if not slow:
+            assert node.managed.session is old and old.held_index == 1
+        assert [t.name for t in targets] == ['p1_transit', 'p1_prepick', 'p1_pick']
+        assert not any(t.joint_motion for t in targets)
         return move(targets, **kwargs)
     node.hardware.move_batch = dispatch
 
     def admission(index):
-        if index <= 7:
+        if not slow and index <= 6:
             assert old.held_index == 1 and old.attempts[1].state == 'PENDING'
     rig.on_request = admission
     rig.steps = iter([
@@ -308,12 +317,17 @@ def test_ready_fresh_batch_appends_before_arrival_and_replaces_old_unused_poses(
     ])
     with pytest.raises(OperationCanceled, match='Reached fresh'):
         run._pick(batch, bridge)
-    assert run.completed == 1 and node.managed.session is bridge.next_session
+    assert run.completed == 1
+    if not slow:
+        assert node.managed.session is bridge.next_session
     assert node.managed.session.batch is batch
     assert node.managed.session.attempts[0].identifier == 'fresh:1'
     assert node.managed.session.attempts[0].state == 'HELD'
     assert [a.state for a in old.attempts] == ['PLACED', 'CANCELED', 'CANCELED']
-    assert rig.order[:7] == [name for name, _ in rig.requests[:7]]
+    if not slow:
+        assert rig.order[:6] == [name for name, _ in rig.requests[:6]]
+    assert not any(name == 'MovJ' for name, _ in rig.requests)
+    node._execute_home.assert_not_called()
     node.candidates.request.assert_not_called()
     run.close()
 

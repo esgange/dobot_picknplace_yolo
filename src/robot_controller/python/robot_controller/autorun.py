@@ -8,6 +8,7 @@ from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost,
 from .pick_session import PickSession, return_targets
 from .placement import PlacementOperation, validate_target
 from .recovery import GRIP_MASK
+from .release import ReleaseQueue
 
 
 def validate_quantity(value):
@@ -45,7 +46,7 @@ class CandidatePrefetch:
 
 
 class PlacementBridge:
-    """Retain the old source until ordered execution crosses into the appended Home."""
+    """Retain the old source until execution enters next pre-pick or final Home."""
 
     def __init__(self, run, placement):
         self.run = run
@@ -54,42 +55,60 @@ class PlacementBridge:
         self.old_session = self.node.managed.session
         self.next_session = None
         self.origin = placement.plan[-1].matrix.copy()
-        self.home_id = None
+        self.boundary_id = None
         self.accepted_sequence = None
         self.neutral_seen = False
         self.completed = False
         self.targets = []
+        placement.continuation = self
 
     def accepted(self, index, response):
-        if index == 0:
-            self.home_id = self.node.hardware._motion_command_id(response)
-            self.accepted_sequence = self.node.monitor.sequence
+        with self.node.managed.lock:
+            # Next entry is MovLIO (OPEN at 50%, no ID); pre-pick is MovL.
+            # A final/empty-result Home is the sole appended MovJ command.
+            boundary_index = 1 if self.next_session is not None else 0
+            if index == boundary_index:
+                self.boundary_id = self.node.hardware._motion_command_id(response)
+                self.accepted_sequence = self.node.monitor.sequence
 
     def admitted(self, target):
-        self.targets.append(target)
-        if self.completed and self.next_session is not None:
-            self.next_session.admitted(target)
+        with self.node.managed.lock:
+            self.targets.append(target)
+            if self.completed and self.next_session is not None:
+                self.next_session.admitted(target)
 
-    def observe(self, sample):
-        if self.completed:
-            return
-        self.placement.observe(self.node, sample)
-        for sequence, _timer, outputs, inputs in self.node.monitor.output_history(
-                self.placement.queue_start_sequence):
-            if sequence <= sample.sequence and not outputs & GRIP_MASK and not inputs & 1:
-                self.neutral_seen = True
-        if (self.home_id is not None and sample.sequence > self.accepted_sequence
-                and sample.feed["currentCommandId"] >= self.home_id):
-            if not self.neutral_seen:
-                raise FeedbackFailure(
-                    "Auto Run placement crossed into Home without neutral outputs and DI1 LOW")
-            self._complete()
+    def observe(self, sample, *, raise_on_loss=True):
+        with self.node.managed.lock:
+            if self.completed:
+                return
+            if self.node.managed.held_loss_pending:
+                ReleaseQueue.observe(self.placement, self.node, sample,
+                                     raise_on_loss=raise_on_loss)
+                return
+            for sequence, _timer, outputs, inputs in self.node.monitor.output_history(
+                    self.placement.queue_start_sequence):
+                if sequence <= sample.sequence and not outputs & GRIP_MASK and not inputs & 1:
+                    self.neutral_seen = True
+            if (self.boundary_id is not None and sample.sequence > self.accepted_sequence
+                    and sample.feed["currentCommandId"] >= self.boundary_id):
+                if self.node.cancel_requested():
+                    return  # A late execution sample cannot revive a stopped operation.
+                if not self.neutral_seen:
+                    raise FeedbackFailure(
+                        "Auto Run placement crossed into next motion without neutral outputs "
+                        "and DI1 LOW")
+                # Hand off before interpreting new-pick suction as old-item I/O.
+                self._complete()
+            else:
+                ReleaseQueue.observe(self.placement, self.node, sample,
+                                     raise_on_loss=raise_on_loss)
 
     def complete_idle(self):
         """The existing placement completion loop already validated final retract."""
-        if self.placement.phase != "DONE":
-            raise FeedbackFailure("Auto Run placement has not completed")
-        self._complete()
+        with self.node.managed.lock:
+            if self.placement.phase != "DONE":
+                raise FeedbackFailure("Auto Run placement has not completed")
+            self._complete()
 
     def _complete(self):
         if self.completed:
@@ -107,7 +126,7 @@ class PlacementBridge:
             for target in self.targets:
                 self.next_session.admitted(target)
             node._transition("PICKING", "Placement passed; next queued Pick is executing")
-        elif self.home_id is not None:
+        elif self.boundary_id is not None:
             node._transition("HOMING", "Placement passed; queued Home is executing")
         else:
             node._transition("READY", "Placement complete; waiting for next item poses")
@@ -134,7 +153,7 @@ class AutoRunOperation:
         self.node.events.record(
             "INFO", "auto_run_placement_completed", "Placement sequence completed",
             completed=self.completed, requested=self.quantity,
-            home_command_id=self.bridge.home_id if self.bridge is not None else None)
+            boundary_command_id=self.bridge.boundary_id if self.bridge is not None else None)
         self.node.operation_progress(
             "AUTO_COUNT", f"Auto Run: {self.completed}/{self.quantity} placements completed")
 
@@ -166,7 +185,7 @@ class AutoRunOperation:
         for attempt in range(1, 4):
             node.raise_if_cancelled()
             config.validate_sources(node.root)
-            if bridge is None:
+            if bridge is None or bridge.completed:
                 node._transition("PICKING", "Auto Run: starting Pick")
                 node._preflight_item_state(False)
             session = node.managed.session
@@ -225,9 +244,9 @@ class AutoRunOperation:
             for plan in plans:
                 return_targets(plan)
             extra = {}
-            if bridge is not None:
+            if bridge is not None and not bridge.completed:
                 bridge.next_session = session
-                extra = dict(queued_home=self.queued_home(bridge), placement_bridge=bridge)
+                extra = dict(placement_bridge=bridge)
             else:
                 node.managed.session = session
 
@@ -301,7 +320,7 @@ class AutoRunOperation:
                     # action while the operator retries or returns the item.
                     placement.handle_pause(node)
             # run() returns only after ordered acceptance of every placement
-            # command. Even an already-ready batch cannot append Home/Pick earlier.
+            # command. Even an already-ready batch cannot append the next Pick earlier.
             self.bridge = bridge = PlacementBridge(self, placement)
             if last_item:
                 self.finish_home(bridge)
@@ -311,7 +330,8 @@ class AutoRunOperation:
             node.hardware.finish_batch(pending, handoff=self.prefetch.future.done)
             if placement.phase == "DONE":
                 bridge.complete_idle()
-                self.bridge = bridge = None
+                # Keep the completed placement context so _pick skips initial
+                # Home even when perception finishes after the physical retract.
             while not self.prefetch.future.done():
                 node.raise_if_cancelled()
                 node._preflight_item_state(False)

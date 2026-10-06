@@ -44,8 +44,8 @@ placement X/Y/rotation for every cycle. Start from unheld READY with both detect
 available. Each cycle confirms Tray Detect and acquires fresh tray pose/depth.
 If another item is needed, immediately start a fresh bin pose request while
 planning and sending the placement approach/release/retract queue. Once all
-placement commands are accepted and the fresh poses are ready, append Home and
-the next Pick without waiting for placement to finish. Successful placement
+placement commands are accepted and the fresh poses are ready, append the next
+entry → pre-pick → pick directly behind placement, without Home or an arrival wait. Successful placement
 cancels any unused poses from its old batch. After the last placement, append
 Home immediately and finish only at confirmed Home; no extra bin request is made.
 The displayed count requires placement execution and neutral/released feedback,
@@ -98,7 +98,10 @@ Every final Home destination uses `MovJ(mode=true)` with the exact six taught
 joint angles, including the Home button, recovery, returns and Auto Run. Necessary
 vertical clearance remains linear. Home confirmation compares each joint within
 ±1° without wrapping full turns; matching the tool pose alone is insufficient.
-Auto Run still queues Home between placement and the next pick.
+Auto Run skips Home between successful placement and the next pick, even when
+perception finishes after retract. Initial Pick, final Auto Run and empty-result
+retry Home remain. Next-pick ownership requires the pre-pick command ID and
+observed placement release; acceptance alone cannot count a placement.
 
 Motion groups retain CP (default 100%) blending and confirm their final endpoint using
 fresh RobotStatus idle and joint feedback after acceptance. Saved joint targets

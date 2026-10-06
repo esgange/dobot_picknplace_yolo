@@ -277,15 +277,15 @@ def test_drop_after_next_motion_admission_keeps_old_source_and_does_not_count_pl
     pending, node.placement.pending_motion = node.placement.pending_motion, None
     rig.transport.finish_batch(pending, handoff=lambda: True)
     appended = rig.transport._move_batch(
-        (*run.queued_home(bridge), plan[0], plan[2], plan[3]),
+        (plan[0], plan[2], plan[3]),
         confirmed_start_pose=bridge.origin, placement_bridge=bridge,
         stop_on_suction=True, return_terminal_pose=True)
     next(appended)
     low_feedback(rig)
     with pytest.raises(HeldSuctionLost):
         rig.transport.finish_batch(appended)
-    assert [name for name, _ in rig.requests][:7] == [
-        "MovL", "MovLIO", "MovLIO", "MovJ", "MovLIO", "MovL", "MovLIO"]
+    assert [name for name, _ in rig.requests][:6] == [
+        "MovL", "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO"]
     assert node.managed.session is old and old.held_index == 1
     assert old.attempts[0].state == "DROPPED"
     assert not bridge.completed and run.completed == 0

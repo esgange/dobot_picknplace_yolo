@@ -210,7 +210,7 @@ class ManagedControl:
         self.session.admitted(target)
 
     def run_pick(self, plans, *, check, departure=(), departure_pose=None,
-                 queued_home=(), placement_bridge=None):
+                 placement_bridge=None):
         """Keep confirmed held loss inside the owning Pick and its saved batch."""
         node = self.node
         while True:
@@ -226,13 +226,13 @@ class ManagedControl:
                     return_home=node._execute_home, progress=node._candidate_progress,
                     holding_changed=lambda value: setattr(node, "holding_item", value),
                     departure=departure, departure_pose=departure_pose,
-                    queued_home=queued_home, placement_bridge=placement_bridge)
+                    placement_bridge=placement_bridge)
             except HeldSuctionLost:
                 if placement_bridge is not None and not placement_bridge.completed:
                     # The queued next Pick does not own the old held item/batch.
                     # Auto Run must discard that speculative session first.
                     raise
-                queued_home, placement_bridge = (), None
+                placement_bridge = None
                 returned = self._return_after_suction_loss()
                 if returned is None:
                     return {"picked": False, "candidate": None, "holding_item": False}

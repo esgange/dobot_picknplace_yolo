@@ -27,7 +27,7 @@ Preview cannot start Auto Run. Launch/prefill never starts it.
 Successful tray placement discards unused poses; the next manual or Auto Run
 Pick uses a fresh bin batch. Original poses remain eligible for misses,
 Pause/Continue and drop/return recovery until a successful placement. Preserve
-normal Home skip/arrival, candidate plans, timed I/O, acquisition Stop
+initial Pick Home skip/arrival, candidate plans, timed I/O, acquisition Stop
 acknowledgement, lifts and saved Tray Detect destination.
 Tray pose acquisition begins only after Pick confirms saved tray joints and idle
 feedback. Auto Run always requires the trusted picked item for placement, including
@@ -41,7 +41,7 @@ old batch still contains eligible poses (rule 218 supersedes rule 215).
 It runs while the owning action plans and sends the placement approach/release/retract
 queue, overlapping command admission and execution. The worker never sends hardware
 commands. Require ordered acceptance of all three placement commands before consuming
-even an already-ready result or appending Home/next-Pick motion. Tray failure or Stop
+even an already-ready result or appending next-Pick motion. Tray failure or Stop
 before the worker starts prevents the request; a subsequent placement admission or
 execution failure cancels/discards it. Capture remains a fresh post-request
 RGB/depth/TF observation.
@@ -56,12 +56,13 @@ The prefetched result gets its own ledger; its candidates cannot acquire ownersh
 until the old placement crosses the execution/release boundary.
 
 Consume the result using the existing handoff/error path. When valid poses are ready,
-append joint Home → next entry → pre-pick → final pick **without waiting for placement
-to finish or Home to become stationary**. The dashboard executes those requests in
-accepted order behind placement, with the selected global CP. Home starts from the planned
-placement retract at Home Z. If detection is slower than placement, finish normal
-retract supervision and wait for the batch, then use normal Home/Pick. The batch is
-retained for retries/recovery until the first successful placement. Manual
+append next entry → pre-pick → final pick directly **without Home or a placement
+arrival wait**. The dashboard executes these requests after every accepted
+placement command, with the selected global CP. Entry travels from the planned
+tray retract to item X/Y at Home Z and retains finger OPEN at 50%; final descent
+retains SUCK at 20%. If detection is slower than placement, confirm/count retract
+and wait unheld, then use the same direct next Pick without an initial Home.
+The fresh batch is retained for retries/recovery until the first successful placement. Manual
 Pick → Place cycles discard the old batch at placement completion and acquire
 fresh poses on the next explicit Pick.
 Source/hash/attitude checks and three nonempty batches per Pick remain in force.
@@ -71,17 +72,21 @@ completed placement before this retry. Another empty result ends NO_PICK at Home
 with the completed quantity. Empty observations do not consume physical-pick batches.
 
 The handoff retains the previous placement and source until advancing FeedInfo
-reports the appended Home's returned queue ID (or a later ID), with observed neutral
+reports the next pre-pick MovL's returned queue ID (or a later ID), with observed neutral
 gripper outputs and DI1 LOW since placement admission. This proves execution passed
 the placement queue without inventing a MovLIO queue ID or requiring a midpoint
-stop. Only then count that placement, mark the old candidate PLACED, activate the
+stop. Entry remains MovLIO and returns no ID; pre-pick is the second appended
+command. Apply this handoff before interpreting any new-pick suction as old-item
+feedback, including when feedback jumps directly to final descent. Only then count
+that placement, mark the old candidate PLACED, activate the
 next candidate and permit its suction acquisition. Cancel the old batch's unused
 poses and install the fresh ledger. Old held DI1 cannot
 trigger the next Pick. Missing boundary/release evidence faults and Stops the run.
 An interrupted handoff retains the correct source for explicit Recover. Counted
 placement is robot execution/release evidence, not camera proof of item delivery.
 
-For the final item, append Home immediately after placement admission without
+Initial Pick and empty-result recovery retain Home. For the final item, append
+MovJ Home immediately after placement admission without
 requesting another item batch. Confirm final Home, neutral outputs and DI1 LOW
 before Auto Run SUCCESS/READY. Status publishes `auto_run_active`, requested and
 completed quantities; the action result preserves the final/partial count.

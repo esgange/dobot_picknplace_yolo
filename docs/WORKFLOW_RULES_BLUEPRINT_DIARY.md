@@ -9222,6 +9222,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the operator's next run. Preserve `.env`, calibration/teach/model artifacts
   and existing operator RViz edits. No offline-transfer milestone claimed.
 
+### 2026-10-06 — Rule 231: direct Auto Run continuation after tray placement
+
+- Remove only the Home detour between a successful placement and the next
+  nonempty fresh Auto Run Pick. Require ordered acceptance of all placement
+  approach/release/retract calls, then append existing item entry, pre-pick and
+  final pick directly from the planned tray retract at Home Z. No extra waypoint,
+  midpoint arrival wait or output call. Preserve entry OPEN at 50%, final SUCK at
+  20%, taught rates, CP, bin/camera candidate checks and pickup/lift/drop behavior.
+- Replace the removed Home's execution boundary with the existing pre-pick MovL
+  queue ID (second appended command). Entry remains MovLIO and returns no ID.
+  Keep old placement/source until advancing feedback reaches/passes that ID and
+  output history proves neutral gripper/vacuum with raw DI1 LOW since placement
+  admission. Count once, mark PLACED, cancel unused old poses and install the new
+  ledger before its pickup can be accepted. Final/empty-result Home retains its
+  MovJ ID boundary; the event field is now boundary_command_id.
+- Route placement feedback through its continuation owner, including continuous
+  monitoring, so a sample already showing the next item's suction is handed off
+  before interpreting old-item outputs. Serialize handoff under the existing
+  managed lock. A latched old-item drop or canceled operation cannot become a
+  new placement count/source transfer from later feedback. No new executor,
+  background motion thread, dummy command, query service or configuration.
+- Preserve completed-placement context when detection finishes after physical
+  retract, so the next Pick also skips ordinary initial Home in this slower
+  branch. Keep the supervised unheld wait and normal raw-DI1 admission check.
+  Initial Pick Home, final Auto Run Home, empty-result Home retry, exhausted-miss
+  return and explicit recovery remain. All Home destinations keep rule-230 MovJ.
+  Manual cycles and active-drop return routes are unchanged; remove the obsolete
+  queued_home prefix parameter from the shared Pick execution APIs.
+- Validation: controller build and colcon test pass, **1202 pytest tests**, no
+  failures/skips. Focused real-transport/synthetic-feedback cases cover both
+  perception timings, no Home waypoint/service, placement acceptance before next
+  admission, source/count transfer at pre-pick (not entry), coalesced feedback
+  jumping to new suction, Stop at each next-command admission, late feedback
+  after Stop, retained old drop, final Home and empty retry. Initial test failures
+  were old Home expectations and fake-node cancellation/admission callbacks;
+  fixed test fixtures, preserving production guards. Changed-line lint and
+  whitespace checks pass. No physical robot commands, process restart or live
+  timing measurement.
+- Update AGENTS, root/controller READMEs and FSM. Regenerate nine HTML/PDF diagrams,
+  inspect Auto Run and verify all export hash footers against
+  `759a243b7e7ded59df3a5774c4531aa4ba1f195648a9a3ba73a6bd0935bed2b1`.
+  Restart Robot Controller to apply. No vendor changes or offline-transfer
+  milestone; preserve operator RViz, .env, calibration, teach and model artifacts.
+
 ### Future entry template
 
 ```text
