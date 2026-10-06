@@ -8966,6 +8966,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Controller to apply. Preserved `.env`, station artifacts and the unrelated
   operator RViz edit.
 
+### 2026-10-06 — Rule 225: confirm recovery standstill after EnableRobot
+
+- The observed collision run reached mode 11 / CollisionStates=1; Stop returned
+  res=0, but the old pre-clear stationary/idle confirmation repeatedly timed out,
+  preventing ClearError and EnableRobot. The user requested acceptance-only Stop
+  at recovery entry and deferred joint/queue confirmation until after enabling.
+- Explicit Recover now validates the Stop reply, adopts fresh legal gripper I/O,
+  conditionally clears alarms, verifies alarm clearance, sends EnableRobot and
+  confirms enabled feedback. Only then require two distinct fresh stationary
+  joint samples, empty queue and unchanged outputs/raw DI1. Reuse the original
+  accepted Stop response; no extra Stop or fixed stationary dwell is added.
+- Preserve gripper checks throughout setup; latch any violation during the
+  post-enable confirmation instead of adopting changed outputs. Settings and Home
+  motion remain blocked until that bounded, cancellable confirmation succeeds.
+  Unknown suction, stale feedback, ownership conflicts, unresolved prior replies,
+  rejected/unanswered commands and emergency-stop clearance still block recovery.
+  Direct Stop, Startup, managed Pause and automatic drop containment retain their
+  existing physical Stop confirmation. Home travel and its final gripper reset
+  are unchanged. No drag-mode command, setting, schema or interface is added.
+- Validation: **1183 controller tests passed**, including 19 new synthetic cases
+  for mode-11 collision with changing pre-enable joints, held/unheld output
+  preservation, rejected/unanswered Stop/ClearError/Enable, cancellation, unknown
+  suction, opposing outputs, stale feedback, unresolved prior motion and failed
+  post-enable standstill/queue/output checks. Updated existing lifecycle mocks
+  for the split acceptance/confirmation phases. Controller symlink build, scoped
+  flake8 and whitespace checks pass; no robot commands or process restarts.
+- Updated AGENTS, root/package READMEs and FSM baseline, recovery diagram/table
+  and sequence text. Regenerated nine HTML/PDF diagrams, visually checked the
+  recovery page and verified HTML/all PDF source footers against
+  `0f79ff87edfa12f2a42861baa1b3e203178e354641627191e0487e50c96ff91c`.
+  Restart Robot Controller to apply. Preserved station artifacts, `.env` and the
+  unrelated operator RViz edit.
+
 ### Future entry template
 
 ```text

@@ -107,6 +107,11 @@ DI1 interrupts settling or this lift immediately; only completing the lift witho
 DI1 fails the candidate. Pending motion admission is resolved and discarded before return.
 Explicit Recover cancels the interrupted action, preserves current gripper
 outputs during a confirmed vertical lift to Home height and return to taught Home.
+Recover first waits only for Stop acceptance, validates fresh gripper feedback,
+clears alarms if needed and enables the robot. After enabled feedback, it confirms
+stationary joints, an empty queue and unchanged gripper I/O before settings or
+Home motion. Collision mode cannot block alarm clearing at the old pre-enable
+standstill check. Direct Stop and Startup retain their physical Stop checks.
 At Home, Recover / Clear Error relaxes both finger outputs and switches suction and
 exhaust OFF; confirmed neutral outputs and DI1 LOW finish READY.
 The final reset check waits up to five seconds for fresh Home joints, idle status

@@ -46,7 +46,7 @@ class HomeRecovery:
             return cls(trusted, released)
 
     def capture(self, node, sample):
-        """Only called after Stop proves a stationary empty queue and stable I/O."""
+        """Adopt fresh I/O after accepted Stop; prove standstill after enabling."""
         bits = sample.feed["digital_outputs"]
         outputs = {ch: bool(bits & (1 << (ch - 1))) for ch in GRIP_CHANNELS}
         if outputs[1] and outputs[13] or outputs[2] and outputs[14]:
@@ -75,7 +75,7 @@ class HomeRecovery:
                     session.set_state(index, "CANCELED")
                 session.held_index = None
         node.events.record(
-            "INFO", "recovery_grip_preserved", "Fresh stopped gripper state adopted",
+            "INFO", "recovery_grip_preserved", "Fresh gripper state adopted after accepted Stop",
             digital_outputs=bits, digital_input_bits=sample.feed["digital_input_bits"],
             holding_item=detected)
 

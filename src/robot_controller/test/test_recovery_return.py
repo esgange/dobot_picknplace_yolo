@@ -242,7 +242,8 @@ def test_real_lifecycle_preserves_unheld_outputs_through_clear_enable_and_settin
     transport.wait_services = lambda **_kwargs: None
     transport.ensure_no_pending_response = lambda: None
     transport.request_stop = rig.hardware.request_stop
-    transport.confirm_stop = lambda _future, **kw: kw["recovery_home"].capture(rig, rig.snapshot())
+    transport._acknowledge_stop = lambda *_args, **_kw: rig.log.append(("stop_accepted",))
+    transport.confirm_stop = lambda _future, **kw: rig.log.append(("stationary_after_enable",))
     transport._clear_errors_if_needed = lambda: rig.log.append(("clear",))
     transport._call_startup = lambda name: rig.log.append((name,))
     transport._wait_enabled = lambda: None
@@ -253,6 +254,9 @@ def test_real_lifecycle_preserves_unheld_outputs_through_clear_enable_and_settin
     rig.hardware.recover = transport.recover
     assert rig.recover().success
     assert ("EnableRobot",) in rig.log and ("settings", 60, 100) in rig.log
+    assert rig.log.index(("stop_accepted",)) < rig.log.index(("clear",))
+    assert rig.log.index(("EnableRobot",)) < rig.log.index(("stationary_after_enable",))
+    assert rig.log.index(("stationary_after_enable",)) < rig.log.index(("settings", 60, 100))
     assert rig.feed["digital_outputs"] == 0
     first_reset = next(i for i, row in enumerate(rig.log) if row[0] == "output")
     last_move = max(i for i, row in enumerate(rig.log) if row[0] == "move")

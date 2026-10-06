@@ -173,7 +173,7 @@ def test_recovery_restores_selected_cp_including_zero(selected):
     transport.node.check_feedback_owners = Mock()
     transport.clients = {'CP': object()}
     for name in ('wait_services', 'ensure_no_pending_response', '_phase', 'request_stop',
-                 'confirm_stop', '_clear_errors_if_needed', '_wait_enabled',
+                 '_acknowledge_stop', 'confirm_stop', '_clear_errors_if_needed', '_wait_enabled',
                  '_reset_outputs_if_unheld', '_confirm_ready'):
         setattr(transport, name, Mock())
     transport._call_startup = Mock()

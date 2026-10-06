@@ -61,6 +61,7 @@ def lifecycle_transport(*, payload="{[1537]}", clearable=False):
     transport._reset_outputs_if_unheld = lambda: calls.append("outputs")
     transport._confirm_ready = lambda: calls.append("ready")
     transport.request_stop = lambda _reason: calls.append("Stop") or object()
+    transport._acknowledge_stop = lambda *_args, **_kwargs: None
     transport.confirm_stop = lambda *_args, **_kwargs: None
 
     def call(name, **_kwargs):

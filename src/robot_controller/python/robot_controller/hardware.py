@@ -543,8 +543,9 @@ class DobotTransport:
             raise StopUnconfirmed(detail)
         self._finish_service_audit(audit, "accepted", result=result)
 
-    def confirm_stop(self, future=None, *, allow_suction_loss=False, recovery_home=None):
-        self._acknowledge_stop(future)
+    def confirm_stop(self, future=None, *, allow_suction_loss=False, recovery_home=None,
+                     after_enable=False):
+        self._acknowledge_stop(future, check_cancel=after_enable)
         anchor = None
         anchor_sequence = None
         anchor_io = None
@@ -571,7 +572,11 @@ class DobotTransport:
             if recovery_home is not None:
                 # Explicit cancel-and-Home uses newly stopped I/O, never the
                 # interrupted placement/put-back history. No outputs are sent.
-                pass
+                if after_enable:
+                    try:
+                        recovery_home.check(snapshot)
+                    except (FeedbackFailure, HeldUnknown) as exc:
+                        held_violation = str(exc)
             elif return_progress is not None and getattr(return_progress, "observing", False):
                 try:
                     return_progress.observe(self.node, snapshot)
@@ -610,22 +615,29 @@ class DobotTransport:
             anchor_stopped = stopped
             return stopped and unmoved
         try:
+            wait_options = ({"cancel": self.node.cancel_requested, "require_enabled": True}
+                            if after_enable else {})
+            endpoint = "EnableRobot" if after_enable else "Stop"
             self.monitor.wait(stationary, MODE_TRANSITION_TIMEOUT_SEC,
-                              description="stationary joints and empty queue after Stop")
+                              description=f"stationary joints and empty queue after {endpoint}",
+                              **wait_options)
         except FeedbackFailure as exc:
+            if held_violation is not None:
+                raise StopUnconfirmed(held_violation) from exc
             raise StopUnconfirmed(str(exc)) from exc
         self.moving = False
+        if held_violation is not None:
+            raise StopUnconfirmed(
+                "Stop completed but held-item integrity was not preserved: "
+                + held_violation)
         if recovery_home is not None:
             self.pending_motion_outputs = {}
             self.node.events.record(
                 "INFO", "stop_confirmed",
                 "Stationary empty queue and current gripper I/O confirmed")
-            recovery_home.capture(self.node, last_snapshot)
+            if not after_enable:
+                recovery_home.capture(self.node, last_snapshot)
             return
-        if held_violation is not None:
-            raise StopUnconfirmed(
-                "Stop completed but held-item integrity was not preserved: "
-                + held_violation)
         if last_snapshot is not None:
             outputs = last_snapshot.feed["digital_outputs"]
             for channel, planned in planned_outputs.items():
@@ -909,14 +921,21 @@ class DobotTransport:
         self.node.check_feedback_owners()
         self.ensure_no_pending_response()
         self._phase("QUEUE_RESET", "Stopping and discarding any queued motion", "Stop")
+        stop = self.request_stop("explicit Recover queue reset")
+        self._acknowledge_stop(stop, check_cancel=True)
+        if self.home_recovery is not None:
+            # Alarm/collision mode may prevent standstill confirmation until
+            # ClearError/EnableRobot. Preserve fresh I/O now, with no pose wait.
+            self.home_recovery.capture(self.node, self.monitor.snapshot(require_enabled=False))
         extra = ({"recovery_home": self.home_recovery}
                  if self.home_recovery is not None else {})
-        self.confirm_stop(self.request_stop("explicit Recover queue reset"),
-                          allow_suction_loss=self.return_recovery, **extra)
         self._check_held_context(self.node.holding_item, self.node.expected_outputs)
         self._clear_errors_if_needed()
         self._call_startup("EnableRobot")
         self._wait_enabled()
+        self._phase("RECOVERY_STANDSTILL", "Confirming stationary joints and empty queue "
+                    "after EnableRobot")
+        self.confirm_stop(stop, allow_suction_loss=self.return_recovery, after_enable=True, **extra)
         cp_percent = self.node.global_cp_percent
         self._apply_settings(speed_percent if speed_percent is not None else 100,
                              cp_percent if cp_percent is not None else 100)

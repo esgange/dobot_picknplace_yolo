@@ -1546,6 +1546,17 @@ and diagnostics to 50%. Rule 223's post-retract activation and 500 ms drop debou
 remain unchanged. No new setting/schema; update diary/FSM/exports and validate
 the longer probe with synthetic feedback.
 
+Rule 225 moves explicit Recover's stationary-joint/empty-queue confirmation
+after ClearError (when needed), verified alarm clearance and EnableRobot/enabled
+feedback. Initially require Stop acceptance and validated fresh gripper I/O only;
+preserve those outputs through setup. Reuse the accepted Stop and confirm two
+distinct stationary joint samples, empty queue and unchanged I/O/raw DI1 before
+settings or Home motion. Keep bounded response/feedback waits, cancellation,
+ownership, unresolved-reply, freshness and unknown-suction guards. Direct Stop,
+Startup, managed Pause and drop containment keep physical Stop confirmation.
+No drag command, new setting/schema, automatic retry or launch behavior change;
+update diary/FSM/exports and validate collision/rejection/timeout cases synthetically.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

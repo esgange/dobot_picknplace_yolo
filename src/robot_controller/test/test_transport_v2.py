@@ -1050,7 +1050,8 @@ def test_explicit_return_recovery_keeps_outputs_and_restores_strict_suction_chec
         managed=SimpleNamespace(recovery_return_needed=lambda: True,
                                 note_suction_loss=lambda _sample: None),
         check_all_command_owners=lambda _names: None, check_feedback_owners=lambda: None,
-        cancel_requested=lambda: False, publish_status=lambda: None,
+        cancel_requested=lambda: False, raise_if_cancelled=lambda: None,
+        publish_status=lambda: None,
         operation_progress=lambda *_args, **_kwargs: None)
 
     def wait(predicate, *_args, **_kwargs):

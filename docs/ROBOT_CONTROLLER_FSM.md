@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Recovery ordering review: **2026-10-06**, baseline **`1ce58c9`** plus rule **225**.
+Explicit Recover requires Stop acceptance, then validates/adopts fresh gripper
+I/O without waiting for stationary joints or queue-idle feedback. Conditional
+ClearError and verified alarm clearance precede EnableRobot and enabled feedback.
+Only then confirm two distinct stationary joint samples, an empty queue and
+unchanged gripper I/O/raw DI1, before settings/readiness and Home recovery motion.
+Reuse the accepted Stop response; no second Stop or fixed dwell is added. Keep
+freshness, ownership, outstanding-response, unknown-suction, output and cancellation
+guards. Failure at any stage prevents later commands. Direct Stop, Startup,
+managed Pause and automatic drop containment retain their physical Stop checks.
+
 Deferred drop-monitoring review: **2026-10-06**, baseline **`09ed60a`** plus rule
 **223**. The shared falling-edge debounce is now **500 ms**. On pickup, retain
 HELD/source context but defer loss monitoring until fresh joint FK reaches the
@@ -1156,12 +1167,15 @@ flowchart TD
     Fault --> Recover
     Unknown --> Recover
     Recover --> Cancel["Cancel old action and remaining candidates"]
-    Cancel --> Guard{"Fresh Stop, stable I/O, known suction and ownership valid?"}
+    Cancel --> Guard{"Stop accepted; fresh I/O, known suction and ownership valid?"}
     Guard -->|Unknown DI1 HIGH| Unknown
     Guard -->|Other failure| Fault
-    Guard -->|Valid| Enable["Conditional clear; verified alarm clearance; Enable/settings; preserve I/O"]
+    Guard -->|Valid| Enable["Conditional clear; verified alarm clearance; EnableRobot + enabled feedback; preserve I/O"]
     Enable -->|Failure| Fault
-    Enable --> Lift["Below Home Z: vertical lift at current XY/attitude; physically confirm"]
+    Enable --> Stationary{"Fresh stationary joints, empty queue and unchanged I/O confirmed?"}
+    Stationary -->|Failure or Stop| Fault
+    Stationary -->|Yes| Settings["Restore speed/CP and settings; confirm readiness"]
+    Settings --> Lift["Below Home Z: vertical lift at current XY/attitude; physically confirm"]
     Lift --> Home["Move to exact taught Home; preserve grip"]
     Home --> Relax["Idle + Home joints: DO1, DO2, DO13, DO14 OFF; confirm each"]
     Relax --> Confirm["Up to 5 s: fresh Home joints + RobotStatus idle; output queue finished"]
@@ -1190,18 +1204,26 @@ or overwrite a new operation. Operation startup cannot clear an in-progress Stop
 | Interrupted release confirmed | Preserve current outputs through lift/Home, then relax. New DI1 HIGH before travel blocks this route. |
 | Unknown HIGH suction, no trusted source | Keep stopped; safely secure/clear item or inspect the sensor for obstruction. Once DI1 shows LOW, click Recover again; no extra Stop click required. No invented return location. |
 | Competing maintenance app | Close the named Gripper Diagnostics/motion-debug application, then retry Recover. |
+| Collision mode blocks pre-enable standstill | Recover requires accepted Stop, then conditional ClearError and Enable. Confirm stationary joints/empty queue after enabled feedback, before settings or motion. |
 | Confirmed emergency stop (`res=-3` or alarm 1537) | Cannot start/recover while active. Release the physical button, then click Recover / Clear Error. Recover may clear a latched alarm; Enable remains blocked until clearance is verified. |
 | Stale feedback, alarm, output mismatch, changed source or failed command | Resolve the reported cause, then Recover. A click does not bypass the check. |
 
-Normal Recover cancels the old operation and remaining candidates, then confirms
-a stationary empty queue and stable gripper outputs/raw DI1 across two distinct
-fresh samples. Adopt those current outputs only after validation; never replay
+Normal Recover cancels the old operation and remaining candidates, then sends
+Stop and requires acceptance. Validate and adopt fresh current gripper I/O without
+waiting for stationary joints or an empty queue at this stage; never replay
 expired placement history. Reject opposing outputs and unknown suction. Known
 held suction must have a trusted source and active vacuum; sustained clear DI1
 permits empty recovery without asserting that an object left the fingers.
 
-Restore readiness with conditional ClearError, verified clearance, Enable and
-settings. Keep the last confirmed global speed and CP (each 100% if unset;
+Preserve those outputs through conditional ClearError, verified clearance,
+EnableRobot and enabled feedback. Now confirm stationary joints and an empty
+queue across two distinct fresh joint samples with unchanged gripper outputs/raw
+DI1. The existing bounded confirmation remains cancellable and requires enabled
+feedback. Reuse the original accepted Stop; no additional Stop is sent. A timeout
+names the post-EnableRobot check, and any latched I/O violation blocks progression.
+Only after confirmation restore settings/readiness. Direct Stop, Startup, managed
+Pause and drop containment retain their original physical Stop order.
+Keep the last confirmed global speed and CP (each 100% if unset;
 CP=0 remains valid). Preserve outputs
 during travel. Below Home Z, issue and physically confirm an upward-only
 RelMovLUser with unchanged XY/attitude; then a separate joint-target MovL to taught

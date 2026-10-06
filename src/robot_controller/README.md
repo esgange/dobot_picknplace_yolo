@@ -198,7 +198,9 @@ reported by StopMoveJog is fatal even though ordinary StopMoveJog rejections are
 best effort. Stop rejection still means Stop is unconfirmed.
 
 Recover retains its explicit Stop → conditional ClearError → verified alarm
-clearance → Enable sequence. An acknowledged ClearError alone is not success.
+clearance → Enable sequence. Only Stop acceptance is required before clearing;
+stationary joints and an empty queue are confirmed after enabled feedback,
+before settings or recovery motion. An acknowledged ClearError alone is not success.
 If the alarm persists, GetErrorID distinguishes an emergency stop from the old
 generic clearance timeout. Recover remains clickable in FAULT so it can clear a
 latched alarm after physical release; no stale UI flag blocks that attempt. It
@@ -751,16 +753,23 @@ Startup validates sole canonical services and publishers, then performs:
 8. 200 ms of coherent `READY` feedback.
 
 Recover cancels the interrupted pick/place/put-back and marks unfinished
-candidates CANCELED. It confirms Stop with two distinct stationary, queue-empty
-samples with unchanged gripper outputs and raw DI1, then adopts that fresh I/O
-state. It does not replay old placement history. Opposing output pairs, unknown
+candidates CANCELED. It sends Stop and requires an accepted response, then adopts
+validated fresh gripper I/O without waiting for stationary joints or an empty
+queue. It does not replay old placement history. Opposing output pairs, unknown
 DI1 HIGH, DI1 HIGH after confirmed release, or a prior dropped source that merely
 regains suction block motion. Sustained fresh LOW permits empty recovery while
 preserving the outputs: LOW is not proof that an object physically left the fingers.
 A trusted HELD source with live suction and vacuum stays held throughout recovery travel.
 
-After conditional ClearError, verified alarm clearance, Enable and readiness,
-Recover issues an upward-only RelMovLUser at unchanged XY/attitude if below Home Z.
+Keep gripper and feedback checks active through conditional ClearError, verified
+alarm clearance and Enable. After enabled feedback, confirm two distinct fresh
+stationary joint samples, an empty queue and unchanged gripper outputs/raw DI1.
+This check has the existing bounded wait and Stop cancellation; rejection,
+timeout, stale feedback or I/O changes prevent settings and recovery motion.
+Use the original accepted Stop; do not send another Stop just for this check.
+Restore settings/readiness, then issue an upward-only RelMovLUser at unchanged
+XY/attitude if below Home Z. Direct Stop, managed Pause, drop containment and
+Startup retain their existing physical Stop confirmation order.
 Confirm that lift before a separate queued joint-target MovL to taught Home.
 Use taught travel speed/acceleration and the last confirmed global speed and CP (each 100%
 if unset, preserving CP=0). Already at/above Home height skips the lift; already at taught Home
