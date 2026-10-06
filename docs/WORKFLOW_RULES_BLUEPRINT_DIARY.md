@@ -8941,6 +8941,31 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `5b22231fd565491bd501acfdde83cbc8c8d740a638cfdb96f2dce89eedef0522`.
   Preserved `.env`, station artifacts and the unrelated operator RViz edit.
 
+### 2026-10-06 — Rule 224: increase last-chance pickup lift to 50%
+
+- Increased the slow pickup probe from 20% to 50% of the remaining upward
+  distance from actual settled Z to saved first-retract/pre-pick Z. A 40 mm
+  remaining lift now gives 20 mm. Keep taught final-approach speed/acceleration,
+  unchanged suction/finger outputs and DI1 acquisition through the longer lift.
+  Update phase/event/failure messages to report 50%.
+- Preserve acquisition Stop/reply containment, actual-pose continuation,
+  endpoint-only miss confirmation, zero-rise handling and failed retry routes.
+  Rule 223 still activates drop monitoring at first-retract height with a fresh
+  500 ms LOW interval. No new setting/schema, detector request or robot wait.
+  This supersedes only rule 222's probe fraction and corresponding messages.
+- Validation: **1164 controller tests passed**. Updated existing probe scenarios
+  check the 20 mm commanded distance, acquisition beyond the former 8 mm endpoint
+  and at the new endpoint, miss completion, pending reply containment, ledger
+  continuation, deferred-drop target, unchanged rates/I/O and 50% failure text.
+  Controller symlink build, scoped flake8 and whitespace checks pass.
+- Updated AGENTS, root/package READMEs and FSM review/Pick/ledger diagrams.
+  Regenerated nine adjacent HTML/PDF diagrams, visually checked Pick and ledger,
+  and verified the HTML hash and every PDF footer against
+  `e42bce10335755fc7e5e6f3057caba239372694335221458db31788b77e2e364`.
+  No hardware motion or production restart was performed; restart Robot
+  Controller to apply. Preserved `.env`, station artifacts and the unrelated
+  operator RViz edit.
+
 ### Future entry template
 
 ```text

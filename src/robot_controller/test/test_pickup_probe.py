@@ -48,7 +48,7 @@ def pick_with_probe(rig):
 @pytest.mark.parametrize("at_endpoint", [False, True])
 def test_di1_during_probe_takes_normal_acquisition_stop_without_waiting(monkeypatch, at_endpoint):
     rig, clock = probe_rig(monkeypatch)
-    height = .108 if at_endpoint else .104
+    height = .120 if at_endpoint else .112
     rig.steps = iter([*rig.settle, dict(z=height, running=int(not at_endpoint),
                                       command_id=8, outputs=VACUUM, di1=True)])
     acquired, origin = pick_with_probe(rig)
@@ -57,7 +57,7 @@ def test_di1_during_probe_takes_normal_acquisition_stop_without_waiting(monkeypa
     assert len(rig.stops) == 1
     assert [name for name, _fields in rig.calls] == ["MovLIO", "MovL"]
     fields = rig.calls[-1][1]
-    assert fields["c"] == pytest.approx(108.)  # 20% of 40 mm is 8 mm.
+    assert fields["c"] == pytest.approx(120.)  # 50% of 40 mm is 20 mm.
     assert fields["param_value"] == ["user=0", "tool=0", "v=10", "a=35"]
     assert "mdis" not in fields
     assert rig.transport.node.expected_outputs[13]
@@ -69,12 +69,12 @@ def test_di1_during_probe_takes_normal_acquisition_stop_without_waiting(monkeypa
 def test_no_di1_fails_only_after_probe_queue_id_idle_and_endpoint(monkeypatch):
     rig, clock = probe_rig(monkeypatch)
     rig.steps = iter([*rig.settle,
-                      dict(z=.108, command_id=7, outputs=VACUUM),  # Old command.
+                      dict(z=.120, command_id=7, outputs=VACUUM),  # Old command.
                       dict(z=.1, command_id=8, outputs=VACUUM),  # Not at probe endpoint.
-                      dict(z=.108, command_id=8, outputs=VACUUM, running=1),
-                      dict(z=.108, command_id=8, outputs=VACUUM)])
+                      dict(z=.120, command_id=8, outputs=VACUUM, running=1),
+                      dict(z=.120, command_id=8, outputs=VACUUM)])
     acquired, origin = pick_with_probe(rig)
-    assert not acquired and origin[2, 3] == pytest.approx(.108)
+    assert not acquired and origin[2, 3] == pytest.approx(.120)
     assert len(rig.calls) == 2 and not rig.stops
     assert clock[0] == pytest.approx(.65)  # No second settling interval.
     assert not rig.transport.acquisition_eligible and rig.transport.late_miss_suction
@@ -106,11 +106,11 @@ def test_probe_preserves_actual_xy_and_attitude(monkeypatch):
         return pose
 
     rig.transport.node.kinematics.forward = actual
-    rig.steps = iter([*rig.settle, dict(z=.108, command_id=8, outputs=VACUUM)])
+    rig.steps = iter([*rig.settle, dict(z=.120, command_id=8, outputs=VACUUM)])
     acquired, origin = pick_with_probe(rig)
     fields = rig.calls[-1][1]
     assert not acquired
-    assert [fields[axis] for axis in "abcf"] == pytest.approx([2., -1., 108., .2])
+    assert [fields[axis] for axis in "abcf"] == pytest.approx([2., -1., 120., .2])
     assert np.allclose(origin[:2, 3], [.002, -.001])
 
 
@@ -155,7 +155,7 @@ def test_executor_retains_active_ledger_until_probe_result_and_retracts_from_act
     rig.transport.move_batch = move_or_record
     rig.transport.sensor = lambda *_a: True
     rig.transport.output = lambda *_a, **_k: pytest.fail("Gripper moved before held lift")
-    height = .104 if acquire else .108
+    height = .112 if acquire else .120
     rig.steps = iter([*rig.settle, dict(z=height, command_id=8, outputs=VACUUM,
                                       running=int(acquire), di1=acquire)])
     outcome = PickExecutor(rig.transport, finish_home=False).run(
@@ -207,7 +207,7 @@ def test_settling_to_probe_boundary_never_latches_miss_or_loses_acquisition(monk
 @pytest.mark.parametrize("outputs", [0, VACUUM | (1 << 13), VACUUM | (1 << 1)])
 def test_probe_rejects_suction_loss_or_uncommanded_finger_change(monkeypatch, outputs):
     rig, _clock = probe_rig(monkeypatch)
-    rig.steps = iter([*rig.settle, dict(z=.104, running=1, command_id=8, outputs=outputs)])
+    rig.steps = iter([*rig.settle, dict(z=.112, running=1, command_id=8, outputs=outputs)])
     with pytest.raises(FeedbackFailure, match="Pickup probe output DO"):
         pick_with_probe(rig)
     assert len(rig.calls) == 2
@@ -241,7 +241,7 @@ def test_di1_during_probe_admission_resolves_reply_and_discards_queue_again(monk
     def dispatch(name, fields):
         rig.calls.append((name, fields))
         if name == "MovL":
-            rig.emit(z=.104, running=1, outputs=VACUUM, di1=True)
+            rig.emit(z=.112, running=1, outputs=VACUUM, di1=True)
             return pending
         rig.emit(z=.1, running=1, outputs=VACUUM)
         future = Future()
@@ -264,7 +264,7 @@ def test_di1_during_probe_admission_resolves_reply_and_discards_queue_again(monk
     transport.node.wait_control = respond
     rig.steps = iter(rig.settle)
     acquired, origin = pick_with_probe(rig)
-    assert acquired and origin[2, 3] == .104
+    assert acquired and origin[2, 3] == .112
     assert pending.done() and len(rig.calls) == 2
     assert [fresh for _reason, fresh, _future in rig.stops] == [False, True]
 
@@ -279,7 +279,7 @@ def test_failure_log_explains_both_attempts_but_keeps_typed_state(settling_ms):
         publish_status=lambda: None)
     RobotController._attempt_changed(node, 1, SimpleNamespace(state="FAILED", identifier="item"))
     expected = (f"FAILED — no DI1 pickup detected after {settling_ms:g} ms settling "
-                "and the 20% upward-lift check.")
+                "and the 50% upward-lift check.")
     assert messages == [f"Candidate 1 (item): {expected}"]
     assert events[0][0][2] == expected
     assert events[0][1]["candidate_state"] == "FAILED"

@@ -102,7 +102,7 @@ immediately; no fixed arrival dwell is added outside taught final-pick settling.
 Eligible DI1 HIGH during Pick sends Stop immediately and starts the lift/Tray
 Detect return after command acknowledgement, without stationary confirmation.
 If final-pick settling ends without DI1, keep suction on and try a last-chance
-lift through 20% of the remaining distance to pre-pick at final-approach rates.
+lift through 50% of the remaining distance to pre-pick at final-approach rates.
 DI1 interrupts settling or this lift immediately; only completing the lift without
 DI1 fails the candidate. Pending motion admission is resolved and discarded before return.
 Explicit Recover cancels the interrupted action, preserves current gripper
@@ -414,7 +414,8 @@ or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST
 (DO13 OFF then DO1 ON), or NEUTRAL (both OFF). Opposing outputs are never
 intentionally active together and such feedback aborts motion. The first pick
 group goes Home-Z item X/Y with OPEN at 50%, directly to pre-pick, then to final
-pick with SUCK at 20%. A miss latches only after final-pose `pick_settling`.
+pick with SUCK at 20%. A miss latches only after final-pose `pick_settling`
+and the 50% last-chance upward lift both finish without DI1.
 Retry rises to the old pre-pick with EXHAUST at 80%, enters both NEUTRAL states
 at the start of the old-clearance rise, enters OPEN at 50% of travel to the
 next candidate's safety-Z transit, and enters SUCK at 20% of the next final

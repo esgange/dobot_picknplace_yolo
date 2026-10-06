@@ -1462,7 +1462,7 @@ class DobotTransport:
                         # reset arming, release vacuum or move the fingers here.
                         probe_started = True
                         actual = self.pose_from_snapshot(snapshot)
-                        lift = .2 * max(0., pickup_retract_pose[2, 3] - actual[2, 3])
+                        lift = .5 * max(0., pickup_retract_pose[2, 3] - actual[2, 3])
                         bits = snapshot.feed["digital_outputs"]
                         if not suction_armed or not bits & (1 << 12):
                             raise FeedbackFailure("Pickup probe requires armed suction DO13 ON")
@@ -1470,7 +1470,7 @@ class DobotTransport:
                             channel: bool(bits & (1 << (channel - 1)))
                             for channel in (1, 2, 13, 14)})
                         self.node.events.record(
-                            "INFO", "pickup_probe_started", "Settling expired; try 20% upward lift",
+                            "INFO", "pickup_probe_started", "Settling expired; try 50% upward lift",
                             batch=batch_name, settling_sec=pick_settling_sec,
                             lift_mm=lift * 1000, speed_percent=tail.speed_percent,
                             acceleration_percent=tail.acceleration_percent)
@@ -1492,7 +1492,7 @@ class DobotTransport:
                         if self.suction_interrupted:
                             return finish_suction_interrupt()
                         self.node.operation_progress(
-                            "MOTION", "No DI1 after settling; trying 20% upward lift",
+                            "MOTION", "No DI1 after settling; trying 50% upward lift",
                             waypoint=tail.name)
                         replies = self.call_group(
                             [("MovL", fields)], progress=progress, outputs_by_call=[{}],

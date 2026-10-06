@@ -13,9 +13,10 @@ clears a pending gate. Raw I/O, acquisition/probe, output/freshness checks,
 intentional release and confirmed-drop containment remain unchanged. Log
 `drop_detection_deferred` and `drop_detection_armed` with height and 500 ms.
 
-Pickup probe review: **2026-10-06**, baseline **`beae161`** plus rule **222**.
+Pickup probe review: **2026-10-06**, baseline **`1451bfa`** plus rule **224**
+(superseding rule 222's 20% distance only).
 After final-pick settling expires without DI1, keep the candidate ACTIVE and
-command a last-chance upward lift through 20% of the remaining distance from
+command a last-chance upward lift through 50% of the remaining distance from
 actual settled Z to saved pre-pick Z, at final-approach speed/acceleration.
 Preserve measured XY/attitude, suction and finger outputs. Acquisition stays
 armed across settling, probe admission and travel; DI1 HIGH uses the existing
@@ -24,7 +25,7 @@ fresh executed/idle probe endpoint without DI1 latches FAILED, with no second
 settling interval. Zero available rise skips motion and never descends. This
 applies to all shared Pick paths, including retries and Auto Run. Keep source
 retention, Pause/Stop, failed retract/retry and post-failure late-DI1 isolation.
-Messages read `FAILED — no DI1 pickup detected after N ms settling and the 20%
+Messages read `FAILED — no DI1 pickup detected after N ms settling and the 50%
 upward-lift check.` N comes from loaded `pick_settling`; typed state remains
 FAILED. Probe events include actual distance/rates, including zero rise. This
 supersedes the rule-221 settling-only message and miss boundary.
@@ -650,7 +651,7 @@ flowchart TD
     Sense -->|Yes| Acquire["Send Stop; await acceptance only; fresh joint pose; mark HELD"]
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
-    Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 20% toward pre-pick at approach rates; fingers unchanged"]
+    Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 50% toward pre-pick at approach rates; fingers unchanged"]
     Probe -->|DI1 HIGH| Acquire
     Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; log settling + upward-lift check without DI1"]
     Acquire --> Fingers["grip_onpick: close now, independent of use_grip"]
@@ -711,7 +712,7 @@ flowchart TD
   potentially later-admitted command. Normal delayed callbacks cannot send a
   redundant Stop into the return queue. Rejection/timeout blocks the return.
   If there is no early pickup, observe taught `timing.pick_settling` at the final
-  stationary/idle pose. Expiry without acquisition starts a 20% upward probe to
+  stationary/idle pose. Expiry without acquisition starts a 50% upward probe to
   saved pre-pick Z at taught approach rates, keeping measured XY/attitude and
   unchanged suction/finger outputs. Keep the same acquisition filter and ACTIVE
   candidate throughout; HIGH immediately interrupts either phase. Require the
@@ -759,7 +760,7 @@ flowchart TD
     PENDING -->|Motion accepted| ACTIVE
     ACTIVE -->|Unheld Pause| INTERRUPTED
     INTERRUPTED -->|Continue same candidate| ACTIVE
-    ACTIVE -->|Settling + 20% upward-lift check end without pickup| FAILED
+    ACTIVE -->|Settling + 50% upward-lift check end without pickup| FAILED
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
     HELD -->|Return queue complete at Home; neutral and DI1 LOW| RETURNED
