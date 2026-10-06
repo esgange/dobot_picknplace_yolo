@@ -1132,8 +1132,14 @@ The current station also requires the latest strict schema-7 robot-camera
 transform `Link6 <- robot_camera_link` (transform only). For every candidate,
 preview and hardware independently compose its calibrated camera-link body
 at Link6's pick height (`item Z + standoff_height`) into `platform_reference`.
-Use the shared centered 100 × 30 × 30 mm housing, camera-link XYZ size
-30/100/30 mm. Transform all eight corners and project their convex outline onto
+Use the shared Gemini 335 housing: RGB optical XYZ size 90/25/30 mm, center
+(+11, 0, −12.79) mm relative to `robot_camera_color_optical_frame`. Compose the
+documented nominal RGB-to-camera-link transform with the saved mounting transform;
+this yields camera-link center (−10.77, −25, 0) mm and XYZ size 30/90/25 mm.
+This fixed mechanical model does not replace the factory optical TF used for
+RGB/aligned-depth measurement or change any saved calibration. The geometry
+sources and derivation are in the [Item Perception README](../item_perception_yolo/README.md).
+Transform all eight corners and project their convex outline onto
 platform XY, including mount/platform tilt. The normal Home-relative pick
 attitude is used if the entire outline is inside/on the
 green Bin Teach ROI; otherwise the exact 180° tool-Z mirror is used if safe.
@@ -1148,8 +1154,8 @@ apply solely to the item pick point.
 GUI controller launch also starts the read-only `/robot_camera_box` node. It
 publishes `/robot_controller/robot_camera_body` as a translucent magenta CUBE
 using the same strict latest robot-camera calibration and shared dimensions.
-The box is centered on the calibrated camera-link origin, with width along its
-Y axis, and frame-locked to live `Link6`. It adds no camera TF, command client,
+The box includes the RGB-referenced center offset, with its marker axes matching
+RGB optical axes, and is frame-locked to live `Link6`. It adds no camera TF, command client,
 RGB/depth subscription or hardware action. Canonical RViz has a Marker display
 for this topic; reload its config if already open. Run it separately with
 `ros2 run robot_controller robot_camera_box` when teaching without the controller.

@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from item_perception_yolo.pick_planning import (
-    CAMERA_BODY_SIZE_M, camera_body_corners, camera_body_footprint,
+    camera_body_corners, camera_body_footprint, camera_body_pose_from_rgb,
+    camera_link_from_rgb_optical,
     candidate_pose_in_base, pick_attitude, point_in_polygon, rpy_matrix, select_pick_attitude)
 
 
@@ -33,10 +34,10 @@ def choose(candidate, camera=None):
 
 def test_normal_inside_is_retained_and_boundary_is_inclusive():
     normal = choose(item(0.0))
-    boundary = choose(item(0.135))  # Camera center .185 + 15 mm depth half-size touches .2.
+    boundary = choose(item(0.14577))  # Link origin .19577 + 4.23 mm to front glass.
     assert normal.accepted and normal.mirrored is False
     assert boundary.accepted and boundary.mirrored is False
-    assert boundary.selected_camera_platform_xy == pytest.approx((0.185, 0.0))
+    assert boundary.selected_camera_platform_xy == pytest.approx((0.19577, 0.0))
     assert max(p[0] for p in boundary.selected_camera_footprint_xy) == pytest.approx(.2)
     assert point_in_polygon((0.2, 0.0), ROI)
 
@@ -71,7 +72,7 @@ def test_center_inside_but_housing_crosses_edge_uses_safe_mirror():
 
 
 def test_both_centers_inside_but_bodies_outside_rejects_candidate():
-    selected = choose(item(.195), camera=np.eye(4))
+    selected = choose(item(.198), camera=np.eye(4))
     assert point_in_polygon(selected.normal_camera_platform_xy, ROI)
     assert point_in_polygon(selected.mirrored_camera_platform_xy, ROI)
     assert not selected.accepted and selected.selected_camera_footprint_xy is None
@@ -80,9 +81,33 @@ def test_both_centers_inside_but_bodies_outside_rejects_candidate():
 def test_camera_width_is_local_y_and_rotates_with_mounting():
     pose = np.eye(4)
     corners = camera_body_corners(pose)
-    assert np.ptp(corners, axis=0) == pytest.approx(CAMERA_BODY_SIZE_M)
+    assert np.ptp(corners, axis=0) == pytest.approx((.030, .090, .025))
+    assert corners.mean(axis=0) == pytest.approx((-.01077, -.025, 0.))
     pose[:3, :3] = rpy_matrix(0, 0, np.pi / 2)
-    assert np.ptp(camera_body_corners(pose), axis=0) == pytest.approx((.100, .030, .030))
+    assert np.ptp(camera_body_corners(pose), axis=0) == pytest.approx((.090, .030, .025))
+    assert camera_body_corners(pose).mean(axis=0) == pytest.approx((.025, -.01077, 0.))
+
+
+def test_rgb_reference_matches_documented_glass_and_housing_bounds():
+    # RGB lens: 11 mm left of case center, 2.21 mm behind front glass.
+    # Test in optical axes, independently of the planner's Link6/platform chain.
+    rgb_from_link = np.linalg.inv(camera_link_from_rgb_optical())
+    corners = camera_body_corners(rgb_from_link)
+    assert corners.min(axis=0) == pytest.approx((-.034, -.0125, -.02779))
+    assert corners.max(axis=0) == pytest.approx((.056, .0125, .00221))
+    assert camera_body_pose_from_rgb(np.eye(4))[:3, 3] == pytest.approx((.011, 0., -.01279))
+    link_corners = camera_body_corners(np.eye(4))
+    assert link_corners.min(axis=0) == pytest.approx((-.02577, -.070, -.0125))
+    assert link_corners.max(axis=0) == pytest.approx((.00423, .020, .0125))
+
+
+def test_offset_body_crossing_side_wall_mirrors_even_when_centered_box_would_fit():
+    selected = choose(item(y=-.09), camera=np.eye(4))
+    # A centered 90 mm box reaches only -.135; the real rearward/sideways
+    # offset takes the normal housing to -.16, across the -.15 green wall.
+    assert selected.accepted and selected.mirrored
+    assert min(y for _, y in selected.normal_camera_footprint_xy) == pytest.approx(-.16)
+    assert all(point_in_polygon(p, ROI) for p in selected.selected_camera_footprint_xy)
 
 
 def test_tilted_housing_projects_all_eight_corners_in_platform_frame():
@@ -110,7 +135,7 @@ def test_camera_body_cannot_cross_narrow_bin_even_with_center_inside():
     selected = select_pick_attitude(
         np.eye(4), item(), 0., 0., np.eye(4), np.eye(4),
         [[-.2, -.04], [.2, -.04], [.2, .04], [-.2, .04]])
-    assert not selected.accepted  # 100 mm body does not fit in an 80 mm bin.
+    assert not selected.accepted  # 90 mm body does not fit in an 80 mm bin.
 
 
 def test_each_candidate_is_planned_independently_from_home_with_offset():

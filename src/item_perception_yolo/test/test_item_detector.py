@@ -88,7 +88,9 @@ def service_node(monkeypatch, tmp_path):
                      "rotation_from_home_deg": 0., "offset_direction": "none"}}
     result = {"candidates": [candidate], "rejected": [], "count": 1, "inference_ms": 10.}
     clearance = candidate["robot_camera_clearance"]
-    clearance["body_size_camera_link_m"] = [.03, .1, .03]
+    clearance["body_reference_frame"] = "robot_camera_color_optical_frame"
+    clearance["body_size_color_optical_m"] = [.09, .025, .03]
+    clearance["body_center_color_optical_m"] = [.011, 0., -.01279]
     for key in ("normal", "mirrored", "selected"):
         clearance[key + "_footprint_platform_xy"] = [
             [-.005, -.03], [.025, -.03], [.025, .07], [-.005, .07]]
@@ -312,14 +314,19 @@ def test_native_protocol_candidate_checks(service_node):
             {"candidates": [candidate, copy.deepcopy(candidate)]}, node.settings)
 
 
-@pytest.mark.parametrize("invalid", ["old_point_only", "size", "outline", "selection"])
+@pytest.mark.parametrize("invalid", ["old_point_only", "size", "outline", "selection",
+                                     "center", "frame"])
 def test_native_protocol_requires_matching_camera_body_evidence(service_node, invalid):
     node, candidate = service_node
     plan = candidate["robot_camera_clearance"]
     if invalid == "old_point_only":
-        del plan["body_size_camera_link_m"]
+        del plan["body_center_color_optical_m"]
     elif invalid == "size":
-        plan["body_size_camera_link_m"] = [.03, .01, .03]
+        plan["body_size_color_optical_m"] = [.1, .03, .03]
+    elif invalid == "center":
+        plan["body_center_color_optical_m"] = [0., 0., 0.]
+    elif invalid == "frame":
+        plan["body_reference_frame"] = "robot_camera_link"
     elif invalid == "outline":
         plan["normal_footprint_platform_xy"] = [[float("nan"), 0.]] * 4
     else:

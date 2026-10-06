@@ -9043,6 +9043,54 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and verified HTML/all PDF source footers against
   `bc4cdecaa507561936c3d036530d80e9b32fe53ad1add100970f4166bf5fdd95`.
 
+### 2026-10-06 — Rule 227: position the housing from the RGB optical origin
+
+- The operator confirmed RGB-aligned depth and requested housing placement
+  relative to the RGB optical frame. Root settings enable depth registration
+  with SW alignment to COLOR; driver code labels registered depth with the
+  color optical frame. Saved hand-eye calibration remains
+  `Link6 <- robot_camera_link`; its solver converts from the observed RGB optical
+  pose using the actual factory TF. Alignment does not relocate the saved
+  camera-link/depth optical center to the RGB lens.
+- Correct rule 226's assumed centered 100×30×30 mm body using the
+  [Orbbec Gemini 330 datasheet V1.6](https://www.orbbec.com/wp-content/uploads/2025/06/Gemini-330-series-Datasheet-V1.6.pdf):
+  §3.2.3 specifies Gemini 335 width/height/depth 90/25/30 mm; §§4.8–4.9 give
+  RGB relative to depth (+14, 0, +2.02) mm and RGB 2.21 mm behind front glass.
+  Appendix B places RGB 11 mm from the body center. Thus the body center is
+  (+11, 0, −12.79) mm in RGB optical XYZ (right/down/forward), with box sizes
+  90/25/30 mm in those axes. Cross-checked the geometry against the bundled
+  Orbbec Gemini 335 URDF and housing mesh; the derived camera-link center is
+  (−10.77, −25, 0) mm and link-axis sizes are 30/90/25 mm.
+- Define the mechanical model in `robot_camera_color_optical_frame` and compose
+  its documented nominal RGB-to-link bridge through the unchanged saved mount.
+  The nominal bridge is solely for housing geometry; never replace the actual
+  factory TF used for RGB/depth projection or calibration. This adds no live
+  camera/TF requirement, calibration rewrite, deployment file, schema or key.
+  Keep full eight-corner normal/mirror containment shared by Item Teach, headless
+  Item Detect, controller preview and hardware. New native evidence validates
+  the RGB frame, size and center offset, rejecting prior centered-body results.
+- The RViz CUBE uses the same body pose and optical-axis dimensions, attached
+  through saved mounting to live Link6. Rename only its canonical display label
+  in the vendor RViz config; preserve all existing operator edits outside the
+  staged patch. Read-only marker authority and headless launch are unchanged.
+- Validation: **1726 controller/item-perception tests passed** in the final full
+  run. Focused geometry/protocol tests, controller symlink build, scoped
+  flake8 and whitespace checks pass. Isolated ROS marker publication verifies
+  optical-axis dimensions, composed calibrated offset, deletion and absence of
+  robot service clients. Regression cases cover independent RGB/link bounds,
+  rotated center offsets, a newly unsafe side-wall footprint requiring a mirror,
+  native-worker RGB evidence and identical marker/planner corners. The original
+  full run passed 1725 tests; one depth-overlay pixel assertion intersected the
+  newly positioned outline. Move that sample outside the outline and retain
+  its accepted-depth check; the worker test then passes.
+- Updated AGENTS, root/package READMEs and FSM review/diagram/guard table;
+  regenerated nine HTML/PDF diagrams, inspected the Pick diagram and verified
+  all source hashes against
+  `8aec27c7a9ded4c7c9d492bf56a108364aebbc02a964b905cc9b1563e887b446`.
+  No physical commands or production restarts. Restart perception, controller
+  and the camera-box display to apply; `.env`, calibration and teach artifacts
+  remain unchanged. The model excludes mounting hardware/cables and swept paths.
+
 ### Future entry template
 
 ```text

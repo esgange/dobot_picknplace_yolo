@@ -355,9 +355,14 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         point = selected["candidates"][0]
         assert point["source_index"] == 7 and point["pixel"] == [160., 120.]
         assert point["position"] == pytest.approx([0, 0, .1])
+        body = point["robot_camera_clearance"]
+        assert body["body_reference_frame"] == "robot_camera_color_optical_frame"
+        assert body["body_size_color_optical_m"] == [.09, .025, .03]
+        assert body["body_center_color_optical_m"] == [.011, 0., -.01279]
         assert len(selected_pair) == 2 * len(pixels)
         depth_overlay = selected_pair[len(pixels):]
-        assert depth_overlay[(120*320+162)*3:(120*320+162)*3+3] == bytes(3)
+        # Inspect an accepted sample left of the magenta offset-camera outline.
+        assert depth_overlay[(120*320+158)*3:(120*320+158)*3+3] == bytes(3)
         assert depth_overlay[(180*320+260)*3:(180*320+260)*3+3] == bytes([255]*3)
         # Default teaching RViz operation reuses this exact pair/detection without
         # another prediction, model argument or production pose request.

@@ -195,12 +195,13 @@ def exercise_geometry():
     tiny_roi = {**context, "roi": [[-.02, -.02], [-.02, .02], [.02, .02], [.02, -.02]],
                 "pick_planning": {**context["pick_planning"],
                                   "link6_from_robot_camera": np.eye(4).tolist()}}
-    # Item overlap/pick-point gates pass, but a 100 mm camera cannot fit in 40 mm.
+    # Item overlap/pick-point gates pass, but a 90 mm camera cannot fit in 40 mm.
     tiny_result = generate_candidates([item], rgb, depth, tiny_roi, settings, cv2, np)
     assert not tiny_result[2] and "robot-camera body" in tiny_result[3][0]["reason"]
-    # Mount width vertically: its 30×30 mm projection fits and overlap stays eligible.
+    # Mount width vertically and center the offset housing: its 30×25 mm
+    # projection fits and item overlap stays eligible.
     tiny_roi["pick_planning"]["link6_from_robot_camera"] = [
-        [1., 0., 0., 0.], [0., 0., -1., 0.], [0., 1., 0., 0.], [0., 0., 0., 1.]]
+        [1., 0., 0., .01077], [0., 0., -1., 0.], [0., 1., 0., 0.], [0., 0., 0., 1.]]
     assert len(generate_candidates([item], rgb, depth, tiny_roi, settings, cv2, np)[2]) == 1
     values = np.array([699., 700., 700., 700., 701., 999., 0., np.nan, np.inf])
     accepted, median, sigma = filter_depth(values, 200, 1000, cv2, np)

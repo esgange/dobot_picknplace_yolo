@@ -16,15 +16,44 @@ from camera_calibration_gui.calibration_core import quaternion_to_rotation_matri
 from .item_teach_core import JOINT_NAMES, file_sha256
 
 
-# Housing centered on robot_camera_link as specified by the operator.
-# Non-optical camera axes: X forward/depth, Y left/width, Z up/height.
-CAMERA_BODY_SIZE_M = (0.030, 0.100, 0.030)
+# Gemini 335 nominal mechanical model, Orbbec datasheet V1.6 §§3.2.3, 4.8–4.9
+# and Appendix B; see the package README for sources and the derivation.
+# RGB optical axes: X right/width, Y down/height, Z forward/depth.
+CAMERA_BODY_REFERENCE_FRAME = "robot_camera_color_optical_frame"
+CAMERA_BODY_SIZE_RGB_M = (0.090, 0.025, 0.030)
+CAMERA_BODY_CENTER_RGB_M = (0.011, 0.0, -0.01279)
+
+
+def camera_link_from_rgb_optical():
+    """Nominal mechanical RGB origin in the saved depth-origin camera_link.
+
+    This bridge positions the housing only. It neither replaces factory optical
+    TF nor supplies the transforms used for RGB/depth measurement/calibration.
+    """
+    return np.array([[0., 0., 1., .00202],
+                     [-1., 0., 0., -.014],
+                     [0., -1., 0., 0.],
+                     [0., 0., 0., 1.]])
+
+
+def camera_body_pose_from_rgb(rgb_optical_transform):
+    """Body-center pose, with optical axes, from a destination <- RGB pose."""
+    pose = rigid_matrix(rgb_optical_transform, "RGB optical body reference").copy()
+    pose[:3, 3] += pose[:3, :3] @ np.asarray(CAMERA_BODY_CENTER_RGB_M)
+    return pose
+
+
+def camera_body_pose(camera_link_transform):
+    """Position the RGB-referenced housing through the existing camera-link mount."""
+    return camera_body_pose_from_rgb(
+        rigid_matrix(camera_link_transform, "Camera link transform")
+        @ camera_link_from_rgb_optical())
 
 
 def camera_body_corners(camera_transform):
     """Eight housing corners in the destination frame, including mounting tilt."""
-    transform = rigid_matrix(camera_transform, "Camera body transform")
-    half = np.asarray(CAMERA_BODY_SIZE_M) / 2
+    transform = camera_body_pose(camera_transform)
+    half = np.asarray(CAMERA_BODY_SIZE_RGB_M) / 2
     corners = np.array([[x, y, z] for x in (-half[0], half[0])
                         for y in (-half[1], half[1]) for z in (-half[2], half[2])])
     return corners @ transform[:3, :3].T + transform[:3, 3]

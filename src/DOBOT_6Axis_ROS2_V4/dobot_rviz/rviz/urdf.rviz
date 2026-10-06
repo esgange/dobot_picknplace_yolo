@@ -73,7 +73,7 @@ Visualization Manager:
       Decay Time: 0
     - Class: rviz_default_plugins/Marker
       Enabled: true
-      Name: Robot camera - 100 x 30 x 30 mm body
+      Name: Robot camera - 90 x 25 x 30 mm body
       Namespaces:
         robot_camera_body: true
       Topic:

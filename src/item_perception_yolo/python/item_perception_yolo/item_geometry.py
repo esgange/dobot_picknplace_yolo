@@ -4,7 +4,9 @@ import math
 
 from .planar_bin_roi import border_in_optical
 from .item_teach_core import depth_coverage_ok, inset_bin_roi
-from .pick_planning import CAMERA_BODY_SIZE_M, candidate_pose_in_base, select_pick_attitude
+from .pick_planning import (
+    CAMERA_BODY_CENTER_RGB_M, CAMERA_BODY_REFERENCE_FRAME, CAMERA_BODY_SIZE_RGB_M,
+    candidate_pose_in_base, select_pick_attitude)
 
 
 BIN_CLEARANCE_COLOR = (102, 204, 255)
@@ -631,7 +633,9 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                     "normal_platform_xy": list(attitude.normal_camera_platform_xy),
                     "mirrored_platform_xy": list(attitude.mirrored_camera_platform_xy),
                     "selected_platform_xy": list(attitude.selected_camera_platform_xy),
-                    "body_size_camera_link_m": list(CAMERA_BODY_SIZE_M),
+                    "body_reference_frame": CAMERA_BODY_REFERENCE_FRAME,
+                    "body_size_color_optical_m": list(CAMERA_BODY_SIZE_RGB_M),
+                    "body_center_color_optical_m": list(CAMERA_BODY_CENTER_RGB_M),
                     "normal_footprint_platform_xy": [list(p) for p in
                                                      attitude.normal_camera_footprint_xy],
                     "mirrored_footprint_platform_xy": [list(p) for p in

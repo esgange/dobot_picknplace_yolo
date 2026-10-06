@@ -1572,6 +1572,18 @@ new configuration/schema or swept-path collision guarantee. Preserve operator
 RViz edits; stage only the new canonical display. Update diary/FSM/exports and
 test geometry, provider/controller agreement and marker placement synthetically.
 
+Rule 227 supersedes rule 226's camera dimensions and zero center offset. Use
+Gemini 335's documented RGB-optical XYZ size 90/25/30 mm and body center
+(+11, 0, −12.79) mm. Compose the nominal mechanical RGB-to-camera-link transform
+with the existing saved Link6 mount: link-frame center (−10.77, −25, 0) mm.
+RGB/aligned-depth still use actual factory optical TF for measurements; never
+substitute the nominal housing bridge into calibration or perception projection.
+Keep the shared eight-corner footprint/mirror test and RViz marker identical,
+with native evidence validating reference frame, dimensions and offset. No new
+live TF dependency, calibration rewrite, teach schema or configuration key.
+Document Orbbec geometry sources, update FSM/exports and test independent
+RGB/link bounds, rotated offsets, mirror decisions and marker/planner agreement.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

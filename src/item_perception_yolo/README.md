@@ -480,9 +480,23 @@ candidate outside the blue/green overlay.
 The shared click, Simulate Trigger, Armed and headless candidate pipeline applies
 this before ranking; the controller receives the resulting filtered list.
 At the planned pick Link6 pose (`item Z + standoff_height`), the shared planner
-uses taught Home and the calibrated Link6-relative camera pose. The housing is
-a centered 100 × 30 × 30 mm box: non-optical camera-link XYZ dimensions are
-30/100/30 mm (X depth, Y width, Z height), with no center offset or added margin.
+uses taught Home and the calibrated Link6-relative camera pose. Model the Gemini
+335 housing in `robot_camera_color_optical_frame`: XYZ dimensions 90/25/30 mm
+(X right/width, Y down/height, Z forward/depth), center (+11, 0, −12.79) mm.
+The nominal mechanical RGB origin is (+14, 0, +2.02) mm in depth optical axes.
+Convert optical axes to camera-link axes (X forward, Y left, Z up), then compose
+with the unchanged saved `Link6 <- robot_camera_link` calibration. The resulting
+body center in camera-link axes is (−10.77, −25, 0) mm; its XYZ extent is
+30/90/25 mm. No added margin is included.
+
+Sources: [Orbbec Gemini 330 datasheet V1.6](https://www.orbbec.com/wp-content/uploads/2025/06/Gemini-330-series-Datasheet-V1.6.pdf),
+§3.2.3 (size), §§4.8–4.9 (origins, RGB 2.21 mm behind glass), Appendix B
+(RGB 11 mm from body center); verified against the bundled Gemini 335 URDF/mesh.
+The optical-to-link bridge is a fixed nominal **housing model**, never a
+replacement for factory TF used to measure pixels or solve calibration.
+RGB-aligned depth keeps its RGB optical frame; alignment does not move the
+physical camera-link origin to the RGB lens. No new live TF dependency is added.
+
 Transform all eight corners, including camera/platform tilt, and project their
 convex outline onto platform XY. If the normal shortest attitude's entire body
 does not fit inside/on green, check the equivalent 180° tool-Z mirror; if neither fits, the item
@@ -491,8 +505,8 @@ Green is the robot-camera-body constraint, independent of the blue pick-point
 inset. A magenta `CAM` or `CAM 180` footprint shows the selected projected
 housing outline on both bin RGB and registered depth, with camera-clearance
 rejection reasons in result diagnostics. Native result validation requires the
-same body dimensions and normal/mirrored/selected outlines, rejecting old
-point-only evidence. The same pure planner runs in headless detection and both
+same RGB reference frame, dimensions, center offset and normal/mirrored/selected
+outlines, rejecting old centered-body evidence. The same pure planner runs in headless detection and both
 controller preview and hardware planning. Restart all these processes together
 after updating. Teach-file schemas/settings and pose-service interfaces are unchanged.
 This models the housing at the pick pose, without mount/cable geometry or swept-path checks.

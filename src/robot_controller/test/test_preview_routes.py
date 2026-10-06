@@ -85,7 +85,7 @@ def test_preview_and_hardware_reject_center_inside_but_camera_housing_outside(pr
     config.selection.bin.points = [SimpleNamespace(x_m=x, y_m=y)
                                    for x, y in ((-.2, -.15), (.2, -.15),
                                                 (.2, .15), (-.2, .15))]
-    candidate = SimpleNamespace(identifier='edge', position_m=(.195, 0., .1),
+    candidate = SimpleNamespace(identifier='edge', position_m=(.198, 0., .1),
                                 quaternion=(0., 0., np.sqrt(.5), np.sqrt(.5)))
     batch = SimpleNamespace(candidates=[candidate])
     node = SimpleNamespace(configuration=config)

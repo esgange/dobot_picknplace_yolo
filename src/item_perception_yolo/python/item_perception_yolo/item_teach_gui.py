@@ -1595,7 +1595,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 rgb_lines.extend([f"platform_reference XYZ [mm]: {xyz}",
                                   f"Yaw: {yaw:+.2f}° | Teaching snapshot TF — no motion"])
                 camera_plan = pose["robot_camera_clearance"]
-                camera_note = ("Robot camera body 100×30×30 mm: "
+                camera_note = ("Robot camera body 90×25×30 mm: "
                                + ("CAM 180 mirrored" if camera_plan["mirrored"] else
                                   "CAM normal")
                                + " | green ROI")

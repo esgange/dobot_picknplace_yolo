@@ -8,7 +8,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from visualization_msgs.msg import Marker
 
 from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternion
-from item_perception_yolo.pick_planning import CAMERA_BODY_SIZE_M, rigid_matrix
+from item_perception_yolo.pick_planning import CAMERA_BODY_SIZE_RGB_M, camera_body_pose
 from item_perception_yolo.platform_teach_core import workspace_root
 from item_perception_yolo.station_calibration import latest_robot_camera_calibration
 
@@ -17,8 +17,8 @@ CAMERA_BOX_TOPIC = "/robot_controller/robot_camera_body"
 
 
 def camera_box_marker(link6_from_camera, stamp):
-    """Same centered body and camera axes used by the production clearance planner."""
-    pose = rigid_matrix(link6_from_camera, "Link6 from robot camera")
+    """Same RGB-optical housing offset and size used by the clearance planner."""
+    pose = camera_body_pose(link6_from_camera)
     marker = Marker()
     marker.header.frame_id, marker.header.stamp = "Link6", stamp
     marker.ns, marker.id = "robot_camera_body", 0
@@ -26,7 +26,7 @@ def camera_box_marker(link6_from_camera, stamp):
     marker.pose.position.x, marker.pose.position.y, marker.pose.position.z = map(float, pose[:3, 3])
     q = marker.pose.orientation
     q.x, q.y, q.z, q.w = rotation_matrix_to_quaternion(pose[:3, :3])
-    marker.scale.x, marker.scale.y, marker.scale.z = CAMERA_BODY_SIZE_M
+    marker.scale.x, marker.scale.y, marker.scale.z = CAMERA_BODY_SIZE_RGB_M
     marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1., .1, .8, .65
     marker.frame_locked = True  # Follow live Link6 TF without publishing a competing camera TF.
     marker.lifetime.sec = 3
@@ -66,8 +66,9 @@ class RobotCameraBox(Node):
             self.publisher.publish(marker)
             if status != self.last_status:
                 self.get_logger().info(
-                    f"Camera body 100×30×30 mm centered on robot_camera_link; "
-                    f"width along camera Y; calibration: {camera.path.name}")
+                    f"Gemini 335 body 90×25×30 mm; RGB optical center offset "
+                    f"(+11, 0, -12.79) mm, nominal mechanical model; "
+                    f"calibration: {camera.path.name}")
         self.last_status = status
 
 

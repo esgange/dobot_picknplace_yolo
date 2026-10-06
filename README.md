@@ -433,8 +433,10 @@ modulo-180° line directions. Every candidate independently minimizes rotation
 from Home, so retry rotations never accumulate. Platform tilt never
 becomes TCP tilt and waypoint heights remain in base Z. The latest strict
 `Link6 <- robot_camera_link` calibration is transform-only: no robot-camera
-stream is subscribed. A 100 × 30 × 30 mm housing is centered on that camera
-origin (camera-link XYZ size 30/100/30 mm). At the planned pick height, project
+stream is subscribed. The Gemini 335 housing uses documented 90 × 25 × 30 mm
+RGB optical XYZ dimensions and center offset (+11, 0, −12.79) mm from the RGB
+optical origin. The nominal mechanical RGB-to-link transform places its center
+at (−10.77, −25, 0) mm in the saved camera-link frame. At the planned pick height, project
 all eight rotated corners onto platform XY and require the entire outline
 inside/on the green Bin ROI; otherwise test the equivalent 180° tool-Z mirror.
 If neither body fits, the detector removes that pose before
@@ -444,7 +446,9 @@ shown on bin-camera RGB/depth; light blue remains pick-point-only. A confirmed
 miss advances to another candidate; Pause/Continue retries an interrupted approach.
 The read-only `robot_camera_box` node publishes a magenta CUBE marker on
 `/robot_controller/robot_camera_body`, attached to live Link6 using the same
-calibration and dimensions. GUI controller launch starts it automatically;
+calibration, RGB-referenced dimensions and center offset. RGB/aligned-depth
+measurements retain their actual factory optical TF; the nominal mechanical
+transform is used only for the housing. GUI controller launch starts it automatically;
 `ros2 run robot_controller robot_camera_box` runs it separately for teaching.
 Canonical RViz includes the display. Reload its configuration if already open.
 This is a pick-pose footprint check, not a swept-path or full robot collision planner.

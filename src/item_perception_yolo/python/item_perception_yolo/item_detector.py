@@ -39,7 +39,9 @@ from .item_teach_core import (file_sha256, load_item_profile, settings_from_prof
                               validate_home, depth_coverage_ok, NEW_PROFILE_IMAGE_SIZE)
 from .item_preview import frame_from_message, validate_prefix, validate_preview_settings
 from .item_native_client import NativeClient
-from .pick_planning import CAMERA_BODY_SIZE_M, Cr10Kinematics, rigid_matrix
+from .pick_planning import (
+    CAMERA_BODY_CENTER_RGB_M, CAMERA_BODY_REFERENCE_FRAME, CAMERA_BODY_SIZE_RGB_M,
+    Cr10Kinematics, rigid_matrix)
 from .station_calibration import (
     latest_robot_camera_calibration, validate_robot_camera_calibration)
 from .item_teach_calibration import (
@@ -178,7 +180,8 @@ def validate_candidates(result, settings):
                 or type(clearance) is not dict
                 or set(clearance) != {"mirrored", "normal_platform_xy",
                                       "mirrored_platform_xy", "selected_platform_xy",
-                                      "body_size_camera_link_m", "normal_footprint_platform_xy",
+                                      "body_reference_frame", "body_size_color_optical_m",
+                                      "body_center_color_optical_m", "normal_footprint_platform_xy",
                                       "mirrored_footprint_platform_xy",
                                       "selected_footprint_platform_xy",
                                       "rotation_from_home_deg", "offset_direction"}
@@ -194,8 +197,11 @@ def validate_candidates(result, settings):
                                       clearance["mirrored_platform_xy"],
                                       clearance["selected_platform_xy"]))):
             raise RuntimeError("Malformed robot-camera clearance plan")
-        if clearance["body_size_camera_link_m"] != list(CAMERA_BODY_SIZE_M):
-            raise RuntimeError("Native robot-camera body dimensions differ from the shared model")
+        if (clearance["body_reference_frame"] != CAMERA_BODY_REFERENCE_FRAME
+                or clearance["body_size_color_optical_m"] != list(CAMERA_BODY_SIZE_RGB_M)
+                or clearance["body_center_color_optical_m"] != list(CAMERA_BODY_CENTER_RGB_M)):
+            raise RuntimeError(
+                "Native robot-camera body geometry differs from the shared RGB model")
         for key in ("normal_footprint_platform_xy", "mirrored_footprint_platform_xy",
                     "selected_footprint_platform_xy"):
             outline = clearance[key]
