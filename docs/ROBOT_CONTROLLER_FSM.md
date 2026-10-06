@@ -1,5 +1,13 @@
 # Robot Controller — Finite State Machine
 
+Failed-pick diagnostic review: **2026-10-06**, baseline **`8d1d8e9`** plus rule
+**221**. After the existing final-pick settling interval expires without DI1
+acquisition, operator and candidate-event messages read `FAILED — no DI1 pickup
+detected before N ms settling expired.` N is the loaded `pick_settling` duration
+in milliseconds (300 for 0.3 seconds). Preserve plain FAILED in the event's
+`candidate_state` field and typed status. Classification, timing, retract,
+late-DI1 handling, I/O and retry behavior are unchanged.
+
 Shared debug-capture review: **2026-10-06**, baseline **`aa59259`** plus rule **220**.
 The controller's Save item/tray debug RGB/depth checkbox passes one action-scoped
 choice to both detectors. Pick Item uses item requests; Place Item now carries
@@ -621,7 +629,7 @@ flowchart TD
     Sense -->|Yes| Acquire["Send Stop; await acceptance only; fresh joint pose; mark HELD"]
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
-    Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
+    Settle -->|Interval ends with no pickup| Miss["Latch FAILED; log no DI1 pickup before taught settling expired"]
     Acquire --> Fingers["grip_onpick: close now, independent of use_grip"]
     Fingers --> HeldReturn["Pre-pick lift: 50% relax if use_grip OFF, otherwise delayed close; clearance → Safety Z exit → Tray Detect; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]

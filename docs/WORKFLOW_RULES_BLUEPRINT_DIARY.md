@@ -8837,6 +8837,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   production process restart was performed. Preserved station artifacts, `.env`
   and the unrelated operator RViz edit.
 
+### 2026-10-06 — Rule 221: explicit DI1 timeout reason in failed-pick logs
+
+- Failed candidate messages now read `FAILED — no DI1 pickup detected before
+  300 ms settling expired.` for the current 0.3-second setting. Milliseconds are
+  formatted from the loaded `timing.pick_settling`, so other settings remain
+  accurate. The shared candidate callback updates both manual/Auto Run operator
+  logs and structured events. Preserve the plain state in the event's explicit
+  `candidate_state` field and the existing typed status; other messages are unchanged.
+- This is a logging change only. The failed decision still precedes retract;
+  the settling interval, late-DI1 policy, suction/exhaust timing and retry routes
+  are unchanged. No profile, interface or hardware behavior change.
+- Validation: **1137 existing Robot Controller tests passed**. Direct synthetic
+  callback checks verified identical operator/event wording for 300, 100 and
+  250.5 ms, preserved FAILED state and unchanged HELD text. Controller symlink
+  build, scoped flake8 and whitespace checks pass. No hardware command or
+  production restart was performed; restart Robot Controller to load the message.
+- Updated package README, AGENTS and FSM diagnostic review/Pick diagram;
+  regenerated nine HTML/PDF diagrams and reviewed the Pick export. Verified the
+  HTML source hash and every PDF footer against
+  `4cce0fd2fef6e56f163001113222f5fb090f6b3ed75e9f70da05f93520423e0a`.
+  Preserved station artifacts, `.env` and the unrelated RViz edit.
+
 ### Future entry template
 
 ```text

@@ -485,10 +485,15 @@ class RobotController(Node):
             self.managed.motion_admitted(target)
 
     def _attempt_changed(self, index, attempt):
-        self.events.record("INFO", "candidate_state", attempt.state,
+        message = attempt.state
+        if attempt.state == "FAILED":
+            settling_ms = self.configuration.profile["timing"]["pick_settling"] * 1000
+            message = (f"FAILED — no DI1 pickup detected before {settling_ms:g} ms "
+                       "settling expired.")
+        self.events.record("INFO", "candidate_state", message, candidate_state=attempt.state,
                            candidate_index=index, candidate_id=attempt.identifier)
         self.publish_operator_log(
-            "INFO", f"Candidate {index} ({attempt.identifier}): {attempt.state}")
+            "INFO", f"Candidate {index} ({attempt.identifier}): {message}")
         self.publish_status()
 
     # ---------- configuration and lifecycle services ----------

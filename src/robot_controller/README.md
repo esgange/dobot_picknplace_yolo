@@ -1168,7 +1168,11 @@ within tolerance with advancing queue-idle feedback and the commanded final
 outputs for the profile's `pick_settling` interval while DI1 is monitored. This
 is the complete final-pick confirmation interval; there is no fixed 300 ms pick
 gate before it or separate sensor wait after it. If DI1 is still low when the
-interval ends, that attempt is irrevocably missed.
+interval ends, that attempt is irrevocably missed. The operator log and structured
+candidate event report `FAILED — no DI1 pickup detected before 300 ms settling expired.`
+for a 0.3-second setting; the displayed milliseconds always use the loaded
+`pick_settling` value. The event's `candidate_state` field and typed status remain
+`FAILED`. This message does not change the subsequent retract or late-DI1 policy.
 
 DI1 HIGH-to-LOW uses one fixed `SUCTION_LOSS_DEBOUNCE_SEC = 0.050` filter owned
 by the canonical feedback monitor, not a teach-file setting. After HIGH has been

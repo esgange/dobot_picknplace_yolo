@@ -1501,6 +1501,13 @@ requests keep saving disabled. Preserve acquisition, motion, release and Stop
 contracts. Rebuild interfaces/controller and restart controller/GUI together;
 update README, diary and FSM/exports and validate without hardware commands.
 
+Rule 221 makes failed-pick candidate logs explain the missing DI1 acquisition:
+FAILED — no DI1 pickup detected before N ms settling expired. Derive N from the
+loaded Item Teach pick_settling value, not a fixed 300 ms. Publish the same text
+in the operator log and candidate_state event; retain the plain candidate state
+in the event's candidate_state field and typed status. This is diagnostic only:
+no timing, failure classification, late-DI1 handling, retract, I/O or retry change.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
