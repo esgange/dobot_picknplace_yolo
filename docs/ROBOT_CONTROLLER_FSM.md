@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Tray Detect joint-motion review: **2026-10-06**, baseline **`c467a0f`** plus
+rule **232**. After a successful Pick's linear lifts and Safety Z exit, the saved
+Tray Detect target uses absolute joint `MovJ(mode=true)` with the six exact taught
+angles and taught travel rates. Held Continue, explicit Tray Detect travel and
+Place's observation positioning share that target; the latter two retain 100%
+speed. Preview uses the same planner. Preserve ordered queue acceptance, returned
+command-ID execution, exact ±1° joint arrival, held-output/drop and Stop gates.
+Placement approach, release descent and upward retract stay linear
+`MovL`/`MovLIO`, with existing timed I/O and no added wait. Auto Run still appends
+the next Pick directly behind the placement queue without Home.
+
 Direct Auto Run continuation review: **2026-10-06**, baseline **`12bea53`** plus
 rule **231**. After all placement replies are accepted, append the next fresh
 entry → pre-pick → pick without Home or a placement-arrival wait. Retain OPEN at
@@ -18,7 +29,7 @@ Home-Z clearance then joint Home; keep existing linear safety/transit/release
 segments. Required MovJ ownership, ordered acceptance, returned queue-ID execution,
 Stop/late-response containment and exact ±1° per-joint arrival apply. Never wrap
 a full wrist turn or substitute Cartesian arrival. Initial/recovery/return and
-Auto Run Home all use MovJ; Tray Detect stays joint-target MovL. Rule 231 removes
+Auto Run Home all use MovJ; Tray Detect now follows rule 232. Rule 231 removes
 the inter-cycle Home detour; the placement-before-next-pick acceptance boundary
 remains in place.
 
@@ -239,7 +250,7 @@ per-motion overrides; geometry, I/O timing and endpoint checks are unchanged.
 Place entry review: **2026-10-01**, baseline **`289dbd9`** plus rule **203**.
 Explicit Place accepts READY/HOLDING with or without an item in either launch
 mode. Skip observation travel when fresh idle/joints match saved Tray Detect;
-otherwise use its direct 100% joint-target MovL, preserve outputs and confirm
+otherwise use its direct 100% joint-target MovJ, preserve outputs and confirm
 arrival before acquiring tray/depth. Travel failure/Stop prevents acquisition.
 Auto Run retains both-provider and trusted-pick guards; its disabled reason is
 now visible beside the controls. Away-from-tray preview shows only the required
@@ -723,7 +734,7 @@ flowchart TD
     Probe -->|DI1 HIGH| Acquire
     Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; log settling + upward-lift check without DI1"]
     Acquire --> Fingers["grip_onpick: close now, independent of use_grip"]
-    Fingers --> HeldReturn["Pre-pick lift: 50% relax if use_grip OFF, otherwise delayed close; clearance → Safety Z exit → Tray Detect; monitor suction"]
+    Fingers --> HeldReturn["Pre-pick lift: 50% relax if use_grip OFF, otherwise delayed close; clearance → Safety Z exit → MovJ Tray Detect; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
     HeldReturn -.-> DropGate["At measured pre-pick height: arm drop detection; no queue split; start fresh LOW timer"]
     DropGate -->|DI1 LOW for 500 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
@@ -804,7 +815,7 @@ flowchart TD
   never has finger I/O. Suction remains ON in every combination. Held Continue
   restores the chosen transport state before direct travel from safety parking.
 - Successful Pick queues its two lifts, Cartesian Safety Z exit, then
-  joint-target MovL to saved Tray Detect. Exit and tray travel use taught travel
+  joint-target MovJ to saved Tray Detect. Exit and tray travel use taught travel
   rates. The exit keeps measured X/Y/attitude and Z at max(Home Z, current height).
   Keep that queued control point even at clearance height; omit final Home.
   Selected CP may round the exit; no intermediate arrival gate is added.
@@ -862,7 +873,7 @@ claim PLACED or RETURNED.
 flowchart TD
     Request["PlaceItem: READY/HOLDING, empty or held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
     Observe -->|Yes immediately| Depth["Fresh tray pose/depth; optional debug RGB/depth; valid pixels meet taught percentage; at most 3 attempts"]
-    Observe -->|No| Travel["Direct joint-target MovL to Tray Detect; speed 100%; preserve outputs"]
+    Observe -->|No| Travel["Direct joint-target MovJ to Tray Detect; speed 100%; preserve outputs"]
     Travel --> Arrive["Confirm execution, saved joints and idle before detection"]
     Arrive --> Depth
     Travel -->|Failure or Stop| Stop["Stop and report failure; preserve outputs"]
@@ -911,14 +922,14 @@ pick_rotation and the detected tray quaternion do not determine tool attitude.
 
 As for Pick's initial Home skip, check fresh RobotStatus idle and all six actual
 joints within ±1° of saved Tray Detect. Proceed immediately when matched;
-otherwise use the existing direct joint-target MovL at 100% with taught travel
+otherwise use the existing direct joint-target MovJ at 100% with taught travel
 acceleration and preserved gripper outputs. Confirm actual execution/idle/joint
 arrival before requesting tray pose/depth. Failure or Stop contains motion and
 prevents a tray request or placement queue; no Home detour is added.
 Recheck position during observation and after its result. There is no fixed
 settling interval, new FeedInfo tick or GetPose call for this position check.
 Fresh safety/held-item gates remain. The external Tray Detect Position action
-still sends one direct joint-target MovL and confirms execution/idle/joint arrival.
+still sends one direct joint-target MovJ and confirms execution/idle/joint arrival.
 Bin routes retain their existing clearance logic.
 
 After the valid observation, start Auto Run's next-bin request when needed, then
@@ -1052,7 +1063,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 ```mermaid
 flowchart TD
     Start["READY: Auto Run quantity and placement target"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
-    Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
+    Pick --> Tray["Linear lifts and exit; MovJ Tray Detect; confirm joints and idle"]
     Tray --> Observe["Fresh tray pose then placement depth; optional debug RGB/depth; at most 3 complete attempts"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
     Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
@@ -1379,7 +1390,8 @@ item placement is not measured; source context does not survive restart.
 | Final exhausted miss | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
 
 Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
-moves directly to saved Tray Detect joints and finishes HOLDING there.
+queues its linear Safety Z exit then MovJ to the exact saved Tray Detect joints
+and finishes HOLDING there.
 
 Shared joint-Home planning skips its preliminary rise when current/planned Z is
 within 5 mm below Home Z or higher. Every final Home command is MovJ in absolute

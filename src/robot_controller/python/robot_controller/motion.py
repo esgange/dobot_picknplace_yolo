@@ -119,9 +119,9 @@ def home_targets(current, home, joints, *, speed_percent, acceleration_percent):
 
 
 def tray_detect_targets(destination, joints, *, speed_percent, acceleration_percent):
-    """Queue the saved tray observation pose directly; no bin-clearance waypoints."""
+    """Queue absolute MovJ to saved tray joints; no bin-clearance waypoints."""
     return (Target("tray_detect_position", destination.copy(), speed_percent,
-                   acceleration_percent, tuple(joints)),)
+                   acceleration_percent, tuple(joints), joint_motion=True),)
 
 
 def pick_tray_target(tray, settings):

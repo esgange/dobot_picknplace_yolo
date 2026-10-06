@@ -142,10 +142,12 @@ surface Z + `trayplace_height` (mm), independent of pick heights. Pre-place/retr
 uses the placement X/Y at taught Home Z, matching the first item-pick approach
 before pre-pick.
 Place checks fresh RobotStatus idle and all six joints within ±1° of saved Tray
-Detect. Skip travel when matched; otherwise send the existing direct joint-target
-MovL at 100%, preserving outputs, and confirm execution/idle/joints before detection.
+Detect. Skip travel when matched; otherwise send absolute-joint
+MovJ at 100%, preserving outputs, and confirm execution/idle/joints before detection.
 Failed or interrupted arrival prevents tray acquisition and placement. The external
-Tray Detect Position action uses this same direct route.
+Tray Detect Position action uses this same direct route. Successful Pick also uses
+MovJ to the exact saved Tray Detect joints after its linear lifts and Safety Z exit,
+retaining taught travel rates. Placement descent and upward retract stay linear.
 After fresh detection, placement queues pre-place → release (open fingers,
 suction OFF and exhaust ON at 80% of descent) → retract at Home Z
 (neutral at its 0% start) in one ordered group, without a drop-arrival wait or settling.
@@ -464,7 +466,8 @@ launch. It never chooses a calibration independently. Controller and headless
 launches create no camera-body display; their clearance checks remain independent.
 Canonical RViz includes the display. Reload its configuration if already open.
 This is a pick-pose footprint check, not a swept-path or full robot collision planner.
-Final Home moves use MovJ in absolute joint mode; other no-I/O moves use MovL. Timed-output
+Final Home and Tray Detect moves use MovJ in absolute joint mode; other no-I/O
+moves use MovL. Timed-output
 moves use non-empty MovLIO. The conditional rise for initial/shared Home uses
 RelMovLUser; item exit transits use Cartesian MovL.
 Continue replans the remaining operation from its confirmed parked pose;

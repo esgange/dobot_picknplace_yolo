@@ -343,6 +343,8 @@ def test_pick_return_queues_finger_policy_and_safety_exit_before_tray_arrival(
     rig = QueueRig()
     rig.node.placement = None
     rig.node.expected_outputs = {1: False, 2: close_on_pick, 13: True, 14: not close_on_pick}
+    rig.node.configuration.tray.detect_joints = tuple(np.deg2rad(
+        [10., -20., 30., -40., 50., -347.524]))
     rig.emit(outputs=HELD if close_on_pick else (1 << 12) | (1 << 13), inputs=1, running=0)
     hardware = FakeHardware([True])
     plan = pick_targets(matrix(1.), item_pose(), taught, 1)
@@ -357,12 +359,14 @@ def test_pick_return_queues_finger_policy_and_safety_exit_before_tray_arrival(
         hardware.targets[-1], require_suction=True, confirmed_start_pose=hardware.pose)
 
     lift_service = "MovL" if use_grip and close_on_pick else "MovLIO"
-    assert rig.order == [lift_service, "MovL", "MovL", "MovL", "feedback"]
+    assert rig.order == [lift_service, "MovL", "MovL", "MovJ", "feedback"]
     lift, clearance, exit_transit, tray = [request for _service, request in rig.requests]
     assert list(getattr(lift, "mdis", ())) == (
         ["{0,50,2,0}", "{0,50,14,0}"] if not use_grip else
         ["{0,50,14,0}", "{0,50,2,1}"] if not close_on_pick else [])
     assert not lift.mode and not clearance.mode and not exit_transit.mode and tray.mode
+    assert [tray.a, tray.b, tray.c, tray.d, tray.e, tray.f] == pytest.approx(
+        [10., -20., 30., -40., 50., -347.524])
     assert [list(request.param_value) for request in (lift, clearance, exit_transit, tray)] == [
         ["user=0", "tool=0", "v=6", "a=40"],
         ["user=0", "tool=0", "v=100", "a=70"],

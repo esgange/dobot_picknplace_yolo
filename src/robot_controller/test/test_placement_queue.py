@@ -12,7 +12,7 @@ from robot_controller.controller import RobotController
 from robot_controller.errors import FeedbackFailure, HeldSuctionLost, OperationCanceled
 from robot_controller.hardware import DobotTransport
 from robot_controller.kinematics import pose_values
-from robot_controller.motion import Target
+from robot_controller.motion import tray_detect_targets
 from robot_controller.placement import place_targets
 from test_feedback_v2 import feed, primed_monitor, joint_message
 from test_placement import operation_node
@@ -358,9 +358,10 @@ def test_idle_joint_arrival_completes_on_first_new_sample_without_pose_service()
     rig.steps = iter([dict(outputs=0, inputs=0, home=True)])
     # Cartesian feedback deliberately differs; tray arrival uses actual joint topic.
     rig.monitor.update_joints(joint_message())
-    rig.transport.move_batch((Target('tray_detect_position', np.eye(4), 80, 70,
-                                     joints_rad=(0.,) * 6),), batch_name='tray_position')
-    assert [name for name, _ in rig.requests] == ['MovL']
+    rig.transport.move_batch(tray_detect_targets(
+        np.eye(4), (0.,) * 6, speed_percent=80, acceleration_percent=70),
+        batch_name='tray_position')
+    assert [name for name, _ in rig.requests] == ['MovJ']
     assert rig.requests[0][1].mode
     assert next(rig.steps, None) is None
 
@@ -458,9 +459,9 @@ def test_controller_queues_direct_tray_position_without_safety_z(start_z, holdin
 
     rig.monitor.wait_next = arrived
     RobotController._execute_tray_position(node)
-    assert [name for name, _ in rig.requests] == ['MovL']
+    assert [name for name, _ in rig.requests] == ['MovJ']
     request = rig.requests[0][1]
-    assert request.mode  # Linear move to the exact recorded joint target.
+    assert request.mode  # Joint interpolation to the exact recorded joint target.
     assert [request.a, request.b, request.c, request.d, request.e, request.f] == [0.] * 6
     assert list(request.param_value) == ['user=0', 'tool=0', 'v=100', 'a=70']
     node.configuration.validate_sources.assert_called()

@@ -1646,6 +1646,19 @@ Supersede earlier Auto Run Home-between-cycles rules, including rule 230's retai
 detour; manual Pick/Place and active-drop return geometry remain unchanged.
 
 
+Rule 232 makes every saved Tray Detect destination absolute joint MovJ with
+mode=true and all six exact taught angles, without modulo wrapping. Successful
+Pick retains its linear lifts and Safety Z exit before this MovJ, with taught
+travel rates; held Continue shares it. Explicit Tray Detect Position and Place's
+observation positioning use the same target at their existing 100% speed and
+taught travel acceleration. Preview shares the planner. Preserve ordered queue
+acceptance, returned command-ID execution, exact ±1° joint/idle arrival, held
+outputs, Stop/drop and freshness gates. Supersede prior Tray Detect MovL rules,
+including rule 230's exception. Keep placement approach, release descent and
+queued upward retract linear MovL/MovLIO with unchanged timed I/O. Do not add
+Home, intermediate arrival waits, service calls, settings or teach-schema changes.
+
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

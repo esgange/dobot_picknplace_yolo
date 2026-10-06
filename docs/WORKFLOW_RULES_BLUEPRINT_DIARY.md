@@ -9266,6 +9266,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Restart Robot Controller to apply. No vendor changes or offline-transfer
   milestone; preserve operator RViz, .env, calibration, teach and model artifacts.
 
+### 2026-10-06 — Rule 232: MovJ to saved Tray Detect joints
+
+- Change the shared Tray Detect target to absolute joint MovJ (mode=true) using
+  all six exact taught angles, without modulo wrapping. This covers the last
+  command of successful Pick, held Continue, explicit Tray Detect Position,
+  Place's observation travel when needed and their read-only previews.
+- Keep successful Pick's linear first lift, clearance and Safety Z exit before
+  MovJ in the same ordered queue. Preserve taught travel rates on Pick/Continue;
+  explicit observation travel retains speed 100% and taught travel acceleration.
+  Reuse the existing MovJ transport, returned queue-ID execution evidence, exact
+  per-joint ±1° arrival and fresh idle/held-output/Stop/drop gates. No new client,
+  service call, waypoint, arrival wait, configuration or teach schema is added.
+- User clarification: keep the queued upward retract after item placement linear.
+  Placement remains MovL approach, MovLIO descent with 80% release, and MovLIO
+  upward retract with 0% output neutralization. Auto Run appends its next Pick
+  directly behind this queue without Home, preserving rule 231 and parallel
+  fresh detection. Existing release, put-back and recovery routes are unchanged.
+- Validation: focused real-transport/synthetic-feedback and preview tests pass
+  (159 cases); controller build and colcon test pass with **1202 pytest tests**,
+  no failures/skips. Cover exact unwrapped tray joint encoding, all four finger
+  policies, linear lifts and unchanged placement services/timed I/O. Changed-line
+  lint passes. Update root/package documentation, AGENTS and FSM; regenerate all
+  nine HTML/PDF diagrams, verify source hashes and inspect the placement page.
+  FSM SHA-256: 144f58ddff3ffbd607c95c7699dba0c460567e6d86137fe32581e6238735f68a.
+- No hardware commands, production restarts, vendor changes or offline-transfer
+  milestone. Restart Robot Controller/Preview to apply. Preserve operator RViz,
+  .env, calibration, teach and model artifacts; physical travel remains untested.
+
 ### Future entry template
 
 ```text

@@ -85,7 +85,7 @@ def test_manual_observation_move_has_no_item_presence_gate(held_context, inputs)
 
     rig.monitor.wait_next = arrived
     RobotController._execute_tray_position(node)
-    assert [name for name, _ in rig.requests] == ['MovL']
+    assert [name for name, _ in rig.requests] == ['MovJ']
     assert rig.requests[0][1].mode
     node._preflight_item_state.assert_not_called()
 
@@ -129,7 +129,7 @@ def test_place_moves_to_tray_only_if_needed_and_detects_after_arrival(held, at_t
     node.placement.run(node)
     assert node._execute_tray_position.call_count == (0 if at_tray else 1)
     assert [name for name, _ in rig.requests] == (
-        [] if at_tray else ['MovL']) + ['MovL', 'MovLIO', 'MovLIO']
+        [] if at_tray else ['MovJ']) + ['MovL', 'MovLIO', 'MovLIO']
     if not at_tray:
         assert rig.requests[0][1].mode
         assert 'v=100' in rig.requests[0][1].param_value

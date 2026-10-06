@@ -224,12 +224,12 @@ empty or held robot in either launch mode. Pick finishes at the recorded Tray De
 **Place Item commands travel to the observation pose when needed.** It checks fresh
 RobotStatus idle and all six `/joint_states` within ±1° of saved Tray Detect,
 just like Pick's immediate Home skip. If matched, observe immediately; otherwise
-send the existing direct joint-target MovL at 100% with taught travel acceleration
+send the existing direct joint-target MovJ at 100% with taught travel acceleration
 and preserved outputs. Confirm execution/idle/joints before requesting the tray.
 Failure or interruption performs existing containment and blocks detection and
 placement. There is no separate observation-position button; the typed
 Tray Detect Position action remains available to external clients with its direct
-joint-target MovL. The bin routes retain their existing clearance logic.
+joint-target MovJ. The bin routes retain their existing clearance logic.
 After confirmation, request fresh tray/depth from Armed Tray Teach or headless
 Tray Detect, with
 **three requests per acquisition batch**. Retry a missing pose/depth result,
@@ -1045,7 +1045,9 @@ as Pick. Preview shows those same endpoints. Every final Home command uses
 in degrees, taught travel `v`/`a`, and no timed I/O. Return routes that already
 use speed 100% retain that rate. All final Home destinations, including recovery,
 missed-pick exhaustion, item return and Auto Run, use this joint interpolation.
-Tray Detect retains its existing joint-target `MovL` service.
+Tray Detect also uses absolute joint `MovJ` (rule 232), after the existing linear
+pick lifts and Safety Z exit. Placement approach/descent and its queued upward
+retract remain linear `MovL`/`MovLIO`, including their timed I/O.
 
 The initial step skips if all six fresh actual joints are within ±1° of the taught
 tuple in fresh canonical joint feedback with RobotStatus idle,
@@ -1286,7 +1288,7 @@ clearance uses `v=100` with travel acceleration. Exit and Tray Detect use taught
 travel speed/acceleration, scaled by global SpeedFactor. There is no final Home
 in this success route. The Safety Z exit is a queued control point and may be
 rounded by the selected global CP; it has no separate physical arrival gate.
-The final command is joint-target MovL, restoring the saved Tray Detect attitude.
+The final command is joint-target MovJ, restoring the saved Tray Detect attitude.
 Confirm only its saved joints (±1°), fresh idle RobotStatus and executed/empty
 queue after admission; no midpoint wait or fixed arrival dwell is added.
 SUCK stays ON without reissuing it; no EXHAUST/NEUTRAL release events are sent.
@@ -1355,7 +1357,8 @@ Serialized service responses may let
 a short pick segment decelerate even at global CP 100%; queue order takes
 precedence over uninterrupted blending.
 
-Final Home targets use `MovJ(mode=true)`; other no-I/O targets use `MovL`.
+Final Home and Tray Detect targets use `MovJ(mode=true)`; other no-I/O targets
+use `MovL`.
 `MovLIO` is used only for a real non-empty timed DO tuple. Initial/shared Home's conditional rise uses `RelMovLUser`; item exit
 transits use Cartesian `MovL`. The controller never calls
 `InverseKin` or vendor `Continue`; controller Continue rebuilds the remaining route.

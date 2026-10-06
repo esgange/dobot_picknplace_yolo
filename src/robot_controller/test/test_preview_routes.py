@@ -133,6 +133,7 @@ def test_pick_preview_includes_success_tray_and_missed_or_put_back_home_branches
         assert names.index(f"p{index}_final") < names.index(exit_transit.name)
         assert names.index(exit_transit.name) < names.index(f"p{index}_success_tray_detect")
         destination = targets[f"p{index}_success_tray_detect"]
+        assert destination.joint_motion
         assert destination.joints_rad == preview.config.tray.detect_joints
         assert np.array_equal(destination.matrix, preview.config.tray.detect_matrix)
         assert destination.speed_percent == preview.config.profile["speed"]["travel_percent"]
@@ -192,6 +193,7 @@ def test_place_preview_away_from_tray_shows_observation_travel_without_detection
     preview.trays.request.assert_not_called()
     assert [t.name for t in preview.targets] == ['tray_detect_position']
     assert preview.targets[0].joints_rad == preview.config.tray.detect_joints
+    assert preview.targets[0].joint_motion
     assert preview.targets[0].speed_percent == 100
     assert not preview.targets[0].motion_io
 
