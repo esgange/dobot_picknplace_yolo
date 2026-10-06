@@ -132,6 +132,11 @@ class PlacementOperation(ReleaseQueue):
                                   config.profile, self.rotation_deg, config.home_matrix)
         config.validate_sources(node.root)
         self.preflight(node)
+        if not config.profile["gripper"]["use_grip"]:
+            # Fresh bin inference has already started through on_observed.
+            # Reopen relaxed fingers without releasing or interrupting suction.
+            node.hardware.output(2, False)
+            node.hardware.output(14, True)
         self.phase = "APPROACH"
         self.begin_queue(node)
         node.operation_progress("PLACE_QUEUE", "Queueing pre-place, release and final retract",

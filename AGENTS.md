@@ -1474,6 +1474,21 @@ Recover/reload/restart invalidate them. Preserve slow-result supervision, retry
 limits, source/Stop/I/O gates, final-item Home and the existing one-worker limit.
 No schema, detector, configuration, motion rate or executor change is added.
 
+Rule 219 makes grip_onpick independent of use_grip: after confirmed suction
+pickup, grip_onpick=true closes immediately. At 50% of the first held lift to
+pre-pick, use_grip=false relaxes DO2/DO14 OFF; use_grip=true closes there only if
+grip_onpick=false, otherwise remains closed. Held Pause preserves outputs;
+Continue restores the chosen transport state before direct Tray Detect travel
+if the original lift event was interrupted. After valid tray pose/depth and
+placement validation, use_grip=false reopens with confirmed DO2 OFF then DO14 ON
+before placement motion, without changing vacuum or waiting for DI12. Auto Run
+starts fresh bin inference before these outputs; complete placement admission
+still precedes next Pick admission. Preserve continuous drop/Stop supervision,
+all four flag combinations, missed-pick behavior, 80% shared release and 0%
+retract neutral. Item Teach keeps both existing booleans editable independently;
+no schema, saved setting, rate, geometry, runtime artifact or executor change.
+Update README, diary and FSM/exports and validate without hardware commands.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

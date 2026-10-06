@@ -1163,6 +1163,27 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert window.node.yolo_enabled and not window.armed_toggle.isChecked()
 
 
+@pytest.mark.parametrize("grip_onpick", [False, True])
+def test_grip_onpick_remains_editable_and_persists_without_transport_grip(
+        window, paired_teach, monkeypatch, tmp_path, grip_onpick):
+    path, profile, _, _, _ = paired_teach
+    profile["gripper"] = dict(use_grip=False, grip_onpick=grip_onpick)
+    path.write_text(yaml.safe_dump(profile))
+    window._load_dialog()
+    finish_model_job(window)
+    checkbox = window.inputs["grip_onpick"]
+    assert checkbox.isEnabled() and checkbox.isChecked() is grip_onpick
+    for enabled in (True, False):
+        window.inputs["use_grip"].setChecked(enabled)
+        assert checkbox.isEnabled() and checkbox.isChecked() is grip_onpick
+    checkbox.setChecked(not grip_onpick)
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
+    window._save()
+    saved, _ = core.load_item_profile(path, root=tmp_path)
+    assert saved["gripper"] == dict(use_grip=False, grip_onpick=not grip_onpick)
+    assert saved["schema_version"] == profile["schema_version"]
+
+
 def test_partial_recovery_clears_previous_form_values_and_unknown_booleans(window, paired_teach):
     path, profile, _, _, _ = paired_teach
     window.inputs["height"].setText("999")

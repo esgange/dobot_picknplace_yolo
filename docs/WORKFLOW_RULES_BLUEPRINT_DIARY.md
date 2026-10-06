@@ -8767,6 +8767,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   command was sent. Restart Robot Controller and Tray Teach to load the cleanup.
   Preserved `.env`, teach/model/calibration artifacts and unrelated user changes.
 
+### 2026-10-06 — Rule 219: independent pickup grip and relaxed suction transport
+
+- Implemented the approved finger behavior in the shared Pick executor for
+  manual Pick and Auto Run. `grip_onpick=true` now closes immediately after
+  confirmed suction pickup, independently of `use_grip`. At 50% of the first
+  held lift to pre-pick, `use_grip=false` sends DO2/DO14 OFF (RELAX), while
+  `use_grip=true, grip_onpick=false` closes there and both true remains closed.
+  Clearance has no finger event. Vacuum and missed-pick behavior are unchanged.
+- Held Pause preserves outputs. Continue restores CLOSE for `use_grip=true` or
+  RELAX for false before direct travel from safety parking, covering a Pause
+  that canceled the original lift's halfway event. It does not repeat pickup.
+- After valid tray pose/depth and placement/source validation, `use_grip=false`
+  reopens through ordered DO2 OFF then DO14 ON, with each service reply/output
+  echo confirmed before placement motion. No vacuum output or DI12 wait is
+  introduced. Auto Run starts fresh bin inference before these calls; all three
+  placement motions still require acceptance before next-Pick admission.
+  Stop/drop remain active during reopening; interrupted/released recovery never
+  repeats release. Place and Return retain 80% descent release and 0% retract reset.
+- Item Teach keeps both existing gripper booleans independently editable and
+  preserves their saved values. Removed the obsolete enable dependency and added
+  behavior tooltips. No schema, new setting, motion geometry/rate, detector,
+  worker/executor, `.env` or station teach/model/calibration artifact change.
+- Validation: **1634 tests passed** — 1109 Robot Controller and 525 Item
+  Perception. Covers all four flag combinations with actual transport request
+  encoding, immediate-close ordering, first-lift neutral/close feedback, held
+  Pause/Continue, fresh-bin callback before reopen, reopen replies/echoes before
+  placement, invalid tray/source rejection without outputs, Stop/drop during
+  reopening, and GUI edit/save/load independence. All tests use synthetic
+  services/feedback or offscreen Qt. Both packages built with symlink-install;
+  scoped flake8 and whitespace checks pass. Removed one redundant test import.
+- Updated root/package READMEs, AGENTS and FSM guards/diagrams/review baseline;
+  regenerated the nine offline HTML/PDF diagrams and visually reviewed Pick,
+  Placement and Auto Run. Verified the HTML source hash and every PDF footer
+  against `3a3e6eb5aa5521d3514929300fb8a79bd893c50afd42b03e36578e7854920398`.
+  Installed module paths resolve to the updated sources. No hardware command or live
+  cycle test was performed, and no application was started/restarted. Restart
+  Robot Controller and Item Teach to apply. Preserved the unrelated RViz edit
+  and all station artifacts.
+
 ### Future entry template
 
 ```text

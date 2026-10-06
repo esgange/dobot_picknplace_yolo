@@ -1131,8 +1131,9 @@ The outputs are explicit mutually exclusive states. Finger OPEN is DO2 OFF then
 DO14 ON, CLOSE is DO14 OFF then DO2 ON, and NEUTRAL is both OFF. Vacuum SUCK is
 DO1 exhaust OFF then DO13 ON, EXHAUST is DO13 OFF then DO1 ON, and NEUTRAL is
 both OFF. Timed state changes preserve that order, and feedback showing either
-opposing pair ON together faults the motion. `use_grip` controls CLOSE only;
-every candidate is presented with OPEN and no DI12 wait.
+opposing pair ON together faults the motion. `grip_onpick` controls immediate
+pickup closing independently of `use_grip`, which selects finger holding during
+transport. Every candidate is presented with OPEN and no DI12 wait.
 
 The first `candidate_1_home_to_pick` group contains three control points: item
 X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with SUCK
@@ -1173,12 +1174,32 @@ Direct Stop is sent immediately and its stationary confirmation never waits for
 this timer. The debounce is independent of taught `pick_settling` and motion-timed
 release; it introduces no teach setting, launch argument or schema change.
 
-On success, `use_grip=true, grip_onpick=true` enters CLOSE immediately after
-the pickup Stop acknowledgement. With `grip_onpick=false`, the first lift to
-pre-pick uses MovLIO and CLOSE occurs at 50% (DO14 OFF before DO2 ON), encoded as
-`mdis=["{0,50,14,0}", "{0,50,2,1}"]`. The clearance rise uses MovL with no timed
-finger event. `use_grip=false` never enters
-CLOSE. Successful Pick queues latest measured pose → pre-pick → clearance →
+On success, `grip_onpick=true` enters CLOSE immediately after pickup Stop
+acknowledgement and confirmed suction, regardless of `use_grip`. Both output
+calls require acceptance and output feedback before the lift queue.
+
+| `use_grip` | `grip_onpick` | After pickup | At 50% of first lift to pre-pick |
+| --- | --- | --- | --- |
+| true | true | CLOSE | Keep closed |
+| true | false | Keep open | CLOSE |
+| false | true | CLOSE | RELAX (DO2 OFF, DO14 OFF) |
+| false | false | Keep open | RELAX (DO2 OFF, DO14 OFF) |
+
+The halfway event uses MovLIO: CLOSE is `{0,50,14,0}` then `{0,50,2,1}`;
+RELAX is `{0,50,2,0}` then `{0,50,14,0}`. Clearance has no finger event.
+Held Pause preserves outputs; Continue restores CLOSE for `use_grip=true` or
+RELAX for false before direct Tray Detect travel, including when Pause canceled
+the first lift's event. Suction remains on throughout.
+
+After valid tray pose/depth and placement validation, `use_grip=false` sends
+DO2 OFF then DO14 ON and confirms both before placement motion. Auto Run starts
+fresh next-bin inference before these calls; all placement motions must still
+be accepted before appending the next Pick. `use_grip=true` stays closed until
+the existing 80% descent release. The reopen never switches vacuum or waits for
+DI12; Stop/drop interruption prevents later commands. Release recovery never
+reopens or repeats release. Place and Return retain 80% release/0% retract reset.
+
+Successful Pick queues latest measured pose → pre-pick → clearance →
 Safety Z exit → saved Tray Detect joints as one `candidate_N_pick_to_tray` group.
 The vertical targets preserve measured X/Y and attitude and never descend.
 Safety Z is max(taught Home Z, current height); retain the explicit exit even if

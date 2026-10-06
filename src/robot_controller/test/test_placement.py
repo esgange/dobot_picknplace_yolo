@@ -34,6 +34,7 @@ def settings():
             "speed": {"travel_percent": 80, "approach_percent": 10, "retract_percent": 20},
             "acceleration": {"travel_percent": 70, "approach_percent": 30, "retract_percent": 40},
             "timing": {"pick_settling": .2}, "pick_rotation": 90.,
+            "gripper": {"use_grip": True, "grip_onpick": True},
             "geometry": {"pickdepth_radius": 30.}, "quality": dict(QUALITY_DEFAULTS)}
 
 
@@ -85,8 +86,10 @@ def test_tray_drop_height_is_independent_of_pick_heights(
 
 
 @pytest.mark.parametrize("surface_z", [.74, .75])
-def test_drop_at_or_above_home_rejects_before_any_placement_command(surface_z):
+@pytest.mark.parametrize("use_grip", [False, True])
+def test_drop_at_or_above_home_rejects_before_any_placement_command(surface_z, use_grip):
     node = operation_node()
+    node.configuration.profile["gripper"]["use_grip"] = use_grip
     node.trays.request.return_value = np.array([.3, .2, surface_z])
     with pytest.raises(ValueError, match="Home Z must be above the drop height"):
         run_place(node)
@@ -262,16 +265,20 @@ def test_place_sequence_ends_at_retract_and_clears_held_context():
     assert not any(node.hardware.outputs.values())
 
 
-def test_missing_depth_never_admits_placement_or_releases_item():
+@pytest.mark.parametrize("use_grip", [False, True])
+def test_missing_depth_never_admits_placement_or_releases_item(use_grip):
     node = operation_node()
+    node.configuration.profile["gripper"]["use_grip"] = use_grip
     node.trays.request.side_effect = FeedbackFailure("No depth")
     with pytest.raises(FeedbackFailure, match="No depth"):
         run_place(node)
     assert not node.hardware.calls and node.holding_item
 
 
-def test_source_change_after_detection_blocks_queue_and_preserves_grip():
+@pytest.mark.parametrize("use_grip", [False, True])
+def test_source_change_after_detection_blocks_queue_and_preserves_grip(use_grip):
     node = operation_node()
+    node.configuration.profile["gripper"]["use_grip"] = use_grip
     node.configuration.validate_sources.side_effect = [None, ValueError("Teach file changed")]
     with pytest.raises(ValueError, match="Teach file changed"):
         run_place(node)

@@ -215,7 +215,7 @@ class PickExecutor:
             departure=(), departure_pose=None, queued_home=(),
             placement_bridge=None):
         grip = settings["gripper"]["use_grip"]
-        close_on_pick = grip and settings["gripper"]["grip_onpick"]
+        close_on_pick = settings["gripper"]["grip_onpick"]
         if not plans:
             return {"picked": False, "candidate": None, "holding_item": False}
         settling = settings["timing"]["pick_settling"]
@@ -236,6 +236,11 @@ class PickExecutor:
                 if grip:
                     self.hardware.output(14, False)
                     self.hardware.output(2, True)
+                else:
+                    # Pause may have canceled the first lift's neutral event.
+                    # Restore the transport state before leaving safety parking.
+                    self.hardware.output(2, False)
+                    self.hardware.output(14, False)
                 current = self.hardware.current_pose()
                 check(held)
                 self.hardware.move_batch(
@@ -309,9 +314,13 @@ class PickExecutor:
                     else:
                         events = (gripper_neutral_events(0)
                                   + vacuum_neutral_events(0))
-                elif not upward and grip and not close_on_pick:
-                    # Close halfway through the first held lift to pre-pick.
-                    events = gripper_close_events(50)
+                elif not upward:
+                    # Pickup closing is independent of the transport policy.
+                    # Suction-only transport relaxes both finger outputs.
+                    if not grip:
+                        events = gripper_neutral_events(50)
+                    elif not close_on_pick:
+                        events = gripper_close_events(50)
                 held_retract = acquired and not upward
                 upward.append(replace(
                     target, matrix=matrix,

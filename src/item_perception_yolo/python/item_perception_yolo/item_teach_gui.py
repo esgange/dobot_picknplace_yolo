@@ -586,10 +586,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
             field = QtWidgets.QCheckBox()
             self.inputs[key] = field
             grip.addRow(key, field)
-        self.inputs["use_grip"].stateChanged.connect(
-            lambda state: self._grip_enabled(state == QtCore.Qt.Checked))
-        self.inputs["grip_onpick"].setEnabled(False)
-        self.inputs["grip_onpick"].setToolTip("No effect when use_grip is false")
+        self.inputs["use_grip"].setToolTip(
+            "Hold fingers closed during transport. When off, relax at 50% of the first "
+            "upward lift and reopen after tray detection, before placement.")
+        self.inputs["grip_onpick"].setToolTip(
+            "Close immediately after confirmed suction pickup, regardless of use_grip. "
+            "When off with use_grip on, close at 50% of the first upward lift.")
         settle = QtWidgets.QLineEdit()
         settle.setPlaceholderText("Required; seconds to wait at pick if DI1 has not triggered")
         self.inputs["pick_settling"] = settle
@@ -1732,10 +1734,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node.events.record("INFO", "item_preview_settings_updated", self.preview_status,
                                 yolo=self._yolo_settings())
 
-    def _grip_enabled(self, enabled):
-        self.inputs["grip_onpick"].setEnabled(
-            enabled or self.inputs["grip_onpick"].checkState() == QtCore.Qt.PartiallyChecked)
-
     def _browse_model(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select pretrained YOLO .pt — any folder", str(Path.home()),
@@ -1987,7 +1985,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
         for key, value in settings["gripper"].items():
             self.inputs[key].setTristate(False)
             self.inputs[key].setChecked(value)
-        self._grip_enabled(self.inputs["use_grip"].isChecked())
         self.home = copy.deepcopy(profile["home"])
         self._show_home()
         self.saved_path = target.path
@@ -2033,7 +2030,6 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 widget.setTristate(value is None)
                 widget.setCheckState(QtCore.Qt.PartiallyChecked if value is None else
                                      QtCore.Qt.Checked if value else QtCore.Qt.Unchecked)
-        self._grip_enabled(self.inputs["use_grip"].checkState() == QtCore.Qt.Checked)
         self.home = draft.home
         if self.home is not None:
             self._show_home()

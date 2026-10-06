@@ -1,5 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Independent finger settings review: **2026-10-06**, baseline **`757c79c`** plus
+rule **219**. `grip_onpick=true` closes immediately after confirmed suction pickup
+regardless of `use_grip`. At 50% of the first held lift, `use_grip=false` relaxes
+DO2/DO14 OFF; `use_grip=true, grip_onpick=false` closes; both true stays closed.
+Held Pause preserves outputs; Continue restores CLOSE or RELAX according to
+`use_grip` before direct Tray Detect travel, including an interrupted lift event.
+After valid tray pose/depth and placement validation, suction-only transport
+reopens with confirmed DO2 OFF then DO14 ON before placement motion. Auto Run
+starts its fresh bin request before these outputs; all placement replies still
+precede next-Pick admission. Vacuum stays on; no DI12 wait is added. Continuous
+drop/Stop supervision, 80% shared release and 0% retract reset remain in force.
+Item Teach exposes both booleans independently without schema/profile changes.
+
 Fresh-cycle review: **2026-10-05**, baseline **`0301756`** plus rule **218**.
 Successful tray placement marks its held candidate PLACED and cancels all remaining
 poses from that observation, for manual cycles and Auto Run. This supersedes rule
@@ -164,7 +177,8 @@ context survives Stop. Rule 212 extends this same route to automatic drop return
 Pickup grip review: **2026-10-01**, baseline **`fa9836d`** plus diary rule **190**.
 With use_grip enabled and grip_onpick disabled, close fingers at 50% of the first
 held lift to pre-pick using MovLIO; clearance uses MovL with no finger event.
-Immediate grip_onpick closing, no-grip behavior, motion rates, Stop acknowledgement
+Rule 219 supersedes the dependency of immediate pickup closing on use_grip and
+adds first-lift RELAX for suction-only transport. Motion rates, Stop acknowledgement
 and direct Tray Detect completion remain unchanged for manual Pick and Auto Run.
 
 Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
@@ -597,7 +611,8 @@ flowchart TD
     Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
     Settle -->|Interval ends with no pickup| Miss["Latch FAILED"]
-    Acquire --> HeldReturn["Pre-pick lift (delayed grip: close at 50%) → clearance → Safety Z exit → saved Tray Detect joints; monitor suction"]
+    Acquire --> Fingers["grip_onpick: close now, independent of use_grip"]
+    Fingers --> HeldReturn["Pre-pick lift: 50% relax if use_grip OFF, otherwise delayed close; clearance → Safety Z exit → Tray Detect; monitor suction"]
     HeldReturn -->|Grip maintained| Success["HOLDING / SUCCESS at Tray Detect"]
     HeldReturn -->|Held DI1 LOW for 50 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
     PutBack -->|Eligible saved candidate; same queue| Entry
@@ -658,11 +673,13 @@ flowchart TD
 - Success first lifts to pre-pick at taught retract rates. Empty retract and
   the clearance rise use speed 100% with taught travel acceleration. Other Pick
   travel uses its taught rates; global SpeedFactor scales all motion.
-- With `use_grip=true, grip_onpick=false`, that first held lift uses MovLIO with
-  `{0,50,14,0}` then `{0,50,2,1}`: OPEN OFF, CLOSE ON at 50%. Clearance uses MovL
-  without timed finger I/O. With `grip_onpick=true`, keep the separate DO14 OFF
-  then DO2 ON calls and output confirmation before lifting; both lifts use MovL.
-  With `use_grip=false`, neither lift commands CLOSE. Suction remains ON.
+- `grip_onpick=true` sends DO14 OFF then DO2 ON, with output confirmation before
+  lifting, independently of `use_grip`. With `use_grip=false`, the first held lift
+  uses MovLIO `{0,50,2,0}` then `{0,50,14,0}`: both finger outputs OFF at 50%.
+  With `use_grip=true, grip_onpick=false`, it instead uses `{0,50,14,0}` then
+  `{0,50,2,1}`: CLOSE at 50%. Both true keeps CLOSE, with no lift I/O. Clearance
+  never has finger I/O. Suction remains ON in every combination. Held Continue
+  restores the chosen transport state before direct travel from safety parking.
 - Successful Pick queues its two lifts, Cartesian Safety Z exit, then
   joint-target MovL to saved Tray Detect. Exit and tray travel use taught travel
   rates. The exit keeps measured X/Y/attitude and Z at max(Home Z, current height).
@@ -736,7 +753,8 @@ flowchart TD
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
-    Depth -->|Valid; still at observation position| Queue["One queue: pre-place, drop and retract at speed 100%; CP100; no intermediate arrival wait"]
+    Depth -->|Valid; still at observation position| Fingers["Validate placement; use_grip OFF: confirm DO2 OFF then DO14 ON; keep suction"]
+    Fingers --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
     Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN, suction OFF, exhaust ON"]
     Release --> Retract["MovLIO to pre-place in same queue; speed 100%; 0% start fingers + vacuum neutral"]
@@ -747,6 +765,8 @@ flowchart TD
     Queue -. "Monitor throughout" .-> Feedback["Command acceptance, fresh enabled feedback, robot faults, opposing outputs and motion watchdogs; no release-confirmation gate"]
     Feedback -->|Fault| Stop
     Depth -. "Held loss before intentional release" .-> Drop
+    Fingers -. "Held loss" .-> Drop
+    Fingers -. "Direct Stop" .-> Stop
     Pre -. "Held loss" .-> Drop
     Release -. "Held loss before observed suction OFF" .-> Drop["50 ms loss: latch DROPPED; immediate Stop; drain replies; final Stop and empty queue"]
     Drop --> Source["Shared Return Item: source approach → pre-pick (80% release) → Home-Z retract (0% neutral); no Home"]
@@ -777,6 +797,14 @@ settling interval, new FeedInfo tick or GetPose call for this position check.
 Fresh safety/held-item gates remain. The external Tray Detect Position action
 still sends one direct joint-target MovL and confirms execution/idle/joint arrival.
 Bin routes retain their existing clearance logic.
+
+After the valid observation, start Auto Run's next-bin request when needed, then
+validate placement geometry and sources. For `use_grip=false`, reopen with DO2
+OFF followed by DO14 ON; await each service response and output echo before the
+placement queue. Do not wait for DI12 or alter vacuum. With `use_grip=true`, retain
+CLOSE until 80% descent. Reopening is pre-release preparation, so drop supervision
+and Stop remain active and prevent later dispatch. Released recovery never repeats
+this reopen. All placement replies still precede next Pick admission.
 
 Use a fresh after-trigger synchronized RGB/depth observation and calibrated
 RGB-time TF. Preserve requested base X/Y; obtain surface base Z from target-ray
@@ -904,7 +932,8 @@ flowchart TD
     Pick --> Tray["Lift and travel; confirm Tray Detect joints and idle"]
     Tray --> Observe["Fresh tray pose then placement depth; at most 3 complete attempts"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
-    Prefetch --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
+    Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
+    Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
     Prefetch -.-> Capture["In parallel: fresh post-trigger RGB/depth/TF; retain result"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append Home behind placement"]
@@ -928,11 +957,13 @@ flowchart TD
     Paused -->|Continue / Place Item Retry| Observe
     Paused -->|Return Item| PutBack["Shared return queue through Home; READY / CANCELED; unchanged partial count"]
     Paused -->|Stop or safety fault| Fail["Stop containment; end run with partial count"]
+    Fingers -->|Rejected, unanswered or Stop; discard worker| Fail
     Place -->|Rejected, unanswered or Stop; discard worker| Fail
     Ready -->|Detector error| Fail
     Append -->|Fault or Stop| Fail
     Tray -. "Held loss" .-> Drop
     Observe -. "Held loss" .-> Drop
+    Fingers -. "Held loss while reopening" .-> Drop
     Place -. "Held loss before suction OFF" .-> Drop
     Append -. "Old item still held: loss" .-> Drop["Immediate Stop; discard worker/new ledger; preserve original batch/source; no placement count"]
     Drop --> Contain["Resolve issued replies; final Stop and stationary empty queue"]
@@ -1232,6 +1263,7 @@ Names below are relative to `/robot_controller/`.
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run next Home/Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
+| Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; DO2 OFF then DO14 ON each accepted and echoed before motion; suction preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback; during Auto Run, only exhausted-acquisition Pause |
 | `return_item` service | Started eligible managed state and trusted held source; during Place/Auto Run, only exhausted-acquisition PAUSED before release admission; no conflicting request |

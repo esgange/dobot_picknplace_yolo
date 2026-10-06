@@ -175,6 +175,83 @@ def test_release_evidence_uses_di1_without_requiring_open_sensor(inputs, during_
     assert finished[-1].kwargs['release_feedback_observed'] == (not bool(inputs & 1))
 
 
+@pytest.mark.parametrize('use_grip', [False, True])
+@pytest.mark.parametrize('grip_onpick', [False, True])
+def test_tray_observation_starts_prefetch_then_reopens_only_relaxed_fingers(
+        use_grip, grip_onpick):
+    rig = QueueRig()
+    rig.node.configuration.profile['gripper'] = dict(use_grip=use_grip, grip_onpick=grip_onpick)
+    suction = 1 << 12
+    opened = suction | (1 << 13)
+    if not use_grip:
+        rig.node.expected_outputs.update({2: False, 14: False})
+        rig.emit(outputs=suction, inputs=1, running=0)
+        # DO feedback is required, but DI12 need not be HIGH to start placement.
+
+        def echo(index):
+            if index <= 2:
+                rig.emit(outputs=suction if index == 1 else opened, inputs=1, running=0)
+        rig.on_request = echo
+        rig.script[0]['outputs'] = opened
+    rig.steps = iter(rig.script)
+    rig.order.clear()
+
+    def observed():
+        rig.node.trays.request.assert_called_once()
+        assert not rig.requests  # Fresh bin request starts before any output/motion call.
+        rig.order.append('prefetch')
+
+    rig.node.placement.run(rig.node, on_observed=observed)
+    assert rig.node.holding_item
+    assert not rig.node.placement.release_confirmed
+    assert [name for name, _ in rig.requests] == (
+        ([] if use_grip else ['DO', 'DO']) + ['MovL', 'MovLIO', 'MovLIO'])
+    assert [(request.index, request.status, request.time)
+            for name, request in rig.requests if name == 'DO'] == (
+        [] if use_grip else [(2, 0, 0), (14, 1, 0)])
+    assert rig.order == (['prefetch'] + ([] if use_grip else ['DO', 'feedback'] * 2)
+                         + ['MovL', 'MovLIO', 'MovLIO'])
+    rig.node.placement.finish_pending(rig.node)
+    assert rig.node.placement.phase == 'DONE'
+    assert not any(rig.node.expected_outputs.values())
+
+
+@pytest.mark.parametrize('at', [1, 2])
+def test_stop_during_tray_reopen_prevents_later_outputs_and_placement(at):
+    rig = QueueRig()
+    rig.node.configuration.profile['gripper']['use_grip'] = False
+
+    def stop(index):
+        if index == at:
+            rig.node.cancel_requested = lambda: True
+        else:
+            rig.emit(outputs=1 << 12, inputs=1, running=0)
+    rig.on_request = stop
+    with pytest.raises(OperationCanceled):
+        rig.node.placement.run(rig.node)
+    assert [name for name, _ in rig.requests] == ['DO'] * at
+    assert not rig.node.placement.release_issued and rig.node.holding_item
+
+
+def test_confirmed_drop_during_tray_reopen_stops_before_placement():
+    rig = QueueRig()
+    rig.node.configuration.profile['gripper']['use_grip'] = False
+    rig.node.wait_for_resume = rig.node.managed.checkpoint
+
+    def drop(index):
+        if index == 1:
+            for _ in range(8):
+                sample = rig.emit(outputs=1 << 12, inputs=0, running=0)
+                rig.node.managed.observe_continuous(sample)
+    rig.on_request = drop
+    with pytest.raises(HeldSuctionLost):
+        rig.node.placement.run(rig.node)
+    assert [name for name, _ in rig.requests] == ['DO', 'Stop']
+    assert rig.node.managed.held_loss_pending
+    assert rig.node.managed.session.attempts[0].state == 'DROPPED'
+    assert not rig.node.placement.release_issued
+
+
 def test_skipped_exhaust_evidence_does_not_block_retract():
     rig = QueueRig()
     rig.script.pop(1)

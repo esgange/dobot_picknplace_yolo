@@ -579,8 +579,12 @@ the terminal pick/stopped pose and final saved-joint destination are physically
 confirmed. Successful Pick ends at Tray Detect after its two lifts and Safety Z exit;
 exhausted Pick uses the same exit transit and exact Home. Successful travel preserves
 SUCK and grip behavior; exhausted returns use EXHAUST then
-NEUTRAL. Deferred finger CLOSE occurs at 50% of the successful first lift to
-pre-pick, using MovLIO; the clearance rise uses MovL with no timed finger event.
+NEUTRAL. `grip_onpick=true` closes immediately after confirmed pickup, independently
+of `use_grip`. At 50% of the first successful lift to pre-pick, `use_grip=false`
+relaxes both finger outputs; `use_grip=true, grip_onpick=false` closes them.
+With both flags true they stay closed. Clearance has no timed finger event.
+After valid tray pose/depth, `use_grip=false` reopens before placement motion,
+while next-bin inference can run. Suction stays on until the normal 80% release.
 Motion requests wait for
 queue-admission responses in order but not intermediate physical arrival;
 short segments may still decelerate despite CP 100. See the

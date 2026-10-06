@@ -8,7 +8,6 @@ import pytest
 
 from robot_controller.errors import (CommandRejected, FeedbackFailure, HeldUnknown,
                                      ManagedInterruption, OperationCanceled, ReturnedToHome)
-from robot_controller.controller import RobotController
 from robot_controller.feedback import SUCTION_LOSS_DEBOUNCE_SEC, SuctionLossDebounce
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ManagedControl
@@ -286,8 +285,12 @@ def test_repeated_pause_of_parked_candidate_does_not_consume_it():
     assert rig.managed.session.attempted_count == 1
 
 
-def test_pause_held_preserves_outputs_and_continue_does_not_open_fingers():
+@pytest.mark.parametrize("use_grip", [False, True])
+@pytest.mark.parametrize("grip_onpick", [False, True])
+def test_pause_held_preserves_outputs_and_continue_restores_transport_fingers(
+        use_grip, grip_onpick):
     rig = Rig(held=True)
+    rig.configuration.profile["gripper"] = dict(use_grip=use_grip, grip_onpick=grip_onpick)
     rig.managed.request("pause")
     rig.managed.handle()
     assert rig.holding_item
@@ -302,6 +305,9 @@ def test_pause_held_preserves_outputs_and_continue_does_not_open_fingers():
         check=lambda _i: None, return_home=rig._execute_home)
     assert result["picked"]
     assert ("output", 14, True) not in rig.log
+    assert [entry for entry in rig.log if entry[0] == "output"] == (
+        [("output", 14, False), ("output", 2, True)] if use_grip else
+        [("output", 2, False), ("output", 14, False)])
     returned = next(entry[2] for entry in reversed(rig.log) if entry[0] == "move")
     assert next(entry[1] for entry in reversed(rig.log) if entry[0] == "move") == (
         "tray_detect_position",)

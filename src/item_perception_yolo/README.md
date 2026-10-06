@@ -446,7 +446,13 @@ for field details. `retry.pose_candidates=3` requests up to three ranked poses
 for the controller to use for retries; it does not execute any retry itself.
 `yolo.max_detections=20` is the separate
 per-frame detection cap before geometric filtering.
-`use_grip=false` disables `grip_onpick` behavior regardless of its saved value.
+The two gripper checkboxes are independent. `grip_onpick=true` closes fingers
+immediately after confirmed suction pickup, even with `use_grip=false`.
+At 50% of the first upward lift, `use_grip=false` relaxes DO2 and DO14 (both OFF);
+`use_grip=true, grip_onpick=false` closes them, and both true keeps them closed.
+After a valid tray pose/depth, `use_grip=false` reopens before placement motion.
+Suction remains on until the shared 80% placement/return descent release.
+These are existing boolean fields; loading/saving preserves both independently.
 Controller rule 57 now defines vertical Home-attitude height equations and
 DI1-monitored final descent; teaching remains non-actuating.
 The **Vertical motion — mm** form saves `standoff_height`, `prepick_height`,
