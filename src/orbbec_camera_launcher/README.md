@@ -111,12 +111,35 @@ the official Gemini 330-series vendor launch:
 | Color enable/width/height/FPS | `enable_color`, `color_width`, `color_height`, `color_fps` |
 | Depth enable/width/height/FPS | `enable_depth`, `depth_width`, `depth_height`, `depth_fps` |
 | Registration and alignment | `depth_registration`, `align_target_stream`, `align_mode` |
+| Registration enabled/disabled | `frame_aggregate_mode=full_frame` / `ANY` (derived) |
 | Frame sync and temporal filter | `enable_frame_sync`, `enable_temporal_filter` |
 | Point cloud and USB-only enumeration | `enable_point_cloud`, `enumerate_net_device` |
 
 The complete supervised set always uses internal `device_num=2`; this is not an
 `.env` setting or launch override. A direct single-camera diagnostic terminal
 always uses `device_num=1`.
+Registered-depth launches also require complete enabled-stream bundles through
+`frame_aggregate_mode=full_frame`, for both direct GUI and supervised/headless
+launches. With this project's enabled streams, each bundle requires RGB and depth.
+This follows `ORBBEC_DEPTH_REGISTRATION`; no extra `.env` key or GUI field is needed.
+Frame synchronization remains controlled separately by `ORBBEC_ENABLE_FRAME_SYNC`.
+Incomplete bundles are omitted; a missing stream can reduce the output rate and
+the existing watchdog still detects prolonged stream loss.
+
+The driver additionally discards software D2C framesets whose alignment did not
+complete or whose output depth dimensions/intrinsics do not match RGB. It does so
+before aligned CameraInfo, image or point-cloud publication, even under a direct
+vendor launch using `ANY`. A throttled driver warning reports the discard reason.
+The explicitly named `depth/image_unaligned` diagnostic topic remains raw.
+Detector CameraInfo validation and disarming on real calibration changes remain
+active. The driver never relabels raw depth by replacing its calibration values.
+
+After updating this code, stop the camera launcher/owned camera processes, rebuild
+`orbbec_camera` and `orbbec_camera_launcher`, then restart through the project
+launcher. Re-arm Item Teach after fresh streams arrive. No teaching/calibration
+file changes are required. An already running camera keeps its old binary and
+aggregation mode until restarted.
+
 Scan, startup, health, check-period, retry-delay, attempt-count, and shutdown
 values belong to the GUI/supervisor and are not vendor camera arguments.
 

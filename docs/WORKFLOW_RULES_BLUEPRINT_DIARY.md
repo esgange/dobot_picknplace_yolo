@@ -9568,6 +9568,64 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Teach/Item Detect to load diagnostic changes; no interface rebuild is needed.
   Preserve unrelated RViz edits. Controller/FSM behavior is unchanged.
 
+### 2026-10-07 — Rule 238: discard unaligned depth and require complete bundles
+
+- The new disarm diagnostics caught `/bin_camera/depth/camera_info` changing K
+  at 06:34:16 UTC: fx 230.6076 → 207.0492 pixels, with unchanged 424×240 dimensions.
+  Item Teach correctly disarmed; Auto Run then ended at 4/20 placements because
+  the item service was unavailable. Subsequent live CameraInfo returned to the
+  RGB intrinsics. A read-only parameter check confirmed SW alignment, registration
+  and frame synchronization enabled, but frame_aggregate_mode=ANY. Inspection
+  found the driver skips software alignment on missing RGB and then falls through
+  to publishing raw depth under the aligned optical frame. Missing RGB at the
+  historical instant was not recorded; that faulty path explains the symptom.
+- Implement the user's authorized fix in the driver. The per-frameset flag must
+  confirm SDK software alignment completed. Before any software-D2C aligned
+  CameraInfo/image/point-cloud publication or color-thread queue, compare the
+  current output depth and RGB frame dimensions and finite intrinsics. Reject
+  missing/invalid targets, incomplete alignment, raw-depth passthrough and
+  mismatched calibration with a throttled warning. Accept rectified depth with
+  zero distortion alongside distorted RGB. Never replace K with startup values.
+  A rejected frame cannot poison detector history; a later good bundle proceeds
+  normally. Separate depth/image_unaligned diagnostics remain raw. HW alignment,
+  C2D and registration-disabled paths are unchanged; detector invalidation remains.
+- Derive vendor frame_aggregate_mode=full_frame when the existing root .env depth
+  registration setting is true, or ANY when false. Use the shared launch argument
+  builder for both single-camera GUI and supervised/headless launches. Require
+  that exact derived value in the supervisor. No .env key, GUI field, saved file,
+  new fallback, camera restart or runtime parameter write is added. Complete
+  enabled-stream bundles are required (RGB+depth for this project); frame sync
+  remains separate and incomplete input can lower output rate. Existing watchdog
+  freshness/startup bounds are unchanged.
+- Intentional vendor patch, not an upstream refresh: repository
+  https://github.com/orbbec/OrbbecSDK_ROS2, branch v2-main, snapshot 8e7cad2b,
+  package/SDK 2.9.3. Change `orbbec_camera/src/ob_camera_node.cpp`, add
+  `include/orbbec_camera/aligned_depth_guard.hpp` and
+  `test/aligned_depth_guard_test.cpp`, register the synthetic CTest in CMakeLists,
+  and document the patch in the package README. Guarding inside the driver is
+  necessary to stop publication before all consumers; a detector-only workaround
+  would still expose mislabelled frames. Preserve SDK binaries and attribution.
+- Validation: isolated Release builds of orbbec_camera and orbbec_camera_launcher
+  pass using the existing installed messages package. The native CTest passes
+  **18 checks**, including actual SDK Align on synthetic images without a device,
+  logged raw/RGB K, missing RGB, missing/failed output, same-K skipped alignment,
+  dimensions, invalid intrinsics, distinct distortion and subsequent recovery.
+  All **24 launcher tests** pass, covering both launch paths and rejection of
+  ANY/color_frame/disable for registered depth. The **96 item detector/capture
+  tests** also pass, preserving CameraInfo-change invalidation and fresh depth
+  acquisition. Initial validation found only
+  test-fixture issues (missing synthetic serials, an SDK umbrella include and a
+  byte-buffer cast); corrected them before the successful runs. Python lint and
+  whitespace checks pass. No camera/robot hardware test or live activation.
+- Update AGENTS, root/vendor/launcher READMEs and this diary. Controller/FSM and
+  teaching geometry are unchanged. Build artifacts remain isolated under
+  build/aligned_depth_guard and install/aligned_depth_guard. For activation, stop
+  cameras, source scripts/source_ros_workspace.bash, run
+  `colcon build --symlink-install --packages-select orbbec_camera orbbec_camera_launcher`,
+  then relaunch through the project launcher and explicitly re-arm Item Teach.
+  Do not rebuild the mapped live driver library or automatically restart cameras.
+  Operator artifacts and unrelated RViz edits remain untouched.
+
 ### Future entry template
 
 ```text

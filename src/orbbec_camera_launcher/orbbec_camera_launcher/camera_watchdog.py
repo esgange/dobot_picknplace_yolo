@@ -33,6 +33,7 @@ _REQUIRED_LAUNCH_ARGUMENTS = {
     'align_target_stream',
     'align_mode',
     'enable_frame_sync',
+    'frame_aggregate_mode',
     'enable_temporal_filter',
     'color_width',
     'color_height',
@@ -271,6 +272,11 @@ class CameraWatchdog(Node):
         values = {str(key): str(value) for key, value in payload.items()}
         if any(not value for value in values.values()):
             raise RuntimeError('launch_args_json cannot contain empty values')
+        expected_aggregation = (
+            'full_frame' if values['depth_registration'] == 'true' else 'ANY')
+        if values['frame_aggregate_mode'] != expected_aggregation:
+            raise RuntimeError(
+                f'frame_aggregate_mode must be {expected_aggregation} for this registration mode')
         return values
 
     def _record_image(self, camera_name: str, stream: str) -> None:

@@ -15,6 +15,7 @@
  *******************************************************************************/
 
 #include "orbbec_camera/ob_camera_node.h"
+#include "orbbec_camera/aligned_depth_guard.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <thread>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -6109,6 +6110,7 @@ void OBCameraNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set
     auto left_color_frame = frame_set->getFrame(OB_FRAME_COLOR_LEFT);
     auto right_color_frame = frame_set->getFrame(OB_FRAME_COLOR_RIGHT);
     auto ir_frame = frame_set->getFrame(OB_FRAME_IR);
+    bool software_alignment_completed = false;
     auto depth_frame_for_hw_d2c_undistortion = depth_frame;
     if (depth_frame) {
       setDisparitySearchOffset();
@@ -6195,6 +6197,7 @@ void OBCameraNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set
             frame_set = new_frame_set;
             depth_frame = frame_set->getFrame(OB_FRAME_DEPTH);
             color_frame = frame_set->getFrame(OB_FRAME_COLOR);
+            software_alignment_completed = true;
           } else {
             RCLCPP_ERROR(logger_, "Failed to align depth frame to color frame");
             return;
@@ -6211,6 +6214,22 @@ void OBCameraNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set
       frame_set = processEnhancedDepthFilter(frame_set);
       depth_frame = frame_set->getFrame(OB_FRAME_DEPTH);
       color_frame = frame_set->getFrame(OB_FRAME_COLOR);
+    }
+
+    // ANY aggregation can deliver depth without RGB. Such a frame skipped Align
+    // above and still carries raw depth intrinsics. Reject it before CameraInfo,
+    // aligned images, point clouds or the color-thread frameset queue can use it.
+    // The explicitly named depth/image_unaligned diagnostic topic stays raw.
+    if (depth_registration_ && align_mode_ == "SW" &&
+        align_target_stream_ == OB_STREAM_COLOR && frame_set->getFrame(OB_FRAME_DEPTH)) {
+      const auto error = softwareD2CError(frame_set->getFrame(OB_FRAME_DEPTH),
+                                         frame_set->getFrame(OB_FRAME_COLOR),
+                                         software_alignment_completed);
+      if (error) {
+        RCLCPP_WARN_THROTTLE(logger_, *node_->get_clock(), 5000,
+                            "Discarding unaligned depth frameset: %s", error);
+        return;
+      }
     }
 
     // Refresh frame from current frameset before logging to reflect post-filter/alignment output.

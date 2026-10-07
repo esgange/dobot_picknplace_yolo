@@ -261,6 +261,12 @@ install(TARGETS list_devices_node list_depth_work_mode_node list_camera_profile_
 )
 
 if(BUILD_TESTING)
+    # Synthetic SDK frames only: this test never enumerates or opens a camera.
+    add_executable(test_aligned_depth_guard test/aligned_depth_guard_test.cpp)
+    target_include_directories(test_aligned_depth_guard PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include ${ORBBEC_INCLUDE_DIR})
+    target_link_libraries(test_aligned_depth_guard -L${ORBBEC_LIBS_DIR} -lOrbbecSDK)
+    add_test(NAME aligned_depth_guard COMMAND test_aligned_depth_guard)
     find_package(ament_lint_auto REQUIRED)
     ament_lint_auto_find_test_dependencies()
 endif()

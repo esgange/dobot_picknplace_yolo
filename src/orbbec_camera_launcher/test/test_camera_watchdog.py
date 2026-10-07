@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import rclpy
@@ -22,6 +23,7 @@ LAUNCH_ARGUMENTS = {
     'align_target_stream': 'COLOR',
     'align_mode': 'SW',
     'enable_frame_sync': 'true',
+    'frame_aggregate_mode': 'full_frame',
     'enable_temporal_filter': 'true',
     'color_width': '848',
     'color_height': '480',
@@ -149,6 +151,31 @@ def parameters(
 
 
 class CameraLauncherTests(unittest.TestCase):
+    def test_registered_launches_require_complete_frames_without_new_env_key(self):
+        values = parse_example()
+        values['ORBBEC_CAMERA_1_SERIAL'] = 'CAMERA001'
+        values['ORBBEC_CAMERA_2_SERIAL'] = 'CAMERA002'
+        original_keys = set(values)
+        for registration, aggregate in (('true', 'full_frame'), ('false', 'ANY')):
+            values['ORBBEC_DEPTH_REGISTRATION'] = registration
+            args = project_config.orbbec_launch_arguments(values)
+            self.assertEqual(args['frame_aggregate_mode'], aggregate)
+            for slot in (1, 2):
+                command = camera_launcher_gui.single_camera_ros_command(values, slot)
+                self.assertIn(f'frame_aggregate_mode:={aggregate}', command)
+        self.assertEqual(set(values), original_keys)
+
+    def test_supervisor_rejects_incomplete_aggregation_for_registered_depth(self):
+        for mode in ('ANY', 'color_frame', 'disable', 'full_frame'):
+            args = {**LAUNCH_ARGUMENTS, 'frame_aggregate_mode': mode}
+            node = SimpleNamespace(_required_text=lambda _key: json.dumps(args))
+            if mode == 'full_frame':
+                self.assertEqual(
+                    camera_watchdog.CameraWatchdog._required_launch_arguments(node), args)
+            else:
+                with self.assertRaisesRegex(RuntimeError, 'must be full_frame'):
+                    camera_watchdog.CameraWatchdog._required_launch_arguments(node)
+
     def test_single_camera_button_opens_exact_vendor_launch_in_terminal(self):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)

@@ -1200,6 +1200,13 @@ Launch modes are mutually exclusive. Every supervised serial and both
 color/depth streams are required; supervised partial startup and unlimited
 restart are forbidden. The package forces USB-only Orbbec enumeration while
 all ROS 2 communication remains local.
+With depth registration enabled, both launch paths request complete RGB/depth
+bundles (`frame_aggregate_mode=full_frame`). The driver discards unsuccessful
+software-alignment output before publishing aligned depth or CameraInfo. This
+prevents occasional raw-depth intrinsics from disarming perception. Detector
+calibration checks remain active; `.env` and teaching files need no new settings.
+Rebuild `orbbec_camera` and `orbbec_camera_launcher` with camera processes stopped,
+then relaunch the cameras and re-arm perception to activate this change.
 See [`src/orbbec_camera_launcher/README.md`](src/orbbec_camera_launcher/README.md).
 
 Calibrate one camera at a time with the local-only ChArUco GUI:

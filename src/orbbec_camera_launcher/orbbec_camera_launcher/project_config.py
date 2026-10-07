@@ -309,6 +309,10 @@ def orbbec_launch_arguments(values: dict[str, str]) -> dict[str, str]:
         'align_target_stream': values['ORBBEC_ALIGN_TARGET_STREAM'],
         'align_mode': values['ORBBEC_ALIGN_MODE'],
         'enable_frame_sync': values['ORBBEC_ENABLE_FRAME_SYNC'],
+        # Registered depth needs a complete RGB/depth bundle. This follows the
+        # existing registration setting, without another operator config key.
+        'frame_aggregate_mode': (
+            'full_frame' if values['ORBBEC_DEPTH_REGISTRATION'] == 'true' else 'ANY'),
         'enable_temporal_filter': values['ORBBEC_ENABLE_TEMPORAL_FILTER'],
         'color_width': values['ORBBEC_COLOR_WIDTH'],
         'color_height': values['ORBBEC_COLOR_HEIGHT'],

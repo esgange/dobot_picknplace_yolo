@@ -1751,6 +1751,18 @@ fresh idle resumes, missing/stale status falls back to request priority. Headles
 stays independent; no new executor/hardware client, motion/retry change, automatic
 restart or deployment. Preserve YOLO 448 and controller bounded empty-batch retry.
 
+Rule 238 requires complete RGB/depth bundles for project registered-depth launches:
+derive frame_aggregate_mode=full_frame from depth registration (ANY when disabled),
+without a new .env key. Both direct GUI and supervised/headless paths must agree.
+The intentional Orbbec software-D2C patch also discards depth-containing framesets
+before aligned publication/point-cloud queues unless alignment completed and the
+current depth dimensions/intrinsics match its RGB target. Preserve separate raw
+depth diagnostics and distinct RGB/depth distortion; never substitute startup K.
+Keep detector calibration-change invalidation, hardware alignment/C2D behavior,
+operator artifacts and running processes unchanged during implementation. Use
+isolated builds and synthetic SDK tests; activate with a manual camera rebuild
+and restart. Document vendor patch provenance and validation in the diary.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
