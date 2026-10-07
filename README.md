@@ -124,12 +124,16 @@ are checked directly; Cartesian targets and current poses use the existing CR10
 forward kinematics from `/joint_states`. FeedInfo still supervises command
 execution, queue completion, faults and I/O. Joint/status callbacks wake checks
 immediately; no fixed arrival dwell is added outside taught final-pick settling.
-Eligible DI1 HIGH during Pick sends Stop immediately and starts the lift/Tray
-Detect return after command acknowledgement, without stationary confirmation.
+Eligible DI1 HIGH during Pick immediately blocks further normal commands. Validate
+already-issued replies before sending pickup Stop; an in-flight finger output at
+the stationary pick also needs its OFF feedback before Stop. Complete remaining
+relaxation after accepted Stop, then start the lift/Tray Detect return without
+stationary confirmation. Operator Stop and fault containment stay immediate;
+response/output waits retain five-second bounds.
 If final-pick settling ends without DI1, keep suction on and try a last-chance
 lift through 50% of the remaining distance to pre-pick at final-approach rates.
-DI1 interrupts settling or this lift immediately; only completing the lift without
-DI1 fails the candidate. Pending motion admission is resolved and discarded before return.
+DI1 latches pickup during settling or this lift; only completing the lift without
+DI1 fails the candidate. Already-queued motion can continue while its reply is pending.
 Explicit Recover cancels the interrupted action, preserves current gripper
 outputs during a confirmed vertical lift to Home height and return to taught Home.
 Recover first waits only for Stop acceptance, validates fresh gripper feedback,

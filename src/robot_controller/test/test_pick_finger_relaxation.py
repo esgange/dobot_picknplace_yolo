@@ -122,7 +122,7 @@ def test_di1_during_relaxation_wait_requests_stop_and_keeps_acquisition(monkeypa
         rig.echo(request, di1=True)
 
         def respond(_seconds):
-            assert len(rig.stops) == 1  # Stop sent even before the DO response.
+            assert not rig.stops  # Pickup Stop must not overtake the pending DO reply.
             clock[0] += .02
             future.set_result(SimpleNamespace(res=0))
         rig.transport.node.wait_control = respond
@@ -134,6 +134,93 @@ def test_di1_during_relaxation_wait_requests_stop_and_keeps_acquisition(monkeypa
     assert acquired and len(rig.stops) == 1
     assert rig.outputs == [(2, 0, 0), (14, 0, 0)]
     assert rig.monitor.snapshot().feed["digital_outputs"] == VACUUM
+
+
+@pytest.mark.parametrize("channel", [2, 14])
+def test_pending_finger_reply_and_required_echo_precede_stop_then_remaining_relaxation(
+        monkeypatch, channel):
+    rig, _clock = relaxation_rig(monkeypatch)
+    pending = Future()
+    order = []
+    original_stop = rig.transport.request_stop
+
+    def stop(reason, **kwargs):
+        assert pending.done()
+        bits = rig.monitor.snapshot().feed["digital_outputs"]
+        assert not bits & (1 << (channel - 1))  # In-flight OFF confirmed before Stop.
+        order.append("Stop")
+        return original_stop(reason, **kwargs)
+
+    def output(request):
+        order.append(f"DO{request.index}")
+        if request.index != channel:
+            return rig.echo(request)
+        # Reproduce the live race: DI1 HIGH while DO14 is still ON and its
+        # service reply is pending. Acceptance does not perform that output.
+        rig.echo(request, di1=True, outputs=OPEN)
+        return pending
+
+    def respond(_seconds):
+        assert not rig.stops and rig.transport.suction_interrupted
+        order.append("reply")
+        pending.set_result(SimpleNamespace(res=0))
+
+    rig.transport.request_stop = stop
+    rig.on_output = output
+    rig.transport.node.wait_control = respond
+    rig.steps = iter([dict(z=.1, outputs=OPEN), dict(z=.1, outputs=VACUUM, di1=True)])
+    acquired, origin = pick(rig)
+    assert acquired and origin[2, 3] == .1
+    assert order == (["DO2", "reply", "Stop", "DO14"] if channel == 2
+                     else ["DO2", "DO14", "reply", "Stop"])
+    assert rig.outputs == [(2, 0, 0), (14, 0, 0)]
+    assert len(rig.stops) == 1
+    assert len([a for a, _ in rig.events if a[1] == "pickup_detected"]) == 1
+
+
+@pytest.mark.parametrize("failure", ["reject", "timeout", "cancel", "feedback"])
+def test_pending_motion_pickup_keeps_fault_and_operator_stop_preemption(monkeypatch, failure):
+    rig, clock = relaxation_rig(monkeypatch)
+    transport = rig.transport
+    pending = Future()
+
+    def dispatch(_request):
+        rig.calls.append("motion")
+        rig.emit(z=.15, running=1, outputs=OPEN, di1=True)
+        return pending
+
+    def wait(seconds):
+        assert transport.suction_interrupted
+        assert not rig.stops  # No pickup Stop while this response is pending.
+        clock[0] += seconds
+        if failure == "reject":
+            pending.set_result(SimpleNamespace(res=-1))
+        elif failure == "cancel":
+            transport.request_stop("explicit operator Stop")
+            transport.node.cancel_requested = lambda: True
+        elif failure == "feedback":
+            def invalid_feedback(**_kwargs):
+                raise FeedbackFailure("invalid feedback")
+            rig.monitor.snapshot = invalid_feedback
+
+    transport.node.check_all_command_owners = lambda _names: None
+    transport.node.wait_control = wait
+    transport.clients["MovLIO"] = SimpleNamespace(
+        service_is_ready=lambda: True, call_async=dispatch)
+    transport.call_group = lambda calls, **kwargs: DobotTransport.call_group(
+        transport, calls, **kwargs)
+    expected = {"reject": CommandRejected, "timeout": CommandResponseTimeout,
+                "cancel": OperationCanceled, "feedback": FeedbackFailure}[failure]
+    with pytest.raises(expected):
+        pick(rig)
+    assert rig.calls == ["motion"] and not rig.outputs
+    assert rig.stops and all(reason != "DI1 acquired during pickup"
+                             for reason, _fresh, _future in rig.stops)
+    assert pending.done() == (failure == "reject")
+    if failure == "timeout":
+        assert 5. <= clock[0] < 5.1
+    if failure == "cancel":
+        assert rig.stops[0][0] == "explicit operator Stop"
 
 
 def test_single_new_feed_packet_releases_output_wait_with_independent_joint_updates(monkeypatch):

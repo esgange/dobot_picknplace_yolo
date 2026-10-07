@@ -427,10 +427,6 @@ class DobotTransport:
                                 if suction_loss is None:
                                     self.request_stop("Held suction lost during motion admission")
                                     suction_loss = exc
-                        if self.suction_interrupted:
-                            # The immediate Stop may precede this command's
-                            # admission. Discard again after both replies.
-                            self.suction_stop_needs_refresh = True
                         if time.monotonic() >= deadline:
                             self._finish_service_audit(
                                 audit, "timeout",
@@ -1159,8 +1155,10 @@ class DobotTransport:
             raise FeedbackFailure("Late DI1 after missed pickup; candidate retry forbidden")
         if stop_on_suction and suction_armed:
             if detected and not self.suction_interrupted:
+                # Latch immediately and stop admitting normal commands. The
+                # owning batch sends pickup Stop only after issued replies have
+                # been validated (and an in-flight stationary DO has echoed).
                 self.suction_interrupted = True
-                self.suction_stop_future = self.request_stop("DI1 acquired during pickup")
             if not vacuum and before_suction is not None:
                 before_suction()
 
@@ -1258,7 +1256,6 @@ class DobotTransport:
             origin = target.matrix
         self.suction_interrupted = False
         self.suction_stop_future = None
-        self.suction_stop_needs_refresh = False
         self.acquisition_eligible = False
         self.late_miss_suction = require_suction_reset
         initial = self._ready_snapshot()
@@ -1272,6 +1269,7 @@ class DobotTransport:
         suction_armed = False
         probe_started = False
         fingers_relaxed = False
+        relaxed_finger_channels = set()
         self.pending_motion_outputs = {}
         self.moving = True
         started = time.monotonic()
@@ -1314,17 +1312,21 @@ class DobotTransport:
             self.acquisition_eligible = stop_on_suction and suction_armed
             if self.acquisition_eligible:
                 self.late_miss_suction = False
+            was_interrupted = self.suction_interrupted
             self._monitor_motion_policy(
                 snapshot, require_suction=require_suction, forbid_suction=forbid_suction,
                 stop_on_suction=stop_on_suction, before_suction=before_suction,
                 planned_outputs={} if placement is not None else self.pending_motion_outputs,
                 suction_armed=suction_armed)
+            if self.suction_interrupted and not was_interrupted:
+                self.node.events.record(
+                    "INFO", "pickup_detected",
+                    "DI1 acquired; finish issued command before pickup Stop", batch=batch_name)
 
         def relax_fingers(trigger):
             nonlocal fingers_relaxed
             if not relax_pick_fingers or fingers_relaxed:
                 return
-            confirmed_off = set()
 
             def observe(sample):
                 progress(sample)
@@ -1332,7 +1334,7 @@ class DobotTransport:
                 if not bits & (1 << 12) or bits & 1:
                     raise FeedbackFailure(
                         "Pickup finger relaxation requires suction ON/exhaust OFF")
-                if any(bits & (1 << (channel - 1)) for channel in confirmed_off):
+                if any(bits & (1 << (channel - 1)) for channel in relaxed_finger_channels):
                     raise FeedbackFailure("Pickup finger output changed after relaxation")
 
             # Only reached from confirmed final-pick idle or accepted pickup
@@ -1340,9 +1342,15 @@ class DobotTransport:
             # Adopt OFF only after fresh feedback, including an intervening DI1.
             for channel in (2, 14):
                 observe(self._ready_snapshot())
+                if channel in relaxed_finger_channels:
+                    continue
+                if self.suction_interrupted and self.suction_stop_future is None:
+                    # Finish only the DO already sent. Remaining finger commands
+                    # resume after pickup Stop, without repeating confirmed OFFs.
+                    return
                 self.output(channel, False, progress=observe)
                 expected_outputs[channel] = False
-                confirmed_off.add(channel)
+                relaxed_finger_channels.add(channel)
             observe(self._ready_snapshot())
             fingers_relaxed = True
             self.node.events.record(
@@ -1354,14 +1362,13 @@ class DobotTransport:
                 "INFO", "motion_batch_interrupted", batch_name,
                 batch=batch_name, queued_targets=queued_targets,
                 reason="DI1 acquired during pickup")
-            # Retire any outstanding Stop before dispatching the return. When
-            # pickup interrupted admission, a second ordered Stop must discard
-            # the command that could have been admitted after the first Stop.
+            # Ordered admission has validated every issued response. Never send
+            # a normal pickup Stop across an unresolved motion or DO request.
+            # Operator cancellation and fault containment retain independent Stop.
+            self.node.raise_if_cancelled()
+            self.ensure_no_pending_response()
+            self.suction_stop_future = self.request_stop("DI1 acquired during pickup")
             self._acknowledge_stop(self.suction_stop_future, check_cancel=True)
-            if self.suction_stop_needs_refresh:
-                self.suction_stop_future = self.request_stop(
-                    "discard motion admitted during pickup Stop", fresh=True)
-                self._acknowledge_stop(self.suction_stop_future, check_cancel=True)
             sample = self._ready_snapshot()
             if (not sample.suction_present
                     or not sample.feed["digital_outputs"] & (1 << 12)):

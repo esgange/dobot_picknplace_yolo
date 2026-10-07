@@ -1210,7 +1210,7 @@ def test_late_di1_from_missed_candidate_is_ignored_until_next_suction_is_armed()
     assert not transport.suction_interrupted
 
 
-def test_armed_di1_high_still_requests_stop_on_the_first_sample():
+def test_armed_di1_high_latches_on_first_sample_without_racing_pending_replies():
     from test_feedback_v2 import timed_monitor
 
     _monitor, _clock, emit = timed_monitor()
@@ -1225,7 +1225,7 @@ def test_armed_di1_high_still_requests_stop_on_the_first_sample():
         acquired, require_suction=False, forbid_suction=False, stop_on_suction=True,
         before_suction=None, planned_outputs={}, suction_armed=True)
     assert transport.suction_interrupted
-    assert stops == ["DI1 acquired during pickup"]
+    assert stops == []  # The owning batch drains replies before sending pickup Stop.
 
 
 class SensorMonitor:

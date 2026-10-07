@@ -1274,15 +1274,24 @@ The first `candidate_1_home_to_pick` group contains three control points: item
 X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with SUCK
 at 20%. It intentionally skips the item-clearance point on this initial descent.
 DI1 is eligible only after the candidate's SUCK transition. The first eligible
-HIGH during descent or settling immediately sends Stop to discard the old queue.
+HIGH during descent or settling immediately latches pickup and blocks later normal
+command admission. Validate every already-issued service reply before sending one
+pickup Stop to discard the old queue. Already-queued motion can continue while
+its reply is pending; the five-second response deadline is unchanged. Operator
+Stop/cancel, Pause and fault/drop containment remain independent and immediate.
 After its successful command acknowledgement, mark the candidate HELD and start
 the upward return from the latest fresh joint-derived pose. Do not wait for
 stationary joints, idle status, an empty-queue sample or the remaining settling
 time before this return. Command acceptance is not a physical-stop confirmation.
-If acquisition occurs while a motion reply is outstanding, resolve that reply
-and the initial Stop, then acknowledge one further Stop to discard any late
-admission before returning. Unanswered/rejected commands or cancellation prevent
-the return; delayed normal motion callbacks cannot Stop its new queue.
+If acquisition occurs during stationary final-pick relaxation, finish only the
+finger DO already sent: require its accepted reply and fresh OFF feedback before
+pickup Stop. After accepted Stop, complete remaining relaxation without repeating
+confirmed OFF channels. An accepted DO is queued, so its reply alone cannot prove
+the output changed. Keep the five-second output bound and vacuum/output monitoring;
+rejection, unanswered calls, missing output feedback or cancellation block return
+and retain fault containment. Remove the former early pickup Stop followed by a
+second discard; delayed successful callbacks cannot Stop the new return queue.
+The `pickup_detected` event marks the latch before the eventual pickup Stop send.
 Otherwise the terminal pose must remain
 within tolerance with advancing queue-idle feedback and the commanded final
 outputs for the profile's `pick_settling` interval while DI1 is monitored. This

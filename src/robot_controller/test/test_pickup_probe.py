@@ -234,7 +234,7 @@ def test_no_upward_travel_skips_probe_instead_of_inventing_height_or_descending(
     assert started[0]["lift_mm"] == 0.
 
 
-def test_di1_during_probe_admission_resolves_reply_and_discards_queue_again(monkeypatch):
+def test_di1_during_probe_admission_resolves_reply_before_one_pickup_stop(monkeypatch):
     rig, _clock = probe_rig(monkeypatch)
     transport = rig.transport
     pending = Future()
@@ -266,7 +266,7 @@ def test_di1_during_probe_admission_resolves_reply_and_discards_queue_again(monk
         transport, calls, **kwargs)
 
     def respond(_seconds):
-        assert rig.stops and not pending.done()
+        assert not rig.stops and not pending.done()
         pending.set_result(SimpleNamespace(res=0, robot_return="{8}"))
 
     transport.node.wait_control = respond
@@ -274,7 +274,7 @@ def test_di1_during_probe_admission_resolves_reply_and_discards_queue_again(monk
     acquired, origin = pick_with_probe(rig)
     assert acquired and origin[2, 3] == .112
     assert pending.done() and len(rig.calls) == 2
-    assert [fresh for _reason, fresh, _future in rig.stops] == [False, True]
+    assert [fresh for _reason, fresh, _future in rig.stops] == [False]
 
 
 @pytest.mark.parametrize("settling_ms", [300, 100, 250.5])

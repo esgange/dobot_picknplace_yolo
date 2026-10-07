@@ -118,9 +118,9 @@ def test_failed_or_canceled_pickup_stop_cannot_start_return(monkeypatch, failure
     assert not any(a[1] == "pickup_stop_acknowledged" for a, _ in rig.events)
 
 
-@pytest.mark.parametrize("stop_replies_first", [False, True])
-def test_pickup_during_pending_motion_reply_discards_again_after_both_replies(
-        monkeypatch, stop_replies_first):
+@pytest.mark.parametrize("response_delayed", [False, True])
+def test_pickup_waits_for_motion_reply_then_stops_without_admitting_next_command(
+        monkeypatch, response_delayed):
     rig, _clock = pickup_rig(monkeypatch)
     transport = rig.transport
     pending = Future()
@@ -137,6 +137,9 @@ def test_pickup_during_pending_motion_reply_discards_again_after_both_replies(
     def dispatch(_request):
         order.append("motion sent")
         rig.emit(z=.15, running=1, outputs=VACUUM, di1=True)
+        if not response_delayed:
+            order.append("motion accepted")
+            pending.set_result(SimpleNamespace(res=0))
         return pending
 
     transport.clients = {"MovLIO": SimpleNamespace(
@@ -144,37 +147,29 @@ def test_pickup_during_pending_motion_reply_discards_again_after_both_replies(
     transport.types = {"MovLIO": SimpleNamespace(Request=lambda **fields: fields)}
     transport.call_group = lambda calls, **kwargs: DobotTransport.call_group(
         transport, calls, **kwargs)
-    first_stop = Future()
 
     def stop(_reason, *, fresh=False):
-        order.append("final Stop" if fresh else "immediate Stop")
-        if not fresh:
-            if stop_replies_first:
-                order.append("immediate Stop accepted")
-                first_stop.set_result(SimpleNamespace(res=0))
-            return first_stop
-        assert pending.done() and first_stop.done()
+        assert pending.done() and not fresh
+        order.append("pickup Stop")
         future = Future()
         future.set_result(SimpleNamespace(res=0))
         return future
 
     def respond(_seconds):
-        if not pending.done():
-            order.append("motion accepted")
-            pending.set_result(SimpleNamespace(res=0))
-        else:
-            order.append("immediate Stop accepted")
-            first_stop.set_result(SimpleNamespace(res=0))
+        assert order == ["motion sent"] and transport.suction_interrupted
+        order.append("motion accepted")
+        pending.set_result(SimpleNamespace(res=0))
 
     transport.request_stop = stop
     transport.node.wait_control = respond
-    acquired, _origin = pick(rig)
+    matrix = np.eye(4)
+    matrix[2, 3] = .1
+    target = Target("pick", matrix, 3, 100, motion_io=(MotionIO(20, 13, True),))
+    acquired, _origin = rig.run(
+        targets=(target, target), stop_on_suction=True, return_terminal_pose=True)
     assert acquired
-    replies = ["motion accepted", "immediate Stop accepted"]
-    if stop_replies_first:
-        replies.reverse()
-    assert order == ["motion sent", "immediate Stop", *replies, "final Stop"]
+    assert order == ["motion sent", "motion accepted", "pickup Stop"]
     # A late-scheduled normal callback must not Stop the newly queued return.
     transport._completed_response("MovLIO", pending, {"outcome": "accepted"})
-    assert order[-1] == "final Stop"
-    assert len(order) == 5
+    assert order[-1] == "pickup Stop"
+    assert len(order) == 3

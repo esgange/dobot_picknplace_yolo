@@ -1,6 +1,7 @@
 """Exercise motion completion with the real feedback and endpoint predicates."""
 
 from types import SimpleNamespace
+import threading
 
 import numpy as np
 import pytest
@@ -29,6 +30,8 @@ class MotionRig:
             raise_if_cancelled=lambda: None, operation_progress=lambda *_a, **_k: None,
             events=SimpleNamespace(record=lambda *a, **k: self.events.append((a, k))))
         self.transport.monitor = self.monitor
+        self.transport.response_lock = threading.RLock()
+        self.transport.pending_response = self.transport.pending_group = None
         self.transport.current_pose = lambda: np.eye(4)
         self.transport._wait_for_resume = lambda: 0.
         self.transport._ready_snapshot = lambda: self.monitor.snapshot(require_enabled=True)

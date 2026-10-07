@@ -1880,6 +1880,17 @@ release, later placement reopen, Stop/Pause and all existing safety gates. No ne
 setting, schema, fixed delay, automatic process restart or hardware trial. Update
 diary/FSM and regenerate HTML/PDF in the same scoped change.
 
+Rule 249 latches eligible pickup DI1 immediately but sends pickup Stop only
+after all already-issued service replies are validated. Admit no further normal
+commands before that Stop. If a stationary final-pick finger DO is already in
+flight, also confirm its OFF feedback before Stop; complete remaining relaxation
+after accepted Stop without repeating confirmed channels. Use one pickup Stop,
+removing the former early-Stop/second-discard sequence. Preserve five-second
+response/output deadlines, immediate operator Stop/cancel, Pause and fault/drop
+containment. Waiting for a reply does not stop already-queued motion. Keep all
+pose, suction, source and output gates; update diary/FSM and regenerate exports.
+No live restart, robot command, new setting/schema or hardware-command retry.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

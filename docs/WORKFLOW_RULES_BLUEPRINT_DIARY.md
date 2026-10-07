@@ -10054,6 +10054,57 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve unrelated RViz edits, `.env`, calibration, teaching/model artifacts
   and `runtime_teach/`. Scoped commit/push follows the standing workflow.
 
+### 2026-10-07 — Rule 249: finish pending commands before pickup Stop
+
+- Operator reported the 12:33:07 UTC PICKING → STOPPING → HELD_UNKNOWN failure.
+  The retained events show final-pick relaxation DO2 OFF completing, DO14 OFF
+  sent at 12:33:01.924086, eligible DI1 causing pickup Stop #618 at .946520 while
+  that DO response was pending, and DO14 accepted at 12:33:02.008282. Its output
+  confirmation did not complete before the five-second deadline. Auto Run ended
+  at 35/50 placements with “Timed out waiting for advancing robot feedback.”
+  At the later explicit Recover, DO13/DO14 were both ON (output bits 12288).
+  This supports an interrupted queued output; exact firmware ordering is not
+  recorded. HELD_UNKNOWN followed DI1 HIGH before trusted HELD completion.
+- The operator explicitly requires pickup Stop to wait until pending commands
+  respond. Supersede rules 188/222/248's immediate pickup-Stop ordering: latch
+  eligible DI1 immediately, admit no later normal command, validate every issued
+  response, then send and acknowledge one pickup Stop before held continuation.
+  Remove the former early Stop followed by a second post-admission discard.
+  The owning batch checks no responses remain pending before sending that Stop;
+  delayed accepted callbacks cannot stop its return queue.
+- Service acceptance alone is not output execution: project DO maps to Dobot's
+  queued DO, while DOInstant is a separate command. At already-confirmed idle
+  final pick, a finger DO in flight also requires its fresh OFF feedback before
+  pickup Stop. Finish only that issued channel, then Stop; complete any remaining
+  relaxation after accepted Stop without repeating confirmed OFF channels.
+  This covers DI1 during either DO2 or DO14 response/echo and preserves suction,
+  opposing-output checks, per-channel confirmation and retained candidate source.
+  Do not introduce DOInstant, new services or automatic hardware-command retries.
+- Keep the existing five-second service-response/output deadlines. Rejected or
+  unanswered commands, missing output confirmation, invalid feedback, operator
+  Stop/cancel, managed Pause and fault/drop containment retain their independent
+  immediate Stop paths; failure never authorizes another motion. Already-queued
+  motion can continue while waiting for a response. No new fixed delay, settling
+  interval, setting, schema, taught pose, rate, CP or detector change is added.
+  Log `pickup_detected` when DI1 latches so the wait is visible before Stop send.
+- Validation: **1,344 controller tests pass** in isolated ROS domain 81 with
+  offscreen Qt and synthetic services/feedback. Tests cover delayed/immediate
+  motion replies, suppression of later group commands, probe admission with one
+  Stop, DI1 while either finger DO is pending, accepted-but-not-yet-executed
+  DO14, partial relaxation across Stop without duplicates, rejection, five-second
+  timeout, invalid feedback and operator Stop while a motion reply is pending.
+  Existing Stop/Pause/drop, Auto Run, gripper combinations and acquisition tests
+  pass. Scoped flake8 (100 columns, existing E128 style excluded) and whitespace
+  checks pass. No physical robot command or process restart was performed.
+- Updated AGENTS, root/controller READMEs and FSM review/diagram/guard table.
+  Regenerated and verified all nine HTML diagrams and nine PDF pages against
+  source SHA-256 `3c33c84f99a9e7e198909c5bfc4f339bcd256fa6e29527f202661d8ded6f01d8`;
+  visually reviewed the Pick page. Installed Python resolves to source, so no
+  build or driver-library replacement is needed. Restart Robot Controller when
+  safe to activate; this correction has not been verified in live operation.
+  Preserve unrelated RViz, .env, calibration, teaching/model and runtime files;
+  scoped commit and verified push follow the standing workflow.
+
 ### Future entry template
 
 ```text
