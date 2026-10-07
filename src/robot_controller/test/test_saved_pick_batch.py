@@ -17,6 +17,7 @@ from test_auto_run import cycle_rig, queue_rig, request
 from test_automatic_return import action_rig
 from test_continuous_drop import recovery_rig
 from test_placement_queue import RELEASE, OPEN
+from test_candidates_v2 import client, configuration, valid_result
 
 
 def placement_completed(node):
@@ -48,6 +49,37 @@ def manual_rig(monkeypatch, counts, acquisitions):
                             quaternion=(0., 0., 0., 1.)) for i in range(count)])
     node.candidates.request = detect
     return node
+
+
+@pytest.mark.parametrize('auto', [False, True])
+def test_controller_rank_drives_pick_retry_and_preserves_source_ids(monkeypatch, tmp_path, auto):
+    node = manual_rig(monkeypatch, [3], [False, True])
+    config = configuration()
+    config.home_matrix = node.configuration.home_matrix.copy()
+    response = valid_result(candidate_count=3)
+    x, y = config.home_matrix[:2, 3]
+    for candidate, offset in zip(response.candidates, [.3, .05, .15]):
+        candidate.pose.position.x = float(x + offset)
+        candidate.pose.position.y = float(y)
+        candidate.pose.position.z = .3
+    batch = client(tmp_path)._validate_result(response, config, False)
+    node.candidates.request = Mock(return_value=batch)
+    if auto:
+        assert AutoRunOperation(node, request(1))._pick()
+    else:
+        result = node.execute()
+        assert result.outcome == result.SUCCESS
+        assert result.selected_candidate_id == 'batch:2'
+        assert result.attempted_candidates == 2
+    session = node.managed.session
+    assert [a.identifier for a in session.attempts] == ['batch:1', 'batch:2', 'batch:0']
+    assert [a.state for a in session.attempts] == ['FAILED', 'HELD', 'PENDING']
+    assert session.held_index == 2 and session.next_eligible == 3
+    for index, offset in enumerate([.05, .15, .3]):
+        assert session.attempts[index].plan[3].matrix[0, 3] == pytest.approx(x + offset)
+        assert session.attempts[index].plan[3].name == f'p{index + 1}_pick'
+    assert session.batch is batch
+    node.candidates.request.assert_called_once()
 
 
 def test_manual_placement_discards_remaining_poses_and_next_pick_requests_fresh(monkeypatch):

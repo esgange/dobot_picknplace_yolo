@@ -1,7 +1,9 @@
 import copy
 import json
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+import numpy as np
 import pytest
 
 from item_perception_interfaces.msg import ItemCandidate
@@ -23,12 +25,12 @@ def configuration():
     }
     station = SimpleNamespace(
         camera=SimpleNamespace(sha256="camera"),
-        platform=SimpleNamespace(sha256="platform"))
+        platform=SimpleNamespace(sha256="platform", base_from_platform=np.eye(4)))
     selection = SimpleNamespace(bin=SimpleNamespace(sha256="bin"), station=station,
                                 robot_camera=SimpleNamespace(sha256="robot_camera"))
     return SimpleNamespace(
         profile=profile, profile_sha256="profile", selection=selection,
-        pose_candidates=3, configuration_id="configuration")
+        pose_candidates=3, configuration_id="configuration", home_matrix=np.eye(4))
 
 
 def valid_result(*, candidate_count=1):
@@ -44,7 +46,8 @@ def valid_result(*, candidate_count=1):
         "profile_sha256": "profile", "model_sha256": "model",
         "camera_sha256": "camera", "platform_sha256": "platform",
         "robot_camera_sha256": "robot_camera",
-        "bin_sha256": "bin", "depth_frame_stamps_ns": [99_934_000_000, 99_967_000_000, 100_000_000_000],
+        "bin_sha256": "bin",
+        "depth_frame_stamps_ns": [99_934_000_000, 99_967_000_000, 100_000_000_000],
         "debug_capture": {
             "requested": False, "rgb_path": "", "depth_path": "", "error": ""},
     })
@@ -79,6 +82,72 @@ def test_fresh_hash_matched_ranked_batch_is_accepted(tmp_path):
     assert [candidate.priority for candidate in batch.candidates] == [1, 2]
     assert batch.candidates[0].position_m == (0.0, 0.0, 0.1)
     assert batch.debug_message == "OFF"
+
+
+@pytest.mark.parametrize("positions,expected", [
+    ([(.3, .2, .1), (.1, .2, .1), (.2, .2, .1)], [1, 2, 0]),
+    ([(.1, .4, .1), (.1, .1, .1), (.1, .3, .1)], [1, 2, 0]),
+    # Identical XY: the higher surface is closer to a Home above the items.
+    ([(.1, .2, .1), (.1, .2, .6), (.1, .2, .3)], [1, 2, 0]),
+    # XY alone would prefer the first pose; all three dimensions must count.
+    ([(0., 0., .1), (.2, 0., .7), (.3, 0., .5)], [1, 2, 0]),
+])
+def test_home_distance_reorders_validated_poses_without_changing_detector_evidence(
+        tmp_path, positions, expected):
+    config = configuration()
+    config.home_matrix[2, 3] = .8
+    result = valid_result(candidate_count=3)
+    for value, position in zip(result.candidates, positions):
+        value.pose.position.x, value.pose.position.y, value.pose.position.z = position
+    original = copy.deepcopy(result)
+    observer = client(tmp_path)
+    observer.node.events = Mock()
+    batch = observer._validate_result(result, config, False)
+    assert [c.identifier for c in batch.candidates] == [f"batch:{i}" for i in expected]
+    assert [c.priority for c in batch.candidates] == [i + 1 for i in expected]
+    assert result == original
+    assert batch.evidence == json.loads(original.diagnostics_json)
+    details = observer.node.events.record.call_args.kwargs
+    assert details["ranking"] == "home_distance_3d"
+    assert details["home_position_base_m"] == [0., 0., .8]
+    for rank, (entry, index) in enumerate(zip(details["candidate_order"], expected), 1):
+        assert entry["controller_priority"] == rank
+        assert entry["detector_priority"] == index + 1
+        assert entry["candidate_id"] == f"batch:{index}"
+        assert entry["home_distance_m"] == pytest.approx(
+            np.linalg.norm(np.array(positions[index]) - [0., 0., .8]))
+
+
+def test_home_ranking_uses_base_transform_and_taught_home_instead_of_origin(tmp_path):
+    config = configuration()
+    # Platform local X points along base Y, and its origin is translated.
+    config.selection.station.platform.base_from_platform = np.array([
+        [0., -1., 0., 1.], [1., 0., 0., 2.], [0., 0., 1., .3], [0., 0., 0., 1.]])
+    config.home_matrix[:3, 3] = [1., 2.02, .8]
+    batch = client(tmp_path)._validate_result(valid_result(candidate_count=3), config, False)
+    assert [c.identifier for c in batch.candidates] == ["batch:2", "batch:1", "batch:0"]
+    # Retain platform-relative poses for the existing motion/preview planners.
+    assert batch.candidates[0].position_m == (.02, 0., .1)
+
+
+def test_equal_home_distances_keep_detector_priority_even_with_different_confidence(tmp_path):
+    result = valid_result(candidate_count=3)
+    for value, xy in zip(result.candidates, [(1., 0.), (0., 1.), (-1., 0.)]):
+        value.pose.position.x, value.pose.position.y = xy
+    result.candidates[0].confidence = .5
+    result.candidates[2].confidence = .99
+    batch = client(tmp_path)._validate_result(result, configuration(), False)
+    assert [c.priority for c in batch.candidates] == [1, 2, 3]
+
+
+@pytest.mark.parametrize("frame", ["home", "platform"])
+def test_invalid_ranking_transform_cannot_admit_a_batch(tmp_path, frame):
+    config = configuration()
+    matrix = (config.home_matrix if frame == "home" else
+              config.selection.station.platform.base_from_platform)
+    matrix[0, 3] = float("nan")
+    with pytest.raises(FeedbackFailure, match="Cannot prioritize item poses from Home"):
+        client(tmp_path)._validate_result(valid_result(), config, False)
 
 
 @pytest.mark.parametrize("key", [
@@ -192,4 +261,4 @@ def test_controller_rejects_incompatible_depth_bundle_evidence(tmp_path, stamps)
 def test_controller_rejects_pre_request_bundle_even_if_last_frame_is_new(tmp_path):
     with pytest.raises(FeedbackFailure, match="predates request"):
         client(tmp_path)._validate_result(valid_result(), configuration(), False,
-                                         requested_at_ns=99_950_000_000)
+                                          requested_at_ns=99_950_000_000)

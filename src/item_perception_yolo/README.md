@@ -395,6 +395,11 @@ platform's full rotation/translation. No extra `platform_reference` authority,
 robot-TCP compensation, live tracking, motion or service change is introduced.
 Use an already-running RViz TF display; Item Teach never launches RViz.
 
+These labels retain Item Detect's center-first priorities. The controller
+independently orders the returned poses by 3D distance from taught Home, so its
+attempt/Preview numbers may differ. Controller logs preserve each pose ID and
+both priorities; Item Detect's filtering and returned count remain unchanged.
+
 The complete batch replaces any previous clicked-item or simulated preview.
 Validate the response frame, priorities, IDs, pose values, source/profile identity
 and snapshot identity before installing all TFs atomically. While frozen, only their

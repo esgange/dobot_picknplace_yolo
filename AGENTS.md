@@ -1824,6 +1824,18 @@ Keep full-circle denominator, tray containment, range/MAD filtering, freshness,
 empty/zero-valid rejection and retries. No profile/interface change or operator
 artifact rewrite; update diary/FSM and regenerate HTML/PDF.
 
+Rule 244 adds independent controller pick ranking after strict detector-response
+validation. Sort only the returned poses by straight-line 3D distance from taught
+Home Link6 XYZ to the raw item surface XYZ transformed into base_link; exact ties
+retain detector priority. Exclude offsets, orientation and live robot position.
+Use the shared client for manual Pick, Auto Run/prefetch and Preview. Preserve
+pose IDs, detector priorities/evidence and log their controller-order/distance
+mapping. Freeze this order in the batch and ledger through retries, Pause and
+drop/return recovery; preserve terminal exclusions and existing invalidation.
+Do not alter Item Detect generation, filtering, cap or overlays, or request more
+poses. No schema, interface, setting or motion/I/O changes; update diary/FSM and
+regenerate HTML/PDF. Validate without live hardware commands.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

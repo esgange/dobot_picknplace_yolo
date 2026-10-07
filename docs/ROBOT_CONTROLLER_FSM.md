@@ -1,5 +1,19 @@
 # Robot Controller — Finite State Machine
 
+Controller pick-priority review: **2026-10-07**, baseline **`1b9ee2f`** plus rule
+**244**. After validating the full Item Detect response in detector order, rank
+only its returned poses by Euclidean XYZ distance from taught Home Link6 to the
+received item surface position, both in `base_link`. Transform the item through
+the bound platform calibration; exclude standoff, orientation and current robot
+pose from this metric. Exact distance ties retain detector priority. Shared
+controller acquisition supplies this order to manual Pick, Auto Run/prefetch and
+Preview. Keep original IDs/detector priorities and diagnostics; log their mapping
+to controller attempt numbers and distances. Detector generation/filtering/cap
+and image labels remain unchanged. Freeze controller order for the owning batch,
+including misses, Pause/Continue and saved-source drop/return recovery; preserve
+terminal exclusions and invalidation on placement/reload/Recover/restart. No
+motion/I/O, interface, schema, setting or new hardware action is introduced.
+
 Tray placement coverage review: **2026-10-07**, baseline **`f4021e1`** plus rule
 **243**. Place Item, Auto Run and Preview request a fixed **30%** valid-depth
 fraction, independent of the saved Item pick threshold. Retain the saved physical
@@ -781,7 +795,8 @@ flowchart TD
     Limit -->|Yes| NoPick["READY / NO_PICK; Home after misses or bin exit after final drop"]
     Limit -->|No| Next["Advance attempt; discard old batch"]
     Next --> Detect
-    Any -->|Yes| Home["Retain poses; fresh idle + Home joints: skip queue, otherwise reach Home"]
+    Any -->|Yes| Rank["Controller: nearest received item XYZ to taught Home in base_link; detector priority breaks ties"]
+    Rank --> Home["Retain ranked poses; fresh idle + Home joints: skip queue, otherwise reach Home"]
     Home --> Plan["Recheck RGB-offset 90×25×30 mm camera footprint: normal or 180°; save ordered plans and ledger"]
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
@@ -820,8 +835,9 @@ flowchart TD
   First held success ends the action while retaining its batch; three physically
   exhausted batches finish READY/NO_PICK. Reused IDs in new replies, item-service failures/timeouts, source changes
   and robot faults remain terminal. Result `attempted_candidates` sums candidates
-  across all batches, including failure/cancellation results. Per-batch ranking,
-  taught `pose_candidates`, routes, I/O and settling remain unchanged.
+  across all batches, including failure/cancellation results. Each new batch uses
+  controller Home-distance order (rule 244); taught `pose_candidates`, routes,
+  I/O and settling remain unchanged.
 - The accepted batch stays in memory for misses, held-item recovery and
   Pause/Continue, retaining original plans/identifiers/order without age expiry.
   Successful tray placement marks PLACED and cancels its remaining candidates;
@@ -911,7 +927,7 @@ flowchart TD
 FAILED, DROPPED, RETURNED, PLACED and CANCELED are terminal ledger states. A returned uncertain
 item remains **DROPPED**, recording the loss; it does not change to RETURNED.
 Successful tray placement cancels remaining PENDING/INTERRUPTED candidates.
-Until then, eligible candidates remain in saved order. Thus Continue
+Until then, eligible candidates remain in saved controller Home-distance order. Thus Continue
 retries the interrupted candidate before later candidates. The ledger and held
 source exist only in memory; process restart does not reconstruct them.
 RETURNED requires completed return at Home with neutral outputs and DI1 LOW.
@@ -1126,7 +1142,7 @@ flowchart TD
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
     Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
     Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
-    Prefetch -.-> Capture["In parallel: post-trigger RGB and median depth/TF; retain checked batch"]
+    Prefetch -.-> Capture["In parallel: post-trigger RGB and median depth/TF; validate and retain batch ranked by distance from Home"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append MovJ Home behind placement"]
     Home --> Done["PLACED; cancel unused poses; count execution/release; confirm Home + neutral + DI1 LOW; freeze total seconds; READY"]
@@ -1518,6 +1534,7 @@ Names below are relative to `/robot_controller/`.
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
+| Controller item priority (manual Pick / Auto Run / Preview) | Validate detector order and all source/timestamp/pose evidence first; then rank returned item XYZ in base_link by 3D distance from taught Home Link6 XYZ, exact ties by detector priority; preserve IDs and fixed order for the batch; never expand the detector's returned set |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
 | Pick nearby-depth eligibility (perception) | No usable median-depth point inside/on the physical outer bin and camera-XY radius reaches the saved floor-relative height difference from the candidate surface; evaluate platform Z=0 beneath each point along camera Z; exclude standoff; schema-13 defaults 150/60 mm and three frames; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |

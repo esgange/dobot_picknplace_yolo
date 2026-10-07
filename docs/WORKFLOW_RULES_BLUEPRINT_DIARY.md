@@ -9849,6 +9849,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Live placement verification remains pending. Preserve .env, all station/teach/
   model/runtime artifacts and unrelated RViz edits.
 
+### 2026-10-07 — Rule 244: controller ranks received item poses from taught Home
+
+- The operator requested a controller-owned priority independent of Item Detect:
+  choose the received item pose closest to Home. Use straight-line 3D distance
+  from taught Home Link6 XYZ to the raw item surface XYZ, transformed from
+  platform_reference into base_link using the bound platform calibration. No
+  standoff, pre-pick, orientation, live robot position or queue-path weighting.
+  Exact distance ties preserve the original detector priority.
+- Keep Item Detect generation, center-first ranking, nearby checks, returned
+  count/cap, service response and overlay labels unchanged. The controller first
+  validates the complete original response, including priority/center-distance
+  order, IDs, timestamps, convention and source bindings. Only then sort those
+  returned candidates. Reject invalid/nonfinite ranking geometry; no substitute
+  frame, guessed Home or additional pose request.
+- The existing shared CandidateClient supplies this order to manual Pick,
+  Auto Run (including prefetch) and read-only Preview. Preserve platform-relative
+  poses, IDs, original detector priorities and evidence. Controller attempt/TF
+  indices describe execution order, so they may differ from detector P1…Pn.
+  Extend the existing `candidate_response` event with the Home XYZ, ranking name
+  and ordered ID/controller-priority/detector-priority/distance-in-metres mapping.
+- Freeze controller order when accepting the batch. Existing plans and ledger
+  indices follow that order through misses, Pause/Continue and drop/return
+  recovery; terminal states stay excluded. Preserve saved return source and
+  correct selected_candidate_id after reordered attempts. Placement, explicit
+  Recover, reload and restart retain their existing invalidation behavior.
+  No interface, profile, setting, executor, motion geometry/rate or I/O changes.
+- Validation: all **1,260 controller tests pass**, including new X/Y/Z ranking,
+  height-versus-XY ordering, translated/rotated platform and nonzero Home,
+  tie behavior, original response/evidence preservation, logged mapping,
+  malformed-transform rejection, manual/Auto Run miss-to-next-pick ID/plan/ledger
+  alignment and Preview target numbering. Existing malformed detector-order,
+  source/timestamp, Pause/return, Stop and acquisition/placement tests still pass.
+  Use isolated ROS domain 81 and offscreen Qt only. Scoped flake8 and whitespace
+  checks pass; tidy two pre-existing formatting warnings in the touched test.
+- Update AGENTS, root/controller/Item READMEs and FSM review, Pick/Auto Run
+  diagrams, ledger explanation and admission table. Regenerate nine adjacent
+  offline HTML/PDF diagrams from the Markdown source. Installed controller Python
+  resolves to source, requiring no build; the operator must restart controller
+  and Preview to load it. No process restart, robot command, automatic arming,
+  driver replacement or live trial was performed. Preserve .env, station/teach/
+  model/runtime artifacts and unrelated RViz edits. Live verification is pending.
+
 ### Future entry template
 
 ```text

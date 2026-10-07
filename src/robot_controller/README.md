@@ -11,6 +11,26 @@ physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview 
 plus Auto Run with an adjacent quantity field, completed count and elapsed seconds.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.
 
+## Pick priority
+
+After validating an Item Detect response in its original priority order, the
+controller sorts the received poses by straight-line **3D distance from taught
+Home**, nearest first. Transform each item's platform-relative XYZ into
+`base_link` and compare it with the taught Home Link6 XYZ. Use the received item
+surface position before standoff/pre-pick offsets; orientation, live robot
+position and queue travel are not ranking inputs. Exact distance ties preserve
+detector priority. No extra poses are requested, and detector selection, filters,
+ranking, count limit and images remain unchanged.
+
+Manual Pick, Auto Run (including prefetched batches) and Preview share this
+controller order. Freeze it when accepting a batch; misses, Pause/Continue and
+drop/return recovery keep its plans, IDs, order and terminal-state exclusions.
+Successful placement still discards unused candidates. Controller attempt/preview
+numbers refer to execution order and can differ from Item Teach's P1…Pn labels.
+The `candidate_response` event logs Home XYZ and each pose's controller priority,
+original detector priority, ID and distance in metres. Restart controller and
+Preview to load the change; no artifact, interface or configuration migration.
+
 ## Auto Run
 
 Start from configured, unheld READY with recorded tray joints and both pose
@@ -707,8 +727,8 @@ when `feedback_fresh` is true; zeroed fields in an unavailable snapshot mean
 unknown, not confirmed disabled/OFF/LOW. These are feedback values, independent
 of expected/commanded outputs and the debounced held-item state. The periodic
 status rate remains 5 Hz, with additional state/progress updates.
-`candidate_ids` and `candidate_states` are parallel ordered arrays for the retained
-batch; `can_return_item` identifies trusted held source context.
+`candidate_ids` and `candidate_states` are parallel arrays in the retained batch's
+controller Home-distance order; `can_return_item` identifies trusted held source context.
 The removed Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image endpoints
 have no compatibility wrappers.
 
@@ -1112,13 +1132,14 @@ joints. Its tray detector need not be armed; Pick only travels to the saved pose
    profile/model/camera/platform/bin-hash-matched
    batch from `/item_detect/get_item_poses`, advertised by exactly one root node:
    headless `/item_detect` or explicitly Armed `/item_teach`;
-2. run the same Home function once poses are available, skipping motion when already
+2. for a new batch, validate the response, transform item positions into base coordinates
+   and rank by 3D distance from taught Home, using detector priority for ties;
+3. run the same Home function once poses are available, skipping motion when already
    matched. If the result is empty, confirm Home and retry acquisition once per
    Pick; another empty result ends NO_PICK at Home;
-3. for a new batch, transform platform-relative targets into base coordinates;
 4. offset Link6 green/Y by the taught `pick_rotation` from each item's short-axis
    line while preserving taught tool Z;
-5. attempt eligible saved candidates in detector rank order, excluding terminal
+5. attempt eligible saved candidates in controller Home-distance order, excluding terminal
    states; new batch size still comes from Item Teach `pose_candidates`;
 6. after an intermediate miss, retract to that candidate's final clearance and
    proceed through the next candidate's safety-Z transit, clearance, pre-pick

@@ -8,6 +8,7 @@ import threading
 import time
 
 from item_perception_interfaces.srv import GetItemPoses
+from item_perception_yolo.pick_planning import candidate_pose_in_base, rigid_matrix
 
 from .errors import FeedbackFailure, OperationCanceled
 
@@ -22,7 +23,7 @@ CANONICAL_CANDIDATE_PROVIDERS = frozenset({
 @dataclass(frozen=True)
 class Candidate:
     identifier: str
-    priority: int
+    priority: int  # Original detector priority; batch order is controller priority.
     class_id: int
     confidence: float
     position_m: tuple
@@ -31,6 +32,8 @@ class Candidate:
 
 @dataclass(frozen=True)
 class CandidateBatch:
+    """Validated poses in fixed controller distance-from-Home order."""
+
     identifier: str
     observation_stamp_ns: int
     depth_stamp_ns: int
@@ -188,11 +191,33 @@ class CandidateClient:
             found.append(Candidate(
                 value.id, value.priority, value.class_id, value.confidence,
                 (p.x, p.y, p.z), (q.x, q.y, q.z, q.w)))
-        batch = CandidateBatch(result.batch_id, stamps[0], stamps[1], tuple(found),
+        # Validate the detector's own ordering first, then independently rank
+        # only the returned poses. Measure raw item XYZ, before tool offsets.
+        try:
+            home = rigid_matrix(configuration.home_matrix, "Taught Home")[:3, 3]
+            platform = selection.station.platform.base_from_platform
+            ranked = []
+            for candidate in found:
+                item = candidate_pose_in_base(
+                    platform, candidate.position_m, candidate.quaternion)
+                distance = math.dist(home, item[:3, 3])
+                if not math.isfinite(distance):
+                    raise ValueError("Candidate distance from Home must be finite")
+                ranked.append((distance, candidate))
+            ranked.sort(key=lambda entry: (entry[0], entry[1].priority))
+        except ValueError as exc:
+            raise FeedbackFailure(f"Cannot prioritize item poses from Home: {exc}") from exc
+        batch = CandidateBatch(result.batch_id, stamps[0], stamps[1],
+                               tuple(candidate for _, candidate in ranked),
                                evidence, debug_message)
         self.node.events.record(
             "INFO", "candidate_response", result.message,
             batch_id=batch.identifier, candidates=len(batch.candidates),
             configuration_id=configuration.configuration_id,
+            ranking="home_distance_3d", home_position_base_m=home.tolist(),
+            candidate_order=[{
+                "controller_priority": index, "candidate_id": candidate.identifier,
+                "detector_priority": candidate.priority, "home_distance_m": distance,
+            } for index, (distance, candidate) in enumerate(ranked, 1)],
             debug_capture=debug_message)
         return batch

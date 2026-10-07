@@ -68,6 +68,12 @@ Keep the fixed bin camera clear during placement-time detection. Missed picks,
 Pause/Continue and automatic drop return keep eligible original poses until
 successful placement. Separate manual Pick → Place cycles also discard unused
 poses on placement; the next explicit Pick requests a fresh batch.
+The controller independently orders each accepted item batch by **3D distance
+from taught Home to the item position in base_link**, nearest first. Equal
+distances retain Item Detect's priority. Manual Pick, Auto Run and Preview share
+this order; retries and Pause retain it. Item Detect's center-first generation,
+returned count and image labels stay unchanged. Controller attempt numbers may
+therefore differ from the detector's P1…Pn labels; logs retain both and the pose ID.
 Reload/recovery or process restart invalidates the retained batch; no poses are
 persisted to disk.
 Rebuild interfaces/controller and manually restart their clients after upgrading.

@@ -18,6 +18,7 @@ from robot_controller.placement import place_targets
 from test_feedback_v2 import feed, primed_monitor
 from test_placement import operation_node
 from test_operation_retries import TrayRig
+from test_candidates_v2 import client, configuration, valid_result
 
 
 @pytest.fixture
@@ -142,6 +143,25 @@ def test_pick_preview_includes_success_tray_and_missed_or_put_back_home_branches
     preview.client.request.assert_called_once()
     preview.trays.request.assert_not_called()
     assert preview_module.load_configuration.call_args.kwargs['tray_path'] == 'tray'
+
+
+def test_pick_preview_numbers_targets_in_controller_home_order(preview, tmp_path):
+    config = configuration()
+    config.home_matrix = preview.config.home_matrix.copy()
+    response = valid_result(candidate_count=2)
+    for candidate, x in zip(response.candidates, [.1, .4]):
+        candidate.pose.position.x = x
+        candidate.pose.position.y = .2
+        candidate.pose.position.z = .3
+    batch = client(tmp_path)._validate_result(response, config, False)
+    assert [candidate.priority for candidate in batch.candidates] == [2, 1]
+    preview.client.request.return_value = batch
+    result = preview.run(Preview.Request.PICK)
+    assert result.success
+    picks = [target for target in preview.targets if target.name in ('p1_pick', 'p2_pick')]
+    assert [target.name for target in picks] == ['p1_pick', 'p2_pick']
+    assert [target.matrix[0, 3] for target in picks] == pytest.approx([.4, .1])
+    preview.client.request.assert_called_once()
 
 
 @pytest.mark.parametrize('tray', [None, SimpleNamespace(detect_joints=None)])
