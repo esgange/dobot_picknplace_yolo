@@ -1799,6 +1799,22 @@ pose filters and controller authority unchanged. Real captures add no simulated
 TFs; simulated TFs expire after five seconds too. Headless rendering still depends
 on debug saving and has no GUI handoff. No cross-process image relay is introduced.
 
+Rule 242 adds a stationary Home suction test to explicit Recover before gripper
+reset. Preserve fingers; confirm exhaust OFF before suction ON without cycling
+active vacuum. Any raw DI1 HIGH during the test means item/obstruction; a clear
+test requires one second of fresh advancing feedback at idle taught Home. Clear
+then performs the existing neutral reset/READY confirmation. Positive enters
+PAUSED, retaining the existing managed worker/operation slot and gripper outputs,
+while the Recover service returns. Offer the shared Return Item queue only for
+an existing unreleased HELD/DROPPED source. Do not promote probe HIGH to a pickup
+or infer a source after release/restart. With no source, require manual clearing.
+Once DI1 is LOW, Continue (GUI: RETEST SUCTION) repeats the test, never the cancelled
+job. Cancel remaining candidates; preserve uncertain source until test/return
+completion. Keep pre-Home unknown-suction gates, source/feedback/output/Home checks,
+response ordering and direct Stop during testing, waiting and return. No new
+service, schema, setting, executor or automatic restart/retry; update diary/FSM
+and regenerate its HTML/PDF. Validate with synthetic feedback only.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

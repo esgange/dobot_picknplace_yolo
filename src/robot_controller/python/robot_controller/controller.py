@@ -438,7 +438,13 @@ class RobotController(Node):
     def _end_operation(self):
         with self.managed.lock:
             self.active_goal = None
-            if (self.managed.kind is not None and not self.managed.executing
+            recovery = getattr(self, "recovery_home", None)
+            if (self.active_action == "recover" and recovery is not None
+                    and recovery.awaiting_return and self.machine.state == "PAUSED"
+                    and not self.cancel_requested()):
+                self.active_action = "recovery_pause"
+                self.managed.start_idle_worker()
+            elif (self.managed.kind is not None and not self.managed.executing
                     and self.active_action in ("home", "pick", "tray_position", "place")
                     and not self.cancel_requested()):
                 # A request can arrive after the action result is committed but
@@ -447,6 +453,10 @@ class RobotController(Node):
                 self.active_action = "pause"
                 self.managed.start_idle_worker()
             else:
+                if (self.active_action == "recover" and recovery is not None
+                        and recovery.awaiting_return):
+                    # Stop can win after PAUSED is published but before worker handoff.
+                    self.managed._clear_request()
                 self.active_action = self.phase = self.waypoint = ""
                 self.candidate_index = self.candidate_total = 0
                 self.operation_lock.release()
@@ -474,7 +484,7 @@ class RobotController(Node):
 
     def observe_managed_feedback(self, sample):
         recovery = getattr(self, "recovery_home", None)
-        if recovery is not None and self.active_action == "recover":
+        if recovery is not None and self.active_action in ("recover", "recovery_pause"):
             recovery.check(sample)
             return False
         returning = getattr(self.managed, "return_progress", None)
@@ -636,6 +646,7 @@ class RobotController(Node):
             if recovery is None:
                 recovery = self.recovery_home = HomeRecovery.cancel_action(self)
             recovery.motion_started = False
+            recovery.test_started = False
             recovery.outputs.clear()
             self.startup_complete = False
             self._transition("RECOVERING", "Cancelling interrupted action; recover to Home")
@@ -645,16 +656,23 @@ class RobotController(Node):
             if self.global_cp_percent is None:
                 self.global_cp_percent = 100
             recovery.run(self)
+            if recovery.test_suction(self):
+                recovery.park(self)
+                response.success = True
+                response.message, response.state = self.machine.message, self.machine.state
+                return response
             recovery.relax(self)
             self.raise_if_cancelled()
             self.recovery_home = None
             self.startup_complete = True
-            self._transition("READY", "Recovery completed at Home; gripper relaxed; "
+            self._transition("READY", "Recovery completed at Home; suction test clear; "
+                             "gripper relaxed; "
                              "interrupted action cancelled")
             response.success = True
         except HeldUnknown as exc:
             self.startup_complete = False
-            if recovery is not None and (recovery.motion_started or recovery.relaxing):
+            if recovery is not None and (
+                    recovery.motion_started or recovery.relaxing or recovery.test_started):
                 self._contain_queue_control_failure("Home recovery", exc)
                 if recovery.relaxing and self.machine.state == "HELD_UNKNOWN":
                     self._transition("HELD_UNKNOWN", str(exc))
@@ -668,7 +686,8 @@ class RobotController(Node):
             self._settle_lifecycle_cancellation(str(exc))
         except Exception as exc:
             response.success = False
-            if recovery is not None and (recovery.motion_started or recovery.relaxing):
+            if recovery is not None and (
+                    recovery.motion_started or recovery.relaxing or recovery.test_started):
                 self._contain_queue_control_failure("Home recovery", exc)
                 if self.machine.state == "RECOVERY_REQUIRED":
                     self._transition("FAULT", f"Home recovery failed; robot stopped: {exc}")
@@ -1406,7 +1425,7 @@ class RobotController(Node):
                 robot_camera_platform_xy=list(
                     attitude.selected_camera_platform_xy),
                 robot_camera_footprint_platform_xy=[list(p) for p in
-                                                   attitude.selected_camera_footprint_xy],
+                                                    attitude.selected_camera_footprint_xy],
                 robot_camera_sha256=config.selection.robot_camera.sha256,
                 target_rpy_deg=pose_values(plan[0].matrix)[3:])
         return plans

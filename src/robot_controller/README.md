@@ -790,8 +790,29 @@ Confirm that lift before a separate queued joint-target MovJ to taught Home.
 Use taught travel speed/acceleration and the last confirmed global speed and CP (each 100%
 if unset, preserving CP=0). Already at/above Home height skips the lift; already at taught Home
 skips its move. Current outputs and suction policy are monitored throughout travel.
-After stationary Home is confirmed, reset DO1, DO2, DO13 and DO14 to OFF, in that
-order, confirming each response/output. Both finger outputs OFF means relaxed;
+After stationary Home is confirmed, test suction: command DO1 OFF before DO13 ON
+when needed, preserve both finger outputs, and never cycle an already-active
+vacuum OFF first. Confirm every output and continued Home/idle before observing
+raw DI1 for up to one second. Any HIGH latches an item-or-obstruction indication;
+it is not proof of a clog or a new pickup. A clear result requires a full second
+and advancing fresh feedback. Missing feedback, changed Home position/outputs,
+command failure or Stop fails the test and prevents an automatic reset.
+
+A positive test enters PAUSED at Home, keeping suction and fingers unchanged.
+The existing managed worker retains the operation slot; the Recover service
+returns without waiting for the operator. RETURN ITEM is offered only for an
+existing unreleased HELD/DROPPED source. It uses the normal shared return queue
+to the saved pre-pick release, retract and Home. A dropped source remains DROPPED;
+the test never promotes it to a new HELD success. Confirmed release, missing
+source or process restart cannot invent a return destination. Without a source,
+clear the item/obstruction manually. Once raw DI1 is LOW, RETEST SUCTION uses the
+Continue service to run another check at Home; it never resumes old candidates.
+Suction loss while awaiting the choice retains the uncertain source without
+starting motion. Fresh feedback, stationary Home and preserved outputs remain
+monitored, and direct Stop pre-empts the test, wait and return.
+
+Only after a clear test, reset DO1, DO2, DO13 and DO14 to OFF in that order,
+confirming each response/output. Both finger outputs OFF means relaxed;
 there is no OPEN command or exhaust pulse. The intentional reset permits suction
 to decay. Require all four outputs OFF, DI1 LOW and continued Home arrival before
 reporting READY. This final check waits up to five seconds for newer joint/status
@@ -806,9 +827,9 @@ no automatic next pick or replay of an interrupted placement/put-back release.
 Recover remains available in HELD_UNKNOWN for a fresh check after the operator
 secures/clears the item or obstruction. Stale feedback, active E-stop/other alarms,
 changed teach sources, unexpected I/O or failed commands prevent movement.
-The completion prompt reports Home reached, fingers relaxed, suction/exhaust OFF
-and DI1 LOW. Recover itself does not put an item back; use the separate Return Item
-operation for a deliberate return to the source.
+The completion prompt reports Home reached, a clear suction test, fingers relaxed,
+suction/exhaust OFF and DI1 LOW. A detected item/obstruction instead leaves the
+controller paused for the explicit Return Item or Retest Suction choice.
 
 Native action cancellation and Stop invalidate the active command generation,
 use the independent Stop client, wait for acknowledgement and two distinct

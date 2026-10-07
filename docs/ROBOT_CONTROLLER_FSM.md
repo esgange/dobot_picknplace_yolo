@@ -1,5 +1,22 @@
 # Robot Controller — Finite State Machine
 
+Recovery suction-test review: **2026-10-07**, baseline **`f781c29`** plus rule
+**242**. Recover preserves gripper outputs through its existing Stop/clear/enable
+and lift/Home route. At confirmed Home, preserve fingers, confirm exhaust OFF
+before suction ON, and observe raw DI1 for up to one second. Never cycle active
+vacuum OFF first. A clear test requires advancing fresh feedback for the full
+second, then the existing neutral-output/DI1 LOW reset finishes READY. Any HIGH,
+including a brief callback-observed pulse, latches item/obstruction; it cannot
+distinguish a clog from a held item. Enter PAUSED at Home without releasing.
+The Recover service returns and the existing managed worker retains ownership.
+Return Item uses the shared saved pre-pick/retract/Home queue only with an
+unreleased HELD/DROPPED source. Missing/confirmed-released sources never acquire
+a guessed destination, and a test HIGH never promotes a DROPPED candidate.
+After manual clearing and raw DI1 LOW, Continue (GUI: RETEST SUCTION) repeats
+only this test. The cancelled job and remaining candidates never resume.
+Keep Home/output/feedback/source/Stop guards during the test, wait and return.
+No interface, configuration, executor or automatic retry is added.
+
 Floor-relative acquisition review: **2026-10-06**, baseline **`02e139d`** plus
 rule **237**. Schema-13 Item Teach adds depth-frame count 1/3/5 (default 3).
 One strict-majority float32 median of fresh post-request frames supplies pose,
@@ -435,15 +452,16 @@ now binds an optional Tray Teach. `GoTrayDetectPosition` and `PlaceItem` add
 `TRAY_POSITIONING` and `PLACING`; placement uses fresh tray depth and an independent
 tool-Z rotation. Placement Pause stops in place; interrupted release has its own
 retained Continue progress and never enters the bin put-back routine. Explicit
-Recover supersedes that progress with cancel-and-Home-then-relax under rule 176.
+Recover supersedes that progress with cancel-and-Home, followed by rule 242's
+suction test and explicit return/retest choice before any neutral reset.
 Rule 203 permits explicit empty or held placement in either launch mode;
 Auto Run retains its trusted held-item requirement.
 Tray service requests now use the versioned depth-capable endpoint; old provider
 processes cannot satisfy readiness. Executor failures in the provider are visible.
 
-Recovery behavior review: **2026-09-29**, diary rule **176**: explicit Recover
-cancels the old action, preserves grip through lift/Home, then resets the gripper
-to relaxed/OFF at confirmed Home.
+Recovery behavior review: rule **242** supersedes rule **176**'s immediate reset:
+explicit Recover cancels the old action, preserves grip through lift/Home, then
+tests suction. Clear permits the reset; detected suction pauses for an operator.
 
 Emergency-stop feedback review: **2026-09-29**, diary rule **167**. Startup queries
 GetErrorID before initialization; confirmed emergency stops have explicit operator
@@ -477,8 +495,10 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
   Exhausted tray acquisition offers Continue / Place Item (Retry) and the normal
   held-item Return control, including during Auto Run; Pick Item remains disabled.
 - **Direct Stop stops motion and preserves the grip.** It does not put an item back.
-- **Recover cancels the old action, returns Home, then relaxes the gripper.**
-  Preserve outputs during travel; reset DO1/DO2/DO13/DO14 only at confirmed Home.
+- **Recover cancels the old action, returns Home, then tests suction.**
+  Preserve outputs during travel. At Home, preserve fingers and enable suction;
+  a positive test pauses with Return Item when its saved source is available.
+  Clear DI1 enables Retest Suction; only a clear test permits the neutral reset.
   It confirms a vertical lift to Home height before moving Home; it never resumes
   release or the old batch. Fresh gripper/robot checks must pass first.
 - One controller operation owns execution at a time. A managed Pause retains
@@ -521,6 +541,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | BUSY, startup/recovery/return/parking/stopping | STOP |
 | HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; CP; STOP |
 | PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
+| PAUSED, Recovery suction detected | Return Item with saved unreleased HELD/DROPPED source; Retest Suction after raw DI1 LOW; STOP |
 | PAUSED, tray acquisition exhausted (Place / Auto Run) | Continue / Place Item (Retry); Return Item with trusted held source; STOP |
 | ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
 | OFFLINE | STOP if reachable; loading/preparation waits for fresh robot feedback |
@@ -722,11 +743,11 @@ typed status and failed service responses include the complete guidance.
 | `PICKING` | Poses before Home; one empty-result retry at Home; up to three nonempty physical-pick batches; success ends at Tray Detect. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed/CP are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
-| `PAUSED` | Managed parking or in-place acquisition Stop confirmed; monitor pose, queue, outputs and held suction. Failed tray acquisition offers explicit retry or trusted-source return. |
+| `PAUSED` | Managed parking, acquisition Stop or Recovery Home suction test confirmed. Monitor pose/queue/outputs. Recovery offers saved-source return or explicit retest after DI1 LOW. |
 | `RETURNING_ITEM` | Saved item's put-back is executing; destination afterward depends on why it started. |
 | `STOPPING` | Direct Stop/cancellation/fault containment is being confirmed. |
 | `RECOVERY_REQUIRED` | Stop confirmed; previous operation cannot simply Continue. Explicit Recover required. |
-| `RECOVERING` | Cancel interrupted action, validate fresh stopped grip, restore readiness, lift and return Home with outputs preserved. |
+| `RECOVERING` | Cancel interrupted action, restore readiness, lift/Home with grip preserved, then test suction before resetting outputs. |
 | `HELD_UNKNOWN` | Suction detected without trusted pickup context; keep stopped and resolve the item/sensor condition. Recover can recheck. |
 | `FAULT` | Initialization, recovery, supervision or containment failed. Read the cause and explicitly Recover or Stop. |
 
@@ -873,7 +894,7 @@ flowchart TD
     PENDING -->|Successful tray placement or explicit Recover| CANCELED
     ACTIVE -->|Explicit Recover| CANCELED
     INTERRUPTED -->|Successful tray placement or explicit Recover| CANCELED
-    HELD -->|Recover: clear suction or explicit reset at Home| CANCELED
+    HELD -->|Recover: clear Home suction test and neutral reset| CANCELED
 ```
 
 FAILED, DROPPED, RETURNED, PLACED and CANCELED are terminal ledger states. A returned uncertain
@@ -937,7 +958,7 @@ flowchart TD
     Stopped -->|Release confirmed| Recover["Continue: neutralize, upward retreat only; never release again"]
     Recover --> Ready
     Stopped -->|Partial release unconfirmed| Block["Continue blocked; no repeated descent/release"]
-    Stopped -->|Explicit Recover| Cancel["Cancel placement; fresh Stop and grip checks; preserve I/O; lift to Home Z then Home; relax gripper"]
+    Stopped -->|Explicit Recover| Cancel["Cancel placement; fresh Stop and grip checks; lift/Home with grip preserved; suction test then reset or operator choice"]
 ```
 
 X/Y are strictly positive millimetres along the detected tray inward short-X /
@@ -1261,8 +1282,9 @@ HOLDING pause loses and returns its item, Continue may run remaining saved candi
 
 The permanent red **STOP** always dispatches direct Stop, including when a PAUSED
 topic sample arrives before the Pause reply. Pending Pause/Return disables the
-separate managed control. **RETURN ITEM** appears only after PAUSED has
-trusted held source. External `/return_item` clients can request a managed
+separate managed control. **RETURN ITEM** appears only after PAUSED has a
+trusted held source, or Recovery's suction test retains an unreleased source.
+External `/return_item` clients can request a managed
 return from other started eligible states; the GUI exposes it while paused.
 The exhausted tray-acquisition pause uses this same Return control and route,
 but stays at Tray Detect while awaiting the choice (section 3a).
@@ -1291,7 +1313,15 @@ flowchart TD
     Stationary -->|Yes| Settings["Restore speed/CP and settings; confirm readiness"]
     Settings --> Lift["Below Home Z: vertical lift at current XY/attitude; physically confirm"]
     Lift --> Home["MovJ to exact taught Home joints; preserve grip"]
-    Home --> Relax["Idle + Home joints: DO1, DO2, DO13, DO14 OFF; confirm each"]
+    Home --> Test["Idle Home: exhaust OFF then suction ON; preserve fingers; up to 1 s raw DI1 test"]
+    Test -->|Full second clear with fresh advancing feedback| Relax["Idle + Home joints: DO1, DO2, DO13, DO14 OFF; confirm each"]
+    Test -->|Any HIGH: item or obstruction| Choice["PAUSED at Home: preserve grip; Recover replies; managed worker owns wait"]
+    Choice -->|Explicit Return Item; saved unreleased source| Return["Shared saved pre-pick release, retract and Home; no next Pick"]
+    Return -->|Neutral outputs and DI1 LOW at Home| Ready
+    Choice -->|Manually cleared; DI1 LOW; Retest Suction| Test
+    Test -->|Fault or Stop| Stopping
+    Choice -->|Fault or Stop| Stopping
+    Return -->|Fault or Stop| Stopping
     Relax --> Confirm["Up to 5 s: fresh Home joints + RobotStatus idle; output queue finished"]
     Confirm -->|Neutral outputs and DI1 LOW| Ready["READY at Home; gripper relaxed; old batch cancelled"]
     Confirm -->|Timeout, changed position, I/O fault or Stop| Fault
@@ -1312,11 +1342,13 @@ or overwrite a new operation. Operation startup cannot clear an in-progress Stop
 
 | Recovery situation | Operator path / controller result |
 | --- | --- |
-| Known item, suction intact | Preserve grip while lifting and returning Home; then relax all outputs. READY requires neutral outputs and DI1 LOW. |
+| Known item, suction intact | Preserve grip through lift/Home; positive suction test pauses before reset. Explicit Return Item uses the saved source. |
 | Saved item with latched loss | Fresh LOW permits lift/Home without release or new picks; HIGH does not erase the prior loss and blocks motion. |
 | Interrupted pick/place/put-back, release unconfirmed | Cancel it, validate fresh stopped grip, lift/Home; no repeated release and no fabricated placement success. |
 | Interrupted release confirmed | Preserve current outputs through lift/Home, then relax. New DI1 HIGH before travel blocks this route. |
 | Unknown HIGH suction, no trusted source | Keep stopped; safely secure/clear item or inspect the sensor for obstruction. Once DI1 shows LOW, click Recover again; no extra Stop click required. No invented return location. |
+| Home test detects suction with no saved source | Stay PAUSED at Home, preserve fingers/vacuum, and offer no Return Item. Manually clear it; raw DI1 LOW permits Retest Suction. |
+| Home test detects suction with an uncertain DROPPED source | Retain that source/state; offer the existing dropped-item return route. The test is not a new pickup. |
 | Competing maintenance app | Close the named Gripper Diagnostics/motion-debug application, then retry Recover. |
 | Collision mode blocks pre-enable standstill | Recover requires accepted Stop, then conditional ClearError and Enable. Confirm stationary joints/empty queue after enabled feedback, before settings or motion. |
 | Confirmed emergency stop (`res=-3` or alarm 1537) | Cannot start/recover while active. Release the physical button, then click Recover / Clear Error. Recover may clear a latched alarm; Enable remains blocked until clearance is verified. |
@@ -1344,7 +1376,25 @@ RelMovLUser with unchanged XY/attitude; then a separate joint-target MovJ to tau
 Home. Use taught travel rates. Already-high skips the rise; already-at-Home skips
 its move. Monitor unchanged outputs and held/clear suction throughout. Direct
 Stop pre-empts recovery; another Recover replans from a new Stop and current pose.
-At confirmed stationary Home, issue DO1 OFF, DO2 OFF, DO13 OFF and DO14 OFF,
+At confirmed stationary Home, confirm DO1 OFF before DO13 ON as needed; preserve
+fingers and never switch an active vacuum OFF to start the test. Confirm Home and
+the output queue, then observe raw DI1 for up to one second. A HIGH during any
+accepted feed callback latches item/obstruction even if it clears before the wait
+wakes. A clear result needs a full second with advancing fresh feedback. Stale
+feedback, motion, output mismatch, failed command or Stop prevents completion.
+
+Positive enters PAUSED with phase RECOVERY_SUCTION_BLOCKED. The service returns
+and transfers the operation slot to the existing managed worker. Keep monitoring
+enabled idle Home, outputs and feedback while waiting. Retain the unreleased
+HELD/DROPPED source even when fresh LOW during recovery made holding uncertain.
+Offer Return Item only with that source; its shared queue releases at saved
+pre-pick, retracts and confirms Home/neutral/LOW before READY. Missing or already
+released sources require manual clearing; no inferred return target is allowed.
+Raw DI1 LOW enables Continue, labelled RETEST SUCTION, to repeat the same test
+at Home. A repeated positive waits again. Neither choice revives cancelled work.
+Suction loss during this wait retains the source without starting automatic motion.
+
+Only after a clear test, issue DO1 OFF, DO2 OFF, DO13 OFF and DO14 OFF,
 confirming every response and fresh output echo. Accept only the pending OFF
 transition; unexpected output changes still fail. During this reset, intentional
 suction loss is allowed and the former held source becomes CANCELED. No finger
@@ -1417,7 +1467,7 @@ item placement is not measured; source context does not survive restart.
 | Explicit Return Item, including failed tray acquisition | Shared queue + joint Home → RETURNED / READY. |
 | Held loss in active Pick, idle holding, tray acquisition or placement | Shared queue + next eligible original-batch pick; no Home/detection. Exhausted return ends above bin. Auto Run places the replacement; manual Place ends at replacement Tray Detect. |
 | Held loss during Pause / while PAUSED | Shared queue + joint Home → DROPPED / PAUSED; wait for Continue or Stop. |
-| Explicit Recover | Cancel; preserve grip through lift/Home, then relax at Home. No release replay or automatic next Pick. |
+| Explicit Recover | Cancel; preserve grip through lift/Home, then test suction. Clear resets; positive offers saved-source Return Item or manual clearing/retest. No automatic next Pick. |
 
 ## 7. Home uses exact taught joint motion
 
@@ -1466,8 +1516,8 @@ Names below are relative to `/robot_controller/`.
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
 | Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; DO2 OFF then DO14 ON each accepted and echoed before motion; suction preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
-| `continue` service | Confirmed managed PAUSED with retained Pause context and valid parked feedback; during Auto Run, only exhausted-acquisition Pause |
-| `return_item` service | Started eligible managed state and trusted held source; during Place/Auto Run, only exhausted-acquisition PAUSED before release admission; no conflicting request |
+| `continue` service | Confirmed managed PAUSED with valid parked feedback; recovery suction Pause additionally requires raw DI1 LOW and only retests; during Auto Run, only exhausted-acquisition Pause |
+| `return_item` service | Started eligible managed state and held source, or recovery suction Pause with unreleased HELD/DROPPED source; during Place/Auto Run, only exhausted-acquisition PAUSED before release admission; no conflicting request |
 | `stop` service / action cancellation | Direct pre-emption; does not require Pause first |
 | `recover` service | FAULT / RECOVERY_REQUIRED / HELD_UNKNOWN; operation slot free |
 | `set_global_speed` service | Stationary READY / HOLDING; integer 1–100; operation slot free |
@@ -1558,19 +1608,19 @@ Updating a message without changing state is allowed in every state.
 | `INACTIVE` | `FAULT`, `STARTING`, `STOPPING`, `UNCONFIGURED` |
 | `STARTING` | `FAULT`, `HELD_UNKNOWN`, `READY`, `STOPPING` |
 | `READY` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `INACTIVE`, `PAUSED`, `PAUSING`, `PICKING`, `PLACING`, `RECOVERING`, `STOPPING`, `TRAY_POSITIONING` |
-| `HOMING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
+| `HOMING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `RETURNING_ITEM`, `STOPPING` |
 | `PICKING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `RETURNING_ITEM`, `STOPPING` |
-| `HOLDING` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `PAUSED`, `PAUSING`, `PLACING`, `RECOVERING`, `STOPPING`, `TRAY_POSITIONING` |
-| `PAUSED` | `FAULT`, `HOLDING`, `HOMING`, `PAUSING`, `PICKING`, `PLACING`, `READY`, `RETURNING_ITEM`, `STOPPING`, `TRAY_POSITIONING` |
+| `HOLDING` | `FAULT`, `HELD_UNKNOWN`, `HOMING`, `PAUSED`, `PAUSING`, `PLACING`, `RECOVERING`, `RETURNING_ITEM`, `STOPPING`, `TRAY_POSITIONING` |
+| `PAUSED` | `FAULT`, `HOLDING`, `HOMING`, `PAUSING`, `PICKING`, `PLACING`, `READY`, `RECOVERING`, `RETURNING_ITEM`, `STOPPING`, `TRAY_POSITIONING` |
 | `STOPPING` | `FAULT`, `HELD_UNKNOWN`, `INACTIVE`, `RECOVERY_REQUIRED`, `UNCONFIGURED` |
 | `RECOVERY_REQUIRED` | `FAULT`, `RECOVERING`, `STOPPING` |
-| `RECOVERING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `READY`, `RETURNING_ITEM`, `STOPPING` |
+| `RECOVERING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `READY`, `RETURNING_ITEM`, `STOPPING` |
 | `HELD_UNKNOWN` | `FAULT`, `RECOVERING`, `RECOVERY_REQUIRED`, `STOPPING` |
 | `FAULT` | `RECOVERING`, `STOPPING` |
 | `PAUSING` | `FAULT`, `PAUSED`, `RETURNING_ITEM`, `STOPPING` |
 | `RETURNING_ITEM` | `FAULT`, `PAUSED`, `PICKING`, `READY`, `STOPPING` |
-| `TRAY_POSITIONING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
-| `PLACING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `HOMING`, `PAUSED`, `PAUSING`, `PICKING`, `READY`, `RECOVERY_REQUIRED`, `STOPPING` |
+| `TRAY_POSITIONING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `PAUSED`, `PAUSING`, `READY`, `RECOVERY_REQUIRED`, `RETURNING_ITEM`, `STOPPING` |
+| `PLACING` | `FAULT`, `HELD_UNKNOWN`, `HOLDING`, `HOMING`, `PAUSED`, `PAUSING`, `PICKING`, `READY`, `RECOVERY_REQUIRED`, `RETURNING_ITEM`, `STOPPING` |
 
 ## 10. Maintaining this document
 

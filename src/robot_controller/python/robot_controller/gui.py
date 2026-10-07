@@ -212,7 +212,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.recover.clicked.connect(lambda: self._command("recover"))
         self.recover.setToolTip(
             "Cancel the action, preserve grip while lifting and returning Home, "
-            "then relax fingers and turn suction/exhaust OFF")
+            "then test suction; detected suction offers Return Item before resetting outputs")
         self.stop.clicked.connect(self._immediate_stop)
         for button in (self.recover, self.pause, self.stop):
             button.setMinimumHeight(58)
@@ -729,7 +729,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 elif name == "recover" and result.state == "READY":
                     QtWidgets.QMessageBox.information(
                         self, "Recovered — gripper relaxed",
-                        "Recovery completed at Home. Fingers are relaxed, suction and "
+                        "Recovery completed at Home and the suction test passed. "
+                        "Fingers are relaxed, suction and "
                         "exhaust are OFF, and DI1 is LOW. The interrupted action was cancelled.")
             except Exception as exc:
                 if name == "speed":
@@ -840,6 +841,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 if "configure" in self.pending else
                 "Request sent — waiting for controller confirmation…")
         managed_name = "pause"
+        recovery_paused = bool(paused and state.phase == "RECOVERY_SUCTION_BLOCKED")
+        self.managed_actions["continue"].setText(
+            "RETEST SUCTION" if recovery_paused else "CONTINUE")
         if paused:
             managed_name = ("return_item" if state.can_return_item
                             and not reasons["return_item"] else "continue")
@@ -869,8 +873,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         descriptions = {
             "auto_run": "Pick and place the requested quantity, then return Home",
             "configure": "Load teach files, enable and initialize the robot to READY",
-            "continue": "Resume the retained operation",
-            "recover": "Cancel the action, preserve grip to Home, then reset gripper outputs",
+            "continue": ("Retest suction at Home after clearing the item or obstruction"
+                         if recovery_paused else "Resume the retained operation"),
+            "recover": "Cancel the action, preserve grip to Home, then test suction",
             "pause": "Stop and confirm the operation's paused position",
             "return_item": "Return the held item to its saved bin position, then Home",
             "home": "Move Home while preserving any held item",

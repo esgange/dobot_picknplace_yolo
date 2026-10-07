@@ -40,6 +40,9 @@ class ManagedControl:
     def can_return_item(self):
         """Shared status/admission guard for trusted-source return, including acquisition Pause."""
         node = self.node
+        recovery = getattr(node, "recovery_home", None)
+        if recovery is not None and recovery.awaiting_return:
+            return recovery.has_return_source(node)
         if not node.holding_item or self.session is None or self.session.held_index is None:
             return False
         if node.active_action != "place":
@@ -61,9 +64,7 @@ class ManagedControl:
                 raise CommandRejected(
                     "Bin return during Place requires paused failed tray acquisition "
                     "and a trusted held item; otherwise Stop and Recover")
-            if kind == "return" and (self.session is None
-                                     or self.session.held_index is None
-                                     or not node.holding_item):
+            if kind == "return" and not self.can_return_item():
                 raise CommandRejected("Return requires the trusted held candidate's source pose")
             if self.kind is not None:
                 if kind == "return" and node.machine.state == "PAUSED":
@@ -109,6 +110,10 @@ class ManagedControl:
             reason = self.continue_block_reason(sample)
             if reason:
                 raise CommandRejected(reason)
+            recovery = getattr(self.node, "recovery_home", None)
+            if recovery is not None and recovery.awaiting_return:
+                self.resume.set()
+                return
             if node_placement := getattr(self.node, "placement", None):
                 node_placement.check_paused(self.node, sample)
             else:
@@ -126,6 +131,14 @@ class ManagedControl:
                 return "Continue requires completed Pause parking"
             if self.resume.is_set():
                 return "Continue is already pending"
+            recovery = getattr(node, "recovery_home", None)
+            if recovery is not None and recovery.awaiting_return:
+                try:
+                    recovery.check_home(node, sample)
+                except FeedbackFailure as exc:
+                    return str(exc)
+                return ("Suction remains HIGH; Return Item or clear the obstruction, then "
+                        "Continue to retest" if sample.feed["digital_input_bits"] & 1 else "")
             if self.drop_pending or (node.holding_item and not sample.suction_present):
                 return "Suction lost; item return must finish before Continue"
             placement = getattr(node, "placement", None)
@@ -148,6 +161,9 @@ class ManagedControl:
         """Latch drop without abandoning an outstanding service response."""
         with self.lock:
             self.note_suction_loss(sample)
+            recovery = getattr(self.node, "recovery_home", None)
+            if recovery is not None and recovery.awaiting_return:
+                return False  # The recovery owner stays Home until the operator chooses.
             if ((self.parking_held or self.kind == "pause" and (
                     not self.executing or self.node.machine.state == "PAUSED"))
                     and self.node.holding_item and not sample.suction_present):
@@ -172,6 +188,9 @@ class ManagedControl:
                 self.node.hardware.request_stop("Confirmed held suction loss")
 
     def observe_continuous(self, sample):
+        recovery = getattr(self.node, "recovery_home", None)
+        if recovery is not None:
+            recovery.observe_suction(sample)
         placement = getattr(self.node, "placement", None)
         if placement is not None and placement.observing:
             # FeedInfo may latch/send Stop, but operation exceptions belong to
@@ -569,7 +588,11 @@ class ManagedControl:
 
     def _idle_worker(self):
         try:
-            self.handle()
+            recovery = getattr(self.node, "recovery_home", None)
+            if recovery is not None and recovery.awaiting_return:
+                recovery.wait_for_choice(self.node)
+            else:
+                self.handle()
             if (self.previous == "HOLDING" and not self.node.holding_item
                     and self.session is not None and self.session.resuming):
                 # Explicit Continue after a completed Pick's paused-drop return

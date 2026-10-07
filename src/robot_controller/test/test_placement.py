@@ -138,6 +138,8 @@ class Hardware:
     def sample(self, **_kwargs):
         return SimpleNamespace(
             suction_present=self.suction, sequence=self.sequence,
+            robot_enabled=True, joints=(0.,) * 6 if np.allclose(
+                self.current, self.node.configuration.home_matrix) else (1.,) * 6,
             feed={"digital_input_bits": int(self.suction) | (int(self.outputs[14]) << 11),
                   "digital_outputs": sum(1 << (ch - 1) for ch, v in self.outputs.items() if v),
                   "isRunQueuedCmd": 0, "RunningStatus": 0,
@@ -441,7 +443,7 @@ def test_place_action_acknowledges_queue_with_a_typed_result(save_images):
     assert node.trays.request.call_args.kwargs["save_debug_images"] is save_images
 
 
-def test_controller_recovery_cancels_placement_then_relaxes_after_home():
+def test_controller_recovery_cancels_placement_then_relaxes_after_home(monkeypatch):
     node = operation_node()
     node.hardware.interrupt_at = 1
     with pytest.raises(OperationCanceled):
@@ -453,12 +455,23 @@ def test_controller_recovery_cancels_placement_then_relaxes_after_home():
     node._end_operation = Mock()
     node.hardware.recover = Mock(side_effect=lambda _speed, **kw:
                                  kw["home_recovery"].capture(node, node.hardware.sample()))
+    # Duration/freshness is covered by the dedicated suction-test scenarios.
+    monkeypatch.setattr("robot_controller.recovery.SUCTION_TEST_SEC", 0.)
+
+    def wait(predicate, *_args, **_kwargs):
+        sample = node.hardware.emit()
+        assert predicate(sample)
+        return sample
+    node.monitor.wait = wait
     node.managed.recover_item_and_continue = Mock(side_effect=AssertionError("Wrong bin recovery"))
     response = RobotController._recover(node, Command.Request(), Command.Response())
     assert response.success and response.state == "READY"
     assert node.hardware.recover.call_count == 1
     assert node.placement is None
-    assert node.hardware.calls[-5][1][-1] == "recovery_home"
+    last_move = max(i for i, row in enumerate(node.hardware.calls) if row[0] == "move")
+    first_output = next(i for i, row in enumerate(node.hardware.calls) if row[0] == "output")
+    assert node.hardware.calls[last_move][1][-1] == "recovery_home"
+    assert first_output > last_move
     assert node.hardware.calls[-4:] == [("output", ch, False) for ch in (1, 2, 13, 14)]
     assert not any(node.hardware.outputs.values())
     node.managed.recover_item_and_continue.assert_not_called()

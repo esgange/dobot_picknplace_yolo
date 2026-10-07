@@ -68,13 +68,23 @@ def test_interrupted_release_recovery_preserves_io_to_home_then_neutralizes(boun
         assert not result.success  # HIGH with vacuum OFF is not trusted holding.
         rig.lose_suction()
         result = rig.recover()
+    if boundary in ("before_release", 2, 14):
+        assert result.success and result.state == "PAUSED"
+        assert rig.managed.can_return_item()
+        assert rig.managed.session.attempts[0].state == "HELD"
+        assert not any(row[0] in ("output", "timed_output") for row in rig.log[offset:])
+        return
     assert result.success and result.state == "READY"
-    assert rig.managed.session.attempts[0].state == "CANCELED"
+    assert rig.managed.session.attempts[0].state == (
+        "CANCELED" if boundary == "retract" else "DROPPED")
     assert rig.managed.session.attempts[1].state == "CANCELED"
     assert rig.managed.return_progress is None
     assert rig.feed["digital_outputs"] == 0
     assert [row for row in rig.log[offset:] if row[0] == "output"] == [
-        ("output", channel, False) for channel in (1, 2, 13, 14)]
+        *([("output", 1, False)] if boundary == 1 else []),
+        ("output", 13, True),
+        *[("output", channel, False) for channel in (1, 2, 13, 14)],
+    ]
     assert not any(row[0] == "timed_output" for row in rig.log[offset:])
 
 

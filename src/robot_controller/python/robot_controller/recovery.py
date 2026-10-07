@@ -1,6 +1,7 @@
-"""Cancel-and-Home recovery, followed by an explicit gripper reset at Home."""
+"""Cancel-and-Home recovery, suction check and optional saved-source return."""
 
 from dataclasses import dataclass, field
+import time
 
 from .errors import FeedbackFailure, HeldSuctionLost, HeldUnknown, UNKNOWN_ITEM_GUIDANCE
 from .motion import Target
@@ -8,6 +9,7 @@ from .motion import Target
 
 GRIP_CHANNELS = (1, 2, 13, 14)
 GRIP_MASK = sum(1 << (channel - 1) for channel in GRIP_CHANNELS)
+SUCTION_TEST_SEC = 1.0
 
 
 @dataclass
@@ -19,6 +21,10 @@ class HomeRecovery:
     motion_started: bool = False
     relaxing: bool = False
     pending_outputs: dict = field(default_factory=dict)
+    testing: bool = False
+    test_started: bool = False
+    suction_seen: bool = False
+    awaiting_return: bool = False
 
     @classmethod
     def cancel_action(cls, node):
@@ -41,7 +47,7 @@ class HomeRecovery:
                 session.cancel_remaining()
             node.events.record(
                 "WARNING", "recovery_action_cancelled",
-                "Interrupted action cancelled; preserve grip to Home, then relax gripper",
+                "Interrupted action cancelled; preserve grip to Home, then test suction",
                 placement_release_confirmed=released, trusted_held_source=trusted)
             return cls(trusted, released)
 
@@ -61,6 +67,7 @@ class HomeRecovery:
             raise FeedbackFailure("Recovery blocked: DI1 LOW is not yet stable; retry Recover")
         self.holding = detected
         self.relaxing = False
+        self.testing = self.awaiting_return = False
         self.pending_outputs.clear()
         self.outputs = outputs
         node.expected_outputs.update(outputs)
@@ -71,9 +78,10 @@ class HomeRecovery:
             if session is not None and session.held_index is not None:
                 index = session.held_index
                 if session.attempts[index - 1].state == "HELD":
-                    # No release proof: cancel it, never claim PLACED/RETURNED.
-                    session.set_state(index, "CANCELED")
-                session.held_index = None
+                    # Retain the uncertain source until the active suction test finishes.
+                    session.set_state(index, "CANCELED" if self.release_confirmed else "DROPPED")
+                if self.release_confirmed:
+                    session.held_index = None
         node.events.record(
             "INFO", "recovery_grip_preserved", "Fresh gripper state adopted after accepted Stop",
             digital_outputs=bits, digital_input_bits=sample.feed["digital_input_bits"],
@@ -88,8 +96,9 @@ class HomeRecovery:
             allowed = (expected, self.pending_outputs.get(channel, expected))
             if actual not in allowed:
                 raise FeedbackFailure(f"Recovery blocked: preserved DO{channel} changed")
-        if self.relaxing:
-            return sample  # Suction may decay while the explicitly requested reset runs.
+        self.observe_suction(sample)
+        if self.relaxing or self.testing or self.awaiting_return:
+            return sample  # Test/clearance/reset owns the expected DI1 changes at Home.
         if self.holding and not sample.suction_present:
             self.trusted_held = False
             raise HeldSuctionLost("Recovery stopped: held-item suction was lost")
@@ -131,6 +140,131 @@ class HomeRecovery:
             node.hardware.move_batch((home,), batch_name="recovery_home",
                                      confirmed_start_pose=current, **policy)
         self.check(node.monitor.snapshot(require_enabled=True))
+
+    def has_return_source(self, node):
+        session = node.managed.session
+        return bool(not self.release_confirmed and session is not None
+                    and session.held_index is not None
+                    and session.attempts[session.held_index - 1].state in ("HELD", "DROPPED"))
+
+    def observe_suction(self, sample):
+        # Feed callbacks latch even a HIGH that clears before the operation wakes.
+        if self.testing and sample.feed["digital_input_bits"] & 1:
+            self.suction_seen = True
+
+    def check_home(self, node, sample):
+        from .hardware import HOME_JOINT_TOLERANCE_RAD
+
+        self.check(sample)
+        if (not sample.robot_enabled or sample.feed["isRunQueuedCmd"]
+                or sample.feed["RunningStatus"]
+                or max(abs(a - b) for a, b in zip(sample.joints, node.configuration.home_joints))
+                > HOME_JOINT_TOLERANCE_RAD):
+            raise FeedbackFailure("Recovery suction check requires stationary taught Home")
+        return sample
+
+    def test_suction(self, node):
+        """A positive raw DI1 is an obstruction/item indication, never a new pickup."""
+        from .hardware import OUTPUT_FEEDBACK_TIMEOUT_SEC
+
+        node.raise_if_cancelled()
+        node.configuration.validate_sources(node.root)
+        self.check_home(node, node.monitor.snapshot(require_enabled=True))
+        self.suction_seen = self.awaiting_return = False
+        self.testing = True
+        self.test_started = True
+        node.operation_progress("RECOVERY_SUCTION_TEST", "At Home; testing suction for 1 second")
+        node.events.record("INFO", "recovery_suction_test_started",
+                           "Testing suction at Home; finger outputs preserved",
+                           duration_sec=SUCTION_TEST_SEC)
+        try:
+            # Opposite OFF before suction ON; do not cycle an already-active vacuum.
+            for channel, active in ((1, False), (13, True)):
+                if self.outputs[channel] != active:
+                    node.raise_if_cancelled()
+                    self.pending_outputs[channel] = active
+                    node.hardware.output(channel, active)
+                    self.outputs[channel] = active
+                    self.pending_outputs.pop(channel)
+                    self.check(node.monitor.snapshot(require_enabled=True))
+            initial = self.check_home(node, node.hardware.confirm_home(
+                node.configuration.home_joints))
+            started = time.monotonic()
+
+            def observed(sample):
+                self.check_home(node, sample)
+                return self.suction_seen or (sample.sequence > initial.sequence
+                                             and time.monotonic() - started >= SUCTION_TEST_SEC)
+
+            node.monitor.wait(observed, SUCTION_TEST_SEC + OUTPUT_FEEDBACK_TIMEOUT_SEC,
+                              cancel=node.cancel_requested, require_enabled=True,
+                              description="Recovery suction test at stationary Home")
+            node.raise_if_cancelled()
+            node.configuration.validate_sources(node.root)
+        finally:
+            self.testing = False
+        self.awaiting_return = self.suction_seen
+        if not self.suction_seen:
+            self.holding = self.trusted_held = node.holding_item = False
+        node.events.record("WARNING" if self.suction_seen else "INFO",
+                           "recovery_suction_test_result",
+                           "Suction detected: item or obstruction" if self.suction_seen else
+                           "Suction test clear", detected=self.suction_seen,
+                           return_source_available=self.has_return_source(node))
+        return self.suction_seen
+
+    def park(self, node):
+        with node.managed.lock:
+            node.managed.kind = "pause"
+            node.managed.executing = True
+            node.managed.previous = "RECOVERING"
+            node.managed.resume.clear()
+            node.pause_event.set()
+            node.startup_complete = True
+            node.operation_progress("RECOVERY_SUCTION_BLOCKED", "Suction detected at Home")
+            choice = ("Return Item to its saved bin position, or clear the obstruction and "
+                      if self.has_return_source(node) else
+                      "No saved return position; clear the item/obstruction and ")
+            node._transition("PAUSED", "Suction detected: item or obstruction. " + choice
+                             + "Continue to retest. The previous operation is cancelled.")
+
+    def wait_for_choice(self, node):
+        """Use the existing managed-operation worker; no service waits for an operator."""
+        managed = node.managed
+        try:
+            while True:
+                node.raise_if_cancelled()
+                sample = self.check_home(node, node.monitor.snapshot(require_enabled=True))
+                managed.note_suction_loss(sample)
+                with managed.lock:
+                    returning, retest = managed.kind == "return", managed.resume.is_set()
+                if returning:
+                    if not self.has_return_source(node):
+                        raise HeldUnknown("Return Item requires a saved unreleased pickup source")
+                    node.configuration.validate_sources(node.root)
+                    node.recovery_home = None
+                    managed._put_back(dropped=managed._candidate().state == "DROPPED")
+                    node._transition("READY", "Item return completed at Home; recovery finished; "
+                                     "previous operation cancelled")
+                    return
+                if retest:
+                    managed.resume.clear()
+                    if sample.feed["digital_input_bits"] & 1:
+                        raise HeldUnknown("Suction remains HIGH; clear it before retesting")
+                    self.holding = self.trusted_held = node.holding_item = False
+                    node._transition("RECOVERING", "Retesting suction at Home")
+                    if self.test_suction(node):
+                        self.park(node)
+                    else:
+                        self.relax(node)
+                        node.recovery_home = None
+                        node._transition("READY", "Recovery completed at Home; suction test clear; "
+                                         "gripper relaxed; previous operation cancelled")
+                        return
+                node.wait_control(.02)
+        finally:
+            with managed.lock:
+                managed._clear_request()
 
     def relax(self, node):
         """Only neutralize after confirmed Home; never open fingers or pulse exhaust."""

@@ -52,7 +52,7 @@ def test_expired_placement_history_does_not_trap_explicit_recovery_or_claim_plac
     confirm_fresh_stop(rig, recovery)
     assert rig.node.placement is None and not operation.observing
     assert not recovery.holding and not rig.node.holding_item
-    assert rig.node.managed.session.attempts[0].state == 'CANCELED'
+    assert rig.node.managed.session.attempts[0].state == 'DROPPED'
     assert not operation.release_confirmed  # Never invent successful release.
     assert len(rig.requests) == sent  # Capture itself never sends DO/motion.
     assert rig.node.expected_outputs == {1: False, 2: False, 13: False, 14: False}

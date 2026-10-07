@@ -29,6 +29,21 @@ def status(**fields):
     return message
 
 
+@pytest.mark.parametrize("source,clear", [(True, False), (False, False), (False, True)])
+def test_recovery_suction_pause_offers_return_or_explicit_retest(window, source, clear):
+    window.node.status = status(
+        state="PAUSED", operation="recovery_pause", operation_active=True,
+        phase="RECOVERY_SUCTION_BLOCKED", can_return_item=source, can_continue=clear,
+        continue_block_reason="" if clear else "Clear the suction obstruction",
+        digital_input_bits=0 if clear else 1)
+    window._refresh()
+    assert window.managed_primary == ("return_item" if source else "continue")
+    assert window.pause.text() == ("RETURN ITEM" if source else "RETEST SUCTION")
+    assert window.pause.isEnabled() is (source or clear)
+    assert not window.pick_item.isEnabled() and not window.place_item.isEnabled()
+    assert not window.recover.isEnabled()
+
+
 def test_pick_requires_recorded_tray_position_even_with_item_detector_ready(window, monkeypatch):
     warnings = []
     monkeypatch.setattr(QtWidgets.QMessageBox, 'warning', lambda *_args: warnings.append(_args))

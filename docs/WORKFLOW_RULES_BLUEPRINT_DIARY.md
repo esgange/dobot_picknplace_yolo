@@ -9764,6 +9764,60 @@ Never use a floating “latest” version in an issue, script, or deployment not
   artifacts and unrelated RViz edits. Operator verification of live display and
   controller-triggered captures remains pending.
 
+### 2026-10-07 — Rule 242: Recovery suction test and explicit saved-item return
+
+- The operator requested a Recovery suction/blockage check with the same Return
+  Item option as Pause, then explicitly chose an active test at confirmed Home.
+  Keep the existing accepted Stop, fresh gripper validation, conditional alarm
+  clear/Enable, post-enable stationary confirmation and lift/Home sequence.
+  Preserve the pre-Home unknown-suction gate and all outputs during travel.
+- Before relaxing the gripper at Home, preserve both finger outputs and confirm
+  exhaust OFF before suction ON. Do not cycle an already-active vacuum OFF.
+  Reconfirm Home/idle after the output queue, then observe raw DI1 for up to one
+  second. A clear result requires the full interval plus advancing fresh feedback.
+  Feed callbacks latch any HIGH, including a pulse that clears before the operation
+  wakes. Revalidate sources and cancellation after the test. DI1 means suction
+  from an item or obstruction; it cannot establish a clog or a new successful pick.
+- Clear proceeds through the existing four-output neutral reset and final
+  Home/idle/output/DI1 LOW confirmation to READY. Positive enters PAUSED at Home
+  with suction and fingers preserved; the Recover service returns promptly while
+  the existing managed worker retains the operation slot. No extra executor,
+  service, interface field, setting or process is introduced.
+- Retain an unreleased HELD/DROPPED source until test/return completion instead of
+  erasing it on LOW before the test. Cancel every remaining candidate. Offer
+  Return Item only with that source, using the shared saved pre-pick release,
+  retract and joint Home queue. A DROPPED source stays DROPPED; a positive test
+  cannot restore pickup success or fabricate a source after confirmed release or
+  restart. Without a source, remain Home for manual clearing. After raw DI1 LOW,
+  Continue is labelled RETEST SUCTION and repeats only this check. A repeated
+  positive waits again; neither choice resumes the cancelled job. Suction loss
+  while waiting retains the uncertain source without starting automatic motion.
+- Keep fresh enabled feedback, idle taught Home and output checks during the
+  test/wait; validate sources before test completion, retest and return. Stop,
+  stale data, unexpected movement/I/O, rejected output commands or changed sources
+  cannot release remaining outputs or report READY. Transfer to the managed
+  worker preserves sole operation ownership; direct Stop pre-empts every stage.
+  GUI remains a typed-service client, with no hardware calls or new confirmation.
+- Validation: all **1,243 Robot Controller tests** pass in isolated ROS domain 81
+  with offscreen Qt. New coverage includes empty/held tests, output order and
+  preserved fingers, full duration and advancing samples, brief HIGH pulses,
+  positive results with/without a source, existing shared return, clear/retest,
+  cancelled-candidate exclusion, confirmed-release exclusion, real worker handoff,
+  Stop winning between PAUSED publication and worker handoff,
+  Stop, stale data, movement/output faults, rejected DOs and source changes.
+  Adapt existing interrupted-release/placement fixtures to the test-before-reset
+  policy; preserve normal Pick/Place/Auto Run/Pause regressions. Production Python
+  flake8 and whitespace checks pass. No hardware command or live test was run.
+- Update AGENTS, root/package READMEs and the controller FSM behavior, diagrams,
+  guard/state tables. Regenerate all nine diagrams in adjacent offline HTML/PDF.
+  Mechanical comparison found four pre-existing table omissions of RETURNING_ITEM
+  (HOMING, HOLDING, TRAY_POSITIONING, PLACING); correct them to match existing code,
+  alongside new RECOVERING↔PAUSED edges. Verify every transition row and export
+  source hash. Installed controller modules resolve to source; no build is needed.
+  Activation requires the operator to restart controller and GUI when safe.
+  No processes were restarted; live commissioning remains pending. Preserve .env,
+  calibration/teaching/model/runtime artifacts and unrelated RViz edits.
+
 ### Future entry template
 
 ```text

@@ -131,8 +131,14 @@ clears alarms if needed and enables the robot. After enabled feedback, it confir
 stationary joints, an empty queue and unchanged gripper I/O before settings or
 Home motion. Collision mode cannot block alarm clearing at the old pre-enable
 standstill check. Direct Stop and Startup retain their physical Stop checks.
-At Home, Recover / Clear Error relaxes both finger outputs and switches suction and
-exhaust OFF; confirmed neutral outputs and DI1 LOW finish READY.
+At confirmed Home, Recover / Clear Error turns exhaust OFF and suction ON,
+preserving the fingers, and checks DI1 for up to one second. A clear test relaxes
+all four outputs and finishes READY after neutral-output/DI1 LOW confirmation.
+Detected suction means an item or obstruction, not a definitive clog diagnosis.
+The controller stays PAUSED at Home with suction/fingers preserved. **RETURN ITEM**
+uses the saved unreleased pickup location when available; otherwise clear the
+item/obstruction manually. Once DI1 is LOW, **RETEST SUCTION** repeats the check.
+Neither choice resumes the cancelled job. STOP remains available throughout.
 The final reset check waits up to five seconds for fresh Home joints, idle status
 and the output queue to finish. Temporary I/O activity no longer produces an
 immediate “Home position lost” failure; a timeout identifies the failed conditions.
@@ -290,9 +296,9 @@ supervision sees an unexpected running/nonempty queue, it pre-empts that motion
 with the independent Stop path before requiring recovery.
 
 After Stop with a trusted held item and no confirmed suction loss, Recover
-preserves the grip during travel, then relaxes it at confirmed Home and ends READY
-after neutral outputs and DI1 LOW. Use **RETURN ITEM** from Pause for a
-deliberate put-back to the source. The permanent **STOP**
+preserves the grip during travel, then tests suction at confirmed Home. A positive
+test pauses before releasing the gripper and offers **RETURN ITEM** for the saved
+source. A clear test finishes the gripper reset and reaches READY. The permanent **STOP**
 remains available while Pause/return is pending and always pre-empts without
 put-back. Unknown suction instead produces an instruction to keep the robot
 stopped, safely secure/clear the item or check the suction sensor for obstruction.
