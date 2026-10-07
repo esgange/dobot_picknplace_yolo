@@ -183,6 +183,11 @@ checks. Bounded histories are invalidated on camera/source changes. For on-hand
 cameras every pair of RGB/depth-time transforms must remain within 0.05 mm / 0.05°;
 a moving bundle is reacquired within the same request deadline.
 
+Every pose request uses RGB and all contributing raw depth frames with timestamps
+strictly newer than that request. Equal-boundary and previous-request frames are
+rejected; an immediate controller retry waits for new publications within the
+existing deadline. Zero controller settling delay cannot reuse the earlier capture.
+
 The shared acquisition layer masks readings outside `[max(500, depth_min_mm),
 depth_max_mm]` before aggregation. A per-pixel median needs a strict majority
 (two of three); missing support becomes NaN. Immutable float32 millimetres preserve

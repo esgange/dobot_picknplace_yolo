@@ -91,8 +91,10 @@ def window_node():
 
 def test_capture_history_must_be_post_trigger_synchronized_and_same_calibration():
     node, rgb = window_node()
-    frames, _, _ = ItemDetectNode._depth_window(node, rgb, QUALITY_DEFAULTS, 3, 100_000_000_000)
+    frames, _, _ = ItemDetectNode._depth_window(node, rgb, QUALITY_DEFAULTS, 3, 99_999_999_999)
     assert len(frames) == 3
+    with pytest.raises(ValueError, match="after request"):
+        ItemDetectNode._depth_window(node, rgb, QUALITY_DEFAULTS, 3, 100_000_000_000)
     with pytest.raises(ValueError, match="after request"):
         ItemDetectNode._depth_window(node, rgb, QUALITY_DEFAULTS, 3, 100_001_000_000)
     node._depth_history[0]["color_info"]["d"] = [1]
@@ -114,10 +116,10 @@ def test_five_frame_capture_uses_midpoint_rgb_without_relaxing_sync():
     node.get_clock = lambda: SimpleNamespace(
         now=lambda: SimpleNamespace(nanoseconds=start+140_000_000))
     with pytest.raises(ValueError, match="synchronization"):
-        ItemDetectNode._depth_window(node, node._rgb_history[-1], QUALITY_DEFAULTS, 5, start)
-    selected = ItemDetectNode._bundle_rgb(node, node._rgb_history[-1], 5, start)
+        ItemDetectNode._depth_window(node, node._rgb_history[-1], QUALITY_DEFAULTS, 5, start-1)
+    selected = ItemDetectNode._bundle_rgb(node, node._rgb_history[-1], 5, start-1)
     assert selected["stamp_ns"] == start+66_000_000
-    frames, _, _ = ItemDetectNode._depth_window(node, selected, QUALITY_DEFAULTS, 5, start)
+    frames, _, _ = ItemDetectNode._depth_window(node, selected, QUALITY_DEFAULTS, 5, start-1)
     assert len(frames) == 5
 
 
@@ -151,6 +153,42 @@ def test_moving_camera_reacquires_bundle_within_original_deadline():
     node._snapshot_context = Mock(side_effect=ValueError("Camera moved"))
     with pytest.raises(ValueError):
         ItemDetectNode._snapshot(node, 0, time.monotonic()+.04, wait=True)
+
+
+def test_immediate_item_retries_cannot_reuse_any_rgb_or_depth_frame():
+    node, rgb = window_node()
+    node.settings = {"quality": dict(QUALITY_DEFAULTS), "geometry": {"depth_frame_count": 3}}
+    node.applied = SimpleNamespace(
+        camera=SimpleNamespace(settings=SimpleNamespace(camera_prefix="bin")))
+    node.camera_prefix, node.arm_epoch = "bin", 1
+    node._image = rgb
+    node._bundle_rgb = lambda image, *args: ItemDetectNode._bundle_rgb(node, image, *args)
+    node._depth_window = lambda *args: ItemDetectNode._depth_window(node, *args)
+    node._snapshot_context = lambda *_args: {}
+    used_rgb, used_depth = set(), set()
+    start = 99_999_999_999
+    for _attempt in range(5):
+        observed, depth, _ = ItemDetectNode._snapshot(
+            node, start, time.monotonic()+1, wait=False)
+        assert observed["stamp_ns"] > start and observed["stamp_ns"] not in used_rgb
+        assert min(depth["frame_stamps_ns"]) > start
+        assert not used_depth.intersection(depth["frame_stamps_ns"])
+        used_rgb.add(observed["stamp_ns"])
+        used_depth.update(depth["frame_stamps_ns"])
+        start = node.get_clock().now().nanoseconds
+        # No new publication: even an immediate retry must wait, not reuse the buffer.
+        with pytest.raises(ValueError, match="new RGB"):
+            ItemDetectNode._snapshot(node, start, time.monotonic()+1, wait=False)
+        node._image = {**rgb, "stamp_ns": start}  # Equal boundary also predates capture.
+        with pytest.raises(ValueError, match="new RGB"):
+            ItemDetectNode._snapshot(node, start, time.monotonic()+1, wait=False)
+        frames = [{**f, "stamp_ns": start+(i+1)*20_000_000}
+                  for i, f in enumerate(node._depth_history)]
+        node._depth_history = deque(frames, maxlen=5)
+        node._image = {**rgb, "stamp_ns": frames[-1]["stamp_ns"]}
+        node._rgb_history = deque([node._image])
+        now = start + 80_000_000
+        node.get_clock = lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=now))
 
 
 def test_production_status_only_suppresses_fresh_active_pick_place_or_auto():

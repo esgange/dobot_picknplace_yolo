@@ -19,6 +19,7 @@ from .motion import rigid_matrix
 
 
 PROVIDERS = {("tray_teach", "/"), ("tray_detect", "/")}
+TRAY_ATTEMPT_LIMIT = 5
 
 
 @dataclass
@@ -32,7 +33,7 @@ class TrayObservationUnavailable(FeedbackFailure):
 
 
 class TrayAcquisitionExhausted(FeedbackFailure):
-    """Three unavailable observations; hardware Place can await an operator choice."""
+    """Acquisition budget exhausted; hardware Place can await an operator choice."""
 
 
 def validate_result(result, config, sampling, start_ns, now_ns):
@@ -136,7 +137,7 @@ class TrayClient:
                 node.wait_control(.02)
             self.pending = None
         sampling = sampling_from_item(config.profile, x_mm, y_mm)
-        while attempts.count < 3:
+        while attempts.count < TRAY_ATTEMPT_LIMIT:
             node.wait_for_resume()
             check_item()
             config.validate_sources(node.root)
@@ -151,14 +152,15 @@ class TrayClient:
                 attempts.reason = str(exc)
                 node.events.record(
                     "WARNING", "tray_observation_attempt_failed", attempts.reason,
-                    attempt=attempts.count, max_attempts=3)
+                    attempt=attempts.count, max_attempts=TRAY_ATTEMPT_LIMIT)
                 node.operation_progress(
-                    "TRAY_DEPTH", f"Tray observation attempt {attempts.count}/3 failed: "
+                    "TRAY_DEPTH", f"Tray observation attempt {attempts.count}/"
+                    f"{TRAY_ATTEMPT_LIMIT} failed: "
                     f"{attempts.reason}")
         node.wait_for_resume()
         check_item()
         raise TrayAcquisitionExhausted(
-            f"Tray observation failed after 3 attempts: {attempts.reason}")
+            f"Tray observation failed after {TRAY_ATTEMPT_LIMIT} attempts: {attempts.reason}")
 
     def _observe(self, config, sampling, check_item, attempts, save_debug_images):
         node = self.node
@@ -166,7 +168,8 @@ class TrayClient:
                                       save_debug_images=bool(save_debug_images),
                                       sample_placement_depth=True,
                                       placement=PlacementDepthRequest(**sampling))
-        node.operation_progress("TRAY_DEPTH", f"Tray observation attempt {attempts.count + 1}/3: "
+        node.operation_progress("TRAY_DEPTH", f"Tray observation attempt {attempts.count + 1}/"
+                                f"{TRAY_ATTEMPT_LIMIT}: "
                                 "requesting fresh tray pose and placement depth")
         start = node.get_clock().now().nanoseconds
         deadline = time.monotonic() + sampling["request_timeout_sec"] + 1

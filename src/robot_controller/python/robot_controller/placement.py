@@ -8,7 +8,7 @@ import numpy as np
 from .errors import FeedbackFailure, HeldUnknown, ManagedInterruption, ReturnedToHome
 from .motion import pose_reached, rigid_matrix
 from .release import ReleaseQueue, release_targets
-from .tray_client import TrayAcquisitionExhausted, TrayAttempts
+from .tray_client import TRAY_ATTEMPT_LIMIT, TrayAcquisitionExhausted, TrayAttempts
 
 
 def acquisition_pause_active(node):
@@ -241,7 +241,7 @@ class PlacementOperation(ReleaseQueue):
                             self.acquisition_failure = ""
                             node.events.record(
                                 "INFO", "tray_acquisition_retry",
-                                "Operator requested 3 new attempts")
+                                f"Operator requested {TRAY_ATTEMPT_LIMIT} new attempts")
                         if self.phase == "APPROACH":
                             self.phase = "OBSERVE"  # Reobserve after an interrupted approach.
                         managed._clear_request()

@@ -14,6 +14,7 @@ from .errors import FeedbackFailure, OperationCanceled
 
 
 CANDIDATE_SERVICE = "/item_detect/get_item_poses"
+EMPTY_POSE_RETRY_LIMIT = 4
 CANONICAL_CANDIDATE_PROVIDERS = frozenset({
     ("item_detect", "/"),
     ("item_teach", "/"),
@@ -167,7 +168,8 @@ class CandidateClient:
                 or depth_stamps[-1] != stamps[1]
                 or any(abs(stamp - stamps[0])/1e9 > profile["quality"]["sync_tolerance_sec"]
                        for stamp in depth_stamps)
-                or (requested_at_ns is not None and min(*stamps, *depth_stamps) < requested_at_ns)):
+                or (requested_at_ns is not None
+                    and min(*stamps, *depth_stamps) <= requested_at_ns)):
             raise FeedbackFailure("Detector temporal depth capture is invalid or predates request")
         if not result.batch_id or len(result.candidates) > configuration.pose_candidates:
             raise FeedbackFailure("Detector batch ID/count is invalid")

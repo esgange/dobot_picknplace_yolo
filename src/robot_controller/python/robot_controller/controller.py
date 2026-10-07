@@ -28,7 +28,7 @@ from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, SetGlobalCP, SetGlobalSpeed
 
 from .candidates import (
-    CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
+    CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, EMPTY_POSE_RETRY_LIMIT, CandidateClient)
 from .autorun import AutoRunOperation, validate_quantity
 from .configuration import load_configuration, load_runtime_configuration
 from .errors import (CommandRejected, CommandResponseTimeout, FeedbackFailure,
@@ -1441,7 +1441,7 @@ class RobotController(Node):
             pick_tray_target(config.tray, config.profile)
             batch = None
             completed_batches = 0
-            empty_retry_used = False
+            empty_retries = 0
             retry_home_pending = False
             seen_batches = set()
             session = self.managed.session
@@ -1482,14 +1482,16 @@ class RobotController(Node):
                             if batch.identifier in seen_batches:
                                 raise FeedbackFailure("Detector reused an earlier Pick batch ID")
                             seen_batches.add(batch.identifier)
-                            if not batch.candidates and not empty_retry_used:
-                                # Reserve the one retry before Home so Pause cannot
+                            if not batch.candidates and empty_retries < EMPTY_POSE_RETRY_LIMIT:
+                                # Reserve each retry before Home so Pause cannot
                                 # reset its budget or request again before arrival.
-                                empty_retry_used = retry_home_pending = True
+                                empty_retries += 1
+                                retry_home_pending = True
                                 self.events.record(
                                     "INFO", "pick_empty_pose_retry",
-                                    "No item poses; confirm Home and retry acquisition once",
-                                    batch_id=batch.identifier)
+                                    "No item poses; confirm Home before the next acquisition",
+                                    batch_id=batch.identifier, retry=empty_retries,
+                                    max_retries=EMPTY_POSE_RETRY_LIMIT)
                                 batch = None
                                 continue
                         if batch.candidates:
@@ -1526,8 +1528,8 @@ class RobotController(Node):
                             result.outcome = result.SUCCESS
                         elif not batch.candidates:
                             self._transition(
-                                "READY", "No item poses; the one Home acquisition retry "
-                                "has been used; no item picked; robot Home")
+                                "READY", f"No item poses; all {EMPTY_POSE_RETRY_LIMIT} Home "
+                                "acquisition retries used; no item picked; robot Home")
                             result.outcome = result.NO_PICK
                             self.events.record(
                                 "INFO", "pick_pose_acquisition_exhausted", self.machine.message,

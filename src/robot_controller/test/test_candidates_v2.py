@@ -258,7 +258,8 @@ def test_controller_rejects_incompatible_depth_bundle_evidence(tmp_path, stamps)
         client(tmp_path)._validate_result(result, configuration(), False)
 
 
-def test_controller_rejects_pre_request_bundle_even_if_last_frame_is_new(tmp_path):
+@pytest.mark.parametrize("request_ns", [99_934_000_000, 99_950_000_000])
+def test_controller_rejects_pre_request_bundle_even_if_last_frame_is_new(tmp_path, request_ns):
     with pytest.raises(FeedbackFailure, match="predates request"):
         client(tmp_path)._validate_result(valid_result(), configuration(), False,
-                                          requested_at_ns=99_950_000_000)
+                                          requested_at_ns=request_ns)

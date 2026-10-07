@@ -737,8 +737,8 @@ class ItemDetectNode(Node):
 
     def _bundle_rgb(self, rgb, count, after_ns=0):
         """Choose RGB nearest the depth-window midpoint, retaining existing sync limits."""
-        frames = [f for f in self._depth_history if f["stamp_ns"] >= after_ns][-count:]
-        images = [f for f in getattr(self, "_rgb_history", ()) if f["stamp_ns"] >= after_ns]
+        frames = [f for f in self._depth_history if f["stamp_ns"] > after_ns][-count:]
+        images = [f for f in getattr(self, "_rgb_history", ()) if f["stamp_ns"] > after_ns]
         if len(frames) != count or not images:
             return rgb
         midpoint = (frames[0]["stamp_ns"] + frames[-1]["stamp_ns"]) / 2
@@ -747,7 +747,7 @@ class ItemDetectNode(Node):
     def _depth_window(self, rgb, quality, count, after_ns=0):
         """Called with the frame condition held; capture immutable source identities."""
         validate_depth_frame_count(count)
-        frames = [frame for frame in self._depth_history if frame["stamp_ns"] >= after_ns]
+        frames = [frame for frame in self._depth_history if frame["stamp_ns"] > after_ns]
         if len(frames) < count:
             raise ValueError(f"Waiting for {count} distinct depth frames after request")
         frames = frames[-count:]
@@ -801,7 +801,7 @@ class ItemDetectNode(Node):
             try:
                 with self.condition:
                     rgb = self._image
-                    if rgb is None or rgb["stamp_ns"] < after_ns:
+                    if rgb is None or rgb["stamp_ns"] <= after_ns:
                         raise ValueError("Waiting for a new RGB observation after request")
                     rgb = self._bundle_rgb(rgb, count, after_ns)
                     frames, color_info, depth_info = self._depth_window(

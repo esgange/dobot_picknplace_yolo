@@ -4,6 +4,7 @@ from concurrent.futures import Future
 import threading
 from time import monotonic
 
+from .candidates import EMPTY_POSE_RETRY_LIMIT
 from .errors import (CommandRejected, FeedbackFailure, HeldSuctionLost,
                      ManagedInterruption, OperationCanceled)
 from .pick_session import PickSession, return_targets
@@ -197,7 +198,7 @@ class AutoRunOperation:
         node, config = self.node, self.configuration
         node.active_action = "pick"
         attempted = 0
-        empty_retry_used = False
+        empty_retries = 0
         for attempt in range(1, 4):
             node.raise_if_cancelled()
             config.validate_sources(node.root)
@@ -225,19 +226,20 @@ class AutoRunOperation:
                 self.seen_batches.add(batch.identifier)
                 if batch.candidates:
                     break
-                if empty_retry_used:
+                if empty_retries >= EMPTY_POSE_RETRY_LIMIT:
                     node._transition(
-                        "READY", "Auto Run stopped: no item poses; the one Home "
-                        "acquisition retry has been used")
+                        "READY", f"Auto Run stopped: no item poses; all {EMPTY_POSE_RETRY_LIMIT} "
+                        "Home acquisition retries used")
                     node.events.record(
                         "INFO", "pick_pose_acquisition_exhausted", node.machine.message,
                         batch_id=batch.identifier, attempted=attempted)
                     return False
-                empty_retry_used = True
+                empty_retries += 1
                 node.events.record(
                     "INFO", "pick_empty_pose_retry",
-                    "No item poses; confirm Home and retry acquisition once",
-                    batch_id=batch.identifier)
+                    "No item poses; confirm Home before the next acquisition",
+                    batch_id=batch.identifier, retry=empty_retries,
+                    max_retries=EMPTY_POSE_RETRY_LIMIT)
                 if bridge is not None:
                     self.finish_home(bridge)
                     bridge = None

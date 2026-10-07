@@ -114,7 +114,7 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
     assert result.selected_candidate_id == ("" if count == 1 else "item1")
     assert [a.state for a in rig.seen_sessions[0].attempts] == (
         ["DROPPED"] if count == 1 else ["DROPPED", "HELD"])
-    assert rig.requests == ["detect"] * (3 if count == 1 else 1)
+    assert rig.requests == ["detect"] * (6 if count == 1 else 1)
     assert not any(entry[0] == "recover" for entry in rig.log)
     assert not any(entry[0] == "state" and entry[1] in (
         "FAULT", "RECOVERY_REQUIRED", "RECOVERING", "PAUSED") for entry in rig.log)
@@ -144,7 +144,7 @@ def test_repeated_losses_consume_each_saved_candidate_once(monkeypatch):
     assert rig.lost == [1, 2, 3]
     assert [a.state for a in rig.seen_sessions[0].attempts] == ["DROPPED"] * 3
     assert rig.log.count(("timed_output", 80, 1, True)) == 3
-    assert rig.requests == ["detect"] * 3
+    assert rig.requests == ["detect"] * 6
 
 
 @pytest.mark.parametrize("failure", ["stop", "pending", "source", "output", "release"])

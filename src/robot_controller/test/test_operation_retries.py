@@ -57,7 +57,9 @@ def test_pick_success_ends_retries_and_counts_all_previous_candidates(
     assert "Tray Detect" in result.message
 
 
-@pytest.mark.parametrize("counts", [[2, 1, 3], [0, 2, 1, 3], [2, 0, 1, 3]])
+@pytest.mark.parametrize("counts", [
+    [2, 1, 3], [0, 2, 1, 3], [2, 0, 1, 3],
+    [0, 0, 0, 0, 2, 1, 3], [2, 0, 0, 1, 0, 0, 3]])
 def test_pick_exhausts_three_complete_batches_and_returns_home_between_them(monkeypatch, counts):
     rig = pick_rig(monkeypatch, counts, [False] * sum(counts))
     result = rig.execute()
@@ -88,39 +90,49 @@ def test_pick_requests_poses_before_home_and_homes_before_candidate_motion(monke
     assert len(rig.requests) == 1
 
 
-@pytest.mark.parametrize("retry_count", [0, 1])
-def test_empty_pose_result_homes_then_retries_only_once(monkeypatch, retry_count):
-    rig = pick_rig(monkeypatch, [0, retry_count], [True] if retry_count else [])
+@pytest.mark.parametrize("counts", [[0] * n + [1] for n in range(1, 5)] + [[0] * 5])
+def test_empty_pose_results_allow_four_retries_after_home_without_added_wait(monkeypatch, counts):
+    found = counts[-1]
+    rig = pick_rig(monkeypatch, counts, [True] if found else [])
+    rig.wait_control = Mock(side_effect=AssertionError("No retry settling delay"))
     result = rig.execute()
-    assert result.outcome == (result.SUCCESS if retry_count else result.NO_PICK)
-    assert result.attempted_candidates == retry_count
-    assert len(rig.requests) == 2
-    assert rig.log.index(("detect", 1)) < rig.log.index(("ensure_home",)) < rig.log.index(
-        ("detect", 2))
-    if not retry_count:
-        assert "one Home acquisition retry" in result.message
+    assert result.outcome == (result.SUCCESS if found else result.NO_PICK)
+    assert result.attempted_candidates == found
+    assert len(rig.requests) == len(counts)
+    for attempt in range(1, len(counts)):
+        before = rig.log.index(("detect", attempt))
+        after = rig.log.index(("detect", attempt + 1))
+        assert ("ensure_home",) in rig.log[before + 1:after]
+    if not found:
+        assert "4 Home acquisition retries" in result.message
         assert not any(row[0] == "move" for row in rig.log)
         assert np.array_equal(rig.hardware.current_pose(), rig.configuration.home_matrix)
 
 
 def test_empty_retry_budget_survives_a_physical_pick_miss(monkeypatch):
-    rig = pick_rig(monkeypatch, [0, 1, 0], [False])
+    rig = pick_rig(monkeypatch, [0, 1, 0, 0, 0, 0], [False])
     result = rig.execute()
     assert result.outcome == result.NO_PICK and result.attempted_candidates == 1
-    assert len(rig.requests) == 3
-    assert "one Home acquisition retry" in result.message
+    assert len(rig.requests) == 6
+    assert "4 Home acquisition retries" in result.message
 
 
-@pytest.mark.parametrize("counts", [[1], [0]])
+@pytest.mark.parametrize("counts", [[1]] + [[0] * n for n in range(1, 5)])
 @pytest.mark.parametrize("failure", [FeedbackFailure, OperationCanceled])
 def test_home_failure_after_detection_blocks_retry_or_candidate_motion(
         monkeypatch, counts, failure):
     rig = pick_rig(monkeypatch, counts, [])
-    rig._execute_home = Mock(side_effect=failure("Home interrupted"))
+    home = rig._execute_home
+
+    def fail_home(**kwargs):
+        if len(rig.requests) == len(counts):
+            raise failure("Home interrupted")
+        return home(**kwargs)
+    rig._execute_home = fail_home
     result = rig.execute()
     assert result.outcome == (result.CANCELED if failure is OperationCanceled
                               else result.FEEDBACK_FAILURE)
-    assert len(rig.requests) == 1
+    assert len(rig.requests) == len(counts)
     assert not any(row[0] == "move" for row in rig.log)
 
 
@@ -133,15 +145,16 @@ def test_detector_error_is_terminal_without_home_or_retry(monkeypatch):
     assert ("ensure_home",) not in rig.log
 
 
-@pytest.mark.parametrize("counts", [[0, 0], [1]])
-def test_pause_during_home_preserves_acquired_batch_or_one_retry_budget(monkeypatch, counts):
+@pytest.mark.parametrize("counts,at_request", [([0] * 5, n) for n in range(1, 5)] + [([1], 1)])
+def test_pause_during_home_preserves_acquired_batch_and_retry_budget(
+        monkeypatch, counts, at_request):
     rig = pick_rig(monkeypatch, counts, [True] if counts[0] else [])
     rig.hardware.on_move = Mock()  # No held-loss injection before a candidate ledger exists.
     home = rig._execute_home
     interrupted = []
 
     def pause(**kwargs):
-        if not interrupted:
+        if len(rig.requests) == at_request and not interrupted:
             interrupted.append(True)
             rig.managed.request("pause")
             rig.managed.checkpoint()
@@ -331,20 +344,21 @@ def test_tray_retries_missing_pose_or_reply_and_accepts_third_fresh_result(
     GetTrayPose.Response(
         status="ERROR", message="Insufficient accepted placement depth samples/fraction"),
 ])
-def test_tray_exhausts_three_failures_with_typed_final_reason(monkeypatch, failure):
-    rig = TrayRig(monkeypatch, [failure] * 3)
-    with pytest.raises(TrayAcquisitionExhausted, match="failed after 3 attempts"):
+def test_tray_exhausts_five_failures_with_typed_final_reason(monkeypatch, failure):
+    rig = TrayRig(monkeypatch, [failure] * 5)
+    with pytest.raises(TrayAcquisitionExhausted, match="failed after 5 attempts"):
         rig.request()
-    assert rig.client.call_async.call_count == rig.attempts.count == 3
+    assert rig.client.call_async.call_count == rig.attempts.count == 5
     assert rig.observer.pending is None
-    with pytest.raises(TrayAcquisitionExhausted, match="failed after 3 attempts"):
+    with pytest.raises(TrayAcquisitionExhausted, match="failed after 5 attempts"):
         rig.request()
-    assert rig.client.call_async.call_count == 3
+    assert rig.client.call_async.call_count == 5
 
 
-@pytest.mark.parametrize("attempt", [1, 2])
-def test_tray_first_usable_observation_ends_retry(monkeypatch, attempt):
+@pytest.mark.parametrize("attempt", [1, 2, 3, 4, 5])
+def test_tray_first_usable_observation_ends_retry_without_added_wait(monkeypatch, attempt):
     rig = TrayRig(monkeypatch, [None] * (attempt - 1) + ["valid"])
+    rig.node.wait_control = Mock(side_effect=AssertionError("No retry settling delay"))
     assert rig.request() == pytest.approx([.13, .24, .25])
     assert rig.attempts.count == rig.client.call_async.call_count == attempt
 
@@ -358,8 +372,8 @@ def test_tray_stop_feedback_loss_or_pause_prevents_a_retry(monkeypatch, error):
     assert rig.client.call_async.call_count == rig.attempts.count == 1
 
 
-def test_tray_pause_drains_old_request_and_keeps_three_attempt_limit(monkeypatch):
-    rig = TrayRig(monkeypatch, ["timeout", None, "valid"])
+def test_tray_pause_drains_old_request_and_keeps_five_attempt_limit(monkeypatch):
+    rig = TrayRig(monkeypatch, ["timeout", None, None, None, "valid"])
     rig.on_send = lambda _: setattr(
         rig.node.wait_for_resume, "side_effect", ManagedInterruption("Pause"))
     with pytest.raises(ManagedInterruption):
@@ -368,7 +382,7 @@ def test_tray_pause_drains_old_request_and_keeps_three_attempt_limit(monkeypatch
     rig.node.wait_for_resume.side_effect = None
     rig.on_send = lambda _: None
     assert rig.request() == pytest.approx([.13, .24, .25])
-    assert rig.futures[0].cancelled() and rig.attempts.count == 3
+    assert rig.futures[0].cancelled() and rig.attempts.count == 5
 
 
 def test_tray_discards_late_first_reply_and_validates_new_request_time(monkeypatch):
@@ -416,23 +430,23 @@ def test_tray_source_change_after_failed_observation_blocks_resend(monkeypatch):
 
 
 def test_tray_late_completed_reply_uses_retry_budget(monkeypatch):
-    rig = TrayRig(monkeypatch, ["valid", "valid", "valid"])
+    rig = TrayRig(monkeypatch, ["valid"] * 5)
     rig.on_send = lambda _: rig.advance(0)
     with pytest.raises(FeedbackFailure, match="after its deadline"):
         rig.request()
-    assert rig.attempts.count == 3
+    assert rig.attempts.count == 5
 
 
-def test_pause_after_third_tray_request_cannot_dispatch_a_fourth(monkeypatch):
-    rig = TrayRig(monkeypatch, [None, None, "timeout"])
+def test_pause_after_fifth_tray_request_cannot_dispatch_a_sixth(monkeypatch):
+    rig = TrayRig(monkeypatch, [None] * 4 + ["timeout"])
 
     def pause(_future):
-        if len(rig.futures) == 3:
+        if len(rig.futures) == 5:
             rig.node.wait_for_resume.side_effect = ManagedInterruption("Pause")
     rig.on_send = pause
     with pytest.raises(ManagedInterruption):
         rig.request()
     rig.node.wait_for_resume.side_effect = None
-    with pytest.raises(FeedbackFailure, match="after 3 attempts"):
+    with pytest.raises(FeedbackFailure, match="after 5 attempts"):
         rig.request()
-    assert rig.client.call_async.call_count == 3 and rig.observer.pending is None
+    assert rig.client.call_async.call_count == 5 and rig.observer.pending is None

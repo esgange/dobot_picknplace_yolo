@@ -9891,6 +9891,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   driver replacement or live trial was performed. Preserve .env, station/teach/
   model/runtime artifacts and unrelated RViz edits. Live verification is pending.
 
+### 2026-10-07 — Rule 245: five fresh perception requests with zero retry settling
+
+- The operator selected five requests total (one initial request and four retries)
+  for unavailable item/tray poses, with zero added settling delay, provided retries
+  cannot reuse earlier raw camera frames.
+- Manual Pick and each Auto Run Pick permit four valid-empty-result acquisition
+  retries. Confirm Home before every retry, skipping motion when already matched.
+  Reserve the retry before Home so ordinary Pause cannot reset it or request before
+  arrival. Preserve that allowance across physical misses and the separate three
+  nonempty candidate-batch budget: five requests if all are empty, up to seven
+  requests if four empty observations occur among three nonempty batches. Stop
+  after the fifth empty result with NO_PICK. Item service errors/timeouts, invalid
+  evidence and robot faults remain terminal rather than consuming empty retries.
+- An empty Auto Run prefetch finishes the owned placement-to-Home route and counts
+  placement once before retrying. Later empty retries confirm existing Home without
+  duplicating that route or completed quantity. Tray pose/depth acquisition uses
+  five requests total in manual Place, Auto Run and read-only Preview. Exhaustion
+  keeps the existing Stop-confirmed PAUSED / Continue / Return Item workflow;
+  explicit Continue grants five more, while ordinary Pause retains the used count.
+  Update progress, logs and GUI retry guidance to the same bounds.
+- No inter-retry timer is added. Each request still waits for new camera capture
+  and processing within the original deadline. Tray already requires both RGB
+  and placement depth timestamps strictly after the trigger, plus post-trigger
+  receipt. Tighten Item RGB/history/depth-window selection and controller evidence
+  validation to reject equal request timestamps as well as earlier ones. Every
+  contributing temporal-median depth frame must pass; old raw buffers cannot
+  satisfy an immediate retry. Identical scene pixels are allowed in distinct new
+  camera frames. Preserve fresh exact-time TF, synchronization, CameraInfo, source
+  hashes and cancellation checks; never reuse a cached detection or freeze depth.
+- Validation: **1,436 tests pass**: all 1,281 controller tests, 78 capture/service
+  tests across Item and Tray, and 77 Item detector tests. Cover success on the last
+  permitted request, exhaustion, Home failures/Stop/Pause at each retry, separate
+  physical-miss budgets, Auto Run prefetch/counts, tray pause/return/Continue,
+  no added retry wait, equal-boundary rejection and five back-to-back captures
+  with disjoint raw RGB/depth timestamps. Use isolated ROS domain 81, offscreen Qt
+  and synthetic feedback/frames; no live hardware commands. Scoped flake8 and
+  whitespace checks pass; wrap one pre-existing long line in a touched UI test.
+- Update AGENTS, root/controller/Item READMEs and current FSM review, diagrams and
+  state description; regenerate the adjacent offline HTML/PDF exports. Installed
+  Python resolves to source; no build or live process restart is performed.
+  Operator restart of controller/GUI/Preview and Item Teach/Detect is needed to
+  load the updated modules. Preserve .env, station calibration, teaching/model/
+  runtime artifacts, the unrelated RViz edit and all live processes. Live operation
+  after this change remains unverified.
+
 ### Future entry template
 
 ```text

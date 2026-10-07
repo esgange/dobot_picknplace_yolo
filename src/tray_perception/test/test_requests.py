@@ -284,6 +284,34 @@ def test_stale_rgb_cannot_satisfy_trigger_and_fresh_depth_is_not_required(backen
     assert node.preview.call_args.kwargs["view"]["rgb"]["stamp_ns"] > 100_000_000_000
 
 
+@pytest.mark.parametrize("stale_stream", ["rgb", "depth"])
+def test_immediate_tray_retries_require_new_raw_rgb_and_depth(backend, monkeypatch, stale_stream):
+    node, _, _ = backend
+    ordinary = node.snapshot.side_effect
+    used = {"rgb": set(), "depth": set()}
+    monkeypatch.setattr(requests.time, "sleep", lambda _seconds: None)
+    for attempt in range(5):
+        start_ns = 100_000_000_000 + attempt*100_000_000
+        started = time.monotonic()
+        view = ordinary()
+        view["rgb"].update(stamp_ns=start_ns+1, received_at=started)
+        view["depth"] = {"stamp_ns": start_ns+1, "received_at": started, "depth": bytes(8)}
+        stale = {**view, stale_stream: {**view[stale_stream], "stamp_ns": start_ns}}
+        if attempt:
+            old = {**view, stale_stream: {
+                **view[stale_stream], "stamp_ns": max(used[stale_stream])}}
+            node.snapshot.side_effect = [old, stale, view]
+        else:
+            node.snapshot.side_effect = [stale, view]
+        captured = node.requests._fresh_view(
+            start_ns, started, started+1., lambda: None, sampling=dict(QUALITY_DEFAULTS))
+        assert captured is view
+        for stream in used:
+            stamp = captured[stream]["stamp_ns"]
+            assert stamp > start_ns and stamp not in used[stream]
+            used[stream].add(stamp)
+
+
 @pytest.mark.parametrize("sample_depth", [False, True])
 def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth):
     node, path, digest = backend

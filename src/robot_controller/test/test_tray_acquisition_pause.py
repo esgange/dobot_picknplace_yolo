@@ -70,7 +70,7 @@ def acquisition_rig(monkeypatch, replies, *, held=True):
 
 def exhaust(node):
     node._transition("PLACING", "Observing tray")
-    with pytest.raises(ManagedInterruption, match="failed after 3 attempts"):
+    with pytest.raises(ManagedInterruption, match="failed after 5 attempts"):
         node.placement.run(node)
     assert node.machine.state == "PAUSING"
     assert node.placement.acquisition_paused
@@ -81,14 +81,14 @@ def exhaust(node):
 @pytest.mark.parametrize("reply", [None, "timeout"])
 def test_exhaustion_pauses_in_place_preserving_outputs_source_and_ownership(
         monkeypatch, held, reply):
-    node, tray = acquisition_rig(monkeypatch, [reply] * 3, held=held)
+    node, tray = acquisition_rig(monkeypatch, [reply] * 5, held=held)
     pose, outputs = node.hardware.current_pose(), node.feed["digital_outputs"]
     exhaust(node)
 
     def paused():
         assert node.machine.state == "PAUSED"
         assert node.phase == "TRAY_ACQUISITION_PAUSED"
-        assert "failed after 3 attempts" in node.machine.message
+        assert "failed after 5 attempts" in node.machine.message
         assert "Place Item (Retry)" in node.machine.message
         assert "Pick Item" not in node.machine.message
         assert ("Return Item" in node.machine.message) is held
@@ -98,7 +98,7 @@ def test_exhaustion_pauses_in_place_preserving_outputs_source_and_ownership(
         assert node.managed.can_return_item() is held
         if held:
             assert node.managed.session.attempts[0].state == "HELD"
-        assert tray.client.call_async.call_count == 3
+        assert tray.client.call_async.call_count == 5
         node.cancel_event.set()
     node.on_wait = paused
     with pytest.raises(OperationCanceled):
@@ -108,31 +108,31 @@ def test_exhaustion_pauses_in_place_preserving_outputs_source_and_ownership(
 
 
 @pytest.mark.parametrize("save_images", [False, True])
-def test_continue_explicitly_grants_new_three_request_budget(monkeypatch, save_images):
-    node, tray = acquisition_rig(monkeypatch, [None] * 5 + ["valid"])
+def test_continue_explicitly_grants_new_five_request_budget(monkeypatch, save_images):
+    node, tray = acquisition_rig(monkeypatch, [None] * 9 + ["valid"])
     node.placement.save_debug_images = save_images
     exhaust(node)
     old_budget = node.placement.tray_attempts
     node.on_wait = node.managed.continue_operation
     node.placement.handle_pause(node)
     assert node.machine.state == "PLACING"
-    assert old_budget.count == 3 and node.placement.tray_attempts.count == 0
+    assert old_budget.count == 5 and node.placement.tray_attempts.count == 0
     assert not node.placement.acquisition_failure
     # Admission geometry is covered by the real transport suite; isolate the
     # observation retry here without executing another fake placement route.
     node.hardware.move_batch = Mock(return_value=None)
     node.placement.run(node)
-    assert tray.client.call_async.call_count == 6
-    assert node.placement.tray_attempts.count == 3
+    assert tray.client.call_async.call_count == 10
+    assert node.placement.tray_attempts.count == 5
     assert node.hardware.move_batch.call_count == 1
     assert node.hardware.move_batch.call_args.kwargs["queue_only"]
     assert all(call.args[0].save_debug_images is save_images
                for call in tray.client.call_async.call_args_list)
 
 
-def test_another_exhausted_budget_pauses_again_without_automatic_fourth_request(monkeypatch):
-    node, tray = acquisition_rig(monkeypatch, [None] * 6)
-    for total in (3, 6):
+def test_another_exhausted_budget_pauses_again_without_automatic_sixth_request(monkeypatch):
+    node, tray = acquisition_rig(monkeypatch, [None] * 10)
+    for total in (5, 10):
         exhaust(node)
         assert tray.client.call_async.call_count == total
         node.on_wait = node.managed.continue_operation
@@ -141,7 +141,7 @@ def test_another_exhausted_budget_pauses_again_without_automatic_fourth_request(
 
 @pytest.mark.parametrize("headless", [False, True])
 def test_return_puts_item_at_saved_bin_prepick_then_homes_and_cancels_place(monkeypatch, headless):
-    node, tray = acquisition_rig(monkeypatch, [None] * 3)
+    node, tray = acquisition_rig(monkeypatch, [None] * 5)
     node.headless = headless
     source = node.managed.session.attempts[0].plan
     node.on_wait = lambda: node.managed.request("return")
@@ -153,7 +153,7 @@ def test_return_puts_item_at_saved_bin_prepick_then_homes_and_cancels_place(monk
     assert not node.operation_lock.locked() and node.placement is None
     assert not node.holding_item and node.managed.session.held_index is None
     assert node.managed.session.attempts[0].state == "RETURNED"
-    assert tray.client.call_async.call_count == 3
+    assert tray.client.call_async.call_count == 5
     routes = [row for row in node.log if row[0] == "move"]
     assert routes[-1][1][-1] == "home"
     assert len(routes) == 1
@@ -185,7 +185,7 @@ def test_gui_bin_return_restores_normal_held_feedback_checks(monkeypatch, return
 
 @pytest.mark.parametrize("failure", ["stop", "source", "suction", "position", "outputs"])
 def test_paused_acquisition_keeps_failure_gates(monkeypatch, failure):
-    node, tray = acquisition_rig(monkeypatch, [None] * 3)
+    node, tray = acquisition_rig(monkeypatch, [None] * 5)
     exhaust(node)
 
     def fail():
@@ -203,7 +203,7 @@ def test_paused_acquisition_keeps_failure_gates(monkeypatch, failure):
     node.on_wait = fail
     with pytest.raises((OperationCanceled, FeedbackFailure)):
         node.placement.handle_pause(node)
-    assert tray.client.call_async.call_count == 3
+    assert tray.client.call_async.call_count == 5
     assert not any(row[0] in ("move", "output", "pulse") for row in node.log)
 
 
@@ -242,7 +242,7 @@ def test_manual_pause_keeps_partly_used_acquisition_budget(monkeypatch):
 
 
 def test_stop_during_bin_return_preserves_return_context(monkeypatch):
-    node, _tray = acquisition_rig(monkeypatch, [None] * 3)
+    node, _tray = acquisition_rig(monkeypatch, [None] * 5)
     exhaust(node)
     node.on_wait = lambda: node.managed.request("return")
 

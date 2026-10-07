@@ -131,7 +131,8 @@ def status_node(monitor):
         active_action='', phase='', waypoint='', candidate_index=0, candidate_total=0,
         managed=SimpleNamespace(session=None, can_return_item=lambda: False,
                                 continue_block_reason=lambda _sample: 'Not paused'),
-        global_speed_percent=50, global_cp_percent=100, startup_complete=True, _perception_ready=lambda _action: True,
+        global_speed_percent=50, global_cp_percent=100, startup_complete=True,
+        _perception_ready=lambda _action: True,
         monitor=monitor)
     return node, messages
 
@@ -154,7 +155,7 @@ def test_tray_status_uses_every_joint_and_idle_without_waits_or_commands(joint):
 
 
 def test_uncertain_release_disables_continue_without_mutating_placement(monkeypatch):
-    node, _tray = acquisition_rig(monkeypatch, [None] * 3)
+    node, _tray = acquisition_rig(monkeypatch, [None] * 5)
     exhaust(node)
     node.machine = ControllerStateMachine(initial='PAUSED')
     node.managed.parked_pose = node.hardware.current_pose()

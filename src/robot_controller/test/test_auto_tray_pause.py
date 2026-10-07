@@ -33,7 +33,7 @@ def paused_run(monkeypatch, replies):
 @pytest.mark.parametrize('rounds', [1, 2])
 def test_continue_retries_same_held_item_and_count_after_confirmed_pause(
         monkeypatch, reply, rounds):
-    node, tray, run = paused_run(monkeypatch, [reply] * (3 * rounds) + ['valid'])
+    node, tray, run = paused_run(monkeypatch, [reply] * (5 * rounds) + ['valid'])
     session, outputs = node.managed.session, dict(node.expected_outputs)
     pauses = []
     node.hardware.move_batch = Mock(return_value=None)
@@ -44,7 +44,7 @@ def test_continue_retries_same_held_item_and_count_after_confirmed_pause(
         assert node.operation_lock.locked() and node.auto_run is run
         assert node.managed.session is session and node.holding_item
         assert node.expected_outputs == outputs and run.completed == 2
-        assert tray.client.call_async.call_count == len(pauses) * 3
+        assert tray.client.call_async.call_count == len(pauses) * 5
         assert run.prefetch is None
         node.candidates.request.assert_not_called()
         node.hardware.move_batch.assert_not_called()
@@ -63,14 +63,14 @@ def test_continue_retries_same_held_item_and_count_after_confirmed_pause(
     run.finish_home = finish
     assert run.run()
     assert len(pauses) == rounds and all(p is pauses[0] for p in pauses)
-    assert run.completed == 3 and tray.client.call_async.call_count == 3 * rounds + 1
+    assert run.completed == 3 and tray.client.call_async.call_count == 5 * rounds + 1
     run._pick.assert_called_once()
     assert node.managed.kind is None and node.managed.session is session
     run.close()
 
 
 def test_return_from_auto_pause_finishes_ready_and_cancels_run_without_counting(monkeypatch):
-    node, tray, run = paused_run(monkeypatch, [None] * 3)
+    node, tray, run = paused_run(monkeypatch, [None] * 5)
     node._record_auto_run_result = lambda *args: RobotController._record_auto_run_result(
         node, *args)
     monkeypatch.setattr(controller_module, 'AutoRunOperation', lambda *_args: run)
@@ -93,7 +93,7 @@ def test_return_from_auto_pause_finishes_ready_and_cancels_run_without_counting(
     assert node.managed.session.attempts[0].state == 'RETURNED'
     assert not node.holding_item and not node.operation_lock.locked()
     assert node.auto_run is None and node.placement is None
-    assert tray.client.call_async.call_count == 3
+    assert tray.client.call_async.call_count == 5
     assert not any(row[0] == 'move' and 'p2_pick' in row[1] for row in node.log)
     run._pick.assert_called_once()
     node.candidates.request.assert_not_called()
@@ -103,7 +103,7 @@ def test_return_from_auto_pause_finishes_ready_and_cancels_run_without_counting(
 
 @pytest.mark.parametrize('failure', ['stop', 'suction', 'position', 'outputs', 'source'])
 def test_paused_auto_fault_or_stop_cannot_retry_or_start_another_pick(monkeypatch, failure):
-    node, tray, run = paused_run(monkeypatch, [None] * 3)
+    node, tray, run = paused_run(monkeypatch, [None] * 5)
     node.managed.continue_after_loss = Mock(
         side_effect=AssertionError('A paused failure cannot resume Auto Run'))
 
@@ -124,7 +124,7 @@ def test_paused_auto_fault_or_stop_cannot_retry_or_start_another_pick(monkeypatc
     node.on_wait = fail
     with pytest.raises((FeedbackFailure, OperationCanceled)):
         run.run()
-    assert run.completed == 2 and tray.client.call_async.call_count == 3
+    assert run.completed == 2 and tray.client.call_async.call_count == 5
     assert not any(row[0] in ('move', 'output', 'pulse') for row in node.log)
     run._pick.assert_called_once()
     node.candidates.request.assert_not_called()

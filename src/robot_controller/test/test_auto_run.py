@@ -350,7 +350,7 @@ def test_stop_before_prefetch_consumption_discards_it_without_next_pick(monkeypa
     assert run.completed == 0 and workers[0].closed
 
 
-def test_auto_pick_retries_empty_poses_once_and_preserves_completed_quantity(monkeypatch):
+def test_auto_pick_retries_empty_poses_four_times_and_preserves_completed_quantity(monkeypatch):
     from test_automatic_return import action_rig
 
     node = action_rig(monkeypatch, count=1, losses=())
@@ -364,13 +364,15 @@ def test_auto_pick_retries_empty_poses_once_and_preserves_completed_quantity(mon
     run = AutoRunOperation(node, request(4))
     run.completed = 2
     assert not run._pick()
-    assert len(node.requests) == 2
+    assert len(node.requests) == 5
     assert run.completed == 2 and node.machine.state == "READY"
 
 
 @pytest.mark.parametrize("counts,acquisitions", [
-    ([1], [True]), ([0, 1], [True]), ([1, 1, 1], [False] * 3), ([0, 1, 0], [False]),
+    ([1], [True]), ([0, 1], [True]), ([0, 0, 0, 0, 1], [True]),
+    ([1, 1, 1], [False] * 3), ([0, 1, 0, 0, 0, 0], [False]),
     ([0, 1, 1, 1], [False] * 3), ([1, 0, 1, 1], [False] * 3),
+    ([0, 0, 0, 0, 1, 1, 1], [False] * 3), ([1, 0, 0, 1, 0, 0, 1], [False] * 3),
 ])
 def test_auto_pick_detects_first_and_keeps_separate_acquisition_and_pick_budgets(
         monkeypatch, counts, acquisitions):
@@ -387,9 +389,8 @@ def test_auto_pick_detects_first_and_keeps_separate_acquisition_and_pick_budgets
         assert node.log.index(("ensure_home",)) < node.log.index(("detect", 2))
 
 
-def test_empty_prefetch_finishes_queued_home_before_its_single_retry():
+def test_empty_prefetch_finishes_owned_home_then_retries_without_duplicate_motion():
     rig, run, bridge = queue_rig(quantity=2)
-    rig.node._execute_home = Mock(side_effect=AssertionError("Home is owned by the bridge"))
     rig.steps = iter([
         dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
         dict(outputs=0, inputs=OPEN, currentCommandId=3),
@@ -397,16 +398,24 @@ def test_empty_prefetch_finishes_queued_home_before_its_single_retry():
         dict(outputs=0, inputs=0, home=True),
     ])
 
-    def detect(*_args, **_kwargs):
+    def at_home():
         assert run.completed == 1 and bridge.completed
         assert rig.monitor.snapshot().robot_enabled
         assert np.allclose(rig.transport.pose_from_snapshot(rig.monitor.snapshot()),
                            rig.node.configuration.home_matrix)
         assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovJ"]
-        return SimpleNamespace(identifier="retry-empty", candidates=[])
+    rig.node._execute_home = Mock(side_effect=at_home)
+    rig.node.wait_control = Mock(side_effect=AssertionError("No retry settling delay"))
+    observations = []
+
+    def detect(*_args, **_kwargs):
+        at_home()
+        observations.append(True)
+        return SimpleNamespace(identifier=f"retry-empty-{len(observations)}", candidates=[])
     rig.node.candidates = SimpleNamespace(request=Mock(side_effect=detect))
     assert not run._pick(SimpleNamespace(identifier="prefetched-empty", candidates=[]), bridge)
-    rig.node.candidates.request.assert_called_once()
+    assert rig.node.candidates.request.call_count == 4
+    assert rig.node._execute_home.call_count == 3
     assert run.completed == 1 and rig.node.machine.state == "READY"
 
 
@@ -561,7 +570,7 @@ def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, in
     from robot_controller.errors import HeldSuctionLost
     from test_tray_acquisition_pause import acquisition_rig
 
-    node, tray = acquisition_rig(monkeypatch, [None] * 3)
+    node, tray = acquisition_rig(monkeypatch, [None] * 5)
     run = node.auto_run = AutoRunOperation(node, request(2))
     run._pick = Mock(return_value=True)  # Successful Pick's confirmed Tray Detect endpoint.
     original_session = node.managed.session
@@ -581,7 +590,7 @@ def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, in
 
     def stop_when_paused():
         assert node.machine.state == "PAUSED" and node.placement.acquisition_paused
-        assert tray.client.call_async.call_count == 3
+        assert tray.client.call_async.call_count == 5
         node.cancel_event.set()
     node.on_wait = stop_when_paused
     try:
@@ -589,7 +598,7 @@ def test_tray_acquisition_failure_never_starts_next_item_request(monkeypatch, in
             run.run()
         node.candidates.request.assert_not_called()
         assert run.completed == 0
-        assert tray.client.call_async.call_count == (3 if interruption == "tray_exhausted" else 1)
+        assert tray.client.call_async.call_count == (5 if interruption == "tray_exhausted" else 1)
         assert node.managed.session is original_session and node.holding_item
         run._pick.assert_called_once()
     finally:
