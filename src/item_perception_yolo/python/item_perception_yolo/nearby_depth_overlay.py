@@ -78,17 +78,14 @@ def draw_nearby_depth_overlays(views, context, checks, cv2, np):
                    HEIGHT_COLOR, cv2, np)
             obstacles.append(projected_base_points(
                 check["blocking_points"], base_from_optical, camera, cv2, np))
-            maximum = evidence["maximum_height_difference_mm"]
-            maximum_text = "no depth" if maximum is None else f"max {maximum:.1f}mm"
-            label = f"#{source_id} NEAR {'BLOCKED' if check['blocked'] else 'OK'} | {maximum_text}"
             anchor = projected_base_points([center], base_from_optical, camera, cv2, np)[0]
             if np.isfinite(anchor).all():
-                annotations.append((label, anchor + [-40, 43],
+                annotations.append((f"#{source_id}", anchor + [8, 16],
                                     OBSTACLE_COLOR if check["blocked"] else RADIUS_COLOR))
             if check["maximum_point"] is not None:
                 point = projected_base_points(
                     [check["maximum_point"]], base_from_optical, camera, cv2, np)[0]
-                maxima.append((point, source_id, maximum, check["blocked"]))
+                maxima.append((point, check["blocked"]))
         for pixels in obstacles:
             visible = (np.isfinite(pixels).all(axis=1)
                        & (pixels[:, 0] >= 0) & (pixels[:, 0] < view.shape[1] - .5)
@@ -97,7 +94,7 @@ def draw_nearby_depth_overlays(views, context, checks, cv2, np):
             view[pixels[:, 1], pixels[:, 0]] = OBSTACLE_COLOR
         for label, anchor, color in annotations:
             _text(view, label, anchor, color, cv2)
-        for point, source_id, maximum, blocked in maxima:
+        for point, blocked in maxima:
             if not (np.isfinite(point).all() and 0 <= point[0] < view.shape[1]
                     and 0 <= point[1] < view.shape[0]):
                 continue
@@ -107,11 +104,3 @@ def draw_nearby_depth_overlays(views, context, checks, cv2, np):
                 pixel = tuple(np.rint(point).astype(int))
                 cv2.drawMarker(view, pixel, (255, 255, 255), cv2.MARKER_TILTED_CROSS, 13, 3)
                 cv2.drawMarker(view, pixel, OBSTACLE_COLOR, cv2.MARKER_TILTED_CROSS, 11, 1)
-                _text(view, f"#{source_id} +{maximum:.1f}mm", point + [9, -10],
-                      OBSTACLE_COLOR, cv2)
-        evidence = next(iter(checks.values()))["evidence"]
-        _text(view, f"NEAR: solid R={evidence['radius_mm']:g}mm | "
-              f"dashed H={evidence['height_mm']:g}mm (camera XY / floor height)",
-              (5, view.shape[0]-23), RADIUS_COLOR, cv2)
-        _text(view, "Floor-relative difference | red/X=obstacle | cyan=depth sample",
-              (5, view.shape[0]-7), (255, 255, 255), cv2)

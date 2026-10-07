@@ -619,14 +619,17 @@ for deployment/restart and measurement details.
 
 To inspect this check, Item Teach overlays both RGB and registered depth:
 solid yellow = radius at the item surface, dashed orange = the height limit
-above it, red depth points/X = blocking obstacles. Labels show the detection ID,
-`NEAR OK` or `NEAR BLOCKED`, and the highest nearby point's measured height.
-`NEAR OK` only passes this filter. Click an item to isolate its check; click again
+above it, red depth points/X = blocking obstacles. Small labels show only the
+detection ID; full measurements and rejection reasons remain in diagnostics.
+Click an item to isolate its check; click again
 to resume the live view. Simulate Trigger and saved `debug/pick_img/` pairs include
 these overlays, including blocked items when no valid poses remain. Enable
 **Save item/tray debug RGB/depth** on the controller to save request images.
 The existing 1 Hz teaching snapshot supplies the overlays without another YOLO
-prediction. Restart Item Teach/headless Item Detect after updating their workers.
+prediction. RGB and depth update together after all overlays finish; the previous
+completed snapshot stays visible while processing. Compact fixed-height status
+bands show the result count and age; hover over them for detailed feedback.
+Restart Item Teach/headless Item Detect after updating their workers.
 The preview uses `pose_candidates` as its acquisition limit and reports how many
 remaining candidates were left unchecked. Clicking an unchecked item measures
 that selected item only. `valid_count` reports validated returned poses, not an

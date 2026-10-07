@@ -99,8 +99,6 @@ def draw_bin_roi(overlay, context, unavailable_reason, cv2, np):
             visible = True
     if not visible:
         return {"visible": False, "reason": "Loaded bin ROI border is outside the image"}
-    cv2.putText(overlay, "Loaded Bin ROI", (12, height - 15), cv2.FONT_HERSHEY_SIMPLEX,
-                .65, (0, 255, 0), 2, cv2.LINE_AA)
     return {"visible": True, "reason": ""}
 
 
@@ -124,9 +122,6 @@ def draw_bin_clearance(overlay, context, clearance, cv2, np):
             cv2.line(overlay, clipped_start, clipped_end, BIN_CLEARANCE_COLOR,
                      2, cv2.LINE_AA)
             visible = True
-    if visible:
-        cv2.putText(overlay, "Pick clearance", (12, height - 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, .65, BIN_CLEARANCE_COLOR, 2, cv2.LINE_AA)
     return visible
 
 

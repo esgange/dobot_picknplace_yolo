@@ -717,9 +717,16 @@ straight RGB edges are sampled before projection to handle differing distortion.
 Both views freeze on the exact displayed pair when clicked, and that item
 gets a detailed pose inspection (no second inference or newer depth). All other outlines
 stay visible on frozen depth; the sampling circle is cyan, accepted samples black,
-rejected red. Result/frozen status, inference settings, dimensions/pose and source
-ages appear in a wrapping black status band at the top of each pane, below its
-heading. They no longer obscure camera pixels or scale down with the image.
+rejected red. Compact fixed-height black bands below each pane's heading show
+result/frozen status and source age, plus dimensions for a selected item. Hover
+over a band for inference settings, pose details, RViz feedback and overlay legends;
+the status area retains errors and inspection details. Long legends, nearby-height
+labels and bin/inset captions are not painted over camera pixels.
+The worker keeps each RGB/depth pair private through detection and nearby-overlay
+rendering. The GUI replaces both panes only after the complete result passes its
+settings and camera/source generation checks. The previous completed snapshot
+remains visible, with its original age, during processing. Age-only updates do
+not rescale unchanged images; new buffers, selection and pane resizing do.
 Masks, axes, bin borders and sampling circles stay on the images. Only image
 clicks select/resume, not status-band clicks; letterbox mapping remains unchanged.
 The redundant above-video help/settings text is removed. Missing plane calibration
@@ -838,9 +845,10 @@ blocking service request. All native operations are serialized in one worker.
   height surface; dashed orange is the rejection-height surface. Short orange lines
   connect the planes. These are metric 3D projections, not fixed pixel circles;
   RGB and depth use their own distortion models. Red points are the offending
-  usable depth samples; a red/white X marks the highest blocker and its height.
-  Labels identify the detection source index, `NEAR BLOCKED` or `NEAR OK`, and
-  maximum floor-relative height difference from the item. `NEAR OK` is only this check, not pick eligibility.
+  usable depth samples; a red/white X marks the highest blocker.
+  Small labels identify only the detection source index, colored red when blocked
+  and yellow otherwise. Full floor-relative heights and rejection reasons remain
+  in diagnostics. These colors describe only this check, not overall pick eligibility.
   Candidates rejected before depth/geometry validation have no nearby result.
   The cyan sampling circle and its black/red MAD samples retain their meaning.
   Live all-class preview keeps its existing size/class annotations; click an

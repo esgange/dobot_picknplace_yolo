@@ -973,7 +973,6 @@ class ItemDetectNode(Node):
                 return None
             view = {**rgb, "rgb": pixels, "source_rgb": rgb, "preview_mode": "roi",
                     "metadata": {"roi_overlay": status}}
-            self.last_view = view
             return view
         finally:
             self.operation_lock.release()
@@ -1037,7 +1036,6 @@ class ItemDetectNode(Node):
                 view["depth_error"] = depth_error
                 if epoch != self.arm_epoch or not self.yolo_enabled:
                     return None
-                self.last_view = view
                 return view
             depth = context = None
             if self.applied is not None and self.settings["geometry_source"] != "none":
@@ -1047,7 +1045,6 @@ class ItemDetectNode(Node):
             view = self.infer(rgb, depth, context)
             if epoch != self.arm_epoch or not self.yolo_enabled:
                 return None
-            self.last_view = view
             return view
         finally:
             self.operation_lock.release()

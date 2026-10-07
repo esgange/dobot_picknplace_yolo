@@ -544,8 +544,10 @@ def test_teaching_preview_keeps_rgb_when_depth_or_station_missing():
                                           bin_clearance={"p1_p2": None, "p2_p3": None,
                                                          "p3_p4": None, "p4_p1": None})
     assert node.settings is None
+    previous = node.last_view = {"previous": "completed preview"}
     view = detector.ItemDetectNode.preview_once(node)
     assert view["rgb"] == b"preview" and view["observation"]["depth"] is None
+    assert node.last_view is previous  # GUI publishes only after remaining overlays finish.
     node._snapshot.assert_not_called()
     preview = node.infer.call_args.kwargs["preview"]
     assert preview["settings"]["yolo"] == {**yolo, "class_ids": [0, 7]}
@@ -733,6 +735,7 @@ def test_roi_off_uses_same_worker_and_never_infers():
                                       "roi_overlay": {"visible": True, "reason": ""}}, b"y"*12)
     result = detector.ItemDetectNode.roi_once(node)
     assert result["preview_mode"] == "roi" and result["rgb"] == b"y"*12
+    assert node.last_view is None  # Still private until the GUI completes the snapshot.
     assert node.native.call.call_args.args[0]["operation"] == "overlay_roi"
     assert "model" not in node.native.call.call_args.args[0]
     node.infer.assert_not_called()

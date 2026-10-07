@@ -25,7 +25,8 @@ def window(tmp_path, monkeypatch):
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "warning", MagicMock())
     node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False,
         events=MagicMock(), disarm=MagicMock(), arm=MagicMock(), close_runtime=MagicMock(),
-        camera_mount=MagicMock(),
+        camera_mount=MagicMock(), arm_epoch=0, _camera_generation=0,
+        condition=threading.Condition(),
         rviz=MagicMock(compute=MagicMock(return_value=None)),
         clear_selected_pose=MagicMock(), show_selected_pose=MagicMock(), clicked_pose=MagicMock(),
         show_simulated_poses=MagicMock(),
@@ -272,7 +273,7 @@ def test_simulated_view_resumes_ten_seconds_after_display(window, monkeypatch, e
     now[0] += 20.
     finish_model_job(window)
     assert window.simulation_expires_at == 130.
-    assert "live in 10s" in window.rgb_feedback.text()
+    assert "live in 10s" in window.rgb_feedback.toolTip()
     window.node.clear_selected_pose.reset_mock()
     window.node.disarm.reset_mock()
     now[0] = 129.999
@@ -291,7 +292,7 @@ def test_simulated_view_resumes_ten_seconds_after_display(window, monkeypatch, e
     assert window._job.call_args.args[0] == "preview"
     window.node.clear_selected_pose.assert_called_once()
     window.node.disarm.assert_not_called()
-    assert "SIMULATED" not in window.rgb_feedback.text()
+    assert "Simulated" not in window.rgb_feedback.text()
 
 
 def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(window):
@@ -308,15 +309,15 @@ def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(windo
     assert window.frozen_view["rgb"] == view["rgb"]
     assert window.frozen_view["depth_rgb"] == view["depth_rgb"]
     assert window.simulation_response is response
-    assert "SIMULATED SHORTAGE" in window.rgb_feedback.text()
-    assert "SIMULATED SHORTAGE" in window.depth_feedback.text()
-    assert "P1 part" in window.rgb_feedback.text()
-    assert "100 accepted / 2 rejected" in window.depth_feedback.text()
+    assert "Simulated SHORTAGE" in window.rgb_feedback.text()
+    assert "Simulated SHORTAGE" in window.depth_feedback.text()
+    assert "P1 part" in window.rgb_feedback.toolTip()
+    assert "100 accepted / 2 rejected" in window.depth_feedback.toolTip()
     window.node.simulate_trigger.assert_called_once()
     window.node.arm.assert_not_called()
     window.node.show_selected_pose.assert_not_called()
     window.node.show_simulated_poses.assert_called_once_with(response, view)
-    assert "RViz TF: base_link → item_teach_candidate_1" in window.rgb_feedback.text()
+    assert "RViz TF: base_link → item_teach_candidate_1" in window.rgb_feedback.toolTip()
     assert window.node.service is None and not window.armed_toggle.isChecked()
     assert window.saved_path == Path("saved.yaml")
     old_rgb, old_depth = window.video.pixmap().toImage(), window.depth_video.pixmap().toImage()
@@ -439,10 +440,12 @@ def test_simulation_batch_feedback_does_not_expand_with_all_1000_candidates(wind
     window.simulate_button.click()
     window._refresh_video()
     finish_model_job(window)
-    assert "P3 part" in window.rgb_feedback.text() and "P4 part" not in window.rgb_feedback.text()
-    assert "17 more poses" in window.depth_feedback.text()
+    assert "P3 part" in window.rgb_feedback.toolTip() and "P4 part" not in window.rgb_feedback.toolTip()
+    assert "17 more poses" in window.depth_feedback.toolTip()
+    assert len(window.rgb_feedback.text().splitlines()) <= 3
+    assert len(window.depth_feedback.text().splitlines()) <= 3
     assert "P20 part" in window.status.toPlainText()
-    assert "item_teach_candidate_1…20" in window.rgb_feedback.text()
+    assert "item_teach_candidate_1…20" in window.rgb_feedback.toolTip()
     window.node.show_simulated_poses.assert_called_once()
     assert len(window.node.show_simulated_poses.call_args.args[0].candidates) == 20
 
@@ -489,30 +492,40 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
     window.node.last_view = view
     window.resize(*window_size)
     window.show()
-    # Let Qt lay out wrapped status bands, then render at the resulting image size.
+    # Let Qt lay out the fixed status bands, then render at the resulting image size.
     for _ in range(3):
         window._refresh_video()
         gui.QtWidgets.QApplication.processEvents()
-    assert "RESULT SNAPSHOT — DETECTIONS: 0" in window.rgb_feedback.text()
-    assert "STALE Frame age 1.10s | processing 555.0ms" in window.rgb_feedback.text()
-    assert "conf 0.25 / IoU 0.7 / cap 100" in window.rgb_feedback.text()
-    assert "Depth age: 1.05s" in window.depth_feedback.text()
+    assert window.rgb_feedback.text() == "Snapshot · 0 detections\nAge 1.10s"
+    assert "STALE Frame age 1.10s | processing 555.0ms" in window.rgb_feedback.toolTip()
+    assert "conf 0.25 / IoU 0.7 / cap 100" in window.rgb_feedback.toolTip()
+    assert "Depth age 1.05s" in window.depth_feedback.text()
     for feedback, image, pixels in (
         (window.rgb_feedback, window.video, view["rgb"]),
         (window.depth_feedback, window.depth_video, view["depth_rgb"]),
     ):
-        assert feedback.isVisible() and feedback.wordWrap()
-        assert "orange floor-height limit" in feedback.text()
-        assert "NEAR OK is this check only" in feedback.text()
+        assert feedback.isVisible() and not feedback.wordWrap()
+        assert "orange floor-height limit" in feedback.toolTip()
+        assert len(feedback.text().splitlines()) <= 3
         assert feedback.textFormat() == gui.QtCore.Qt.PlainText
         assert feedback.parent() is image.parent()
         assert feedback.geometry().bottom() < image.geometry().top()
-        assert feedback.height() >= feedback.heightForWidth(feedback.width())
+        assert feedback.minimumHeight() == feedback.maximumHeight()
         expected = gui.QtGui.QImage(pixels, width, height, width * 3,
                                     gui.QtGui.QImage.Format_RGB888)
         expected = gui.QtGui.QPixmap.fromImage(expected).scaled(
             image.size(), gui.QtCore.Qt.KeepAspectRatio, gui.QtCore.Qt.SmoothTransformation)
         assert image.pixmap().toImage() == expected.toImage()  # No burnt-in text/background.
+    # Age/status updates must not rescale the same snapshot or resize its bands.
+    before = [(label.pixmap().cacheKey(), label.size())
+              for label in (window.video, window.depth_video)]
+    window.node.get_clock = lambda: SimpleNamespace(
+        now=lambda: SimpleNamespace(nanoseconds=101_100_000_000))
+    window._refresh_video()
+    gui.QtWidgets.QApplication.processEvents()
+    assert "Age 2.10s" in window.rgb_feedback.text()
+    assert [(label.pixmap().cacheKey(), label.size())
+            for label in (window.video, window.depth_video)] == before
     center = gui.QtCore.QPointF(window.video.contentsRect().center())
     mapped = gui.image_click(center, window.video, width, height)
     assert abs(mapped.x() - width / 2) <= 4 and abs(mapped.y() - height / 2) <= 4
@@ -628,6 +641,72 @@ def test_live_edit_discards_already_completed_old_preview_reply(window):
     assert window.node.yolo_enabled
 
 
+def _completed_preview(rgb, depth):
+    return {"rgb": bytes(rgb) * 16, "depth_rgb": bytes(depth) * 16,
+            "width": 4, "height": 4, "stamp_ns": 100_000_000_000,
+            "depth_stamp_ns": 100_000_000_000, "sequence": 1, "preview_mode": "all",
+            "metadata": {"count": 0, "detections": [], "geometry_sources": ["mask"]}}
+
+
+def test_preview_swaps_completed_rgb_depth_pair_after_all_overlays(window):
+    old = _completed_preview([10, 20, 30], [40, 50, 60])
+    pending = _completed_preview([70, 80, 90], [100, 110, 120])
+    window.node.last_view = old
+    window._refresh_video()
+    old_images = [label.pixmap().toImage() for label in (window.video, window.depth_video)]
+    overlay_started, finish_overlay = threading.Event(), threading.Event()
+
+    def slow_overlay(view, _options):
+        view["rgb"] = bytes([130, 140, 150]) * 16
+        overlay_started.set()
+        assert finish_overlay.wait(timeout=3)
+        view["depth_rgb"] = bytes([160, 170, 180]) * 16
+        view["nearby_overlay"] = True
+        return None
+
+    window.node.rviz.compute.side_effect = slow_overlay
+    window._job("preview", lambda: window._preview_with_rviz(lambda: pending, {}))
+    try:
+        assert overlay_started.wait(timeout=3)
+        window._refresh_video()
+        assert window.displayed_view is old and window.node.last_view is old
+        assert [label.pixmap().toImage()
+                for label in (window.video, window.depth_video)] == old_images
+    finally:
+        finish_overlay.set()
+    completed = window.job_results.get(timeout=3)
+    assert completed[2] is None
+    window.job_results.put(completed)
+    window._refresh_video()
+    assert window.displayed_view is window.node.last_view is completed[1]
+    assert window.displayed_view["nearby_overlay"]
+    assert pending["rgb"] == bytes([70, 80, 90]) * 16  # Worker owns its view dictionary.
+    for label, color in ((window.video, (130, 140, 150)),
+                         (window.depth_video, (160, 170, 180))):
+        assert label.pixmap().toImage().pixelColor(0, 0).getRgb()[:3] == color
+
+
+@pytest.mark.parametrize("binding", ["arm_epoch", "_camera_generation"])
+@pytest.mark.parametrize("stage", ["during_overlay", "queued"])
+def test_changed_source_discards_preview_before_display(window, binding, stage):
+    pending = _completed_preview([70, 80, 90], [100, 110, 120])
+
+    def invalidate(*_args):
+        setattr(window.node, binding, getattr(window.node, binding) + 1)
+
+    if stage == "during_overlay":
+        window.node.rviz.compute.side_effect = invalidate
+    window._job("preview", lambda: window._preview_with_rviz(lambda: pending, {}))
+    completed = window.job_results.get(timeout=3)
+    assert completed[2] is None
+    if stage == "queued":
+        invalidate()
+    window.job_results.put(completed)
+    window._refresh_video()
+    assert window.displayed_view is None and window.node.last_view is None
+    window.node.rviz.publish.assert_not_called()
+
+
 def test_yolo_off_cancels_pending_live_update(window):
     window.yolo_toggle.setChecked(True)
     window.inputs["confidence"].setText("0.9")
@@ -722,11 +801,12 @@ def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, 
         window.node.show_selected_pose.assert_called_once_with(candidate, view["stamp_ns"], 1)
         assert "platform_reference XYZ" in window.video_status.text()
         for feedback in (window.rgb_feedback, window.depth_feedback):
-            assert "FROZEN SELECTION" in feedback.text()
-            assert "Y / height: 80.00 mm" in feedback.text()
-            assert "platform_reference XYZ [mm]: +10.00, +20.00, +100.00" in feedback.text()
-            assert "CAM normal" in feedback.text()
-        assert "100 accepted / 2 rejected" in window.depth_feedback.text()
+            assert "Frozen · #0 part" in feedback.text()
+            assert "80.0 × 32.0 mm" in feedback.text()
+            assert "Y / height: 80.00 mm" in feedback.toolTip()
+            assert "platform_reference XYZ [mm]: +10.00, +20.00, +100.00" in feedback.toolTip()
+            assert "CAM normal" in feedback.toolTip()
+        assert "100 accepted / 2 rejected" in window.depth_feedback.toolTip()
         window._select_detection(center)
         assert window.selected_pose_result is None and window.frozen_view is None
         window.node.clear_selected_pose.assert_called()

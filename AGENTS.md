@@ -1776,6 +1776,15 @@ ROI/insets, the floor-based sampling circle, clearance checks, pick pixels/posit
 model calls, schemas and controller motion unchanged. Do not fit item tilt, use
 tool standoff as height, rewrite operator artifacts or restart running processes.
 
+Rule 240 keeps Item Teach preview image buffers private until detection and all
+available nearby overlays finish. Commit the completed RGB/depth pair together
+on the GUI thread after settings and camera/source generation checks; retain the
+previous completed snapshot with its original age while processing. Refresh image
+pixmaps only for changed buffers, selection or pane size. Use compact fixed-height
+status bands with detailed tooltips/status, source-ID-only nearby labels and no
+long image legends or bin/inset captions. Preserve all geometric overlays, depth
+filter decisions, 1 Hz scheduling, production priority and source invalidation.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

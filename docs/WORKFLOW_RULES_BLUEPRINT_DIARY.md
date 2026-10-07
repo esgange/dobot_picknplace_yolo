@@ -9672,6 +9672,49 @@ Never use a floating “latest” version in an issue, script, or deployment not
   edits. Live operation with corrected sizing remains unverified until the
   operator relaunches and checks it; synthetic validation does not establish that.
 
+### 2026-10-07 — Rule 240: display complete Item Teach snapshots with compact feedback
+
+- The operator withdrew the circle-removal request and instead requested less
+  obstructive text and one image refresh with all overlays already present.
+  The detection/ROI worker previously assigned `last_view` before the second
+  native teaching/RViz step replaced its RGB/depth buffers with nearby overlays.
+  The GUI's independent refresh timer could therefore display both intermediate
+  and completed states of the same observation.
+- Keep preview results private through both steps. Queue the completed view to
+  the existing GUI job slot, then commit its RGB/depth pair on the GUI thread
+  under the camera invalidation lock. Check the settings revision and captured
+  arm/camera generations, including changes after computation but before the
+  queued result is consumed. Preserve the previous completed inference snapshot
+  and its original source age while processing. Never re-scale/reassign the same
+  pixmap just because age/status changed; buffer changes, selection and resizing
+  still refresh it. Keep production priority, original observation binding, one
+  worker, 1 Hz scheduling, explicit simulation and source invalidation unchanged.
+- Replace wrapping feedback paragraphs with fixed-height bands showing result
+  count/state and age, plus selected-item dimensions. Move detailed settings,
+  poses, RViz feedback and legends into band tooltips; retain the status area and
+  diagnostics. Remove long nearby captions, maximum-height labels, bottom image
+  legends and bin/inset captions. Retain small colored source IDs, the exact
+  yellow/orange circles, red obstacle pixels/X, bin/inset borders, sampling
+  circles and size colors. All filter decisions and numeric evidence are unchanged.
+  Shared native rendering also gives simulation and requested debug images the
+  shorter labels. Supersede only the verbose display parts of rules 43/235.
+- Validation: all **617 Item Perception tests** pass in an isolated ROS domain.
+  Regression coverage holds a worker between RGB and depth overlay completion,
+  verifies the old pair remains visible until both new buffers are complete, and
+  rejects source changes during processing or while replies are queued. Existing
+  selection, simulation, native overlay/geometry, depth-filter and worker transport
+  checks pass. Layout checks retain pixel/click mapping at both tested window
+  sizes and verify that age-only updates do not resize bands or replace pixmaps.
+  The GUI suite was repeated after the final caption shortening. Production
+  flake8, whitespace checks and an offscreen synthetic layout inspection pass.
+- Update AGENTS and both READMEs; controller behavior/FSM is unchanged. Canonical
+  installed GUI and native-overlay Python modules resolve to source, so no build
+  or driver-library replacement is required. Manually relaunch Item Teach/Detect
+  to activate the new parent/worker code and explicitly re-arm when ready. No live
+  process was restarted or robot commanded. Preserve .env, calibration, teaching
+  profiles/model weights, runtime_teach and unrelated RViz edits. Live visual
+  operation after activation remains for the operator to verify.
+
 ### Future entry template
 
 ```text

@@ -484,7 +484,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             layout.addWidget(heading)
             feedback = QtWidgets.QLabel()
             feedback.setTextFormat(QtCore.Qt.PlainText)
-            feedback.setWordWrap(True)
+            feedback.setWordWrap(False)
+            feedback.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+            feedback.setFixedHeight(feedback.fontMetrics().lineSpacing() * 3 + 16)
             feedback.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
             feedback.setStyleSheet(
                 "background: #111; color: white; padding: 8px 12px; font-weight: bold;")
@@ -994,9 +996,15 @@ class ItemTeachWindow(QtWidgets.QWidget):
         return options
 
     def _preview_with_rviz(self, action, options):
+        binding = self.node.arm_epoch, self.node._camera_generation
         view = action()
         if view is not None:
+            # Keep both image buffers private until every native overlay is ready.
+            view = dict(view)
             view["rviz"] = self.node.rviz.compute(view, options)
+            if binding != (self.node.arm_epoch, self.node._camera_generation):
+                return None
+            view["preview_binding"] = binding
         return view
 
     def _start_automatic_preview(self):
@@ -1340,11 +1348,20 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 self.simulation_busy = False
                 self.simulate_button.setEnabled(not self.model_load_reserved)
                 self.simulate_button.setText("Simulate Trigger")
-            if kind != "model" and self.job_revision != self.preview_revision:
-                # Even already-completed, queued replies may belong to settings
-                # edited after inference finished. Never resurrect their overlays.
-                value = error = None
-                self.node.last_view = None
+            with self.node.condition:
+                obsolete_preview = (
+                    kind in ("preview", "roi") and value is not None
+                    and "preview_binding" in value
+                    and value["preview_binding"] != (
+                        self.node.arm_epoch, self.node._camera_generation))
+                if kind != "model" and (
+                        self.job_revision != self.preview_revision or obsolete_preview):
+                    # Queued replies can become obsolete before the GUI consumes them.
+                    value = error = None
+                    self.node.last_view = None
+                elif kind in ("preview", "roi") and value is not None:
+                    # Commit the completed pair under the camera invalidation lock.
+                    self.node.last_view = value
             pair = self.model_requested_pair if kind == "model" else None
             if kind == "model" and error is None and pair is not None:
                 try:
@@ -1621,8 +1638,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         frame_note = f"{'STALE ' if age > 0.5 else ''}Frame age {age:.2f}s{suffix}"
         rgb_lines = [title, frame_note, self.rviz_status]
         nearby_legend = ("Nearby: yellow camera-XY radius / orange floor-height limit / "
-                         "red X obstacle"
-                         " | NEAR OK is this check only")
+                         "red X obstacle; full checks in diagnostics")
         if selected or mode == "simulated" or view.get("nearby_overlay"):
             rgb_lines.append(nearby_legend)
         elif mode == "all":
@@ -1709,11 +1725,31 @@ class ItemTeachWindow(QtWidgets.QWidget):
             painter.end()
         if settings_note:
             rgb_lines.append(settings_note)
-        self.rgb_feedback.setText("\n".join(rgb_lines))
+        if selected:
+            compact_title = f"Frozen · #{selected['source_index']} {selected['class_name']}"
+        elif mode == "simulated":
+            compact_title = f"Simulated {batch.status} · {batch.valid_count} poses"
+        elif self.pending_simulation is not None or self.simulation_busy:
+            compact_title = "Simulating…"
+        elif self.preview_settings_paused:
+            compact_title = "Preview paused"
+        elif mode == "all":
+            compact_title = f"Snapshot · {len(metadata['detections'])} detections"
+        elif mode == "filtered":
+            compact_title = f"Snapshot · {len(metadata['candidates'])} picks"
+        elif mode == "roi":
+            compact_title = "YOLO OFF · bin ROI"
+        else:
+            compact_title = "Waiting for preview" if self.node.yolo_enabled else "Live RGB"
+        compact_lines = [compact_title, f"Age {age:.2f}s"]
+        if selected:
+            compact_size = (f"{measurement['length_mm']:.1f} × {measurement['width_mm']:.1f} mm"
+                            if measurement else "Size unavailable")
+            compact_lines.append(compact_size)
+        self.rgb_feedback.setText("\n".join(compact_lines))
+        self.rgb_feedback.setToolTip("\n".join(rgb_lines))
         self.rgb_feedback.show()
-        self.video.setPixmap(QtGui.QPixmap.fromImage(image).scaled(
-            self.video.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation,
-        ))
+        self._present_image(self.video, image, view, selected, "rgb")
         depth_pixels = view.get("depth_rgb")
         if depth_pixels:
             depth = QtGui.QImage(depth_pixels, view["width"], view["height"], view["width"] * 3,
@@ -1743,11 +1779,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 painter.end()
             if settings_note:
                 depth_lines.append(settings_note)
-            self.depth_feedback.setText("\n".join(depth_lines))
+            compact_depth = [compact_title, f"Depth age {depth_age:.2f}s"]
+            if selected:
+                compact_depth.append(compact_size)
+            self.depth_feedback.setText("\n".join(compact_depth))
+            self.depth_feedback.setToolTip("\n".join(depth_lines))
             self.depth_feedback.show()
-            self.depth_video.setPixmap(QtGui.QPixmap.fromImage(depth).scaled(
-                self.depth_video.size(), QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation))
+            self._present_image(self.depth_video, depth, view, selected, "depth_rgb")
         else:
             self.depth_feedback.clear()
             self.depth_feedback.hide()
@@ -1755,6 +1793,15 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.depth_video.setText(
                 "Registered depth unavailable for this RGB snapshot.\n"
                 + view.get("depth_error", "Waiting for synchronized RGB/depth and CameraInfo."))
+
+    def _present_image(self, label, image, view, selected, field):
+        """Refresh a completed image only for a new buffer, selection or pane size."""
+        key = (id(view), id(view[field]), id(selected), label.width(), label.height())
+        if getattr(label, "snapshot_key", None) == key and label.pixmap() is not None:
+            return
+        label.setPixmap(QtGui.QPixmap.fromImage(image).scaled(
+            label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+        label.snapshot_key = key
 
     def closeEvent(self, event):
         self.closing = True
