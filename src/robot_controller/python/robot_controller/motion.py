@@ -291,6 +291,7 @@ class PickExecutor:
                                      if placement_bridge is not None
                                      else f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
+                relax_pick_fingers=not close_on_pick,
                 return_terminal_pose=True, pickup_retract_pose=plan[4].matrix, **origin)
         indices = [index for index in range(start_index, len(plans) + 1)
                    if session is None or index == start_index
@@ -385,6 +386,7 @@ class PickExecutor:
                 (*upward, next_transit, next_plan[1], next_plan[2], next_plan[3]),
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
+                relax_pick_fingers=not close_on_pick,
                 pick_settling_sec=settling, return_terminal_pose=True,
                 pickup_retract_pose=next_plan[4].matrix,
                 confirmed_start_pose=return_origin)

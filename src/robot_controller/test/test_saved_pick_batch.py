@@ -346,6 +346,8 @@ def test_fresh_batch_skips_home_before_or_after_placement_finishes(slow):
         dict(outputs=0, inputs=OPEN, currentCommandId=3),
         dict(outputs=0, inputs=OPEN, currentCommandId=4),
         dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+        dict(outputs=1 << 12, inputs=1, currentCommandId=7),
     ])
     with pytest.raises(OperationCanceled, match='Reached fresh'):
         run._pick(batch, bridge)
@@ -355,6 +357,8 @@ def test_fresh_batch_skips_home_before_or_after_placement_finishes(slow):
     assert node.managed.session.batch is batch
     assert node.managed.session.attempts[0].identifier == 'fresh:1'
     assert node.managed.session.attempts[0].state == 'HELD'
+    assert [(r.index, r.status) for name, r in rig.requests if name == 'DO'] == [
+        (2, 0), (14, 0)]
     assert [a.state for a in old.attempts] == ['PLACED', 'CANCELED', 'CANCELED']
     if not slow:
         assert rig.order[:6] == [name for name, _ in rig.requests[:6]]

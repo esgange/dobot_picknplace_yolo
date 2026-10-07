@@ -10007,6 +10007,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   live operation remains unverified. Preserve unrelated RViz edits, .env,
   calibration, teaching/model files and runtime_teach.
 
+### 2026-10-07 — Rule 248: relax pickup fingers when Grip on Pick is OFF
+
+- The operator requested suction priority at final pick for both combinations
+  with `grip_onpick=false`, independently of `use_grip`. Keep fingers OPEN during
+  approach, then send DO2 OFF followed by DO14 OFF at confirmed final-pick idle,
+  before settling/probing. If eligible DI1 interrupts descent first, perform the
+  same relaxation after the existing pickup Stop acknowledgement, before lifting.
+  This supersedes rules 190/219 only where fingers stayed OPEN until the held
+  lift's halfway event. Do not claim measured pneumatic performance from software.
+- Both OFF states require ordered service acceptance and fresh output feedback.
+  Preserve suction DO13 ON/exhaust DO1 OFF, legal output pairs, fresh robot state,
+  cancellation and Pause. Acquisition stays active through response/output waits;
+  intervening DI1 still requests independent Stop. Reconcile only confirmed OFF
+  states, reject a reverted finger output during relaxation, and block further
+  motion on rejection, timeout, missing feedback or vacuum loss. Supervised output
+  waits propagate faults immediately and use FeedInfo sequence, independently of
+  joint/status revision counts. Existing unrelated output callers are unchanged.
+- Relax once per attempt. Keep the one taught final-pick settling interval with
+  no extra dwell, including `pick_settling=0`. A no-DI1 pickup probe preserves the
+  relaxed fingers. At 50% of the first successful held lift, `use_grip=true` still
+  CLOSEs; false stays relaxed, with its existing OFF events reaffirming that state.
+  Grip on Pick ON still closes after pickup, independently of Use Grip, then
+  relaxes at 50% if Use Grip is OFF. Suction remains ON during acquisition/lifting.
+- Apply the flag to initial and missed-candidate acquisition queues, including
+  unheld Continue, return continuation and queued Auto Run placement-to-pick.
+  Preserve early-pickup measured return origin, source/ledger/drop handling,
+  failed-attempt release, next-entry OPEN, held Continue, later placement reopen,
+  motion geometry/rates/CP, detection counts, all Stop gates and schemas/settings.
+  Log `pickup_fingers_relaxed` with arrival versus accepted-pickup-Stop trigger.
+- Validation: **1,338 controller tests pass** in isolated ROS domain 81 with
+  offscreen Qt and synthetic services/feedback. New tests cover final arrival
+  before settling, early/settling/probe acquisition, DI1 during a pending DO reply
+  or echo, zero settling, unchanged Grip on Pick ON behavior, both transport
+  settings and retry propagation, output rejection/timeout, vacuum/finger faults,
+  Stop, Pause during either output and the real independent feedback-counter gate.
+  Existing probe-ledger and direct Auto Run batch tests now confirm relaxation.
+  Scoped flake8 (100-column limit, existing E128 style excluded) and whitespace
+  checks pass. No physical robot command, process restart or live trial was run.
+- Update AGENTS, root/controller READMEs and FSM review/diagram/guard table.
+  Regenerated HTML/PDF contain nine diagrams/nine pages, verified against source
+  SHA-256 `5ccd0c21601c51b4a27e2a7352b0c288db74885a1646dfe74b143f5420efc2a4`;
+  visually reviewed the Pick page. Installed controller Python resolves to source,
+  so no driver replacement or rebuild is needed. Operator restart of the Robot
+  Controller when safe activates this change; live verification remains pending.
+  Preserve unrelated RViz edits, `.env`, calibration, teaching/model artifacts
+  and `runtime_teach/`. Scoped commit/push follows the standing workflow.
+
 ### Future entry template
 
 ```text

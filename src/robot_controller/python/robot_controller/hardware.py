@@ -1214,7 +1214,8 @@ class DobotTransport:
                     before_suction=None, pick_settling_sec=0.0,
                     require_suction_reset=False, return_terminal_pose=False,
                     confirmed_start_pose=None, preserve_outputs=False, placement=None,
-                    placement_bridge=None, pickup_retract_pose=None):
+                    placement_bridge=None, pickup_retract_pose=None,
+                    relax_pick_fingers=False):
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction,
@@ -1223,6 +1224,8 @@ class DobotTransport:
                     or not math.isfinite(pick_settling_sec) or pick_settling_sec < 0)
                 or (pick_settling_sec and not stop_on_suction)
                 or (require_suction_reset and not stop_on_suction)
+                or type(relax_pick_fingers) is not bool
+                or (relax_pick_fingers and not stop_on_suction)
                 or (pickup_retract_pose is not None and (
                     not stop_on_suction or not self._valid_rigid_matrix(pickup_retract_pose)))
                 or (placement_bridge is not None and (
@@ -1268,6 +1271,7 @@ class DobotTransport:
                               and not bool(initial.feed["digital_input_bits"] & 1))
         suction_armed = False
         probe_started = False
+        fingers_relaxed = False
         self.pending_motion_outputs = {}
         self.moving = True
         started = time.monotonic()
@@ -1316,6 +1320,35 @@ class DobotTransport:
                 planned_outputs={} if placement is not None else self.pending_motion_outputs,
                 suction_armed=suction_armed)
 
+        def relax_fingers(trigger):
+            nonlocal fingers_relaxed
+            if not relax_pick_fingers or fingers_relaxed:
+                return
+            confirmed_off = set()
+
+            def observe(sample):
+                progress(sample)
+                bits = sample.feed["digital_outputs"]
+                if not bits & (1 << 12) or bits & 1:
+                    raise FeedbackFailure(
+                        "Pickup finger relaxation requires suction ON/exhaust OFF")
+                if any(bits & (1 << (channel - 1)) for channel in confirmed_off):
+                    raise FeedbackFailure("Pickup finger output changed after relaxation")
+
+            # Only reached from confirmed final-pick idle or accepted pickup
+            # Stop. Keep acquisition live through both response/output waits.
+            # Adopt OFF only after fresh feedback, including an intervening DI1.
+            for channel in (2, 14):
+                observe(self._ready_snapshot())
+                self.output(channel, False, progress=observe)
+                expected_outputs[channel] = False
+                confirmed_off.add(channel)
+            observe(self._ready_snapshot())
+            fingers_relaxed = True
+            self.node.events.record(
+                "INFO", "pickup_fingers_relaxed", "Fingers relaxed; suction preserved",
+                batch=batch_name, trigger=trigger)
+
         def finish_suction_interrupt():
             self.node.events.record(
                 "INFO", "motion_batch_interrupted", batch_name,
@@ -1340,9 +1373,14 @@ class DobotTransport:
                         f"Motion-timed DO{channel} mismatch after suction Stop")
             self.node.expected_outputs.update(expected_outputs)
             self.pending_motion_outputs = {}
-            return_origin = self.pose_from_snapshot(sample)
             if pickup_retract_pose is not None:
                 self.defer_pickup_drop(pickup_retract_pose, sample)
+            relax_fingers("pickup_stop_accepted")
+            sample = self._ready_snapshot()
+            if (not sample.suction_present
+                    or not sample.feed["digital_outputs"] & (1 << 12)):
+                raise FeedbackFailure("Suction lost after acquisition Stop")
+            return_origin = self.pose_from_snapshot(sample)
             self.node.events.record(
                 "INFO", "pickup_stop_acknowledged",
                 "Pickup accepted; queue return without stationary confirmation",
@@ -1471,6 +1509,11 @@ class DobotTransport:
                     stable_since, settle_origin = now, snapshot
                 elif not idle:
                     stable_since, settle_origin = None, None
+                if idle and relax_pick_fingers and not fingers_relaxed:
+                    relax_fingers("final_pick_arrival")
+                    # Recheck DI1, actual pose and the newly confirmed output
+                    # state before settling/probe completion. No extra dwell.
+                    continue
                 if (stable_since is not None
                         and now - stable_since >= terminal_stable_sec
                         and (terminal_stable_sec == 0
@@ -1614,19 +1657,37 @@ class DobotTransport:
                           description="50 ms exhaust pulse ON/OFF and released DI1")
         self.node.expected_outputs.update({1: False, 2: False, 13: False, 14: True})
 
-    def output(self, channel, active, *, require_clear=False):
+    def output(self, channel, active, *, require_clear=False, progress=None):
         snapshot = self._ready_snapshot()
         if require_clear and snapshot.feed["digital_input_bits"] & 1:
             raise FeedbackFailure("Unexpected DI1 before output change")
         before = snapshot.sequence
-        self.call("DO", index=channel, status=int(active), time=0)
+        self.call("DO", index=channel, status=int(active), time=0,
+                  **({"progress": progress} if progress is not None else {}))
         mask = 1 << (channel - 1)
-        self.monitor.wait(
-            lambda sample: sample.sequence > before
-            and bool(sample.feed["digital_outputs"] & mask) == active,
-            OUTPUT_FEEDBACK_TIMEOUT_SEC, cancel=self.node.cancel_requested,
-            pause=self._pause_requested, require_enabled=True,
-            description=f"DO{channel} output feedback")
+        if progress is not None:
+            # The generic feedback predicate retries FeedbackFailure. Acquisition
+            # supervision must instead propagate a vacuum/output fault immediately.
+            deadline = time.monotonic() + OUTPUT_FEEDBACK_TIMEOUT_SEC
+            while True:
+                self.node.raise_if_cancelled()
+                sample = self._ready_snapshot()
+                progress(sample)
+                if (sample.sequence > before
+                        and bool(sample.feed["digital_outputs"] & mask) == active):
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise FeedbackFailure(f"Timed out waiting for DO{channel} output feedback")
+                self.monitor.wait_next(sample.sequence, min(1., remaining),
+                                       cancel=self.node.cancel_requested)
+        else:
+            self.monitor.wait(
+                lambda sample: sample.sequence > before
+                and bool(sample.feed["digital_outputs"] & mask) == active,
+                OUTPUT_FEEDBACK_TIMEOUT_SEC, cancel=self.node.cancel_requested,
+                pause=self._pause_requested, require_enabled=True,
+                description=f"DO{channel} output feedback")
         self.node.expected_outputs[channel] = active
         self.pending_motion_outputs.pop(channel, None)
 

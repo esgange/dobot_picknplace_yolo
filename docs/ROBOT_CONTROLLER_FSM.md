@@ -1,5 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Pickup relaxation review: **2026-10-07**, baseline **`d9dac01`** plus rule **248**.
+With `grip_onpick=false`, both `use_grip` combinations approach with fingers OPEN,
+then confirm DO2 OFF and DO14 OFF at final-pick arrival before settling/probing.
+Early DI1 instead triggers the existing accepted Stop, followed by relaxation
+before the held lift. Keep suction ON/exhaust OFF and acquisition monitoring
+through both service-response and fresh-output waits. An intervening DI1 still
+requests Stop; no lift/probe may precede both output confirmations. Preserve the
+single taught settling interval and strict output/feedback/cancellation gates.
+Fingers remain relaxed through the probe and the first half of the held lift;
+`use_grip=true` then closes at 50%, while false stays relaxed. Grip on Pick ON,
+failed release/retry, held Continue and later placement reopening are unchanged.
+No settings, schemas or physical commissioning are added.
+
 Tray travel review: **2026-10-07**, baseline **`b645b5b`** plus rule **247**.
 Shared Tray Detect travel queues joint-target MovL followed by absolute MovJ to
 the identical six saved angles, with the same rates and no timed I/O on either.
@@ -219,6 +232,8 @@ Independent finger settings review: **2026-10-06**, baseline **`757c79c`** plus
 rule **219**. `grip_onpick=true` closes immediately after confirmed suction pickup
 regardless of `use_grip`. At 50% of the first held lift, `use_grip=false` relaxes
 DO2/DO14 OFF; `use_grip=true, grip_onpick=false` closes; both true stays closed.
+Rule 248 moves initial relaxation earlier for both `grip_onpick=false`
+combinations: final-pick arrival or accepted early pickup Stop, before any lift.
 Held Pause preserves outputs; Continue restores CLOSE or RELAX according to
 `use_grip` before direct Tray Detect travel, including an interrupted lift event.
 After valid tray pose/depth and placement validation, suction-only transport
@@ -396,6 +411,7 @@ held lift to pre-pick using MovLIO; clearance uses MovL with no finger event.
 Rule 219 supersedes the dependency of immediate pickup closing on use_grip and
 adds first-lift RELAX for suction-only transport. Motion rates, Stop acknowledgement
 and direct Tray Detect completion remain unchanged for manual Pick and Auto Run.
+Rule 248 starts RELAX at arrival/early pickup Stop when grip_onpick is disabled.
 
 Auto Run review: **2026-09-30**, baseline **`fcc4f72`** plus diary rule **189**.
 One counted action owns Pick/Place and final Home. For every next normal cycle,
@@ -831,13 +847,13 @@ flowchart TD
     Plan --> Entry["Entry park_transit → pre-pick → final approach"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
     Sense -->|Yes| Acquire["Send Stop; await acceptance only; fresh joint pose; mark HELD"]
-    Sense -->|No| Settle["Joint-FK target + RobotStatus idle + executed queue: taught pick_settling"]
+    Sense -->|No| Settle["Final joint-FK / idle / executed queue; grip_onpick OFF: confirm RELAX; taught pick_settling"]
     Settle -->|DI1 HIGH| Acquire
     Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 50% toward pre-pick at approach rates; fingers unchanged"]
     Probe -->|DI1 HIGH| Acquire
     Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; log settling + upward-lift check without DI1"]
-    Acquire --> Fingers["grip_onpick: close now, independent of use_grip"]
-    Fingers --> HeldReturn["Pre-pick lift: 50% relax if use_grip OFF, otherwise delayed close; clearance → Safety Z exit → MovL then MovJ to identical Tray Detect joints; no intermediate wait"]
+    Acquire --> Fingers["grip_onpick ON: CLOSE; OFF: confirm RELAX if not already done"]
+    Fingers --> HeldReturn["Pre-pick lift: at 50%, use_grip OFF stays/becomes relaxed; ON closes/stays closed; clearance → Safety Z exit → MovL then MovJ to Tray Detect; no intermediate wait"]
     HeldReturn -->|Final MovJ execution, raw joints, idle and grip confirmed| Success["HOLDING / SUCCESS at Tray Detect"]
     HeldReturn -.-> DropGate["At measured pre-pick height: arm drop detection; no queue split; start fresh LOW timer"]
     DropGate -->|DI1 LOW for 500 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
@@ -911,6 +927,13 @@ flowchart TD
   toward the subsequent 500 ms debounce. Source/HELD context and output guards
   remain active. Monitor crossing the height within the same blended queue;
   Pause parking may complete that rise and direct Stop retains its pending gate.
+- `grip_onpick=false` sends DO2 OFF then DO14 OFF at confirmed final-pick idle,
+  before settling/probing, or after an earlier pickup Stop acceptance. Both
+  `use_grip` settings take this path. Keep suction ON/exhaust OFF; DI1 remains
+  supervised during response and output waits. Only fresh confirmed OFF states
+  update the expected outputs; failures/cancellation prevent lift or probe.
+  Relax once per attempt, retaining neutral fingers throughout the probe and
+  first half of the held lift. Missed retries reopen on the next entry as before.
 - `grip_onpick=true` sends DO14 OFF then DO2 ON, with output confirmation before
   lifting, independently of `use_grip`. With `use_grip=false`, the first held lift
   uses MovLIO `{0,50,2,0}` then `{0,50,14,0}`: both finger outputs OFF at 50%.
@@ -918,6 +941,7 @@ flowchart TD
   `{0,50,2,1}`: CLOSE at 50%. Both true keeps CLOSE, with no lift I/O. Clearance
   never has finger I/O. Suction remains ON in every combination. Held Continue
   restores the chosen transport state before direct travel from safety parking.
+  Both false remains relaxed; the 50% OFF events simply reaffirm the arrival state.
 - Successful Pick queues its two lifts, Cartesian Safety Z exit, then
   joint-target MovL then MovJ to identical saved Tray Detect joints. Both use taught travel
   rates. The exit keeps measured X/Y/attitude and Z at max(Home Z, current height).
@@ -1576,6 +1600,7 @@ Names below are relative to `/robot_controller/`.
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
 | Pick nearby-depth eligibility (perception) | No usable median-depth point inside/on the physical outer bin and camera-XY radius reaches the saved floor-relative height difference from the candidate surface; evaluate platform Z=0 beneath each point along camera Z; exclude standoff; schema-13 defaults 150/60 mm and three frames; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
+| Pickup finger relaxation (internal) | grip_onpick=false; confirmed final-pick idle or accepted eligible acquisition Stop; DO2 OFF then DO14 OFF with fresh echoes before probing/lifting; suction ON/exhaust OFF and DI1 supervision through both waits; no extra settling interval |
 | Tray arrival pair (internal) | Admit MovL then MovJ to identical taught angles/rates, waiting only for ordered service acceptance; preserve outputs/Stop/drop gates; no midpoint arrival or mismatch decision; final MovJ execution/idle and all raw joints within ±1° required before completion or detection |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |

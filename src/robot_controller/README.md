@@ -1262,7 +1262,13 @@ DO1 exhaust OFF then DO13 ON, EXHAUST is DO13 OFF then DO1 ON, and NEUTRAL is
 both OFF. Timed state changes preserve that order, and feedback showing either
 opposing pair ON together faults the motion. `grip_onpick` controls immediate
 pickup closing independently of `use_grip`, which selects finger holding during
-transport. Every candidate is presented with OPEN and no DI12 wait.
+transport. Every candidate approaches with OPEN and no DI12 wait. With
+`grip_onpick=false`, confirm DO2 OFF then DO14 OFF at final pick arrival, before
+settling/probing. An earlier suction pickup performs the same relaxation after
+Stop acceptance, before the held lift. This applies independently of `use_grip`.
+Keep suction ON/exhaust OFF throughout; monitor DI1 during both service and
+output-feedback waits. No extra settling interval is added. Each transition
+requires acceptance and fresh output feedback; faults or Stop block further work.
 
 The first `candidate_1_home_to_pick` group contains three control points: item
 X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with SUCK
@@ -1288,8 +1294,9 @@ distance from actual settled Z to saved pre-pick Z**, preserving measured XY and
 attitude. A 40 mm remaining retract gives a 20 mm lift. Keep all finger/vacuum
 outputs unchanged and eligible DI1 monitored throughout the transition, admission
 and lift. DI1 HIGH takes the same acquisition Stop path and starts the normal held
-lift/Tray Detect queue from the actual stopped pose; gripper behavior begins only
-after acquisition. Stop and Pause still pre-empt, retaining the original source.
+lift/Tray Detect queue from the actual stopped pose. With Grip on Pick OFF, fingers
+remain relaxed throughout the probe. Stop and Pause still pre-empt, retaining the
+original source.
 
 Only fresh feedback confirming the probe queue ID, endpoint and idle state without
 DI1 latches FAILED; no second settling interval is added. With no upward distance
@@ -1339,15 +1346,18 @@ On success, `grip_onpick=true` enters CLOSE immediately after pickup Stop
 acknowledgement and confirmed suction, regardless of `use_grip`. Both output
 calls require acceptance and output feedback before the lift queue.
 
-| `use_grip` | `grip_onpick` | After pickup | At 50% of first lift to pre-pick |
+| `use_grip` | `grip_onpick` | At final arrival / pickup | At 50% of first held lift to pre-pick |
 | --- | --- | --- | --- |
 | true | true | CLOSE | Keep closed |
-| true | false | Keep open | CLOSE |
+| true | false | RELAX at arrival or early pickup Stop | CLOSE |
 | false | true | CLOSE | RELAX (DO2 OFF, DO14 OFF) |
-| false | false | Keep open | RELAX (DO2 OFF, DO14 OFF) |
+| false | false | RELAX at arrival or early pickup Stop | Keep relaxed (both OFF reaffirmed) |
 
 The halfway event uses MovLIO: CLOSE is `{0,50,14,0}` then `{0,50,2,1}`;
 RELAX is `{0,50,2,0}` then `{0,50,14,0}`. Clearance has no finger event.
+For both Grip on Pick OFF combinations, DO2/DO14 stay OFF until that halfway
+event, giving suction priority during settling and initial lifting. A missed
+attempt never closes; the next candidate's existing approach reopens the fingers.
 Held Pause preserves outputs; Continue restores CLOSE for `use_grip=true` or
 RELAX for false before direct Tray Detect travel, including when Pause canceled
 the first lift's event. Suction remains on throughout.

@@ -154,7 +154,14 @@ def test_executor_retains_active_ledger_until_probe_result_and_retracts_from_act
 
     rig.transport.move_batch = move_or_record
     rig.transport.sensor = lambda *_a: True
-    rig.transport.output = lambda *_a, **_k: pytest.fail("Gripper moved before held lift")
+    relaxed = []
+
+    def relax(channel, active, *, progress):
+        assert states == ["ACTIVE"] and not active
+        relaxed.append(channel)
+        progress(rig.monitor.snapshot(require_enabled=True))
+
+    rig.transport.output = relax
     height = .112 if acquire else .120
     rig.steps = iter([*rig.settle, dict(z=height, command_id=8, outputs=VACUUM,
                                       running=int(acquire), di1=acquire)])
@@ -162,6 +169,7 @@ def test_executor_retains_active_ledger_until_probe_result_and_retracts_from_act
         [plan], taught, tray_target=tray_target(), session=session, check=lambda _i: None,
         return_home=lambda **_k: pytest.fail("Unexpected Home during this pickup"))
     assert outcome["picked"] is acquire
+    assert relaxed == [2, 14]
     assert states == ["ACTIVE", "HELD" if acquire else "FAILED"]
     assert len(returns) == 1
     targets, kwargs = returns[0]

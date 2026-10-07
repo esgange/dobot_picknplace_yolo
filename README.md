@@ -703,7 +703,10 @@ confirmed. Successful Pick ends at Tray Detect after its two lifts and Safety Z 
 exhausted Pick uses the same exit transit and exact Home. Successful travel preserves
 SUCK and grip behavior; exhausted returns use EXHAUST then
 NEUTRAL. `grip_onpick=true` closes immediately after confirmed pickup, independently
-of `use_grip`. At 50% of the first successful lift to pre-pick, `use_grip=false`
+of `use_grip`. With `grip_onpick=false`, relax DO2/DO14 OFF at confirmed final
+pick arrival, or after an early pickup Stop, while leaving suction ON. Keep
+fingers relaxed through settling/probing and the first half of the held lift.
+At 50% of the first successful lift to pre-pick, `use_grip=false`
 relaxes both finger outputs; `use_grip=true, grip_onpick=false` closes them.
 With both flags true they stay closed. Clearance has no timed finger event.
 After valid tray pose/depth, `use_grip=false` reopens before placement motion,
