@@ -368,11 +368,24 @@ def test_tray_depth_response_binds_pose_settings_sources_and_capture_time():
     assert point == pytest.approx([.13, .24, .25])
 
 
+@pytest.mark.parametrize("pick_fraction", [.2, .5, .8])
+def test_tray_coverage_is_independent_of_saved_pick_quality(pick_fraction):
+    profile = settings()
+    profile["quality"]["minimum_depth_fraction"] = pick_fraction
+    before = json.dumps(profile, sort_keys=True)
+    sampling = sampling_from_item(profile, 30., 40.)
+    assert sampling == {"x_mm": 30., "y_mm": 40., "diameter_mm": 30.,
+                        **profile["quality"], "minimum_depth_fraction": .3}
+    assert json.dumps(profile, sort_keys=True) == before
+
+
 @pytest.mark.parametrize("accepted,total,valid", [
-    (1, 1, True), (2, 4, True), (2, 5, False), (0, 0, False),
-    (0, 10, False), (6, 5, False), (100, 200, True), (100, 201, False)])
+    (1, 1, True), (2, 4, True), (2, 5, True), (0, 0, False),
+    (0, 10, False), (6, 5, False), (3, 10, True), (299, 1000, False),
+    (387, 1056, True), (316, 1056, False), (317, 1056, True)])
 def test_tray_depth_response_uses_fraction_without_fixed_count(accepted, total, valid):
     result, config, sampling = response_fixture()
+    assert sampling["minimum_depth_fraction"] == .3
     result.placement.accepted_samples = accepted
     result.placement.total_samples = total
     if valid:

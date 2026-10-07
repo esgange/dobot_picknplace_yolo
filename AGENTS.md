@@ -1815,6 +1815,15 @@ response ordering and direct Stop during testing, waiting and return. No new
 service, schema, setting, executor or automatic restart/retry; update diary/FSM
 and regenerate its HTML/PDF. Validate with synthetic feedback only.
 
+Rule 243 sets controller tray placement coverage to a fixed 30%, independently
+of Item Teach's saved pick percentage. Place Item, Auto Run and Preview use the
+shared placement sampling builder; preserve all other saved quality fields and
+the physical diameter. Send the explicit fraction through the existing v3
+contract so native sampling, provider validation and controller admission agree.
+Keep full-circle denominator, tray containment, range/MAD filtering, freshness,
+empty/zero-valid rejection and retries. No profile/interface change or operator
+artifact rewrite; update diary/FSM and regenerate HTML/PDF.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -473,14 +473,17 @@ Do not run it while Tray Teach is Armed. An unarmed teaching GUI may still previ
 
 `GetTrayPose.sample_placement_depth=true` enables a `PlacementDepthRequest` containing
 positive tray-local X/Y in mm, the physical Item Teach depth sampling **diameter**,
-and its exact quality settings. The provider takes fresh synchronized RGB/depth
+and quality settings. Controller Place Item, Auto Run and Preview requests use a
+fixed **30%** `minimum_depth_fraction`, independent of the saved Item pick threshold;
+all other quality settings come from Item Teach unchanged. The provider takes
+fresh synchronized RGB/depth
 after the trigger, performs the usual single tray inference, and samples the
 requested target using original registered-depth pixels and their own intrinsics.
 It uses the same median/MAD acceptance as Item Pick, excludes outside-tray samples,
-and requires the saved `minimum_depth_fraction` of all original circle pixels
-to remain valid (default 50%). There is no fixed sample-count minimum; empty
-footprints and zero valid pixels fail. Item Teach displays the shared threshold
-as **Minimum valid depth (%)**. Invalid targets, clipped footprints or
+and requires the requested `minimum_depth_fraction` of all original circle pixels
+to remain valid. There is no fixed sample-count minimum; empty
+footprints and zero valid pixels fail. Item Teach's **Minimum valid depth (%)**
+continues to control item picking only. Invalid targets, clipped footprints or
 insufficient valid percentage are rejected. The saved
 plane remains unchanged. A depth failure returns ERROR without killing/disarming
 the native worker/provider. Ordinary pose requests keep depth optional.

@@ -879,8 +879,10 @@ displayed on a 0–100 scale (greater than zero) and stored as
 after range/MAD filtering and item-mask inclusion; the denominator is every
 original depth pixel in the physical sampling circle. Empty footprints and
 zero valid pixels fail. There is no additional fixed pixel-count minimum.
-Tray placement uses this same saved percentage, with tray containment instead
-of the item mask. Plane-based tray pose measurement itself needs no live depth.
+Tray placement uses a separate fixed 30% requirement, with tray containment
+instead of the item mask, while retaining the saved diameter and other quality
+settings. Item picking keeps its saved percentage. Plane-based tray pose
+measurement itself needs no live depth.
 Schema 11 removed `minimum_depth_samples`; current schema 13 additionally requires
 the nearby depth radius and height. Open older profiles in Item Teach, review the
 retained percentage and the proposed 150/60 mm defaults for absent new fields,

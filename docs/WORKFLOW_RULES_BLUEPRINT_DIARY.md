@@ -9818,6 +9818,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No processes were restarted; live commissioning remains pending. Preserve .env,
   calibration/teaching/model/runtime artifacts and unrelated RViz edits.
 
+### 2026-10-07 — Rule 243: independent 30% tray placement depth coverage
+
+- The operator requested lowering tray placement's required valid-depth fraction
+  from 50% to 30%, after an observation retained 387/1056 pixels (36.6%). That
+  observation now passes the coverage check; other depth/pose checks still apply.
+- The shared placement request builder sets `minimum_depth_fraction` to 0.3 for
+  controller Place Item, Auto Run and Preview. Validate the original Item quality
+  first, copy all other saved fields and physical sampling diameter unchanged,
+  and leave Item picking's saved fraction and operator artifacts intact. No new
+  setting, schema, endpoint or message layout is introduced.
+- Send 0.3 through the existing typed v3 request and echoed diagnostics so native
+  sampling, tray provider validation and controller admission use exactly the
+  same threshold. Keep the full-circle denominator, tray containment, range/MAD
+  filtering, empty/zero-valid rejection, source/freshness/synchronization checks,
+  median surface Z, retry limits and motion/I/O behavior.
+- Validation: **1,301 tests pass** across the complete controller suite and
+  targeted tray native-depth/service suites, with isolated ROS domain 81 and
+  offscreen Qt. Cover exact/below-30% boundaries, 387/1056 acceptance, invalid
+  counts, 360p/720p native sampling, unchanged stricter explicit requests,
+  GUI/headless provider parity and preservation of different saved pick fractions.
+  Scoped flake8 and whitespace checks pass; correct one existing test indentation
+  warning in the already-touched tray request test file.
+- Update AGENTS, root/Item/Tray/controller READMEs and FSM review, placement guard
+  and Auto Run diagram. Regenerate all nine offline HTML/PDF diagrams and verify
+  their source hash. Installed placement Python resolves to source, so no build
+  is required. The operator must restart controller and Preview to load this
+  policy; existing tray providers already honor the request's fraction. No live
+  process was restarted, robot commanded, perception armed or driver replaced.
+  Live placement verification remains pending. Preserve .env, all station/teach/
+  model/runtime artifacts and unrelated RViz edits.
+
 ### Future entry template
 
 ```text

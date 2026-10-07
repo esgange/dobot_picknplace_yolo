@@ -890,10 +890,14 @@ does not synchronize `runtime_teach/`; compare file hashes before switching mode
 Headless requires production profiles, whereas GUIs can retain incomplete drafts
 and unsaved edits.
 
-Depth coverage uses **Minimum valid depth (%)** in Item Teach (default 50%).
-Item picks and tray placement depth apply this percentage after range/outlier
-filtering over the full physical sampling circle, with no fixed pixel-count
-minimum. Schema 11 removes the count field; open older Item profiles, review and
+Item pick depth coverage uses **Minimum valid depth (%)** in Item Teach (default
+50%). Tray placement uses a separate fixed **30%** requirement for Place Item,
+Auto Run and Preview. Both apply their percentage after range/outlier filtering
+over the full physical sampling circle, with no fixed pixel-count minimum.
+Placement retains the saved sampling diameter and all other quality settings.
+Restart the controller and Preview process to load the 30% change; no teaching
+file or interface migration is needed. Schema 11 removes the count field; open
+older Item profiles, review and
 Save before controller reload or manual headless deployment. Restart Tray
 Teach/Detect and Robot Controller together for `/tray_detect/get_tray_pose_v3`.
 

@@ -1,5 +1,15 @@
 # Robot Controller — Finite State Machine
 
+Tray placement coverage review: **2026-10-07**, baseline **`f4021e1`** plus rule
+**243**. Place Item, Auto Run and Preview request a fixed **30%** valid-depth
+fraction, independent of the saved Item pick threshold. Retain the saved physical
+sampling diameter, range, freshness, synchronization and request deadline. Tray
+native sampling, provider validation and controller admission use the same
+explicit request value. Denominator remains every original sampling-circle
+pixel; numerator remains tray-contained, range/MAD-accepted pixels. Empty or
+zero-valid footprints still fail. No profile/interface change, live artifact
+write, motion/I/O or retry change is introduced.
+
 Recovery suction-test review: **2026-10-07**, baseline **`f781c29`** plus rule
 **242**. Recover preserves gripper outputs through its existing Stop/clear/enable
 and lift/Home route. At confirmed Home, preserve fingers, confirm exhaust OFF
@@ -251,9 +261,10 @@ its interrupted placement and leaves a replacement at Tray Detect. Preserve
 strict output/source/feedback/reply gates, direct Stop and paused-drop behavior.
 
 Depth coverage review: **2026-10-04**, baseline **`14e4dfd`** plus rule **208**.
-Item schema 11 removes the fixed depth sample-count field. Item poses and tray
-placement require the taught fraction of all original sampling-circle pixels to
-survive containment, range and MAD filtering (default 50%). Empty/zero-valid
+Item schema 11 removes the fixed depth sample-count field. Item poses require the
+taught fraction (default 50%); tray placement now requests a fixed 30% under rule
+243. Both require that fraction of all original sampling-circle pixels to
+survive containment, range and MAD filtering. Empty/zero-valid
 footprints fail. Tray provider and controller validate the same fraction before
 placement admission through `/tray_detect/get_tray_pose_v3`; old endpoints cannot
 satisfy readiness. GUI recovery retains older percentages for explicit review
@@ -1111,7 +1122,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 flowchart TD
     Start["READY: Auto Run quantity and placement target; start elapsed timer"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Pick --> Tray["Linear lifts and exit; MovJ Tray Detect; confirm joints and idle"]
-    Tray --> Observe["Fresh tray pose then placement depth; optional debug RGB/depth; at most 3 complete attempts"]
+    Tray --> Observe["Fresh tray pose then placement depth: at least 30% valid pixels; optional debug RGB/depth; at most 3 complete attempts"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
     Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
     Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
@@ -1513,7 +1524,7 @@ Names below are relative to `/robot_controller/`.
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run direct next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
-| Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the taught percentage of the full sampling circle; empty/zero-valid samples fail; no fixed count floor |
+| Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the placement-specific 30% of the full sampling circle after tray containment/range/MAD filtering; empty/zero-valid samples fail; no fixed count floor; item pick percentage unchanged |
 | Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; DO2 OFF then DO14 ON each accepted and echoed before motion; suction preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with valid parked feedback; recovery suction Pause additionally requires raw DI1 LOW and only retests; during Auto Run, only exhausted-acquisition Pause |

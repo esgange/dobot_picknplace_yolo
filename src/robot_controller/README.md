@@ -333,9 +333,11 @@ the recorded Tray Detect Pose attitude; the offset rotates about that tool's Z.
 Item axes and pick rotation have no effect on placement orientation.
 
 Placement keeps requested X/Y and measures surface Z using the Item Teach depth
-sampling diameter and quality settings. Valid original pixels after range/MAD
-filtering must cover the taught percentage of the full sampling circle (default
-50%); no fixed sample-count threshold remains. Empty samples fail. The detector,
+sampling diameter and quality settings, except placement has its own fixed
+**30%** minimum depth coverage. This applies to Place Item, Auto Run and Preview;
+item picking keeps its saved percentage. Valid original pixels after range/MAD
+filtering must cover at least 30% of the full sampling circle;
+no fixed sample-count threshold remains. Empty samples fail. The detector,
 service and controller apply the same rule. Release Z is surface Z + the explicit
 Item Teach `motion.trayplace_height` in millimetres (rule 184). This placement
 clearance is independent of standoff, pre-pick and retract heights; Preview uses

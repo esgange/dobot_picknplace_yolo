@@ -19,6 +19,7 @@ from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
 from item_perception_yolo.runtime_teach import runtime_teach_catalog, runtime_tray_catalog
 from tray_perception import core, requests
 from tray_perception import documents
+from tray_perception.placement import sampling_from_item
 from test_documents import ready_form
 from test_core import artifact as saved_artifact
 from test_core import camera_info, plane, position, settings
@@ -301,9 +302,10 @@ def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth)
 
     node.snapshot.side_effect = snapshot
     node.native.call = MagicMock(return_value=({
-        "state": "ok", "surface_base": [.12, .13, .24], "accepted_samples": 2,
-        "total_samples": 4, "median_mm": 700., "sigma_mm": 1.}, b""))
-    sample = {"x_mm": 20., "y_mm": 30., "diameter_mm": 30., **QUALITY_DEFAULTS}
+        "state": "ok", "surface_base": [.12, .13, .24], "accepted_samples": 3,
+        "total_samples": 10, "median_mm": 700., "sigma_mm": 1.}, b""))
+    sample = sampling_from_item({"geometry": {"pickdepth_radius": 30.},
+                                 "quality": dict(QUALITY_DEFAULTS)}, 20., 30.)
     responses = []
     for deployment in (False, True):
         node.requests.disarm("Switch synthetic provider")
@@ -319,6 +321,9 @@ def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth)
             placement=PlacementDepthRequest(**sample)), GetTrayPose.Response())
         assert response.success and response.found
         assert response.placement.valid is sample_depth
+        if sample_depth:
+            evidence = json.loads(response.diagnostics_json)
+            assert evidence["placement_sampling"]["minimum_depth_fraction"] == .3
         responses.append(response)
     assert responses[0].batch_id != responses[1].batch_id
     for response in responses:
@@ -705,7 +710,7 @@ def test_controller_capture_matches_saved_debug_and_saving_stays_optional(
     if display:
         node.capture_preview = CaptureMailbox()
     save = MagicMock(return_value={"requested": True, "rgb_path": "rgb.png",
-                                  "depth_path": "depth.png", "error": ""})
+                                   "depth_path": "depth.png", "error": ""})
     monkeypatch.setattr(requests, "save_debug", save)
     arm(backend)
     response = trigger(backend, debug=debug)

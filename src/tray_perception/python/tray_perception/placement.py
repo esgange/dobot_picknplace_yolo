@@ -6,6 +6,7 @@ from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS, validate_qual
 
 
 FIELDS = ("x_mm", "y_mm", "diameter_mm", *QUALITY_DEFAULTS)
+PLACEMENT_MINIMUM_DEPTH_FRACTION = 0.3
 
 
 def validate_sampling(value):
@@ -24,6 +25,8 @@ def sampling_from_message(message):
 
 
 def sampling_from_item(profile, x_mm, y_mm):
-    return validate_sampling({"x_mm": x_mm, "y_mm": y_mm,
-                              "diameter_mm": profile["geometry"]["pickdepth_radius"],
-                              **profile["quality"]})
+    sampling = validate_sampling({"x_mm": x_mm, "y_mm": y_mm,
+                                  "diameter_mm": profile["geometry"]["pickdepth_radius"],
+                                  **profile["quality"]})
+    # Placement has its own coverage requirement; keep the saved pick quality intact.
+    return {**sampling, "minimum_depth_fraction": PLACEMENT_MINIMUM_DEPTH_FRACTION}

@@ -58,17 +58,20 @@ def exercise_placement_depth():
         circle = np.argwhere((xx - width / 2)**2 + (yy - height / 2)**2
                              <= (.005 * focal / .8)**2)
         total = len(circle)
-        for good in (0, total // 2, (total + 1) // 2, total):
-            frame = np.zeros((height, width), dtype="<u2")
-            frame[tuple(circle[:good].T)] = 700
-            result, _ = placement_depth(request, frame.tobytes(), cv2, np)
-            if good / total >= .5:
-                assert result["accepted_samples"] == good and result["total_samples"] == total
-                assert np.allclose(result["surface_base"], [.3, .2, .3])
-                if scale == 1:
-                    assert good < 30
-            else:
-                assert "requires 50.0%" in result["error"]
+        for fraction in (.3, .5):
+            request["sampling"]["minimum_depth_fraction"] = fraction
+            minimum = int(np.ceil(total * fraction))
+            for good in (0, minimum - 1, minimum, total):
+                frame = np.zeros((height, width), dtype="<u2")
+                frame[tuple(circle[:good].T)] = 700
+                result, _ = placement_depth(request, frame.tobytes(), cv2, np)
+                if good / total >= fraction:
+                    assert result["accepted_samples"] == good and result["total_samples"] == total
+                    assert np.allclose(result["surface_base"], [.3, .2, .3])
+                    if scale == 1:
+                        assert good < 30
+                else:
+                    assert f"requires {fraction:.1%}" in result["error"]
 
 
 def test_private_placement_depth_geometry():
