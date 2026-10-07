@@ -9715,6 +9715,55 @@ Never use a floating “latest” version in an issue, script, or deployment not
   profiles/model weights, runtime_teach and unrelated RViz edits. Live visual
   operation after activation remains for the operator to verify.
 
+### 2026-10-07 — Rule 241: matching five-second trigger captures and passive teaching video
+
+- The operator requested clean passive Item Teach/Tray Teach camera views, the
+  same complete overlays as optional debug saves on capture, a five-second hold
+  for both simulation and real controller requests, and matching concise status
+  bands. Supersede the continuous image-overlay/click-inspection display policy
+  and ten-second simulated hold only; retain acquisition, pose filtering and
+  background diagnostic/RViz processing.
+- Both windows display raw RGB and synchronized registered-depth colors between
+  captures. Share a lightweight cached depth renderer without loading native
+  OpenCV into ROS/Qt. Do not hit-test passive pixels against old detections.
+  Preserve explicit Tray Teach corner capture, samples and Create/Cancel flow.
+  A completed Simulate Trigger or real request served by the Armed teaching node
+  supplies its complete annotated RGB/depth pair for five seconds after GUI
+  acceptance, including empty results. New captures replace the pair and restart
+  the hold; clicking RGB resumes sooner. Expiry preserves newer pending results.
+- Real service callbacks hand off only the newest completed result through one
+  bounded thread-safe mailbox. Revalidate profile/source generation at display
+  and throughout the hold; failures or invalidation remove previous captures.
+  GUI requests render regardless of debug saving and use the same image buffers
+  for the display and optional PNGs. The save flag still controls disk writes.
+  No extra inference, worker, executor, request or cross-process image relay is
+  introduced. Headless requests retain debug-only optional image rendering.
+  Tray real/debug rendering now uses the same returned-tray-only geometry as
+  simulation; rejected/nonselected poses remain in diagnostics. Item captures
+  retain their existing size/depth/nearby diagnostic geometry.
+- Share pane headings, typography and fixed three-line status bands: request
+  source/result/pose count, source age/processing time/return-to-live countdown,
+  then detection counts or the first rejection reason. Detailed IDs, poses,
+  settings and rejection evidence stay in tooltips, activity logs and diagnostics.
+  Completed pairs are never replaced by intermediate background overlays. Real
+  captures add no simulated TFs; simulation TFs independently expire after five
+  seconds. Controller request timing, arming and hardware authority are unchanged.
+- Validation: the complete Item Perception and Tray Perception suites pass
+  **873 tests** in an isolated ROS domain, including native worker/geometry and
+  synthetic service tests. Coverage includes real/simulated and empty results,
+  debug on/off buffer identity, complete-result handoff, replacement, five-second
+  expiry, early resume, source invalidation, passive display during processing,
+  and preserved corner capture. The **200 GUI tests** pass again after final band
+  sizing and tooltip polish. Offscreen matching layouts, native Turbo palette
+  parity, production-source flake8 and whitespace checks were also verified.
+- Update AGENTS and root/package READMEs. Controller behavior/FSM is unchanged.
+  Canonical installed Python modules resolve to source; no build or live driver
+  replacement is required. Manually relaunch both teaching windows and workers,
+  then explicitly re-arm when ready. No live process was restarted, perception
+  armed or robot commanded. Preserve .env, calibration, teaching/model/runtime
+  artifacts and unrelated RViz edits. Operator verification of live display and
+  controller-triggered captures remains pending.
+
 ### Future entry template
 
 ```text

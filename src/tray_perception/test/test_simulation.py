@@ -132,13 +132,13 @@ def test_simulation_timer_expires_without_gui_and_replacement_restarts_hold(
         response.tray.id = ""
         view["result"].update(selected=None, detections=[])
     node.simulation.install(response, view)
-    now[0] = 109.999
+    now[0] = 104.999
     assert node.simulation.tick()
     node.simulation.install(response, view)
-    now[0] = 110.
+    now[0] = 105.
     assert node.simulation.tick()
     node.broadcaster.sendTransform.reset_mock()
-    now[0] = 119.999
+    now[0] = 109.999
     assert not node.simulation.tick()
     assert node.simulation.binding is None and node.simulation.expires_at is None
     node.broadcaster.sendTransform.assert_not_called()

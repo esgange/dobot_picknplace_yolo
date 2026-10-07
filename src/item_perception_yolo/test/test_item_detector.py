@@ -757,3 +757,61 @@ def test_roi_native_malformed_result_remains_terminal():
                    {"visible": 1, "reason": ""}, {}):
         with pytest.raises(RuntimeError, match="Malformed ROI"):
             detector.validate_roi_status(status)
+
+
+@pytest.mark.parametrize("debug", [False, True])
+@pytest.mark.parametrize("display", [False, True])
+def test_controller_capture_uses_debug_buffers_without_forcing_disk_save(
+        service_node, monkeypatch, debug, display):
+    from item_perception_yolo.item_preview import CaptureMailbox
+    node, _ = service_node
+    if display:
+        node.capture_preview = CaptureMailbox()
+    view = node.infer.return_value
+    view.update(rgb=bytes([20, 40, 60]) * 4, depth_rgb=bytes([80, 100, 120]) * 4,
+                width=2, height=2, stamp_ns=100_200_000_000, depth_stamp_ns=100_200_000_000)
+    save = MagicMock(return_value={"rgb_path": "rgb.png", "depth_path": "depth.png"})
+    monkeypatch.setattr(detector, "save_pick_debug_pair", save)
+    response = detector.ItemDetectNode._request(node, GetItemPoses.Request(
+        max_candidates=3, profile_sha256="a"*64, save_debug_images=debug,
+        pose_convention=GetItemPoses.Request.POSE_CONVENTION), GetItemPoses.Response())
+    assert response.success
+    assert node.infer.call_args.kwargs["render_images"] is (debug or display)
+    assert save.call_count == int(debug)
+    if display:
+        captured = node.capture_preview.take()
+        assert captured["response"] is response
+        assert captured["view"]["simulation_epoch"] == node.arm_epoch
+        for field in ("rgb", "depth_rgb", "stamp_ns", "depth_stamp_ns"):
+            assert captured["view"][field] == view[field]
+        if debug:
+            saved = save.call_args.args[2]
+            assert (captured["view"]["rgb"], captured["view"]["depth_rgb"]) == \
+                (saved["rgb"], saved["depth_rgb"])
+        assert node.capture_preview.take() is None
+    assert not (node.root / "debug").exists()
+
+
+def test_controller_capture_is_published_only_after_the_request_completes(service_node):
+    from item_perception_yolo.item_preview import CaptureMailbox
+    node, _ = service_node
+    node.capture_preview = CaptureMailbox()
+    entered, release = threading.Event(), threading.Event()
+    view = node.infer.return_value
+
+    def infer(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(3)
+        return view
+
+    node.infer.side_effect = infer
+    thread = threading.Thread(target=lambda: call(node))
+    thread.start()
+    try:
+        assert entered.wait(3)
+        assert node.capture_preview.take() is None
+    finally:
+        release.set()
+        thread.join(3)
+    assert not thread.is_alive()
+    assert node.capture_preview.take()["response"].success

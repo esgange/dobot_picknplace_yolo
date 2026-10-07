@@ -1785,6 +1785,20 @@ status bands with detailed tooltips/status, source-ID-only nearby labels and no
 long image legends or bin/inset captions. Preserve all geometric overlays, depth
 filter decisions, 1 Hz scheduling, production priority and source invalidation.
 
+Rule 241 makes Item Teach and Tray Teach camera panes passive live RGB/depth
+between captures. Show the completed request's annotated pair for five seconds
+after GUI acceptance for both Simulate Trigger and real requests served by that
+teaching node, including empty results. New completed captures replace the pair
+and restart the hold; RGB click resumes sooner. Use the same rendered buffers as
+optional debug saves, independent of the disk-save flag, with one bounded result
+handoff and no extra inference or request. Share compact three-line status bands
+for source/result/count, age/processing/countdown and rejection summary; keep full
+evidence in tooltips/diagnostics. No passive hit-testing against old detections.
+Keep tray corner capture, background diagnostic/RViz work, source invalidation,
+pose filters and controller authority unchanged. Real captures add no simulated
+TFs; simulated TFs expire after five seconds too. Headless rendering still depends
+on debug saving and has no GUI handoff. No cross-process image relay is introduced.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

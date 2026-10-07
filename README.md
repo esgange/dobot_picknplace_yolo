@@ -612,7 +612,7 @@ Production/simulation use distinct post-request frames and a strict-majority
 float32 median for all pose, clearance and image paths. Item-only depth limits
 start at max(500 mm, configured minimum); tray limits stay unchanged.
 Review these changed measurements and frame settings explicitly before Save.
-Debug-disabled production skips rendering; fresh active controller status suspends
+Debug-disabled headless production skips rendering; fresh active controller status suspends
 new Item Teach background jobs. Source validation still reads/verifies contents.
 See the [capture and timing contract](src/item_perception_yolo/README.md#schema-13-capture-and-request-scheduling)
 for deployment/restart and measurement details.
@@ -621,18 +621,22 @@ To inspect this check, Item Teach overlays both RGB and registered depth:
 solid yellow = radius at the item surface, dashed orange = the height limit
 above it, red depth points/X = blocking obstacles. Small labels show only the
 detection ID; full measurements and rejection reasons remain in diagnostics.
-Click an item to isolate its check; click again
-to resume the live view. Simulate Trigger and saved `debug/pick_img/` pairs include
-these overlays, including blocked items when no valid poses remain. Enable
+Capture a request to inspect its checks; click RGB to resume passive video.
+Simulate Trigger and saved `debug/pick_img/` pairs include these overlays,
+including blocked items when no valid poses remain. Enable
 **Save item/tray debug RGB/depth** on the controller to save request images.
-The existing 1 Hz teaching snapshot supplies the overlays without another YOLO
-prediction. RGB and depth update together after all overlays finish; the previous
-completed snapshot stays visible while processing. Compact fixed-height status
-bands show the result count and age; hover over them for detailed feedback.
-Restart Item Teach/headless Item Detect after updating their workers.
-The preview uses `pose_candidates` as its acquisition limit and reports how many
-remaining candidates were left unchecked. Clicking an unchecked item measures
-that selected item only. `valid_count` reports validated returned poses, not an
+The request supplies complete overlays without another YOLO prediction.
+Between captures, both teaching windows show clean live RGB/depth
+without masks, borders, axes, circles or labels. Simulate Trigger and actual
+controller requests served by the Armed teaching window display their exact
+completed annotated pair for five seconds, then return to passive video. New
+results replace older captures and restart the hold; click RGB to resume sooner.
+Both windows share compact source/result/count, age/timing/countdown and rejection
+feedback, with full details in tooltips and diagnostics. Debug saving controls
+writing files only; the same request image buffers supply the captured view.
+Restart both teaching windows and their workers to activate these changes.
+Item capture uses `pose_candidates` as its acquisition limit and reports how many
+remaining candidates were left unchecked. `valid_count` reports validated returned poses, not an
 exhaustive count of every potentially usable item in the image.
 
 Item Teach schema 13 provides optional inward clearances for Bin Teach edges
@@ -709,7 +713,7 @@ Edits to confidence, IoU, cap, class selection, dimensions, quality or geometry 
 enabled preview after a 300 ms typing pause, without toggling YOLO. Invalid
 values pause inference with a reason; correcting them resumes it. Old-setting
 results are discarded, and edits disarm without automatically saving or re-arming.
-The view retains all model classes and size failures. Item borders are green
+Background diagnostics retain all model classes and size failures. Item borders are green
 within the taught size tolerance, red outside it, and gray if dimensions or
 plane measurement are unavailable. Green means size-valid, not a validated pose.
 Select the station platform/bin and mask/OBB to measure short-X/width and
@@ -724,27 +728,17 @@ Registered depth and RGB must share their optical frame, dimensions and K.
 Their lens-distortion coefficients may differ: the worker uses both CameraInfo
 models to map the physical sampling circle and RGB mask onto native depth pixels.
 Depth is not resized or interpolated; the original RGB pick center is unchanged.
-Click an item to freeze the exact RGB/depth observation and inspect its pose.
-Class, size, ROI, freshness and MAD depth checks must pass. No newer image/depth
-or TF is substituted. Once that exact pair passes acquisition checks it remains
-valid for the frozen click calculation. The top-left shows
-platform-relative XYZ/yaw and dimensions. A valid click publishes teaching-only
-`base_link -> item_teach_selected_item` at 10 Hz, composed with the platform's
-full tilt/height. This frozen TF is not a live tracked item or a robot command;
-it remains until resuming, changing settings/sources/arming, YOLO OFF, failure or exit.
-Click the image again to resume. Item Teach never launches RViz; use its TF
-display to inspect that frame. It does not publish another `platform_reference`
-authority. Rejected clicks show a reason and publish no selected pose.
-The cyan selection ring follows `pickdepth_radius` (circle diameter in mm),
-projected from platform Z=0 with the same geometry used for depth sampling.
-It may appear elliptical under perspective; no fixed-pixel ring is substituted
-when calibration is unavailable. Edit the diameter, then click an item again.
-Depth mirrors RGB mask shading, size borders, short-X/long-Y axes, pick dots
-and bin ROI through its own calibrated pixel model. Both views freeze together
-on a click; the selected pose is inspected from that exact pair, while
-all item outlines remain visible. Both panes show selection/pose feedback;
-accepted depth points are black and rejected points red. The redundant help
-paragraph above the views is removed. Platform/Bin Teach use the same compact
+Use Simulate Trigger or a controller request served by Armed Item Teach to
+capture the exact RGB/depth result. Class, size, ROI, freshness and MAD depth
+checks must pass before a pose is accepted; no newer image/depth or TF is
+substituted. The returned pair displays for five seconds, then clean passive
+video resumes. Click RGB to resume sooner. Captured geometry includes short-X/
+long-Y axes, pick dots, bin/inset borders and the metric cyan depth-sampling
+circle. Accepted depth points are black and rejected points red. Full pose,
+size and rejection evidence remain in tooltips and diagnostics. Simulated batches
+publish their teaching-only TFs during the same five-second hold; real request
+images add no simulated TFs. No extra platform-reference authority is created.
+Platform/Bin Teach use the same compact
 setup/large-video presentation, with Save/capture visible and extra calibration
 details expandable; their explicit Apply and capture/save workflow is unchanged.
 
@@ -824,7 +818,7 @@ The main controls are **YOLO Detect | Simulate Trigger | Armed**. With a complet
 saved profile, matching loaded model, YOLO ON and a valid station, **Simulate
 Trigger** runs the same fresh RGB/depth/TF candidate pipeline as a real pose request.
 It works with Armed OFF and never advertises a service or commands the robot.
-Both views freeze for **10 seconds after the result is displayed**, then return
+Both views freeze for **5 seconds after the result is displayed**, then return
 to live automatically. A countdown is shown; click RGB to resume sooner. This
 includes empty results and clears the simulated pose guides on expiry.
 The frozen views show only the returned ranked P1…Pn overlays, capped by
@@ -836,8 +830,8 @@ Item Teach does not launch RViz. These frozen poses preserve the platform's full
 tilt/height, replace any clicked-item/batch preview, and stop publishing on resume,
 edits/source changes, arming changes, YOLO OFF or failure/exit. Empty batches
 publish no candidate frames. TF/RViz may briefly retain old frames after stopping.
-Pose/depth/count feedback and ages
-are in the top bands; additional pose details are in Activity. A shortage or zero
+Compact result/count/age/timing feedback is in the top bands; full pose and
+rejection details remain in tooltips and Activity. A shortage or zero
 valid items is explicit. Click RGB again to resume; edits/source changes or YOLO
 OFF cancel old results. The armed service continues acquiring independent fresh
 observations—it never returns this frozen teaching batch.
@@ -935,8 +929,8 @@ corner uses its remaining valid depth samples, even one. The sidebar identifies
 whether the plane has been saved. The saved plane's green outline and P1–P4
 labels are hidden from RGB/depth previews and request images; corner selection
 and depth-sample evidence remain visible during explicit plane capture.
-Click a live tray to read width/X and length/Y, enter the
-desired size filters, and Save Tray Teach as you progress. Plane capture and
+Enter physical width/X and length/Y, save the desired size filters, then
+use Simulate Trigger to inspect the returned tray and its rejection diagnostics. Plane capture and
 measurement need no recorded robot pose. Streams and background preview keep running.
 The saved plane and
 corner points are expressed in `base_link`. Subsequent tray measurements use
@@ -993,9 +987,11 @@ Reopening needs no source Item Teach file. Controller Home remains in the
 controller's Item Teach file. Teaching has no motion commands or placement
 variables. **Simulate Trigger** runs the same fresh observation pipeline as the
 controller-facing service and holds its exact returned RGB/depth result for
-**10 seconds after display**, including empty results. Then live preview resumes
-and the simulated pose clears. Click RGB to resume sooner; armed requests remain
-independent throughout. **Armed ON**
+**5 seconds after display**, including empty results. Then live preview resumes
+and the simulated pose clears. Real controller requests served by Armed Tray
+Teach use the same five-second captured display and replace older captures.
+Click RGB to resume sooner; detection and controller execution never wait for
+the display timer. Passive RGB/depth has no overlays. **Armed ON**
 advertises `/tray_detect/get_tray_pose_v3`; requests supply the saved YAML SHA-256
 and receive one tray or an explicit no-tray result. Settings changes disarm.
 The versioned endpoint carries the placement-depth contract; there is no fallback

@@ -1,13 +1,17 @@
-"""Strict RGB and preview-setting validators; no native runtime imports."""
+"""Read-only preview validation, passive camera display and completed capture feedback."""
 
+import base64
+import math
 import re
+import threading
 import time
 
+import numpy as np
 
 from .preview_protocol import MAX_IMAGE_BYTES
 
 FRAME_MAX_AGE_SEC = 0.5
-SIMULATION_HOLD_SEC = 10.0
+CAPTURE_HOLD_SEC = 5.0
 
 
 def validate_prefix(prefix):
@@ -40,3 +44,87 @@ def frame_from_message(message, prefix, now_ns):
         "width": width, "height": height, "stamp_ns": sec * 1_000_000_000 + nano,
         "received_at": time.monotonic(), "rgb": bytes(message.data),
     }
+
+
+# OpenCV 4.10 COLORMAP_TURBO in RGB order. The GUI never imports native OpenCV.
+_TURBO = np.frombuffer(base64.b64decode(
+    "MBI7MhVDMxhKNBtRNR5YNiFfNyRmOCdtOSpzOi15Oy+APDKGPTWLPjiRPzuXPz6cQECiQUOnQUasQkmxQku1"
+    "Q066RFG/RFTDRFbHRVnLRVzPRV7TRmHWRmTaRmbdRmngRmvjR27mR3HpR3PrR3buR3jwR3vyRn30RoD2RoL4"
+    "RoX6Rof7RYr8RYz9RI/+Q5H+QpT/QZb/QJn/Ppv+PZ7+O6D9OqP8OKX7N6j6Nav4M633Ma/1L7L0LrTyLLfw"
+    "KrnuKLzrJ77pJcDnI8PkIsXiIMffH8ndHsvaHM3YG9DVGtLSGtTQGdXNGNfKGNnIGNvFGN3CGN7AGOC9GeK7"
+    "GeO5GuS2HOa0HeeyH+mvIOqsIuuqJeynJ+6kKu+hLPCeL/GbMvKYNfOUOPSRPPWOP/aKQ/eHRviESviATvl9"
+    "Uvp6Vfp2WftzXfxvYfxsZf1paf1mbf5icf5fdf5cef5Zff9WgP9ThP9RiP9Oi/9Lj/9Jkv9Hlv5Emf5CnP5A"
+    "n/0/of09pPw8p/w6qfs5rPs4r/o3sfk2tPg2t/c1ufY1vPU0vvQ0wfM0w/E0xvA0yO80y+00zew00Oo00uk1"
+    "1Oc11+U12eQ22+I23eA339834d0349s45dk459c56dU569M57NE67s8678068cs68sk69Mc69cU69sM698E6+L45"
+    "+bw5+ro5+7g4+7Y3/LM2/LE2/a41/aw0/qkz/qcy/qQx/qEw/p4v/pst/pks/pYr/pMq/pAp/Y0n/Yom/Icl"
+    "/IQj+4Ei+34h+nsf+Xge+XUd+HIc928a9mwZ9WkY9GYX82MV8mAU8V0T8FsS71gR7VUQ7FMP61AO6k4N6EsM"
+    "50kM5UcL5EUK4kMK4UEJ3z8I3T0I3DsH2jkH2DcG1jUG1DMF0jEF0C8Fzi0EzCsEyioEyCgDxSYDwyUDwSMC"
+    "viECvCACuR4Ctx0CtBsBshoBrxgBrBcBqRYBpxQBpBMBoRIBnhABmw8BmA4BlQ0BkgsBjgoBiwkCiAgChQcC"
+    "gQYCfgUCegQD"), dtype=np.uint8).reshape(256, 3)
+
+
+class CaptureMailbox:
+    """Keep at most one completed service result for the GUI thread to consume."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.pending = None
+
+    def put(self, response, view):
+        with self.lock:
+            self.pending = {"response": response, "view": view}
+
+    def take(self):
+        with self.lock:
+            pending, self.pending = self.pending, None
+            return pending
+
+
+class PassiveCameraView:
+    """Color raw depth once per frame, without inference, calibration or pose reuse."""
+
+    def __init__(self):
+        self.depth_key = self.depth_pixels = None
+
+    def make(self, rgb, depth, now_ns):
+        if rgb is None:
+            return None
+        result = {**rgb, "preview_mode": "passive", "metadata": {}, "depth_rgb": None,
+                  "depth_error": "Waiting for synchronized registered depth"}
+        if (depth is None or (depth["width"], depth["height"]) != (rgb["width"], rgb["height"])
+                or not 0 <= (now_ns - depth["stamp_ns"]) / 1e9 <= .5
+                or abs(depth["stamp_ns"] - rgb["stamp_ns"]) > 100_000_000):
+            return result
+        key = depth["stamp_ns"], id(depth["depth"]), depth["width"], depth["height"]
+        if key != self.depth_key:
+            values = np.frombuffer(depth["depth"], "<u2")
+            if values.size != rgb["width"] * rgb["height"]:
+                return result
+            # Same 200–1000 mm display range as the native tray depth view.
+            scaled = np.clip((values.astype(float) - 200) * 255 / 800, 0, 255).astype(np.uint8)
+            pixels = _TURBO[scaled].copy()
+            pixels[(values < 200) | (values > 1000)] = 0
+            self.depth_key, self.depth_pixels = key, pixels.tobytes()
+        result.update(depth_rgb=self.depth_pixels, depth_stamp_ns=depth["stamp_ns"], depth_error="")
+        return result
+
+
+def configure_status_band(label):
+    from python_qt_binding import QtCore, QtWidgets
+
+    label.setTextFormat(QtCore.Qt.PlainText)
+    label.setWordWrap(False)
+    label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+    label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+    label.setStyleSheet(
+        "background: #111; color: white; padding: 8px 12px; font-weight: bold;")
+    label.ensurePolished()
+    label.setFixedHeight(label.fontMetrics().lineSpacing() * 3 + 20)
+
+
+def capture_status(source, status, count, age, processing_ms, remaining, reason=""):
+    """Use identical concise result/age/countdown wording in both teaching GUIs."""
+    title = f"{source} · {status} · {count} {'pose' if count == 1 else 'poses'}"
+    timing = "Depth unavailable" if age is None else f"Age {max(0., age):.2f}s"
+    timing += f" · {processing_ms:.0f}ms · live in {max(0, math.ceil(remaining))}s"
+    return "\n".join((title, timing, reason))

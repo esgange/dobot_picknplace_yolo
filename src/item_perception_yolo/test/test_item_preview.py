@@ -421,3 +421,34 @@ def test_native_bad_weights_hard_fail(native_paths, tmp_path):
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)
+
+
+def test_passive_camera_uses_raw_rgb_and_fresh_unannotated_depth():
+    import numpy as np
+    from item_perception_yolo.item_preview import PassiveCameraView, _TURBO
+    renderer = PassiveCameraView()
+    rgb = {"width": 4, "height": 2, "rgb": bytes([50]) * 24, "stamp_ns": 100_000_000_000}
+    values = np.array([0, 199, 200, 600, 1000, 1001, 65535, 400], dtype="<u2")
+    depth = {"width": 4, "height": 2, "depth": values.tobytes(), "stamp_ns": rgb["stamp_ns"]}
+    view = renderer.make(rgb, depth, 100_100_000_000)
+    assert view["rgb"] is rgb["rgb"] and view["preview_mode"] == "passive"
+    colors = np.frombuffer(view["depth_rgb"], np.uint8).reshape(-1, 3)
+    assert not colors[[0, 1, 5, 6]].any()
+    assert np.array_equal(colors[2], _TURBO[0])
+    assert np.array_equal(colors[3], _TURBO[127])
+    assert np.array_equal(colors[4], _TURBO[255])
+    assert renderer.make(rgb, depth, 100_100_000_000)["depth_rgb"] is view["depth_rgb"]
+    for bad in (None, {**depth, "stamp_ns": 99_000_000_000}, {**depth, "width": 3},
+                {**depth, "stamp_ns": 100_200_000_000}):
+        assert renderer.make(rgb, bad, 100_300_000_000)["depth_rgb"] is None
+    assert renderer.make(None, depth, 100_100_000_000) is None
+
+
+def test_capture_mailbox_retains_only_the_newest_complete_result():
+    from item_perception_yolo.item_preview import CaptureMailbox
+    mailbox = CaptureMailbox()
+    assert mailbox.take() is None
+    mailbox.put("first", {"rgb": b"old"})
+    mailbox.put("second", {"rgb": b"new"})
+    assert mailbox.take() == {"response": "second", "view": {"rgb": b"new"}}
+    assert mailbox.take() is None

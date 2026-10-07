@@ -20,6 +20,9 @@ def exercise_geometry():
     )
     from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS, inset_bin_roi
     assert cv2.__version__ == "4.10.0"
+    from item_perception_yolo.item_preview import _TURBO
+    assert np.array_equal(_TURBO, cv2.cvtColor(cv2.applyColorMap(
+        np.arange(256, dtype=np.uint8), cv2.COLORMAP_TURBO), cv2.COLOR_BGR2RGB).reshape(256, 3))
     cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
     camera = {"k": [1000., 0., 320., 0., 1000., 240., 0., 0., 1.], "d": [0.] * 5}

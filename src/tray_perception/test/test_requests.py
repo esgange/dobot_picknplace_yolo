@@ -694,3 +694,32 @@ def test_tray_extent_evidence_cannot_return_invalid_geometry(cause):
         value["position"][0] += .1
     with pytest.raises(RuntimeError, match="extent evidence"):
         requests.pose_extents(value)
+
+
+@pytest.mark.parametrize("debug", [False, True])
+@pytest.mark.parametrize("display", [False, True])
+def test_controller_capture_matches_saved_debug_and_saving_stays_optional(
+        backend, monkeypatch, debug, display):
+    from item_perception_yolo.item_preview import CaptureMailbox
+    node, _, _ = backend
+    if display:
+        node.capture_preview = CaptureMailbox()
+    save = MagicMock(return_value={"requested": True, "rgb_path": "rgb.png",
+                                  "depth_path": "depth.png", "error": ""})
+    monkeypatch.setattr(requests, "save_debug", save)
+    arm(backend)
+    response = trigger(backend, debug=debug)
+    assert response.success
+    assert node.preview.call_args.kwargs["visualize"] is (debug or display)
+    assert node.preview.call_args.kwargs["returned_only"] is True
+    assert save.call_count == int(debug)
+    if display:
+        captured = node.capture_preview.take()
+        assert captured["response"] is response
+        assert captured["view"]["trigger_epoch"] == node.requests.epoch
+        if debug:
+            saved = save.call_args.args[2]
+            assert (captured["view"]["overlay"], captured["view"]["depth_overlay"]) == \
+                (saved["overlay"], saved["depth_overlay"])
+        assert node.capture_preview.take() is None
+    assert not (node.root / "debug").exists()

@@ -33,7 +33,9 @@ from .platform_teach_core import (
     rotation_matrix_to_quaternion,
 )
 from .ui_state import load_package_ui_state, write_item_ui_state, write_item_preview_state
-from .item_preview import SIMULATION_HOLD_SEC, validate_prefix
+from .item_preview import (
+    CAPTURE_HOLD_SEC, CaptureMailbox, PassiveCameraView, configure_status_band, capture_status,
+    validate_prefix)
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
@@ -111,6 +113,10 @@ class ItemTeachNode(ItemDetectNode):
     def _on_production_status(self, message):
         self._production_status = (message, time.monotonic())
 
+    def passive_snapshot(self):
+        with self.condition:
+            return self._image, self._depth
+
     def background_suspended(self):
         sample = self._production_status
         if sample is None or time.monotonic() - sample[1] > 1.0:
@@ -157,7 +163,7 @@ class ItemTeachNode(ItemDetectNode):
         # Keep only identity evidence in the timer state, never another image/depth snapshot.
         binding = {"simulation_epoch": epoch,
                    "simulation_profile": tuple(view["simulation_profile"]),
-                   "expires_at": time.monotonic() + SIMULATION_HOLD_SEC}
+                   "expires_at": time.monotonic() + CAPTURE_HOLD_SEC}
         with self.selection_lock:
             if (epoch != self.arm_epoch or not self.yolo_enabled
                     or self.native.failed or self.fatal_error):
@@ -304,6 +310,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.simulation_busy = False
         self.simulation_response = None
         self.simulation_expires_at = None
+        self.capture_source = "Simulated"
+        self.node.capture_preview = CaptureMailbox()
+        self.passive_camera = PassiveCameraView()
         self.selected_pose_result = None
         self.selected_pose_status = ""
         self.last_preview_sequence = None
@@ -443,7 +452,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         toggle_row.addWidget(self.yolo_toggle)
         self.simulate_button = QtWidgets.QPushButton("Simulate Trigger")
         self.simulate_button.setToolTip(
-            "Show a new RGB/depth pair with only the ranked service candidates for 10 seconds, "
+            "Show a new RGB/depth pair with only the ranked service candidates for 5 seconds, "
             "then resume live automatically. Click RGB to resume sooner. "
             "Requires a saved profile and YOLO ON; Armed may be OFF. No robot commands.")
         self.simulate_button.clicked.connect(self._simulate_trigger)
@@ -483,14 +492,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             heading.setObjectName("viewHeading")
             layout.addWidget(heading)
             feedback = QtWidgets.QLabel()
-            feedback.setTextFormat(QtCore.Qt.PlainText)
-            feedback.setWordWrap(False)
-            feedback.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
-            feedback.setFixedHeight(feedback.fontMetrics().lineSpacing() * 3 + 16)
-            feedback.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
-            feedback.setStyleSheet(
-                "background: #111; color: white; padding: 8px 12px; font-weight: bold;")
-            feedback.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Minimum)
+            configure_status_band(feedback)
             feedback.hide()
             layout.addWidget(feedback)
             layout.addWidget(image, 1)
@@ -498,7 +500,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             return feedback
 
         self.rgb_feedback = image_panel(
-            "RGB  /  Bin ROI · item size · click to inspect pose", self.video)
+            "RGB / Item camera", self.video)
         self.depth_video = QtWidgets.QLabel("Depth sampling: select station files and enable YOLO")
         self.depth_video.setAlignment(QtCore.Qt.AlignCenter)
         self.depth_video.setMinimumSize(400, 140)
@@ -507,7 +509,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.depth_video.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
                                        QtWidgets.QSizePolicy.Expanding)
         self.depth_feedback = image_panel(
-            "DEPTH  /  Native pixels · accepted BLACK · rejected RED", self.depth_video)
+            "DEPTH / Item camera", self.depth_video)
         images.setStretchFactor(0, 1)
         images.setStretchFactor(1, 1)
         images.setSizes([560, 560])
@@ -863,7 +865,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Edits update automatically, disarm and require saving before re-arming."
         )
 
-    def _resume_live(self):
+    def _resume_live(self, *, clear_pending_capture=True):
+        if clear_pending_capture:
+            self.node.capture_preview.take()
         self.node.rviz.clear()
         if (self.frozen_view is not None or self.pending_pose is not None
                 or self.pending_simulation is not None or self.simulation_busy):
@@ -881,6 +885,26 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.node.clear_selected_pose()
         self.displayed_view = self.frozen_view = self.selected_detection = None
         self.last_preview_sequence = None
+
+    def _show_capture(self, value, source):
+        response, view = value["response"], value["view"]
+        self._resume_live(clear_pending_capture=False)
+        if not response.success:
+            self.preview_error = response.message
+            self._message(f"{source} capture failed: {response.message}")
+            return
+        self.node.validate_simulation_view(view)
+        if source == "Simulated":
+            self.node.show_simulated_poses(response, view)
+        self.capture_source = source
+        self.simulation_response = response
+        self.frozen_view = {**view, "preview_mode": "simulated"}
+        self.simulation_expires_at = time.monotonic() + CAPTURE_HOLD_SEC
+        self.preview_error = ""
+        self.preview_status = f"{source} {response.status}: {response.message}"
+        for candidate in response.candidates:
+            self._message(self._batch_candidate_text(candidate))
+        self._message(self.preview_status)
 
     def _select_detection(self, point):
         view = self.displayed_view
@@ -1338,6 +1362,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
     def _refresh_video(self):
         if self.closing:
             return
+        # Service callbacks supply completed request images without touching Qt.
+        captured = self.node.capture_preview.take()
         try:
             kind, value, error = self.job_results.get_nowait()
         except queue.Empty:
@@ -1414,7 +1440,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 self.model_load_status.setText("Model loaded; classes verified")
                 self.preview_status = "Model loaded — starting 1 Hz teaching preview"
                 self.auto_preview_pending = True
-                self._message("Model loaded. Preview displays all model classes. "
+                self._message("Model loaded. Trigger a capture to inspect the annotated result. "
                               "Select geometry when both mask and OBB are available.")
                 if pair is not None:
                     self._message(
@@ -1426,27 +1452,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                             "Verified paired model loaded with item teach",
                                             profile=str(pair[0]), profile_sha256=pair[1])
             elif kind == "simulate" and value is not None:
-                response = value["response"]
-                self.node.clear_selected_pose()
-                if response.success:
-                    try:
-                        self.node.show_simulated_poses(response, value["view"])
-                        self.simulation_response = response
-                        self.frozen_view = {**value["view"], "preview_mode": "simulated"}
-                        self.simulation_expires_at = time.monotonic() + SIMULATION_HOLD_SEC
-                        self.preview_error = ""
-                        self.preview_status = f"SIMULATED {response.status}: {response.message}"
-                        for candidate in response.candidates:
-                            self._message(self._batch_candidate_text(candidate))
-                    except (ValueError, OSError) as exc:
-                        self._resume_live()
-                        self.node.last_view = None
-                        self.preview_status = "Simulate Trigger preview rejected: " + str(exc)
-                        self.preview_error = str(exc)
-                else:
-                    self.preview_status = "Simulate Trigger failed: " + response.message
-                    self.preview_error = response.message
-                self._message(self.preview_status)
+                try:
+                    self._show_capture(value, "Simulated")
+                except (ValueError, OSError) as exc:
+                    self._resume_live()
+                    self.preview_error = "Capture rejected: " + str(exc)
+                    self._message(self.preview_error)
             elif kind == "pose" and value is not None and self.frozen_view is not None:
                 self.frozen_view = {**self.frozen_view, "rgb": value["rgb"],
                                     "depth_rgb": value["depth_rgb"]}
@@ -1494,6 +1505,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 if value["preview_mode"] != "roi":
                     self._populate_sources(metadata["geometry_sources"],
                                            self.geometry_source.currentData())
+        if captured is not None:
+            try:
+                self._show_capture(captured, "Controller")
+            except (ValueError, OSError) as exc:
+                self._resume_live(clear_pending_capture=False)
+                self.preview_error = "Capture rejected: " + str(exc)
+                self._message(self.preview_error)
         if self.node.native.failed:
             self.node.clear_selected_pose()
             self._finish_model_load()
@@ -1537,8 +1555,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.armed_toggle.setChecked(False)
         if (self.simulation_expires_at is not None
                 and time.monotonic() >= self.simulation_expires_at):
-            self._resume_live()
-            self.preview_status = "Simulation preview finished after 10 seconds; live view resumed"
+            self._resume_live(clear_pending_capture=False)
+            self.preview_status = "Capture finished after 5 seconds; live passive video resumed"
             self._message(self.preview_status)
         if self.simulation_response is not None:
             try:
@@ -1567,20 +1585,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if suspended:
             self.node.rviz.hold("Production active; background preview suspended")
             self.preview_status = (
-                "Production active: live RGB; annotations/voxels retained with age")
-        view = (frame if suspended and self.frozen_view is None else
-                self.node.last_view if self.node.last_view is not None else frame)
+                "Production active: live video; background RViz refresh suspended")
+        rgb, depth = self.node.passive_snapshot()
+        view = self.passive_camera.make(rgb, depth, self.node.get_clock().now().nanoseconds)
         roi_note = ""
-        if view is not None and self.frozen_view is None:
-            age = (self.node.get_clock().now().nanoseconds - view["stamp_ns"]) / 1e9
-            result_snapshot = view.get("preview_mode") in ("all", "filtered")
-            if age < 0 or (age > 0.5 and not result_snapshot):
-                # Live ROI-only projections must stay fresh. Completed inference is
-                # instead a labelled snapshot: keep its annotations AND source RGB
-                # together even when CPU inference itself takes over 0.5 seconds.
-                # This display-only choice never supplies a pose-service response.
-                view = frame
-                roi_note = "Bin ROI hidden: overlay frame is stale; waiting for fresh projection"
         if self.frozen_view is not None:
             view = self.frozen_view
         if view is not None and view.get("metadata", {}).get("roi_overlay") is not None:
@@ -1615,7 +1623,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         elif mode == "simulated":
             batch = self.simulation_response
             remaining = max(0, math.ceil(self.simulation_expires_at - time.monotonic()))
-            title = (f"SIMULATED {batch.status} — {batch.message} | live in {remaining}s "
+            title = (f"{self.capture_source.upper()} {batch.status} — {batch.message} "
+                     f"| live in {remaining}s "
                      "| click RGB to resume")
         elif self.pending_simulation is not None or self.simulation_busy:
             title = "SIMULATE TRIGGER — acquiring/processing | click RGB to cancel"
@@ -1627,8 +1636,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         elif mode == "roi":
             title = "YOLO OFF — loaded bin ROI"
         else:
-            title = ("YOLO ON — waiting for annotated result" if self.node.yolo_enabled
-                     else "YOLO OFF — RGB view")
+            title = "Live passive video"
         if not selected and mode in ("all", "filtered") and age > 0.5:
             title = "RESULT SNAPSHOT — " + title
             if roi_note == "Loaded Bin ROI":
@@ -1646,12 +1654,16 @@ class ItemTeachWindow(QtWidgets.QWidget):
         batch_lines = []
         if mode == "simulated":
             batch_lines = [f"Frozen teaching batch | {batch.valid_count} valid / "
-                           f"{batch.detected_count} detections | NO ROBOT COMMANDS"]
+                           f"{batch.detected_count} detections"]
             count = len(batch.candidates)
-            batch_lines.append(
-                "RViz TF: base_link → item_teach_candidate_1"
-                + (f"…{count}" if count > 1 else "") + " (frozen)" if count else
-                "RViz TF: no candidate frames (empty batch)")
+            if self.capture_source == "Simulated":
+                batch_lines.append(
+                    "RViz TF: base_link → item_teach_candidate_1"
+                    + (f"…{count}" if count > 1 else "") + " (frozen)" if count else
+                    "RViz TF: no candidate frames (empty batch)")
+            batch_lines.append(f"Batch: {batch.batch_id}")
+            batch_lines.extend(f"#{entry['source_index']}: {entry['reason']}"
+                               for entry in metadata.get("rejected", []))
             if metadata.get("unchecked"):
                 batch_lines.append(f"Nearby unchecked: {len(metadata['unchecked'])} "
                                    "remaining candidates; requested batch is complete")
@@ -1740,13 +1752,14 @@ class ItemTeachWindow(QtWidgets.QWidget):
         elif mode == "roi":
             compact_title = "YOLO OFF · bin ROI"
         else:
-            compact_title = "Waiting for preview" if self.node.yolo_enabled else "Live RGB"
+            compact_title = "Live passive video"
         compact_lines = [compact_title, f"Age {age:.2f}s"]
         if selected:
             compact_size = (f"{measurement['length_mm']:.1f} × {measurement['width_mm']:.1f} mm"
                             if measurement else "Size unavailable")
             compact_lines.append(compact_size)
-        self.rgb_feedback.setText("\n".join(compact_lines))
+        self.rgb_feedback.setText(self._capture_status(view, age) if mode == "simulated"
+                                  else "\n".join(compact_lines))
         self.rgb_feedback.setToolTip("\n".join(rgb_lines))
         self.rgb_feedback.show()
         self._present_image(self.video, image, view, selected, "rgb")
@@ -1782,7 +1795,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             compact_depth = [compact_title, f"Depth age {depth_age:.2f}s"]
             if selected:
                 compact_depth.append(compact_size)
-            self.depth_feedback.setText("\n".join(compact_depth))
+            self.depth_feedback.setText(self._capture_status(view, depth_age)
+                                        if mode == "simulated" else "\n".join(compact_depth))
             self.depth_feedback.setToolTip("\n".join(depth_lines))
             self.depth_feedback.show()
             self._present_image(self.depth_video, depth, view, selected, "depth_rgb")
@@ -1796,12 +1810,23 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _present_image(self, label, image, view, selected, field):
         """Refresh a completed image only for a new buffer, selection or pane size."""
-        key = (id(view), id(view[field]), id(selected), label.width(), label.height())
+        key = (id(view[field]), id(selected), label.width(), label.height())
         if getattr(label, "snapshot_key", None) == key and label.pixmap() is not None:
             return
         label.setPixmap(QtGui.QPixmap.fromImage(image).scaled(
             label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
         label.snapshot_key = key
+
+    def _capture_status(self, view, age):
+        result, response = view["metadata"], self.simulation_response
+        rejected = result.get("rejected", [])
+        note = (f"#{rejected[0]['source_index']}: {rejected[0]['reason']}"
+                if rejected and not response.valid_count else
+                f"{response.detected_count} detected · {len(rejected)} rejected · "
+                f"{len(result.get('unchecked', []))} unchecked")
+        return capture_status(self.capture_source, response.status, response.valid_count,
+                              age, result.get("inference_ms", 0.),
+                              self.simulation_expires_at - time.monotonic(), note)
 
     def closeEvent(self, event):
         self.closing = True

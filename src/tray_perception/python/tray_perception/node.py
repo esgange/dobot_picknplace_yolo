@@ -226,6 +226,10 @@ class TrayTeachNode(Node):
                 "generation": generation, "connection": connection, "camera_context": None,
                 "metric_error": "", "depth_error": ""}
 
+    def passive_snapshot(self):
+        with self.lock:
+            return self.rgb, self.depth
+
     def snapshot(self, *, depth_required=False, view=None, quality=None):
         self.validate_sources()
         quality = QUALITY_DEFAULTS if quality is None else quality

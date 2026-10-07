@@ -31,6 +31,7 @@ def window(tmp_path):
                                status=lambda: {"status": "waiting", "point_count": 0,
                                                "reason": "No camera"}))
     node.simulation = SimpleNamespace(clear=MagicMock(), install=MagicMock())
+    node.passive_snapshot = lambda: (None, None)
     widget = gui.TrayTeachWindow(node)
     widget.timer.stop()
     yield widget
@@ -736,7 +737,7 @@ def live_view(pixel=0):
             "result": {"selected": None, "reason": "No eligible tray", "detections": []}}
 
 
-def test_click_inspection_keeps_live_updates_without_overwriting_dimensions(window):
+def test_passive_click_ignores_hidden_detections_without_overwriting_dimensions(window):
     enable_model(window)
     window.dimensions["length_mm"].setText("222")
     item = {"polygon": [[10, 10], [100, 10], [100, 100], [10, 100]],
@@ -744,15 +745,16 @@ def test_click_inspection_keeps_live_updates_without_overwriting_dimensions(wind
             "length_mm": 200., "width_mm": 100., "reason": "Unselected tray class"}
     window.last_view = {**live_view(), "result": {"detections": [item]}}
     window._click(50, 50)
-    assert window.detail_sample is not None and window.plane_view is None
+    assert window.detail_sample is None and window.plane_view is None
     assert window.dimensions["length_mm"].text() == "222"
-    assert "X/width 100.0 mm × Y/length 200.0 mm" in window.detail_label.text()
+    assert window.detail_sample is None
     view = live_view(45)
+    window.node.passive_snapshot = lambda: (view["rgb"], None)
     window._show_view(view)
     window.node.accept_view.assert_called_once_with(view)
     assert window.last_view is view and not window.canvas.highlight
     assert window.canvas.image.pixelColor(0, 0).red() == 45
-    assert "Last clicked tray" in window.detail_label.text()
+    assert "Last clicked tray" not in window.detail_label.text()
 
 
 def test_prefix_edit_stops_old_preview_and_connect_runs_explicitly(window):
@@ -887,6 +889,7 @@ def test_inline_corners_hold_one_observation_while_background_preview_continues(
     assert window.canvas.image.pixelColor(0, 0).red() == 20
     assert window.last_view["rgb"]["rgb"][0] == 150
     assert window.plane_view is captured and window.points == [[.5, .5]]
+    window.node.passive_snapshot = lambda: (live_view(150)["rgb"], None)
     window.cancel_plane_button.click()
     assert window.plane_view is None and not window.canvas.points
     assert window.canvas.image.pixelColor(0, 0).red() == 150
@@ -925,6 +928,7 @@ def test_plane_create_queues_original_snapshot_and_keeps_existing_plane_until_co
     window._capture()
     assert window.node.plane is original
     window.node.invalidate.assert_not_called()
+    window.node.passive_snapshot = lambda: (live_view(80)["rgb"], None)
     preview.set_result(live_view(100))
     window._tick()
     window.future.result(timeout=2)
@@ -981,8 +985,8 @@ def test_measurement_inspection_needs_no_size_filter_or_copied_position(window, 
     view["result"].update(detections=[item], reason="1 tray(s) measured | Size filter inactive")
     window._show_view(view)
     window._click(50, 50)
-    assert "X/width 100.0 mm × Y/length 200.0 mm" in window.detail_label.text()
-    assert "measured" in window.result_label.text()
+    assert window.detail_sample is None
+    assert window.last_view["result"]["detections"][0]["length_mm"] == 200.
     assert all(field.text() == dimension_text for field in window.dimensions.values())
     with pytest.raises(ValueError, match="complete Tray Teach profile"):
         window._trigger_settings()
@@ -1448,13 +1452,13 @@ def test_simulation_freezes_exact_empty_result_then_resumes_without_arming(
     assert window.simulation_expires_at is None
     now[0] += 20.  # Queue/inference delay must not shorten the displayed hold.
     window._tick()
-    assert window.simulation_expires_at == 130.
-    assert "live in 10s" in window.rgb_status.text()
+    assert window.simulation_expires_at == 125.
+    assert "live in 5s" in window.rgb_status.text()
     assert window.last_view is view
-    assert "Last simulated request: NO_VALID_TRAY" in window.detail_label.text()
-    assert "SIMULATED NO_VALID_TRAY" in window.rgb_status.text()
-    assert "FROZEN" in window.depth_status.text()
-    assert "no returned tray pose" in window.rgb_status.text()
+    assert "Simulated capture: NO_VALID_TRAY" in window.detail_label.text()
+    assert "Simulated · NO_VALID_TRAY" in window.rgb_status.text()
+    assert "Depth unavailable" in window.depth_status.text()
+    assert "no returned tray pose" in window.rgb_status.toolTip()
     window.node.accept_view.assert_not_called()
     window.node.simulation.install.assert_called_once_with(response, view)
     assert not window.armed_toggle.isChecked()
@@ -1464,6 +1468,7 @@ def test_simulation_freezes_exact_empty_result_then_resumes_without_arming(
     window.camera_prefix.blockSignals(False)
     window.node.camera_prefix = "cam"
     window.node.preview = MagicMock(return_value=live_view(60))
+    window.node.passive_snapshot = lambda: (live_view(60)["rgb"], None)
     window.next_preview = 0
     window._tick()
     assert window.future is None and window.simulation_view is view
@@ -1473,10 +1478,10 @@ def test_simulation_freezes_exact_empty_result_then_resumes_without_arming(
     if resume == "click":
         window._click(1., 1.)
     else:
-        now[0] = 129.999
+        now[0] = 124.999
         window._tick()
         assert window.simulation_view is view and window.future is None
-        now[0] = 130.
+        now[0] = 125.
         window._tick()
     assert window.simulation_view is None
     assert window.simulation_expires_at is None
@@ -1499,6 +1504,7 @@ def test_simulated_detail_source_change_revokes_old_target_without_stopping_prev
     assert "invalidated: profile changed" in window.detail_label.text()
     window.node.invalidate.assert_called_with("profile changed")
     replacement = live_view(70)
+    window.node.passive_snapshot = lambda: (replacement["rgb"], None)
     window._show_view(replacement)
     assert window.last_view is replacement and window.canvas.image.pixelColor(0, 0).red() == 70
 
@@ -1518,7 +1524,7 @@ def test_simulation_displays_exact_pose_and_source_edit_resumes_live(window):
     window._simulate_trigger()
     finish_jobs(window)
     assert window.simulation_view is view
-    text = window.rgb_status.text()
+    text = window.rgb_status.toolTip()
     for expected in ("Returned 1 tray", "2 valid / 3", "+250.0, -400.0, +12.0",
                      "+1.00000, +0.00000, +0.00000, +0.00000", "285.0 × 200.0",
                      "tray_teach_simulated_tray", "controller"):
@@ -1543,3 +1549,66 @@ def test_failed_simulation_clears_previous_result_without_restoring_a_pose(windo
     window.node.simulation.install.assert_not_called()
     window.node.simulation.clear.assert_called()
     assert "No fresh calibrated observation" in window.status.text()
+
+
+def test_controller_capture_replaces_old_pair_for_five_seconds_then_live(window, monkeypatch):
+    ready_trigger_window(window)
+    now = [100.]
+    monkeypatch.setattr(gui, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    response = SimpleNamespace(success=True, status="NO_VALID_TRAY", message="No eligible tray",
+                               found=False, detected_count=1, valid_count=0, batch_id="one")
+    view = {**live_view(20), "depth": None, "trigger_binding": {}, "trigger_epoch": 1,
+            "result": {"selected": None, "detections": [
+                {"source_index": 0, "valid": False, "reason": "Tray touches image edge"}],
+                "inference_ms": 120., "reason": "No eligible tray"}}
+    window.node.passive_snapshot = lambda: (live_view(99)["rgb"], None)
+    window.node.capture_preview.put(response, view)
+    window._tick()
+    assert window.simulation_expires_at == 105.
+    assert "Controller · NO_VALID_TRAY · 0 poses" in window.rgb_status.text()
+    assert "Tray touches image edge" in window.rgb_status.text()
+    assert len(window.rgb_status.text().splitlines()) == 3
+    assert window.canvas.image.pixelColor(0, 0).red() == 20
+    window.node.simulation.install.assert_not_called()
+    now[0] = 104.
+    newer = {**view, "overlay": bytes([40]) * 12}
+    window.node.capture_preview.put(response, newer)
+    window._tick()
+    assert window.simulation_expires_at == 109.
+    for value in (105., 108.999):
+        now[0] = value
+        window._tick()
+        assert window.canvas.image.pixelColor(0, 0).red() == 40
+    now[0] = 109.
+    window._tick()
+    assert window.simulation_view is None and window.simulation_expires_at is None
+    assert window.canvas.image.pixelColor(0, 0).red() == 99
+    assert "Live passive video" in window.rgb_status.text()
+    assert window.node.requests.service is None
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_changed_or_failed_controller_capture_cannot_restore_old_tray(window, failed):
+    ready_trigger_window(window)
+    view = {**live_view(20), "depth": None, "trigger_binding": {}, "trigger_epoch": 1,
+            "result": {"selected": None, "detections": [], "inference_ms": 12., "reason": ""}}
+    response = SimpleNamespace(success=True, status="NO_VALID_TRAY", message="Empty",
+                               found=False, detected_count=0, valid_count=0, batch_id="one")
+    window._show_capture({"response": response, "view": view}, "Controller")
+    if failed:
+        response.success, response.message = False, "No fresh depth"
+    else:
+        window.node.requests.validate_view.side_effect = ValueError("Camera changed")
+    window.node.capture_preview.put(response, view)
+    window._tick()
+    assert window.simulation_view is None and window.canvas.image is None
+    assert ("No fresh depth" if failed else "Camera changed") in window.status.text()
+
+
+def test_passive_frame_restored_after_capture_even_if_camera_has_not_advanced(window):
+    raw = live_view(70)["rgb"]
+    window.node.passive_snapshot = lambda: (raw, None)
+    window._show_passive()
+    window.canvas.show_frame(bytes([90]) * 12, 2, 2)  # Corner/trigger capture replaces pixels.
+    window._show_passive()
+    assert window.canvas.image.pixelColor(0, 0).red() == 70

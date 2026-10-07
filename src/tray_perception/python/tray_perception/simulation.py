@@ -5,7 +5,7 @@ import math
 import time
 
 from geometry_msgs.msg import TransformStamped
-from item_perception_yolo.item_preview import SIMULATION_HOLD_SEC
+from item_perception_yolo.item_preview import CAPTURE_HOLD_SEC
 
 
 FRAME = "tray_teach_simulated_tray"
@@ -68,7 +68,7 @@ class TraySimulationPreview:
             self.binding = {key: view[key] for key in (
                 "generation", "trigger_binding", "trigger_epoch", "camera_context")}
             self.transform = transform
-            self.expires_at = time.monotonic() + SIMULATION_HOLD_SEC
+            self.expires_at = time.monotonic() + CAPTURE_HOLD_SEC
             if view["cloud"] is not None:
                 self.node.rviz.accept(view["cloud"])
             self.node.events.record(

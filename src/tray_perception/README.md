@@ -46,20 +46,20 @@ standalone inspection with another explicitly selected calibrated camera.
 Drag the divider between RGB and registered depth to adjust their widths, just
 like Item Teach. Each pane keeps its own status heading and scales the image to
 fit; live updates preserve your chosen split.
-Both camera panes now use Item Teach's black diagnostic band: detection/valid-tray
-counts, frame age, inference time, RViz voxel status and waiting reason, confidence,
-IoU, detection cap and the size-color legend. Depth also shows its own timestamp
-age or unavailable reason. Ages update while inference is busy; observations older
-than 0.5 seconds show **STALE**, with **RESULT SNAPSHOT** on annotated results.
-Settings describe the displayed result's actual request. YOLO OFF and invalid or
-pending settings have explicit status; no inference time is invented for raw RGB.
-Corner capture and simulated requests retain their **CAPTURED/FROZEN** headings.
-These labels add no inference or pose request; restart Tray Teach after rebuilding
-to apply the display update.
+Both teaching windows share compact fixed three-line capture bands: source/result/
+pose count, age/processing time/five-second countdown, then rejection counts or a
+short reason when no pose was returned. Full pose values, batch identity, settings
+and rejection evidence remain in tooltips and request diagnostics.
+Between captures the RGB/depth panes show clean live camera pixels, without
+masks, axes, circles or labels. Passive depth uses the same Turbo palette over
+200–1000 mm, with out-of-range pixels black; this display range is not a pose gate.
+Background inference/RViz diagnostics remain independent. Passive clicks do not
+inspect stale detections from another observation. Explicit four-corner teaching
+still holds its exact captured pair and corner evidence until Create or Cancel.
 
 1. Browse a local YOLO `.pt` model to automatically load it and enable 1 Hz preview when RGB is
    ready. **YOLO Detect ON/OFF** controls inference; OFF retains RGB/depth/voxel
-   preview. Show all model classes under the current confidence, IoU and detection
+   preview. Background diagnostics evaluate all model classes under the confidence, IoU and detection
    cap; checked classes determine pose eligibility. Defaults are 0.25 / 0.70 / 100
    and internal inference size 448; loaded profiles retain their inference size.
    CPU predictions use square 448 × 448 input for new profiles. Existing saved
@@ -129,25 +129,17 @@ to apply the display update.
    Explicit corner capture still shows the draft corners and sample evidence.
    The sidebar reports plane availability and explicitly says **not saved — Save
    Tray Teach** until the plane is written to a profile or loaded from one.
-4. Click a displayed tray to inspect its measured size and acceptance reason.
-   Once the reference plane exists, every fully measurable mask/OBB has a cyan
-   nearest-base corner, red **X / short-edge** arrow, green **Y / long-edge** arrow
-   and edge lengths in mm. Measurements and axes work before dimensions are
-   entered, for unchecked classes, and outside size tolerance; those detections
-   remain ineligible for a production pose. Clicks report that tray's X/width,
-   Y/length and corner XYZ in `base_link`, without changing your expected dimensions.
-   Depth shows the same geometry projected with its own distortion model when
-   available. Missing live depth does not block plane-based RGB measurements.
-   Preview status reports **measured / size filter inactive** when filters are
-   incomplete. If measurements are unavailable, it names the missing calibration,
-   timestamped TF or reference plane instead of only saying no tray was accepted.
-   Ordinary inspection stays live; the last clicked observation is labelled with its age.
-   Its highlight disappears on the next frame, and settings changes invalidate
-   the summary. Corner capture and Simulate Trigger hold the displayed observation;
-   there is no Resume Live button for ordinary inspection.
+4. Complete and save the tray settings, then use **Simulate Trigger** to inspect
+   the returned tray and rejection evidence. Its captured overlay has a cyan
+   nearest-base corner, red X/short-edge and green Y/long-edge arrows with lengths
+   in mm. Depth projects the same geometry through its own distortion model.
+   The pair stays visible for five seconds, then passive video resumes. Click RGB
+   to resume sooner. Passive clicks cannot select a detection from an old frame.
+   Missing optional depth does not block plane-based tray measurements. Full
+   measurement and rejection evidence remains in diagnostics.
    Enter long-side **Length**, short-side **Width**, and one **Tolerance ± (mm)**
    manually. Clicking never overwrites those fields. Missing/invalid dimensions
-   keep detections visible with grey unchecked borders but prevent accepted poses.
+   retain unchecked background measurements but prevent accepted poses.
    Green/red means size pass/fail, independently of class acceptance. Measurements intersect model
    polygons with the saved reference plane, fit a metric enclosing rectangle,
    and check both dimensions against the tolerance. Live depth is not used for
@@ -372,28 +364,35 @@ endpoint before creating its replacement; old callbacks cannot use the new bindi
 single-tray selection and typed response logic locally, even while Armed OFF.
 It never enables the robot or requests controller motion. It requires the exact
 saved profile and YOLO ON. Like Item Teach, the exact RGB/depth observation freezes
-for **10 seconds after the result appears**, then returns to live automatically.
+for **5 seconds after the result appears**, then returns to live automatically.
 Queue/inference time does not reduce this hold. The headings show a countdown;
-**click RGB to resume** sooner. Draw only the returned tray, plus the reference
-plane; rejected or nonselected detection axes never masquerade as returned poses.
-Both pane headings show SIMULATED/FROZEN, original frame age, inference time,
-returned/valid/detected counts, base XYZ in mm, quaternion XYZW, dimensions,
-confidence, batch ID and rejection reasons. An empty successful response freezes
-its empty result for the same 10 seconds and clears the preceding pose. Missing
+**click RGB to resume** sooner. Draw only the returned tray; rejected or nonselected detection axes never masquerade as returned poses.
+The compact bands show source, result, pose count, original frame age, inference
+time, countdown and a rejection summary. Base XYZ, quaternion, dimensions,
+confidence, batch ID and full rejection evidence remain in tooltips/diagnostics. An empty successful response freezes
+its empty result for the same five seconds and clears the preceding pose. Missing
 optional depth is labelled. Each replacement simulation starts its own hold.
 
 The teaching-only `base_link -> tray_teach_simulated_tray` TF and existing pose
 guides hold exactly the response geometry. They refresh their display timestamp
 at 10 Hz; this never recomputes geometry from live robot/camera TF or changes the
 observation timestamp shown in the UI/log. The normal live selected-tray TF stops
-while the result is held. Ten-second expiry, RGB click, another simulation, edits, source/model/hash
+while the result is held. Five-second expiry, RGB click, another simulation, edits, source/model/hash
 changes, YOLO/arming changes, failure and exit clear the simulated pose. The ROS
 timer independently validates its identity and monotonic expiry even if Qt is busy.
 Expiry clears only teaching visualization, preserving arming and request handling. Old TF history can
 remain briefly in RViz after publication stops.
 
-Camera callbacks and armed service requests remain active. A service call always
-uses independent fresh frames and cannot reuse or replace the frozen simulation.
+Camera callbacks and armed service requests remain active. Each service call
+uses independent fresh frames. A real controller request served by Armed Tray
+Teach replaces the captured pair, labelled Controller, for five seconds after
+GUI acceptance. A newer completed request restarts that hold; the controller
+never waits for the display timer. Source/settings changes reject queued and
+held results. Real captures do not install simulated TFs. Display and optional
+debug saving use the same complete returned-tray overlays; rejected and nonselected
+poses are excluded from the images while their evidence remains in diagnostics.
+A single bounded result handoff retains only the newest completed pair. Headless
+requests have no GUI handoff or cross-process image relay.
 Automatic preview inference resumes on expiry or RGB click; retained scene voxels may grey
 while the historical result is held. Ordinary inspection/corner teaching retain
 their existing live scheduling. No extra worker, camera subscription, robot command

@@ -279,6 +279,7 @@ class TrayRequests:
         epoch, generation = self.epoch, self.node.generation
         acquired, view = False, None
         simulated = simulation is not None
+        capture_preview = getattr(self.node, "capture_preview", None)
         request_id = uuid.uuid4().hex
         phase = "validate_request"
 
@@ -313,8 +314,9 @@ class TrayRequests:
             phase = "inference"
             result_view = self.node.preview(
                 preview_settings(settings, self.node.model_metadata), generation=generation,
-                view=view, visualize=simulated or request.save_debug_images, deadline=deadline,
-                returned_only=simulated,
+                view=view, visualize=(simulated or request.save_debug_images
+                                      or capture_preview is not None), deadline=deadline,
+                returned_only=True,
                 **({"depth_quality": sampling} if sampling is not None else {}))
             check()
             self.prepare(path, settings, request.profile_sha256)
@@ -431,6 +433,8 @@ class TrayRequests:
                 self.node.fatal_error = str(exc)
                 self.disarm(str(exc))
         finally:
+            if not simulated and capture_preview is not None:
+                capture_preview.put(response, view)
             if acquired:
                 self.node.work_lock.release()
             self.request_lock.release()

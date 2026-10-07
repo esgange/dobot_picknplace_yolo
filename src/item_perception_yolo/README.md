@@ -62,7 +62,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
 3. Enter a prefix and **Connect RGB**. The loaded model's 1 Hz preview
    starts when ready; **YOLO Detect** stops/resumes it. There is one view;
    the Detect All/Filtered controls, dropdown and Resume Live button are removed.
-   It displays every model class, including size failures. Home and a saved item
+   Camera panes stay passive; background diagnostics still evaluate every model class. Home and a saved item
    profile are not needed for preview. Visible confidence, IoU and detection cap
    apply immediately after a typing pause. First-run fields start at 0.25,
    0.70 and 100; new profiles use internal size 448, loaded ones retain their size.
@@ -105,33 +105,27 @@ ros2 launch item_perception_yolo item_teach.launch.py
    exact selected files and hashes, regardless of other newer calibrations.
    Selection changes stop YOLO, disarm and clear old overlays/TF. Use **Load
    Calibration** after correcting a file, or reselect the bin, to revalidate.
-5. **Click an item** to freeze that exact displayed RGB/depth result, highlight
-   its pick dot with a cyan ring and show its measured **X / width (short side)** and
-   **Y / height (long side)** in millimetres at the top-left. Mask uses its
-   minimum-area pixel rectangle; OBB uses its oriented rectangle. Both use the
-   same height-corrected metric enclosing-rectangle calculation as production:
-   assume each item is parallel to the floor and use the plane through its measured
-   center. Registered depth must pass the existing range, mask, MAD and coverage
-   checks before measurement. Missing/invalid depth leaves the outline visible
-   with unknown size; no floor-plane size is substituted. Class/taught-size failures
-   do not hide available measurements; the existing green-ROI overlap rule remains.
-   The station's hash-validated camera, both CameraInfo models and RGB-time internal TF
-   are required; on-hand also needs RGB-time robot TF no older than one second.
-   Unavailable geometry has an explicit reason, never guessed dimensions.
-   A box-only model remains preview-only without mask/OBB metric measurements.
-   The sole verified mask/OBB output is selected on Load Model; choose explicitly
-   if both are available. Overlapping hits choose the smallest enclosing pixel
-   rectangle, then confidence and frame-local index. Clicks in letterbox margins
-   do nothing. Click the image again to release the frozen selection.
-   No form values are overwritten. Registered depth is displayed alongside RGB;
-   missing or mismatched depth has an explicit reason and blocks size/pose, not RGB.
+5. Use **Simulate Trigger** with a complete saved profile to inspect the exact
+   returned RGB/depth result for five seconds. Real controller requests served by
+   Armed Item Teach use the same captured image buffers and hold. Both pane
+   updates are complete before display, including size/depth/nearby overlays.
+   New results replace older captures and start a new five-second hold; click
+   inside RGB to resume passive video sooner. Passive images contain no overlays
+   and are never hit-tested against an older inference result. Detailed rejection
+   evidence remains in tooltips, the activity log and request diagnostics.
+   Size assumes each item is parallel to the floor and projects its rectangle
+   onto the plane through the measured center. Registered depth must pass range,
+   mask, MAD and coverage checks; no floor-plane size is substituted. Missing
+   geometry/depth blocks poses with an explicit reason. No form fields are
+   overwritten. The separate Bin Teach ROI editor is unchanged.
+
 6. Enter physical item length in `height`, short side in `width`, and choose the
    ±millimetre `tolerance`. A green item rectangle means size within tolerance;
    red means outside tolerance, gray means size not checked (missing measurements
    or dimensions). Green alone does not mean a valid 3D pose. Detections remain
-   visible in all three cases. Fill class/geometry/quality settings to calculate
-   a pose on click. Only the clicked item runs the strict class, size,
-   ROI overlap, center-in-item and MAD depth checks. Accepted depth points are
+   in background diagnostics in all three cases. Complete and save the settings,
+   then trigger a fresh capture to inspect the accepted poses and any rejections.
+   The request applies strict class, size, ROI overlap, center-in-item and MAD checks. Accepted depth points are
    black, rejected points red inside the sampling circle. Blank/invalid required
    fields or failed checks show a reason and publish no selected pose.
    Confidence/IoU are 0–1 (e.g. 0.40/0.35, not 40/35);
@@ -144,7 +138,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
    size fields explicitly disable size checking (gray), never supply guessed values.
    Edits clear old/frozen detections and discard in-flight/queued old-setting
    replies; they always disarm and invalidate saved-profile eligibility. Preview
-   uses all classes; manual poses and production require checked classes.
+   uses all classes; triggered poses require checked classes.
    Other form edits clear the selection/TF and disarm without stopping detection.
 
    Section **4  Item size / pick depth — mm** also contains **Nearby depth radius
@@ -162,9 +156,9 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Rank geometrically eligible poses first, then check
    nearby height one candidate at a time. Skip each blocked candidate and stop
    when `pose_candidates` (or the request's smaller count) have passed. Stop with
-   SHORTAGE/NO_VALID_ITEMS if exhausted. Leave remaining poses unchecked. Clicked
-   inspection checks only the selected item; teaching preview, Simulate Trigger
-   and headless acquisition share the ranked batch logic.
+   SHORTAGE/NO_VALID_ITEMS if exhausted. Leave remaining poses unchecked.
+   Background teaching diagnostics, Simulate Trigger and real acquisition share
+   the ranked batch logic.
    Save/load the exact complete
    item profile, then **Armed ON**
    to advertise `/item_detect/get_item_poses`. OFF removes the service. GUI and
@@ -207,8 +201,9 @@ Native transport is the round-trip residual outside measured native processing;
 it also includes dispatch/scheduling and worker preparation.
 Overlapping/nested stage durations must not be summed as independent costs.
 
-Debug-disabled production skips annotated-image generation and transfer. Teaching,
-simulation and requested debug capture render completed geometry once. Camera-only
+Debug-disabled headless production skips annotated-image generation and transfer.
+Teaching requests, simulation and requested debug capture render completed geometry
+once. Camera-only
 rays/mappings are cached by CameraInfo/dimensions, while per-capture original scene
 geometry remains separate from display voxels. Parsed artifact caches use verified
 file bytes; files and model hashes are still read at validation boundaries. File
@@ -353,23 +348,12 @@ pose preview can satisfy a production request. Headless Item Detect publishes
 none of these topics, remains request-driven, and writes images only for an
 explicit `GetItemPoses.save_debug_images=true` request.
 
-For a valid clicked pose, the top-left shows dimensions and platform-relative
-XYZ/yaw. Item Teach broadcasts `base_link -> item_teach_selected_item` at 10 Hz,
-composing the destination platform's full transform; it never flattens that plane
-or creates a competing `platform_reference` TF publisher. In an independently
-running RViz, add/use the TF display to inspect that child. This is a frozen
-teaching snapshot, not live tracking or a commanded pick target. Its source age
-remains visible; it persists until the image is clicked again, settings/source or
-arming changes, YOLO OFF, native/source failure or exit. ROS TF clients may retain
-previous transforms briefly in their buffers after publication stops.
-Click calculation reuses the exact displayed geometry and synchronized raw
-RGB/depth/TF snapshot, without re-running YOLO or substituting newer sensor data.
-Input freshness checks apply when acquiring the snapshot. Once the exact pair is
-accepted, it remains valid for that frozen click calculation; settings/source
-changes still invalidate it, and the request deadline still bounds native work.
-Only a bounded current/in-flight/selected snapshot is held in memory. The sole
-persistence exception is an explicitly requested controller troubleshooting pair
-described below; there is no continuous image archive.
+Use the triggered result to inspect returned poses and dimensions. Passive
+camera pixels have no selectable detection geometry; old inference cannot be
+hit-tested on a new camera frame. Simulated batch TFs retain the captured platform
+transform and expire with the five-second image hold. Only bounded current,
+in-flight and held observations remain in memory, and only an explicitly checked
+debug request writes images to disk.
 
 ### Simulate Trigger
 
@@ -389,11 +373,10 @@ checks. One action queues behind the current GUI job, with progress shown on the
 button; no repeated clicks or automatic retry. The deadline includes queue time.
 Production/simulated requests are mutually exclusive and report BUSY on overlap.
 
-The successful pair freezes on both views for **10 seconds after display**, then
+The successful pair freezes on both views for **5 seconds after display**, then
 returns to live automatically. Queue/inference time does not consume this hold;
 the headings show a countdown. Click RGB to resume sooner. Each replacement
-simulation starts a new hold; the timer also applies to empty results. Ordinary
-clicked-item inspection keeps its click-to-resume lifetime.
+capture starts a new hold; the timer also applies to empty results.
 The frozen images give pick annotations to **only returned candidates**,
 ranked P1…Pn and capped by `retry.pose_candidates`. Retain their mask shading,
 one green rectangle, X/Y axes, center dot, cyan metric sampling rings, black/red
@@ -418,7 +401,7 @@ and snapshot identity before installing all TFs atomically. While frozen, only t
 broadcast timestamps refresh; their positions/orientations do not follow newer
 images or robot TF. The timer independently checks source/profile, arming epoch,
 YOLO and native/fatal state so invalidation stops publication even if Qt is busy.
-It also stops simulated TF/pose-guide publication after the same 10-second hold
+It also stops simulated TF/pose-guide publication after the same five-second hold
 using monotonic time independently of Qt or ROS clock changes. Expiry clears only
 the teaching visualization, leaving armed services and real candidate batches valid.
 SHORTAGE and NO_VALID_ITEMS are explicit successful outcomes; zero items freezes
@@ -430,9 +413,14 @@ Click RGB to cancel/resume; image margins and status bands do nothing. Settings,
 station/profile/model/arming changes, YOLO OFF or failure invalidate pending and
 frozen results and stop all teaching TFs. A failed request never displays or
 publishes a previous batch as its result.
-An armed real service remains independent and always obtains new observations,
-even while a simulation is frozen. No images are persisted; batch metadata is
-recorded only in the existing bounded package events.
+An armed real service always obtains new observations, even while a capture is
+frozen. Its completed result replaces the captured pair for five seconds, labelled
+Controller. The same buffers are saved when debug is checked; unchecked requests
+still render for the teaching window but create no files. Simulate Trigger never
+saves images. One bounded mailbox hands the newest complete pair to Qt; expiry
+never disarms, delays a service response or changes controller targets. Real
+captures do not install simulated TFs. Headless requests retain their debug-only
+rendering and do not send images to a separately running teaching process.
 
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
@@ -714,21 +702,21 @@ splitter. Both carry mask shading, green/red/gray size borders, centered axes/do
 the loaded green bin ROI, and any configured light-blue pick clearance. Depth
 geometry is projected through its own CameraInfo;
 straight RGB edges are sampled before projection to handle differing distortion.
-Both views freeze on the exact displayed pair when clicked, and that item
-gets a detailed pose inspection (no second inference or newer depth). All other outlines
-stay visible on frozen depth; the sampling circle is cyan, accepted samples black,
-rejected red. Compact fixed-height black bands below each pane's heading show
-result/frozen status and source age, plus dimensions for a selected item. Hover
-over a band for inference settings, pose details, RViz feedback and overlay legends;
-the status area retains errors and inspection details. Long legends, nearby-height
-labels and bin/inset captions are not painted over camera pixels.
-The worker keeps each RGB/depth pair private through detection and nearby-overlay
-rendering. The GUI replaces both panes only after the complete result passes its
-settings and camera/source generation checks. The previous completed snapshot
-remains visible, with its original age, during processing. Age-only updates do
-not rescale unchanged images; new buffers, selection and pane resizing do.
-Masks, axes, bin borders and sampling circles stay on the images. Only image
-clicks select/resume, not status-band clicks; letterbox mapping remains unchanged.
+Both panes normally show raw camera video, including unannotated registered
+depth colored over 200–1000 mm (black outside that display range). This display
+range is independent of pose acceptance. Passive drawing uses NumPy and the
+native Turbo palette without importing OpenCV into ROS/Qt or consuming the worker.
+The background 1 Hz diagnostic/voxel pipeline remains independent of these pixels.
+A completed Simulate Trigger or real request served by this teaching node shows
+the exact annotated RGB/depth pair for five seconds after GUI acceptance. All
+native overlays finish before the pair becomes visible; newer results replace
+both panes together. RGB clicks resume passive viewing, including during controller
+operation. No old background detection is selectable on a newer passive image.
+Item Teach and Tray Teach share fixed three-line bands: source/result/pose count,
+age/processing/countdown, then a rejection summary or the first rejection reason
+for an empty result. Full pose, batch, settings and rejection details stay in
+band tooltips and diagnostics. Only geometric overlays and short labels remain
+on the camera pixels, matching optional debug saves.
 The redundant above-video help/settings text is removed. Missing plane calibration
 does not hide pixel-space depth overlays, but still blocks metric poses/circles/ROI.
 Load/Save stay visible in the header; Activity log expands the bounded
@@ -851,9 +839,8 @@ blocking service request. All native operations are serialized in one worker.
   in diagnostics. These colors describe only this check, not overall pick eligibility.
   Candidates rejected before depth/geometry validation have no nearby result.
   The cyan sampling circle and its black/red MAD samples retain their meaning.
-  Live all-class preview keeps its existing size/class annotations; click an
-  item to isolate this diagnostic on the same frozen observation. Simulate Trigger
-  and requested debug PNG pairs show the same diagnostics. Capped production
+  Passive camera panes have no overlays. Simulate Trigger, real GUI-served
+  requests and their optional debug PNG pairs share the same captured diagnostics. Capped production
   images retain blocked nearby checks, including empty batches, while
   unchecked later candidates receive no annotations of their own. The worker
   explicitly reports their source IDs in `unchecked`; they are neither valid

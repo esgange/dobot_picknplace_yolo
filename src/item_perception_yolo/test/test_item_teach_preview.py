@@ -44,6 +44,8 @@ def window(tmp_path, monkeypatch):
     node.enable_preview = lambda source, yolo, **kw: ItemDetectNode.enable_preview(
         node, source, yolo, **kw)
     node.enable_yolo = lambda settings: ItemDetectNode.enable_yolo(node, settings)
+    node.validate_simulation_view = MagicMock()
+    node.passive_snapshot = lambda: (node.camera_snapshot()[0], None)
     widget = gui.ItemTeachWindow(node)
     widget.timer.stop()
     widget.model.setText(node.model_config["path"])
@@ -260,7 +262,7 @@ def simulation_setup(window):
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_simulated_view_resumes_ten_seconds_after_display(window, monkeypatch, empty):
+def test_simulated_view_resumes_five_seconds_after_display(window, monkeypatch, empty):
     response, view = simulation_setup(window)
     if empty:
         response.candidates = []
@@ -272,11 +274,11 @@ def test_simulated_view_resumes_ten_seconds_after_display(window, monkeypatch, e
     assert window.simulation_expires_at is None  # Inference is still pending for the GUI.
     now[0] += 20.
     finish_model_job(window)
-    assert window.simulation_expires_at == 130.
-    assert "live in 10s" in window.rgb_feedback.toolTip()
+    assert window.simulation_expires_at == 125.
+    assert "live in 5s" in window.rgb_feedback.toolTip()
     window.node.clear_selected_pose.reset_mock()
     window.node.disarm.reset_mock()
-    now[0] = 129.999
+    now[0] = 124.999
     window._refresh_video()
     assert window.frozen_view is not None
     frame = {"width": 2, "height": 2, "rgb": bytes([70]) * 12,
@@ -285,10 +287,10 @@ def test_simulated_view_resumes_ten_seconds_after_display(window, monkeypatch, e
     window.node.last_view = view  # Resume must not put an older annotation back on screen.
     window.node.preview_once = MagicMock()
     window._job = MagicMock()
-    now[0] = 130.
+    now[0] = 125.
     window._refresh_video()
     assert window.frozen_view is None and window.simulation_response is None
-    assert window.simulation_expires_at is None and window.displayed_view is frame
+    assert window.simulation_expires_at is None and window.displayed_view["rgb"] is frame["rgb"]
     assert window._job.call_args.args[0] == "preview"
     window.node.clear_selected_pose.assert_called_once()
     window.node.disarm.assert_not_called()
@@ -309,8 +311,8 @@ def test_simulate_button_reserves_next_slot_and_freezes_only_returned_pair(windo
     assert window.frozen_view["rgb"] == view["rgb"]
     assert window.frozen_view["depth_rgb"] == view["depth_rgb"]
     assert window.simulation_response is response
-    assert "Simulated SHORTAGE" in window.rgb_feedback.text()
-    assert "Simulated SHORTAGE" in window.depth_feedback.text()
+    assert "Simulated · SHORTAGE" in window.rgb_feedback.text()
+    assert "Simulated · SHORTAGE" in window.depth_feedback.text()
     assert "P1 part" in window.rgb_feedback.toolTip()
     assert "100 accepted / 2 rejected" in window.depth_feedback.toolTip()
     window.node.simulate_trigger.assert_called_once()
@@ -414,7 +416,7 @@ def test_simulation_tf_rejection_never_keeps_old_preview(window):
     window._refresh_video()
     finish_model_job(window)
     assert window.frozen_view is None and window.simulation_response is None
-    assert "Simulate Trigger preview rejected" in window.status.toPlainText()
+    assert "Capture rejected" in window.status.toPlainText()
     window.node.clear_selected_pose.assert_called()
 
 
@@ -489,17 +491,18 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
             "width": width, "height": height, "stamp_ns": 99_000_000_000,
             "depth_stamp_ns": 99_050_000_000, "sequence": 1, "preview_mode": "all",
             "metadata": {"detections": [], "inference_ms": 555.}, "nearby_overlay": True}
-    window.node.last_view = view
+    response = SimpleNamespace(success=True, status="NO_VALID_ITEMS", message="No items", batch_id="b",
+                               valid_count=0, detected_count=0, candidates=[])
+    window._show_capture({"response": response, "view": view}, "Controller")
     window.resize(*window_size)
     window.show()
     # Let Qt lay out the fixed status bands, then render at the resulting image size.
     for _ in range(3):
         window._refresh_video()
         gui.QtWidgets.QApplication.processEvents()
-    assert window.rgb_feedback.text() == "Snapshot · 0 detections\nAge 1.10s"
+    assert "Controller · NO_VALID_ITEMS · 0 poses" in window.rgb_feedback.text()
     assert "STALE Frame age 1.10s | processing 555.0ms" in window.rgb_feedback.toolTip()
-    assert "conf 0.25 / IoU 0.7 / cap 100" in window.rgb_feedback.toolTip()
-    assert "Depth age 1.05s" in window.depth_feedback.text()
+    assert "Age 1.05s" in window.depth_feedback.text()
     for feedback, image, pixels in (
         (window.rgb_feedback, window.video, view["rgb"]),
         (window.depth_feedback, window.depth_video, view["depth_rgb"]),
@@ -526,7 +529,7 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
     assert "Age 2.10s" in window.rgb_feedback.text()
     assert [(label.pixmap().cacheKey(), label.size())
             for label in (window.video, window.depth_video)] == before
-    center = gui.QtCore.QPointF(window.video.contentsRect().center())
+    center = gui.QtCore.QRectF(window.video.contentsRect()).center()
     mapped = gui.image_click(center, window.video, width, height)
     assert abs(mapped.x() - width / 2) <= 4 and abs(mapped.y() - height / 2) <= 4
     assert gui.image_click(gui.QtCore.QPointF(0, 0), window.video, width, height) is None
@@ -538,11 +541,12 @@ def test_feedback_uses_top_black_band_without_painting_camera_pixels(window, win
         gui.QtCore.Qt.LeftButton, gui.QtCore.Qt.LeftButton, gui.QtCore.Qt.NoModifier)
     gui.QtWidgets.QApplication.sendEvent(window.rgb_feedback, event)
     clicked.assert_not_called()
-    window.node.last_view = {**view, "depth_rgb": None, "depth_error": "Synthetic missing pair"}
+    window.frozen_view = {**window.frozen_view, "depth_rgb": None,
+                          "depth_error": "Synthetic missing pair"}
     window._refresh_video()
     assert window.depth_feedback.isHidden() and not window.depth_feedback.text()
     assert "Synthetic missing pair" in window.depth_video.text()
-    window.node.last_view = None
+    window._resume_live()
     window._refresh_video()
     assert window.rgb_feedback.isHidden() and not window.rgb_feedback.text()
 
@@ -652,6 +656,8 @@ def test_preview_swaps_completed_rgb_depth_pair_after_all_overlays(window):
     old = _completed_preview([10, 20, 30], [40, 50, 60])
     pending = _completed_preview([70, 80, 90], [100, 110, 120])
     window.node.last_view = old
+    window.node.passive_snapshot = lambda: (old, {"width": 4, "height": 4,
+        "depth": bytes([88, 2]) * 16, "stamp_ns": old["stamp_ns"]})
     window._refresh_video()
     old_images = [label.pixmap().toImage() for label in (window.video, window.depth_video)]
     overlay_started, finish_overlay = threading.Event(), threading.Event()
@@ -669,7 +675,7 @@ def test_preview_swaps_completed_rgb_depth_pair_after_all_overlays(window):
     try:
         assert overlay_started.wait(timeout=3)
         window._refresh_video()
-        assert window.displayed_view is old and window.node.last_view is old
+        assert window.displayed_view["rgb"] is old["rgb"] and window.node.last_view is old
         assert [label.pixmap().toImage()
                 for label in (window.video, window.depth_video)] == old_images
     finally:
@@ -678,12 +684,13 @@ def test_preview_swaps_completed_rgb_depth_pair_after_all_overlays(window):
     assert completed[2] is None
     window.job_results.put(completed)
     window._refresh_video()
-    assert window.displayed_view is window.node.last_view is completed[1]
-    assert window.displayed_view["nearby_overlay"]
+    assert window.node.last_view is completed[1]
+    assert window.node.last_view["nearby_overlay"]
+    assert window.displayed_view["rgb"] is old["rgb"]
     assert pending["rgb"] == bytes([70, 80, 90]) * 16  # Worker owns its view dictionary.
-    for label, color in ((window.video, (130, 140, 150)),
-                         (window.depth_video, (160, 170, 180))):
-        assert label.pixmap().toImage().pixelColor(0, 0).getRgb()[:3] == color
+    assert [label.pixmap().toImage()
+            for label in (window.video, window.depth_video)] == old_images
+
 
 
 @pytest.mark.parametrize("binding", ["arm_epoch", "_camera_generation"])
@@ -752,67 +759,20 @@ def test_invalid_pickdepth_diameter_pauses_even_with_blank_size_fields(window, b
     assert window.node.yolo_enabled and window.node.preview_depth_diameter == 45.
 
 
-@pytest.mark.parametrize("outcome", ["valid", "size", "depth", "error", "cancel"])
-def test_click_pose_uses_displayed_snapshot_and_publishes_only_valid_tf(window, outcome):
-    for key, value in (("height", "80"), ("width", "32"), ("tolerance", "1")):
-        window.inputs[key].setText(value)
-    window.inputs["standoff_height"].setText("90")
-    window.home = {"positions_rad": [0.] * 6}
-    window.classes.item(0).setCheckState(gui.QtCore.Qt.Checked)
-    window.yolo_toggle.setChecked(True)
-    item = {"source_index": 0, "class_id": 1, "class_name": "part", "confidence": .8,
-            "polygon": [[270, 220], [370, 220], [370, 260], [270, 260]],
-            "rectangle": [[270, 220], [370, 220], [370, 260], [270, 260]],
-            "measurement": {"length_mm": 80., "width_mm": 32.}, "measurement_error": "",
-            "size_valid": outcome != "size", "size_reason": "synthetic size check"}
-    view = {"rgb": bytes(640*480*3), "width": 640, "height": 480,
-            "stamp_ns": 100_000_000_000, "depth_stamp_ns": 100_000_000_000,
-            "sequence": 1, "preview_mode": "all", "metadata": {"detections": [item]}}
-    candidate = {"position": [.01, .02, .1], "quaternion": [0., 0., 0., 1.],
-                 "filtered_camera_depth": .7, "accepted_depth_count": 100,
-                 "rejected_depth_count": 2,
-                 "robot_camera_clearance": {"mirrored": False}}
-    result = {"candidate": candidate if outcome in ("valid", "cancel") else None,
-              "reason": "insufficient accepted depth samples/fraction",
-              "rgb": bytes(640*480*3),
-              "depth_rgb": bytes(640*480*3), "stamp_ns": view["stamp_ns"], "epoch": 1}
-    window.node.clicked_pose.return_value = result
-    if outcome == "error":
-        window.node.clicked_pose.side_effect = ValueError("Snapshot invalidated")
-    window.node.last_view = view
+@pytest.mark.parametrize("mode", ["all", "filtered", "roi"])
+def test_passive_click_never_uses_background_detection_geometry(window, mode):
+    raw = _completed_preview([1, 2, 3], [4, 5, 6])
+    hidden = {**raw, "rgb": bytes([99]) * 48, "preview_mode": mode}
+    window.node.camera_snapshot = lambda: (raw, "Live camera")
+    window.node.last_view = hidden
+    window.node.clicked_pose = MagicMock()
     window._refresh_video()
-    center = gui.QtCore.QPointF(window.video.contentsRect().center())
-    window._select_detection(center)
-    assert window.frozen_view is view
-    window.node.last_view = {**view, "sequence": 2}
-    window._refresh_video()
-    if outcome == "size":
-        window.node.clicked_pose.assert_not_called()
-        assert "Size outside tolerance" in window.selected_pose_status
-    else:
-        completed = window.job_results.get(timeout=3)
-        window.job_results.put(completed)
-        if outcome == "cancel":
-            window._resume_live()
-        window._refresh_video()
-        assert window.node.clicked_pose.call_args.args[0] is view
-        assert window.node.clicked_pose.call_args.args[1] is item
-    if outcome == "valid":
-        window.node.show_selected_pose.assert_called_once_with(candidate, view["stamp_ns"], 1)
-        assert "platform_reference XYZ" in window.video_status.text()
-        for feedback in (window.rgb_feedback, window.depth_feedback):
-            assert "Frozen · #0 part" in feedback.text()
-            assert "80.0 × 32.0 mm" in feedback.text()
-            assert "Y / height: 80.00 mm" in feedback.toolTip()
-            assert "platform_reference XYZ [mm]: +10.00, +20.00, +100.00" in feedback.toolTip()
-            assert "CAM normal" in feedback.toolTip()
-        assert "100 accepted / 2 rejected" in window.depth_feedback.toolTip()
-        window._select_detection(center)
-        assert window.selected_pose_result is None and window.frozen_view is None
-        window.node.clear_selected_pose.assert_called()
-    else:
-        window.node.show_selected_pose.assert_not_called()
-    window.node.arm.assert_not_called()
+    assert window.displayed_view["rgb"] == raw["rgb"]
+    window._select_detection(gui.QtCore.QPointF(window.video.contentsRect().center()))
+    assert window.frozen_view is None and window.selected_detection is None
+    window.node.clicked_pose.assert_not_called()
+    window.node.show_selected_pose.assert_not_called()
+
 
 
 def test_clicked_tf_preserves_platform_tilt_and_stops_on_invalidation():
@@ -1490,130 +1450,75 @@ def test_paired_model_must_match_saved_task_classes_and_geometry(window, paired_
     assert not window.node.yolo_enabled and not window.armed_toggle.isChecked()
 
 
-def test_scaled_letterbox_click_and_frozen_measurement(window):
-    item = {"source_index": 0, "class_id": 1, "class_name": "part", "confidence": .8,
-            "polygon": [[270, 220], [370, 220], [370, 260], [270, 260]],
-            "rectangle": [[270, 220], [370, 220], [370, 260], [270, 260]],
-            "measurement": {"length_mm": 80., "width_mm": 32.}, "measurement_error": ""}
-    view = {"rgb": bytes(640 * 480 * 3), "width": 640, "height": 480,
-            "stamp_ns": 100_000_000_000, "sequence": 1, "preview_mode": "all",
-            "depth_rgb": bytes([20, 50, 80]) * (640 * 480),
-            "depth_stamp_ns": 100_010_000_000,
-            "metadata": {"detections": [item], "inference_ms": 10.}}
-    window.yolo_toggle.setChecked(True)
-    window.node.last_view = view
+def test_scaled_letterbox_click_resumes_captured_pair(window):
+    response, view = simulation_setup(window)
+    window._show_capture({"response": response, "view": view}, "Controller")
     window._refresh_video()
+    frozen = window.displayed_view
     center = gui.QtCore.QPointF(window.video.contentsRect().center())
-    # Centering uses width/height rather than QRect's inclusive right/bottom edge.
-    center += gui.QtCore.QPointF(.5, .5)
-    mapped = gui.image_click(center, window.video, 640, 480)
-    assert abs(mapped.x() - 320) < 2 and abs(mapped.y() - 240) < 2
+    assert gui.image_click(center, window.video, view["width"], view["height"]) is not None
+    window._select_detection(gui.QtCore.QPointF(-1, -1))
+    assert window.displayed_view is frozen and window.frozen_view is not None
     window._select_detection(center)
-    assert window.frozen_view is view
-    assert window.selected_detection is item
-    assert window.inputs["height"].text() == ""  # No automatic field overwrite/tolerance guess.
-    window.node.last_view = {**view, "sequence": 2, "metadata": {"detections": []},
-                             "depth_rgb": bytes([200, 0, 0]) * (640 * 480)}
-    window._refresh_video()
-    assert window.displayed_view is view  # Frame-local ID cannot jump to a newer detection.
-    depth_image = window.depth_video.pixmap().toImage()
-    assert depth_image.pixelColor(depth_image.width()//2, depth_image.height()//2) == \
-        gui.QtGui.QColor(20, 50, 80)  # Frozen depth is not replaced with newer live data.
-    assert "Frozen frame" in window.video_status.text()
-    window.inputs["height"].setText("80")
-    assert window.frozen_view is None and not window.node.yolo_enabled
-    window._apply_live_detection_settings()
-    assert window.node.yolo_enabled
-    window.displayed_view = view
-    window._select_detection(center)
-    window._select_detection(center)  # Second image click replaces Resume Live.
     assert window.frozen_view is None and window.selected_detection is None
-    assert not hasattr(window, "resume_live")
-    window.yolo_toggle.setChecked(False)
-
+    assert not window.node.show_simulated_poses.called
     label = gui.QtWidgets.QLabel()
     label.resize(800, 600)
     label.setAlignment(gui.QtCore.Qt.AlignCenter)
     label.setPixmap(gui.QtGui.QPixmap(800, 400))
     assert gui.image_click(gui.QtCore.QPointF(400, 99), label, 1920, 960) is None
-    point = gui.image_click(gui.QtCore.QPointF(400, 300), label, 1920, 960)
-    assert point == gui.QtCore.QPointF(960, 480)
+    assert gui.image_click(gui.QtCore.QPointF(400, 300), label, 1920, 960) == \
+        gui.QtCore.QPointF(960, 480)
     label.close()
 
 
-def test_unavailable_measurement_keeps_detection_and_explains_reason(window):
-    item = {"source_index": 0, "class_name": "part", "confidence": .8,
-            "polygon": [[10, 10], [630, 10], [630, 470], [10, 470]],
-            "rectangle": [[10, 10], [630, 10], [630, 470], [10, 470]],
-            "measurement": None, "measurement_error": "Apply station calibration"}
-    view = {"rgb": bytes(640 * 480 * 3), "width": 640, "height": 480,
-            "stamp_ns": 100_000_000_000, "sequence": 1, "preview_mode": "all",
-            "metadata": {"detections": [item]}}
-    window.node.last_view = view
-    window.yolo_toggle.setChecked(True)
+
+def test_empty_capture_shows_depth_rejection_without_an_old_pose(window):
+    response, view = simulation_setup(window)
+    response.candidates, response.valid_count, response.status = [], 0, "NO_VALID_ITEMS"
+    view["metadata"]["rejected"] = [{"source_index": 1, "reason": "Insufficient valid depth"}]
+    window.node.capture_preview.put(response, view)
     window._refresh_video()
-    window._select_detection(gui.QtCore.QPointF(window.video.contentsRect().center()))
-    window._refresh_video()
-    assert window.frozen_view is view
-    assert "Apply station calibration" in window.video_status.text()
+    assert window.frozen_view["rgb"] == view["rgb"]
+    assert "Insufficient valid depth" in window.rgb_feedback.text()
+    assert "Controller · NO_VALID_ITEMS · 0 poses" in window.rgb_feedback.text()
+    window.node.show_selected_pose.assert_not_called()
 
 
-def test_roi_is_shown_without_yolo_and_hidden_when_stale(window):
-    frame = {"rgb": bytes(640 * 480 * 3), "width": 640, "height": 480,
-             "stamp_ns": 100_000_000_000, "sequence": 1}
-    view = {**frame, "preview_mode": "roi",
-            "metadata": {"roi_overlay": {"visible": True, "reason": ""}}}
-    window.node.applied = object()
+
+def test_roi_stays_hidden_in_passive_video(window):
+    frame = _completed_preview([1, 2, 3], [4, 5, 6])
     window.node.camera_snapshot = lambda: (frame, "RGB live")
-    window.node.roi_once = MagicMock()
-    window.node.last_view = view
-    window.last_preview_sequence = 1
+    window.node.last_view = {**frame, "rgb": bytes([99]) * 48, "preview_mode": "roi",
+                             "metadata": {"roi_overlay": {"visible": True, "reason": ""}}}
     window._refresh_video()
-    assert not window.yolo_toggle.isChecked()
-    assert window.displayed_view is view
-    assert "Loaded Bin ROI" in window.video_status.text()
-    window.node.get_clock = lambda: SimpleNamespace(
-        now=lambda: SimpleNamespace(nanoseconds=101_000_000_000))
-    window._refresh_video()
-    assert window.displayed_view is frame
-    assert "overlay frame is stale" in window.video_status.text()
+    assert window.displayed_view["rgb"] == frame["rgb"]
+    assert window.displayed_view["preview_mode"] == "passive"
+    assert "Loaded Bin ROI" not in window.video_status.text()
+
 
 
 @pytest.mark.parametrize("mode", ["all", "filtered"])
-def test_slow_inference_keeps_annotated_snapshot_and_its_roi(window, mode):
-    frame = {"rgb": bytes(640 * 480 * 3), "width": 640, "height": 480,
-             "stamp_ns": 100_030_000_000, "sequence": 2}
-    metadata = {"roi_overlay": {"visible": True, "reason": ""},
-                "detections": [{}] * 23, "candidates": [{}] * 4, "count": 23,
-                "inference_ms": 800., "geometry_sources": ["mask"]}
-    annotated = {**frame, "rgb": bytes([100]) * (640 * 480 * 3),
-                 "stamp_ns": 99_100_000_000, "sequence": 1,
-                 "preview_mode": mode, "metadata": metadata}
-    window.yolo_toggle.setChecked(True)
+def test_slow_background_inference_never_replaces_passive_video(window, mode):
+    frame = _completed_preview([1, 2, 3], [4, 5, 6])
+    annotated = {**frame, "rgb": bytes([99]) * 48, "preview_mode": mode,
+                 "metadata": {"count": 0, "detections": [], "candidates": [],
+                              "geometry_sources": ["mask"]}}
     window.node.camera_snapshot = lambda: (frame, "RGB live")
     window.node.last_view = annotated
-    window.last_preview_sequence = 2
+    window.job_busy = True
     window._refresh_video()
-    assert window.displayed_view is annotated  # Not the newer, unannotated raw RGB.
-    text = window.video_status.text()
-    assert "RESULT SNAPSHOT" in text and "STALE Frame age 1.00s" in text
-    assert "processing 800.0ms" in text
-    assert "same result snapshot, not a live projection" in text
-    assert ("DETECTIONS: 23" if mode == "all" else "FILTERED: 4 valid picks") in text
-    window.job_results.put(("preview", None, RuntimeError("Synthetic TF unavailable")))
+    assert window.displayed_view["rgb"] == frame["rgb"]
+    window.job_results.put(("preview", annotated, None))
     window._refresh_video()
-    assert window.displayed_view is annotated
-    assert "Preview blocked: Synthetic TF unavailable" in window.video_status.text()
-    # A newer completed result replaces the snapshot naturally; no freezing or retry.
-    newer = {**annotated, "stamp_ns": 100_000_000_000, "sequence": 3}
-    window.node.last_view = newer
-    window.job_results.put(("preview", newer, None))
+    assert window.displayed_view["rgb"] == frame["rgb"]
+    assert "Live passive video" in window.rgb_feedback.text()
+    window.job_results.put(("preview", None, ValueError("Synthetic TF unavailable")))
     window._refresh_video()
-    assert window.displayed_view is newer
-    assert "RESULT SNAPSHOT" not in window.video_status.text()
-    assert "Preview blocked" not in window.video_status.text()
+    assert window.displayed_view["rgb"] == frame["rgb"]
+    assert "Synthetic TF unavailable" in window.video_status.text()
     window.node.arm.assert_not_called()
-    assert window.node.service is None
+
 
 
 def test_raw_rgb_never_claims_last_result_detection_count(window):
@@ -1624,8 +1529,8 @@ def test_raw_rgb_never_claims_last_result_detection_count(window):
     window.last_preview_sequence = 1
     window.preview_status = "ALL DETECTIONS: 23 | click to measure"
     window._refresh_video()
-    assert window.displayed_view is frame
-    assert "waiting for annotated result" in window.video_status.text()
+    assert window.displayed_view["rgb"] == frame["rgb"]
+    assert "Live passive video" in window.video_status.text()
     assert "DETECTIONS: 23" not in window.video_status.text()
 
 
@@ -1958,3 +1863,45 @@ def test_missing_calibration_loads_once_when_selected_files_become_available(win
         window._refresh_video()
     assert gui.save_calibration_selection.call_count == 2
     window.node.arm.assert_not_called()
+
+
+def test_controller_capture_replaces_simulation_and_restarts_five_second_hold(window, monkeypatch):
+    response, view = simulation_setup(window)
+    clock = [100.]
+    monkeypatch.setattr(gui, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    window._show_capture({"response": response, "view": view}, "Simulated")
+    frame = {**view, "rgb": bytes([1, 2, 3]) * 20000}
+    window.node.passive_snapshot = lambda: (frame, None)
+    clock[0] = 104.
+    replacement = {**view, "rgb": bytes([4, 5, 6]) * 20000}
+    window.node.capture_preview.put(response, replacement)
+    window._refresh_video()
+    assert window.simulation_expires_at == 109.
+    assert window.displayed_view["rgb"] == replacement["rgb"]
+    assert "Controller · SHORTAGE" in window.rgb_feedback.text()
+    window.node.show_simulated_poses.assert_called_once()  # Real requests add no simulated TF.
+    for value in (105., 108.999):
+        clock[0] = value
+        window._refresh_video()
+        assert window.displayed_view["rgb"] == replacement["rgb"]
+    clock[0] = 109.
+    window._refresh_video()
+    assert window.frozen_view is None and window.simulation_expires_at is None
+    assert window.displayed_view["rgb"] == frame["rgb"]
+    assert "Live passive video" in window.rgb_feedback.text()
+    window.node.arm.assert_not_called()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_obsolete_or_failed_controller_capture_clears_old_images(window, failed):
+    response, view = simulation_setup(window)
+    window._show_capture({"response": response, "view": view}, "Controller")
+    if failed:
+        response.success, response.message = False, "No fresh depth"
+    else:
+        window.node.validate_simulation_view.side_effect = ValueError("CameraInfo changed")
+    window.node.capture_preview.put(response, view)
+    window._refresh_video()
+    assert window.frozen_view is None and window.simulation_expires_at is None
+    assert window.video.pixmap() is None
+    assert ("No fresh depth" if failed else "CameraInfo changed") in window.status.toPlainText()

@@ -18,7 +18,9 @@ from .core import (
     read_session, tray_directory, validate_settings,
     validate_geometry, validate_preview, write_session)
 from .documents import detection_profile, open_document, save_document, validate_name
-from item_perception_yolo.item_preview import SIMULATION_HOLD_SEC, validate_prefix
+from item_perception_yolo.item_preview import (
+    CAPTURE_HOLD_SEC, CaptureMailbox, PassiveCameraView, configure_status_band, capture_status,
+    validate_prefix)
 from item_perception_yolo.item_teach_core import file_sha256, NEW_PROFILE_IMAGE_SIZE
 from .node import TrayTeachNode
 from .contract import SERVICE_NAME
@@ -41,6 +43,7 @@ class TrayCanvas(QtWidgets.QWidget):
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
     def show_frame(self, rgb, width, height):
+        self.passive_key = None
         self.image = QtGui.QImage(rgb, width, height, width * 3, QtGui.QImage.Format_RGB888).copy()
         self.update()
 
@@ -114,6 +117,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.detail_sample = None
         self.simulation_view = self.simulation_response = None
         self.simulation_expires_at = None
+        self.capture_source = "Simulated"
+        self.node.capture_preview = CaptureMailbox()
+        self.passive_camera = PassiveCameraView()
+        self.passive_view = None
         self.preview_settings = self.last_view = None
         self.preview_due = None
         self.preview_error = self.geometry_error = ""
@@ -276,7 +283,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.simulate_button = self._button("Simulate Trigger", self._simulate_trigger)
         self.simulate_button.setToolTip(
             "Run the real fresh-frame pose pipeline locally. Requires a saved profile and "
-            "YOLO ON; Armed may be OFF. Hold returned images/pose for 10 seconds, then "
+            "YOLO ON; Armed may be OFF. Hold returned images/pose for 5 seconds, then "
             "resume live automatically; click RGB to resume sooner. "
             "No robot commands.")
         toggle_row.addWidget(self.simulate_button, 1)
@@ -332,8 +339,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         images.setChildrenCollapsible(False)
         images.setHandleWidth(6)
         for title, canvas in (
-                ("RGB / Tray size · click to inspect pose", self.canvas),
-                ("DEPTH / Registered pixels · tray size", self.depth_canvas)):
+                ("RGB / Tray camera", self.canvas),
+                ("DEPTH / Tray camera", self.depth_canvas)):
             panel = QtWidgets.QWidget()
             layout = QtWidgets.QVBoxLayout(panel)
             layout.setContentsMargins(0, 0, 0, 0)
@@ -342,12 +349,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             heading.setObjectName("viewHeading")
             layout.addWidget(heading)
             label = QtWidgets.QLabel("Waiting for camera observation")
-            label.setTextFormat(QtCore.Qt.PlainText)
-            label.setWordWrap(True)
-            label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
-            label.setStyleSheet(
-                "background: #111; color: white; padding: 8px 12px; font-weight: bold;")
-            label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Minimum)
+            configure_status_band(label)
             layout.addWidget(label)
             layout.addWidget(canvas, 1)
             images.addWidget(panel)
@@ -364,7 +366,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.result_label.setWordWrap(True)
         column.addWidget(self.result_label)
         self.detail_label = QtWidgets.QLabel(
-            "Click a tray to inspect its size; cameras stay live.")
+            "Live camera view; trigger a capture to inspect the result.")
         self.detail_label.setWordWrap(True)
         column.addWidget(self.detail_label)
         splitter.addWidget(visual)
@@ -887,32 +889,41 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._message("Simulate Trigger — waiting for a fresh tray observation…")
 
             def shown(value):
-                response, view = value["response"], value["view"]
-                if not response.success:
-                    self.result_label.setText(f"No simulated tray pose: {response.message}")
-                    self._message(f"Simulate Trigger: {response.message}", error=True)
-                    return
-                self.node.simulation.install(response, view)
-                self.simulation_view, self.simulation_response = view, response
-                self.simulation_expires_at = time.monotonic() + SIMULATION_HOLD_SEC
-                self._show_view(view)
-                self._show_detail(view, f"Last simulated request: {response.status} — "
-                                  f"{response.message}", trigger=True)
-                self._show_simulation_status()
-                self._message(f"{response.status}: {response.message}. "
-                              "Frozen returned result for 10 seconds; click RGB to resume sooner.")
+                self._show_capture(value, "Simulated")
             self._job(lambda: self.node.requests.simulate(path, settings, digest, requested_at),
                       shown, "simulate")
         except (ValueError, OSError) as exc:
             self._message(str(exc), error=True)
 
-    def _resume_live(self):
+    def _show_capture(self, value, source):
+        response, view = value["response"], value["view"]
+        self._resume_live(clear_pending_capture=False)
+        if not response.success:
+            self.result_label.setText(f"Capture failed: {response.message}")
+            self._message(f"{source}: {response.message}", error=True)
+            return
+        self.node.requests.validate_view(view)
+        if source == "Simulated":
+            self.node.simulation.install(response, view)
+        self.capture_source = source
+        self.simulation_view, self.simulation_response = view, response
+        self.simulation_expires_at = time.monotonic() + CAPTURE_HOLD_SEC
+        self._show_view(view)
+        self._show_detail(view, f"{source} capture: {response.status} — "
+                          f"{response.message}", trigger=True)
+        self._show_simulation_status()
+        self._message(f"{response.status}: {response.message}. "
+                      "Captured result for 5 seconds; click RGB to resume sooner.")
+
+    def _resume_live(self, *, clear_pending_capture=True):
+        if clear_pending_capture:
+            self.node.capture_preview.take()
         self.node.simulation.clear()
         self.simulation_view = self.simulation_response = None
         self.simulation_expires_at = None
         self.detail_sample = self.last_view = None
-        self.detail_label.setText("Click a tray to inspect its size; cameras stay live.")
-        self.result_label.setText("Waiting for a fresh tray preview")
+        self.detail_label.setText("Live camera view; trigger a capture to inspect the result.")
+        self.result_label.setText("Live camera view; waiting for a capture")
         for label in (self.rgb_status, self.depth_status, self.result_label):
             label.setToolTip("")
         self.canvas.image = self.depth_canvas.image = None
@@ -927,11 +938,11 @@ class TrayTeachWindow(QtWidgets.QWidget):
         now = self.node.get_clock().now().nanoseconds
         age = max(0., (now - view["rgb"]["stamp_ns"]) / 1e9)
         remaining = max(0, math.ceil(self.simulation_expires_at - time.monotonic()))
-        lines = [f"SIMULATED {response.status} — live in {remaining}s | click RGB to resume",
+        lines = [f"{self.capture_source.upper()} {response.status} — live in {remaining}s",
                  f"FROZEN | frame age {age:.2f} s | inference "
                  f"{view['result']['inference_ms']:.1f} ms",
                  f"Returned {int(response.found)} tray | {response.valid_count} valid / "
-                 f"{response.detected_count} detections | NO ROBOT COMMANDS"]
+                 f"{response.detected_count} detections"]
         if response.found:
             pose = response.tray
             p, q = pose.pose.position, pose.pose.orientation
@@ -940,7 +951,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 f"Quaternion XYZW: {q.x:+.5f}, {q.y:+.5f}, {q.z:+.5f}, {q.w:+.5f}",
                 f"Size L × W: {pose.length*1000:.1f} × {pose.width*1000:.1f} mm | "
                 f"confidence {pose.confidence:.3f}",
-                f"RViz: base_link → {SIMULATED_FRAME} (frozen)"])
+                (f"RViz: base_link → {SIMULATED_FRAME} (frozen)"
+                 if self.capture_source == "Simulated" else "Controller request capture")])
         else:
             lines.append("RViz: no returned tray pose")
         cleaned = mask_clean_summary(view["result"].get("selected"))
@@ -954,14 +966,15 @@ class TrayTeachWindow(QtWidgets.QWidget):
         lines.extend([f"Batch: {response.batch_id}",
                       "Historical base_link pose; armed service uses independent new frames.",
                       "Tray pose only; placement-depth sampling is requested by the controller."])
-        self.rgb_status.setText("\n".join(lines))
         depth = view["depth"]
-        note = (f"Depth age {(now-depth['stamp_ns'])/1e9:.2f} s" if depth is not None else
-                "Depth unavailable — tray pose comes from the reference plane")
-        self.depth_status.setText("\n".join(lines[:3] + [note] + lines[3:]))
-        tooltip = "\n".join(rejected)
-        self.rgb_status.setToolTip(tooltip)
-        self.depth_status.setToolTip(tooltip)
+        depth_age = None if depth is None else (now - depth["stamp_ns"]) / 1e9
+        reason = (rejected[0] if rejected and not response.found else
+                  f"{response.detected_count} detected · {len(rejected)} rejected")
+        for label, source_age in ((self.rgb_status, age), (self.depth_status, depth_age)):
+            label.setText(capture_status(
+                self.capture_source, response.status, int(response.found), source_age,
+                view["result"]["inference_ms"], remaining, reason))
+            label.setToolTip("\n".join(lines + rejected))
 
     def _snapshot_plane(self):
         self._discard_plane_draft()
@@ -1001,30 +1014,6 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if self.plane_view is not None:
             self._plane_click(x, y)
             return
-        if self.last_view is None or self.last_view["generation"] != self.node.generation:
-            return
-        hits = []
-        for item in self.last_view["result"].get("detections", []):
-            polygon = QtGui.QPolygonF([QtCore.QPointF(*p) for p in item["polygon"]])
-            if polygon.containsPoint(QtCore.QPointF(x, y), QtCore.Qt.WindingFill):
-                rect = polygon.boundingRect()
-                hits.append((rect.width() * rect.height(), -item["confidence"],
-                             item["source_index"], item))
-        if hits:
-            item = min(hits, key=lambda hit: hit[:3])[3]
-            self.canvas.highlight = item["polygon"]
-            self.canvas.update()
-            measured = (f"Reference plane: X/width {item['width_mm']:.1f} mm × "
-                        f"Y/length {item['length_mm']:.1f} mm"
-                        if "length_mm" in item else
-                        "2D outline only; metric dimensions unavailable")
-            origin = (" | base_link corner XYZ: " + ", ".join(
-                f"{value * 1000:.1f}" for value in item["position"]) + " mm"
-                if "position" in item else "")
-            self._show_detail(self.last_view,
-                              f"Last clicked tray: {item['class_name']} | {measured} | "
-                              f"{item['reason']}{origin}" + (
-                                  " | " + mask_clean_summary(item) if "mask_clean" in item else ""))
 
     def _show_detail(self, view, summary, *, trigger=False):
         sample = view if trigger else {
@@ -1129,7 +1118,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
     def _reset_inspection(self):
         self._discard_plane_draft()
         self.detail_sample = None
-        self.detail_label.setText("Click a tray to inspect its size; cameras stay live.")
+        self.detail_label.setText("Live camera view; trigger a capture to inspect the result.")
         self.last_view = None
         self.canvas.highlight = []
         self.canvas.update()
@@ -1189,6 +1178,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
             self._display_view(view)
 
     def _display_view(self, view):
+        if view is not self.simulation_view:
+            self._show_passive()
+            return
         self.canvas.highlight = []
         rgb, result = view["rgb"], view["result"]
         self.canvas.show_frame(view["overlay"], rgb["width"], rgb["height"])
@@ -1265,7 +1257,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             lines.append(view["metric_error"])
         if self.geometry_error:
             lines.append("Size filter inactive: " + self.geometry_error)
-        self.rgb_status.setText("\n".join(lines))
+        self.rgb_status.setToolTip("\n".join(lines))
         depth = None if view is None else view.get("depth")
         if depth is None:
             reason = "" if view is None else view.get("depth_error", "")
@@ -1274,11 +1266,35 @@ class TrayTeachWindow(QtWidgets.QWidget):
             depth_age = max(0., (now - depth["stamp_ns"]) / 1e9)
             depth_note = (f"{'STALE ' if depth_age > .5 else ''}Depth age {depth_age:.2f}s | "
                           "200–1000 mm; black = outside range")
-        self.depth_status.setText("\n".join(lines[:2] + [depth_note] + lines[2:]))
+        self.depth_status.setToolTip("\n".join(lines[:2] + [depth_note] + lines[2:]))
+        live = self.passive_view
+        for label, stamp in (
+                (self.rgb_status, None if live is None else live["stamp_ns"]),
+                (self.depth_status, None if live is None else live.get("depth_stamp_ns"))):
+            age_note = ("Waiting for camera" if stamp is None else
+                        f"Age {max(0., (now-stamp)/1e9):.2f}s")
+            label.setText("Live passive video\n" + age_note)
+
+    def _show_passive(self):
+        rgb, depth = self.node.passive_snapshot()
+        view = self.passive_camera.make(rgb, depth, self.node.get_clock().now().nanoseconds)
+        self.passive_view = view
+        for canvas, field in ((self.canvas, "rgb"), (self.depth_canvas, "depth_rgb")):
+            canvas.highlight = []
+            pixels = None if view is None else view.get(field)
+            if pixels:
+                key = id(pixels), view["width"], view["height"]
+                if getattr(canvas, "passive_key", None) != key or canvas.image is None:
+                    canvas.show_frame(pixels, view["width"], view["height"])
+                    canvas.passive_key = key
+            else:
+                canvas.image = None
+                canvas.update()
 
     def _tick(self):
         if self.closing:
             return
+        captured = self.node.capture_preview.take()
         if self.session_due is not None and time.monotonic() >= self.session_due:
             self._persist_session()
         if self.preview_due is not None and time.monotonic() >= self.preview_due:
@@ -1313,6 +1329,12 @@ class TrayTeachWindow(QtWidgets.QWidget):
                         self.result_label.setText(f"No current tray pose: {exc}")
                 if terminal:
                     self.node.fatal_error = str(exc)
+        if captured is not None:
+            try:
+                self._show_capture(captured, "Controller")
+            except (ValueError, OSError, RuntimeError) as exc:
+                self._resume_live(clear_pending_capture=False)
+                self._message("Capture rejected: " + str(exc), error=True)
         if self.node.fatal_error:
             self.timer.stop()
             QtWidgets.QMessageBox.critical(self, "Tray Teach stopped", self.node.fatal_error)
@@ -1320,8 +1342,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
             return
         if (self.simulation_expires_at is not None
                 and time.monotonic() >= self.simulation_expires_at):
-            self._resume_live()
-            self._message("Simulation preview finished after 10 seconds; live view resumed")
+            self._resume_live(clear_pending_capture=False)
+            self._message("Capture finished after 5 seconds; live passive video resumed")
         self._update_detail()
         if self.plane_view is not None and self.plane_view["generation"] != self.node.generation:
             self._discard_plane_draft()
@@ -1337,7 +1359,8 @@ class TrayTeachWindow(QtWidgets.QWidget):
         if not arming:
             self._style_armed(requests.service is not None)
         self.request_status.setText(
-            ("Request running | " if requests.busy else "") + requests.status)
+            ("Request running | " if requests.busy else "") + requests.status.split(" | ")[0])
+        self.request_status.setToolTip(requests.status)
         self._update_controls()
         prefix = self.node.camera_prefix
         self.camera_status.setText(self.node.camera_status + (
@@ -1355,6 +1378,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 "Create or Cancel returns to live view; camera streams keep running")
             self.depth_status.setText("Depth — CAPTURED | matching corner sample evidence")
         else:
+            self._show_passive()
             self._show_live_status()
         if self.node.plane is not None:
             stored = "saved in teach file" if self.node.plane == self.saved_plane else \

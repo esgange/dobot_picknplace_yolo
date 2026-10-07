@@ -108,15 +108,15 @@ def test_simulated_tf_expires_without_gui_and_new_batch_gets_full_hold(teaching_
     monkeypatch.setattr(gui, "time", SimpleNamespace(monotonic=lambda: now[0]))
     node = teaching_node
     node.show_simulated_poses(*batch(3))
-    now[0] = 109.999
+    now[0] = 104.999
     node._broadcast_selected_pose()
     assert node.selected_pose is not None
     node.show_simulated_poses(*batch(2, "replacement"))
-    now[0] = 110.
+    now[0] = 105.
     node._broadcast_selected_pose()
     assert len(node.selected_pose[1]) == 2
     node.selected_pose_broadcaster.sendTransform.reset_mock()
-    now[0] = 119.999
+    now[0] = 109.999
     node._broadcast_selected_pose()
     assert node.selected_pose is None
     node.selected_pose_broadcaster.sendTransform.assert_not_called()

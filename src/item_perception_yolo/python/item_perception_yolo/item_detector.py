@@ -1131,6 +1131,7 @@ class ItemDetectNode(Node):
         acquired = False
         view = None
         simulated = simulation_path is not None
+        capture_preview = getattr(self, "capture_preview", None)
 
         def check_active():
             if (epoch != self.arm_epoch or revision != getattr(self, "_input_revision", 0)
@@ -1196,7 +1197,8 @@ class ItemDetectNode(Node):
                 raise ValueError("Request deadline exceeded before inference")
             view = self.infer(rgb, depth, context, timeout=max(0.001, deadline-time.monotonic()),
                               candidate_limit=request.max_candidates,
-                              render_images=simulated or bool(request.save_debug_images))
+                              render_images=(simulated or bool(request.save_debug_images)
+                                             or capture_preview is not None))
             result = view["metadata"]
             stages.update(result["timings_ms"])
             stages["native_roundtrip_ms"] = view["native_roundtrip_ms"]
@@ -1279,11 +1281,9 @@ class ItemDetectNode(Node):
                         "unchecked": result["unchecked"],
                         "debug_capture": debug_capture}
             response.diagnostics_json = json.dumps(evidence, allow_nan=False)
-            if simulated:
+            if simulated or capture_preview is not None:
                 view = {**view, "simulation_profile": (str(profile_path), profile_digest),
                         "simulation_epoch": epoch}
-            if self.preview_mode == "filtered" and not simulated and view["rgb"]:
-                self.last_view = view
             self.events.record("INFO", "item_simulated_batch" if simulated else "item_pose_batch",
                                response.message,
                                batch_id=response.batch_id, status=response.status,
@@ -1300,6 +1300,8 @@ class ItemDetectNode(Node):
                 self.fatal_error = str(exc)
                 self.get_logger().fatal(str(exc))
         finally:
+            if not simulated and capture_preview is not None:
+                capture_preview.put(response, view)
             if acquired:
                 self.operation_lock.release()
             self.request_lock.release()
