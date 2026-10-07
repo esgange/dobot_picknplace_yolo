@@ -119,9 +119,17 @@ def home_targets(current, home, joints, *, speed_percent, acceleration_percent):
 
 
 def tray_detect_targets(destination, joints, *, speed_percent, acceleration_percent):
-    """Queue absolute MovJ to saved tray joints; no bin-clearance waypoints."""
-    return (Target("tray_detect_position", destination.copy(), speed_percent,
-                   acceleration_percent, tuple(joints), joint_motion=True),)
+    """Queue linear travel then exact joint alignment, confirming only the latter."""
+    target = Target("tray_detect_position", destination.copy(), speed_percent,
+                    acceleration_percent, tuple(joints), joint_motion=True)
+    return tray_arrival_targets(target)
+
+
+def tray_arrival_targets(target):
+    """Admit MovL then MovJ to the same taught angles without an arrival barrier."""
+    if not target.joint_motion:
+        raise ValueError("Tray arrival requires an absolute joint target")
+    return (replace(target, name=f"{target.name}_linear", joint_motion=False), target)
 
 
 def pick_tray_target(tray, settings):
@@ -131,7 +139,7 @@ def pick_tray_target(tray, settings):
     return tray_detect_targets(
         tray.detect_matrix, tray.detect_joints,
         speed_percent=settings["speed"]["travel_percent"],
-        acceleration_percent=settings["acceleration"]["travel_percent"])[0]
+        acceleration_percent=settings["acceleration"]["travel_percent"])[-1]
 
 
 def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
@@ -245,7 +253,7 @@ class PickExecutor:
                 current = self.hardware.current_pose()
                 check(held)
                 self.hardware.move_batch(
-                    (tray_target,), require_suction=True, forbid_suction=False,
+                    tray_arrival_targets(tray_target), require_suction=True, forbid_suction=False,
                     confirmed_start_pose=current,
                     batch_name=f"candidate_{held}_pick_to_tray")
                 session.resuming = False
@@ -342,7 +350,8 @@ class PickExecutor:
                 # Only the terminal saved joints are confirmed; no Home detour.
                 check(index)
                 self.hardware.move_batch(
-                    (*upward, tray_target), require_suction=True, forbid_suction=False,
+                    (*upward, *tray_arrival_targets(tray_target)),
+                    require_suction=True, forbid_suction=False,
                     confirmed_start_pose=return_origin,
                     batch_name=f"candidate_{index}_pick_to_tray")
                 return {"picked": True, "candidate": index, "holding_item": True}

@@ -313,7 +313,7 @@ def test_pause_held_preserves_outputs_and_continue_restores_transport_fingers(
         [("output", 2, False), ("output", 14, False)])
     returned = next(entry[2] for entry in reversed(rig.log) if entry[0] == "move")
     assert next(entry[1] for entry in reversed(rig.log) if entry[0] == "move") == (
-        "tray_detect_position",)
+        "tray_detect_position_linear", "tray_detect_position")
     assert np.array_equal(rig.hardware.current_pose(), rig.configuration.tray.detect_matrix)
     assert returned["require_suction"]
     assert not any(entry[0] == "home" for entry in rig.log)

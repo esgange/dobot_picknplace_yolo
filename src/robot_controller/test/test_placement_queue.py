@@ -361,7 +361,7 @@ def test_idle_joint_arrival_completes_on_first_new_sample_without_pose_service()
     rig.transport.move_batch(tray_detect_targets(
         np.eye(4), (0.,) * 6, speed_percent=80, acceleration_percent=70),
         batch_name='tray_position')
-    assert [name for name, _ in rig.requests] == ['MovJ']
+    assert [name for name, _ in rig.requests] == ['MovL', 'MovJ']
     assert rig.requests[0][1].mode
     assert next(rig.steps, None) is None
 
@@ -459,9 +459,9 @@ def test_controller_queues_direct_tray_position_without_safety_z(start_z, holdin
 
     rig.monitor.wait_next = arrived
     RobotController._execute_tray_position(node)
-    assert [name for name, _ in rig.requests] == ['MovJ']
+    assert [name for name, _ in rig.requests] == ['MovL', 'MovJ']
     request = rig.requests[0][1]
-    assert request.mode  # Joint interpolation to the exact recorded joint target.
+    assert request.mode  # Linear travel uses the same saved joints as final MovJ.
     assert [request.a, request.b, request.c, request.d, request.e, request.f] == [0.] * 6
     assert list(request.param_value) == ['user=0', 'tool=0', 'v=100', 'a=70']
     node.configuration.validate_sources.assert_called()

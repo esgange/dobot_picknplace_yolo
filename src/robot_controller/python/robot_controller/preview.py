@@ -31,7 +31,7 @@ from .feedback import FeedbackMonitor
 from .kinematics import Cr10Kinematics
 from .motion import (candidate_pose_in_base, candidate_exit_transit,
                      home_targets, pick_targets, pick_tray_target, pose_reached,
-                     tray_detect_targets)
+                     tray_arrival_targets, tray_detect_targets)
 from .pick_session import return_targets
 from .placement import TRAY_SPEED_PERCENT, place_targets, validate_target
 from .tray_client import TrayClient
@@ -206,7 +206,8 @@ class RobotControllerPreview(rclpy.node.Node):
                     targets.extend(plan)
                     exit_transit = candidate_exit_transit(plan[5].matrix, plan)
                     targets.append(exit_transit)
-                    targets.append(replace(tray_target, name=f"p{index}_success_tray_detect"))
+                    targets.extend(tray_arrival_targets(
+                        replace(tray_target, name=f"p{index}_success_tray_detect")))
                     # Both successful and missed picks use the Safety Z exit;
                     # only missed/put-back branches continue through Home.
                     targets.extend(replace(t, name=f"p{index}_return_{t.name}") for t in

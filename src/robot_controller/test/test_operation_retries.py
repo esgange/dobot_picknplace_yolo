@@ -52,7 +52,8 @@ def test_pick_success_ends_retries_and_counts_all_previous_candidates(
     assert len(rig.requests) == successful_attempt
     assert rig.finished == ["success"]
     final = [row for row in rig.log if row[0] == "move"][-1]
-    assert final[1] == ("p1_retract", "p1_final", "p1_transit_exit", "tray_detect_position")
+    assert final[1] == ("p1_retract", "p1_final", "p1_transit_exit",
+                        "tray_detect_position_linear", "tray_detect_position")
     assert np.array_equal(rig.hardware.current_pose(), rig.configuration.tray.detect_matrix)
     assert "Tray Detect" in result.message
 
@@ -261,7 +262,7 @@ def test_held_pause_during_successful_route_continues_directly_to_tray(monkeypat
     assert paused and ('state', 'PAUSED') in rig.log
     assert len(rig.requests) == 1
     final = [row for row in rig.log if row[0] == 'move'][-1]
-    assert final[1] == ('tray_detect_position',)
+    assert final[1] == ('tray_detect_position_linear', 'tray_detect_position')
     assert final[2]['require_suction']
     assert np.array_equal(rig.hardware.current_pose(), rig.configuration.tray.detect_matrix)
 

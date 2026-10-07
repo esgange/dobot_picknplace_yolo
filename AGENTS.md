@@ -1858,6 +1858,18 @@ strictly post-request raw frames, all safety/failure gates and source checks.
 Update operator guidance, diary/FSM and regenerated HTML/PDF together. No new
 configuration, schema or hardware behavior beyond acquisition count is added.
 
+Rule 247 supersedes rule 232's single Tray Detect MovJ with an ordered MovL then
+MovJ pair to the same six exact taught joints. Queue MovJ immediately after MovL
+acceptance; do not wait for linear arrival or condition it on measured mismatch.
+Confirm only final MovJ execution/idle and all raw joints within ±1° before Pick
+success or tray detection. Keep taught rates, outputs, selected CP, ordered
+acceptance and all Stop/Pause/drop gates. Successful Pick, held Continue, explicit
+Tray Detect, Place positioning and Preview share the pair. Already-matched idle
+explicit positioning still skips travel. Home remains MovJ; direct inter-cycle
+Auto Run travel and linear placement remain unchanged. CP may blend into final
+MovJ before the linear endpoint; the pair is not a cable-winding/path guarantee.
+No configuration, schema, service or automatic live commissioning is added.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

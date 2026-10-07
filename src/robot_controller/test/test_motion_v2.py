@@ -304,7 +304,8 @@ def test_success_closes_only_after_suction_and_finishes_at_tray_holding():
     assert finish[2]["require_suction"] is True
     assert finish[2]["forbid_suction"] is False
     assert np.allclose(finish[2]["confirmed_start_pose"], hardware.pose)
-    assert finish[1] == ("p1_retract", "p1_final", "p1_transit_exit", "tray_detect_position")
+    assert finish[1] == ("p1_retract", "p1_final", "p1_transit_exit",
+                         "tray_detect_position_linear", "tray_detect_position")
     assert hardware.targets[-1][-1].joints_rad == tray_target().joints_rad
 
 
@@ -323,12 +324,13 @@ def test_success_with_deferred_grip_closes_halfway_through_prepick_lift():
     assert not any(entry[0] == "output" and entry[1] in (2, 14)
                    for entry in hardware.log)
     assert not returned
-    retract, clearance, exit_transit, destination = hardware.targets[-1]
+    retract, clearance, exit_transit, linear, destination = hardware.targets[-1]
     assert [event.vendor_value() for event in retract.motion_io] == [
         "{0,50,14,0}", "{0,50,2,1}"]
     assert not clearance.motion_io
     assert not exit_transit.motion_io
     assert not destination.motion_io
+    assert not linear.motion_io
 
 
 @pytest.mark.parametrize("use_grip", [False, True])
@@ -359,8 +361,10 @@ def test_pick_return_queues_finger_policy_and_safety_exit_before_tray_arrival(
         hardware.targets[-1], require_suction=True, confirmed_start_pose=hardware.pose)
 
     lift_service = "MovL" if use_grip and close_on_pick else "MovLIO"
-    assert rig.order == [lift_service, "MovL", "MovL", "MovJ", "feedback"]
-    lift, clearance, exit_transit, tray = [request for _service, request in rig.requests]
+    assert rig.order == [lift_service, "MovL", "MovL", "MovL", "MovJ", "feedback"]
+    lift, clearance, exit_transit, linear, tray = [r for _service, r in rig.requests]
+    assert all(getattr(linear, field) == getattr(tray, field)
+               for field in ('mode', 'a', 'b', 'c', 'd', 'e', 'f', 'param_value'))
     assert list(getattr(lift, "mdis", ())) == (
         ["{0,50,2,0}", "{0,50,14,0}"] if not use_grip else
         ["{0,50,14,0}", "{0,50,2,1}"] if not close_on_pick else [])
@@ -422,17 +426,19 @@ def test_success_and_exhaustion_keep_vertical_safety_exit_before_final_travel(
         assert len(hardware.targets) == 2  # Approach, then one complete finish group.
         group = hardware.targets[-1]
         assert [target.name for target in group] == ([
-            "p1_retract", "p1_final", "p1_transit_exit", "tray_detect_position"] if acquired else [
+            "p1_retract", "p1_final", "p1_transit_exit", "tray_detect_position_linear",
+            "tray_detect_position"] if acquired else [
             "p1_retract", "p1_final", "p1_transit_exit", "home"])
-        assert group[-2].matrix[2, 3] == pytest.approx(max(home_z, stopped_z))
-        assert not group[-2].motion_io
-        assert not group[-2].relative_z
-        assert group[-2].joints_rad is None
+        upward = group[:-2] if acquired else group[:-1]
+        assert upward[-1].matrix[2, 3] == pytest.approx(max(home_z, stopped_z))
+        assert not upward[-1].motion_io
+        assert not upward[-1].relative_z
+        assert upward[-1].joints_rad is None
         first_rates = (6, 40) if acquired else (100, 70)
         assert [(target.speed_percent, target.acceleration_percent)
                 for target in group] == [first_rates, (100, 70)] + [(80, 70)] * (
                     len(group) - 2)
-        for target in group[:-1]:
+        for target in upward:
             assert np.array_equal(target.matrix[:2, 3], hardware.pose[:2, 3])
             assert np.array_equal(target.matrix[:3, :3], hardware.pose[:3, :3])
             assert target.matrix[2, 3] >= stopped_z

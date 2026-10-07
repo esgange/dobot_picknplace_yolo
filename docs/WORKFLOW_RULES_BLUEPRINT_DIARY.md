@@ -9964,6 +9964,49 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No process was restarted or robot commanded; live verification remains pending.
   Preserve unrelated RViz edits, .env, calibration, teaching/model/runtime files.
 
+### 2026-10-07 — Rule 247: queue MovL then MovJ to Tray Detect
+
+- The operator requested linear travel to Tray Detect followed immediately by
+  joint alignment, preserving the rest of the Auto Run cycle. Queue MovJ after
+  MovL acceptance without waiting for linear arrival or checking whether the
+  joints need correction. Supersede rule 232's single Tray Detect MovJ.
+- Shared planning now produces MovL(mode=true) then MovJ(mode=true) to the exact
+  same six saved angles, converted to degrees without wrapping full turns. Both
+  use the same speed/acceleration and no timed I/O. Successful Pick queues the
+  pair after its existing linear lifts/Safety Z exit in one ordered group; held
+  Continue uses the pair directly. Explicit Tray Detect and Place positioning
+  share it at their existing 100% speed/taught travel acceleration. Preserve the
+  initial skip when explicit positioning is already idle at all saved joints.
+- Reuse the existing ordered transport: MovL must return accepted res=0 and a
+  valid queue ID before MovJ is sent, but no physical-arrival barrier separates
+  them. Confirm only final MovJ's own queue ID, advancing joint/status feedback,
+  idle/empty queue and all six raw joint errors within ±1° before Pick success
+  or tray acquisition. Rejection/unanswered calls, Stop/Pause, held loss, output
+  faults and final-arrival failures retain existing containment. No conditional
+  correction, new hardware client, retry, dwell or feedback policy is added.
+- Home remains absolute MovJ. Auto Run still goes directly from placement to the
+  next pick and uses Home only through existing initial/final/retry/return routes.
+  Placement's linear motion/timed I/O, acquisition budgets, sources and station
+  artifacts are unchanged. Preview shows both nominal Tray Detect endpoints.
+- Selected global CP remains active and may blend into MovJ before the exact
+  linear endpoint. The pair is not a predicted joint trajectory or a guarantee
+  against cable winding; full-turn joint correction can require substantial
+  rotation. No physical robot command, process restart or live trial was run.
+- Validation: all **1,317 controller tests pass** in isolated ROS domain 81 with
+  offscreen Qt and synthetic services/feedback. New real-transport checks prove
+  identical unwrapped six-angle/rate requests, both commands queued before any
+  arrival feedback, delayed MovL acceptance blocking MovJ, final MovJ queue-ID/
+  idle/raw-joint arrival (including 180° and full-turn differences), rejection
+  and Stop at each admission. Existing Pick finger-policy/lift, held Continue,
+  explicit positioning, detection-after-arrival, Auto Run, recovery and Preview
+  tests pass with the two-command route. Scoped flake8 and whitespace checks pass.
+- Update AGENTS, root/controller READMEs and current FSM review, state/guard tables
+  and Pick/Place/Auto Run diagrams; regenerate adjacent offline HTML/PDF exports.
+  Installed Python resolves to source, so no build or driver replacement is
+  needed. Operator restart of Controller/Preview when safe activates the change;
+  live operation remains unverified. Preserve unrelated RViz edits, .env,
+  calibration, teaching/model files and runtime_teach.
+
 ### Future entry template
 
 ```text
