@@ -808,7 +808,7 @@ def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, co
                            succeed=lambda: finished.append("success"),
                            abort=lambda: finished.append("abort"))
     result = RobotController._execute_pick_action(rig, goal)
-    assert requests == ["detect"] * 6
+    assert requests == ["detect"] * 11
     assert result.outcome == result.NO_PICK
     assert result.attempted_candidates == count
     assert finished == ["success"]

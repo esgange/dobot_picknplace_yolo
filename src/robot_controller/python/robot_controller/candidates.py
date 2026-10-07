@@ -14,7 +14,7 @@ from .errors import FeedbackFailure, OperationCanceled
 
 
 CANDIDATE_SERVICE = "/item_detect/get_item_poses"
-EMPTY_POSE_RETRY_LIMIT = 4
+EMPTY_POSE_RETRY_LIMIT = 9
 CANONICAL_CANDIDATE_PROVIDERS = frozenset({
     ("item_detect", "/"),
     ("item_teach", "/"),

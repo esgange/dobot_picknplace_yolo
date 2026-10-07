@@ -1,13 +1,13 @@
 # Robot Controller — Finite State Machine
 
-Perception retry review: **2026-10-07**, baseline **`0430ce0`** plus rule **245**.
-Item empty results permit four acquisition retries per owning Pick; five empty
+Perception retry review: **2026-10-07**, baseline **`24a81c9`** plus rule **246**.
+Item empty results permit nine acquisition retries per owning Pick; ten empty
 requests end READY/NO_PICK. Confirm Home before every retry, reserving its count
 before Home so Pause cannot reset it. Preserve the separate three-nonempty-batch
 physical-pick limit. Auto Run empty prefetch finishes/counts its owned Home once;
-further retries confirm already-reached Home. Tray acquisition permits five
+further retries confirm already-reached Home. Tray acquisition permits ten
 requests total before the existing confirmed PAUSED workflow; explicit Continue
-grants another five. Shared tray Preview uses the same bound. Neither adds a
+grants another ten. Shared tray Preview uses the same bound. Neither adds a
 settling delay. Every successful capture requires RGB and all raw depth frames
 strictly newer than that request; stale/equal timestamps wait or fail, never
 reuse cached frames. Preserve deadlines, source/evidence checks, Stop, retained
@@ -231,11 +231,11 @@ reload and restart invalidate them. Keep source validation, motion/I/O, retry
 limits and Stop. No schema/interface or additional worker/executor is introduced.
 
 Tray-failure Pause review: **2026-10-04**, baseline **`72073dc`** plus rule **214**.
-Five unavailable tray observations (rule 245) now confirm Stop and enter PAUSED at Tray
+Ten unavailable tray observations (rule 246) now confirm Stop and enter PAUSED at Tray
 Detect in both manual Place and Auto Run. Keep the held source, outputs, original
 target, operation owner and completed count. The normal paused Continue / Return
 Item menu is available, alongside Place Item (Retry) and direct STOP. Continue
-grants five fresh tray attempts for the same item; another exhausted batch
+grants ten fresh tray attempts for the same item; another exhausted batch
 pauses again. Return uses the shared return queue, ends Home/READY and cancels
 the operation without counting that item or starting another Pick. Auto Run
 permits these two typed controls only in this confirmed pre-release Pause;
@@ -349,8 +349,8 @@ benchmark improved 41.5%, not a measured physical-cycle speedup.
 Pick acquisition review: **2026-10-01**, baseline **`9145d4a`** plus rule **200**.
 Request item poses before Home. A nonempty result is retained while ensuring
 Home before candidate motion; the existing idle/joint match skips that motion.
-Rule 245 permits four Home-and-acquisition retries for valid empty results per
-Pick. A fifth empty result ends NO_PICK at Home. Preserve this allowance across Pause
+Rule 246 permits nine Home-and-acquisition retries for valid empty results per
+Pick. A tenth empty result ends NO_PICK at Home. Preserve this allowance across Pause
 and physical misses, separately from the three-nonempty-batch physical-pick limit.
 Auto Run applies the same policy; empty prefetch finishes the owned Home and
 counts placement before retry. Service faults and invalid evidence stay terminal.
@@ -408,9 +408,9 @@ readiness, saved Tray Detect arrival and Continue eligibility. Continue rejects
 uncertain release without setting resume. No motion queue or I/O timing changes.
 
 Acquisition pause review: **2026-09-30**, baseline **`2ed6a41`** plus diary rule
-**185** (retry count superseded by rule **245**). Five unavailable observations
+**185** (retry count superseded by rule **246**). Ten unavailable observations
 Stop and pause Place at Tray Detect,
-preserving grip and ownership. Continue / Place Item (Retry) explicitly grants five new
+preserving grip and ownership. Continue / Place Item (Retry) explicitly grants ten new
 requests; Pick Item remains disabled. The normal paused RETURN ITEM
 control uses the saved-source bin put-back and Home routine, ending READY and
 Place CANCELED. Rule 186 gives direct STOP its own permanent control. Require a
@@ -455,10 +455,10 @@ check. Preview does not change hardware-controller lifecycle states.
 
 Retry behavior review: **2026-09-30**, baseline **`30073a2`** plus diary rule
 **180**, superseded for Pick acquisition by rule **200**. Pick permits three
-nonempty physical-pick batches and, under rule 245, four empty-result acquisition
+nonempty physical-pick batches and, under rule 246, nine empty-result acquisition
 retries after Home.
 The initial request precedes Home; Home is confirmed before candidate motion.
-Place permits five
+Place permits ten
 fresh tray/depth requests for unavailable observations or missing replies.
 Ordinary Pause retains both limits; rule 185 permits an explicit new tray batch
 after acquisition exhaustion. Robot faults and invalid successful pose evidence
@@ -598,7 +598,7 @@ appear beside the controls and in tooltips.
 
 Continue requires retained managed Pause context, unchanged parked pose/outputs,
 no pending suction loss, and no uncertain placement release. A paused observation
-also needs the tray provider. Retry uses the original target and a new five-request
+also needs the tray provider. Retry uses the original target and a new ten-request
 budget; target fields stay locked. Return remains independent of tray perception.
 An old E-stop message never permanently disables Recover: the controller rechecks
 current alarms on the explicit request. Unknown suction is still checked by
@@ -650,7 +650,7 @@ and Home/put-back branches. It previews one fresh batch at nominal endpoints;
 actual early-contact poses and future retry batches require live execution and are not invented.
 Place requires saved Tray Detect joints and shares the three-command
 placement route, including taught rotation, with no observation-travel/Home TF. It samples real fresh tray/depth at
-the camera's current pose with five requests maximum. Preview cannot move the
+the camera's current pose with ten requests maximum. Preview cannot move the
 camera to make a hidden tray visible. Sources and successful pose evidence remain
 strict; failed observation publishes no partial placement route.
 
@@ -754,8 +754,8 @@ Place goal; there is no mixed-layout fallback. Restart Tray Teach/Detect and
 Robot Controller after updating. Provider executor failures revoke arming and
 report a terminal error with traceback, rather than retaining a silent frozen
 preview. Each unanswered in-flight request retains its bounded timeout; retry
-only within the five-request acquisition batch, then confirm Stop and pause.
-Explicit Continue / Place Item (Retry) grants another batch; no automatic sixth request.
+only within the ten-request acquisition batch, then confirm Stop and pause.
+Explicit Continue / Place Item (Retry) grants another batch; no automatic eleventh request.
 
 Startup order: validate ownership/feedback → read-only GetErrorID E-stop check → best-effort StopMoveJog → strict
 Stop/empty queue → unknown-item check → Disable → conditional ClearError →
@@ -780,7 +780,7 @@ typed status and failed service responses include the complete guidance.
 | `HOMING` | Explicit joint-target MovJ GoHome action is executing. |
 | `TRAY_POSITIONING` | Traveling to the saved Tray Detect Pose joints. |
 | `PLACING` | Checking observation position, observing tray/depth, admitting placement or supervising retract after action SUCCESS. |
-| `PICKING` | Poses before Home; four empty-result retries at Home; up to three nonempty physical-pick batches; success ends at Tray Detect. |
+| `PICKING` | Poses before Home; nine empty-result retries at Home; up to three nonempty physical-pick batches; success ends at Tray Detect. |
 | `HOLDING` | Trusted item held; Home, Tray Detect Position, Place Item, Pause, controlled return or global speed/CP are available under their guards. New Pick is blocked. |
 | `PAUSING` | Managed Stop and parking/return preparation; Continue is not yet allowed. |
 | `PAUSED` | Managed parking, acquisition Stop or Recovery Home suction test confirmed. Monitor pose/queue/outputs. Recovery offers saved-source return or explicit retest after DI1 LOW. |
@@ -802,7 +802,7 @@ flowchart TD
     Detect --> Validate["Validate sources and short-X / long-Y convention"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
     Validate -->|Valid| Any{"Any valid candidates?"}
-    Any -->|No| EmptyBudget{"All four empty-result retries used?"}
+    Any -->|No| EmptyBudget{"All nine empty-result retries used?"}
     EmptyBudget -->|Yes| Empty["READY / NO_PICK; robot Home"]
     EmptyBudget -->|No| RetryHome["Reserve retry; confirm Home or skip if matched; zero added delay; Pause retains budget"]
     RetryHome --> Detect
@@ -842,10 +842,10 @@ flowchart TD
   tray placement cancels unused poses; the next normal cycle uses fresh ones.
   Eligible poses retained after interruption/return may still be used. Ensure Home before
   candidate motion. Valid empty
-  results allow four retries, each after Home confirmation; the fifth empty result
+  results allow nine retries, each after Home confirmation; the tenth empty result
   ends READY/NO_PICK at Home. Empty results do not consume physical attempts,
   and the empty-result allowance survives Pause and later misses. Three nonempty
-  batches plus four empty observations permit at most seven requests per Pick.
+  batches plus nine empty observations permit at most twelve requests per Pick.
   After physical exhaustion, confirm Home before requesting a fresh batch.
   First held success ends the action while retaining its batch; three physically
   exhausted batches finish READY/NO_PICK. Reused IDs in new replies, item-service failures/timeouts, source changes
@@ -961,7 +961,7 @@ claim PLACED or RETURNED.
 ```mermaid
 flowchart TD
     Request["PlaceItem: READY/HOLDING, empty or held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
-    Observe -->|Yes immediately| Depth["Fresh tray pose/depth; optional debug RGB/depth; valid pixels meet 30% placement coverage; at most 5 attempts; zero added delay"]
+    Observe -->|Yes immediately| Depth["Fresh tray pose/depth; optional debug RGB/depth; valid pixels meet 30% placement coverage; at most 10 attempts; zero added delay"]
     Observe -->|No| Travel["Direct joint-target MovJ to Tray Detect; speed 100%; preserve outputs"]
     Travel --> Arrive["Confirm execution, saved joints and idle before detection"]
     Arrive --> Depth
@@ -970,7 +970,7 @@ flowchart TD
     Depth -->|No usable result or reply timeout| Budget{"Requests left?"}
     Budget -->|Yes; stay at observation pose| Depth
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
-    AcquisitionPause -->|Continue / Place Item Retry| Reset["Operator grants 5 new requests; recheck sources and position"]
+    AcquisitionPause -->|Continue / Place Item Retry| Reset["Operator grants 10 new requests; recheck sources and position"]
     Reset --> Observe
     AcquisitionPause -->|Trusted HELD source: Return Item| PutBack["One queue: bin approach → saved pre-pick (80% fingers OPEN, suction OFF, exhaust ON) → retract (neutral at 0% start) → joint Home; confirm only Home"]
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
@@ -1038,7 +1038,7 @@ Inadequate/clipped depth fails before
 any placement command. Hash/provider/plane checks remain strict.
 
 Retry missing pose/depth, no-result/error/BUSY responses and unanswered requests
-at most five times total, including the first request. Each request has the
+at most ten times total, including the first request. Each request has the
 existing taught timeout plus one second reply allowance and its own capture-time
 boundary. Cancel/discard timed-out local futures; never consume their late results.
 There is zero added settling delay for item or tray retries. RGB and every raw
@@ -1048,12 +1048,12 @@ frames, Home confirmation and inference still contribute actual elapsed time.
 The provider serializes inference and may reply BUSY while an old callback retires.
 Pause retains the count, drains an interrupted request to completion or its original
 deadline and discards that result. Local source/ownership/feedback failures and
-invalid successful pose/depth evidence stop immediately. After five unavailable
+invalid successful pose/depth evidence stop immediately. After ten unavailable
 observations, confirm Stop and stay at saved Tray Detect in PAUSED with original
 action/operation ownership and unchanged grip. There is no parking rise or
 placement/release command. Publish phase `TRAY_ACQUISITION_PAUSED` and the failure
 reason. Continue / Place Item (Retry) explicitly resets the request budget, rechecks sources
-and observation position, then makes up to five new requests. Another exhausted
+and observation position, then makes up to ten new requests. Another exhausted
 batch pauses again. Ordinary manual Pause retains its partly used budget.
 
 Pick Item remains disabled. A trusted HELD source before any placement release
@@ -1157,7 +1157,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 flowchart TD
     Start["READY: Auto Run quantity and placement target; start elapsed timer"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Pick --> Tray["Linear lifts and exit; MovJ Tray Detect; confirm joints and idle"]
-    Tray --> Observe["Fresh tray pose then placement depth: at least 30% valid pixels; optional debug RGB/depth; at most 5 complete attempts; zero added delay"]
+    Tray --> Observe["Fresh tray pose then placement depth: at least 30% valid pixels; optional debug RGB/depth; at most 10 complete attempts; zero added delay"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
     Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
     Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
@@ -1174,7 +1174,7 @@ flowchart TD
     Poses -->|No| RetryHome["Reserve retry; finish/confirm Home; count placement once; fresh item request"]
     RetryHome --> Retried{"Poses returned?"}
     Retried -->|Yes| Next
-    Retried -->|No| EmptyBudget{"All four empty-result retries used?"}
+    Retried -->|No| EmptyBudget{"All nine empty-result retries used?"}
     EmptyBudget -->|Yes| Empty
     EmptyBudget -->|No| RetryHome
     Append --> Boundary["Pre-pick ID + neutral/DI1 LOW history, or already confirmed retract: old PLACED; count once; install fresh ledger"]
@@ -1182,7 +1182,7 @@ flowchart TD
     Next --> Tray
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK; Home after misses or bin exit after final drop; partial count"]
     Next -->|3 physical batches or empty retry exhausted| Empty
-    Observe -->|5 requests exhausted| Paused["Confirm Stop; PAUSED at Tray Detect; retain item, target, owner and count"]
+    Observe -->|10 requests exhausted| Paused["Confirm Stop; PAUSED at Tray Detect; retain item, target, owner and count"]
     Paused -->|Continue / Place Item Retry| Observe
     Paused -->|Return Item| PutBack["Shared return queue through Home; READY / CANCELED; unchanged partial count"]
     Paused -->|Stop or safety fault| Fail["Stop containment; end run with partial count and total seconds"]
@@ -1234,8 +1234,8 @@ A ready result or detector error uses the existing handoff path. Stop, held loss
 or another run failure closes/discards this worker and its result before another
 operation can own the controller.
 If a valid empty batch arrives, append/finish Home and count the placement, then
-request poses again. Allow four empty-result retries per owning Pick, confirming
-Home each time; a fifth empty result ends NO_PICK with the partial count. This
+request poses again. Allow nine empty-result retries per owning Pick, confirming
+Home each time; a tenth empty result ends NO_PICK with the partial count. This
 budget cannot reset after a physical miss. Empty observations do not consume its
 three nonempty physical-pick batches.
 If observation is slower than placement, finish normal retract
@@ -1275,12 +1275,12 @@ frozen duration Total; unavailable status is labelled unavailable. This measures
 whole-run time through final Home, not individual inference or placement latency.
 
 The UI exposes AUTO RUN with completed/requested counts and locks manual controls
-and inputs during execution, except permanent STOP. Five unavailable tray requests
+and inputs during execution, except permanent STOP. Ten unavailable tray requests
 confirm Stop and enter the shared acquisition PAUSED state at Tray Detect. Keep
 the same placement object, held source, target, action owner and completed count;
 show PAUSED and the normal Continue/Return menu. Typed Continue and Return Item
 are permitted only in this confirmed pre-release acquisition Pause. Continue
-grants five new tray requests for that item; another exhaustion pauses again.
+grants ten new tray requests for that item; another exhaustion pauses again.
 No new Pick, bin prefetch or placement motion is sent while waiting. Return Item
 executes the shared saved-source queue through Home, ends READY / CANCELED and
 retains the partial count. No fault-recovery Stop is added after successful return.
@@ -1288,7 +1288,7 @@ Return requires a trusted held source; Continue also requires the tray provider
 and valid unchanged parked state. A fault or held loss while awaiting this
 operator decision cannot automatically restart counted production.
 External manual actions still cannot acquire the operation slot. Three physically
-exhausted nonempty Pick batches, or an empty result after its four acquisition retries
+exhausted nonempty Pick batches, or an empty result after its nine acquisition retries
 are used, end NO_PICK at Home. Other faults and STOP terminate with the completed
 count; no fourth physical-pick batch, extra empty-result retry, automatic startup,
 configuration change or hardware restart is implied.

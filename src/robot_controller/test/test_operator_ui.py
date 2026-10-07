@@ -155,7 +155,7 @@ def test_tray_status_uses_every_joint_and_idle_without_waits_or_commands(joint):
 
 
 def test_uncertain_release_disables_continue_without_mutating_placement(monkeypatch):
-    node, _tray = acquisition_rig(monkeypatch, [None] * 5)
+    node, _tray = acquisition_rig(monkeypatch, [None] * 10)
     exhaust(node)
     node.machine = ControllerStateMachine(initial='PAUSED')
     node.managed.parked_pose = node.hardware.current_pose()

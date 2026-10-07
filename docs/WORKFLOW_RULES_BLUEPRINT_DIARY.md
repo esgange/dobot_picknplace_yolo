@@ -9936,6 +9936,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   runtime artifacts, the unrelated RViz edit and all live processes. Live operation
   after this change remains unverified.
 
+### 2026-10-07 — Rule 246: ten total item and tray acquisition requests
+
+- The operator increased both perception limits from five to ten requests total:
+  one initial request plus nine retries. Supersede rule 245's counts only.
+- Set the shared empty-item retry allowance to nine for manual Pick and Auto Run.
+  Confirm Home before each empty-result retry; preserve the reservation across
+  Pause and later physical misses. Ten empty observations end READY/NO_PICK.
+  The separate three nonempty physical-pick batches remain unchanged; interleaved
+  empties can therefore produce up to twelve requests for one owning Pick.
+- Set tray pose/depth acquisition to ten requests in manual Place, Auto Run and
+  read-only Preview. Exhaustion retains the Stop-confirmed PAUSED workflow with
+  Continue / Return Item. Explicit Continue grants ten new requests; ordinary
+  Pause retains the partly used count. Update the GUI tooltip and current docs.
+- Keep zero added settling, strictly post-request RGB/raw-depth timestamps,
+  original request deadlines, source/provider validation, Stop and I/O guards.
+  Missing item services, invalid evidence and robot faults remain terminal.
+  No schema, configuration, artifact or motion/I/O sequence changes.
+- Validation: all **1,306 controller tests pass** in isolated ROS domain 81 with
+  offscreen Qt and synthetic robot feedback. Cover success through request ten,
+  exhaustion without request eleven, Home failure/Stop/Pause before every item
+  retry, interleaved physical misses, Auto Run prefetch quantity, tray Continue/
+  Return Item and no added delay. Scoped flake8 and whitespace checks pass.
+  Regenerate all nine FSM diagrams in the adjacent HTML/PDF and verify source
+  hash and new bounds. Installed controller modules resolve to source; no build
+  is needed. Operator restart of controller/GUI/Preview activates the change.
+  No process was restarted or robot commanded; live verification remains pending.
+  Preserve unrelated RViz edits, .env, calibration, teaching/model/runtime files.
+
 ### Future entry template
 
 ```text

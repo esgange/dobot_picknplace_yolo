@@ -39,7 +39,7 @@ current placement X/Y/rotation and debug-image choice. One native `AutoRun` acti
 owns all hardware commands until completion/failure/cancellation. The GUI disables
 manual motion, Preview, teach loading, speed/CP, Pause/Continue/Return and input edits;
 permanent STOP remains enabled. External manual actions cannot acquire the operation
-slot. After five unavailable tray observations, Auto Run instead enters the
+slot. After ten unavailable tray observations, Auto Run instead enters the
 normal acquisition Pause and permits Continue or Return Item, as described below.
 Other manual queue-control requests reject while Auto Run is active.
 Preview cannot start Auto Run. Launch/prefill never starts it.
@@ -54,7 +54,7 @@ feedback. Auto Run always requires the trusted picked item for placement, includ
 in GUI mode. Placement retains its existing approach/release/retract queue and rates.
 
 After Pick confirms Tray Detect joints/idle, acquire the tray pose and placement
-depth first, including any of the five allowed observation attempts. After the
+depth first, including any of the ten allowed observation attempts. After the
 validated result and observation-position check, start one read-only worker requesting
 a fresh next-bin candidate batch whenever another item is needed, even if the
 old batch still contains eligible poses (rule 218 supersedes rule 215).
@@ -86,10 +86,10 @@ The fresh batch is retained for retries/recovery until the first successful plac
 Pick → Place cycles discard the old batch at placement completion and acquire
 fresh poses on the next explicit Pick.
 Source/hash/attitude checks and three nonempty batches per Pick remain in force.
-Each Pick has four retries for empty pose results: confirm Home before each
-new request (five requests total if all are empty). An empty prefetch uses the
+Each Pick has nine retries for empty pose results: confirm Home before each
+new request (ten requests total if all are empty). An empty prefetch uses the
 owned placement-to-Home route and counts the
-completed placement before this retry. A fifth empty result ends NO_PICK at Home
+completed placement before this retry. A tenth empty result ends NO_PICK at Home
 with the completed quantity. Empty observations do not consume physical-pick batches.
 
 The handoff retains the previous placement and source until advancing FeedInfo
@@ -122,12 +122,12 @@ shows **Total**. The last count/time remain in controller memory for reconnectin
 clients until a new run replaces them or the controller restarts. Rebuild both
 interfaces and controller, then restart controller/GUI/status/action clients together.
 
-Three exhausted nonempty Pick batches, or an empty result after all four Home
-acquisition retries are used, end READY/NO_PICK at Home. Five unavailable tray
+Three exhausted nonempty Pick batches, or an empty result after all nine Home
+acquisition retries are used, end READY/NO_PICK at Home. Ten unavailable tray
 requests confirm Stop and enter **PAUSED at Tray Detect**, retaining the item,
 source, target, operation owner and completed count. The same paused controls
 offer **Continue**, **Return Item** and permanent **STOP**; Place Item (Retry) is
-an alias for Continue. Continue grants five fresh tray requests for that same
+an alias for Continue. Continue grants ten fresh tray requests for that same
 item and resumes the run after a valid result. Another exhausted batch pauses
 again. No new Pick or next-bin request starts while waiting. Return Item uses
 the shared return queue, ends Home/READY and cancels Auto Run with its unchanged
@@ -264,7 +264,7 @@ Tray Detect Position action remains available to external clients with its direc
 joint-target MovJ. The bin routes retain their existing clearance logic.
 After confirmation, request fresh tray/depth from Armed Tray Teach or headless
 Tray Detect, with
-**five requests per acquisition batch**. Retry a missing pose/depth result,
+**ten requests per acquisition batch**. Retry a missing pose/depth result,
 provider no-result/error/BUSY reply or response timeout at the same observation
 position. One attempt is **fresh tray pose → fresh placement depth**. A depth
 failure consumes that attempt even when a tray was found; the next attempt repeats
@@ -274,13 +274,13 @@ Each request keeps its taught request timeout plus one second for the
 reply and requires RGB/depth captured after that request. A timed-out local future
 is discarded; a late reply cannot supply a later attempt. The provider serializes
 inference. Ordinary Pause/Continue keeps the request count and discards interrupted
-results after completion or their original deadline. After five unavailable
+results after completion or their original deadline. After ten unavailable
 observations, confirm Stop and enter **PAUSED at the saved Tray Detect position**,
 with the original Place/Auto Run action and command ownership retained. Preserve outputs
 and any held source; queue no placement, release or parking rise. Report the final
 reason in status, action feedback and operator log. **Continue / Place Item (Retry)** starts
-another batch of up to five fresh requests, after the usual position/source checks.
-There is no automatic sixth request. Another exhausted batch pauses again.
+another batch of up to ten fresh requests, after the usual position/source checks.
+There is no automatic eleventh request. Another exhausted batch pauses again.
 Local source/ownership/feedback faults and invalid successful pose
 evidence remain terminal. Run exactly one provider; commands remain controller-owned.
 
@@ -521,8 +521,8 @@ Actions:
   Successful tray placement invalidates unused poses; its next Pick requests
   fresh ones. Poses retained after interruption/return may still be used. Then
   ensure Home before candidate motion. Valid empty
-  results allow four Home-and-acquisition retries per Pick, preserved across Pause
-  and later physical misses. The fifth empty result ends READY/NO_PICK at Home.
+  results allow nine Home-and-acquisition retries per Pick, preserved across Pause
+  and later physical misses. The tenth empty result ends READY/NO_PICK at Home.
   Empty results do not consume physical-pick attempts. After exhausting a
   nonempty batch, confirm Home and request a fresh batch.
   Success ends immediately in HOLDING; three exhausted nonempty batches end
@@ -660,7 +660,7 @@ appear beside the controls and in tooltips.
 
 Continue requires retained managed Pause context, unchanged parked pose/outputs,
 no pending suction loss, and no uncertain placement release. A paused observation
-also needs the tray provider. Retry uses the original target and a new five-request
+also needs the tray provider. Retry uses the original target and a new ten-request
 budget; target fields stay locked. Return remains independent of tray perception.
 An old E-stop message never permanently disables Recover: the controller rechecks
 current alarms on the explicit request. Unknown suction is still checked by
@@ -705,7 +705,7 @@ Pick preview shows one fresh candidate batch and its possible nominal branches,
 not simulated suction outcomes or unknown future retry observations. Actual early
 contact/Stop positions depend on hardware feedback and cannot be predicted.
 Place uses fresh tray/depth from the camera's **current physical position**, with
-the same five-request bound and evidence validation. A hidden tray cannot be
+the same ten-request bound and evidence validation. A hidden tray cannot be
 observed by previewing a future camera pose; a missing observation fails visibly
 without fabricated targets or movement. Preview does not require a held item.
 
@@ -1136,8 +1136,8 @@ joints. Its tray detector need not be armed; Pick only travels to the saved pose
 2. for a new batch, validate the response, transform item positions into base coordinates
    and rank by 3D distance from taught Home, using detector priority for ties;
 3. run the same Home function once poses are available, skipping motion when already
-   matched. If the result is empty, confirm Home before each of four acquisition retries per
-   Pick; a fifth empty result ends NO_PICK at Home;
+   matched. If the result is empty, confirm Home before each of nine acquisition retries per
+   Pick; a tenth empty result ends NO_PICK at Home;
 4. offset Link6 green/Y by the taught `pick_rotation` from each item's short-axis
    line while preserving taught tool Z;
 5. attempt eligible saved candidates in controller Home-distance order, excluding terminal
@@ -1150,10 +1150,10 @@ joints. Its tray detector need not be armed; Pick only travels to the saved pose
 8. after full exhaustion, confirm Home and repeat from a fresh batch, up to three
    nonempty batches total; three physically exhausted batches finish READY/NO_PICK.
 
-The four empty-result retries are separate from physical-pick attempts and cannot
-reset after a miss or Pause. This permits at most seven pose requests per Pick
-when four empty observations occur among three nonempty batches. If all initial
-requests are empty, stop after the fifth. Detector errors/timeouts and invalid evidence
+The nine empty-result retries are separate from physical-pick attempts and cannot
+reset after a miss or Pause. This permits at most twelve pose requests per Pick
+when nine empty observations occur among three nonempty batches. If all initial
+requests are empty, stop after the tenth. Detector errors/timeouts and invalid evidence
 remain terminal; no hardware command is retried after uncertain acceptance.
 
 Item and tray retries have **zero added settling delay**. Each new request
@@ -1162,7 +1162,7 @@ request timestamp; cached frames cannot satisfy the next attempt. The acquisitio
 pipeline waits for new camera frames within the existing deadline, then runs
 inference. Item retries first confirm Home (skip motion if already matched);
 tray retries remain at Tray Detect. Physical travel, capture and processing still
-take time. Continue after tray exhaustion grants another five-request budget.
+take time. Continue after tray exhaustion grants another ten-request budget.
 
 The detector pose uses local X for the measured short axis and local Y for the
 long axis. It is an in-plane heading, not a TCP attitude. The controller

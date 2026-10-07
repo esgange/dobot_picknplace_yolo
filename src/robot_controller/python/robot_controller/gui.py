@@ -880,7 +880,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "return_item": "Return the held item to its saved bin position, then Home",
             "home": "Move Home while preserving any held item",
             "pick": "Pick an item and carry it to Tray Detect",
-            "place": "Retry tray acquisition with up to 5 fresh requests" if retry else
+            "place": "Retry tray acquisition with up to 10 fresh requests" if retry else
                      "Move to Tray Detect if needed, then place and retract; item optional",
             "preview_toggle": "ON: motion buttons show TFs only. OFF: real robot motion.",
             "speed": "Change the global motion speed factor",

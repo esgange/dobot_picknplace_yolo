@@ -19,7 +19,7 @@ from .motion import rigid_matrix
 
 
 PROVIDERS = {("tray_teach", "/"), ("tray_detect", "/")}
-TRAY_ATTEMPT_LIMIT = 5
+TRAY_ATTEMPT_LIMIT = 10
 
 
 @dataclass

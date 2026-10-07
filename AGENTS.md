@@ -1848,6 +1848,16 @@ each request; stale/equal frames wait or fail instead of satisfying a retry.
 Keep freshness/deadline/source/Stop/I/O gates, no hardware-command retries, and
 no configuration/schema changes. Update diary/FSM and regenerate HTML/PDF.
 
+Rule 246 increases rule 245's limits to ten requests total (initial plus nine
+retries) for empty item poses and unavailable tray pose/depth. Each item retry
+still confirms Home first; keep nine empty-result retries per owning Pick,
+preserved across Pause/misses, and the separate three nonempty physical batches.
+Tray exhaustion retains PAUSED/Continue/Return; explicit Continue grants ten new
+requests. Shared tray Preview uses the same bound. Keep zero added settling,
+strictly post-request raw frames, all safety/failure gates and source checks.
+Update operator guidance, diary/FSM and regenerated HTML/PDF together. No new
+configuration, schema or hardware behavior beyond acquisition count is added.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

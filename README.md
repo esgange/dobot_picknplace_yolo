@@ -50,7 +50,7 @@ cancels any unused poses from its old batch. After the last placement, append
 Home immediately and finish only at confirmed Home; no extra bin request is made.
 The displayed count requires placement execution and neutral/released feedback,
 not acceptance alone. Auto Run disables manual controls during motion; permanent
-STOP remains available. Five unavailable tray observations pause at Tray Detect
+STOP remains available. Ten unavailable tray observations pause at Tray Detect
 with the item held and the count retained. **Continue** retries tray detection
 for that item; **Return Item** puts it back and ends the run at Home/READY with
 its partial count. Three exhausted Pick batches, robot faults and STOP end the
@@ -185,20 +185,20 @@ failures after acceptance appear in status and logs.
 Pick Item requires an available armed Item Teach or
 headless Item Detect provider. Pick first reuses an eligible saved pose; only an
 absent/exhausted batch requests fresh bin poses before Home. Then ensure Home
-before approaching the candidate. Valid empty results allow four
-Home-and-acquisition retries per Pick: five requests total if all are empty,
+before approaching the candidate. Valid empty results allow nine
+Home-and-acquisition retries per Pick: ten requests total if all are empty,
 then READY/NO_PICK at Home. An empty result does not consume a physical-pick batch.
 Pick uses at most
 **three nonempty candidate batches**:
 exhausting all poses counts as one attempt, then return Home and request a fresh
 batch. Stop on the first held success; three exhausted batches finish READY/NO_PICK.
-Place retries a missing tray/depth result or response timeout with at most **five
+Place retries a missing tray/depth result or response timeout with at most **ten
 requests total**, while staying at Tray Detect Pose. Stop/Pause, source validation
 and robot feedback checks remain active; malformed pose evidence remains fatal.
-After five unavailable observations, confirm Stop and enter **PAUSED at Tray
+After ten unavailable observations, confirm Stop and enter **PAUSED at Tray
 Detect**, preserving outputs and any trusted held source, in both manual Place
 and Auto Run. **Continue**, also available as **Place Item (Retry)**,
-starts another five-request acquisition batch for the same target. The paused
+starts another ten-request acquisition batch for the same target. The paused
 control shows **RETURN ITEM** for a known held item, with **Continue** in its menu.
 Return uses the existing saved-bin put-back routine, ending Home/READY and
 canceling the placement/run without counting it. Pick Item stays disabled. No placement or
@@ -448,8 +448,8 @@ request tray detection or placement. Its initial Home check uses one fresh idle
 RobotStatus and all six `/joint_states` within ±1°: skip the entire Home queue
 immediately when matched, without an extra feedback tick, service query or dwell.
 Otherwise use the existing conditional rise and joint Home after acquiring poses,
-before candidate motion. If no poses are returned, confirm Home before each of up to four
-acquisition retries (five requests total if all are empty). Missed-candidate routes
+before candidate motion. If no poses are returned, confirm Home before each of up to nine
+acquisition retries (ten requests total if all are empty). Missed-candidate routes
 and the three-nonempty-batch limit remain.
 Finger states are OPEN (DO2 OFF then DO14 ON), CLOSE (DO14 OFF then DO2 ON),
 or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST
