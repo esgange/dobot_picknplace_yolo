@@ -70,6 +70,55 @@ def test_single_view_starts_with_blank_dimensions_and_no_production_profile(wind
     assert window.node.service is None
 
 
+def test_background_disarm_reason_survives_armed_toggle_refresh(window):
+    node = window.node
+    node.arm_epoch = 4
+    node.last_disarm_reason = ""
+    node.destroy_service = MagicMock()
+    node.disarm = lambda *args, **kwargs: ItemDetectNode.disarm(node, *args, **kwargs)
+    window.armed_toggle.blockSignals(True)
+    window.armed_toggle.setChecked(True)
+    window.armed_toggle.blockSignals(False)
+    node.service = object()
+    reason = "Station source validation failed: Applied bin teach changed"
+    node.disarm(reason)
+    window._refresh_video()
+    assert not window.armed_toggle.isChecked()
+    assert window.armed_toggle.text() == "Armed: OFF"
+    assert reason in window.armed_toggle.toolTip()
+    assert reason in window.status.toPlainText()
+    assert node.last_disarm_reason == reason
+    node.arm.assert_not_called()
+
+
+def test_edited_field_is_named_in_disarm_reason(window):
+    window.node.disarm.reset_mock()
+    window.inputs["nearby_depth_radius_mm"].setText("175")
+    window.node.disarm.assert_called_once_with(
+        "Detection settings changed: nearby_depth_radius_mm")
+    window.node.disarm.reset_mock()
+    window.name.setText("Changed item")
+    window.node.disarm.assert_called_once_with("Teaching settings changed: item_name")
+
+
+def test_production_status_and_preview_source_refresh_leave_service_armed(window):
+    node = window.node
+    window.yolo_toggle.setChecked(True)
+    window.armed_toggle.blockSignals(True)
+    window.armed_toggle.setChecked(True)
+    window.armed_toggle.blockSignals(False)
+    service = node.service = object()
+    node.disarm.reset_mock()
+    window._job = MagicMock()
+    for active in (True, False, True, False):
+        node.background_suspended = lambda: active
+        window._populate_sources(["mask"], "mask")
+        window._refresh_video()
+        assert node.service is service and window.armed_toggle.isChecked()
+    node.disarm.assert_not_called()
+    node.arm.assert_not_called()
+
+
 def test_nearby_filter_fields_live_edit_in_item_size_section(window):
     group = window.inputs["nearby_depth_radius_mm"].parentWidget()
     assert group.title().startswith("4  Item size")

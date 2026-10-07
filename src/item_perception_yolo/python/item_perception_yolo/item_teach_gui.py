@@ -748,6 +748,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
         outer.addWidget(self.status)
         live_fields = {"confidence", "iou", "max_detections", "pose_candidates", *GEOMETRY_FIELDS,
                        *BIN_CLEARANCE_FIELDS, *QUALITY_DEFAULTS}
+        for key, field in {**self.inputs, "item_name": self.name, "model": self.model,
+                           "model_task": self.task, "classes": self.classes,
+                           "geometry_source": self.geometry_source}.items():
+            field.setObjectName(key)
         for key in live_fields:
             self.inputs[key].textChanged.connect(self._detection_settings_changed)
         text_fields = [v for key, v in self.inputs.items()
@@ -810,7 +814,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.preview_revision += 1
             self.node.yolo_enabled = False
             self.node.last_view = None
-            self.node.disarm()
+            self.node.disarm("YOLO switched OFF in Item Teach")
             self.armed_toggle.setChecked(False)
             self.preview_status = "YOLO OFF"
             self.yolo_toggle.setText("YOLO Detect: OFF")
@@ -1049,8 +1053,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _queue_model_load(self, path, *, pair=None):
         """Queue exactly one confirmed model; a paired load is bound to its YAML hash."""
+        self.node.disarm("Model load queued in Item Teach")
         self.yolo_toggle.setChecked(False)
-        self.node.disarm()
         self.armed_toggle.setChecked(False)
         self.node.model_config = None
         self.node.model_metadata = None
@@ -1188,9 +1192,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Selection changed; validating the complete calibration selection automatically…")
 
     def _clear_station_preview(self):
+        self.node.disarm("Station calibration/bin selection changed in Item Teach")
         self.node.camera_mount.clear()
         self.yolo_toggle.setChecked(False)
-        self.node.disarm()
         self.armed_toggle.setChecked(False)
         self.node.applied = self.node.bin_artifact = self.node.robot_camera = None
         self.node.last_view = None
@@ -1277,7 +1281,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             if all(paths) and any(not Path(path).is_file() for path in paths):
                 self.calibration_waiting = paths, persist
             self.node.camera_mount.clear()
-            self.node.disarm()
+            self.node.disarm(f"Station calibration/bin validation failed: {exc}")
             self.node.applied = self.node.bin_artifact = self.node.robot_camera = None
             self.node.last_view = None
             self.bin_platform_warning.clear()
@@ -1300,8 +1304,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
     def _toggle_armed(self, enabled):
         self._resume_live()
         if not enabled:
-            self.node.disarm()
+            self.node.disarm("Armed switched OFF in Item Teach")
             self.armed_toggle.setText("Armed: OFF")
+            reason = getattr(self.node, "last_disarm_reason", "")
+            if reason:
+                self.armed_toggle.setToolTip("Armed OFF: " + reason)
+                self._message("Armed OFF: " + reason)
             return
         try:
             if self.model_load_reserved:
@@ -1313,6 +1321,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.node.enable_yolo(self._inference_settings())
             self.node.arm(self.saved_path)
             self.armed_toggle.setText("Armed: ON")
+            self.armed_toggle.setToolTip("Pose service ON: /item_detect/get_item_poses")
             self._message("Pose service ON: /item_detect/get_item_poses. No robot motion.")
         except (ValueError, OSError, RuntimeError) as exc:
             self.armed_toggle.setChecked(False)
@@ -1472,7 +1481,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.node.clear_selected_pose()
             self._finish_model_load()
             self.node.fatal_error = "Item native worker failed; no restart or fallback"
-            self.node.disarm()
+            self.node.disarm(self.node.fatal_error)
             self.node.get_logger().fatal(self.node.fatal_error)
             QtWidgets.QApplication.instance().quit()
             return
@@ -1772,19 +1781,24 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.activity_summary.setText(message.replace("\n", " "))
         self.activity_summary.setToolTip(message)
 
-    def _dirty(self, *_):
+    def _dirty(self, *_, reason="Teaching settings changed"):
         self._resume_live()
         source = self.geometry_source.currentData()
         if self.node.yolo_enabled and source != self.node.preview_source:
             self._resume_live()
             self.node.last_view = None
             self.node.preview_source = source
-        self.node.disarm()
+        sender = self.sender()
+        if sender is not None and sender.objectName():
+            reason += ": " + sender.objectName()
+        self.node.disarm(reason)
         self.armed_toggle.setChecked(False)
         self.saved_path = None
 
     def _detection_settings_changed(self, *_):
-        self.node.disarm()
+        sender = self.sender()
+        field = sender.objectName() if sender is not None else ""
+        self.node.disarm("Detection settings changed" + (": " + field if field else ""))
         self.armed_toggle.setChecked(False)
         self.saved_path = None
         self._sync_bin_clearance_preview()
@@ -1856,7 +1870,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.home = home
         self.node.events.record("INFO", "home_recorded", "Accepted six home joints", home=home)
         self._show_home()
-        self._dirty()
+        self._dirty(reason="Taught Home replaced")
         self._message("Recorded home joints. No robot movement was requested.")
 
     def _yolo_settings(self):
@@ -1968,7 +1982,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No,
         ) != QtWidgets.QMessageBox.Yes:
             return
-        self._dirty()  # Invalidate service/frozen requests before publishing a changed pair.
+        # Invalidate service/frozen requests before publishing a changed pair.
+        self._dirty(reason="Item Teach Save requested")
         try:
             output, profile = save_item_profile(
                 self._settings(), self.home, Path(self.model.text()),
@@ -2099,8 +2114,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.save_target = (item_save_target(
             path, draft.values.get("name"), draft.digest, root=workspace_root())
             if draft.digest is not None else None)
+        self.node.disarm(f"Item profile requires recovery/review: {error}")
         self.yolo_toggle.setChecked(False)
-        self.node.disarm()
         self.node.model_config = self.node.model_metadata = self.node.last_view = None
         self._resume_live()
         self.armed_toggle.setChecked(False)

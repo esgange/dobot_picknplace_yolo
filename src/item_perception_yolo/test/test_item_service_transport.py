@@ -136,7 +136,7 @@ def exercise_service():
         assert set(looked_up[1:]) == {selected_rgb["stamp_ns"], *selected_depth["frame_stamps_ns"]}
         assert len(selected_depth["frame_stamps_ns"]) == 3
         detector.tf_buffer.lookup_transform = real_lookup
-        detector.disarm()
+        detector.disarm("Synthetic transport test disarm")
         assert detector.service is None
         # A local simulation stays unarmed yet uses the same fresh-observation
         # acquisition, timestamped TF and typed response as the real service.
@@ -151,7 +151,7 @@ def exercise_service():
         # Re-arm the same node: discovery of its retired endpoint must not self-collide.
         detector.arm(Path("synthetic_profile.yaml"))
         assert detector.service is not None
-        detector.disarm()
+        detector.disarm("Synthetic transport test complete")
         sensor.destroy_timer(timer)
         print("synthetic ROS service: fresh pair, TF, typed response, disarm/rearm passed")
     finally:

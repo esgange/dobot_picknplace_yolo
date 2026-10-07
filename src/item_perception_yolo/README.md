@@ -167,6 +167,15 @@ ros2 launch item_perception_yolo item_teach.launch.py
    headless detector must not advertise it simultaneously. No robot motion is
    performed by either mode.
 
+If Armed unexpectedly switches OFF, inspect the Armed tooltip/activity log and
+`logs/item_perception_yolo/events.jsonl`. Each `item_disarmed` event records its
+reason: a named teaching-field edit, explicit toggle/Save/load, source-validation
+error, CameraInfo change, worker failure or shutdown. CameraInfo changes include
+the changed fields and old/new values. The original reason survives subsequent
+GUI status refreshes. Ordinary image timestamps, temporary image freshness/sync
+gaps and production preview suspension do not themselves disarm the service.
+Correct the reported cause and explicitly re-arm; there is no automatic re-arm.
+
 ### Schema 13 capture and request scheduling
 
 Production and Simulate Trigger select 1, 3 or 5 distinct advancing depth frames

@@ -64,12 +64,31 @@ def test_station_source_changes_disarm(monkeypatch):
     monkeypatch.setattr(detector, "file_sha256", lambda _: "changed")
     with pytest.raises(ValueError, match="bin teach changed"):
         detector.ItemDetectNode._validate_sources(node)
-    node.disarm.assert_called_once()
+    node.disarm.assert_called_once_with(
+        "Station source validation failed: Applied bin teach changed")
     assert node.last_view is None
     node.service = None
     with pytest.raises(ValueError, match="bin teach changed"):
         detector.ItemDetectNode._validate_sources(node)
     node.disarm.assert_called_once()  # No endless generation changes in unarmed teaching.
+
+
+def test_disarm_records_first_cause_and_keeps_it_during_gui_synchronization():
+    service = object()
+    node = SimpleNamespace(service=service, arm_epoch=4, last_disarm_reason="",
+                           destroy_service=MagicMock(), events=MagicMock())
+    reason = "depth_info CameraInfo changed: k"
+    detector.ItemDetectNode.disarm(node, reason, stream="depth_info", changed_fields={"k": {}})
+    assert node.service is None and node.arm_epoch == 5
+    assert node.last_disarm_reason == reason
+    node.destroy_service.assert_called_once_with(service)
+    node.events.record.assert_called_once_with(
+        "INFO", "item_disarmed", "Pose service removed: " + reason,
+        reason=reason, stream="depth_info", changed_fields={"k": {}})
+    detector.ItemDetectNode.disarm(node, "Armed switched OFF in Item Teach")
+    assert node.last_disarm_reason == reason and node.arm_epoch == 6
+    node.destroy_service.assert_called_once()
+    node.events.record.assert_called_once()
 
 
 @pytest.fixture

@@ -403,6 +403,7 @@ class ItemDetectNode(Node):
         self.preview_frame_count = DEFAULT_DEPTH_FRAME_COUNT
         self.preview_bin_clearance = dict.fromkeys(BIN_CLEARANCE_FIELDS)
         self.service = None
+        self.last_disarm_reason = ""
         self.arm_epoch = 0
         self.last_view = None
         self.fatal_error = None
@@ -416,14 +417,14 @@ class ItemDetectNode(Node):
                 and self.fatal_error is None):
             self.fatal_error = f"Item worker PID {process.pid} exited: {process.returncode}"
             self.native.failed = True
-            self.disarm()
+            self.disarm(self.fatal_error)
             self.events.record("FATAL", "item_worker_exit", self.fatal_error,
                                pid=process.pid, exit_code=process.returncode)
             self.get_logger().fatal(self.fatal_error)
 
     def connect_camera(self, prefix):
         validate_prefix(prefix)
-        self.disarm()
+        self.disarm(f"Camera connection changed to /{prefix}")
         self.yolo_enabled = False
         if self.applied is not None and prefix != self.applied.camera.settings.camera_prefix:
             self.applied = self.bin_artifact = self.robot_camera = None
@@ -484,10 +485,10 @@ class ItemDetectNode(Node):
                 self.camera_status = str(exc)
                 self.condition.notify_all()
             if kind in ("color_info", "depth_info"):
-                self.disarm()
+                self.disarm(f"Invalid {kind} CameraInfo: {exc}", stream=kind)
             self.events.record("WARNING", "item_message_rejected", str(exc), stream=kind)
             return
-        changed_info = False
+        changed_info = None
         with self.condition:
             if generation != self._camera_generation:
                 return
@@ -503,7 +504,10 @@ class ItemDetectNode(Node):
                     self._input_revision += 1
                     self.arm_epoch += 1
                     self.last_view = None
-                    changed_info = True
+                    previous = getattr(self, field)
+                    changed_info = {key: {"old": previous.get(key), "new": value.get(key)}
+                                    for key in previous.keys() | value.keys()
+                                    if previous.get(key) != value.get(key)}
             if kind == "depth":
                 value["color_info"] = copy.deepcopy(self._color_info)
                 value["depth_info"] = copy.deepcopy(self._depth_info)
@@ -515,14 +519,15 @@ class ItemDetectNode(Node):
             self.camera_status = f"Receiving /{prefix}"
             self.condition.notify_all()
         if changed_info:
-            self.disarm()
+            self.disarm(f"{kind} CameraInfo changed: {', '.join(sorted(changed_info))}",
+                        stream=kind, changed_fields=changed_info)
 
     def camera_snapshot(self):
         with self._feedback_lock:
             return self._image, self.camera_status
 
     def inspect_model(self, path, *, expected_sha256=None):
-        self.disarm()
+        self.disarm("Model load requested")
         self.yolo_enabled = False
         path = Path(path).expanduser().resolve(strict=True)
         if path.suffix != ".pt" or path.stat().st_size == 0:
@@ -541,7 +546,7 @@ class ItemDetectNode(Node):
 
     def apply_station(self, platform_path, bin_path, *, expected_station=None,
                       expected_robot_camera=None, robot_camera_path=None):
-        self.disarm()
+        self.disarm("Station calibration/bin application requested")
         applied = load_bin_teach_calibration_context(
             Path(platform_path), root=self.root,
             camera_path=expected_station.camera.path if expected_station is not None else None)
@@ -623,15 +628,18 @@ class ItemDetectNode(Node):
                            "All detections with size borders; pose calculation on click only",
                            yolo=self.preview_yolo, geometry_source=source)
 
-    def disarm(self):
+    def disarm(self, reason, **details):
         self.arm_epoch += 1
         if self.service is not None:
             service, self.service = self.service, None
+            # Repeated GUI synchronization must not overwrite the original cause.
+            self.last_disarm_reason = reason
             self.destroy_service(service)
-            self.events.record("INFO", "item_disarmed", "Pose service removed")
+            self.events.record("INFO", "item_disarmed", f"Pose service removed: {reason}",
+                               reason=reason, **details)
 
     def arm(self, path):
-        self.disarm()
+        self.disarm("Re-arming requested; revalidating profile and inputs")
         profile, digest = self._validate_pose_profile(path)
         self._validate_sources()
         own = (self.get_name(), self.get_namespace())
@@ -647,6 +655,7 @@ class ItemDetectNode(Node):
         self.pose_candidates = profile["retry"]["pose_candidates"]
         self.service = self.create_service(GetItemPoses, SERVICE_NAME, self._request,
                                            callback_group=ReentrantCallbackGroup())
+        self.last_disarm_reason = ""
         self.events.record("INFO", "item_armed", "Pose service advertised", profile_sha256=digest)
 
     def _validate_pose_profile(self, path):
@@ -677,10 +686,10 @@ class ItemDetectNode(Node):
                 validate_robot_camera_calibration(self.robot_camera, root=self.root)
             if file_sha256(self.bin_artifact.path) != self.bin_artifact.sha256:
                 raise ValueError("Applied bin teach changed")
-        except (ValueError, OSError):
+        except (ValueError, OSError) as exc:
             self.last_view = None
             if self.service is not None:
-                self.disarm()
+                self.disarm(f"Station source validation failed: {exc}")
             raise
 
     def pick_planning_context(self, home, pick_rotation, standoff_height):
@@ -1172,7 +1181,7 @@ class ItemDetectNode(Node):
                 if getattr(self, "deployment", False)
                 else load_item_profile(profile_path))
             if digest != profile_digest:
-                self.disarm()
+                self.disarm("Item profile contents changed before acquisition")
                 raise ValueError("Item profile changed")
             stages["validation_before_ms"] = (time.monotonic() - stage_started)*1000.
             stage_started = time.monotonic()
@@ -1202,7 +1211,7 @@ class ItemDetectNode(Node):
             check_active()
             self._validate_sources()
             if file_sha256(profile_path) != profile_digest:
-                self.disarm()
+                self.disarm("Item profile contents changed during acquisition")
                 raise ValueError("Item profile changed during request")
             if time.monotonic() > deadline:
                 raise ValueError("Request deadline exceeded")
@@ -1253,7 +1262,7 @@ class ItemDetectNode(Node):
                 check_active()
                 self._validate_sources()
                 if file_sha256(profile_path) != profile_digest:
-                    self.disarm()
+                    self.disarm("Item profile contents changed while saving debug images")
                     raise ValueError("Item profile changed while saving debug images")
                 if time.monotonic() > deadline:
                     raise ValueError("Request deadline exceeded while saving debug images")
@@ -1290,7 +1299,7 @@ class ItemDetectNode(Node):
             self.events.record("ERROR", "item_simulated_request_failed" if simulated
                                else "item_pose_request_failed", str(exc))
             if self.native.failed:
-                self.disarm()
+                self.disarm(f"Native worker failed during acquisition: {exc}")
                 self.fatal_error = str(exc)
                 self.get_logger().fatal(str(exc))
         finally:
@@ -1306,11 +1315,11 @@ class ItemDetectNode(Node):
         self._validate_sources()
         path, digest = view["simulation_profile"]
         if file_sha256(Path(path)) != digest:
-            self.disarm()
+            self.disarm("Simulated item profile contents changed")
             raise ValueError("Simulated item profile changed")
 
     def close_runtime(self):
-        self.disarm()
+        self.disarm("Item node shutting down")
         self.yolo_enabled = False
         self.native.close()
 

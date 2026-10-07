@@ -205,4 +205,51 @@ def test_camera_info_change_invalidates_history_and_inflight_generation(monkeypa
     ItemDetectNode._receive(node, object(), "bin", 1, "color_info")
     assert node._input_revision == 1 and node.arm_epoch == 5
     assert not node._depth_history and not node._rgb_history and node.last_view is None
-    node.disarm.assert_called_once()
+    node.disarm.assert_called_once_with(
+        "color_info CameraInfo changed: d", stream="color_info",
+        changed_fields={"d": {"old": [0], "new": [1]}})
+
+
+@pytest.mark.parametrize("kind", ["color_info", "depth_info"])
+def test_repeated_camera_info_timestamps_do_not_disarm_or_clear_history(kind):
+    from unittest.mock import Mock
+    from sensor_msgs.msg import CameraInfo
+    from item_perception_yolo.item_detector import validate_camera_info
+    node, _ = window_node()
+    message = CameraInfo(width=424, height=240, distortion_model="plumb_bob",
+                         k=[230., 0., 212., 0., 230., 120., 0., 0., 1.], d=[0.]*8)
+    message.header.frame_id = "bin_color_optical_frame"
+    message.header.stamp.sec = 100
+    setattr(node, "_" + kind, validate_camera_info(message, "bin"))
+    node._camera_generation = 1
+    node._input_revision = 0
+    node.arm_epoch = 4
+    node._rgb_history = deque([{}], maxlen=7)
+    node.last_view = {"old": True}
+    node.disarm = Mock()
+    node.events = Mock()
+    for ns in range(0, 1_000_000_000, 33_333_333):
+        message.header.stamp.nanosec = ns
+        ItemDetectNode._receive(node, message, "bin", 1, kind)
+    assert node.arm_epoch == 4 and node._input_revision == 0
+    assert len(node._depth_history) == 3 and len(node._rgb_history) == 1
+    assert node.last_view == {"old": True}
+    node.disarm.assert_not_called()
+
+
+def test_invalid_camera_info_reports_error_without_rearming(monkeypatch):
+    from unittest.mock import Mock
+    from item_perception_yolo import item_detector
+    node, _ = window_node()
+    node._camera_generation = 1
+    node._input_revision = 0
+    node.arm_epoch = 4
+    node._rgb_history = deque([{}], maxlen=7)
+    node.disarm = Mock()
+    node.events = Mock()
+    monkeypatch.setattr(item_detector, "validate_camera_info",
+                        Mock(side_effect=ValueError("Unexpected optical frame")))
+    ItemDetectNode._receive(node, object(), "bin", 1, "depth_info")
+    node.disarm.assert_called_once_with(
+        "Invalid depth_info CameraInfo: Unexpected optical frame", stream="depth_info")
+    assert node._depth_info is None and not node._depth_history

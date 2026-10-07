@@ -9535,6 +9535,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   manually deploy matching YAML/.pt, then restart/reload consumers. Preserve the
   unrelated RViz edits. No offline-transfer milestone is claimed.
 
+### 2026-10-07 — Diagnose unexpected Item Teach disarming
+
+- Audit the last recorded run on October 6. The service owner was GUI Item Teach,
+  not the headless detector. Five disarms occurred between 13:53:51 and 13:55:59
+  UTC; one immediately preceded an explicit profile Save. Auto Run later failed
+  because the canonical item pose service was unavailable. The historical events
+  only said `Pose service removed`; they do not establish the unexpected trigger.
+  Do not claim that the camera, preview suspension or an operator edit caused it.
+- The saved schema-13 profile validates and its hash is unchanged across re-arms.
+  All six recorded capture camera models agree. A read-only 30-second CameraInfo
+  audit received 899 messages per stream without a calibration change, and 300
+  concurrent current-source validation calls passed without disarming. No native
+  worker failure was recorded. These checks cannot exclude an earlier transient.
+- Add an explicit reason to every item disarm call and `item_disarmed` event.
+  Include the underlying source-validation exception, named edited GUI field,
+  explicit lifecycle action, or changed CameraInfo fields with old/new values.
+  Preserve the first reason when GUI refresh subsequently unchecks Armed; show it
+  in the activity log and Armed tooltip. Keep current disarm gates, invalidation
+  epochs, explicit re-arming and headless service behavior. This is a diagnostic
+  improvement; the original unexpected-disarm cause remains unconfirmed.
+- Verify repeated advancing CameraInfo timestamps retain arming/history,
+  actual/invalid CameraInfo still invalidates, source failures retain their reason,
+  production suspension and source-list refresh preserve Armed, and GUI refresh
+  cannot replace the original cause with a generic toggle message. The complete
+  Item Perception suite passes **611 tests**, including isolated synthetic ROS
+  service transport; focused diagnostics/UI/capture tests pass **208 tests**.
+  Test only
+  synthetic ROS/UI inputs and read-only artifact validation; do not command
+  hardware, restart processes, rebuild private runtimes or change operator files.
+  The canonical installed Python modules link to these sources: relaunch Item
+  Teach/Item Detect to load diagnostic changes; no interface rebuild is needed.
+  Preserve unrelated RViz edits. Controller/FSM behavior is unchanged.
+
 ### Future entry template
 
 ```text
