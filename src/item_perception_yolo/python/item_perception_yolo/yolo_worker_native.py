@@ -265,11 +265,14 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 validate_bin_clearance(request["settings"]["bin_clearance"])
                 if source != "none" and source not in available:
                     raise RuntimeError("Selected preview geometry is unavailable")
+                depth = (np.frombuffer(data[rgb_bytes:], "<f4").reshape(height, width)
+                         if request.get("preview_depth", False) else None)
                 geometry_started = time.monotonic()
                 detections = preview_detections(
                     results[0], source, names, settings["max_detections"],
                     request["measurement_context"], request["measurement_error"], cv2, np,
-                    diameter_mm=request["settings"]["pickdepth_radius"])
+                    diameter_mm=request["settings"]["pickdepth_radius"], depth_mm=depth,
+                    quality=request["settings"].get("quality"))
                 stages["geometry_ms"] = (time.monotonic() - geometry_started)*1000.
                 overlay, _ = render_result(
                     results[0], rgb, names, config["task"], settings["max_detections"], cv2, np,
@@ -284,7 +287,6 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                                  (255, 0, 0) if valid is False else (180, 180, 180))
                         draw_pick_geometry(overlay, item["rectangle"], cv2, np, color=color)
                 if request.get("preview_depth", False):
-                    depth = np.frombuffer(data[rgb_bytes:], "<f4").reshape(height, width)
                     display_quality = {**request["settings"]["quality"],
                                        "depth_min_mm": item_depth_limits(
                                            request["settings"]["quality"])[0]}

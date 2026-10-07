@@ -9626,6 +9626,52 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Do not rebuild the mapped live driver library or automatically restart cameras.
   Operator artifacts and unrelated RViz edits remain untouched.
 
+### 2026-10-07 — Rule 239: measure flat items at their observed surface height
+
+- The operator confirmed the fixed-floor sizing limitation and requested height
+  compensation assuming all items are flat and parallel to the taught floor.
+  Supersede rules 32/39's depth-independent platform-Z=0 size definition only.
+  Retain the mask-derived minimum-area pixel rectangle or native OBB and its exact
+  pick-center pixel. Reuse the existing filtered depth at that ray to obtain the
+  signed platform-frame center Z. Intersect rectangle rays with that parallel
+  surface plane, fit the metric enclosing rectangle and then apply the taught
+  physical long-Y/height and short-X/width tolerance. Camera tilt and either signed
+  platform-Z convention remain calibrated; do not fit individual item tilt.
+- Extract one shared depth sampler for preview and production. Preserve original
+  depth pixels, independent registered-depth distortion, the floor-defined metric
+  sampling circle, mask membership, range limits, temporal median, spatial MAD and
+  minimum valid fraction. Size now follows valid depth instead of rejecting on
+  floor size first. Center holes/outliers still use the accepted median without
+  relocating the pixel. Surface height excludes standoff/tool offsets. Invalid
+  depth leaves preview outlines visible with unknown size and an explicit reason;
+  production rejects it. No startup/floor-size fallback, extra YOLO prediction,
+  extra worker/executor, schema, configuration key or automatic artifact rewrite.
+- Share sizing across all-class RGB/depth preview, clicked inspection, RViz poses,
+  Simulate Trigger and the headless service through the existing native worker.
+  Keep floor-projected ROI overlap, projected pick-border gates, metric pick-point
+  containment, camera-body clearance, nearby-depth checks and ranking unchanged.
+  Preserve the actual pick position and orientation convention. Update GUI help,
+  root/package READMEs, Quickstart and AGENTS; controller behavior/FSM is unchanged.
+- Validation: the complete Item Perception suite passes **612 tests** in an
+  isolated ROS domain, including the native geometry and private-worker transport
+  checks (21 focused tests). Production-source flake8 and whitespace checks pass.
+  New synthetic checks recover
+  80 x 50 mm at 0/100/200 mm elevation for masks and OBBs, keep preview/click/service
+  results identical, reject wrong sizes, retain unknown outlines on missing or
+  invalid depth, handle center holes/outliers, camera tilt/distortion and both
+  platform-Z signs, reject invalid surface projections, and exclude standoff.
+  Initial failures were fixtures expecting old floor dimensions, including the
+  RViz integration fixture; update their physical dimensions while preserving
+  their independent ROI, distortion, clearance and ranking assertions.
+- Canonical installed Python modules resolve to these source files. Activate by
+  manually relaunching Item Teach/Item Detect and explicitly re-arming; no native
+  runtime or camera-driver rebuild is required. Review taught size/tolerance
+  against physical items because corrected dimensions can be smaller. No live
+  process was restarted, perception armed or robot commanded during this change.
+  Preserve .env, calibration, teaching/model/runtime artifacts and unrelated RViz
+  edits. Live operation with corrected sizing remains unverified until the
+  operator relaunches and checks it; synthetic validation does not establish that.
+
 ### Future entry template
 
 ```text

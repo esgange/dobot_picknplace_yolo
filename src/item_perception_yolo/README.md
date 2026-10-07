@@ -109,9 +109,13 @@ ros2 launch item_perception_yolo item_teach.launch.py
    its pick dot with a cyan ring and show its measured **X / width (short side)** and
    **Y / height (long side)** in millimetres at the top-left. Mask uses its
    minimum-area pixel rectangle; OBB uses its oriented rectangle. Both use the
-   same platform-Z=0 metric enclosing-rectangle calculation as production. No
-   ROI, class, taught-size or depth filter excludes displayed measurements. The
-   station's hash-validated camera, color CameraInfo and RGB-time internal TF
+   same height-corrected metric enclosing-rectangle calculation as production:
+   assume each item is parallel to the floor and use the plane through its measured
+   center. Registered depth must pass the existing range, mask, MAD and coverage
+   checks before measurement. Missing/invalid depth leaves the outline visible
+   with unknown size; no floor-plane size is substituted. Class/taught-size failures
+   do not hide available measurements; the existing green-ROI overlap rule remains.
+   The station's hash-validated camera, both CameraInfo models and RGB-time internal TF
    are required; on-hand also needs RGB-time robot TF no older than one second.
    Unavailable geometry has an explicit reason, never guessed dimensions.
    A box-only model remains preview-only without mask/OBB metric measurements.
@@ -120,14 +124,14 @@ ros2 launch item_perception_yolo item_teach.launch.py
    rectangle, then confidence and frame-local index. Clicks in letterbox margins
    do nothing. Click the image again to release the frozen selection.
    No form values are overwritten. Registered depth is displayed alongside RGB;
-   missing or mismatched depth has an explicit reason and blocks the pose, not RGB.
-6. Enter measured length in `height`, short side in `width`, and choose the
+   missing or mismatched depth has an explicit reason and blocks size/pose, not RGB.
+6. Enter physical item length in `height`, short side in `width`, and choose the
    ±millimetre `tolerance`. A green item rectangle means size within tolerance;
    red means outside tolerance, gray means size not checked (missing measurements
    or dimensions). Green alone does not mean a valid 3D pose. Detections remain
    visible in all three cases. Fill class/geometry/quality settings to calculate
-   a pose on click. Only the clicked item runs the strict class, size, complete
-   ROI footprint, center-in-item and MAD depth checks. Accepted depth points are
+   a pose on click. Only the clicked item runs the strict class, size,
+   ROI overlap, center-in-item and MAD depth checks. Accepted depth points are
    black, rejected points red inside the sampling circle. Blank/invalid required
    fields or failed checks show a reason and publish no selected pose.
    Confidence/IoU are 0–1 (e.g. 0.40/0.35, not 40/35);
@@ -764,12 +768,9 @@ blocking service request. All native operations are serialized in one worker.
 - Confidence and checked classes filter YOLO detections. IoU controls NMS;
   inference explicitly requests NMS rather than silently ignoring IoU for an
   end-to-end model.
-- Project the selected rectangle onto the fixed platform XY plane, Z=0. Under
-  perspective its projection can be a quadrilateral: measure its minimum-area
-  metric enclosing rectangle. Long side is X/`height`, short side Y/`width`,
-  each within taught value plus/minus `tolerance` in mm. Do not move this plane
-  to the item's depth. Keep a detection when its selected footprint overlaps or
-  touches the green bin ROI; ignore it only when the polygons are fully disjoint.
+- Keep a detection when its selected footprint projected onto platform Z=0
+  overlaps or touches the green bin ROI; ignore it only when the polygons are
+  fully disjoint. This floor-plane ROI test is independent of size measurement.
 - Require the final depth-derived pick XY inside/on the green bin ROI.
 - Require the final depth-derived pick XY inside/on the optional light-blue
   `bin_clearance` polygon. Do not apply this inner polygon to the footprint.
@@ -790,7 +791,23 @@ blocking service request. All native operations are serialized in one worker.
   equal to the median pass. Minimum valid-pixel percentage still applies. Median
   retained camera depth back-projects the exact center pixel, then the complete
   3D point is transformed into `platform_reference`. Never append optical depth
-  to platform-plane XY. Depth Z does not alter projected dimensions.
+  to platform-plane XY.
+- Use that same measured center's signed platform Z for the size plane, parallel
+  to platform Z=0. Assume flat items; do not fit individual surface tilts or use
+  gripper standoff/base-Z/camera-Z height as the plane offset. Undistort the selected
+  rectangle's RGB corners, intersect their rays with this plane and fit its
+  minimum-area metric enclosing rectangle. Long side is Y/`height`, short side
+  X/`width`; check both against taught physical millimetres plus/minus `tolerance`
+  only after valid depth. In parallel-plane geometry this corrects the floor size
+  by `(camera_platform_z - item_platform_z) / camera_platform_z`, with signed
+  coordinates. Reject non-finite/behind-camera projections; never fall back to Z=0.
+  Mask/OBB preview, clicked inspection, RViz candidates, Simulate Trigger and
+  headless detection use the same depth sampling and measurement functions.
+  The bin border, inset, sampling circle and nearby-obstacle reference stay at
+  their existing definitions. No additional YOLO pass, schema or setting is added.
+  Restart Item Teach/Item Detect and explicitly re-arm after this Python update;
+  review saved size/tolerance values against physical items. Operator artifacts
+  are never rewritten automatically.
 - RGB shows the loaded ROI, mask shading (mask source only), a single mask-derived
   rectangle or native OBB, centered pick axes/dots, size, rejection reasons and
   priority labels. There is no extra axis-aligned YOLO box. In Filtered mode,

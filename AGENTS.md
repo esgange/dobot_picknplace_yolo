@@ -1763,6 +1763,19 @@ operator artifacts and running processes unchanged during implementation. Use
 isolated builds and synthetic SDK tests; activate with a manual camera rebuild
 and restart. Document vendor patch provenance and validation in the diary.
 
+Rule 239 supersedes rules 32/39's fixed-floor item sizing. Assume each item is
+flat and parallel to platform Z=0. First sample its unchanged RGB pick ray with
+the existing synchronized temporal median, native-depth mask/range/MAD/coverage
+checks. Use that center's signed platform Z as the parallel measurement plane;
+project the mask-derived rectangle/OBB there, fit its metric enclosing rectangle
+and only then check taught physical length/width tolerance. Share this calculation
+across RGB/depth preview, clicked/RViz poses, simulation and headless detection.
+Missing/invalid depth leaves visible preview outlines with unknown size and blocks
+production acceptance; never fall back to floor-projected dimensions. Keep bin
+ROI/insets, the floor-based sampling circle, clearance checks, pick pixels/position,
+model calls, schemas and controller motion unchanged. Do not fit item tilt, use
+tool standoff as height, rewrite operator artifacts or restart running processes.
+
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

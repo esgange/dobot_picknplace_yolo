@@ -163,11 +163,13 @@ def reproject_pixels(pixels, source_camera, target_camera, cv2, np):
     return cached_mapping(pixels, source_camera, target_camera, cv2, np)
 
 
-def on_plane(pixels, camera, transform, cv2, np):
+def on_plane(pixels, camera, transform, cv2, np, *, plane_z=0.0):
+    if not math.isfinite(plane_z):
+        raise ValueError("Non-finite measurement plane height")
     direction = rays(pixels, camera, cv2, np) @ transform[:3, :3].T
     if np.any(np.abs(direction[:, 2]) < 1e-9):
         raise ValueError("Viewing ray is parallel to platform plane")
-    distance = -transform[2, 3] / direction[:, 2]
+    distance = (plane_z - transform[2, 3]) / direction[:, 2]
     if np.any(distance <= 0) or not np.isfinite(distance).all():
         raise ValueError("Platform projection is behind camera")
     return transform[:3, 3] + direction * distance[:, None]
@@ -291,10 +293,11 @@ def objects_from_result(result, source, names, maximum, cv2, np):
     return objects
 
 
-def plane_dimensions(rectangle, context, cv2, np):
-    """The one measurement definition shared by teaching and production filters."""
+def plane_dimensions(rectangle, context, cv2, np, *, surface_z):
+    """Measure a flat item on the floor-parallel plane through its observed center."""
     transform = np.asarray(context["platform_from_optical"], dtype=np.float64)
-    flat = on_plane(rectangle, context["camera"], transform, cv2, np)[:, :2]
+    flat = on_plane(rectangle, context["camera"], transform, cv2, np,
+                    plane_z=surface_z)[:, :2]
     rect = cv2.boxPoints(cv2.minAreaRect(flat.astype(np.float32)))
     edges = np.roll(rect, -1, axis=0) - rect
     lengths = np.linalg.norm(edges, axis=1)
@@ -321,7 +324,52 @@ def depth_sampling_circle(center, diameter_mm, context, cv2, np, *, output_camer
     return flat_center, radius, pixels
 
 
-def preview_detections(result, source, names, maximum, context, reason, cv2, np, *, diameter_mm):
+def sample_item_depth(item, depth_mm, context, quality, diameter_mm, cv2, np, *, samples=None):
+    """One unchanged pick ray and filtered depth sample for size and pick position."""
+    if depth_mm is None or quality is None:
+        raise ValueError("Height-corrected size requires valid synchronized depth")
+    center = item["center"]
+    if not inside(center, item["polygon"], cv2, np):
+        raise ValueError("rectangle center is outside item mask")
+    camera = context["camera"]
+    depth_camera = context["depth_camera"]
+    transform = np.asarray(context["platform_from_optical"], dtype=np.float64)
+    flat_center, radius, circle_px = depth_sampling_circle(
+        center, diameter_mm, context, cv2, np, output_camera=depth_camera)
+    height_px, width_px = depth_mm.shape
+    if (np.any(circle_px < 0) or np.any(circle_px[:, 0] >= width_px)
+            or np.any(circle_px[:, 1] >= height_px)):
+        raise ValueError("depth sampling circle is clipped by image edge")
+    xmin, ymin = np.floor(circle_px.min(axis=0)).astype(int)
+    xmax, ymax = np.ceil(circle_px.max(axis=0)).astype(int)
+    xmax, ymax = min(xmax, width_px - 1), min(ymax, height_px - 1)
+    yy, xx = np.mgrid[ymin:ymax + 1, xmin:xmax + 1]
+    pixels = np.column_stack((xx.ravel(), yy.ravel()))
+    flat_pixels = on_plane(pixels, depth_camera, transform, cv2, np)
+    in_circle = np.linalg.norm(flat_pixels[:, :2] - flat_center[:2], axis=1) <= radius
+    pixels = pixels[in_circle]
+    values = depth_mm[pixels[:, 1], pixels[:, 0]].astype(np.float64)
+    # Each original depth pixel is sampled once through its own camera model.
+    rgb_pixels = reproject_pixels(pixels, depth_camera, camera, cv2, np)
+    in_item = np.array([inside(p, item["polygon"], cv2, np) for p in rgb_pixels], dtype=bool)
+    values[~in_item] = np.nan
+    low, high = item_depth_limits(quality)
+    accepted, median, sigma = filter_depth(values, low, high, cv2, np)
+    if samples is not None:
+        samples[item["index"]] = (pixels, accepted, circle_px)
+    good, total = int(accepted.sum()), len(pixels)
+    if not depth_coverage_ok(good, total, quality["minimum_depth_fraction"]):
+        fraction = good / total if total else 0.
+        raise ValueError(
+            f"insufficient valid depth pixels: {good}/{total} ({fraction:.1%}); "
+            f"requires {quality['minimum_depth_fraction']:.1%}")
+    optical_point = rays([center], camera, cv2, np)[0] * median / 1000
+    position = transform[:3, :3] @ optical_point + transform[:3, 3]
+    return optical_point, position, median, sigma, good, total
+
+
+def preview_detections(result, source, names, maximum, context, reason, cv2, np, *,
+                       diameter_mm, depth_mm=None, quality=None):
     """Frame-local clickable geometry overlapping the green ROI when calibrated."""
     if source == "none":
         # Detection-only boxes are clickable but are not a production geometry source.
@@ -364,7 +412,10 @@ def preview_detections(result, source, names, maximum, context, reason, cv2, np,
             circle_error = error
         elif context is not None:
             try:
-                length, width, _ = plane_dimensions(item["rectangle"], context, cv2, np)
+                _, position, _, _, _, _ = sample_item_depth(
+                    item, depth_mm, context, quality, diameter_mm, cv2, np)
+                length, width, _ = plane_dimensions(item["rectangle"], context, cv2, np,
+                                                    surface_z=float(position[2]))
                 measurement = {"length_mm": length * 1000, "width_mm": width * 1000}
                 error = ""
             except ValueError as exc:
@@ -388,7 +439,7 @@ def preview_detections(result, source, names, maximum, context, reason, cv2, np,
 def classify_size(measurement, geometry):
     """Neutral unknown state is distinct from a measured size rejection."""
     if measurement is None:
-        return None, "Size unavailable: calibrated plane measurement required"
+        return None, "Size unavailable: calibrated surface depth required"
     if geometry is None:
         return None, "Size not checked: enter length, width and tolerance"
     valid = (abs(measurement["length_mm"] - geometry["height"]) <= geometry["tolerance"]
@@ -492,7 +543,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     projected_pick_roi = project_bin_roi(
         {**context, "roi": roi if clearance_roi is None else clearance_roi}, cv2, np)
     quality, geometry = settings["quality"], settings["geometry"]
-    low, high = item_depth_limits(quality)
+    low = item_depth_limits(quality)[0]
     center_roi = polygon_centroid(roi, np)
     labels, depth_objects = {}, []
     candidates, rejected = [], []
@@ -514,55 +565,24 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             flat = on_plane(item["polygon"], camera, transform, cv2, np)[:, :2]
             if not polygons_overlap_or_touch(flat, roi, cv2, np):
                 raise ValueError("item footprint fully outside bin ROI")
-            # Perspective can turn a pixel OBB into a quadrilateral. Fit the
-            # metric enclosing rectangle on the agreed Z=0 plane, never at depth Z.
-            length, width, edges = plane_dimensions(item["rectangle"], context, cv2, np)
-            depth_objects.append({**item, "size_valid": classify_size(
-                {"length_mm": length*1000, "width_mm": width*1000}, geometry)[0]})
-            lengths = np.linalg.norm(edges, axis=1)
-            axis_index = int(np.argmax(lengths))
-            label += f" {length * 1000:.1f}x{width * 1000:.1f}mm"
-            if (abs(length * 1000 - geometry["height"]) > geometry["tolerance"]
-                    or abs(width * 1000 - geometry["width"]) > geometry["tolerance"]):
-                raise ValueError("projected size outside tolerance")
             if not inside(center, projected_pick_roi, cv2, np):
                 raise ValueError(
                     "pick pixel outside projected bin ROI" if clearance_roi is None
                     else "pick pixel outside projected bin-wall clearance")
-            flat_center, radius, circle_px = depth_sampling_circle(
-                center, geometry["pickdepth_radius"], context, cv2, np,
-                output_camera=depth_camera)
-            height_px, width_px = depth_mm.shape
-            if (np.any(circle_px < 0) or np.any(circle_px[:, 0] >= width_px)
-                    or np.any(circle_px[:, 1] >= height_px)):
-                raise ValueError("depth sampling circle is clipped by image edge")
-            xmin, ymin = np.floor(circle_px.min(axis=0)).astype(int)
-            xmax, ymax = np.ceil(circle_px.max(axis=0)).astype(int)
-            xmax, ymax = min(xmax, width_px - 1), min(ymax, height_px - 1)
-            yy, xx = np.mgrid[ymin:ymax + 1, xmin:xmax + 1]
-            pixels = np.column_stack((xx.ravel(), yy.ravel()))
-            flat_pixels = on_plane(pixels, depth_camera, transform, cv2, np)
-            in_circle = np.linalg.norm(flat_pixels[:, :2] - flat_center[:2], axis=1) <= radius
-            pixels = pixels[in_circle]
-            values = depth_mm[pixels[:, 1], pixels[:, 0]].astype(np.float64)
-            # Sample each original depth pixel once; map its ray into the RGB
-            # mask. No depth resizing/interpolation or duplicated samples.
-            rgb_pixels = reproject_pixels(pixels, depth_camera, camera, cv2, np)
-            in_item = np.array([inside(p, item["polygon"], cv2, np) for p in rgb_pixels],
-                               dtype=bool)
-            values[~in_item] = np.nan
-            accepted, median, sigma = filter_depth(values, low, high, cv2, np)
-            if render_images and nearby_views is None:
-                samples[item["index"]] = (pixels, accepted, circle_px)
-            good, total = int(accepted.sum()), len(pixels)
+            optical_point, position, median, sigma, good, total = sample_item_depth(
+                item, depth_mm, context, quality, geometry["pickdepth_radius"], cv2, np,
+                samples=samples if render_images and nearby_views is None else None)
             label += f" depth {good}/{total}"
-            if not depth_coverage_ok(good, total, quality["minimum_depth_fraction"]):
-                fraction = good / total if total else 0.
-                raise ValueError(
-                    f"insufficient valid depth pixels: {good}/{total} ({fraction:.1%}); "
-                    f"requires {quality['minimum_depth_fraction']:.1%}")
-            optical_point = rays([center], camera, cv2, np)[0] * median / 1000
-            position = transform[:3, :3] @ optical_point + transform[:3, 3]
+            # Measure only after valid depth determines the floor-parallel item plane.
+            length, width, edges = plane_dimensions(
+                item["rectangle"], context, cv2, np, surface_z=float(position[2]))
+            depth_objects.append({**item, "size_valid": classify_size(
+                {"length_mm": length*1000, "width_mm": width*1000}, geometry)[0]})
+            axis_index = int(np.argmax(np.linalg.norm(edges, axis=1)))
+            label += f" {length * 1000:.1f}x{width * 1000:.1f}mm"
+            if (abs(length * 1000 - geometry["height"]) > geometry["tolerance"]
+                    or abs(width * 1000 - geometry["width"]) > geometry["tolerance"]):
+                raise ValueError("height-corrected size outside tolerance")
             if not inside(position[:2], roi, cv2, np):
                 raise ValueError("depth-derived pick position outside bin ROI")
             if clearance_roi is not None and not inside(position[:2], clearance_roi, cv2, np):

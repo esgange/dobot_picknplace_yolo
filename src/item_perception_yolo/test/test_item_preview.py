@@ -295,7 +295,7 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         "bin_clearance": {"p1_p2": None, "p2_p3": None,
                           "p3_p4": None, "p4_p1": None},
         "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
-                     "height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 30.}}
+                     "height": 70., "width": 35., "tolerance": 5., "pickdepth_radius": 30.}}
     header["context"] = {
         "camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},
         "depth_camera": {"k": [400., 0., 160., 0., 400., 120., 0., 0., 1.], "d": [0.] * 5},
@@ -364,6 +364,7 @@ def test_private_rgb_depth_worker_end_to_end(native_paths, tmp_path):
         point = selected["candidates"][0]
         assert point["source_index"] == 7 and point["pixel"] == [160., 120.]
         assert point["position"] == pytest.approx([0, 0, .1])
+        assert [point["length"], point["width"]] == pytest.approx([.07, .035])
         body = point["robot_camera_clearance"]
         assert body["body_reference_frame"] == "robot_camera_color_optical_frame"
         assert body["body_size_color_optical_m"] == [.09, .025, .03]

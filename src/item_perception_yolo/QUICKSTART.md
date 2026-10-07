@@ -24,8 +24,10 @@ robot. For initial testing, Load Model and Connect RGB; the trusted model's
 1 Hz preview starts when ready. YOLO Detect stops/resumes it; Armed stays OFF.
 There is one view, without Detect All/Filtered controls or Resume Live button.
 Select station/bin files and mask/OBB, then click a detection to freeze it and
-read short X / width and long Y / height in mm at top-left. Enter dimensions and
-tolerance: green borders pass size, red fail size, gray means not checked.
+read short X / width and long Y / height in mm at top-left. Sizing uses measured
+depth and assumes flat items parallel to the floor; unavailable depth leaves size
+unknown. Enter physical dimensions and tolerance: green borders pass size,
+red fail size, gray means not checked.
 Clicking inspects that item's RGB/depth pose with the strict class/ROI/size
 and MAD depth checks. A valid pose shows platform XYZ/yaw and publishes teaching-only
 `base_link -> item_teach_selected_item` for RViz's TF display. No RViz launch or

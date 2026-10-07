@@ -51,7 +51,7 @@ def exercise_geometry():
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
                 "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
-                             "height": 80., "width": 32., "tolerance": .1,
+                             "height": 70., "width": 28., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "quality": dict(QUALITY_DEFAULTS), "yolo": {"class_ids": [1], "confidence": .5}}
     rgb = np.full((480, 640, 3), 80, np.uint8)
@@ -66,7 +66,7 @@ def exercise_geometry():
     assert not rejected and len(candidates) == 1
     result = candidates[0]
     assert np.allclose(result["position"], [0, 0, .1])
-    assert np.allclose([result["length"], result["width"]], [.08, .032])
+    assert np.allclose([result["length"], result["width"]], [.07, .028])
     assert np.allclose(result["quaternion"], [0, 0, np.sqrt(.5), np.sqrt(.5)])
     # X is the short line; Y is the long line. Link6 keeps its old attitude.
     assert np.allclose(np.asarray(result["planned_link6_matrix"])[:3, :3], np.eye(3))
@@ -89,18 +89,18 @@ def exercise_geometry():
         assert abs(np.dot(pose[:3, 1], expected_tool[:, 0])) > .99999
         assert np.allclose(np.cross(pose[:3, 0], pose[:3, 1]), pose[:3, 2])
         assert np.allclose(measured["position"], [0., 0., .1], atol=1e-6)
-        assert np.allclose([measured["length"], measured["width"]], [.08, .032])
+        assert np.allclose([measured["length"], measured["width"]], [.07, .028])
         assert np.allclose(np.asarray(measured["planned_link6_matrix"])[:3, :3],
                            expected_tool, atol=1e-6)
     assert depth_view[240, 320].tolist() == [255, 0, 0]  # null rejected red
     assert depth_view[240, 321].tolist() == [255, 0, 0]  # outlier rejected red
     assert depth_view[240, 322].tolist() == [0, 0, 0]    # accepted black
     assert np.allclose(result["pixel"], [320, 240])
-    # Size color is independent of depth validity; no item disappears when red.
-    measured = {"length_mm": 80., "width_mm": 32.}
+    # Measured size color is independent of taught values; red items remain visible.
+    measured = {"length_mm": 70., "width_mm": 28.}
     for measured_size, taught, expected in (
             (measured, settings["geometry"], True),
-            ({"length_mm": 95., "width_mm": 32.}, settings["geometry"], False),
+            ({"length_mm": 95., "width_mm": 28.}, settings["geometry"], False),
             (None, settings["geometry"], None), (measured, None, None)):
         valid, reason = classify_size(measured_size, taught)
         assert valid is expected and reason
@@ -129,7 +129,8 @@ def exercise_geometry():
     near_wall = {**item, "center": np.array([440., 240.]),
                  "polygon": polygon + [120., 0.], "rectangle": polygon + [120., 0.]}
     wall_settings = {**settings, "bin_clearance": {
-        "p1_p2": None, "p2_p3": None, "p3_p4": 100., "p4_p1": None}}
+        "p1_p2": None, "p2_p3": None, "p3_p4": 100., "p4_p1": None},
+        "geometry": {**settings["geometry"], "height": 90., "width": 36.}}
     wall_depth = np.full_like(depth, 900)
     _, _, wall_candidates, wall_rejected = generate_candidates(
         [near_wall], rgb, wall_depth, context, wall_settings, cv2, np)
@@ -175,9 +176,12 @@ def exercise_geometry():
                                   "reason": "item footprint fully outside bin ROI"}]
     for z in (600, 900):
         depth[:] = z
-        _, _, points, _ = generate_candidates([item], rgb, depth, context, settings, cv2, np)
-        assert np.allclose([points[0]["length"], points[0]["width"]], [.08, .032])
+        depth_settings = {**settings, "geometry": {**settings["geometry"],
+                          "height": z*.1, "width": z*.04}}
+        _, _, points, _ = generate_candidates([item], rgb, depth, context, depth_settings, cv2, np)
+        assert np.allclose([points[0]["length"], points[0]["width"]], [z*.0001, z*.00004])
         assert np.isclose(points[0]["position"][2], .8-z/1000)
+    depth[:] = 700
     # Center-first beats confidence. Second rectangle has confidence 0.99.
     other = {**item, "index": 1, "confidence": .99,
              "center": item["center"]+[80, 0], "polygon": polygon+[80, 0],
@@ -240,12 +244,12 @@ def exercise_geometry():
     obb_object = objects_from_result(native, "obb", {1: "test"}, 20, cv2, np)[0]
     assert np.allclose(mask_object["center"], [320, 240])
     assert np.allclose(obb_object["center"], [330, 240])
-    # Teaching dimensions use exactly the production plane calculation, without
-    # size/class/ROI/depth filtering. Changing a production filter cannot hide these.
+    # Teaching shares the measured surface plane and depth gates, while size/class
+    # rejection does not hide the detected outline or an available measurement.
     measured = preview_detections(native, "mask", {1: "test"}, 100, context, "", cv2, np,
-                                  diameter_mm=30.)
+                                  diameter_mm=30., depth_mm=depth, quality=settings["quality"])
     assert len(measured) == 1
-    assert np.allclose(list(measured[0]["measurement"].values()), [80., 32.])
+    assert np.allclose(list(measured[0]["measurement"].values()), [70., 28.])
     assert measured[0]["measurement_error"] == ""
     outside_polygon = polygon + [350., 0.]
     outside_boxes = Boxes(cls=Tensor([1]), conf=Tensor([.8]),
@@ -254,19 +258,19 @@ def exercise_geometry():
         boxes=outside_boxes, obb=None, masks=SimpleNamespace(xy=[outside_polygon]))
     assert preview_detections(
         outside_native, "mask", {1: "test"}, 100, context, "", cv2, np,
-        diameter_mm=30.) == []
+        diameter_mm=30., depth_mm=depth, quality=settings["quality"]) == []
     assert preview_detections(
         outside_native, "none", {1: "test"}, 100, context, "", cv2, np,
-        diameter_mm=30.) == []
+        diameter_mm=30., depth_mm=depth, quality=settings["quality"]) == []
     # Without calibrated ROI geometry the same raw detections remain visible.
     assert len(preview_detections(
         outside_native, "mask", {1: "test"}, 100, None, "No calibration", cv2, np,
-        diameter_mm=30.)) == 1
+        diameter_mm=30., depth_mm=depth, quality=settings["quality"])) == 1
     for source in ("mask", "obb"):
         geometry_object = objects_from_result(native, source, {1: "test"}, 100, cv2, np)[0]
-        size = plane_dimensions(geometry_object["rectangle"], context, cv2, np)[:2]
+        size = plane_dimensions(geometry_object["rectangle"], context, cv2, np, surface_z=.1)[:2]
         unfiltered = preview_detections(native, source, {1: "test"}, 100, context, "", cv2, np,
-                                        diameter_mm=30.)
+                                        diameter_mm=30., depth_mm=depth, quality=settings["quality"])
         assert np.allclose(size, np.array(list(unfiltered[0]["measurement"].values())) / 1000)
         center, radius, outline = depth_sampling_circle(
             geometry_object["center"], 30., context, cv2, np)
@@ -274,10 +278,10 @@ def exercise_geometry():
         assert np.array_equal(outline, unfiltered[0]["sampling_circle"])
         assert np.allclose(np.ptp(outline, axis=0), [37.5, 37.5])
         larger = preview_detections(native, source, {1: "test"}, 100, context, "", cv2, np,
-                                    diameter_mm=60.)
+                                    diameter_mm=60., depth_mm=depth, quality=settings["quality"])
         assert np.allclose(np.ptp(larger[0]["sampling_circle"], axis=0), [75., 75.])
     unavailable = preview_detections(native, "mask", {1: "test"}, 100, None,
-                                     "No calibration", cv2, np, diameter_mm=30.)
+                                     "No calibration", cv2, np, diameter_mm=30., depth_mm=depth, quality=settings["quality"])
     assert unavailable[0]["measurement"] is None
     assert unavailable[0]["measurement_error"] == "No calibration"
     assert unavailable[0]["sampling_circle"] is None
@@ -291,8 +295,9 @@ def exercise_geometry():
     assert abs(p[2]) < 1e-9 and abs(p[0]) > .1  # true ray/plane intersection
     tilt_context = {**context, "platform_from_optical": tilted.tolist()}
     measured = preview_detections(native, "mask", {1: "test"}, 100, tilt_context, "", cv2, np,
-                                  diameter_mm=30.)
-    dims = plane_dimensions(mask_object["rectangle"], tilt_context, cv2, np)[:2]
+                                  diameter_mm=30., depth_mm=depth, quality=settings["quality"])
+    dims = plane_dimensions(mask_object["rectangle"], tilt_context, cv2, np,
+                            surface_z=float((tilted @ [0., 0., .7, 1.])[2]))[:2]
     assert np.allclose(dims, np.array(list(measured[0]["measurement"].values())) / 1000)
     # Perspective/distortion must map back onto the same physical 15 mm radius,
     # not a screen-space circle estimated from rectangle size or camera depth.
@@ -427,8 +432,8 @@ def exercise_resolution_depth_coverage():
     transform[2, 3] = .8
     mount = np.eye(4)
     mount[0, 3] = .04
-    physical = np.array([[-.04, -.016, 0.], [.04, -.016, 0.],
-                         [.04, .016, 0.], [-.04, .016, 0.]])
+    physical = np.array([[-.04, -.016, .1], [.04, -.016, .1],
+                         [.04, .016, .1], [-.04, .016, .1]])
     settings = {"geometry_source": "mask", "bin_clearance": dict.fromkeys(
         ("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
         "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
@@ -533,7 +538,7 @@ def exercise_registered_depth():
     invalid = np.rint(mapped).astype(int)
     depth[invalid[1], invalid[0]] = 0
     original = depth.copy()
-    length, width, _ = plane_dimensions(polygon, context, cv2, np)
+    length, width, _ = plane_dimensions(polygon, context, cv2, np, surface_z=.1)
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
@@ -584,7 +589,7 @@ def exercise_candidate_batch_overlay():
                 "bin_clearance": {"p1_p2": None, "p2_p3": None,
                                   "p3_p4": None, "p4_p1": None},
                 "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
-                             "height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.},
+                             "height": 70., "width": 28., "tolerance": .1, "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5}}
     rgb = np.full((480, 640, 3), 80, np.uint8)
     depth = np.full((480, 640), 700, np.uint16)
@@ -653,7 +658,7 @@ def exercise_robot_camera_rejects_before_ranking():
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
                 "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
-                             "height": 80., "width": 32., "tolerance": .1,
+                             "height": 70., "width": 28., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5}}
     rect = np.array([[-50, -20], [50, -20], [50, 20], [-50, 20]], np.float32)
@@ -689,7 +694,7 @@ def exercise_nearby_depth_filter():
     from item_perception_yolo.pick_planning import rpy_matrix
     cv2.setNumThreads(1)
     geometry = {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
-                "height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.}
+                "height": 70., "width": 28., "tolerance": .1, "pickdepth_radius": 30.}
     # Inclusive cylinder boundaries: horizontal radius, not 3D distance.
     for point, rejected in [([.150, 0., .060], True), ([.15001, 0., .100], False),
                             ([.100, 0., .05999], False), ([0., .150, .200], True),
@@ -839,7 +844,7 @@ def exercise_ranked_nearby_acquisition():
                                  "pick_rotation_deg": 0., "standoff_height_mm": 70.}}
     settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
                 "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 20., "nearby_depth_height_mm": 60.,
-                             "height": 80., "width": 32., "tolerance": .1, "pickdepth_radius": 30.},
+                             "height": 70., "width": 28., "tolerance": .1, "pickdepth_radius": 30.},
                 "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
                 "yolo": {"class_ids": [1], "confidence": .5}}
     rgb = np.full((480, 640, 3), 80, np.uint8)
@@ -958,11 +963,136 @@ def exercise_nearby_overlay_projection():
     assert np.array_equal(views[0], unchanged)
 
 
+def exercise_height_corrected_size():
+    import copy
+    from types import SimpleNamespace
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import (
+        generate_candidates, selected_pose, preview_detections, objects_from_result,
+        plane_dimensions, project, classify_size,
+    )
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+
+    cv2.setNumThreads(1)
+    cv2.ocl.setUseOpenCL(False)
+    camera = {"k": [500., 0., 320., 0., 500., 240., 0., 0., 1.], "d": [0.] * 5}
+    transform = np.diag([1., -1., -1., 1.])
+    transform[:3, 3] = [.02, -.03, .9]
+    context = {"camera": camera, "depth_camera": camera,
+               "platform_from_optical": transform.tolist(),
+               "roi": [[-.3, -.3], [-.3, .3], [.3, .3], [.3, -.3]],
+               "pick_planning": {"home_matrix": np.eye(4).tolist(),
+                                 "base_from_platform": np.eye(4).tolist(),
+                                 "link6_from_robot_camera": np.eye(4).tolist(),
+                                 "pick_rotation_deg": 0., "standoff_height_mm": 90.}}
+    quality = dict(QUALITY_DEFAULTS)
+    settings = {"geometry_source": "mask", "quality": quality,
+                "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
+                "geometry": {"depth_frame_count": 3, "height": 80., "width": 50.,
+                             "tolerance": .1, "pickdepth_radius": 30.,
+                             "nearby_depth_radius_mm": 100., "nearby_depth_height_mm": 60.},
+                "yolo": {"class_ids": [1], "confidence": .5}}
+    rgb = np.zeros((480, 640, 3), np.uint8)
+
+    class Tensor:
+        def __init__(self, values):
+            self.values = np.asarray(values)
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return self.values
+
+    class Boxes(SimpleNamespace):
+        def __len__(self):
+            return 1
+
+    # A fixed physical 80 x 50 mm flat item retains its size at different pile
+    # elevations. At 200 mm the old floor projection would be 102.86 x 64.29 mm.
+    for elevation in (0., .1, .2):
+        physical = np.array([[-.04, -.025, elevation], [.04, -.025, elevation],
+                             [.04, .025, elevation], [-.04, .025, elevation]])
+        rectangle = project(physical, camera, transform, cv2, np).astype(np.float32)
+        native = SimpleNamespace(
+            boxes=Boxes(cls=Tensor([1]), conf=Tensor([.9])),
+            masks=SimpleNamespace(xy=[rectangle]),
+            obb=Boxes(cls=Tensor([1]), conf=Tensor([.9]), xyxyxyxy=Tensor([rectangle])))
+        depth = np.full((480, 640), (.9-elevation)*1000, np.float32)
+        center = np.rint(rectangle.mean(axis=0)).astype(int)
+        depth[center[1], center[0]] = 0  # Center holes/outliers do not move the ray.
+        depth[center[1], center[0]+1] = 999
+        for source in ("mask", "obb"):
+            config = {**settings, "geometry_source": source}
+            objects = objects_from_result(native, source, {1: "part"}, 20, cv2, np)
+            displayed = preview_detections(
+                native, source, {1: "part"}, 20, context, "", cv2, np,
+                diameter_mm=30., depth_mm=depth, quality=quality)
+            measurement = displayed[0]["measurement"]
+            assert np.allclose(list(measurement.values()), [80., 50.], atol=.001)
+            assert classify_size(measurement, settings["geometry"])[0] is True
+            assert classify_size(measurement, None)[0] is None
+            _, _, candidates, rejected = generate_candidates(
+                objects, rgb, depth, context, config, cv2, np, render_images=False)
+            assert not rejected and len(candidates) == 1
+            candidate = candidates[0]
+            assert np.allclose([candidate["length"], candidate["width"]], [.08, .05], atol=1e-6)
+            assert np.allclose(candidate["position"], [0., 0., elevation], atol=1e-6)
+            assert np.allclose(candidate["pixel"], rectangle.mean(axis=0), atol=1e-4)
+            _, _, clicked, reasons = selected_pose(
+                displayed[0], rgb, depth, context, config, cv2, np)
+            assert not reasons and clicked == candidates
+            wrong = {**config, "geometry": {**config["geometry"], "height": 100.}}
+            _, _, invalid, reasons = generate_candidates(
+                objects, rgb, depth, context, wrong, cv2, np, render_images=False)
+            assert not invalid and reasons[0]["reason"] == "height-corrected size outside tolerance"
+            # Missing/invalid depth never supplies a floor-size fallback, but the
+            # all-class preview retains the outline and an explicit unknown size.
+            for missing in (None, np.zeros_like(depth), np.full_like(depth, np.nan),
+                            np.full_like(depth, 499.), np.full_like(depth, 1001.)):
+                unknown = preview_detections(
+                    native, source, {1: "part"}, 20, context, "", cv2, np,
+                    diameter_mm=30., depth_mm=missing, quality=quality)
+                assert len(unknown) == 1 and unknown[0]["measurement"] is None
+                assert unknown[0]["measurement_error"]
+                assert classify_size(None, config["geometry"])[0] is None
+                if missing is not None:
+                    _, _, invalid, reasons = generate_candidates(
+                        objects, rgb, missing, context, config, cv2, np, render_images=False)
+                    assert not invalid and "insufficient valid depth" in reasons[0]["reason"]
+    # Camera tilt/distortion and either platform-Z convention still recover a
+    # known flat rectangle using a floor-parallel plane (no item-tilt fitting).
+    distorted = {**camera, "d": [.06, -.01, .001, -.002, 0.]}
+    rotation, _ = cv2.Rodrigues(np.array([.12, -.16, .2]))
+    for sign in (1., -1.):
+        flipped = np.diag([1., sign, sign, 1.])
+        angled = transform.copy()
+        angled[:3, :3] = rotation @ angled[:3, :3]
+        angled = flipped @ angled
+        physical = np.array([[-.04, -.025, .15*sign], [.04, -.025, .15*sign],
+                             [.04, .025, .15*sign], [-.04, .025, .15*sign]])
+        pixels = project(physical, distorted, angled, cv2, np)
+        measured = plane_dimensions(pixels, {**context, "camera": distorted,
+                                            "platform_from_optical": angled.tolist()},
+                                    cv2, np, surface_z=.15*sign)
+        assert np.allclose(measured[:2], [.08, .05], atol=1e-6)
+    # Surface coordinates must remain finite and in front of the camera.
+    for invalid_z in (float("nan"), float("inf"), .9, 1.):
+        with pytest.raises(ValueError):
+            plane_dimensions(rectangle, context, cv2, np, surface_z=invalid_z)
+    # Gripper/tool offsets do not participate in item dimensions.
+    shifted = copy.deepcopy(context)
+    shifted["pick_planning"]["standoff_height_mm"] = 300.
+    assert np.allclose(plane_dimensions(rectangle, shifted, cv2, np, surface_z=.2)[:2],
+                       [.08, .05], atol=1e-6)
+
+
 @pytest.mark.parametrize("exercise", [
     "exercise_geometry", "exercise_registered_depth", "exercise_resolution_depth_coverage",
     "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking",
     "exercise_nearby_depth_filter", "exercise_nearby_overlay_projection",
-    "exercise_ranked_nearby_acquisition"])
+    "exercise_ranked_nearby_acquisition", "exercise_height_corrected_size"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

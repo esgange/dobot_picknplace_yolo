@@ -710,8 +710,13 @@ The view retains all model classes and size failures. Item borders are green
 within the taught size tolerance, red outside it, and gray if dimensions or
 plane measurement are unavailable. Green means size-valid, not a validated pose.
 Select the station platform/bin and mask/OBB to measure short-X/width and
-long-Y/height on platform Z=0. Registered depth is displayed alongside RGB;
-missing/mismatched depth leaves RGB detections visible but blocks pose calculation.
+long-Y/height on a plane parallel to the floor at the measured item-center height.
+Items are assumed flat and parallel to the taught floor. The same filtered depth
+determines this plane and the pick point; size tolerance is checked after depth.
+Registered depth is displayed alongside RGB; missing/mismatched or insufficient
+depth leaves RGB detections visible with size unavailable and blocks the pose.
+There is no floor-size fallback. Taught dimensions are physical millimetres;
+review existing values/tolerances after changing from floor-projected sizing.
 Registered depth and RGB must share their optical frame, dimensions and K.
 Their lens-distortion coefficients may differ: the worker uses both CameraInfo
 models to map the physical sampling circle and RGB mask onto native depth pixels.

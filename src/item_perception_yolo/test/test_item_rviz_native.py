@@ -90,7 +90,7 @@ def exercise_all_candidates():
                 "quality": dict(QUALITY_DEFAULTS),
                 "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
                 "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
-                             "height": 80., "width": 32., "tolerance": .1,
+                             "height": 70., "width": 28., "tolerance": .1,
                              "pickdepth_radius": 30.},
                 "yolo": {"class_ids": [1], "confidence": .5, "iou": .7,
                          "max_detections": 100, "image_size": 640}}
@@ -110,6 +110,8 @@ def exercise_all_candidates():
     assert result["generation"] == 7 and len(data) == result["point_count"] * 16
     assert 0 < result["point_count"] < depth.size
     assert [c["source_index"] for c in result["candidates"]] == [1, 2, 0]
+    assert all(np.allclose([c["length"], c["width"]], [.07, .028])
+               for c in result["candidates"])
     assert result["unchecked"] == [3]
     assert len(result["rejected"]) == 1 and result["rejected"][0]["source_index"] == 4
     # Each pose is exactly the existing full-resolution clicked-pose result.

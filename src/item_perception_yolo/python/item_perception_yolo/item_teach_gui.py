@@ -678,7 +678,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         geometry_help = QtWidgets.QLabel(
             "Item X: short axis; item Y: long axis.\n"
             "pickdepth_radius is the circle DIAMETER (default 30 mm).\n"
-            "Length/width use platform Z=0; depth supplies the pick point.\n"
+            "Length/width use measured item height; items are assumed parallel to the floor.\n"
             "Nearby filter: platform plane is the bin floor; compare heights along camera Z.\n"
             "Scan camera XY inside the outer bin, including its inset margin.\n"
             "Defaults: 150 mm / 60 mm, three-frame median; item depth at least 500 mm."
@@ -1676,7 +1676,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 dimension_note = (f"X / width: {measurement['width_mm']:.2f} mm   "
                                   f"Y / height: {measurement['length_mm']:.2f} mm")
                 rgb_lines.extend([dimension_note, selected.get(
-                    "size_reason", "Platform Z=0 projected size")])
+                    "size_reason", "Size corrected using measured item height")])
             else:
                 rgb_lines.append("Measurement unavailable — see status below")
             pose = self.selected_pose_result
@@ -1698,7 +1698,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 rgb_lines.append("Pose: " + self.selected_pose_status)
             self.video_status.setText(
                 f"Frozen frame, age {age:.2f}s. "
-                + ("Reference-plane dimensions, not depth-corrected physical size."
+                + ("Height-corrected dimensions; item assumed parallel to the floor."
                    if measurement else selected["measurement_error"])
                 + "\n" + pose_text
                 + ("\nSampling circle unavailable: " + selected["sampling_circle_error"]
