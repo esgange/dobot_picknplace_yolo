@@ -292,8 +292,9 @@ def validate_candidate_selection(result, candidate_limit, *, source_ids=None):
         raise RuntimeError("Malformed candidate acquisition limit/unchecked diagnostics")
     rejected = result["rejected"]
     if (type(rejected) is not list or any(
-            type(entry) is not dict or set(entry) not in (
+            type(entry) is not dict or set(entry) - {"rejection_stage"} not in (
                 {"source_index", "reason"}, {"source_index", "reason", "nearby_depth_filter"})
+            or ("rejection_stage" in entry and entry["rejection_stage"] != "height")
             or type(entry["source_index"]) is not int or entry["source_index"] < 0
             or type(entry["reason"]) is not str or not entry["reason"] for entry in rejected)):
         raise RuntimeError("Malformed candidate rejection diagnostics")

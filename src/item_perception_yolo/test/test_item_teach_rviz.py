@@ -28,7 +28,7 @@ def preview(monkeypatch):
     depth = {**rgb, "depth": bytes(8)}
     node = SimpleNamespace(_bundle_rgb=lambda rgb, *args: rgb, background_suspended=lambda: False,
         create_publisher=MagicMock(side_effect=lambda *_: MagicMock()), create_timer=MagicMock(),
-        _validate_sources=MagicMock(), get_clock=lambda: SimpleNamespace(
+        _validate_sources=MagicMock(), events=MagicMock(), get_clock=lambda: SimpleNamespace(
             now=lambda: Time(nanoseconds=int(clock[0] * 1e9))),
         _image=rgb, _depth=depth, _color_info=info, _depth_info=info,
         condition=threading.Condition(), request_lock=threading.Lock(),
@@ -289,6 +289,10 @@ def test_corrupt_native_cloud_is_terminal(preview):
         visual.compute(view, options)
     assert node.native.failed and not node.operation_lock.locked()
     node.native.close.assert_called_once()
+    assert node.fatal_error == "Invalid native RViz result: Malformed RViz preview response"
+    node.events.record.assert_called_once_with(
+        "FATAL", "item_native_result_invalid", node.fatal_error,
+        operation="teaching_rviz", generation=3, camera_generation=4)
 
 
 @pytest.mark.parametrize("invalidated", [False, True])

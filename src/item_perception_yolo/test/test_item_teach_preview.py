@@ -31,7 +31,7 @@ def window(tmp_path, monkeypatch):
         clear_selected_pose=MagicMock(), show_selected_pose=MagicMock(), clicked_pose=MagicMock(),
         show_simulated_poses=MagicMock(),
         pick_planning_context=MagicMock(return_value={"synthetic": "planning"}),
-        native=SimpleNamespace(failed=False), service=None, yolo_enabled=False,
+        native=SimpleNamespace(failed=False), fatal_error="", service=None, yolo_enabled=False,
         preview_source="mask", preview_mode="all", last_view=None, settings=None,
         model_config={"path": str(tmp_path / "model.pt"), "task": "segment"},
         model_metadata={"task": "segment", "classes": {"1": "part", "4": "other"},
@@ -913,6 +913,18 @@ def test_pending_model_is_cancelled_on_invalidation(window, monkeypatch, outcome
     window._refresh_video()
     window.node.inspect_model.assert_not_called()
     assert window.pending_model_path is None
+
+
+def test_terminal_native_validation_keeps_specific_reason_on_gui_shutdown(window):
+    reason = "Invalid native RViz result: Malformed candidate rejection diagnostics"
+    window.node.fatal_error = reason
+    window.node.native.failed = True
+    window.node.get_logger = MagicMock()
+    # Failure can be noticed before the worker thread returns its queued result.
+    window._refresh_video()
+    assert window.node.fatal_error == reason
+    window.node.disarm.assert_called_with(reason)
+    window.node.get_logger().fatal.assert_called_once_with(reason)
 
 
 def test_failed_model_load_unlocks_controls_without_retry(window, monkeypatch):

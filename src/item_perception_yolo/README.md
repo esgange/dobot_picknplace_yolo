@@ -50,6 +50,12 @@ ros2 launch item_perception_yolo item_teach.launch.py
    or YOLO activation are needed. Cancelling Browse retains the previous selection.
    Successful loading automatically starts the 1 Hz YOLO
    preview when ready; Armed stays OFF. Worker failures remain terminal.
+   Below-floor and nearby-height rejections are normal observations, including
+   immediately after changing profiles. Their optional `rejection_stage=height`
+   diagnostic is accepted by the parent without accepting the rejected pose.
+   Malformed RViz results remain terminal and record the exact validation failure
+   as `item_native_result_invalid` in the package event log; shutdown retains that
+   cause instead of replacing it with a generic worker-failed message.
    The locked native runtime is copied into the install prefix as ordinary
    files even for a workspace `--symlink-install`. Its `cv2` loader and binary
    must never be symlinks into `build/`; that layout recursively imports the

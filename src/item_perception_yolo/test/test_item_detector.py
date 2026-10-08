@@ -299,6 +299,24 @@ def test_native_acquisition_partition_never_promotes_unchecked_candidates():
         detector.validate_candidate_selection(result, 2, source_ids=range(6))
 
 
+@pytest.mark.parametrize("nearby", [False, True])
+def test_native_height_rejection_diagnostics_remain_rejected(nearby):
+    rejected = {"source_index": 0, "reason": "height rejection", "rejection_stage": "height"}
+    if nearby:
+        rejected["nearby_depth_filter"] = {"maximum_height_difference_mm": 70.}
+    result = {"candidates": [], "rejected": [rejected], "unchecked": []}
+    detector.validate_candidate_selection(result, 20, source_ids={0})
+    assert not result["candidates"] and result["rejected"] == [rejected]
+    for changes in ({"rejection_stage": "unknown"}, {"rejection_stage": None},
+                    {"rejection_stage": True}, {"rejection_stage": 1},
+                    {"extra_field": "height"}):
+        with pytest.raises(RuntimeError, match="Malformed candidate rejection diagnostics"):
+            detector.validate_candidate_selection(
+                {**result, "rejected": [{**rejected, **changes}]}, 20, source_ids={0})
+    with pytest.raises(RuntimeError, match="identities changed"):
+        detector.validate_candidate_selection(result, 20, source_ids={1})
+
+
 def test_provider_must_honor_acquisition_limit_before_response(service_node):
     node, candidate = service_node
     node.infer.return_value["metadata"]["candidates"] = [candidate] * 4

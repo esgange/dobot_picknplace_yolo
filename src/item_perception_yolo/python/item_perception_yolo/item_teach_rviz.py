@@ -151,9 +151,13 @@ class TeachingRvizPreview:
                     ids = {entry["source_index"] for entry in header["detections"]}
                     validate_candidate_selection(result, options["candidate_limit"], source_ids=ids)
             except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+                node.fatal_error = f"Invalid native RViz result: {exc}"
+                node.events.record("FATAL", "item_native_result_invalid", node.fatal_error,
+                                   operation="teaching_rviz", generation=epoch,
+                                   camera_generation=generation)
                 node.native.failed = True
                 node.native.close()
-                raise RuntimeError(f"Invalid native RViz result: {exc}") from exc
+                raise RuntimeError(node.fatal_error) from exc
             node._validate_sources()
             if epoch != node.arm_epoch or generation != node._camera_generation:
                 raise ValueError("RViz preview invalidated during processing")

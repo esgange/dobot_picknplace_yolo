@@ -10275,6 +10275,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   .env, calibration, teaching/model and runtime artifacts; commit/push only this
   tested scope under the standing workflow.
 
+### 2026-10-08 — Rule 254: accept height-rejection diagnostics after profile reload
+
+- The operator reported Item Teach terminating after loading another profile.
+  Repository package logs show cutlery OBB loading/reloading successfully, followed
+  by the water segmentation pair loading at 09:00:21 UTC, preview resuming, and
+  a generic native-worker fatal shutdown at 09:00:22.784610 UTC. No affected
+  perception/controller processes were running during inspection. The historical
+  log omitted the validation exception, so it cannot conclusively identify the
+  exact rejected candidate or height check for that run.
+- Reproduce a deterministic regression introduced by f3041d4: native geometry
+  emits rejection_stage=height for below-floor/nearby-height rejections, while
+  the parent's exact-key validator rejects that new diagnostic. RViz validation
+  then deliberately closes the worker; GUI shutdown replaces its exception with
+  a generic message. Reload/model deserialization itself succeeded in the log;
+  the metadata mismatch explains a failure on the first height-rejected preview
+  and also affects production detection using the shared validator.
+- Accept only the optional height stage in the existing rejection contract.
+  Preserve required source/reason fields, unknown-field/stage rejection, candidate
+  identity partition, count limits and every geometric eligibility gate. Rejected
+  surfaces stay rejected; passive height failures remain yellow. No ROS interface,
+  profile schema, retry, motion, controller/FSM or operator-setting changes.
+- Record RViz result-validation failures in the existing bounded package log as
+  item_native_result_invalid, with operation/generation and the exact exception,
+  before setting the failed flag/closing the worker. Preserve that cause through
+  the GUI's terminal shutdown, including when it observes failure before the
+  background job has queued its result. No automatic restart, fallback or re-arm.
+- Validation: new native-to-parent JSON checks and rejection tests reproduced
+  three failures before the fix. Focused suites now pass 232 tests; full synthetic
+  and offscreen suites pass **669 Item Perception**, **260 Tray Perception**, and
+  **1,370 Robot Controller** tests on isolated ROS domains. Exercise actual native
+  mixed batches, below-floor/nearby-high-spot metadata, strict malformed diagnostics
+  and identity rejection, terminal error logging and GUI cause retention. This
+  closes the prior coverage gap between native output tests and parent validation.
+  Scoped production lint and whitespace checks pass.
+- Update AGENTS and the Item Perception README. Changed Python modules resolve
+  through the canonical install to source, so no rebuild is needed. No live
+  process restarted, weights executed, perception armed or robot commanded;
+  operator relaunch/live verification remains pending. Preserve unrelated RViz,
+  calibration, .env, teaching/model and runtime artifacts; scoped commit/push
+  follows the standing workflow.
+
 ### Future entry template
 
 ```text

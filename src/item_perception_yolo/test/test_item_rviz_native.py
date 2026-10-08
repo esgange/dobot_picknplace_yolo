@@ -1,5 +1,6 @@
 """Synthetic voxel/pose checks in the private OpenCV runtime, without a model."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -175,16 +176,27 @@ def exercise_all_candidates():
     start = blocked["point_count"] * 16
     pane = np.frombuffer(rendered[start:start+rgb.nbytes], np.uint8).reshape(rgb.shape)
     assert pane[240, 280].tolist() == [124, 115, 60]
+    # Cross the real native/parent JSON boundary, including ordinary, below-floor,
+    # and nearby-height rejections. The parent must accept all native diagnostics.
+    return [{"result": value, "settings": settings, "limit": limit,
+             "source_ids": [d["source_index"] for d in detections]}
+            for value, limit in ((result, 3), (passive, 100), (rejected, 100), (blocked, 100))]
 
 
 @pytest.mark.parametrize("exercise", ["exercise_voxels", "exercise_all_candidates"])
 def test_native_teaching_visualization(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"
-    code = ("import sys,runpy; sys.path.insert(0,sys.argv[1]); "
-            "runpy.run_path(sys.argv[2])[sys.argv[3]]()")
+    code = ("import sys,runpy,json; sys.path.insert(0,sys.argv[1]); "
+            "print(json.dumps(runpy.run_path(sys.argv[2])[sys.argv[3]]()))")
     result = subprocess.run(["/usr/bin/python3", "-c", code, str(runtime), __file__, exercise],
                             env=dict(os.environ, QT_QPA_PLATFORM="offscreen",
                                      OPENBLAS_NUM_THREADS="1"),
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
+    from item_perception_yolo.item_detector import (
+        validate_candidates, validate_candidate_selection)
+    for sample in json.loads(result.stdout) or []:
+        validate_candidates(sample["result"], sample["settings"])
+        validate_candidate_selection(sample["result"], sample["limit"],
+                                     source_ids=sample["source_ids"])

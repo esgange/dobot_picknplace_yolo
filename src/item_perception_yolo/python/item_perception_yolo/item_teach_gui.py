@@ -1518,7 +1518,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if self.node.native.failed:
             self.node.clear_selected_pose()
             self._finish_model_load()
-            self.node.fatal_error = "Item native worker failed; no restart or fallback"
+            self.node.fatal_error = (self.node.fatal_error or
+                                     "Item native worker failed; no restart or fallback")
             self.node.disarm(self.node.fatal_error)
             self.node.get_logger().fatal(self.node.fatal_error)
             QtWidgets.QApplication.instance().quit()
