@@ -412,7 +412,7 @@ def test_motion_group_completion_callbacks_do_not_wait_for_group_lock():
     assert all(future.callback_done.is_set() for future in futures)
 
 
-@pytest.mark.parametrize("service", ["MovJ", "MovL"])
+@pytest.mark.parametrize("service", ["MovJ", "MovJIO", "MovL"])
 def test_motion_group_timeout_blocks_later_sends_and_contains_late_reply(monkeypatch, service):
     class DeferredFuture:
         def __init__(self):

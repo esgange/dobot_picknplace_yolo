@@ -243,3 +243,26 @@ def test_movj_home_requires_its_queue_id_and_exact_unwrapped_joints():
     assert rig.calls[0][0] == "MovJ"
     assert len(rig.waited) == 4
     assert rig.transport.home_already_reached((0.,) * 6)
+
+
+def test_movjio_requires_execution_exact_joints_and_open_outputs_without_inventing_id():
+    rig = MotionRig()
+    rig.transport.node.holding_item = False
+    rig.transport.node.kinematics.forward = lambda _joints: np.eye(4)
+    rig.emit(z=0.)
+    rig.steps = iter([
+        {"z": 0., "outputs": 1 << 13},  # Right endpoint, no execution evidence.
+        {"z": -2 * np.pi, "running": 1, "outputs": 1 << 13},
+        {"z": -2 * np.pi, "outputs": 1 << 13},  # Wrong absolute joint turn.
+        {"z": 0., "outputs": 0},  # Missing commanded opening.
+        {"z": 0., "outputs": 1 << 13},
+    ])
+    target = Target("tray_detect_departure", np.eye(4), 73, 62, (0.,) * 6,
+                    joint_motion=True, motion_io=(MotionIO(50, 2, False),
+                                                  MotionIO(50, 14, True)))
+    rig.run(targets=(target,))
+    service, fields = rig.calls[0]
+    assert service == "MovJIO" and fields["mode"]
+    assert fields["mdis"] == ["{0,50,2,0}", "{0,50,14,1}"]
+    assert fields["param_value"] == ["user=0", "tool=0", "v=73", "a=62"]
+    assert len(rig.waited) == 5

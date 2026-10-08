@@ -10427,6 +10427,56 @@ Never use a floating “latest” version in an issue, script, or deployment not
   not establish its resolution. Preserve unrelated RViz edits, .env, calibration,
   teaching/model and runtime artifacts; scoped commit/push follows the workflow.
 
+### 2026-10-08 — Rule 257: joint Tray Detect return before the next Auto Run item
+
+- After rule 256, the operator reproduced an alarm on the next-item transit
+  itself. The 11:43:06 UTC run admitted placement MovLIO #41–43 and next-item
+  transit #44, then rejected pre-pick MovL #45 with -2; it ended at 1/20 in
+  26.2 seconds. The source queued placement retract directly to item transit,
+  without revisiting Tray Detect. The operator requested a joint Tray Detect
+  waypoint before the next item, with fingers opening halfway through that move.
+- Add the exact six saved Tray Detect joint angles as tray_detect_departure,
+  using the vendor's existing MovJIO service in joint mode. Attach ordered
+  `{0,50,2,0}` / `{0,50,14,1}` events (CLOSE off, OPEN on) and retain taught travel
+  speed/acceleration. Remove OPEN from this next item's transit, which now uses
+  MovL, followed by unchanged pre-pick and final-pick targets. Preserve the
+  universal transit OPEN event for initial picks and other existing routes.
+- Apply the departure for both queued placement handoff and a placement already
+  completed while waiting for perception. Keep the new waypoint, item transit,
+  pre-pick and pick in one ordered group behind placement. No Home, additional
+  tray detection, intermediate arrival barrier, delay or CP override is added;
+  selected CP may blend the taught waypoint. The existing pre-pick execution ID
+  is now the third appended command and still gates old/new source ownership,
+  placement count and acquisition, with neutral output/DI1-LOW history required.
+- Support validated timed outputs on absolute joint targets and include MovJIO
+  in motion service ownership, ordered admission, timeout, Stop and late-reply
+  containment. Its fixed ROS reply has res only, so never infer a queue ID.
+  Retain exact unwrapped joint/feedback/output checks for terminal joint moves.
+  Initial Pick, missed-pick retries, held travel to Tray Detect, bin put-back,
+  final Home and empty-result Home paths retain their geometry and I/O. Clear
+  the placement-departure flag before automatic drop return/continuation.
+- Validation: **1,403 Robot Controller tests pass**, using synthetic feedback,
+  offscreen Qt and isolated ROS domain 84. Cover both gripper flags, taught
+  joints/rates and 50% event order, unchanged item targets, early/late perception,
+  complete placement admission before departure, revised pre-pick handoff and
+  coalesced feedback, Stop during all four sends, rejected departure preventing
+  later travel, MovJIO timeout/late acceptance, exact-joint/execution/output
+  completion, and existing retry/return/recovery routes. Initial full-suite
+  failures were obsolete route/source-string expectations and a test claiming
+  changed joints were not execution evidence; correct fixtures and rely on
+  behavioral transport tests instead of the old service-selection source string.
+- Isolated robot_controller build passes under build/tray_departure with its own
+  build/install directories. Production and changed-test-line lint and whitespace
+  checks pass. Update AGENTS and root/controller READMEs, the FSM behavior review,
+  Auto Run diagram and command/feedback tables; regenerate offline HTML/PDF and
+  verify matching source hash, nine SVG diagrams/PDF pages and the updated route.
+- No vendor patch, public ROS interface, schema, .env key or operator artifact
+  change. Do not command hardware or restart live processes. Leave controller
+  relaunch and live route/alarm verification to the operator; synthetic success
+  does not establish that the original alarm is resolved. Preserve unrelated
+  RViz, calibration, teaching/model and runtime files; scoped commit/push follows
+  the standing workflow.
+
 ### Future entry template
 
 ```text

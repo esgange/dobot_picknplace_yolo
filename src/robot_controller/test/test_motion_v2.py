@@ -13,7 +13,8 @@ from robot_controller.hardware import (
 from robot_controller.motion import (
     MotionIO, PickExecutor, Target, candidate_pose_in_base,
     gripper_close_events, gripper_neutral_events, gripper_open_events, home_targets,
-    pick_attitude, pick_targets, pick_tray_target, pose_reached, vacuum_exhaust_events,
+    pick_attitude, pick_targets, pick_tray_target, placement_pick_targets, pose_reached,
+    vacuum_exhaust_events,
     vacuum_neutral_events, vacuum_suck_events)
 
 
@@ -109,7 +110,7 @@ def test_home_height_skip_uses_five_mm_boundary(below_home_m, needs_rise):
 @pytest.mark.parametrize("fields", [
     {"joints_rad": None}, {"joints_rad": (0.,) * 5},
     {"joints_rad": (float("nan"),) * 6}, {"relative_z": True},
-    {"motion_io": (MotionIO(50, 14, True),)}, {"joint_motion": "yes"},
+    {"joint_motion": "yes"},
 ])
 def test_joint_motion_rejects_invalid_angles_or_linear_options(fields):
     options = dict(joints_rad=(0.,) * 6, joint_motion=True)
@@ -307,6 +308,40 @@ def test_success_closes_only_after_suction_and_finishes_at_tray_holding():
     assert finish[1] == ("p1_retract", "p1_final", "p1_transit_exit",
                          "tray_detect_position_linear", "tray_detect_position")
     assert hardware.targets[-1][-1].joints_rad == tray_target().joints_rad
+
+
+@pytest.mark.parametrize("use_grip", [False, True])
+@pytest.mark.parametrize("close_on_pick", [False, True])
+def test_placement_departure_uses_taught_joints_and_moves_open_event_earlier(
+        use_grip, close_on_pick):
+    taught = settings(use_grip=use_grip, close_on_pick=close_on_pick)
+    taught["speed"]["travel_percent"] = 73
+    taught["acceleration"]["travel_percent"] = 62
+    tray = replace(tray_target(taught), joints_rad=(.1, .2, -.3, .4, .5, -3.7))
+    plan = pick_targets(matrix(1.), item_pose(), taught, 1)
+    hardware = FakeHardware([True])
+    PickExecutor(hardware, finish_home=True).run(
+        [plan], taught, tray_target=tray, after_placement=True,
+        check=lambda _index: None, return_home=lambda **_kwargs: None)
+    route = hardware.targets[0]
+    assert [p.name for p in route] == [
+        "tray_detect_departure", "p1_transit", "p1_prepick", "p1_pick"]
+    assert route[0].joint_motion and route[0].joints_rad == tray.joints_rad
+    assert np.array_equal(route[0].matrix, tray.matrix)
+    assert (route[0].speed_percent, route[0].acceleration_percent) == (73, 62)
+    assert [event.vendor_value() for event in route[0].motion_io] == [
+        "{0,50,2,0}", "{0,50,14,1}"]
+    assert not route[1].joint_motion and not route[1].motion_io
+    assert np.array_equal(route[1].matrix, plan[0].matrix)
+    assert route[2] is plan[2] and route[3] is plan[3]
+    assert plan[0].motion_io == gripper_open_events(50)  # Other routes remain intact.
+    assert hardware.log[1][2]["batch_name"] == "candidate_1_place_to_pick"
+
+
+def test_placement_departure_rejects_a_cartesian_only_tray_target():
+    plan = pick_targets(matrix(1.), item_pose(), settings(), 1)
+    with pytest.raises(ValueError, match="taught Tray Detect joints"):
+        placement_pick_targets(plan, replace(tray_target(), joint_motion=False))
 
 
 def test_success_with_deferred_grip_closes_halfway_through_prepick_lift():

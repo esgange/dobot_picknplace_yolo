@@ -68,15 +68,12 @@ def test_legacy_public_commands_are_absent_and_preview_has_no_dobot_transport():
     assert "dobot_bringup_ros2/srv" not in gui
 
 
-def test_runtime_continue_replans_without_vendor_queue_resume_or_empty_movlio():
+def test_runtime_continue_replans_without_vendor_queue_resume_or_ik_preflight():
     runtime = "\n".join(
         path.read_text() for path in (PACKAGE / "python/robot_controller").glob("*.py"))
     assert "InverseKin" not in runtime
     assert "_call_queue_control" not in runtime
     assert "self.managed.continue_operation()" in runtime
-    assert ('service = "MovJ" if target.joint_motion else '
-            '("MovLIO" if events else "MovL")') in runtime
-    assert 'fields["mdis"] = events' in runtime
 
 
 def test_motion_origin_uses_joint_fk_without_getpose_or_second_pose_subscription():

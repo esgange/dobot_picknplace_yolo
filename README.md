@@ -45,7 +45,9 @@ available. Each cycle confirms Tray Detect and acquires fresh tray pose/depth.
 If another item is needed, immediately start a fresh bin pose request while
 planning and sending the placement approach/release/retract queue. Once all
 placement commands are accepted and the fresh poses are ready, append the next
-entry → pre-pick → pick directly behind placement, without Home or an arrival wait. Successful placement
+Tray Detect joint return → item entry → pre-pick → pick behind placement, without
+Home or an intermediate arrival wait. The joint return uses MovJIO to the saved
+Tray Detect angles and opens fingers at 50%; item entry then uses MovL. Successful placement
 cancels any unused poses from its old batch. After the last placement, append
 Home immediately and finish only at confirmed Home; no extra bin request is made.
 The displayed count requires placement execution and neutral/released feedback,
@@ -122,7 +124,8 @@ joint angles, including the Home button, recovery, returns and Auto Run. Necessa
 vertical clearance remains linear. Home confirmation compares each joint within
 ±1° without wrapping full turns; matching the tool pose alone is insufficient.
 Auto Run skips Home between successful placement and the next pick, even when
-perception finishes after retract. Initial Pick, final Auto Run and empty-result
+perception finishes after retract, but returns through taught Tray Detect joints
+before the next item transit. Initial Pick, final Auto Run and empty-result
 retry Home remain. Next-pick ownership requires the pre-pick command ID and
 observed placement release; acceptance alone cannot count a placement.
 
@@ -510,7 +513,8 @@ Canonical RViz includes the display. Reload its configuration if already open.
 This is a pick-pose footprint check, not a swept-path or full robot collision planner.
 Final Home uses absolute-joint MovJ. Tray Detect queues joint-target MovL then
 absolute-joint MovJ, confirming only the latter; other no-I/O moves use MovL. Timed-output
-moves use non-empty MovLIO. The conditional rise for initial/shared Home uses
+moves use non-empty MovLIO, or MovJIO for Auto Run's post-placement Tray Detect
+joint return with finger OPEN at 50%. The conditional rise for initial/shared Home uses
 RelMovLUser; item exit transits use Cartesian MovL.
 Continue replans the remaining operation from its confirmed parked pose;
 the controller never uses vendor Continue or InverseKin. See the
@@ -711,7 +715,7 @@ speed 100%: approach/rise/Home use travel acceleration, release descent uses
 approach acceleration, and upward retract uses retract acceleration.
 Acceleration starts at 100%
 for all three phases. Save records separate `speed` and `acceleration` groups.
-The controller passes each target's `v=`/`a=` to MovJ, MovL, MovLIO or the Home-height
+The controller passes each target's `v=`/`a=` to MovJ, MovJIO, MovL, MovLIO or the Home-height
 RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,

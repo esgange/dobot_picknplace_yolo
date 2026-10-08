@@ -90,8 +90,8 @@ class Target:
             if (self.joints_rad is None or len(self.joints_rad) != 6
                     or not all(math.isfinite(value) for value in self.joints_rad)):
                 raise ValueError("Joint motion requires six finite absolute joint angles")
-            if self.relative_z or self.motion_io:
-                raise ValueError("Joint motion cannot carry relative-Z or timed linear I/O")
+            if self.relative_z:
+                raise ValueError("Joint motion cannot carry relative-Z")
         states = {}
         for event in self.motion_io:
             key = (event.percent, event.channel)
@@ -140,6 +140,15 @@ def pick_tray_target(tray, settings):
         tray.detect_matrix, tray.detect_joints,
         speed_percent=settings["speed"]["travel_percent"],
         acceleration_percent=settings["acceleration"]["travel_percent"])[-1]
+
+
+def placement_pick_targets(plan, tray_target):
+    """Leave placement via taught Tray Detect joints, opening halfway there."""
+    if not tray_target.joint_motion or tray_target.joints_rad is None:
+        raise ValueError("Placement departure requires taught Tray Detect joints")
+    departure = replace(tray_target, name="tray_detect_departure",
+                        motion_io=gripper_open_events(50))
+    return (departure, replace(plan[0], motion_io=()), plan[2], plan[3])
 
 
 def pose_reached(actual, goal, *, translation_m=0.001, rotation_deg=0.5):
@@ -222,7 +231,7 @@ class PickExecutor:
     def run(self, plans, settings, *, tray_target, check, return_home, remember_prepick=None,
             progress=None, holding_changed=None, session=None,
             departure=(), departure_pose=None,
-            placement_bridge=None):
+            placement_bridge=None, after_placement=False):
         grip = settings["gripper"]["use_grip"]
         close_on_pick = settings["gripper"]["grip_onpick"]
         if not plans:
@@ -267,7 +276,8 @@ class PickExecutor:
                 raise ValueError("DI1 failed to clear before pickup")
             if remember_prepick is not None:
                 remember_prepick(plan[2], settings["gripper"])
-            forward = (plan[0], plan[2], plan[3])
+            forward = (placement_pick_targets(plan, tray_target) if after_placement
+                       else (plan[0], plan[2], plan[3]))
             if session is not None and session.resuming:
                 self.hardware.output(2, False)
                 self.hardware.output(14, True)
@@ -288,7 +298,7 @@ class PickExecutor:
             acquired, return_origin = self.hardware.move_batch(
                 forward, batch_name=(f"return_item_to_candidate_{start_index}_pick" if departure
                                      else f"candidate_{start_index}_place_to_pick"
-                                     if placement_bridge is not None
+                                     if after_placement
                                      else f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
                 relax_pick_fingers=not close_on_pick,

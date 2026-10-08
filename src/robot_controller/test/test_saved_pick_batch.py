@@ -332,13 +332,24 @@ def test_fresh_batch_skips_home_before_or_after_placement_finishes(slow):
             raise OperationCanceled('Reached fresh candidate')
         if not slow:
             assert node.managed.session is old and old.held_index == 1
-        assert [t.name for t in targets] == ['p1_transit', 'p1_prepick', 'p1_pick']
-        assert not any(t.joint_motion for t in targets)
+        assert [t.name for t in targets] == [
+            'tray_detect_departure', 'p1_transit', 'p1_prepick', 'p1_pick']
+        assert targets[0].joint_motion
+        assert targets[0].joints_rad == node.configuration.tray.detect_joints
+        assert not any(t.joint_motion for t in targets[1:])
         return move(targets, **kwargs)
     node.hardware.move_batch = dispatch
+    original_call = rig.transport.clients['MovL'].call_async
+
+    def linear_reply(command):
+        future = original_call(command)
+        future.result().robot_return = '{' + str(len(rig.requests)) + '}'
+        return future
+
+    rig.transport.clients['MovL'].call_async = linear_reply
 
     def admission(index):
-        if not slow and index <= 6:
+        if not slow and index <= 7:
             assert old.held_index == 1 and old.attempts[1].state == 'PENDING'
     rig.on_request = admission
     rig.steps = iter([
@@ -361,7 +372,8 @@ def test_fresh_batch_skips_home_before_or_after_placement_finishes(slow):
         (2, 0), (14, 0)]
     assert [a.state for a in old.attempts] == ['PLACED', 'CANCELED', 'CANCELED']
     if not slow:
-        assert rig.order[:6] == [name for name, _ in rig.requests[:6]]
+        assert rig.order[:7] == [name for name, _ in rig.requests[:7]]
+    assert [name for name, _ in rig.requests].count('MovJIO') == 1
     assert not any(name == 'MovJ' for name, _ in rig.requests)
     node._execute_home.assert_not_called()
     node.candidates.request.assert_not_called()

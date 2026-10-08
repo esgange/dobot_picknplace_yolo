@@ -96,12 +96,16 @@ The prefetched result gets its own ledger; its candidates cannot acquire ownersh
 until the old placement crosses the execution/release boundary.
 
 Consume the result using the existing handoff/error path. When valid poses are ready,
-append next entry → pre-pick → final pick directly **without Home or a placement
+append taught Tray Detect joint return → next entry → pre-pick → final pick **without Home or a placement
 arrival wait**. The dashboard executes these requests after every accepted
-placement command, with the selected global CP. Entry travels from the planned
-tray retract to item X/Y at Home Z and retains finger OPEN at 50%; final descent
-retains SUCK at 20%. If detection is slower than placement, confirm/count retract
-and wait unheld, then use the same direct next Pick without an initial Home.
+placement command, with the selected global CP. The new joint return uses
+`MovJIO(mode=true)` with all six saved Tray Detect angles, taught travel speed/
+acceleration, and `{0,50,2,0}` then `{0,50,14,1}` to open fingers at 50%.
+Move this transfer's OPEN event off the next item transit, which uses plain MovL
+to item X/Y at Home Z. Final descent retains SUCK at 20%. There is no intermediate
+arrival wait or new perception request at Tray Detect; CP may blend the waypoint.
+If detection is slower than placement, confirm/count retract and wait unheld,
+then use the same joint return and next Pick without an initial Home.
 The fresh batch is retained for retries/recovery until the first successful placement. Manual
 Pick → Place cycles discard the old batch at placement completion and acquire
 fresh poses on the next explicit Pick.
@@ -115,8 +119,8 @@ with the completed quantity. Empty observations do not consume physical-pick bat
 The handoff retains the previous placement and source until advancing FeedInfo
 reports the next pre-pick MovL's returned queue ID (or a later ID), with observed neutral
 gripper outputs and DI1 LOW since placement admission. This proves execution passed
-the placement queue without inventing a MovLIO queue ID or requiring a midpoint
-stop. Entry remains MovLIO and returns no ID; pre-pick is the second appended
+the placement queue without inventing a MovJIO queue ID or requiring a midpoint
+stop. The joint return's reply has no ID; pre-pick is the third appended
 command. Apply this handoff before interpreting any new-pick suction as old-item
 feedback, including when feedback jumps directly to final descent. Only then count
 that placement, mark the old candidate PLACED, activate the
@@ -1466,7 +1470,7 @@ transits are blended control points. Later DI1 cannot reclassify the latched mis
 as success. Successful Pick instead uses the two lifts, Safety Z exit and Tray
 Detect route above; its held-item outputs and monitoring remain active.
 
-All `MovJ`, `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
+All `MovJ`, `MovJIO`, `MovL`, `MovLIO`, and `RelMovLUser` requests in one named batch are admitted
 in target order. Each must return `res=0` before the next is sent, with no
 additional inter-command delay. This is an admission barrier, not an
 intermediate physical-arrival wait: it prevents separate ROS services from
@@ -1478,8 +1482,8 @@ interruption and terminal completion are recorded with the batch name.
 An armed new-candidate DI1 or cancellation during admission prevents all later
 targets in that group from being sent; late DI1 from a latched miss is ignored.
 The independent Stop path bypasses normal admission. During a held-item return, a
-timed DO2/DO14 transition requested by MovLIO is accepted only as the exact
-old-to-commanded state change after that MovLIO has been sent, and becomes the
+timed DO2/DO14 transition requested by MovLIO/MovJIO is accepted only as the exact
+old-to-commanded state change after that command has been sent, and becomes the
 new expected state when observed;
 uncommanded output changes, lost DI1/DO13, and wrong terminal states still fail.
 
@@ -1494,8 +1498,10 @@ a short pick segment decelerate even at global CP 100%; queue order takes
 precedence over uninterrupted blending.
 
 Final Home uses `MovJ(mode=true)`. Tray Detect queues `MovL(mode=true)` then
-`MovJ(mode=true)` to the same taught joints; other no-I/O targets use `MovL`.
-`MovLIO` is used only for a real non-empty timed DO tuple. Initial/shared Home's conditional rise uses `RelMovLUser`; item exit
+`MovJ(mode=true)` to the same taught joints for observation. Auto Run returns from
+placement through those joints with `MovJIO(mode=true)`, opening fingers at 50%
+before the next linear item transit. Other no-I/O targets use `MovL`.
+`MovLIO`/`MovJIO` require real non-empty timed DO tuples. Initial/shared Home's conditional rise uses `RelMovLUser`; item exit
 transits use Cartesian `MovL`. The controller never calls
 `InverseKin` or vendor `Continue`; controller Continue rebuilds the remaining route.
 Service acknowledgement is acceptance only; actual
@@ -1520,7 +1526,7 @@ and a newer RobotStatus receipt; duplicate/backward joint stamps cannot refresh
 position evidence. Both topic callbacks wake the wait immediately, independently
 of FeedInfo updates. There is no added stability interval.
 `MovJ` and `MovL` expose their queue ID in the existing reply: require that exact
-`FeedInfo.currentCommandId` at completion. The fixed vendor `MovLIO` and
+`FeedInfo.currentCommandId` at completion. The fixed vendor `MovJIO`, `MovLIO` and
 `RelMovLUser` response schemas expose only `res`; those endpoints instead require
 live execution evidence latched during dispatch/travel (running/queued status,
 changed queue ID or joint movement). Queue-empty confirmation remains a separate

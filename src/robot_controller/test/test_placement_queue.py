@@ -108,7 +108,8 @@ class QueueRig:
                 for values in self.script:
                     self.emit(**values)
             future = Future()
-            future.set_result(SimpleNamespace(res=0, robot_return='{4}'))
+            future.set_result(SimpleNamespace(res=0) if name == 'MovJIO'
+                              else SimpleNamespace(res=0, robot_return='{4}'))
             return future
         return SimpleNamespace(service_is_ready=lambda: True, call_async=call)
 

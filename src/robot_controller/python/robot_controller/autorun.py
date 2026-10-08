@@ -66,9 +66,10 @@ class PlacementBridge:
 
     def accepted(self, index, response):
         with self.node.managed.lock:
-            # Next entry is MovLIO (OPEN at 50%, no ID); pre-pick is MovL.
+            # Taught Tray Detect return is MovJIO (OPEN at 50%, no ID), followed
+            # by linear entry and pre-pick. Keep ownership until pre-pick executes.
             # A final/empty-result Home is the sole appended MovJ command.
-            boundary_index = 1 if self.next_session is not None else 0
+            boundary_index = 2 if self.next_session is not None else 0
             if index == boundary_index:
                 self.boundary_id = self.node.hardware._motion_command_id(response)
                 self.accepted_sequence = self.node.monitor.sequence
@@ -261,10 +262,10 @@ class AutoRunOperation:
                     batch=batch, configuration=config)
             for plan in plans:
                 return_targets(plan)
-            extra = {}
+            extra = dict(after_placement=bridge is not None)
             if bridge is not None and not bridge.completed:
                 bridge.next_session = session
-                extra = dict(placement_bridge=bridge)
+                extra["placement_bridge"] = bridge
             else:
                 node.managed.session = session
 

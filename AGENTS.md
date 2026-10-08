@@ -1969,6 +1969,18 @@ held-loss supervision. Preserve vacuum until the existing 80% descent release,
 prefetch/handoff. Return Item and pickup I/O remain unchanged. No new schema,
 setting, operator-file change or live restart; update diary/FSM and regenerate exports.
 
+Rule 257 routes each normal Auto Run placement-to-next-item transfer through
+the exact taught Tray Detect joints using MovJIO: DO2 OFF then DO14 ON at 50%,
+with taught travel speed/acceleration. Then queue linear item transit, pre-pick
+and final pick; move this transfer's OPEN event off the item transit. Apply even
+when placement finishes before perception. Keep ordered acceptance and selected
+CP, without an intermediate arrival wait. Pre-pick is the third appended command;
+its returned ID plus neutral/DI1-LOW history still gates ledger/count handoff.
+MovJIO has acceptance-only replies and participates in normal Stop, timeout and
+late-reply containment. Initial Pick, missed-pick retries, bin Return Item, final
+Home, empty-result Home and held travel to Tray Detect retain their routes/I/O.
+No new ROS interface, schema or setting; update diary/FSM and regenerate exports.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

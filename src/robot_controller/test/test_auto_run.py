@@ -14,7 +14,8 @@ from robot_controller.autorun import (
 from robot_controller.controller import RobotController
 from robot_controller.errors import (
     CommandRejected, CommandResponseTimeout, FeedbackFailure, OperationCanceled)
-from robot_controller.motion import home_targets, pick_targets
+from robot_controller.motion import (
+    home_targets, pick_targets, pick_tray_target, placement_pick_targets)
 from robot_controller.pick_session import PickSession
 from robot_controller_interfaces.action import AutoRun
 from robot_controller_interfaces.srv import Command
@@ -44,6 +45,11 @@ def queue_rig(quantity=2, *, use_grip=True):
     return rig, run, bridge
 
 
+def next_route(rig, plan):
+    config = rig.node.configuration
+    return placement_pick_targets(plan, pick_tray_target(config.tray, config.profile))
+
+
 @pytest.mark.parametrize("value", [0, -1, 10001, True, 1.5, "2", None])
 def test_auto_quantity_is_a_bounded_positive_integer(value):
     with pytest.raises(ValueError):
@@ -67,12 +73,12 @@ def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisi
     assert rig.node.placement.phase != "DONE"
     assert rig.monitor.snapshot().feed["digital_input_bits"] & 1
     rig.transport.confirm_stop = Mock(side_effect=AssertionError("No stationary pickup wait"))
-    # Real command order: placement 1..3, next entry 4, pre-pick 5, pick 6.
+    # Placement 1..3, taught joint departure 4, entry 5, pre-pick 6, pick 7.
     original = rig.transport.clients["MovL"].call_async
 
     def prepick_reply(command):
         future = original(command)
-        future.result().robot_return = "{5}"
+        future.result().robot_return = "{" + str(len(rig.requests)) + "}"
         return future
     rig.transport.clients["MovL"].call_async = prepick_reply
     rig.steps = iter([
@@ -82,19 +88,25 @@ def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisi
         dict(outputs=0, inputs=OPEN, currentCommandId=3),
         *([] if coalesced else [
             dict(outputs=1 << 13, inputs=OPEN, currentCommandId=4),
-            dict(outputs=1 << 13, inputs=OPEN, currentCommandId=5)]),
-        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=6),
+            dict(outputs=1 << 13, inputs=OPEN, currentCommandId=5),
+            dict(outputs=1 << 13, inputs=OPEN, currentCommandId=6)]),
+        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
     ])
     acquired, _origin = rig.transport.move_batch(
-        (plan[0], plan[2], plan[3]),
+        next_route(rig, plan),
         stop_on_suction=True, pick_settling_sec=10., return_terminal_pose=True,
         confirmed_start_pose=bridge.origin, placement_bridge=bridge)
     assert acquired
     assert [name for name, _ in rig.requests] == [
         "MovL" if use_grip else "MovLIO", "MovLIO", "MovLIO",
-        "MovLIO", "MovL", "MovLIO", "Stop"]
+        "MovJIO", "MovL", "MovL", "MovLIO", "Stop"]
     # No new feedback/arrival wait between placement admission and all next targets.
-    assert rig.order[:6] == [name for name, _ in rig.requests[:6]]
+    assert rig.order[:7] == [name for name, _ in rig.requests[:7]]
+    joint_request = rig.requests[3][1]
+    assert joint_request.mode
+    assert [getattr(joint_request, k) for k in "abcdef"] == pytest.approx(
+        np.rad2deg(rig.node.configuration.tray.detect_joints))
+    assert list(joint_request.mdis) == ['{0,50,2,0}', '{0,50,14,1}']
     assert run.completed == 1
     assert old_session.attempts[0].state == "PLACED" and old_session.held_index is None
     assert rig.node.managed.session is bridge.next_session
@@ -398,6 +410,50 @@ def test_auto_pick_detects_first_and_keeps_separate_acquisition_and_pick_budgets
         assert node.log.index(("ensure_home",)) < node.log.index(("detect", 2))
 
 
+def test_late_prefetch_still_returns_through_tray_joints_after_retract_completed(monkeypatch):
+    from test_operation_retries import pick_rig
+
+    node = pick_rig(monkeypatch, [1], [True])
+    node.managed.session = None
+    node._plan_candidate_batch = lambda batch: RobotController._plan_candidate_batch(node, batch)
+    batch = node.candidates.request(node.configuration)
+    run = AutoRunOperation(node, request(2))
+    run.completed = 1
+    assert run._pick(batch, SimpleNamespace(completed=True))
+    first = next(row for row in node.log if row[0] == "move")
+    assert first[1] == ("tray_detect_departure", "p1_transit", "p1_prepick", "p1_pick")
+    assert first[2]["batch_name"] == "candidate_1_place_to_pick"
+    assert ("ensure_home",) not in node.log
+    assert node.requests == ["detect"] and run.completed == 1
+
+
+def test_rejected_joint_departure_prevents_next_entry_and_preserves_old_source():
+    from rclpy.task import Future as RosFuture
+
+    rig, run, bridge = queue_rig()
+    plan = pick_targets(rig.node.configuration.home_matrix, np.eye(4),
+                        rig.node.configuration.profile, 1)
+    bridge.next_session = PickSession(["next-item"], [plan])
+    bridge.placement.close_pending()
+    original = rig.transport.clients["MovJIO"].call_async
+
+    def rejected(command):
+        original(command)
+        response = RosFuture()
+        response.set_result(SimpleNamespace(res=-2))
+        return response
+
+    rig.transport.clients["MovJIO"].call_async = rejected
+    with pytest.raises(CommandRejected, match="MovJIO failed: -2"):
+        rig.transport.move_batch(next_route(rig, plan), stop_on_suction=True,
+                                 confirmed_start_pose=bridge.origin, placement_bridge=bridge)
+    assert [name for name, _ in rig.requests[3:]] == ["MovJIO", "Stop"]
+    assert rig.node.managed.session is bridge.old_session and run.completed == 0
+    assert bridge.old_session.attempts[0].state == "HELD"
+    assert bridge.next_session.attempts[0].state == "PENDING"
+    run.close()
+
+
 def test_empty_prefetch_finishes_owned_home_then_retries_without_duplicate_motion():
     rig, run, bridge = queue_rig(quantity=2)
     rig.steps = iter([
@@ -693,7 +749,7 @@ def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply,
             dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
         ])
         node.hardware.move_batch(
-            (plan[0], plan[2], plan[3]), stop_on_suction=True,
+            next_route(rig, plan), stop_on_suction=True,
             pick_settling_sec=10., return_terminal_pose=True,
             confirmed_start_pose=bridge.origin, placement_bridge=bridge)
         raise OperationCanceled("test reached next Pick handoff")
@@ -704,9 +760,9 @@ def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply,
             run.run()
         names = [name for name, _ in rig.requests]
         if reply == "accepted":
-            assert names == ["MovL", "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO",
+            assert names == ["MovL", "MovLIO", "MovLIO", "MovJIO", "MovL", "MovL", "MovLIO",
                              "Stop"]
-            entry_dispatch = [i for i, name in enumerate(rig.order) if name == "MovLIO"][2]
+            entry_dispatch = rig.order.index("MovJIO")
             assert rig.order.index("placement accepted") < entry_dispatch
             assert rig.order.index("feedback") > entry_dispatch
             assert run.completed == 1
@@ -863,7 +919,7 @@ def test_executing_placement_failure_discards_inflight_next_item_result(monkeypa
         worker.future.result()
 
 
-@pytest.mark.parametrize("stop_after", [1, 2, 3])
+@pytest.mark.parametrize("stop_after", [1, 2, 3, 4])
 def test_stop_during_direct_next_pick_admission_keeps_old_source(stop_after):
     rig, run, bridge = queue_rig()
     old = bridge.old_session
@@ -882,10 +938,10 @@ def test_stop_during_direct_next_pick_admission_keeps_old_source(stop_after):
             raise OperationCanceled("operator Stop")
     rig.node.raise_if_cancelled = check_cancel
     with pytest.raises(OperationCanceled):
-        rig.transport.move_batch((plan[0], plan[2], plan[3]), stop_on_suction=True,
+        rig.transport.move_batch(next_route(rig, plan), stop_on_suction=True,
                                  confirmed_start_pose=bridge.origin, placement_bridge=bridge)
     names = [name for name, _ in rig.requests[3:]]
-    assert names[:stop_after] == ["MovLIO", "MovL", "MovLIO"][:stop_after]
+    assert names[:stop_after] == ["MovJIO", "MovL", "MovL", "MovLIO"][:stop_after]
     assert names[stop_after:] and set(names[stop_after:]) == {"Stop"}
     assert rig.node.managed.session is old and old.held_index == 1
     assert run.completed == 0 and not bridge.completed
@@ -898,17 +954,20 @@ def test_direct_pick_handoff_waits_for_prepick_id_and_neutral_release_history():
     plan = pick_targets(rig.node.configuration.home_matrix, np.eye(4),
                         rig.node.configuration.profile, 1)
     bridge.next_session = PickSession(["next-item"], [plan])
-    # The entry's acceptance-only reply must not be parsed as an ID.
+    # Joint departure has no ID, and linear entry is not the handoff boundary.
     bridge.accepted(0, SimpleNamespace(res=0))
     assert bridge.boundary_id is None
     bridge.accepted(1, SimpleNamespace(res=0, robot_return="{5}"))
+    assert bridge.boundary_id is None
+    bridge.accepted(2, SimpleNamespace(res=0, robot_return="{6}"))
     bridge.admitted(plan[0])
     bridge.observe(rig.emit(outputs=0, inputs=0, currentCommandId=3))
     bridge.observe(rig.emit(outputs=1 << 13, inputs=OPEN, currentCommandId=4))
+    bridge.observe(rig.emit(outputs=1 << 13, inputs=OPEN, currentCommandId=5))
     assert run.completed == 0 and rig.node.managed.session is bridge.old_session
     # Complete from the new-pick sample itself, without a separate idle sample.
     rig.node.managed.observe_continuous(rig.emit(
-        outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=6))
+        outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7))
     assert run.completed == 1 and rig.node.managed.session is bridge.next_session
     assert bridge.next_session.attempts[0].state == "ACTIVE"
     bridge.observe(rig.monitor.snapshot())

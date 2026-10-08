@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Post-placement Tray Detect return review: **2026-10-08**, baseline **`5d5de23`**
+plus rule **257**. Before each normal next-item transfer, queue exact taught Tray
+Detect joints with MovJIO and OPEN at 50% (DO2 OFF then DO14 ON), followed by
+linear item entry, pre-pick and final pick. Use taught travel rates, preserve
+selected CP and ordered acceptance, and add no midpoint arrival wait. This also
+applies after a completed retract when perception is slower. Pre-pick is now the
+third appended command; its ID and neutral/DI1-LOW history retain the existing
+source/count boundary. MovJIO participates in Stop/timeout/late-reply containment
+without inventing a queue ID. Initial/missed Pick, held Tray Detect arrival, bin
+return and final/empty-result Home routes stay unchanged. Live verification is pending.
+
 Pre-place finger timing review: **2026-10-08**, baseline **`7bab5f7`** plus rule
 **256**. For `use_grip=false`, replace pre-placement DO2 OFF / DO14 ON service
 calls with ordered `{0,80,2,0}` / `{0,80,14,1}` events on pre-place MovLIO.
@@ -167,17 +178,20 @@ speed. Preview uses the same planner. Preserve ordered queue acceptance, returne
 command-ID execution, exact ±1° joint arrival, held-output/drop and Stop gates.
 Placement approach, release descent and upward retract stay linear
 `MovL`/`MovLIO`, with existing timed I/O and no added wait. Auto Run still appends
-the next Pick directly behind the placement queue without Home.
+the next Pick behind the placement queue without Home, through rule 257's joint
+Tray Detect return.
 
 Direct Auto Run continuation review: **2026-10-06**, baseline **`12bea53`** plus
-rule **231**. After all placement replies are accepted, append the next fresh
-entry → pre-pick → pick without Home or a placement-arrival wait. Retain OPEN at
-50% entry and SUCK at 20% final descent. The existing pre-pick MovL supplies its
-queue ID for source/ledger/count handoff; entry MovLIO returns no ID. Require
+rule **231**, with rule **257** adding the taught Tray Detect joint return.
+After all placement replies are accepted, append Tray Detect MovJIO → fresh
+item entry MovL → pre-pick MovL → pick MovLIO without Home or a placement-arrival
+wait. OPEN at 50% of the joint return replaces OPEN on that item entry; retain
+SUCK at 20% final descent. The pre-pick MovL supplies its queue ID for
+source/ledger/count handoff; joint return MovJIO returns no ID. Require
 advancing execution at/past pre-pick plus neutral outputs/raw DI1 LOW in placement
 history; handle handoff before interpreting new-pick feedback as old-item output
 or loss. Slow perception confirms/counts retract, then waits unheld and still
-picks directly. Initial/final Home and empty-result retry Home retain MovJ.
+picks through the same taught joint return. Initial/final Home and empty-result retry Home retain MovJ.
 Parallel fresh detection, ordered admission, Stop/drop and retry guards remain.
 
 Home-motion review: **2026-10-06**, baseline **`c2c3501`** plus rule **230**.
@@ -287,7 +301,8 @@ poses from that observation, for manual cycles and Auto Run. This supersedes rul
 215's reuse across successful placements. After each valid tray pose/depth and
 observation-position check, Auto Run starts a fresh next-bin request when another
 item is needed, in parallel with placement planning/admission/execution. Only after
-all placement replies are accepted may ready fresh poses append next entry → pre-pick → pick,
+all placement replies are accepted may ready fresh poses append taught Tray Detect
+joint return → next entry → pre-pick → pick,
 without waiting for placement arrival. Preserve the old source and poses until
 advancing execution reaches next pre-pick with neutral outputs/DI1 LOW history, then count placement,
 cancel unused old poses and install the new ledger. Slow perception uses the
@@ -1268,7 +1283,7 @@ flowchart TD
     Ready -->|No| Wait["Supervise retract; count if completed; wait unheld for result"]
     Wait --> Ready
     Ready -->|Yes| Poses{"Any valid poses?"}
-    Poses -->|Yes| Append["Append entry → pre-pick → pick; no Home or placement idle wait"]
+    Poses -->|Yes| Append["Append taught Tray Detect MovJIO (50% fingers OPEN) → entry MovL → pre-pick MovL → pick; no Home or midpoint idle wait"]
     Poses -->|No| RetryHome["Reserve retry; finish/confirm Home; count placement once; fresh item request"]
     RetryHome --> Retried{"Poses returned?"}
     Retried -->|Yes| Next
@@ -1339,11 +1354,15 @@ three nonempty physical-pick batches.
 If observation is slower than placement, finish normal retract
 supervision, count the placement and wait for the request while supervising unheld
 idle feedback. Retain that completed placement context: the next nonempty batch
-must also approach directly from tray retract, skipping ordinary initial Home.
+must also use the taught Tray Detect joint return, skipping ordinary initial Home.
 
-The planned retract is at Home Z. Append only next entry, pre-pick and final pick,
-preserving OPEN at 50% entry and SUCK at 20% final descent. The second appended
-target, pre-pick MovL, supplies the execution ID that entry MovLIO cannot return.
+The planned retract is at Home Z. Append a joint return to the exact six saved
+Tray Detect angles, then next entry, pre-pick and final pick. The return uses
+MovJIO with OPEN at 50% (DO2 OFF then DO14 ON) and taught travel speed/acceleration.
+Entry uses MovL without another OPEN event; final descent keeps SUCK at 20%.
+This joint waypoint is queued with the selected CP and may be blended; no new
+physical arrival barrier or tray observation is added. The third appended target,
+pre-pick MovL, supplies the execution ID that joint return MovJIO cannot return.
 The old placement/source remains authoritative until advancing FeedInfo reaches
 or passes that ID and output history shows neutral DO1/DO2/DO13/DO14 with DI1 LOW
 since placement admission. Then mark the old item PLACED, increment once, cancel
@@ -1354,7 +1373,7 @@ Old held DI1 cannot trigger new acquisition. Missing neutral/release evidence at
 the boundary fails closed; Stop before it retains the old source, and Stop after
 it retains the next source. Confirmed retract may already have completed this
 placement; never count it twice.
-There is no stationary midpoint or extra waypoint for handoff; CP (default 100%)
+There is no stationary midpoint for handoff; CP (default 100%)
 and ordered acceptance are preserved. Initial Pick, final quantity and empty-result
 recovery still use Home. Final Home requires actual saved-joint/idle/execution
 confirmation and neutral/DI1 LOW.
@@ -1664,7 +1683,7 @@ Names below are relative to `/robot_controller/`.
 | Tray arrival pair (internal) | Admit MovL then MovJ to identical taught angles/rates, waiting only for ordered service acceptance; preserve outputs/Stop/drop gates; no midpoint arrival or mismatch decision; final MovJ execution/idle and all raw joints within ±1° required before completion or detection |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
-| Auto Run direct next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
+| Auto Run next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; exact taught Tray Detect joint return (MovJIO, OPEN at 50%) precedes linear entry/pre-pick/pick; no cancellation or added midpoint arrival wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the placement-specific 20% of the full sampling circle after tray containment/range/MAD filtering; empty/zero-valid samples fail; no fixed count floor; item pick percentage unchanged |
 | Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; pre-place MovLIO has 80% DO2 OFF then DO14 ON; reconcile only issued approach transitions; no separate DO/output wait; suction/held monitoring preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
@@ -1733,7 +1752,7 @@ endpoint tolerance and confirmed I/O. Joint targets use ±1° per joint; Cartesi
 targets use joint FK within 5 mm/1°. Empty-queue and execution evidence remain
 separate command guards. For a terminal MovJ or MovL, require
 the returned queue ID to equal the stream's currentCommandId. The fixed vendor
-MovLIO/RelMovLUser interfaces return only res; these instead require execution
+MovJIO/MovLIO/RelMovLUser interfaces return only res; these instead require execution
 evidence latched from live running/queue flags, changed currentCommandId or
 joint movement, including during service waits. There is no extra
 query service or fixed stability interval. Only final pick retains taught
