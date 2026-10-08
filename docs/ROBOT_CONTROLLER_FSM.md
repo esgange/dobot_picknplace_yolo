@@ -1,5 +1,15 @@
 # Robot Controller — Finite State Machine
 
+Pre-place finger timing review: **2026-10-08**, baseline **`7bab5f7`** plus rule
+**256**. For `use_grip=false`, replace pre-placement DO2 OFF / DO14 ON service
+calls with ordered `{0,80,2,0}` / `{0,80,14,1}` events on pre-place MovLIO.
+Open at 80% of that travel; no separate output/arrival wait. `use_grip=true` keeps
+MovL pre-place. Hardware, Auto Run and Preview share targets. Admit only issued
+approach output changes during feedback reconciliation; opening neither confirms
+release nor ends held-loss monitoring. Keep vacuum, poses, rates, CP, three-command
+queue, next-bin prefetch/handoff, 80% descent release and 0% retract neutral.
+Pickup and Return Item I/O remain unchanged; live verification is pending.
+
 Measured-surface guard review: **2026-10-08**, baseline **`73582e3`** plus rule
 **252**. Item generation and controller admission independently reject surfaces
 below the calibrated platform-Z=0 bin floor. Tray placement provider and controller
@@ -264,9 +274,9 @@ Rule 248 moves initial relaxation earlier for both `grip_onpick=false`
 combinations: final-pick arrival or accepted early pickup Stop, before any lift.
 Held Pause preserves outputs; Continue restores CLOSE or RELAX according to
 `use_grip` before direct Tray Detect travel, including an interrupted lift event.
-After valid tray pose/depth and placement validation, suction-only transport
-reopens with confirmed DO2 OFF then DO14 ON before placement motion. Auto Run
-starts its fresh bin request before these outputs; all placement replies still
+After valid tray pose/depth and placement validation, rule 256 makes suction-only
+transport reopen with timed DO2 OFF then DO14 ON at 80% of pre-place MovLIO.
+Auto Run starts its fresh bin request before queue admission; all placement replies still
 precede next-Pick admission. Vacuum stays on; no DI12 wait is added. Continuous
 drop/Stop supervision, 80% shared release and 0% retract reset remain in force.
 Item Teach exposes both booleans independently without schema/profile changes.
@@ -1052,9 +1062,9 @@ flowchart TD
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
-    Depth -->|Surface on/above saved plane; still at observation position| Fingers["Validate placement; use_grip OFF: confirm DO2 OFF then DO14 ON; keep suction"]
-    Fingers --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
-    Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
+    Depth -->|Surface on/above saved plane; still at observation position| Valid["Validate placement geometry and sources; keep suction"]
+    Valid --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
+    Queue --> Pre["Placement X/Y at Home Z: use_grip OFF uses MovLIO with 80% DO2 OFF then DO14 ON; otherwise MovL"]
     Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN, suction OFF, exhaust ON"]
     Release --> Retract["MovLIO to pre-place in same queue; speed 100%; 0% start fingers + vacuum neutral"]
     Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
@@ -1064,8 +1074,8 @@ flowchart TD
     Queue -. "Monitor throughout" .-> Feedback["Command acceptance, fresh enabled feedback, robot faults, opposing outputs and motion watchdogs; no release-confirmation gate"]
     Feedback -->|Fault| Stop
     Depth -. "Held loss before intentional release" .-> Drop
-    Fingers -. "Held loss" .-> Drop
-    Fingers -. "Direct Stop" .-> Stop
+    Valid -. "Held loss" .-> Drop
+    Valid -. "Direct Stop" .-> Stop
     Pre -. "Held loss" .-> Drop
     Release -. "Held loss before observed suction OFF" .-> Drop["500 ms loss: latch DROPPED; immediate Stop; drain replies; final Stop and empty queue"]
     Drop --> Source["Shared Return Item: source approach → pre-pick (80% release) → Home-Z retract (0% neutral); no Home"]
@@ -1099,12 +1109,15 @@ uses the same queued MovL/MovJ pair and confirms only final execution/idle/joint
 Bin routes retain their existing clearance logic.
 
 After the valid observation, start Auto Run's next-bin request when needed, then
-validate placement geometry and sources. For `use_grip=false`, reopen with DO2
-OFF followed by DO14 ON; await each service response and output echo before the
-placement queue. Do not wait for DI12 or alter vacuum. With `use_grip=true`, retain
+validate placement geometry and sources. For `use_grip=false`, pre-place uses
+MovLIO with DO2 OFF followed by DO14 ON at 80% of travel to that target. Remove
+separate pre-placement DO calls and their output waits. Do not wait for DI12 or
+alter vacuum. With `use_grip=true`, use MovL pre-place and retain
 CLOSE until 80% descent. Reopening is pre-release preparation, so drop supervision
 and Stop remain active and prevent later dispatch. Released recovery never repeats
-this reopen. All placement replies still precede next Pick admission.
+this reopen. Only an issued approach command authorizes its finger-output changes;
+opening never confirms release or disables held-loss monitoring. All placement
+replies still precede next Pick admission.
 
 Use a fresh after-trigger synchronized RGB/depth observation and calibrated
 RGB-time TF. Preserve requested base X/Y; obtain surface base Z from target-ray
@@ -1172,7 +1185,8 @@ and retract. Every segment and the external Tray Detect Position action use 100%
 Global SpeedFactor still scales those speeds and is never changed by placement.
 Retain Item Teach travel/approach/retract acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
-Commands are MovL pre-place; MovLIO release
+Commands are pre-place MovLIO with 80% DO2 OFF → DO14 ON when `use_grip=false`
+(otherwise MovL); MovLIO release
 with 80% DO2 OFF → DO14 ON → DO13 OFF → DO1 ON; MovLIO back to pre-place with
 0% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF. No final Home command or additional
 retract-height/clearance target is sent. Exhaust
@@ -1243,8 +1257,8 @@ flowchart TD
     Pick --> Tray["Linear lifts and exit; queue MovL then MovJ to identical tray joints without intermediate wait; confirm only final MovJ joints, execution and idle"]
     Tray --> Observe["Fresh tray pose/depth: 20% valid pixels and surface on/above saved plane before offsets; debug RGB/depth; at most 10 attempts; zero added delay"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
-    Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
-    Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
+    Prefetch --> Valid["Validate placement geometry and sources; keep suction"]
+    Valid --> Place["Queue approach (use_grip OFF: MovLIO opens fingers at 80%) → timed release → final retract; require all 3 accepted replies"]
     Prefetch -.-> Capture["In parallel: post-trigger RGB and median depth/TF; validate and retain batch ranked by distance from Home"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append MovJ Home behind placement"]
@@ -1270,13 +1284,13 @@ flowchart TD
     Paused -->|Continue / Place Item Retry| Observe
     Paused -->|Return Item| PutBack["Shared return queue through Home; READY / CANCELED; unchanged partial count"]
     Paused -->|Stop or safety fault| Fail["Stop containment; end run with partial count and total seconds"]
-    Fingers -->|Rejected, unanswered or Stop; discard worker| Fail
+    Valid -->|Invalid geometry or Stop; discard worker| Fail
     Place -->|Rejected, unanswered or Stop; discard worker| Fail
     Ready -->|Detector error| Fail
     Append -->|Fault or Stop| Fail
     Tray -. "Held loss" .-> Drop
     Observe -. "Held loss" .-> Drop
-    Fingers -. "Held loss while reopening" .-> Drop
+    Valid -. "Held loss" .-> Drop
     Place -. "Held loss before suction OFF" .-> Drop
     Append -. "Old item still held: loss" .-> Drop["Immediate Stop; discard worker/new ledger; preserve original batch/source; no placement count"]
     Drop --> Contain["Resolve issued replies; final Stop and stationary empty queue"]
@@ -1652,7 +1666,7 @@ Names below are relative to `/robot_controller/`.
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run direct next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; no cancellation; no physical placement-completion wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the placement-specific 20% of the full sampling circle after tray containment/range/MAD filtering; empty/zero-valid samples fail; no fixed count floor; item pick percentage unchanged |
-| Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; DO2 OFF then DO14 ON each accepted and echoed before motion; suction preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
+| Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; pre-place MovLIO has 80% DO2 OFF then DO14 ON; reconcile only issued approach transitions; no separate DO/output wait; suction/held monitoring preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with valid parked feedback; recovery suction Pause additionally requires raw DI1 LOW and only retests; during Auto Run, only exhausted-acquisition Pause |
 | `return_item` service | Started eligible managed state and held source, or recovery suction Pause with unreleased HELD/DROPPED source; during Place/Auto Run, only exhausted-acquisition PAUSED before release admission; no conflicting request |

@@ -6,7 +6,7 @@ import math
 import numpy as np
 
 from .errors import FeedbackFailure, HeldUnknown, ManagedInterruption, ReturnedToHome
-from .motion import pose_reached, rigid_matrix
+from .motion import gripper_open_events, pose_reached, rigid_matrix
 from .release import ReleaseQueue, release_targets
 from .tray_client import TRAY_ATTEMPT_LIMIT, TrayAcquisitionExhausted, TrayAttempts
 
@@ -51,7 +51,10 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
         raise ValueError("Placement requires an explicit trayplace_height")
     release_z = surface[2] + motion["trayplace_height"] / 1000
     matrix[:3, 3] = [surface[0], surface[1], release_z]
-    return release_targets(matrix, settings, home_matrix, prefix="place")
+    plan = release_targets(matrix, settings, home_matrix, prefix="place")
+    if not settings["gripper"]["use_grip"]:
+        plan = (replace(plan[0], motion_io=gripper_open_events(80)), *plan[1:])
+    return plan
 
 
 @dataclass
@@ -141,11 +144,6 @@ class PlacementOperation(ReleaseQueue):
                                   config.profile, self.rotation_deg, config.home_matrix)
         config.validate_sources(node.root)
         self.preflight(node)
-        if not config.profile["gripper"]["use_grip"]:
-            # Fresh bin inference has already started through on_observed.
-            # Reopen relaxed fingers without releasing or interrupting suction.
-            node.hardware.output(2, False)
-            node.hardware.output(14, True)
         self.phase = "APPROACH"
         self.begin_queue(node)
         node.operation_progress("PLACE_QUEUE", "Queueing pre-place, release and final retract",

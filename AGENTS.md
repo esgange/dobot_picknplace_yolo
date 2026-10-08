@@ -1959,6 +1959,16 @@ Bind inspection to the displayed snapshot/settings; label retained details with
 source age, clear on invalidation, and reject stale/suspended clicks. Keep Tray,
 YOLO OFF, five-second trigger captures, all filters and controller behavior unchanged.
 
+Rule 256 moves only use_grip=false placement finger reopening into pre-place
+MovLIO at 80% travel: DO2 OFF then DO14 ON, with no separate pre-placement DO
+calls or output waits. Keep use_grip=true pre-place as MovL. Shared Hardware,
+Auto Run and Preview targets preserve poses/rates and the three-command queue.
+Track only issued approach output transitions without marking release or ending
+held-loss supervision. Preserve vacuum until the existing 80% descent release,
+0% retract neutral, ordered acceptance, Stop/drop/feedback guards and Auto Run
+prefetch/handoff. Return Item and pickup I/O remain unchanged. No new schema,
+setting, operator-file change or live restart; update diary/FSM and regenerate exports.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

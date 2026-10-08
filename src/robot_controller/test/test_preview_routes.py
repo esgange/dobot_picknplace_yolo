@@ -192,11 +192,13 @@ def test_pick_preview_empty_observation_never_invents_candidates(preview):
 
 
 @pytest.mark.parametrize("angle", [-180., 0., 90., 180.])
-def test_place_preview_contains_only_three_placement_targets(preview, angle):
+@pytest.mark.parametrize("use_grip", [False, True])
+def test_place_preview_contains_only_three_placement_targets(preview, angle, use_grip):
     # Preview remains read-only and works without Startup/EnableRobot.
     preview.monitor.update_feed(feed(EnableStatus=0, robot_mode=4))
     preview.monitor.update_status(SimpleNamespace(is_connected=True, is_enable=False))
     preview.config.profile["motion"]["trayplace_height"] = 42.5
+    preview.config.profile["gripper"]["use_grip"] = use_grip
     result = preview.run(Preview.Request.PLACE, x_mm=30., y_mm=40., rotation_deg=angle)
     assert result.success
     assert [t.name for t in preview.targets] == [
@@ -206,6 +208,9 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle):
     assert all(t.joints_rad is None and not t.joint_motion for t in preview.targets)
     assert preview.targets[1].matrix[2, 3] == pytest.approx(.2925)
     assert all(np.allclose(a.matrix, b.matrix) for a, b in zip(preview.targets, expected))
+    assert [t.motion_io for t in preview.targets] == [t.motion_io for t in expected]
+    assert [e.vendor_value() for e in preview.targets[0].motion_io] == (
+        [] if use_grip else ['{0,80,2,0}', '{0,80,14,1}'])
     preview.trays.request.call_args.kwargs["check_state"]()
     preview.client.request.assert_not_called()
 

@@ -736,8 +736,9 @@ fingers relaxed through settling/probing and the first half of the held lift.
 At 50% of the first successful lift to pre-pick, `use_grip=false`
 relaxes both finger outputs; `use_grip=true, grip_onpick=false` closes them.
 With both flags true they stay closed. Clearance has no timed finger event.
-After valid tray pose/depth, `use_grip=false` reopens before placement motion,
-while next-bin inference can run. Suction stays on until the normal 80% release.
+After valid tray pose/depth, `use_grip=false` reopens at 80% of travel to pre-place
+using MovLIO (DO2 OFF then DO14 ON), while next-bin inference can run. There are
+no separate pre-placement DO calls. Suction stays on until the normal 80% descent release.
 Motion requests wait for
 queue-admission responses in order but not intermediate physical arrival;
 short segments may still decelerate despite CP 100. See the

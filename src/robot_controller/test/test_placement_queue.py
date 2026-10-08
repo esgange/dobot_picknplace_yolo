@@ -177,7 +177,7 @@ def test_release_evidence_uses_di1_without_requiring_open_sensor(inputs, during_
 
 @pytest.mark.parametrize('use_grip', [False, True])
 @pytest.mark.parametrize('grip_onpick', [False, True])
-def test_tray_observation_starts_prefetch_then_reopens_only_relaxed_fingers(
+def test_tray_observation_starts_prefetch_then_queues_reopen_on_pre_place(
         use_grip, grip_onpick):
     rig = QueueRig()
     rig.node.configuration.profile['gripper'] = dict(use_grip=use_grip, grip_onpick=grip_onpick)
@@ -186,11 +186,13 @@ def test_tray_observation_starts_prefetch_then_reopens_only_relaxed_fingers(
     if not use_grip:
         rig.node.expected_outputs.update({2: False, 14: False})
         rig.emit(outputs=suction, inputs=1, running=0)
-        # DO feedback is required, but DI12 need not be HIGH to start placement.
-
         def echo(index):
-            if index <= 2:
-                rig.emit(outputs=suction if index == 1 else opened, inputs=1, running=0)
+            if index == 1:
+                # The 80% event can execute before its MovLIO response arrives.
+                sample = rig.emit(outputs=opened, inputs=1)
+                rig.node.placement.observe(rig.node, sample)
+                assert rig.node.holding_item and not rig.node.placement.release_confirmed
+                assert not rig.node.placement.release_issued
         rig.on_request = echo
         rig.script[0]['outputs'] = opened
     rig.steps = iter(rig.script)
@@ -204,52 +206,97 @@ def test_tray_observation_starts_prefetch_then_reopens_only_relaxed_fingers(
     rig.node.placement.run(rig.node, on_observed=observed)
     assert rig.node.holding_item
     assert not rig.node.placement.release_confirmed
-    assert [name for name, _ in rig.requests] == (
-        ([] if use_grip else ['DO', 'DO']) + ['MovL', 'MovLIO', 'MovLIO'])
-    assert [(request.index, request.status, request.time)
-            for name, request in rig.requests if name == 'DO'] == (
-        [] if use_grip else [(2, 0, 0), (14, 1, 0)])
-    assert rig.order == (['prefetch'] + ([] if use_grip else ['DO', 'feedback'] * 2)
-                         + ['MovL', 'MovLIO', 'MovLIO'])
+    approach = 'MovL' if use_grip else 'MovLIO'
+    assert [name for name, _ in rig.requests] == [approach, 'MovLIO', 'MovLIO']
+    if not use_grip:
+        assert list(rig.requests[0][1].mdis) == ['{0,80,2,0}', '{0,80,14,1}']
+    assert rig.order == (['prefetch', approach] + ([] if use_grip else ['feedback'])
+                         + ['MovLIO', 'MovLIO'])
     rig.node.placement.finish_pending(rig.node)
     assert rig.node.placement.phase == 'DONE'
     assert not any(rig.node.expected_outputs.values())
 
 
-@pytest.mark.parametrize('at', [1, 2])
-def test_stop_during_tray_reopen_prevents_later_outputs_and_placement(at):
+@pytest.mark.parametrize('opened', [False, True])
+def test_stop_during_pre_place_prevents_release_admission(opened):
     rig = QueueRig()
     rig.node.configuration.profile['gripper']['use_grip'] = False
+    rig.node.expected_outputs.update({2: False, 14: False})
+    rig.emit(outputs=1 << 12, inputs=1, running=0)
 
     def stop(index):
-        if index == at:
+        if index == 1:
+            if opened:
+                rig.emit(outputs=(1 << 12) | (1 << 13), inputs=1)
             rig.node.cancel_requested = lambda: True
-        else:
-            rig.emit(outputs=1 << 12, inputs=1, running=0)
     rig.on_request = stop
     with pytest.raises(OperationCanceled):
         rig.node.placement.run(rig.node)
-    assert [name for name, _ in rig.requests] == ['DO'] * at
+    assert [name for name, _ in rig.requests if name != 'Stop'] == ['MovLIO']
     assert not rig.node.placement.release_issued and rig.node.holding_item
 
 
-def test_confirmed_drop_during_tray_reopen_stops_before_placement():
+def test_confirmed_drop_during_pre_place_reopen_stops_before_release():
     rig = QueueRig()
     rig.node.configuration.profile['gripper']['use_grip'] = False
+    rig.node.expected_outputs.update({2: False, 14: False})
+    rig.emit(outputs=1 << 12, inputs=1, running=0)
     rig.node.wait_for_resume = rig.node.managed.checkpoint
 
     def drop(index):
         if index == 1:
             for _ in range(52):
-                sample = rig.emit(outputs=1 << 12, inputs=0, running=0)
+                sample = rig.emit(outputs=(1 << 12) | (1 << 13), inputs=0)
                 rig.node.managed.observe_continuous(sample)
     rig.on_request = drop
     with pytest.raises(HeldSuctionLost):
         rig.node.placement.run(rig.node)
-    assert [name for name, _ in rig.requests] == ['DO', 'Stop']
+    assert [name for name, _ in rig.requests if name != 'Stop'] == ['MovLIO']
+    assert rig.requests[-1][0] == 'Stop'
     assert rig.node.managed.held_loss_pending
     assert rig.node.managed.session.attempts[0].state == 'DROPPED'
     assert not rig.node.placement.release_issued
+
+
+@pytest.mark.parametrize('use_grip', [False, True])
+@pytest.mark.parametrize('issued', [False, True])
+def test_approach_open_feedback_requires_issued_timed_event(use_grip, issued):
+    rig = QueueRig()
+    node, operation = rig.node, rig.node.placement
+    node.configuration.profile['gripper']['use_grip'] = use_grip
+    node.expected_outputs.update({2: False, 14: False})
+    rig.emit(outputs=1 << 12, inputs=1, running=0)
+    operation.plan = place_targets(node.configuration.tray.detect_matrix, [.3, .2, .25],
+                                   node.configuration.profile, 0., node.configuration.home_matrix)
+    operation.begin_queue(node)
+    if issued:
+        operation.issued(0)
+    sample = rig.emit(outputs=(1 << 12) | (1 << 13), inputs=1)
+    if issued and not use_grip:
+        operation.observe(node, sample)
+        assert node.holding_item and not operation.release_confirmed
+        assert not operation.release_issued
+        assert node.expected_outputs[13] and node.expected_outputs[14]
+    else:
+        with pytest.raises(FeedbackFailure, match='Uncommanded release output DO14'):
+            operation.observe(node, sample)
+
+
+@pytest.mark.parametrize('outputs', [0, 1, (1 << 12) | 2])
+def test_pre_place_open_does_not_authorize_vacuum_changes_or_finger_close(outputs):
+    rig = QueueRig()
+    node, operation = rig.node, rig.node.placement
+    node.configuration.profile['gripper']['use_grip'] = False
+    node.expected_outputs.update({2: False, 14: False})
+    rig.emit(outputs=1 << 12, inputs=1, running=0)
+    operation.plan = place_targets(node.configuration.tray.detect_matrix, [.3, .2, .25],
+                                   node.configuration.profile, 0., node.configuration.home_matrix)
+    operation.begin_queue(node)
+    operation.issued(0)
+    sample = rig.emit(outputs=outputs, inputs=1)
+    with pytest.raises(FeedbackFailure, match='Uncommanded release output'):
+        operation.observe(node, sample)
+    assert node.holding_item and not operation.release_confirmed
 
 
 def test_skipped_exhaust_evidence_does_not_block_retract():

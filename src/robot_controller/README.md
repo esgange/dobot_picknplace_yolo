@@ -404,7 +404,7 @@ Then send three Cartesian commands in one queue:
 
 | Command | Target | Timed outputs |
 | --- | --- | --- |
-| MovL | Pre-place | Preserve existing outputs |
+| MovLIO when Use Grip OFF; otherwise MovL | Pre-place | Use Grip OFF: at 80%, DO2 OFF then DO14 ON; preserve vacuum |
 | MovLIO | Release height | At 80%: DO2 OFF, DO14 ON (open), DO13 OFF, DO1 ON |
 | MovLIO | Back to pre-place | At 0% (start): DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 
@@ -1391,13 +1391,19 @@ Held Pause preserves outputs; Continue restores CLOSE for `use_grip=true` or
 RELAX for false before direct Tray Detect travel, including when Pause canceled
 the first lift's event. Suction remains on throughout.
 
-After valid tray pose/depth and placement validation, `use_grip=false` sends
-DO2 OFF then DO14 ON and confirms both before placement motion. Auto Run starts
-fresh next-bin inference before these calls; all placement motions must still
-be accepted before appending the next Pick. `use_grip=true` stays closed until
-the existing 80% descent release. The reopen never switches vacuum or waits for
-DI12; Stop/drop interruption prevents later commands. Release recovery never
-reopens or repeats release. Place and Return retain 80% release/0% retract reset.
+After valid tray pose/depth and placement validation, `use_grip=false` uses
+MovLIO for pre-place, with `{0,80,2,0}` then `{0,80,14,1}`: open fingers at 80%
+of travel to the pre-place target. There are no separate DO calls or output waits
+before placement. Auto Run starts fresh next-bin inference before queue admission;
+all three placement motions must still be accepted before appending the next Pick.
+`use_grip=true` retains MovL pre-place and stays closed until the existing 80%
+descent release. Track approach output changes only after that command is issued,
+including feedback during its response wait. Opening preserves suction and held
+monitoring; it cannot confirm release. No DI12 or intermediate arrival wait is
+added. Stop/drop interruption prevents later commands. Release recovery never
+reopens or repeats release. Place and Return retain 80% release/0% retract reset;
+Return Item's approach has no new finger event. Hardware, Auto Run and Preview
+share the placement targets.
 
 Successful Pick queues latest measured pose → pre-pick → clearance →
 Safety Z exit → saved Tray Detect joints as one `candidate_N_pick_to_tray` group.

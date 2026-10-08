@@ -10387,6 +10387,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve unrelated RViz edits, .env, calibration, teaching/model and runtime
   artifacts; scoped commit/push follows the standing workflow.
 
+### 2026-10-08 — Rule 256: open fingers at 80% of the pre-place move
+
+- The operator requested replacing the two pre-placement finger DO calls with
+  motion-timed opening. For use_grip=false only, attach ordered `{0,80,2,0}` and
+  `{0,80,14,1}` events to pre-place: turn CLOSE off, then OPEN on at 80% of that
+  move. The shared placement target selects MovLIO; use_grip=true keeps MovL.
+  Remove the preceding standalone DO calls and their output-confirmation waits.
+  Hardware, Auto Run and Preview use the same target generation.
+- Extend shared release feedback tracking to admit only the approach command's
+  issued output transitions, including feedback before its response arrives.
+  Finger opening does not mark release or end held-item suction monitoring.
+  Reset that approach allowance with each new queue; unexpected vacuum/finger
+  changes remain failures. Preserve Stop/drop containment and ordered admission.
+- Keep the three-command placement queue, every pose, offset, speed, acceleration
+  and CP setting. Suction remains on until the existing 80% descent release;
+  retract still neutralizes all four outputs at 0%. Auto Run starts next-bin
+  inference at the same observation boundary and appends the next Pick only
+  after all placement replies. Pickup, Return Item and interrupted-release
+  recovery outputs are unchanged. No public ROS interface, schema or setting.
+- Validation: **1,394 Robot Controller tests pass** with synthetic inputs,
+  offscreen Qt and isolated ROS domain 83. Cover both grip flags, exact 80% event
+  order, feedback during the first response wait, no separate placement DO,
+  Stop before/after opening, held loss before release, unissued/unexpected output
+  rejection, Auto Run queued handoff with ordinary/coalesced feedback, unchanged
+  Return Item routes, and shared Hardware/Preview geometry and timing. An initial
+  drop test expected one Stop despite existing independent containment Stops;
+  correct it to verify no later motion/release and retained drop state.
+- Isolated robot_controller symlink build passes under build/preplace_io with
+  its own build/install directories; production and changed-test-line lint and
+  whitespace checks pass. Update AGENTS and root/controller READMEs plus the FSM
+  review, placement/Auto Run diagrams and guard table. Regenerate offline HTML/PDF
+  with the local renderer, verify the source hash and nine diagrams/pages, and
+  visually inspect the changed placement/Auto Run pages.
+- Canonical installed placement.py and release.py resolve to source. Leave the
+  running controller, perception and driver processes untouched; operator
+  controller relaunch and live verification remain pending. The earlier cutlery
+  pre-pick MovL -2 alarm's underlying cause is unproven; this timing change does
+  not establish its resolution. Preserve unrelated RViz edits, .env, calibration,
+  teaching/model and runtime artifacts; scoped commit/push follows the workflow.
+
 ### Future entry template
 
 ```text

@@ -35,6 +35,7 @@ class ReleaseQueue:
     phase: str = "OBSERVE"
     plan: tuple = ()
     pending_outputs: dict = field(default_factory=dict)
+    approach_outputs: dict = field(default_factory=dict)
     release_issued: bool = False
     neutral_issued: bool = False
     release_confirmed: bool = False
@@ -59,12 +60,16 @@ class ReleaseQueue:
         self.queue_start_sequence = sample.sequence
         self.release_issued = self.neutral_issued = False
         self.release_confirmed = False
+        self.approach_outputs.clear()
         self.observing = True
 
     def issued(self, index):
         # Called before dispatch: a timed command with an uncertain response may
         # have executed. Never assume it is safe to repeat its release.
-        if index == self.release_index:
+        if index < self.release_index:
+            self.approach_outputs.update({event.channel: event.active
+                                          for event in self.plan[index].motion_io})
+        elif index == self.release_index:
             self.release_issued = True
             self.phase = "RELEASING"
         elif index == self.neutral_index:
@@ -89,6 +94,8 @@ class ReleaseQueue:
                 for channel in (1, 2, 13, 14):
                     bit = 1 << (channel - 1)
                     allowed = {bool(self.initial_outputs & bit)}
+                    if channel in self.approach_outputs:
+                        allowed.add(self.approach_outputs[channel])
                     if self.release_issued:
                         allowed.add(bool(released_bits & bit))
                     if self.neutral_issued:

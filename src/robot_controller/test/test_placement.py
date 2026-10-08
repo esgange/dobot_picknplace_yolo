@@ -39,10 +39,13 @@ def settings():
 
 
 @pytest.mark.parametrize("angle", [-180., -90., 0., 90., 180.])
-def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
+@pytest.mark.parametrize("use_grip", [False, True])
+def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle, use_grip):
     detect = pose_matrix([300, 200, 800, 175, 12, 28])
     home = pose_matrix([500, -150, 900, 170, 25, -60])
-    plan = place_targets(detect, [.3, .2, .25], settings(), angle, home)
+    profile = settings()
+    profile["gripper"]["use_grip"] = use_grip
+    plan = place_targets(detect, [.3, .2, .25], profile, angle, home)
     assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract"]
     assert [p.matrix[2, 3] for p in plan] == pytest.approx([.9, .31, .9])
     assert all(np.allclose(p.matrix[:2, 3], [.3, .2]) for p in plan[:3])
@@ -53,7 +56,8 @@ def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle):
     assert np.array_equal(plan[-1].matrix, plan[0].matrix)
     assert [p.speed_percent for p in plan] == [100, 100, 100]
     assert [p.acceleration_percent for p in plan] == [70, 30, 40]
-    assert not plan[0].motion_io
+    assert [(e.percent, e.channel, e.active) for e in plan[0].motion_io] == (
+        [] if use_grip else [(80, 2, False), (80, 14, True)])
     assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
         (80, 2, False), (80, 14, True), (80, 13, False), (80, 1, True)]
     assert [(e.percent, e.channel, e.active) for e in plan[2].motion_io] == [

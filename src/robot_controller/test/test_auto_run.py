@@ -27,9 +27,13 @@ def request(quantity=2):
                         x_mm=30., y_mm=40., rotation_deg=0., save_debug_images=False)
 
 
-def queue_rig(quantity=2):
+def queue_rig(quantity=2, *, use_grip=True):
     rig = QueueRig()
     node = rig.node
+    node.configuration.profile['gripper']['use_grip'] = use_grip
+    if not use_grip:
+        node.expected_outputs.update({2: False, 14: False})
+        rig.emit(outputs=1 << 12, inputs=1, running=0)
     node._home_plan = lambda current: home_targets(
         current, node.configuration.home_matrix, node.configuration.home_joints,
         speed_percent=80, acceleration_percent=70)
@@ -47,8 +51,10 @@ def test_auto_quantity_is_a_bounded_positive_integer(value):
 
 
 @pytest.mark.parametrize("coalesced", [False, True])
-def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisition(coalesced):
-    rig, run, bridge = queue_rig()
+@pytest.mark.parametrize("use_grip", [False, True])
+def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisition(
+        coalesced, use_grip):
+    rig, run, bridge = queue_rig(use_grip=use_grip)
     old_session = rig.node.managed.session
     item = np.eye(4)
     item[:3, 3] = [.4, .1, .25]
@@ -70,6 +76,8 @@ def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisi
         return future
     rig.transport.clients["MovL"].call_async = prepick_reply
     rig.steps = iter([
+        *([] if use_grip else [
+            dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=1)]),
         dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
         dict(outputs=0, inputs=OPEN, currentCommandId=3),
         *([] if coalesced else [
@@ -83,7 +91,8 @@ def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisi
         confirmed_start_pose=bridge.origin, placement_bridge=bridge)
     assert acquired
     assert [name for name, _ in rig.requests] == [
-        "MovL", "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO", "Stop"]
+        "MovL" if use_grip else "MovLIO", "MovLIO", "MovLIO",
+        "MovLIO", "MovL", "MovLIO", "Stop"]
     # No new feedback/arrival wait between placement admission and all next targets.
     assert rig.order[:6] == [name for name, _ in rig.requests[:6]]
     assert run.completed == 1

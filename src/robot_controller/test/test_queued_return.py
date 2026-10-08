@@ -44,9 +44,11 @@ def return_rig(height=.8):
 
 @pytest.mark.parametrize("height", [.3, .8, 1.0])
 @pytest.mark.parametrize("approach_speed", [6, 17])
-def test_return_queues_all_targets_before_waiting_for_home(height, approach_speed):
+@pytest.mark.parametrize("use_grip", [False, True])
+def test_return_queues_all_targets_before_waiting_for_home(height, approach_speed, use_grip):
     rig, source = return_rig(height)
     rig.node.configuration.profile["speed"]["approach_percent"] = approach_speed
+    rig.node.configuration.profile["gripper"]["use_grip"] = use_grip
     rig.steps = iter([
         dict(outputs=RELEASE, inputs=OPEN),
         dict(outputs=0, inputs=OPEN),
