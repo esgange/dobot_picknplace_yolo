@@ -35,7 +35,7 @@ from .platform_teach_core import (
 from .ui_state import load_package_ui_state, write_item_ui_state, write_item_preview_state
 from .item_preview import (
     CAPTURE_HOLD_SEC, CaptureMailbox, PassiveCameraView, configure_status_band, capture_status,
-    validate_prefix)
+    validate_prefix, passive_inference_view)
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
@@ -1014,7 +1014,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     raise ValueError("Record or load Home for robot-camera clearance checks")
                 planning = self.node.pick_planning_context(
                     self.home, self._number("pick_rotation"), self._number("standoff_height"))
-                options.update(settings=settings, planning=planning, candidate_limit=limit,
+                options.update(settings=settings, planning=planning,
+                               candidate_limit=settings["yolo"]["max_detections"],
                                pose_error="")
             except (ValueError, OSError) as exc:
                 options["pose_error"] = str(exc)
@@ -1026,6 +1027,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if view is not None:
             # Keep both image buffers private until every native overlay is ready.
             view = dict(view)
+            view["passive_overlay"] = view.get("preview_mode") == "all"
             view["rviz"] = self.node.rviz.compute(view, options)
             if binding != (self.node.arm_epoch, self.node._camera_generation):
                 return None
@@ -1589,6 +1591,13 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 "Production active: live video; RViz updates with each pose capture")
         rgb, depth = self.node.passive_snapshot()
         view = self.passive_camera.make(rgb, depth, self.node.get_clock().now().nanoseconds)
+        completed = self.node.last_view
+        if (completed is not None and completed.get("preview_binding") != (
+                self.node.arm_epoch, self.node._camera_generation)):
+            completed = None
+        view = passive_inference_view(
+            view, completed, self.node.yolo_enabled and not self.preview_settings_paused
+            and not suspended, self.node.get_clock().now().nanoseconds)
         roi_note = ""
         if self.frozen_view is not None:
             view = self.frozen_view
@@ -1753,7 +1762,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         elif mode == "roi":
             compact_title = "YOLO OFF · bin ROI"
         else:
-            compact_title = "Live passive video"
+            compact_title = ("Live YOLO · size / height" if view.get("passive_overlay")
+                             else "Live passive video")
         compact_lines = [compact_title, f"Age {age:.2f}s"]
         if selected:
             compact_size = (f"{measurement['length_mm']:.1f} × {measurement['width_mm']:.1f} mm"

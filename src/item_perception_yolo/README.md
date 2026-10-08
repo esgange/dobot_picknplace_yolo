@@ -62,7 +62,7 @@ ros2 launch item_perception_yolo item_teach.launch.py
 3. Enter a prefix and **Connect RGB**. The loaded model's 1 Hz preview
    starts when ready; **YOLO Detect** stops/resumes it. There is one view;
    the Detect All/Filtered controls, dropdown and Resume Live button are removed.
-   Camera panes stay passive; background diagnostics still evaluate every model class. Home and a saved item
+   Passive YOLO panes show only masks and borders; background diagnostics evaluate every model class. Home and a saved item
    profile are not needed for preview. Visible confidence, IoU and detection cap
    apply immediately after a typing pause. First-run fields start at 0.25,
    0.70 and 100; new profiles use internal size 448, loaded ones retain their size.
@@ -110,8 +110,16 @@ ros2 launch item_perception_yolo item_teach.launch.py
    Armed Item Teach use the same captured image buffers and hold. Both pane
    updates are complete before display, including size/depth/nearby overlays.
    New results replace older captures and start a new five-second hold; click
-   inside RGB to resume passive video sooner. Passive images contain no overlays
-   and are never hit-tested against an older inference result. Detailed rejection
+   inside RGB to resume passive video sooner. With YOLO ON, passive panes show
+   only translucent masks and object borders: red = size outside tolerance,
+   yellow = size passed but below-floor or nearby-height rejection, green = full
+   candidate acceptance. Gray means unavailable checks or another rejection.
+   Evaluate all displayed detections up to the YOLO cap, independently of the
+   production pose count; RViz reflects that complete passive evaluation too.
+   Keep 1 Hz background inference and one completed matched RGB/depth pair between
+   results, with source age in the status band. No passive labels, axes, bin borders,
+   sampling/obstacle circles or hit-testing. YOLO OFF shows plain live video.
+   Detailed rejection
    evidence remains in tooltips, the activity log and request diagnostics.
    Size assumes each item is parallel to the floor and projects its rectangle
    onto the plane through the measured center. Registered depth must pass range,
@@ -330,10 +338,10 @@ distortion models. Complete platform/camera transforms preserve station tilt
 and height. Only visualization
 points are voxelized: pose depth sampling stays full resolution and retains
 class, dimensions, green/light-blue borders, MAD/quality and robot-camera
-clearance checks. Nearby scans stop once `pose_candidates` valid poses are found;
-only these fully checked poses receive TF/markers. Remaining geometric candidates
-appear as `unchecked` source IDs in diagnostics and a count in the UI, never as
-validated poses or rejections. All-class RGB size annotations remain visible.
+clearance checks. Passive preview checks every displayed detection up to the YOLO
+detection cap, including its nearby height scan. Only fully eligible candidates
+receive green borders and TF/markers. Production captures retain the separate
+`pose_candidates` limit and stop scanning when that requested batch is full.
 Selected classes, a valid `pose_candidates` count,
 dimensions, recorded Home, pick rotation and standoff are required for valid
 poses. With incomplete pose settings or YOLO OFF, the calibrated cloud can still
@@ -460,9 +468,13 @@ new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
 strict production item schema 13, class filters and quality gates remain enforced.
 
-### Pick-oriented RGB overlays
+### Detailed captured RGB overlays
 
-Segmentation shows mask shading and exactly one size-colored minimum-area rectangle
+Simulate Trigger, controller captures and optional saved debug images show the
+detailed geometry below. Passive YOLO shows only the masks and eligibility-colored
+borders described above; YOLO OFF shows plain video.
+
+Captured segmentation shows mask shading and exactly one size-colored minimum-area rectangle
 derived from the mask. OBB shows its native oriented rectangle instead. Do not
 add the axis-aligned YOLO box or a second rectangle/per-box class label. Keep
 rectangle geometry for measurement/click selection: show red **X** along its
@@ -478,19 +490,16 @@ available with blank size filters or rejected depth/poses if calibrated geometry
 exists; missing/invalid projection hides it with a reason, never a guessed ring.
 Changing the diameter clears the frozen selection; click again for its new size.
 The image and outline scale together when resizing/letterboxing the video.
-The teaching view shows all geometric
-pick pixels; green/red borders report only the size check, gray is unchecked.
-A preview dot is not a validated 3D pick pose. Production service calculations
+In detailed captures, geometric
+pick pixels and green/red size borders are separate from final eligibility.
+A geometric dot is not a validated 3D pick pose. Production service calculations
 continue to retain only validated candidates.
 Metric dimensions, depth sampling and pose-generation mathematics are unchanged.
 
-With the selected station and bin validated, a green
-unfilled border labelled **Loaded Bin ROI** projects the saved bin XY points at
-platform Z=0 into the RGB
-view when its valid camera inputs arrive. No Apply click or model loading is needed.
-It works with **YOLO ON or OFF**, with no detections required. The
-YOLO-off path uses pure projection in the same isolated worker; it does not load
-model weights, call prediction, or require depth. The projection uses the exact
+With the selected station and bin validated, captured diagnostics include a green
+unfilled border labelled **Loaded Bin ROI** that projects the saved bin XY points at
+platform Z=0 into the RGB view, including empty detection results. The border
+does not appear in passive video. Its projection uses the exact
 current station camera/platform/bin evidence, RGB-time TF, color intrinsics and
 distortion (32 samples per edge), not the source station's placement or a guessed
 rectangle. The 32-samples-per-edge construction and
@@ -522,12 +531,12 @@ or make source-station transforms a deployment binding. Artifact schemas remain
 unchanged; no existing files are rewritten.
 
 Missing/changed inputs, behind-camera or offscreen geometry have an
-explicit `Bin ROI hidden` reason. YOLO-OFF live projections older than 0.5 seconds
-are replaced by raw RGB. Completed teaching inference is a **result snapshot**:
-retain its mask/rectangle/axes and bin border on its exact source RGB until a new
-result arrives, even if CPU inference takes longer than 0.5 seconds. Display the
-source-frame age and inference time; at over 0.5 seconds explicitly label
-**RESULT SNAPSHOT**, **STALE**, and the ROI as historical, not a live projection.
+explicit `Bin ROI hidden` reason in diagnostics. YOLO OFF displays raw live RGB.
+Completed passive teaching inference is a source-bound snapshot: retain only its
+mask/rectangle colors on that exact RGB/depth pair until the next complete result.
+The status band shows source age; detailed timing/checks remain in tooltips.
+After five seconds of source age, or immediately on source/settings invalidation
+or unavailable live RGB, fall back to plain video until a new result arrives.
 Never transfer old annotated pixels onto a newer raw image, show a past detection
 count over raw RGB, or pass display snapshots into production service requests. Incoming-input
 and pose-service freshness limits are unchanged. Frozen selections are also
@@ -872,7 +881,8 @@ blocking service request. All native operations are serialized in one worker.
   in diagnostics. These colors describe only this check, not overall pick eligibility.
   Candidates rejected before depth/geometry validation have no nearby result.
   The cyan sampling circle and its black/red MAD samples retain their meaning.
-  Passive camera panes have no overlays. Simulate Trigger, real GUI-served
+  Passive camera panes show only colored masks and borders, without these nearby
+  diagnostics. Simulate Trigger, real GUI-served
   requests and their optional debug PNG pairs share the same captured diagnostics. Capped production
   images retain blocked nearby checks, including empty batches, while
   unchecked later candidates receive no annotations of their own. The worker

@@ -10234,6 +10234,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve unrelated RViz edits, .env, calibration, teaching/model and runtime
   artifacts; commit/push only this tested scope under the standing workflow.
 
+### 2026-10-08 — Rule 253: minimal passive teaching overlays
+
+- The operator requested passive YOLO masks/borders with dimension and tolerance
+  checks, plus Item Teach height rejection. Both teaching windows now use the
+  same native renderer: translucent masks and one object border, red for size
+  failure and green only for complete candidate eligibility. Item Teach uses
+  yellow for below-bin-floor or nearby-height rejection; Tray Teach has no yellow
+  state and performs no passive placement-depth sampling. Gray means unavailable
+  checks or another rejection. Size failure takes precedence over height color.
+- Reuse existing inference and geometry at the existing maximum 1 Hz cadence;
+  no extra prediction or worker. Item passive geometry checks every displayed
+  detection up to the YOLO cap, and RViz reports that same complete evaluation.
+  Production acquisition retains the taught pose_candidates cap. Add a diagnostic
+  height rejection stage without changing any acceptance threshold, ranking,
+  pose calculation or controller behavior. RGB/depth share colors; depth uses
+  its own intrinsics/distortion for projected geometry.
+- Present the completed RGB/depth pair together and retain its exact source
+  pixels between results, preventing raw/annotated alternation. Preserve source
+  timestamps and display age. Source/settings invalidation, missing live RGB or
+  five-second source age removes the passive result. YOLO OFF shows plain live
+  video. Passive images have no labels, axes, ROI/sampling/obstacle circles or
+  click-to-pose. Detailed diagnostics remain available outside the passive image.
+- Keep Simulate Trigger and GUI-served controller captures, their five-second
+  hold and optional saved debug images unchanged. Preserve corner teaching,
+  production priority, fresh-frame acquisition and all pose/placement filters.
+  No public ROS interface, schema, .env key or model-loading change.
+- Validation: full synthetic/offscreen suites pass: **666 Item Perception**, **260
+  Tray Perception**, and **1,370 Robot Controller** tests, on isolated ROS domains.
+  Cover color precedence, true below-floor/nearby-high-spot rejection, all displayed
+  candidates, unchanged tray selection, native RGB/depth rendering, matched-pair
+  retention as raw frames advance, source invalidation, YOLO OFF and no passive
+  click targets. Existing detailed capture/expiry and controller regressions pass.
+  Visually inspect synthetic native renderings for both windows; scoped production
+  lint and whitespace checks pass. No live camera/robot verification is claimed.
+- Update AGENTS and root/package READMEs. Controller behavior and FSM are unchanged.
+  All changed Python modules resolve through the canonical install to source, so
+  no build is required; operator relaunch activates the change. No live process
+  restarted, perception re-armed or robot commanded. Preserve unrelated RViz,
+  .env, calibration, teaching/model and runtime artifacts; commit/push only this
+  tested scope under the standing workflow.
+
 ### Future entry template
 
 ```text

@@ -319,7 +319,7 @@ class TrayTeachNode(Node):
         return self.plane
 
     def preview(self, settings=None, *, generation, view=None, visualize=True, deadline=None,
-                depth_quality=None, returned_only=False):
+                depth_quality=None, returned_only=False, passive_overlay=False):
         supplied = view is not None
         view = self.raw_snapshot() if view is None else view
         if view["generation"] != generation:
@@ -341,7 +341,7 @@ class TrayTeachNode(Node):
         if context is None:
             plane = None
         request = {"width": rgb["width"], "height": rgb["height"], "plane": plane,
-                   "camera_context": context}
+                   "camera_context": context, "passive_overlay": passive_overlay}
         if settings is None:
             request["operation"] = "tray_overlay"
         else:
@@ -423,13 +423,16 @@ class TrayTeachNode(Node):
             result.get("detections", [])
         visuals = (self.visuals(view, displayed,
                                 cloud=context is not None and not self.deployment,
-                                deadline=deadline, plane=plane) if visualize else
+                                deadline=deadline, plane=plane, passive_source=(
+                                    settings["geometry_source"] if passive_overlay
+                                    and settings is not None else None)) if visualize else
                    {"depth_overlay": b"", "samples": [], "cloud": None})
         self._check_snapshot(view, calibrated=context is not None)
         with self.lock:
             if view["generation"] != self.generation:
                 raise ValueError("Tray preview was invalidated while processing")
-        return {**view, **visuals, "overlay": pixels, "result": result}
+        return {**view, **visuals, "overlay": pixels, "result": result,
+                "passive_overlay": passive_overlay and settings is not None}
 
     def accept_view(self, view):
         """Only the observation accepted by the GUI may replace the displayed cloud/pose."""
@@ -445,13 +448,15 @@ class TrayTeachNode(Node):
             else:
                 self.rviz.hold(view["metric_error"] or view["depth_error"] or "No valid voxels")
 
-    def visuals(self, view, detections, *, cloud, pixels=(), deadline=None, plane=None):
+    def visuals(self, view, detections, *, cloud, pixels=(), deadline=None, plane=None,
+                passive_source=None):
         rgb, depth = view["rgb"], view["depth"]
         if depth is None:
             return {"depth_overlay": b"", "samples": [], "cloud": None}
         result, data = self.native.call({
             "operation": "tray_visuals", "width": rgb["width"], "height": rgb["height"],
             "camera_context": view["camera_context"], "cloud": cloud,
+            "passive_source": passive_source,
             "detections": detections, "pixels": list(pixels), "plane": plane},
             rgb["rgb"] + depth["depth"],
             timeout=10 if deadline is None else max(.001, deadline - time.monotonic()))

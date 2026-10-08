@@ -22,7 +22,7 @@ def window(tmp_path):
     node = SimpleNamespace(root=tmp_path, invalidate=MagicMock(), events=MagicMock(),
                            model=None, model_metadata=None, camera=None, plane=None,
                            position=None, selected=None, native=SimpleNamespace(failed=False),
-                           fatal_error="", close=MagicMock(), generation=1,
+                           fatal_error="", close=MagicMock(), generation=1, yolo_enabled=False,
                            work_lock=threading.RLock(), requests=SimpleNamespace(
                                service=None, busy=False, status="Disarmed", disarm=MagicMock()),
                            camera_prefix=None, camera_status="No camera connected",
@@ -777,7 +777,8 @@ def test_yolo_off_keeps_background_camera_preview(window):
     window._tick()
     window.future.result(timeout=2)
     window._tick()
-    window.node.preview.assert_called_once_with(None, generation=window.node.generation)
+    window.node.preview.assert_called_once_with(
+        None, generation=window.node.generation, passive_overlay=True)
 
 
 def test_slow_preview_keeps_typing_focus_and_controls_available(window):
@@ -1612,3 +1613,25 @@ def test_passive_frame_restored_after_capture_even_if_camera_has_not_advanced(wi
     window.canvas.show_frame(bytes([90]) * 12, 2, 2)  # Corner/trigger capture replaces pixels.
     window._show_passive()
     assert window.canvas.image.pixelColor(0, 0).red() == 70
+
+
+def test_passive_yolo_displays_complete_pair_without_new_raw_frame_blink(window):
+    raw = live_view(40)["rgb"]
+    ready = {**live_view(80), "passive_overlay": True}
+    window.node.yolo_enabled = True
+    window.node.passive_snapshot = lambda: (raw, None)
+    window._show_view(ready)
+    assert window.canvas.image.pixelColor(0, 0).red() == 80
+    assert window.depth_canvas.image.pixelColor(0, 0).red() == 80
+    raw["rgb"] = bytes([99]) * 12
+    window._show_passive()
+    assert window.canvas.image.pixelColor(0, 0).red() == 80
+    assert window.passive_view["stamp_ns"] == ready["rgb"]["stamp_ns"]
+    window.node.generation += 1
+    window._show_passive()
+    assert window.canvas.image.pixelColor(0, 0).red() == 99
+    window.node.generation -= 1
+    window.node.yolo_enabled = False
+    window._show_passive()
+    assert window.canvas.image.pixelColor(0, 0).red() == 99
+    assert window.depth_canvas.image is None

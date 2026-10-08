@@ -452,3 +452,35 @@ def test_capture_mailbox_retains_only_the_newest_complete_result():
     mailbox.put("second", {"rgb": b"new"})
     assert mailbox.take() == {"response": "second", "view": {"rgb": b"new"}}
     assert mailbox.take() is None
+
+
+def test_passive_inference_keeps_matched_pair_until_replaced_or_invalid():
+    from item_perception_yolo.item_preview import passive_inference_view
+    raw = {"rgb": b"new raw", "stamp_ns": 102_000_000_000}
+    completed = {"rgb": b"old annotated", "depth_rgb": b"same observation depth",
+                 "stamp_ns": 100_000_000_000, "passive_overlay": True,
+                 "metadata": {"detections": ["cannot click passive targets"]}}
+    view = passive_inference_view(raw, completed, True, 102_000_000_000)
+    assert view["rgb"] == completed["rgb"] and view["depth_rgb"] == completed["depth_rgb"]
+    assert view["stamp_ns"] == completed["stamp_ns"]
+    assert view["preview_mode"] == "passive" and view["metadata"] == {}
+    for enabled, result, now in ((False, completed, 102_000_000_000),
+                                 (True, None, 102_000_000_000),
+                                 (True, completed, 106_000_000_000),
+                                 (True, completed, 99_000_000_000)):
+        assert passive_inference_view(raw, result, enabled, now) is raw
+    assert passive_inference_view(None, completed, True, 102_000_000_000) is None
+
+
+@pytest.mark.parametrize('tray', [False, True])
+def test_passive_colors_never_mark_unchecked_candidates_green(tray):
+    from item_perception_yolo.item_geometry import passive_detection_color
+    item = {'source_index': 0, 'size_valid': True, 'size_status': 'pass'}
+    blocked = [{'source_index': 0, 'rejection_stage': 'height'}]
+    assert passive_detection_color(item, tray=tray) == (160, 160, 160)
+    assert passive_detection_color(item, rejected=blocked, tray=tray) == (
+        (160, 160, 160) if tray else (255, 220, 0))
+    assert passive_detection_color({**item, 'valid': True}, [{'source_index': 0}],
+                                   tray=tray) == (0, 220, 0)
+    assert passive_detection_color({**item, 'size_valid': False}, rejected=blocked,
+                                   tray=tray) == (255, 50, 50)

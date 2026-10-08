@@ -323,7 +323,8 @@ def test_nearby_overlay_updates_only_its_validated_source_view(preview, invalida
     else:
         assert result["data"] == cloud  # Image bytes must never enter PointCloud2.
         assert view["rgb"] == rendered_rgb and view["depth_rgb"] == rendered_depth
-        assert view["nearby_overlay"] is True
+        assert view["passive_overlay"] is True
+        assert header["passive_overlay"] is True
 
 
 def test_gap_retains_the_published_cloud_not_an_unpublished_result(preview):

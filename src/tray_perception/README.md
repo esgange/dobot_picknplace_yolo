@@ -140,7 +140,15 @@ still holds its exact captured pair and corner evidence until Create or Cancel.
    Enter long-side **Length**, short-side **Width**, and one **Tolerance ± (mm)**
    manually. Clicking never overwrites those fields. Missing/invalid dimensions
    retain unchecked background measurements but prevent accepted poses.
-   Green/red means size pass/fail, independently of class acceptance. Measurements intersect model
+   Passive YOLO shows only translucent masks and object borders: red means size
+   outside tolerance, green means a fully eligible tray, and gray means unchecked
+   or another rejection. There is no yellow state or passive placement-height
+   sampling. Keep 1 Hz inference and display each completed RGB/depth pair together
+   until the next result; never put old detections on newer raw pixels or alternate
+   annotated/raw frames. Drop passive results after five seconds of source age or
+   immediately on source/settings invalidation or unavailable live RGB. YOLO OFF
+   shows plain video. Detailed five-second trigger/debug captures remain unchanged.
+   Measurements intersect model
    polygons with the saved reference plane, fit a metric enclosing rectangle,
    and check both dimensions against the tolerance. Live depth is not used for
    subsequent measurements, so items on top cannot change the reference height.

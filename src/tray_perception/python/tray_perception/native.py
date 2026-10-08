@@ -295,10 +295,16 @@ def predict_trays(request, result, rgb, names, cv2, np):
     settings, plane, context = request["settings"], request["plane"], request["camera_context"]
     validate_preview(settings)
     returned_only = request.get("returned_only", False)
+    passive = request.get("passive_overlay", False)
     if settings["geometry_source"] == "mask":
         objects = clean_objects(result, names, settings["yolo"]["max_detections"], cv2, np)
         count = len(objects)
         overlay = rgb.copy()
+    elif passive:
+        boxes = result.obb if settings["model_task"] == "obb" else result.boxes
+        if boxes is None or not 0 <= len(boxes) <= settings["yolo"]["max_detections"]:
+            raise RuntimeError("Invalid passive tray detection count")
+        overlay, count = rgb.copy(), len(boxes)
     else:
         overlay, count = render_result(result, rgb, names, settings["model_task"],
                                        settings["yolo"]["max_detections"], cv2, np)
@@ -333,10 +339,10 @@ def predict_trays(request, result, rgb, names, cv2, np):
             reason += (f" | Detection Mask Clean rejected {len(rejected_masks)} "
                        "ambiguous/empty mask(s)")
         displayed = ([selected] if selected is not None else []) if returned_only else detections
-        if settings["geometry_source"] == "mask":
+        if settings["geometry_source"] == "mask" and not passive:
             overlay = shade_masks(rgb, [d["polygon"] for d in displayed if len(d["polygon"]) >= 3],
                                   cv2, np)
-        for detection in displayed:
+        for detection in (() if passive else displayed):
             if len(detection["polygon"]) < 3:
                 continue
             polygon = np.rint(detection["polygon"]).astype(np.int32)
@@ -344,6 +350,13 @@ def predict_trays(request, result, rgb, names, cv2, np):
                      "unchecked": (160, 160, 160)}[detection["size_status"]]
             cv2.polylines(overlay, [polygon], True, color, 2)
             draw_tray_axes(overlay, detection, cv2, np)
+    if passive:
+        from item_perception_yolo.item_geometry import passive_overlay, preview_detections
+        drawn = detections
+        if settings["geometry_source"] == "none":
+            drawn = preview_detections(result, "none", names, settings["yolo"]["max_detections"],
+                                       None, reason, cv2, np, diameter_mm=1.)
+        overlay = passive_overlay(rgb, drawn, settings["geometry_source"], cv2, np, tray=True)
     return {"state": "ok", "width": rgb.shape[1], "height": rgb.shape[0], "count": count,
             "detections": detections, "selected": selected, "reason": reason}, overlay.tobytes()
 
@@ -363,7 +376,12 @@ def tray_visuals(request, data, cv2, np):
     context, samples = request["camera_context"], []
     if context is not None:
         color_info, depth_info = context["camera"], context["depth_camera"]
-        for detection in request["detections"]:
+        passive_source = request.get("passive_source")
+        if passive_source is not None:
+            from item_perception_yolo.item_geometry import passive_overlay
+            overlay = passive_overlay(overlay, request["detections"], passive_source,
+                                      cv2, np, tray=True, cameras=context)
+        for detection in (() if passive_source is not None else request["detections"]):
             if len(detection["polygon"]) < 3:
                 continue
             pixels = reproject_pixels(np.asarray(detection["polygon"]),

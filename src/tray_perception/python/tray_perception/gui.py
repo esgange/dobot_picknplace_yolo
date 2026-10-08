@@ -20,7 +20,7 @@ from .core import (
 from .documents import detection_profile, open_document, save_document, validate_name
 from item_perception_yolo.item_preview import (
     CAPTURE_HOLD_SEC, CaptureMailbox, PassiveCameraView, configure_status_band, capture_status,
-    validate_prefix)
+    validate_prefix, passive_inference_view)
 from item_perception_yolo.item_teach_core import file_sha256, NEW_PROFILE_IMAGE_SIZE
 from .node import TrayTeachNode
 from .contract import SERVICE_NAME
@@ -1273,11 +1273,25 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 (self.depth_status, None if live is None else live.get("depth_stamp_ns"))):
             age_note = ("Waiting for camera" if stamp is None else
                         f"Age {max(0., (now-stamp)/1e9):.2f}s")
-            label.setText("Live passive video\n" + age_note)
+            title = ("Live YOLO · size" if live is not None and live.get("passive_overlay")
+                     else "Live passive video")
+            label.setText(title + "\n" + age_note)
 
     def _show_passive(self):
         rgb, depth = self.node.passive_snapshot()
         view = self.passive_camera.make(rgb, depth, self.node.get_clock().now().nanoseconds)
+        completed = self.last_view
+        if (completed is not None and completed["generation"] == self.node.generation
+                and completed.get("passive_overlay")):
+            completed = {**completed["rgb"], "rgb": completed["overlay"],
+                         "depth_rgb": completed.get("depth_overlay"),
+                         "depth_stamp_ns": (None if completed.get("depth") is None else
+                                            completed["depth"]["stamp_ns"]),
+                         "passive_overlay": True}
+        else:
+            completed = None
+        view = passive_inference_view(view, completed, self.node.yolo_enabled,
+                                      self.node.get_clock().now().nanoseconds)
         self.passive_view = view
         for canvas, field in ((self.canvas, "rgb"), (self.depth_canvas, "depth_rgb")):
             canvas.highlight = []
@@ -1399,7 +1413,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
         settings = (copy.deepcopy(self.preview_settings)
                     if self.preview_toggle.isChecked() else None)
         generation = self.node.generation
-        self._job(lambda: self.node.preview(settings, generation=generation),
+        self._job(lambda: self.node.preview(settings, generation=generation, passive_overlay=True),
                   lambda view: self._show_view({**view, "preview_settings": settings}), "preview")
 
     def closeEvent(self, event):

@@ -12,6 +12,7 @@ from .preview_protocol import MAX_IMAGE_BYTES
 
 FRAME_MAX_AGE_SEC = 0.5
 CAPTURE_HOLD_SEC = 5.0
+PASSIVE_RESULT_MAX_AGE_SEC = 5.0
 
 
 def validate_prefix(prefix):
@@ -107,6 +108,15 @@ class PassiveCameraView:
             self.depth_key, self.depth_pixels = key, pixels.tobytes()
         result.update(depth_rgb=self.depth_pixels, depth_stamp_ns=depth["stamp_ns"], depth_error="")
         return result
+
+
+def passive_inference_view(raw, completed, enabled, now_ns):
+    """Hold one matched annotated pair between inferences; never paint on newer raw pixels."""
+    if (raw is None or not enabled or completed is None
+            or not completed.get("passive_overlay")
+            or not 0 <= (now_ns - completed["stamp_ns"]) / 1e9 <= PASSIVE_RESULT_MAX_AGE_SEC):
+        return raw
+    return {**completed, "preview_mode": "passive", "metadata": {}, "passive_overlay": True}
 
 
 def configure_status_band(label):

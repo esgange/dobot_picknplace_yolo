@@ -1,6 +1,7 @@
 """Teaching visualization geometry, called only inside the private native worker."""
 
-from .item_geometry import generate_candidates, reproject_pixels, rectangle_axes
+from .item_geometry import (generate_candidates, reproject_pixels, rectangle_axes,
+                            passive_overlay, render_depth)
 from .floor_clearance import depth_scene
 from .depth_snapshot import DEPTH_ENCODING
 from .item_teach_core import validate_detection_settings, validate_quality
@@ -45,8 +46,9 @@ def teaching_rviz(request, data, cv2, np):
     """Use the displayed detections and exact RGB/depth snapshot without another YOLO call."""
     width, height = request["width"], request["height"]
     overlay_requested = request["nearby_overlay"]
+    passive = request.get("passive_overlay", False)
     if (type(width) is not int or type(height) is not int
-            or type(overlay_requested) is not bool
+            or type(overlay_requested) is not bool or type(passive) is not bool
             or not 0 < width <= 4096 or not 0 < height <= 4096
             or request.get("depth_encoding") != DEPTH_ENCODING
             or len(data) != width * height * (13 if overlay_requested else 7)
@@ -85,10 +87,19 @@ def teaching_rviz(request, data, cv2, np):
                             "class_name": item["class_name"], "confidence": item["confidence"],
                             "polygon": polygon, "rectangle": rectangle,
                             "center": rectangle.mean(axis=0)})
-        # Match acquisition: stop nearby scans once the taught batch is full.
+        # The caller supplies the detection cap for passive preview, or a batch limit.
         _, _, candidates, rejected = generate_candidates(
-            objects, rgb, depth, request["context"], settings, cv2, np, nearby_views=views,
+            objects, rgb, depth, request["context"], settings, cv2, np,
+            nearby_views=None if passive else views,
             candidate_limit=limit, unchecked=unchecked, render_images=False, prepared_scene=scene)
+        if passive and overlay_requested:
+            from .depth_snapshot import item_depth_limits
+            display_quality = {**quality, "depth_min_mm": item_depth_limits(quality)[0]}
+            depth_view = render_depth(depth, display_quality, cv2, np)
+            views = tuple(passive_overlay(
+                pane, request["detections"], settings["geometry_source"], cv2, np,
+                candidates=candidates, rejected=rejected, cameras=cameras)
+                for pane, cameras in ((rgb, None), (depth_view, request["context"])))
     result = {"state": "ok", "generation": request["generation"],
               "nearby_overlay": overlay_requested,
               "point_count": len(cloud), "candidates": candidates, "rejected": rejected,

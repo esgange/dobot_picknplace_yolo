@@ -143,6 +143,38 @@ def exercise_all_candidates():
     with pytest.raises(RuntimeError, match="Malformed"):
         teaching_rviz({**request, "nearby_overlay": True},
                       rgb.tobytes() + depth.tobytes(), cv2, np)
+    # Passive mode checks the entire displayed cap and replaces both old
+    # annotated buffers from raw evidence. No circles, axes, labels or ROI remain.
+    passive_request = {**request, "nearby_overlay": True, "passive_overlay": True,
+                       "candidate_limit": 100}
+    passive, rendered = teaching_rviz(passive_request,
+        rgb.tobytes() + depth.tobytes() + annotated.tobytes() * 2, cv2, np)
+    assert len(passive["candidates"]) == 4 and not passive["unchecked"]
+    start = passive["point_count"] * 16
+    pane = np.frombuffer(rendered[start:start+rgb.nbytes], np.uint8).reshape(rgb.shape)
+    assert pane[240, 480].tolist() == [60, 115, 60]  # Valid beyond the taught count.
+    assert np.array_equal(pane[200:205, 300:310], rgb[200:205, 300:310])
+    assert np.array_equal(pane[:200], rgb[:200])
+    # A measured surface below the floor is yellow, despite a large standoff.
+    depth[210:270, 125:235] = 900
+    settings["geometry"]["tolerance"] = 100.
+    context["pick_planning"]["standoff_height_mm"] = 300.
+    rejected, rendered = teaching_rviz(passive_request,
+        rgb.tobytes() + depth.tobytes() + annotated.tobytes() * 2, cv2, np)
+    assert next(r for r in rejected["rejected"] if r["source_index"] == 0)[
+        "rejection_stage"] == "height"
+    start = rejected["point_count"] * 16
+    pane = np.frombuffer(rendered[start:start+rgb.nbytes], np.uint8).reshape(rgb.shape)
+    assert pane[240, 180].tolist() == [124, 115, 60]
+    depth[:] = 700
+    depth[300, 280] = 600  # High spot outside masks, inside the allowed nearby radius.
+    blocked, rendered = teaching_rviz(passive_request,
+        rgb.tobytes() + depth.tobytes() + annotated.tobytes() * 2, cv2, np)
+    rejection = next(r for r in blocked["rejected"] if r["source_index"] == 1)
+    assert rejection["rejection_stage"] == "height" and "nearby_depth_filter" in rejection
+    start = blocked["point_count"] * 16
+    pane = np.frombuffer(rendered[start:start+rgb.nbytes], np.uint8).reshape(rgb.shape)
+    assert pane[240, 280].tolist() == [124, 115, 60]
 
 
 @pytest.mark.parametrize("exercise", ["exercise_voxels", "exercise_all_candidates"])

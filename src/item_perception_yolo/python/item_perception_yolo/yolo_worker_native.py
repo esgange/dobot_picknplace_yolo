@@ -257,8 +257,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
             roi_status = {"visible": False, "reason": "No calibrated bin ROI applied"}
             if preview:
                 from .item_geometry import (
-                    preview_detections, draw_pick_geometry, draw_bin_roi, draw_bin_clearance,
-                    classify_size, render_depth, draw_depth_geometry,
+                    preview_detections, classify_size, render_depth, passive_overlay,
                 )
                 from .item_teach_core import validate_bin_clearance
                 source = request["geometry_source"]
@@ -274,31 +273,19 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                     diameter_mm=request["settings"]["pickdepth_radius"], depth_mm=depth,
                     quality=request["settings"].get("quality"))
                 stages["geometry_ms"] = (time.monotonic() - geometry_started)*1000.
-                overlay, _ = render_result(
-                    results[0], rgb, names, config["task"], settings["max_detections"], cv2, np,
-                    included_indices=({item["source_index"] for item in detections}
-                                      if request["measurement_context"] is not None else None))
                 for item in detections:
                     valid, reason = classify_size(item["measurement"],
                                                   request["settings"].get("geometry"))
                     item.update(size_valid=valid, size_reason=reason)
-                    if source != "none":
-                        color = ((0, 255, 0) if valid is True else
-                                 (255, 0, 0) if valid is False else (180, 180, 180))
-                        draw_pick_geometry(overlay, item["rectangle"], cv2, np, color=color)
+                overlay = passive_overlay(rgb, detections, source, cv2, np)
                 if request.get("preview_depth", False):
                     display_quality = {**request["settings"]["quality"],
                                        "depth_min_mm": item_depth_limits(
                                            request["settings"]["quality"])[0]}
                     depth_view = render_depth(depth, display_quality, cv2, np)
-                    draw_depth_geometry(depth_view, detections, source,
-                                        request["depth_cameras"], request["measurement_context"],
-                                        cv2, np,
-                                        bin_clearance=request["settings"]["bin_clearance"])
-                roi_status = draw_bin_roi(overlay, request["measurement_context"],
-                                          request["measurement_error"], cv2, np)
-                draw_bin_clearance(overlay, request["measurement_context"],
-                                   request["settings"]["bin_clearance"], cv2, np)
+                    depth_view = passive_overlay(depth_view, detections, source, cv2, np,
+                                                 cameras=request["depth_cameras"])
+                roi_status = {"visible": False, "reason": "Passive object overlays only"}
             if context is not None:
                 from .item_geometry import (
                     objects_from_result, generate_candidates,

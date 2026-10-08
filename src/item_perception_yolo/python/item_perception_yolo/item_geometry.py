@@ -19,6 +19,46 @@ ROBOT_CAMERA_COLOR = (255, 0, 255)
 ROBOT_CAMERA_REJECTED_COLOR = (255, 0, 0)
 
 
+def passive_detection_color(detection, candidates=(), rejected=(), *, tray=False):
+    """Size failures win; green requires complete eligibility, never size alone."""
+    if detection.get("size_valid") is False or detection.get("size_status") == "fail":
+        return (255, 50, 50)
+    index = detection["source_index"]
+    if not tray and any(r["source_index"] == index and r.get("rejection_stage") == "height"
+                        for r in rejected):
+        return (255, 220, 0)
+    valid = detection.get("valid", False) if tray else any(
+        c["source_index"] == index for c in candidates)
+    return (0, 220, 0) if valid else (160, 160, 160)
+
+
+def passive_overlay(image, detections, source, cv2, np, *, candidates=(), rejected=(),
+                    tray=False, cameras=None):
+    """One completed pane: translucent masks and size rectangles, without annotations."""
+    output = image.copy()
+    for detection in detections:
+        polygon = np.asarray(detection["polygon"], dtype=float)
+        if len(polygon) < 3:
+            continue
+        rectangle = np.asarray(detection.get("rectangle", polygon), dtype=float)
+        if cameras is not None:
+            polygon = reproject_pixels(polygon, cameras["camera"], cameras["depth_camera"],
+                                       cv2, np)
+            rectangle = reproject_pixels(rectangle, cameras["camera"],
+                                         cameras["depth_camera"], cv2, np)
+        color = passive_detection_color(detection, candidates, rejected, tray=tray)
+        polygon = np.rint(polygon).astype(np.int32)
+        rectangle = np.rint(rectangle).astype(np.int32)
+        if source == "mask":
+            mask = np.zeros(image.shape[:2], np.uint8)
+            cv2.fillPoly(mask, [polygon], 1)
+            pixels = mask.astype(bool)
+            output[pixels] = np.rint(
+                .75 * output[pixels] + .25 * np.asarray(color)).astype(np.uint8)
+        cv2.polylines(output, [rectangle], True, color, 2, cv2.LINE_AA)
+    return output
+
+
 def rectangle_axes(rectangle, np):
     """Return long/short pixel midlines and their immutable pick-pixel intersection."""
     rect = np.asarray(rectangle, dtype=np.float64)
@@ -557,6 +597,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     for item in objects:
         center = item["center"]
         label = f"#{item['index']} {item['class_name']} {item['confidence']:.2f}"
+        rejection_stage = ""
         try:
             if item["class_id"] not in settings["yolo"]["class_ids"]:
                 raise ValueError("class not selected")
@@ -600,6 +641,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 planning["base_from_platform"], position, quaternion)
             height = floor.measure(item_in_base[:3, 3])
             if height.below_plane:
+                rejection_stage = "height"
                 raise ValueError(height.reason)
             attitude = select_pick_attitude(
                 planning["home_matrix"], item_in_base, planning["pick_rotation_deg"],
@@ -643,7 +685,10 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
         except SurfaceGeometryError:
             raise
         except ValueError as exc:
-            rejected.append({"source_index": item["index"], "reason": str(exc)})
+            rejection = {"source_index": item["index"], "reason": str(exc)}
+            if rejection_stage:
+                rejection["rejection_stage"] = rejection_stage
+            rejected.append(rejection)
             label += " | " + str(exc)
         labels[item["index"]] = label
     candidates.sort(key=lambda c: (c["center_distance"], -c["confidence"], c["source_index"]))
@@ -674,6 +719,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             rejection = {"source_index": source_id, "reason": str(exc)}
             if hasattr(exc, "evidence"):
                 rejection["nearby_depth_filter"] = exc.evidence
+                rejection["rejection_stage"] = "height"
             rejected.append(rejection)
             if drawing:
                 nearby_checks[source_id] = drawing

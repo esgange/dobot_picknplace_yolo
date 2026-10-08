@@ -662,8 +662,15 @@ Simulate Trigger and saved `debug/pick_img/` pairs include these overlays,
 including blocked items when no valid poses remain. Enable
 **Save item/tray debug RGB/depth** on the controller to save request images.
 The request supplies complete overlays without another YOLO prediction.
-Between captures, both teaching windows show clean live RGB/depth
-without masks, borders, axes, circles or labels. Simulate Trigger and actual
+Between captures, YOLO ON shows only translucent detection masks and object
+borders on matching RGB/depth snapshots. Both windows use red for failed size
+tolerance and green for a fully eligible candidate; Item Teach additionally uses
+yellow for below-floor or nearby-height rejection. Tray Teach has no yellow state
+or passive placement-depth sampling. Gray means unchecked or another rejection.
+Item background checks all displayed detections up to the YOLO cap, independent
+of the production pose count. Keep the existing 1 Hz inference cadence and replace
+both panes only when a complete result arrives, without alternating raw frames.
+YOLO OFF shows plain live video. Simulate Trigger and actual
 controller requests served by the Armed teaching window display their exact
 completed annotated pair for five seconds, then return to passive video. New
 results replace older captures and restart the hold; click RGB to resume sooner.
@@ -1034,7 +1041,9 @@ controller-facing service and holds its exact returned RGB/depth result for
 and the simulated pose clears. Real controller requests served by Armed Tray
 Teach use the same five-second captured display and replace older captures.
 Click RGB to resume sooner; detection and controller execution never wait for
-the display timer. Passive RGB/depth has no overlays. **Armed ON**
+the display timer. Passive YOLO displays only masks and borders: red for invalid
+size, green for eligible trays and gray for unchecked or otherwise rejected trays.
+Tray Teach has no yellow height state; YOLO OFF shows plain video. **Armed ON**
 advertises `/tray_detect/get_tray_pose_v3`; requests supply the saved YAML SHA-256
 and receive one tray or an explicit no-tray result. Settings changes disarm.
 The versioned endpoint carries the placement-depth contract; there is no fallback

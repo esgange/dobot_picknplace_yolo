@@ -981,15 +981,15 @@ def finish_model_job(window):
     window._refresh_video()
 
 
-def test_live_nearby_acquisition_uses_taught_count_and_invalidates_edits(window, paired_teach):
+def test_live_nearby_checks_all_detections_and_invalidates_edits(window, paired_teach):
     window._load_dialog()
     finish_model_job(window)
-    assert window._rviz_options()["candidate_limit"] == 3
+    assert window._rviz_options()["candidate_limit"] == 17
     window.node.last_view = {"old": "snapshot"}
     window.inputs["pose_candidates"].setText("2")
     assert window.node.last_view is None and window.preview_settings_paused
     window._apply_live_detection_settings()
-    assert window._rviz_options()["candidate_limit"] == 2
+    assert window._rviz_options()["candidate_limit"] == 17
     window.inputs["pose_candidates"].setText("0")
     window._apply_live_detection_settings()
     options = window._rviz_options()
@@ -1909,3 +1909,34 @@ def test_obsolete_or_failed_controller_capture_clears_old_images(window, failed)
     assert window.frozen_view is None and window.simulation_expires_at is None
     assert window.video.pixmap() is None
     assert ("No fresh depth" if failed else "CameraInfo changed") in window.status.toPlainText()
+
+
+def test_yolo_passive_pair_does_not_blink_to_new_raw_frames(window):
+    raw = _completed_preview([1, 2, 3], [4, 5, 6])
+    ready = {**_completed_preview([20, 30, 40], [50, 60, 70]),
+             "passive_overlay": True, "preview_binding": (0, 0)}
+    window.yolo_toggle.setChecked(True)
+    window.preview_settings_paused = False
+    window.preview_update_due = None
+    window.job_busy = True
+    window.node.camera_snapshot = lambda: (raw, "RGB live")
+    window.node.last_view = ready
+    window._refresh_video()
+    assert window.displayed_view["rgb"] == ready["rgb"]
+    assert window.displayed_view["depth_rgb"] == ready["depth_rgb"]
+    before = [v.pixmap().toImage() for v in (window.video, window.depth_video)]
+    raw["rgb"] = bytes([99]) * 48
+    raw["stamp_ns"] += 50_000_000
+    window._refresh_video()
+    assert [v.pixmap().toImage() for v in (window.video, window.depth_video)] == before
+    assert "size / height" in window.rgb_feedback.text()
+    window._select_detection(gui.QtCore.QPointF(window.video.contentsRect().center()))
+    assert window.frozen_view is None
+    # Reject an obsolete source even if its old image is still retained in memory.
+    window.node._camera_generation += 1
+    window._refresh_video()
+    assert window.displayed_view["rgb"] == raw["rgb"]
+    window.node._camera_generation -= 1
+    window.yolo_toggle.setChecked(False)
+    window._refresh_video()
+    assert window.displayed_view["rgb"] == raw["rgb"]

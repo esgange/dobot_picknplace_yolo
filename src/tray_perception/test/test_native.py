@@ -241,6 +241,28 @@ def exercise_tray_axis_overlays():
         {**accepted_request, "returned_only": True}, None, rgb, {1: "tray"}, cv2, np)
     assert returned_result == accepted_result and returned_result["selected"] is not None
     assert returned_pixels != plain_rgb
+    passive_result, passive_pixels = native.predict_trays(
+        {**accepted_request, "passive_overlay": True}, None, rgb, {1: "tray"}, cv2, np)
+    assert passive_result == accepted_result  # Rendering cannot affect tray selection.
+    passive = np.frombuffer(passive_pixels, np.uint8).reshape(rgb.shape)
+    assert passive[240, 320].tolist() == [0, 55, 0]
+    assert np.any(np.all(passive == [0, 220, 0], axis=2))
+    assert not np.any(np.all(passive == [255, 220, 0], axis=2))
+    assert not np.any(np.all(passive == [255, 0, 0], axis=2))  # No X axis.
+    assert not passive[:200].any() and not passive[280:].any()  # No labels/plane border.
+    bad_size = {**accepted_settings, "geometry": {
+        "length_mm": 300., "width_mm": 150., "tolerance_mm": 1.}}
+    failed, pixels = native.predict_trays(
+        {**request, "settings": bad_size, "passive_overlay": True}, None, rgb, {}, cv2, np)
+    assert failed["selected"] is None
+    assert np.frombuffer(pixels, np.uint8).reshape(rgb.shape)[240, 320].tolist() == [64, 12, 12]
+    _, passive_depth = native.tray_visuals(
+        {"width": 640, "height": 480, "camera_context": context,
+         "detections": accepted_result["detections"], "pixels": [], "cloud": False,
+         "passive_source": "mask"},
+        rgb.tobytes() + np.full((480, 640), 800, "<u2").tobytes(), cv2, np)
+    passive_depth = np.frombuffer(passive_depth[:rgb.size], np.uint8).reshape(rgb.shape)
+    assert passive_depth[240, 270].tolist() == [0, 220, 0]  # Depth's own projected border.
     _, data = native.tray_visuals(
         {"width": 640, "height": 480, "camera_context": context,
          "detections": [item], "pixels": [], "cloud": False},

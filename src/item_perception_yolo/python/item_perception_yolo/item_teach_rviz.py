@@ -112,6 +112,7 @@ class TeachingRvizPreview:
                                      and view.get("preview_mode") == "all"
                                      and view.get("depth_rgb"))
             header = {"operation": "teaching_rviz", "generation": epoch,
+                      "passive_overlay": overlay_requested,
                       "nearby_overlay": overlay_requested, "depth_encoding": DEPTH_ENCODING,
                       "camera_generation": generation,
                       "width": rgb["width"], "height": rgb["height"], "context": context,
@@ -159,7 +160,7 @@ class TeachingRvizPreview:
             if overlay_requested:
                 view["rgb"] = data[cloud_end:cloud_end+len(rgb["rgb"])]
                 view["depth_rgb"] = data[cloud_end+len(rgb["rgb"]):]
-                view["nearby_overlay"] = True
+                view["passive_overlay"] = True
             return {**result, "data": data[:cloud_end], "epoch": epoch,
                     "camera_generation": generation,
                     "stamp_ns": rgb["stamp_ns"], "depth_stamp_ns": depth["stamp_ns"],
