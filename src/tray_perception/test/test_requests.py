@@ -180,7 +180,8 @@ def test_placement_request_uses_one_fresh_observation_and_reports_depth(
         assert 'Insufficient placement depth' in finished.kwargs['traceback']
 
 
-@pytest.mark.parametrize("z,valid", [(.24, True), (.2, True), (.2 - 1e-6, True), (.19, False)])
+@pytest.mark.parametrize("z,valid", [
+    (.24, True), (.2, True), (.19, True), (.18, True), (.18 - .5e-6, True), (.179, False)])
 @pytest.mark.parametrize("provider", ["tray_teach", "tray_detect"])
 def test_placement_floor_uses_saved_plane_and_retains_debug_evidence(backend, z, valid, provider):
     node, _, digest = backend
@@ -213,7 +214,8 @@ def test_placement_floor_uses_saved_plane_and_retains_debug_evidence(backend, z,
     assert node.requests.service is not None and not node.fatal_error
     if not valid:
         assert response.status == "NO_VALID_PLACEMENT_DEPTH"
-        assert "plane Z=200.000 mm, deficit=10.000 mm" in response.message
+        assert "plane Z=200.000 mm, deficit=21.000 mm" in response.message
+        assert "allowed deficit=20.000 mm" in response.message
         assert evidence["placement_rejection"] == response.message
         event = next(c for c in node.events.record.call_args_list
                      if c.args[1] == "tray_placement_plane_rejected")

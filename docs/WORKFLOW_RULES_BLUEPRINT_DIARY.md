@@ -10477,6 +10477,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   RViz, calibration, teaching/model and runtime files; scoped commit/push follows
   the standing workflow.
 
+### 2026-10-08 — Rule 258: 20 mm downward plane allowance
+
+- The operator requested a fixed 20 mm tolerance below the safety plane after a
+  tray observation was rejected at surface Z=93.137 mm versus plane Z=94.223 mm
+  (1.086 mm deficit). Keep the measured-surface design and supersede only rule
+  252's zero physical allowance; do not replace it with commanded-target or
+  trajectory/tool-geometry validation. That example now passes this height guard.
+- Add one fixed 0.020 m allowance to the existing shared surface guard. Compare
+  measured base Z with the exact plane height at measured base X/Y, retaining
+  0.001 mm arithmetic tolerance at the new limit. Item native generation, Item
+  Teach/Simulate/headless, tray placement provider and independent controller
+  admission all use the same calculation before gripper/placement offsets.
+  Tilted planes and either normal sign remain supported. Never alter, clamp or
+  replace the measured surface, calibrated floor or saved tray plane.
+- Larger deficits remain rejected; existing diagnostic reasons now include the
+  allowed 20.000 mm deficit alongside actual surface/plane Z and deficit. Keep
+  source/candidate/batch identity, survivor IDs and nearest-Home ordering, nine
+  Home retries for empty bin acquisition, ten fresh tray requests and paused
+  Continue / Return Item exhaustion. Invalid geometry, malformed evidence and
+  source mismatch remain errors. Nearby-height/size/coverage checks, motion
+  targets, offsets, speeds, blending, timed outputs and taught routes are unchanged.
+- Validation: **694 Item Perception, 265 Tray Perception and 1,411 Robot Controller
+  tests pass** (2,370 total), using synthetic inputs, offscreen Qt and separate
+  ROS domains 85/86/87. Cover within/on/beyond the 20 mm boundary and arithmetic
+  tolerance, tilted/reversed planes, invalid geometry, unchanged measurements,
+  the operator's example, native filtering before count limits, mixed/empty
+  batches and nearest-Home order, offsets that cannot rescue larger deficits,
+  fresh retry exhaustion, paused tray return and Hardware/Preview admission.
+  An initial translated-plane test sat on a floating-point rounding boundary
+  at the extra arithmetic epsilon; put that fixture inside the epsilon and keep
+  exact zero-origin boundary coverage plus translated-plane 20 mm coverage.
+- Production/changed-test-line lint and whitespace checks pass. Update AGENTS,
+  root/package READMEs and the FSM review, diagrams and guard table. Regenerate
+  its HTML/PDF with the local renderer; verify matching Markdown source hash,
+  nine SVGs/pages and updated Pick, placement and Auto Run labels. Visually
+  inspect those three pages. PDF text verification normalizes line wrapping.
+- The canonical installed surface_guard.py resolves to the edited source and
+  imports the new 0.020 m constant; no rebuild or driver-library replacement is
+  needed for this existing Python module. No processes are restarted and no
+  robot commands are issued. Relaunch affected perception/controller processes
+  when safe; live verification remains operator-owned. No ROS interface, schema,
+  .env key or operator-file changes. Preserve unrelated RViz edits, calibration,
+  teaching/model and runtime artifacts; scoped commit/push follows the workflow.
+
 ### Future entry template
 
 ```text

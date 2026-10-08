@@ -1981,6 +1981,16 @@ late-reply containment. Initial Pick, missed-pick retries, bin Return Item, fina
 Home, empty-result Home and held travel to Tray Detect retain their routes/I/O.
 No new ROS interface, schema or setting; update diary/FSM and regenerate exports.
 
+Rule 258 supersedes rule 252's zero physical below-plane allowance with a fixed
+20 mm downward allowance for measured bin/item and tray-placement surfaces.
+Retain 0.001 mm arithmetic tolerance at that limit. Apply the shared base-Z plane
+calculation in perception and controller admission before offsets, supporting
+tilted planes and either normal sign. Preserve exact measured and saved geometry;
+never clamp. Report actual and allowed deficit. Keep candidate IDs/order, fresh
+retry budgets, invalid-geometry/source errors, offsets, taught travel and I/O.
+No schema, ROS interface, .env or operator-artifact changes; update the diary/FSM
+and regenerate its visual exports. Live verification remains operator-owned.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

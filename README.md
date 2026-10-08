@@ -78,13 +78,13 @@ returned count and image labels stay unchanged. Controller attempt numbers may
 therefore differ from the detector's P1…Pn labels; logs retain both and the pose ID.
 Reload/recovery or process restart invalidates the retained batch; no poses are
 persisted to disk.
-Measured item surfaces below the calibrated bin floor and placement surfaces
-below the saved tray plane are rejected **before** gripper/placement-height
-offsets. Compare base Z with the plane at the target X/Y, with only 0.001 mm
-arithmetic tolerance; never clamp a target. Perception and the controller both
-check this. Rejected bin candidates are skipped; empty batches use the existing
-nine Home retries. Below-plane tray observations use the existing ten requests
-and paused Continue / Return Item workflow. Taught travel and tool offsets are
+Measured item and placement surfaces may be up to **20 mm below** the calibrated
+bin floor or saved tray plane. Reject larger deficits **before** gripper or
+placement-height offsets. Compare base Z with the plane at the target X/Y, retaining 0.001 mm
+arithmetic tolerance at that limit; never clamp a target. Perception and the
+controller both check this. Rejected bin candidates are skipped; empty batches use the existing
+nine Home retries. Tray observations beyond the allowance use the existing ten
+requests and paused Continue / Return Item workflow. Taught travel and tool offsets are
 preserved; the guard does not model complete tool geometry or travel trajectories.
 Rebuild interfaces/controller and manually restart their clients after upgrading.
 
@@ -669,8 +669,8 @@ The request supplies complete overlays without another YOLO prediction.
 Between captures, YOLO ON shows translucent detection masks and object
 borders on matching RGB/depth snapshots. Both windows use red for failed size
 tolerance and green for a fully eligible candidate; Item Teach additionally uses
-yellow for below-floor or nearby-height rejection. Tray Teach has no yellow state
-or passive placement-depth sampling. Gray means unchecked or another rejection.
+yellow for exceeding the 20 mm below-floor allowance or nearby-height rejection.
+Tray Teach has no yellow state or passive placement-depth sampling. Gray means unchecked or another rejection.
 Item Teach also shows the saved green bin border and light-blue pick-clearance
 border on both panes. Click an RGB detection's mask or box to see its measured
 size, taught size/tolerance, color meaning and exact rejection reason below the

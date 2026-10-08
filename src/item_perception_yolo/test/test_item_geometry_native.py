@@ -1128,14 +1128,16 @@ def exercise_surface_floor_guard():
             flip = np.diag([1., -1., -1., 1.])
             ctx["platform_from_optical"] = (flip @ optical).tolist()
             ctx["pick_planning"]["base_from_platform"] = flip.tolist()
-        for depth_mm, accepted in ((700, True), (800, True), (900, False)):
+        for depth_mm, accepted in ((700, True), (800, True), (810, True),
+                                   (820, True), (821, False), (900, False)):
             depth = np.full((480, 640), depth_mm, np.uint16)
             _, _, poses, reasons = generate_candidates(
                 [item], rgb, depth, ctx, settings, cv2, np, render_images=False)
             assert bool(poses) is accepted
             if not accepted:
                 assert "below bin floor" in reasons[0]["reason"]
-                assert "deficit=100.000 mm" in reasons[0]["reason"]
+                assert f"deficit={depth_mm - 800:.3f} mm" in reasons[0]["reason"]
+                assert "allowed deficit=20.000 mm" in reasons[0]["reason"]
         depth = np.full((480, 640), 700, np.uint16)
         depth[210:270, 260:380] = 900
         _, _, poses, reasons = generate_candidates(

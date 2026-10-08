@@ -1,4 +1,4 @@
-"""Controller independently rejects below-plane measurements before any offsets."""
+"""Controller independently enforces the 20 mm plane allowance before offsets."""
 
 import copy
 import json
@@ -26,7 +26,7 @@ def test_bin_filters_before_home_ranking_without_changing_ids_or_evidence(tmp_pa
     if flipped:
         plane[:] = np.diag([1., -1., -1., 1.])
     result = valid_result(candidate_count=3)
-    for candidate, z in zip(result.candidates, [-.02, .1, .2]):
+    for candidate, z in zip(result.candidates, [-.021, .1, .2]):
         candidate.pose.position.z = -z if flipped else z
     original = copy.deepcopy(result)
     observer = client(tmp_path)
@@ -38,14 +38,31 @@ def test_bin_filters_before_home_ranking_without_changing_ids_or_evidence(tmp_pa
     assert batch.evidence == json.loads(result.diagnostics_json)
     rejection = observer.node.events.record.call_args_list[0]
     assert rejection.args[1] == "candidate_plane_rejected"
-    assert "deficit=20.000 mm" in rejection.args[2]
+    assert "deficit=21.000 mm" in rejection.args[2]
+    assert "allowed deficit=20.000 mm" in rejection.args[2]
     assert rejection.kwargs["candidate_id"] == "batch:0"
+
+
+@pytest.mark.parametrize("flipped", [False, True])
+def test_bin_keeps_within_allowance_survivors_and_nearest_home_order(tmp_path, flipped):
+    config = configuration()
+    config.home_matrix[2, 3] = .8
+    if flipped:
+        config.selection.station.platform.base_from_platform[:] = np.diag([1., -1., -1., 1.])
+    result = valid_result(candidate_count=3)
+    for candidate, z in zip(result.candidates, [-.02, -.021, .1]):
+        candidate.pose.position.z = -z if flipped else z
+    original = copy.deepcopy(result)
+    batch = client(tmp_path)._validate_result(result, config, False)
+    assert [c.identifier for c in batch.candidates] == ["batch:2", "batch:0"]
+    assert [c.priority for c in batch.candidates] == [3, 1]
+    assert result == original
 
 
 def test_all_below_floor_is_a_valid_empty_batch(tmp_path):
     result = valid_result(candidate_count=2)
     for candidate in result.candidates:
-        candidate.pose.position.z = -.01
+        candidate.pose.position.z = -.021
     batch = client(tmp_path)._validate_result(result, configuration(), False)
     assert batch.candidates == () and batch.identifier == "batch"
     # A bad pose is not allowed to hide malformed response evidence.
@@ -73,7 +90,7 @@ def test_all_below_floor_uses_existing_nine_home_retries(monkeypatch, tmp_path):
         result = valid_result()
         result.batch_id = existing.identifier
         result.candidates[0].id = f"{existing.identifier}:0"
-        result.candidates[0].pose.position.z = -.02
+        result.candidates[0].pose.position.z = -.021
         return observer._validate_result(result, config, False)
 
     rig.candidates.request = filtered
@@ -94,7 +111,7 @@ def test_tray_below_plane_retries_fresh_observations_then_accepts(monkeypatch, p
         result = future.result()
         stamps.append(result.header.stamp.nanosec)
         if len(stamps) < 3:
-            result.placement.surface_base.z = -.01
+            result.placement.surface_base.z = -.021
     rig.on_send = lower_first_two
     options = {"check_state": Mock()} if preview else {}
     point = rig.request(**options)
@@ -108,7 +125,7 @@ def test_tray_below_plane_retries_fresh_observations_then_accepts(monkeypatch, p
 @pytest.mark.parametrize("provider_rejected", [False, True])
 def test_tray_below_plane_exhausts_ten_requests(monkeypatch, provider_rejected):
     rig = TrayRig(monkeypatch, ["valid"] * 10)
-    rig.result.placement.surface_base.z = -.01
+    rig.result.placement.surface_base.z = -.021
     if provider_rejected:
         rig.result.status = "NO_VALID_PLACEMENT_DEPTH"
         rig.result.placement.valid = False
@@ -119,7 +136,7 @@ def test_tray_below_plane_exhausts_ten_requests(monkeypatch, provider_rejected):
 
 def test_tray_below_plane_pauses_with_item_held_and_return_available(monkeypatch):
     node, tray = acquisition_rig(monkeypatch, ["valid"] * 10)
-    tray.result.placement.surface_base.z = -.01
+    tray.result.placement.surface_base.z = -.021
     exhaust(node)
 
     def paused():
@@ -136,7 +153,7 @@ def test_tray_below_plane_pauses_with_item_held_and_return_available(monkeypatch
                                     "rejected_above", "rejected_valid", "rejected_missing"])
 def test_geometry_and_source_errors_do_not_consume_tray_retries(monkeypatch, damage):
     rig = TrayRig(monkeypatch, ["valid"])
-    rig.result.placement.surface_base.z = -.01
+    rig.result.placement.surface_base.z = -.021
     if damage == "plane":
         rig.config.tray.profile["reference_plane"]["base_from_plane"][2][2] = 0.
     elif damage == "provider":
@@ -160,7 +177,8 @@ def test_geometry_and_source_errors_do_not_consume_tray_retries(monkeypatch, dam
     assert rig.client.call_async.call_count == 1
 
 
-@pytest.mark.parametrize("z,valid", [(0., True), (-1e-6, True), (-.000002, False)])
+@pytest.mark.parametrize("z,valid", [
+    (0., True), (-.01, True), (-.02, True), (-.020001, True), (-.020002, False)])
 def test_tray_exact_boundary_and_tolerance(z, valid):
     result, config, sampling = response_fixture()
     result.placement.surface_base.z = z
@@ -174,7 +192,7 @@ def test_tray_exact_boundary_and_tolerance(z, valid):
 
 
 @pytest.mark.parametrize("flipped", [False, True])
-@pytest.mark.parametrize("height", [-.005, 0., .005])
+@pytest.mark.parametrize("height", [-.021, -.02, -.005, 0., .005])
 def test_controller_uses_saved_tilted_plane_at_returned_xy(flipped, height):
     from robot_controller.tray_client import TrayObservationUnavailable
     result, config, sampling = response_fixture()
@@ -196,8 +214,8 @@ def test_controller_uses_saved_tilted_plane_at_returned_xy(flipped, height):
     point[2] += height
     surface = result.placement.surface_base
     surface.x, surface.y, surface.z = map(float, point)
-    if height < 0:
-        with pytest.raises(TrayObservationUnavailable, match="deficit=5.000 mm"):
+    if height < -.02:
+        with pytest.raises(TrayObservationUnavailable, match="deficit=21.000 mm"):
             validate_result(result, config, sampling, 1_000_000_000, 3_000_000_000)
     else:
         accepted, _ = validate_result(result, config, sampling, 1_000_000_000, 3_000_000_000)

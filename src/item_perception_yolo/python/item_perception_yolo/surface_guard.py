@@ -8,6 +8,7 @@ from .pick_planning import rigid_matrix
 
 
 SURFACE_TOLERANCE_M = 1e-6  # 0.001 mm: arithmetic tolerance, not physical clearance.
+SURFACE_BELOW_PLANE_ALLOWANCE_M = .02  # Fixed 20 mm downward measurement allowance.
 
 
 class SurfaceGeometryError(ValueError):
@@ -22,14 +23,17 @@ class SurfaceHeight:
 
     @property
     def below_plane(self):
-        return self.surface_z_m < self.plane_z_m - SURFACE_TOLERANCE_M
+        """Whether the measured surface exceeds the permitted downward allowance."""
+        return self.surface_z_m < (
+            self.plane_z_m - (SURFACE_BELOW_PLANE_ALLOWANCE_M + SURFACE_TOLERANCE_M))
 
     @property
     def reason(self):
         return (f"Measured surface below {self.reference}: "
                 f"surface Z={self.surface_z_m * 1000:.3f} mm, "
                 f"plane Z={self.plane_z_m * 1000:.3f} mm, "
-                f"deficit={(self.plane_z_m - self.surface_z_m) * 1000:.3f} mm")
+                f"deficit={(self.plane_z_m - self.surface_z_m) * 1000:.3f} mm, "
+                f"allowed deficit={SURFACE_BELOW_PLANE_ALLOWANCE_M * 1000:.3f} mm")
 
 
 class HeightPlane:

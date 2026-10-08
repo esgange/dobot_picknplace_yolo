@@ -9,7 +9,8 @@ from item_perception_yolo.surface_guard import HeightPlane, SurfaceGeometryError
 
 @pytest.mark.parametrize("tilted", [False, True])
 @pytest.mark.parametrize("flipped", [False, True])
-@pytest.mark.parametrize("height,below", [(.12, False), (0., False), (-.001, True)])
+@pytest.mark.parametrize("height,below", [
+    (.12, False), (0., False), (-.001, False), (-.02, False), (-.020002, True)])
 def test_surface_height_uses_local_xy_and_either_normal(tilted, flipped, height, below):
     plane = np.eye(4)
     if tilted:
@@ -27,13 +28,23 @@ def test_surface_height_uses_local_xy_and_either_normal(tilted, flipped, height,
     assert result.below_plane is below
     assert np.array_equal(point, before)  # Never clamp or offset the measurement.
     if below:
-        assert "below bin floor" in result.reason and "deficit=1.000 mm" in result.reason
+        assert "below bin floor" in result.reason and "deficit=20.002 mm" in result.reason
+        assert "allowed deficit=20.000 mm" in result.reason
 
 
-@pytest.mark.parametrize("z,below", [(0., False), (-1e-6, False), (-1.0001e-6, True)])
-def test_only_one_micrometre_arithmetic_tolerance(z, below):
+@pytest.mark.parametrize("z,below", [
+    (0., False), (-.019, False), (-.02, False), (-.020001, False), (-.0200010001, True)])
+def test_twenty_mm_allowance_with_one_micrometre_arithmetic_tolerance(z, below):
     result = HeightPlane(np.eye(4), "tray plane").measure([0., 0., z])
     assert result.below_plane is below
+
+
+def test_operator_tray_measurement_passes_without_changing_plane_or_surface():
+    plane = np.eye(4)
+    plane[2, 3] = .094223
+    result = HeightPlane(plane, "tray plane").measure([.1, .2, .093137])
+    assert not result.below_plane
+    assert result.plane_z_m == .094223 and result.surface_z_m == .093137
 
 
 @pytest.mark.parametrize("damage", ["shape", "nan", "scale", "reflection", "vertical"])

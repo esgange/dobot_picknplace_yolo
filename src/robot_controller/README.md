@@ -33,17 +33,19 @@ Preview to load the change; no artifact, interface or configuration migration.
 
 ## Measured-surface height guards
 
-Before ranking, independently reject received item surfaces below the calibrated
-platform-Z=0 bin floor. Before placement planning, independently reject measured
-placement surfaces below the saved Tray Teach reference plane. Both use one shared
-base-Z calculation at the actual target X/Y, supporting tilted planes and either
-normal direction, with 0.001 mm arithmetic tolerance and no added clearance.
+Before ranking, independently reject received item surfaces more than 20 mm below
+the calibrated platform-Z=0 bin floor. Before placement planning, independently
+reject measured placement surfaces more than 20 mm below the saved Tray Teach
+reference plane. Both use one shared base-Z calculation at the actual target X/Y,
+supporting tilted planes and either normal direction. Keep 0.001 mm arithmetic
+tolerance at the fixed 20 mm downward allowance.
 Check raw surfaces before standoff or trayplace_height; never clamp or repair them.
 Perception applies the same guard before returning usable targets.
 
 Skip bad bin candidates without renumbering their detector IDs/priorities; empty
-batches use the existing nine Home retries. Below-plane tray observations consume
-the existing ten-request budget, then pause with Continue / Return Item available.
+batches use the existing nine Home retries. Tray observations beyond the allowance
+consume the existing ten-request budget, then pause with Continue / Return Item
+available.
 Validate source and response evidence before treating a plane rejection as retryable.
 Invalid reference geometry remains terminal, including provider INVALID_GEOMETRY.
 Hardware, Auto Run/prefetch and Preview share admission. Taught travel, offsets,

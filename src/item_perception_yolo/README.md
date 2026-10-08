@@ -118,8 +118,8 @@ ros2 launch item_perception_yolo item_teach.launch.py
    New results replace older captures and start a new five-second hold; click
    inside RGB to resume passive video sooner. With YOLO ON, passive panes show
    translucent masks and object borders: red = size outside tolerance,
-   yellow = size passed but below-floor or nearby-height rejection, green = full
-   candidate acceptance. Gray means unavailable checks or another rejection.
+   yellow = size passed but exceeds the 20 mm floor allowance or nearby-height
+   limit, green = full candidate acceptance. Gray means unavailable checks or another rejection.
    Evaluate all displayed detections up to the YOLO cap, independently of the
    production pose count; RViz reflects that complete passive evaluation too.
    Keep 1 Hz background inference and one completed matched RGB/depth pair between
@@ -226,12 +226,13 @@ geometry, clearance and optional rendering. `timings_ms` separates those stages,
 source validation, preview wait, capture (including median), median preparation,
 planning validation, native round-trip/transport and total detector duration.
 Item Teach adds `capture_voxel_ms` for the request's cloud-only worker processing.
-Measured item surfaces below the calibrated platform-Z=0 bin floor are rejected
-before candidate ranking/count limits and before gripper standoff. The shared
-guard compares base Z with the floor at the measured base X/Y, supporting tilted
-planes and either normal direction; 0.001 mm is the sole arithmetic tolerance.
-Reject without clamping, record source index plus measured/plane Z and deficit,
-and continue searching for eligible candidates. Invalid reference geometry is an
+Measured item surfaces more than 20 mm below the calibrated platform-Z=0 bin floor
+are rejected before candidate ranking/count limits and before gripper standoff.
+The shared guard compares base Z with the floor at the measured base X/Y, supporting tilted
+planes and either normal direction. Allow a fixed 20 mm downward deficit, plus
+0.001 mm arithmetic tolerance at that limit. Reject without clamping, record source
+index plus measured/plane Z, actual deficit and allowed deficit, and continue
+searching for eligible candidates. Invalid reference geometry is an
 error even for an empty batch. Item Teach, Simulate Trigger and headless detection
 share this path; the controller independently checks received surfaces. Existing
 nearby-height, size, camera-clearance and fresh-frame gates remain active.
