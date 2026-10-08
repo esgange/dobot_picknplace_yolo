@@ -258,6 +258,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
             if preview:
                 from .item_geometry import (
                     preview_detections, classify_size, render_depth, passive_overlay,
+                    draw_passive_bin_borders,
                 )
                 from .item_teach_core import validate_bin_clearance
                 source = request["geometry_source"]
@@ -285,7 +286,14 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                     depth_view = render_depth(depth, display_quality, cv2, np)
                     depth_view = passive_overlay(depth_view, detections, source, cv2, np,
                                                  cameras=request["depth_cameras"])
-                roi_status = {"visible": False, "reason": "Passive object overlays only"}
+                roi_status = draw_passive_bin_borders(
+                    overlay, request["measurement_context"], request["settings"]["bin_clearance"],
+                    cv2, np, reason=request["measurement_error"])
+                if depth_view is not None:
+                    draw_passive_bin_borders(
+                        depth_view, request["measurement_context"],
+                        request["settings"]["bin_clearance"], cv2, np, depth=True,
+                        reason=request["measurement_error"])
             if context is not None:
                 from .item_geometry import (
                     objects_from_result, generate_candidates,

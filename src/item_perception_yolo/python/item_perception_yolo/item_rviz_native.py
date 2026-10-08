@@ -1,7 +1,7 @@
 """Teaching visualization geometry, called only inside the private native worker."""
 
 from .item_geometry import (generate_candidates, reproject_pixels, rectangle_axes,
-                            passive_overlay, render_depth)
+                            passive_overlay, render_depth, draw_passive_bin_borders)
 from .floor_clearance import depth_scene
 from .depth_snapshot import DEPTH_ENCODING
 from .item_teach_core import validate_detection_settings, validate_quality
@@ -100,6 +100,9 @@ def teaching_rviz(request, data, cv2, np):
                 pane, request["detections"], settings["geometry_source"], cv2, np,
                 candidates=candidates, rejected=rejected, cameras=cameras)
                 for pane, cameras in ((rgb, None), (depth_view, request["context"])))
+            for index, pane in enumerate(views):
+                draw_passive_bin_borders(pane, request["context"], settings["bin_clearance"],
+                                         cv2, np, depth=bool(index))
     result = {"state": "ok", "generation": request["generation"],
               "nearby_overlay": overlay_requested,
               "point_count": len(cloud), "candidates": candidates, "rejected": rejected,

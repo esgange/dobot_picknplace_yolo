@@ -117,16 +117,25 @@ ros2 launch item_perception_yolo item_teach.launch.py
    updates are complete before display, including size/depth/nearby overlays.
    New results replace older captures and start a new five-second hold; click
    inside RGB to resume passive video sooner. With YOLO ON, passive panes show
-   only translucent masks and object borders: red = size outside tolerance,
+   translucent masks and object borders: red = size outside tolerance,
    yellow = size passed but below-floor or nearby-height rejection, green = full
    candidate acceptance. Gray means unavailable checks or another rejection.
    Evaluate all displayed detections up to the YOLO cap, independently of the
    production pose count; RViz reflects that complete passive evaluation too.
    Keep 1 Hz background inference and one completed matched RGB/depth pair between
-   results, with source age in the status band. No passive labels, axes, bin borders,
-   sampling/obstacle circles or hit-testing. YOLO OFF shows plain live video.
-   Detailed rejection
-   evidence remains in tooltips, the activity log and request diagnostics.
+   results, with source age in the status band. Show the saved green bin border
+   and optional light-blue inward pick-clearance border on both panes using their
+   own camera models. Click an RGB mask or rectangle to show its measured size,
+   taught dimensions/tolerance, color meaning and exact rejection reason below
+   the images. Gray can include border rejection, unselected classes or unavailable
+   checks; it does not specifically mean outside the bin. Video keeps updating;
+   the details remain tied to the clicked snapshot, labelled with source age.
+   Click another detection to inspect it, or empty space to clear the details.
+   Source/settings invalidation clears inspection; stale or suspended frames
+   cannot be inspected. Clicking does not calculate a pose or publish TF.
+   No passive labels, axes or sampling/obstacle circles cover the image.
+   YOLO OFF shows plain live video. Full rejection evidence remains in tooltips,
+   the activity log and request diagnostics.
    Size assumes each item is parallel to the floor and projects its rectangle
    onto the plane through the measured center. Registered depth must pass range,
    mask, MAD and coverage checks; no floor-plane size is substituted. Missing
@@ -134,10 +143,11 @@ ros2 launch item_perception_yolo item_teach.launch.py
    overwritten. The separate Bin Teach ROI editor is unchanged.
 
 6. Enter physical item length in `height`, short side in `width`, and choose the
-   ±millimetre `tolerance`. A green item rectangle means size within tolerance;
-   red means outside tolerance, gray means size not checked (missing measurements
-   or dimensions). Green alone does not mean a valid 3D pose. Detections remain
-   in background diagnostics in all three cases. Complete and save the settings,
+   ±millimetre `tolerance`. In passive preview, green means all candidate checks
+   passed, red means size failed, yellow means height failed and gray means
+   unchecked/another rejection. Detailed captures use size-colored rectangles;
+   their green rectangle alone does not mean a valid 3D pose. Detections remain
+   in background diagnostics. Complete and save the settings,
    then trigger a fresh capture to inspect the accepted poses and any rejections.
    The request applies strict class, size, ROI overlap, center-in-item and MAD checks. Accepted depth points are
    black, rejected points red inside the sampling circle. Blank/invalid required
@@ -477,8 +487,9 @@ strict production item schema 13, class filters and quality gates remain enforce
 ### Detailed captured RGB overlays
 
 Simulate Trigger, controller captures and optional saved debug images show the
-detailed geometry below. Passive YOLO shows only the masks and eligibility-colored
-borders described above; YOLO OFF shows plain video.
+detailed geometry below. Passive YOLO shows masks, eligibility-colored object
+borders and the saved bin/pick-clearance borders described above; click details
+appear below the images. YOLO OFF shows plain video.
 
 Captured segmentation shows mask shading and exactly one size-colored minimum-area rectangle
 derived from the mask. OBB shows its native oriented rectangle instead. Do not
@@ -502,10 +513,10 @@ A geometric dot is not a validated 3D pick pose. Production service calculations
 continue to retain only validated candidates.
 Metric dimensions, depth sampling and pose-generation mathematics are unchanged.
 
-With the selected station and bin validated, captured diagnostics include a green
-unfilled border labelled **Loaded Bin ROI** that projects the saved bin XY points at
-platform Z=0 into the RGB view, including empty detection results. The border
-does not appear in passive video. Its projection uses the exact
+With the selected station and bin validated, both passive YOLO and captured
+diagnostics include a green unfilled **Loaded Bin ROI** border that projects the
+saved bin XY points at platform Z=0, including empty detection results. A light-blue
+border shows enabled inward pick clearances. Its projection uses the exact
 current station camera/platform/bin evidence, RGB-time TF, color intrinsics and
 distortion (32 samples per edge), not the source station's placement or a guessed
 rectangle. The 32-samples-per-edge construction and
@@ -538,8 +549,9 @@ unchanged; no existing files are rewritten.
 
 Missing/changed inputs, behind-camera or offscreen geometry have an
 explicit `Bin ROI hidden` reason in diagnostics. YOLO OFF displays raw live RGB.
-Completed passive teaching inference is a source-bound snapshot: retain only its
-mask/rectangle colors on that exact RGB/depth pair until the next complete result.
+Completed passive teaching inference is a source-bound snapshot: retain its
+mask/rectangle colors and bin/pick-clearance borders on that exact RGB/depth pair
+until the next complete result.
 The status band shows source age; detailed timing/checks remain in tooltips.
 After five seconds of source age, or immediately on source/settings invalidation
 or unavailable live RGB, fall back to plain video until a new result arrives.

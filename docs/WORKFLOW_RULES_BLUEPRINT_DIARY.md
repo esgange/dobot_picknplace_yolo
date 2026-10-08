@@ -10345,6 +10345,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Item Teach was running during inspection and was left untouched. Preserve all
   operator files and unrelated RViz changes; scoped commit/push follows the workflow.
 
+### 2026-10-08 — Rule 255: passive Item Teach borders and detection inspection
+
+- The operator asked whether gray detections mean outside the bin, requested the
+  live bin border, and wanted each detection to expose size and color/rejection
+  meaning. Gray already means unchecked or another rejection, which can include
+  border failure, unselected classes or unavailable geometry/depth. Keep existing
+  acceptance and coloring: red size failure, yellow height failure, green fully
+  eligible; do not convert every gray item into an outside-bin classification.
+- Add saved green bin ROI and optional light-blue inward pick-clearance borders
+  to the completed passive Item RGB/depth pair. Reuse calibrated floor projection,
+  clipping and clearance geometry with each pane's own intrinsics/distortion.
+  Draw even when there are no detections, and expose missing ROI evidence instead
+  of guessing a border. This supersedes rule 253's Item passive ROI exclusion;
+  Tray passive rendering and YOLO OFF plain video are unchanged.
+- Permit clicks on each displayed RGB mask or rectangle. Read its exact displayed
+  snapshot's measurements, copied taught dimensions/tolerance and candidate/rejection
+  evidence; show selectable plain text below the images with the four-color legend
+  and precise reason. Keep video updating and label retained inspection with the
+  clicked source age. Another detection replaces the details; empty space clears
+  them. Invalidation clears inspection, and source/settings changes, stale frames,
+  YOLO OFF or production suspension reject new clicks. No extra inference, pose
+  calculation, TF, worker, ROS interface, configuration or hardware command.
+- Preserve completed-pair replacement, five-second freshness bound, production
+  priority, five-second simulated/real trigger captures and saved debug images.
+  Shared passive display metadata is opt-in for Item inspection; Tray keeps its
+  existing behavior. Controller, motion, filters and FSM are unchanged, so no FSM
+  export regeneration is required.
+- Validation: full synthetic/offscreen suites pass **683 Item Perception**,
+  **261 Tray Perception** and **1,370 Robot Controller** tests on isolated ROS
+  domains. New coverage includes exact RGB/depth border projection with distinct
+  distortion, no-calibration fallback, every color/reason, clicked-vs-newer result
+  evidence, continued video, no pose/TF, and stale/source/mode exclusions. After
+  extending the click test for rectangle-only selection and empty-space clearing,
+  all nine focused click checks pass. Inspect synthetic screenshots at 1560×960
+  and 1200×800: borders appear on both panes and details stay below the images.
+  Production and changed-test-line lint and whitespace checks pass.
+- All six changed Python modules resolve through the canonical install to source;
+  no rebuild is required. Leave relaunch and live verification to the operator.
+  No live process restarted, operator model executed, perception armed or robot commanded.
+  Preserve unrelated RViz edits, .env, calibration, teaching/model and runtime
+  artifacts; scoped commit/push follows the standing workflow.
+
 ### Future entry template
 
 ```text

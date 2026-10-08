@@ -1952,3 +1952,77 @@ def test_yolo_passive_pair_does_not_blink_to_new_raw_frames(window):
     window.yolo_toggle.setChecked(False)
     window._refresh_video()
     assert window.displayed_view["rgb"] == raw["rgb"]
+
+
+def test_passive_click_inspects_displayed_size_and_reason_without_freezing_or_pose(window):
+    raw = _completed_preview([1, 2, 3], [4, 5, 6])
+    detection = {"source_index": 7, "class_name": "item", "confidence": .9,
+                 "polygon": [[1., 1.], [1.5, 1.], [1.5, 1.5], [1., 1.5]],
+                 "rectangle": [[1., 1.], [3., 1.], [3., 3.], [1., 3.]],
+                 "measurement": {"length_mm": 105., "width_mm": 48.},
+                 "measurement_error": "", "size_valid": True}
+    ready = {**raw, "passive_overlay": True, "preview_binding": (0, 0),
+             "measurement_geometry": {"height": 100., "width": 50., "tolerance": 10.},
+             "metadata": {"detections": [detection], "count": 1},
+             "rviz": {"candidates": [], "rejected": [{"source_index": 7,
+                      "reason": "pick pixel outside projected bin-wall clearance"}]}}
+    window.yolo_toggle.setChecked(True)
+    window.preview_settings_paused = False
+    window.preview_update_due = None
+    window.job_busy = True
+    window.node.camera_snapshot = lambda: (raw, "RGB live")
+    window.node.last_view = ready
+    window._refresh_video()
+    point = gui.QtCore.QPointF(window.video.contentsRect().center())
+    replacement = {**ready, "rgb": bytes([90]) * 48, "stamp_ns": 100_050_000_000,
+                   "metadata": {"detections": [{**detection, "size_valid": False,
+                                  "measurement": {"length_mm": 180., "width_mm": 40.}}]}}
+    window.node.last_view = replacement  # A newer worker reply is not yet on screen.
+    window._select_detection(point)  # Inside the displayed box, outside the mask.
+    assert "105.0 × 48.0 mm" in window.video_status.text()
+    assert "Gray:" in window.video_status.text()
+    assert "outside projected bin-wall clearance" in window.video_status.text()
+    window._refresh_video()
+    assert window.displayed_view["rgb"] == replacement["rgb"]  # Live preview continues.
+    assert "105.0 × 48.0 mm" in window.video_status.text()  # Explicitly a clicked snapshot.
+    assert "Clicked snapshot" in window.video_status.text()
+    window._select_detection(point)
+    assert "180.0 × 40.0 mm" in window.video_status.text()
+    assert "Red: failed size check" in window.video_status.text()
+    assert window.frozen_view is None and window.selected_detection is None
+    assert window.pending_pose is None
+    window.node.clicked_pose.assert_not_called()
+    window.node.show_selected_pose.assert_not_called()
+    area, pixmap = window.video.contentsRect(), window.video.pixmap()
+    empty = gui.QtCore.QPointF(area.x() + (area.width() - pixmap.width()) / 2 + 1,
+                              area.y() + (area.height() - pixmap.height()) / 2 + 1)
+    window._select_detection(empty)
+    assert window.passive_inspection is None
+    assert "Click a detection" in window.video_status.text()
+    window._select_detection(point)
+    assert window.passive_inspection is not None
+    window.node._camera_generation += 1
+    window._refresh_video()
+    assert window.passive_inspection is None
+
+
+@pytest.mark.parametrize("invalid", ["source", "stale", "off", "settings", "production"])
+def test_passive_click_rechecks_source_and_mode_before_inspection(window, invalid):
+    view = {**_completed_preview([1, 2, 3], [4, 5, 6]),
+            "preview_mode": "passive", "passive_inspectable": True,
+            "preview_binding": (0, 0), "metadata": {"detections": [None]}}
+    window.displayed_view = view
+    window.node.yolo_enabled = True
+    window.preview_settings_paused = False
+    if invalid == "source":
+        window.node._camera_generation += 1
+    elif invalid == "stale":
+        view["stamp_ns"] -= 6_000_000_000
+    elif invalid == "off":
+        window.node.yolo_enabled = False
+    elif invalid == "settings":
+        window.preview_settings_paused = True
+    else:
+        window.node.background_suspended = lambda: True
+    window._select_detection(gui.QtCore.QPointF(window.video.contentsRect().center()))
+    assert window.passive_inspection is None and window.pending_pose is None

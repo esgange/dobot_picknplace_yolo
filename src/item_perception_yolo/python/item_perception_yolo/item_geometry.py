@@ -166,6 +166,15 @@ def draw_bin_clearance(overlay, context, clearance, cv2, np):
     return visible
 
 
+def draw_passive_bin_borders(overlay, context, clearance, cv2, np, *, depth=False, reason=""):
+    """Saved floor borders on this pane's exact camera model; no item annotations."""
+    if context is not None and depth:
+        context = {**context, "camera": context["depth_camera"]}
+    status = draw_bin_roi(overlay, context, reason or "No calibrated bin ROI applied", cv2, np)
+    draw_bin_clearance(overlay, context, clearance, cv2, np)
+    return status
+
+
 def draw_robot_camera_footprint(overlay, context, footprint_xy, mirrored, accepted, cv2, np):
     """Draw the complete planned housing outline projected onto platform Z=0."""
     pixels = project([[float(x), float(y), 0.0] for x, y in footprint_xy],

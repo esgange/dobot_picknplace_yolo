@@ -896,6 +896,8 @@ class ItemDetectNode(Node):
                 "preview_mode": "all" if preview is not None else "filtered",
                 "depth_rgb": pixels[frame_bytes:],
                 "depth_stamp_ns": None if depth is None else depth["stamp_ns"]}
+        if preview is not None:
+            view["measurement_geometry"] = copy.deepcopy(settings.get("geometry"))
         return view
 
     def _measurement_context(self, rgb, robot_max_age=1.0):

@@ -145,7 +145,7 @@ def exercise_all_candidates():
         teaching_rviz({**request, "nearby_overlay": True},
                       rgb.tobytes() + depth.tobytes(), cv2, np)
     # Passive mode checks the entire displayed cap and replaces both old
-    # annotated buffers from raw evidence. No circles, axes, labels or ROI remain.
+    # annotated buffers from raw evidence. Only masks/boxes and bin borders remain.
     passive_request = {**request, "nearby_overlay": True, "passive_overlay": True,
                        "candidate_limit": 100}
     passive, rendered = teaching_rviz(passive_request,
@@ -155,7 +155,8 @@ def exercise_all_candidates():
     pane = np.frombuffer(rendered[start:start+rgb.nbytes], np.uint8).reshape(rgb.shape)
     assert pane[240, 480].tolist() == [60, 115, 60]  # Valid beyond the taught count.
     assert np.array_equal(pane[200:205, 300:310], rgb[200:205, 300:310])
-    assert np.array_equal(pane[:200], rgb[:200])
+    assert np.array_equal(pane[80:160, 150:450], rgb[80:160, 150:450])
+    assert pane[240, 70].tolist() == [0, 255, 0]  # Calibrated green bin border.
     # A measured surface below the floor is yellow, despite a large standoff.
     depth[210:270, 125:235] = 900
     settings["geometry"]["tolerance"] = 100.
@@ -183,7 +184,37 @@ def exercise_all_candidates():
             for value, limit in ((result, 3), (passive, 100), (rejected, 100), (blocked, 100))]
 
 
-@pytest.mark.parametrize("exercise", ["exercise_voxels", "exercise_all_candidates"])
+def exercise_passive_bin_borders():
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import draw_passive_bin_borders, project_bin_roi
+    camera = {"k": [100., 0., 80., 0., 100., 60., 0., 0., 1.], "d": [.8, 0., 0., 0., 0.]}
+    depth_camera = {**camera, "d": [0.] * 5}
+    transform = np.diag([1., -1., -1., 1.])
+    transform[2, 3] = .8
+    context = {"camera": camera, "depth_camera": depth_camera,
+               "platform_from_optical": transform.tolist(),
+               "roi": [[-.3, -.2], [-.3, .2], [.3, .2], [.3, -.2]]}
+    clearance = dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1"), 50.)
+    panes = []
+    for depth in (False, True):
+        pane = np.zeros((120, 160, 3), np.uint8)
+        status = draw_passive_bin_borders(pane, context, clearance, cv2, np, depth=depth)
+        assert status["visible"]
+        assert np.any(np.all(pane == [0, 255, 0], axis=2))
+        assert np.any(np.all(pane == [102, 204, 255], axis=2))
+        pixels = project_bin_roi({**context, "camera": depth_camera if depth else camera}, cv2, np)
+        x, y = np.rint(pixels[len(pixels) // 8]).astype(int)  # Midpoint of the first edge.
+        assert np.any(np.all(pane[y-2:y+3, x-2:x+3] == [0, 255, 0], axis=2))
+        panes.append(pane)
+    assert not np.array_equal(*panes)  # Depth uses its own distortion.
+    blank = np.zeros_like(panes[0])
+    status = draw_passive_bin_borders(blank, None, clearance, cv2, np, reason="TF unavailable")
+    assert status == {"visible": False, "reason": "TF unavailable"} and not blank.any()
+
+
+@pytest.mark.parametrize("exercise", ["exercise_voxels", "exercise_all_candidates",
+                                      "exercise_passive_bin_borders"])
 def test_native_teaching_visualization(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

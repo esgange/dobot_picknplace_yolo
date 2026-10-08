@@ -464,6 +464,10 @@ def test_passive_inference_keeps_matched_pair_until_replaced_or_invalid():
     assert view["rgb"] == completed["rgb"] and view["depth_rgb"] == completed["depth_rgb"]
     assert view["stamp_ns"] == completed["stamp_ns"]
     assert view["preview_mode"] == "passive" and view["metadata"] == {}
+    inspectable = passive_inference_view(
+        raw, completed, True, 102_000_000_000, inspect_detections=True)
+    assert inspectable["metadata"] is completed["metadata"]
+    assert inspectable["passive_inspectable"] and not view["passive_inspectable"]
     for enabled, result, now in ((False, completed, 102_000_000_000),
                                  (True, None, 102_000_000_000),
                                  (True, completed, 106_000_000_000),
@@ -484,3 +488,36 @@ def test_passive_colors_never_mark_unchecked_candidates_green(tray):
                                    tray=tray) == (0, 220, 0)
     assert passive_detection_color({**item, 'size_valid': False}, rejected=blocked,
                                    tray=tray) == (255, 50, 50)
+
+
+@pytest.mark.parametrize("state,reason", [
+    ("red", "Size outside tolerance"),
+    ("yellow", "nearby point is 75 mm above candidate; limit 60 mm"),
+    ("green", "All candidate checks passed"),
+    ("gray", "pick pixel outside projected bin-wall clearance"),
+    ("class", "class not selected"),
+    ("depth", "insufficient valid depth pixels"),
+    ("setup", "Record or load Home"),
+])
+def test_passive_item_details_match_color_and_exact_snapshot_reason(state, reason):
+    from item_perception_yolo.item_preview import passive_item_details
+    detection = {"source_index": 7, "class_name": "item", "size_valid": state != "red",
+                 "size_reason": "Size outside tolerance" if state == "red" else "Size OK",
+                 "measurement": {"length_mm": 105., "width_mm": 48.}, "measurement_error": ""}
+    snapshot = {"candidates": [], "rejected": []}
+    if state == "green":
+        snapshot["candidates"] = [{"source_index": 7}]
+    elif state == "setup":
+        snapshot["pose_error"] = reason
+    elif state == "depth":
+        detection.update(measurement=None, measurement_error=reason, size_valid=None)
+    else:
+        snapshot["rejected"] = [{"source_index": 7, "reason": reason,
+                                 "rejection_stage": "height" if state == "yellow" else ""}]
+    view = {"rviz": snapshot, "measurement_geometry": {
+        "height": 100., "width": 50., "tolerance": 2.}}
+    text = passive_item_details(view, detection)
+    expected_color = state.title() if state in ("red", "yellow", "green") else "Gray"
+    assert expected_color + ":" in text and reason in text
+    assert "Taught 100 × 50 mm ± 2 mm" in text
+    assert ("Size unavailable" if state == "depth" else "105.0 × 48.0 mm") in text

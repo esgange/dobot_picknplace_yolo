@@ -110,13 +110,48 @@ class PassiveCameraView:
         return result
 
 
-def passive_inference_view(raw, completed, enabled, now_ns):
+def passive_inference_view(raw, completed, enabled, now_ns, *, inspect_detections=False):
     """Hold one matched annotated pair between inferences; never paint on newer raw pixels."""
     if (raw is None or not enabled or completed is None
             or not completed.get("passive_overlay")
             or not 0 <= (now_ns - completed["stamp_ns"]) / 1e9 <= PASSIVE_RESULT_MAX_AGE_SEC):
         return raw
-    return {**completed, "preview_mode": "passive", "metadata": {}, "passive_overlay": True}
+    return {**completed, "preview_mode": "passive", "passive_overlay": True,
+            "metadata": completed.get("metadata", {}) if inspect_detections else {},
+            "passive_inspectable": inspect_detections}
+
+
+def passive_item_details(view, detection):
+    """Describe the same validated evidence used to color one displayed Item snapshot."""
+    from .item_geometry import passive_detection_color
+
+    snapshot = view.get("rviz") or {}
+    rejected = snapshot.get("rejected", [])
+    color = passive_detection_color(detection, snapshot.get("candidates", []), rejected)
+    name, meaning = {
+        (255, 50, 50): ("Red", "failed size check"),
+        (255, 220, 0): ("Yellow", "failed height check"),
+        (0, 220, 0): ("Green", "valid candidate"),
+        (160, 160, 160): ("Gray", "unchecked or another rejection"),
+    }[color]
+    rejection = next((r for r in rejected if r["source_index"] == detection["source_index"]), {})
+    if name == "Red":
+        reason = detection.get("size_reason") or "Measured size is outside tolerance"
+    elif name == "Green":
+        reason = "All candidate checks passed in this snapshot"
+    else:
+        reason = (rejection.get("reason") or detection.get("measurement_error")
+                  or snapshot.get("error") or snapshot.get("pose_error")
+                  or (detection.get("size_reason") if detection.get("size_valid") is None else "")
+                  or "Candidate checks unavailable for this snapshot")
+    measured = detection.get("measurement")
+    size = (f"{measured['length_mm']:.1f} × {measured['width_mm']:.1f} mm"
+            if measured is not None else "Size unavailable")
+    expected = view.get("measurement_geometry")
+    target = (f"Taught {expected['height']:g} × {expected['width']:g} mm "
+              f"± {expected['tolerance']:g} mm" if expected is not None else "Size target unset")
+    return (f"#{detection['source_index']} {detection['class_name']} · {size} · {target}\n"
+            f"{name}: {meaning} · {reason}")
 
 
 def configure_status_band(label):

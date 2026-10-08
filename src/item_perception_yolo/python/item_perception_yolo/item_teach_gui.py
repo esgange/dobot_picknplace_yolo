@@ -35,7 +35,7 @@ from .platform_teach_core import (
 from .ui_state import load_package_ui_state, write_item_ui_state, write_item_preview_state
 from .item_preview import (
     CAPTURE_HOLD_SEC, CaptureMailbox, PassiveCameraView, configure_status_band, capture_status,
-    validate_prefix, passive_inference_view)
+    validate_prefix, passive_inference_view, passive_item_details, PASSIVE_RESULT_MAX_AGE_SEC)
 from .item_detector import ItemDetectNode, INITIAL_PREVIEW_YOLO, transform_matrix
 from .ui_state import write_item_station_state
 from .item_teach_recovery import recover_item_fields
@@ -322,6 +322,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.next_preview_at = 0.
         self.rviz_status = "RViz 1 Hz: waiting for calibrated RGB/depth"
         self.displayed_view = self.frozen_view = self.selected_detection = None
+        self.passive_inspection = None
         self.setWindowTitle("Item Teach")
         self.resize(1560, 960)
         self.setStyleSheet("""
@@ -515,6 +516,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
         images.setSizes([560, 560])
         view_layout.addWidget(images, 1)
         self.video_status = QtWidgets.QLabel("YOLO OFF — raw RGB")
+        self.video_status.setTextFormat(QtCore.Qt.PlainText)
+        self.video_status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.video_status.setWordWrap(True)
         view_layout.addWidget(self.video_status)
         split.addWidget(view_host)
@@ -860,8 +863,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             f"median {self.node.preview_frame_count} frames.\n"
             f"Active: confidence {yolo['confidence']:g}, IoU {yolo['iou']:g}, "
             f"{yolo['image_size']} px, cap {yolo['max_detections']}; all model classes.\n"
-            "Size border: GREEN within tolerance / RED outside / GRAY not checked.\n"
-            "Click for RGB/depth pose + teaching TF; click image again to resume live.\n"
+            "Object colors: GREEN valid / RED size failed / YELLOW height failed / "
+            "GRAY unchecked or other rejection.\n"
+            "Click a live detection for its size and rejection reason below the images.\n"
             "Edits update automatically, disarm and require saving before re-arming."
         )
 
@@ -885,6 +889,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.selected_pose_status = ""
         self.node.clear_selected_pose()
         self.displayed_view = self.frozen_view = self.selected_detection = None
+        self.passive_inspection = None
         self.last_preview_sequence = None
 
     def _show_capture(self, value, source):
@@ -920,17 +925,37 @@ class ItemTeachWindow(QtWidgets.QWidget):
         if self.frozen_view is not None:
             self._resume_live(preserve_rviz=self.simulation_response is not None)
             return
-        if view.get("preview_mode") != "all":
+        passive = view.get("preview_mode") == "passive" and view.get("passive_inspectable")
+        if passive and (
+                view.get("preview_binding") != (self.node.arm_epoch, self.node._camera_generation)
+                or not self.node.yolo_enabled or self.preview_settings_paused
+                or self.node.background_suspended()
+                or not 0 <= (self.node.get_clock().now().nanoseconds - view["stamp_ns"]) / 1e9
+                <= PASSIVE_RESULT_MAX_AGE_SEC):
+            return
+        if not passive and view.get("preview_mode") != "all":
             return
         matches = []
         for item in view["metadata"]["detections"]:
             polygon = QtGui.QPolygonF([QtCore.QPointF(*p) for p in item["polygon"]])
-            if polygon.containsPoint(pixel, QtCore.Qt.OddEvenFill):
+            rectangle = QtGui.QPolygonF([QtCore.QPointF(*p) for p in item["rectangle"]])
+            if (polygon.containsPoint(pixel, QtCore.Qt.OddEvenFill)
+                    or (passive and rectangle.containsPoint(pixel, QtCore.Qt.OddEvenFill))):
                 rect = item["rectangle"]
                 area = abs(sum(rect[i][0] * rect[(i+1) % 4][1]
                                - rect[(i+1) % 4][0] * rect[i][1] for i in range(4)))
                 matches.append((area, -item["confidence"], item["source_index"], item))
         if not matches:
+            if passive:
+                self.passive_inspection = None
+                self._show_passive_inspection(view)
+            return
+        if passive:
+            detection = min(matches, key=lambda value: value[:3])[3]
+            self.passive_inspection = {
+                "binding": view["preview_binding"], "stamp_ns": view["stamp_ns"],
+                "text": passive_item_details(view, detection)}
+            self._show_passive_inspection(view)
             return
         self.selected_detection = min(matches, key=lambda value: value[:3])[3]
         self.frozen_view = view  # Exact displayed frame, not the worker's newer result/index.
@@ -955,6 +980,21 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                 source_index=self.selected_detection["source_index"],
                                 measurement=self.selected_detection["measurement"],
                                 reason=self.selected_detection["measurement_error"])
+
+    def _show_passive_inspection(self, view):
+        legend = ("Object colors: Green valid · Red size failed · Yellow height failed · "
+                  "Gray unchecked/other rejection")
+        borders = "Borders: green bin · light blue pick clearance"
+        detail = self.passive_inspection
+        if detail is None:
+            roi = view.get("metadata", {}).get("roi_overlay", {})
+            note = "" if roi.get("visible") else " · " + roi.get("reason", "Borders unavailable")
+            text = f"{legend}\n{borders}{note}\nClick a detection for size and the exact reason."
+        else:
+            age = max(0., (self.node.get_clock().now().nanoseconds - detail["stamp_ns"]) / 1e9)
+            text = (f"{legend}\nClicked snapshot ({age:.1f}s ago): {detail['text']}\n"
+                    f"{borders} · Click another detection to inspect; empty space clears.")
+        self.video_status.setText(text)
 
     def _simulate_trigger(self):
         if (self.model_load_reserved or self.pending_simulation is not None
@@ -1598,7 +1638,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
             completed = None
         view = passive_inference_view(
             view, completed, self.node.yolo_enabled and not self.preview_settings_paused
-            and not suspended, self.node.get_clock().now().nanoseconds)
+            and not suspended, self.node.get_clock().now().nanoseconds, inspect_detections=True)
+        if (view is None or not view.get("passive_inspectable") or (
+                self.passive_inspection is not None and self.passive_inspection["binding"] != (
+                    self.node.arm_epoch, self.node._camera_generation))):
+            self.passive_inspection = None
         roi_note = ""
         if self.frozen_view is not None:
             view = self.frozen_view
@@ -1706,6 +1750,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             f"{title}\n{frame_note} | {camera_status} | {self.armed_toggle.text()}\n{roi_note}"
             + (f"\nPreview blocked: {self.preview_error}" if self.preview_error else "")
         )
+        if view.get("passive_inspectable"):
+            self._show_passive_inspection(view)
         if selected:
             item_note = (f"#{selected['source_index']} {selected['class_name']} "
                          f"| confidence {selected['confidence']:.2f}")

@@ -662,11 +662,16 @@ Simulate Trigger and saved `debug/pick_img/` pairs include these overlays,
 including blocked items when no valid poses remain. Enable
 **Save item/tray debug RGB/depth** on the controller to save request images.
 The request supplies complete overlays without another YOLO prediction.
-Between captures, YOLO ON shows only translucent detection masks and object
+Between captures, YOLO ON shows translucent detection masks and object
 borders on matching RGB/depth snapshots. Both windows use red for failed size
 tolerance and green for a fully eligible candidate; Item Teach additionally uses
 yellow for below-floor or nearby-height rejection. Tray Teach has no yellow state
 or passive placement-depth sampling. Gray means unchecked or another rejection.
+Item Teach also shows the saved green bin border and light-blue pick-clearance
+border on both panes. Click an RGB detection's mask or box to see its measured
+size, taught size/tolerance, color meaning and exact rejection reason below the
+images. Video continues; the details identify the clicked snapshot and its age.
+Click another detection to update the details or empty space to clear them.
 Item background checks all displayed detections up to the YOLO cap, independent
 of the production pose count. Keep the existing 1 Hz inference cadence and replace
 both panes only when a complete result arrives, without alternating raw frames.
