@@ -202,6 +202,16 @@ geometry, clearance and optional rendering. `timings_ms` separates those stages,
 source validation, preview wait, capture (including median), median preparation,
 planning validation, native round-trip/transport and total detector duration.
 Item Teach adds `capture_voxel_ms` for the request's cloud-only worker processing.
+Measured item surfaces below the calibrated platform-Z=0 bin floor are rejected
+before candidate ranking/count limits and before gripper standoff. The shared
+guard compares base Z with the floor at the measured base X/Y, supporting tilted
+planes and either normal direction; 0.001 mm is the sole arithmetic tolerance.
+Reject without clamping, record source index plus measured/plane Z and deficit,
+and continue searching for eligible candidates. Invalid reference geometry is an
+error even for an empty batch. Item Teach, Simulate Trigger and headless detection
+share this path; the controller independently checks received surfaces. Existing
+nearby-height, size, camera-clearance and fresh-frame gates remain active.
+
 Controller `candidate_timing` records validation, service wait and total latency.
 Native transport is the round-trip residual outside measured native processing;
 it also includes dispatch/scheduling and worker preparation.

@@ -31,6 +31,26 @@ The `candidate_response` event logs Home XYZ and each pose's controller priority
 original detector priority, ID and distance in metres. Restart controller and
 Preview to load the change; no artifact, interface or configuration migration.
 
+## Measured-surface height guards
+
+Before ranking, independently reject received item surfaces below the calibrated
+platform-Z=0 bin floor. Before placement planning, independently reject measured
+placement surfaces below the saved Tray Teach reference plane. Both use one shared
+base-Z calculation at the actual target X/Y, supporting tilted planes and either
+normal direction, with 0.001 mm arithmetic tolerance and no added clearance.
+Check raw surfaces before standoff or trayplace_height; never clamp or repair them.
+Perception applies the same guard before returning usable targets.
+
+Skip bad bin candidates without renumbering their detector IDs/priorities; empty
+batches use the existing nine Home retries. Below-plane tray observations consume
+the existing ten-request budget, then pause with Continue / Return Item available.
+Validate source and response evidence before treating a plane rejection as retryable.
+Invalid reference geometry remains terminal, including provider INVALID_GEOMETRY.
+Hardware, Auto Run/prefetch and Preview share admission. Taught travel, offsets,
+rates, blending and I/O are unchanged; this is not full-tool or trajectory checking.
+Rebuild item_perception_yolo to install the shared helper, then manually restart
+affected perception/controller/Preview processes when safe. No interface migration.
+
 ## Auto Run
 
 Start from configured, unheld READY with recorded tray joints and both pose
@@ -271,7 +291,7 @@ provider no-result/error/BUSY reply or response timeout at the same observation
 position. One attempt is **fresh tray pose → fresh placement depth**. A depth
 failure consumes that attempt even when a tray was found; the next attempt repeats
 tray detection and depth sampling from a new observation, with no saved-pose reuse.
-The first attempt plus two retries share one budget, not separate pose/depth budgets.
+The first attempt plus nine retries share one budget, not separate pose/depth budgets.
 Each request keeps its taught request timeout plus one second for the
 reply and requires RGB/depth captured after that request. A timed-out local future
 is discarded; a late reply cannot supply a later attempt. The provider serializes

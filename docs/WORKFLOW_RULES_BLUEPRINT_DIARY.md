@@ -10175,6 +10175,65 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve unrelated RViz, .env, calibration, teaching/model and runtime artifacts;
   scoped commit/push follows the standing workflow.
 
+### 2026-10-08 — Rule 252: bin-floor and tray-plane measured-surface guards
+
+- The operator approved guarding measured bin-pick and tray-placement surfaces
+  while preserving taught travel. Reject item surfaces below calibrated platform
+  Z=0 and placement surfaces below the exact saved Tray Teach reference plane,
+  before gripper standoff or trayplace_height. Do not clamp a target, introduce a
+  physical clearance margin or infer a full suction-cup/finger model. Taught
+  waypoints, between-waypoint motion, rates, blending and I/O remain unchanged;
+  this is not a complete trajectory or tool-envelope safety guarantee.
+- Add shared HeightPlane geometry in item_perception_yolo: transform both planes
+  into base_link, evaluate plane Z at measured base X/Y, and allow only 0.001 mm
+  arithmetic tolerance. Support tilted planes and either normal direction; reject
+  nonfinite/nonrigid references, invalid coordinates and planes parallel to base Z
+  (absolute unit-normal Z below 1e-9). Reference validation runs even for an empty
+  item batch or a tray placement request with no selected tray.
+- Item Teach/Simulate Trigger/headless detection share candidate rejection before
+  ranking/count limits; later valid candidates can fill the requested count.
+  Controller admission independently filters after validating all original source,
+  timestamp and pose evidence, before nearest-Home ranking. Preserve survivor IDs,
+  original detector priorities and immutable batch evidence. Log batch/candidate
+  IDs, measured/plane Z and deficit. All rejected returns a valid empty batch and
+  uses the existing nine Home acquisition retries; no retry budget reset or delay.
+- Tray provider checks measured depth before marking placement valid. A below-plane
+  observation retains tray/depth evidence and optional debug RGB/depth, reports
+  NO_VALID_PLACEMENT_DEPTH with placement.valid=false and a placement_rejection
+  diagnostic, and keeps the provider armed. Controller validates that evidence and
+  independently reproduces the rejection; invalid or inconsistent rejection
+  evidence is terminal. Ordinary below-plane observations consume the existing
+  ten-request budget, then retain Stop-confirmed PAUSED / Continue / Return Item
+  with the original held source and outputs. Invalid reference geometry reports
+  INVALID_GEOMETRY, disarms the provider and is terminal to the controller.
+- Hardware, Auto Run/prefetch and Preview share the controller checks. Preserve
+  fresh post-request frames, zero added retry settling, all source/freshness gates,
+  current tool offsets and 20% tray coverage. No public ROS type, artifact schema,
+  .env setting or operator-file changes. Existing source and malformed-response
+  failures are not reclassified as ordinary below-plane observations.
+- Validation: full Item Perception suite **662 passed**; final installed controller
+  suite **1,370 passed** and Tray Perception suite **259 passed**, all with synthetic
+  inputs and isolated ROS domains. Installed shared geometry/native tests also
+  passed **34 checks**. Cover translated/tilted/reversed planes, equality/tolerance,
+  below/above surfaces, offsets that would mask a bad surface, invalid references,
+  mixed/all-rejected batches, rank/count/ID preservation, nine Home retries, ten
+  fresh tray attempts, held acquisition pause/Return eligibility, Preview parity,
+  retained debug images and terminal evidence errors. An old size test's 900 mm
+  depth put its candidate below the 800 mm floor; change that sizing fixture to
+  750 mm and cover 900 mm explicitly as a floor rejection. Motion/I/O regression
+  suites pass. Scoped flake8 and git diff --check pass.
+- Rechecked process state: no Item/Tray Teach/Detect or controller/Preview process
+  was running. Canonical symlink build of item_perception_yolo, tray_perception
+  and robot_controller passed; verified the new helper imports from canonical
+  install. No driver build/library replacement, robot command, arming or live
+  process restart. Operator launches affected processes to activate this change;
+  live verification remains pending.
+- Update AGENTS, root/package READMEs and the FSM review, Pick/Place/Auto Run
+  diagrams and guard table. Regenerated all nine adjacent HTML/PDF diagrams;
+  verified source SHA-256 and all PDF page hashes and visually inspected placement.
+  Preserve unrelated RViz edits, .env, calibration, teaching/model and runtime
+  artifacts; commit/push only this tested scope under the standing workflow.
+
 ### Future entry template
 
 ```text

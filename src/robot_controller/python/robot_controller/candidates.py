@@ -9,6 +9,7 @@ import time
 
 from item_perception_interfaces.srv import GetItemPoses
 from item_perception_yolo.pick_planning import candidate_pose_in_base, rigid_matrix
+from item_perception_yolo.surface_guard import HeightPlane
 
 from .errors import FeedbackFailure, OperationCanceled
 
@@ -198,10 +199,18 @@ class CandidateClient:
         try:
             home = rigid_matrix(configuration.home_matrix, "Taught Home")[:3, 3]
             platform = selection.station.platform.base_from_platform
+            floor = HeightPlane(platform, "bin floor")
             ranked = []
             for candidate in found:
                 item = candidate_pose_in_base(
                     platform, candidate.position_m, candidate.quaternion)
+                height = floor.measure(item[:3, 3])
+                if height.below_plane:
+                    self.node.events.record(
+                        "WARNING", "candidate_plane_rejected", height.reason,
+                        batch_id=result.batch_id, candidate_id=candidate.identifier,
+                        detector_priority=candidate.priority)
+                    continue
                 distance = math.dist(home, item[:3, 3])
                 if not math.isfinite(distance):
                     raise ValueError("Candidate distance from Home must be finite")

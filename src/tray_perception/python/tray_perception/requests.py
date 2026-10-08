@@ -17,6 +17,7 @@ from camera_calibration_gui.calibration_core import quaternion_to_rotation_matri
 
 from item_perception_yolo.item_detector import encode_rgb_png
 from item_perception_yolo.item_teach_core import file_sha256, depth_coverage_ok
+from item_perception_yolo.surface_guard import HeightPlane, SurfaceGeometryError
 from tray_perception_interfaces.srv import GetTrayPose
 
 from .core import load_profile, ORIGIN_CONVENTION
@@ -308,6 +309,8 @@ class TrayRequests:
             path, settings = simulation if simulated else (binding["path"], binding["settings"])
             phase = "validate_sources"
             verified = self.prepare(path, settings, request.profile_sha256)
+            floor = (None if sampling is None else HeightPlane(
+                verified["profile"]["reference_plane"]["base_from_plane"], "tray plane"))
             check()
             phase = "fresh_observation"
             view = self._fresh_view(start_ns, started, deadline, check, sampling)
@@ -331,6 +334,7 @@ class TrayRequests:
             response.detected_count = result["count"]
             response.valid_count = sum(d["valid"] for d in result["detections"])
             response.found = selected is not None
+            surface_rejection = ""
             if selected is not None:
                 pose = response.tray
                 pose.id = f"{response.batch_id}:{selected['source_index']}"
@@ -376,7 +380,13 @@ class TrayRequests:
                     sampled.depth_header.frame_id = "base_link"
                     sampled.depth_header.stamp = Time(
                         nanoseconds=view["depth"]["stamp_ns"]).to_msg()
-                    sampled.valid = True
+                    height = floor.measure(measured["surface_base"])
+                    sampled.valid = not height.below_plane
+                    if height.below_plane:
+                        surface_rejection = height.reason
+                        self.node.events.record(
+                            "WARNING", "tray_placement_plane_rejected", height.reason,
+                            request_id=request_id, batch_id=response.batch_id, tray_id=pose.id)
                     self.prepare(path, settings, request.profile_sha256)
                     self._sole_provider()
             debug = {"requested": bool(request.save_debug_images), "rgb_path": "",
@@ -394,12 +404,16 @@ class TrayRequests:
                 "snapshot_context": view["camera_context"],
                 "reference_plane": verified["profile"]["reference_plane"],
                 "placement_sampling": sampling,
+                "placement_rejection": surface_rejection,
                 "inference_ms": result["inference_ms"], "detections": result["detections"],
                 "debug_capture": debug}, allow_nan=False)
             check()
             response.success = True
             response.status = "OK" if response.found else "NO_VALID_TRAY"
             response.message = "One tray pose returned" if response.found else "No eligible tray"
+            if surface_rejection:
+                response.status = "NO_VALID_PLACEMENT_DEPTH"
+                response.message = surface_rejection
             view = {**result_view, "trigger_binding": verified, "trigger_epoch": epoch}
             self.status = f"{response.status}: {response.message} | {response.batch_id}"
             event = "tray_simulated" if simulated else "tray_pose_response"
@@ -423,12 +437,15 @@ class TrayRequests:
         except Exception as exc:
             response = GetTrayPose.Response(success=False, found=False,
                                             status="ERROR", message=str(exc))
+            if isinstance(exc, SurfaceGeometryError):
+                response.status = "INVALID_GEOMETRY"
             view = None
             self.status = f"ERROR: {exc}"
             self.node.events.record(
                 "ERROR", "tray_request_failed", str(exc), request_id=request_id, phase=phase,
                 elapsed_sec=time.monotonic() - started, traceback=traceback.format_exc())
-            terminal = isinstance(exc, RuntimeError) and not self.node.native.closed
+            terminal = isinstance(exc, (RuntimeError, SurfaceGeometryError)) \
+                and not self.node.native.closed
             if self.node.native.failed or terminal:
                 self.node.fatal_error = str(exc)
                 self.disarm(str(exc))

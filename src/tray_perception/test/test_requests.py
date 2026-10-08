@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from pathlib import Path
@@ -177,6 +178,68 @@ def test_placement_request_uses_one_fresh_observation_and_reports_depth(
     if not usable:
         assert finished.kwargs['phase'] == 'placement_depth'
         assert 'Insufficient placement depth' in finished.kwargs['traceback']
+
+
+@pytest.mark.parametrize("z,valid", [(.24, True), (.2, True), (.2 - 1e-6, True), (.19, False)])
+@pytest.mark.parametrize("provider", ["tray_teach", "tray_detect"])
+def test_placement_floor_uses_saved_plane_and_retains_debug_evidence(backend, z, valid, provider):
+    node, _, digest = backend
+    node.get_name = lambda: provider
+    node.get_node_names_and_namespaces = lambda: [(provider, "/")]
+    ordinary = node.snapshot.side_effect
+
+    def snapshot(**_kwargs):
+        view = ordinary()
+        view["depth"] = {"stamp_ns": view["rgb"]["stamp_ns"],
+                         "received_at": view["rgb"]["received_at"], "depth": bytes(8)}
+        return view
+    node.snapshot.side_effect = snapshot
+    preview = node.preview.side_effect
+    node.preview.side_effect = lambda *args, **kwargs: {
+        **preview(*args, **kwargs), "depth_overlay": bytes(12)}
+    measured = {"state": "ok", "surface_base": [.12, .13, z],
+                "accepted_samples": 50, "total_samples": 60, "median_mm": 700., "sigma_mm": 1.}
+    node.native.call = MagicMock(return_value=(measured, b""))
+    arm(backend)
+    response = node.requests.handle(GetTrayPose.Request(
+        profile_sha256=digest, sample_placement_depth=True, save_debug_images=True,
+        placement=PlacementDepthRequest(x_mm=20., y_mm=30., diameter_mm=30., **QUALITY_DEFAULTS)),
+        GetTrayPose.Response())
+    assert response.success and response.found and response.placement.valid is valid
+    assert response.placement.surface_base.z == z
+    evidence = json.loads(response.diagnostics_json)
+    for key in ("rgb_path", "depth_path"):
+        assert Path(evidence["debug_capture"][key]).is_file()
+    assert node.requests.service is not None and not node.fatal_error
+    if not valid:
+        assert response.status == "NO_VALID_PLACEMENT_DEPTH"
+        assert "plane Z=200.000 mm, deficit=10.000 mm" in response.message
+        assert evidence["placement_rejection"] == response.message
+        event = next(c for c in node.events.record.call_args_list
+                     if c.args[1] == "tray_placement_plane_rejected")
+        assert event.kwargs["batch_id"] == response.batch_id
+        assert event.kwargs["tray_id"] == response.tray.id
+
+
+def test_invalid_saved_height_plane_is_terminal_without_depth_retry(backend):
+    node, _, digest = backend
+    arm(backend)
+    prepare = node.requests.prepare
+
+    def invalid_plane(*args):
+        verified = copy.deepcopy(prepare(*args))
+        verified["profile"]["reference_plane"]["base_from_plane"][2][2] = 0.
+        return verified
+    node.requests.prepare = invalid_plane
+    node.native.call = MagicMock()
+    response = node.requests.handle(GetTrayPose.Request(
+        profile_sha256=digest, sample_placement_depth=True,
+        placement=PlacementDepthRequest(x_mm=20., y_mm=30., diameter_mm=30., **QUALITY_DEFAULTS)),
+        GetTrayPose.Response())
+    assert not response.success and response.status == "INVALID_GEOMETRY"
+    assert "Invalid tray plane" in response.message
+    assert node.fatal_error and node.requests.service is None
+    node.native.call.assert_not_called()
 
 
 @pytest.mark.parametrize("last_usable", [False, True])

@@ -11,6 +11,7 @@ from .pick_planning import (
 from .depth_snapshot import item_depth_limits
 from .floor_clearance import usable_scene_depth, nearby_depth_check
 from .projection_cache import cached_rays, cached_mapping
+from .surface_guard import HeightPlane, SurfaceGeometryError
 
 
 BIN_CLEARANCE_COLOR = (102, 204, 255)
@@ -532,6 +533,12 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
         raise RuntimeError("Invalid platform-from-optical rigid transform")
     if roi.shape != (4, 2) or not np.isfinite(roi).all():
         raise RuntimeError("Invalid bin ROI")
+    planning = context.get("pick_planning")
+    if type(planning) is not dict or set(planning) != {
+            "home_matrix", "base_from_platform", "link6_from_robot_camera",
+            "pick_rotation_deg", "standoff_height_mm"}:
+        raise SurfaceGeometryError("Robot-camera pick-planning context is missing or malformed")
+    floor = HeightPlane(planning["base_from_platform"], "bin floor")
     clearance_roi = inset_bin_roi(context["roi"], settings["bin_clearance"])
     clearance_roi = (None if clearance_roi is None
                      else np.asarray(clearance_roi, dtype=np.float64))
@@ -589,13 +596,11 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             # previous +Y (short side); +Y is -previous +X, preserving handedness.
             yaw = math.atan2(float(axis[1]), float(axis[0])) + math.pi / 2
             quaternion = [0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)]
-            planning = context.get("pick_planning")
-            if type(planning) is not dict or set(planning) != {
-                    "home_matrix", "base_from_platform", "link6_from_robot_camera",
-                    "pick_rotation_deg", "standoff_height_mm"}:
-                raise ValueError("Robot-camera pick-planning context is missing or malformed")
             item_in_base = candidate_pose_in_base(
                 planning["base_from_platform"], position, quaternion)
+            height = floor.measure(item_in_base[:3, 3])
+            if height.below_plane:
+                raise ValueError(height.reason)
             attitude = select_pick_attitude(
                 planning["home_matrix"], item_in_base, planning["pick_rotation_deg"],
                 planning["standoff_height_mm"], planning["base_from_platform"],
@@ -635,6 +640,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                 },
             })
             label += f" Z={position[2] * 1000:.1f}mm"
+        except SurfaceGeometryError:
+            raise
         except ValueError as exc:
             rejected.append({"source_index": item["index"], "reason": str(exc)})
             label += " | " + str(exc)

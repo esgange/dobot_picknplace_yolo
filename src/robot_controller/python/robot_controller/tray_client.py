@@ -8,6 +8,7 @@ import time
 import numpy as np
 from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
 from item_perception_yolo.item_teach_core import depth_coverage_ok
+from item_perception_yolo.surface_guard import HeightPlane
 from tray_perception.core import ORIGIN_CONVENTION
 from tray_perception.placement import sampling_from_item
 from tray_perception.contract import SERVICE_NAME as SERVICE
@@ -37,7 +38,18 @@ class TrayAcquisitionExhausted(FeedbackFailure):
 
 
 def validate_result(result, config, sampling, start_ns, now_ns):
-    if result is None or not result.success or not result.found or not result.placement.valid:
+    try:
+        floor = HeightPlane(config.tray.profile["reference_plane"]["base_from_plane"],
+                            "tray plane")
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise FeedbackFailure(f"Invalid tray reference geometry: {exc}") from exc
+    if result is not None and result.status == "INVALID_GEOMETRY":
+        raise FeedbackFailure(f"Invalid tray placement geometry: {result.message}")
+    plane_rejected = result is not None and result.status == "NO_VALID_PLACEMENT_DEPTH"
+    if plane_rejected and (not result.success or not result.found):
+        raise FeedbackFailure("Invalid tray plane rejection: missing observation evidence")
+    if (result is None or not result.success or not result.found
+            or (not result.placement.valid and not plane_rejected)):
         reason = "no response" if result is None else f"{result.status}: {result.message}"
         raise TrayObservationUnavailable(f"No usable tray placement depth: {reason}")
     try:
@@ -87,6 +99,14 @@ def validate_result(result, config, sampling, start_ns, now_ns):
             sampling["x_mm"] / 1000, sampling["y_mm"] / 1000, 0.])
         if not np.allclose(target[:2], [surface.x, surface.y], atol=1e-6):
             raise ValueError("placement X/Y differs from the requested tray offsets")
+        height = floor.measure([surface.x, surface.y, surface.z])
+        if plane_rejected and sample.valid:
+            raise ValueError("provider plane rejection marked placement valid")
+        if height.below_plane:
+            raise TrayObservationUnavailable(
+                f"{height.reason} (batch {result.batch_id}, tray {pose.id})")
+        if plane_rejected:
+            raise ValueError("provider plane rejection disagrees with measured surface")
         return np.array([surface.x, surface.y, surface.z]), evidence
     except (ValueError, TypeError, KeyError, AttributeError, ZeroDivisionError) as exc:
         raise FeedbackFailure(f"Invalid tray placement response: {exc}") from exc

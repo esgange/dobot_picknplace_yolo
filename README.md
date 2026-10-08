@@ -76,6 +76,14 @@ returned count and image labels stay unchanged. Controller attempt numbers may
 therefore differ from the detector's P1…Pn labels; logs retain both and the pose ID.
 Reload/recovery or process restart invalidates the retained batch; no poses are
 persisted to disk.
+Measured item surfaces below the calibrated bin floor and placement surfaces
+below the saved tray plane are rejected **before** gripper/placement-height
+offsets. Compare base Z with the plane at the target X/Y, with only 0.001 mm
+arithmetic tolerance; never clamp a target. Perception and the controller both
+check this. Rejected bin candidates are skipped; empty batches use the existing
+nine Home retries. Below-plane tray observations use the existing ten requests
+and paused Continue / Return Item workflow. Taught travel and tool offsets are
+preserved; the guard does not model complete tool geometry or travel trajectories.
 Rebuild interfaces/controller and manually restart their clients after upgrading.
 
 **Save item/tray debug RGB/depth** applies to Pick Item, Place Item and Auto Run.

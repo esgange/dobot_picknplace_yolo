@@ -1,5 +1,20 @@
 # Robot Controller — Finite State Machine
 
+Measured-surface guard review: **2026-10-08**, baseline **`73582e3`** plus rule
+**252**. Item generation and controller admission independently reject surfaces
+below the calibrated platform-Z=0 bin floor. Tray placement provider and controller
+independently reject sampled surfaces below the exact saved reference plane.
+Evaluate plane height in base Z at actual target X/Y, supporting tilted planes
+and either normal direction. Allow 0.001 mm arithmetic tolerance, no extra margin
+or clamping. Check surfaces before standoff/trayplace_height. Filter bin candidates
+before count/ranking; controller preserves survivor IDs and nearest-Home order.
+All rejected becomes an empty batch with existing nine Home retries. Below-plane
+tray depth uses ten fresh requests and existing paused Continue / Return Item.
+Retain rejection diagnostics and optional tray debug images. Invalid geometry,
+sources and response evidence remain errors. Hardware/Auto Run/Preview share the
+guard; taught travel, offsets and motion/I/O stay unchanged. This guards measured
+surfaces, without modeling full tool geometry or between-waypoint trajectories.
+
 Tray placement coverage review: **2026-10-08**, baseline **`4d1fe62`** plus rule
 **251**, superseding rule 243's threshold. Place Item, Auto Run and Preview request
 a fixed **20%** valid-depth fraction, independent of the saved Item pick threshold.
@@ -840,10 +855,10 @@ typed status and failed service responses include the complete guidance.
 ```mermaid
 flowchart TD
     Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible poses retained after interruption or Return Item?"}
-    Saved -->|No| Detect["Post-request median depth before Home; rank poses then floor-clearance checks until batch full; optional debug images"]
+    Saved -->|No| Detect["Post-request median depth; reject surfaces below bin floor; rank and nearby-height check until batch full; optional debug images"]
     Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
     Reuse --> Entry
-    Detect --> Validate["Validate sources and short-X / long-Y convention"]
+    Detect --> Validate["Validate sources and convention; independently skip surfaces below bin floor before offsets"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
     Validate -->|Valid| Any{"Any valid candidates?"}
     Any -->|No| EmptyBudget{"All nine empty-result retries used?"}
@@ -1028,7 +1043,7 @@ flowchart TD
     Arrive --> Depth
     Travel -->|Failure or Stop| Stop["Stop and report failure; preserve outputs"]
     Arrive -->|Failure or Stop| Stop
-    Depth -->|No usable result or reply timeout| Budget{"Requests left?"}
+    Depth -->|No usable result, below-plane surface or timeout| Budget{"Requests left?"}
     Budget -->|Yes; stay at observation pose| Depth
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
     AcquisitionPause -->|Continue / Place Item Retry| Reset["Operator grants 10 new requests; recheck sources and position"]
@@ -1037,7 +1052,7 @@ flowchart TD
     PutBack --> Returned["READY; Place CANCELED; no new Pick"]
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
-    Depth -->|Valid; still at observation position| Fingers["Validate placement; use_grip OFF: confirm DO2 OFF then DO14 ON; keep suction"]
+    Depth -->|Surface on/above saved plane; still at observation position| Fingers["Validate placement; use_grip OFF: confirm DO2 OFF then DO14 ON; keep suction"]
     Fingers --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
     Queue --> Pre["MovL: placement X/Y at Home Z; same height as first Item Pick approach"]
     Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN, suction OFF, exhaust ON"]
@@ -1098,6 +1113,13 @@ pixel coverage (rule 251), with samples restricted to the tray and all circle pi
 the denominator. Empty/zero-valid samples fail; no count floor remains.
 Inadequate/clipped depth fails before
 any placement command. Hash/provider/plane checks remain strict.
+Provider and controller compare the measured surface to the exact saved plane
+at the returned base X/Y before trayplace_height. Below-plane depth is retryable
+with 0.001 mm numerical tolerance; geometry or evidence corruption remains fatal.
+Provider NO_VALID_PLACEMENT_DEPTH keeps the sampled evidence and optional debug
+images with placement.valid=false. The controller validates that evidence and
+independently reproduces the rejection before retrying; an inconsistent rejection
+is malformed. INVALID_GEOMETRY is terminal. No target is clamped.
 
 Retry missing pose/depth, no-result/error/BUSY responses and unanswered requests
 at most ten times total, including the first request. Each request has the
@@ -1219,7 +1241,7 @@ handling, and use trusted held-item placement even when launched from the GUI.
 flowchart TD
     Start["READY: Auto Run quantity and placement target; start elapsed timer"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Pick --> Tray["Linear lifts and exit; queue MovL then MovJ to identical tray joints without intermediate wait; confirm only final MovJ joints, execution and idle"]
-    Tray --> Observe["Fresh tray pose then placement depth: at least 20% valid pixels; optional debug RGB/depth; at most 10 complete attempts; zero added delay"]
+    Tray --> Observe["Fresh tray pose/depth: 20% valid pixels and surface on/above saved plane before offsets; debug RGB/depth; at most 10 attempts; zero added delay"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
     Prefetch --> Fingers["Validate placement; use_grip OFF: reopen and confirm outputs; keep suction"]
     Fingers --> Place["Queue approach → timed release → final retract; require all 3 accepted replies"]
@@ -1618,6 +1640,7 @@ Names below are relative to `/robot_controller/`.
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
+| Measured surface floor/plane (perception / controller / Preview) | Base Z at actual target X/Y must be at/above calibrated bin floor or saved tray plane before tool offsets, with 0.001 mm numerical tolerance; either normal sign and tilted planes; reject without clamping; skip bin candidates/use empty retry budget, retry tray observations/use acquisition pause; invalid geometry/evidence remains fatal |
 | Controller item priority (manual Pick / Auto Run / Preview) | Validate detector order and all source/timestamp/pose evidence first; then rank returned item XYZ in base_link by 3D distance from taught Home Link6 XYZ, exact ties by detector priority; preserve IDs and fixed order for the batch; never expand the detector's returned set |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
 | Pick nearby-depth eligibility (perception) | No usable median-depth point inside/on the physical outer bin and camera-XY radius reaches the saved floor-relative height difference from the candidate surface; evaluate platform Z=0 beneath each point along camera Z; exclude standoff; schema-13 defaults 150/60 mm and three frames; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |

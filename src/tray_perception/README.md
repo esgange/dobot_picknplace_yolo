@@ -488,6 +488,17 @@ insufficient valid percentage are rejected. The saved
 plane remains unchanged. A depth failure returns ERROR without killing/disarming
 the native worker/provider. Ordinary pose requests keep depth optional.
 
+Placement surfaces must also be on/above the exact saved reference plane at the
+returned base X/Y, before any controller placement-height offset. Use shared
+base-Z geometry with 0.001 mm numerical tolerance, either normal direction and
+tilted planes; never clamp or substitute a height. Below-plane results keep the
+tray pose and sampled depth evidence, set placement.valid=false and report
+NO_VALID_PLACEMENT_DEPTH with measured/plane Z and deficit. Preserve requested
+debug images and include placement_rejection in diagnostics. The provider stays
+armed; controller acquisition retries using fresh observations. Invalid reference
+geometry instead reports INVALID_GEOMETRY and disarms; the controller treats it
+as terminal. Taught plane artifacts and motion routes remain unchanged.
+
 `PlacementDepthResult` contains validity, base-frame target X/Y with measured
 surface Z, the depth timestamp, accepted/total counts, median and MAD sigma.
 Diagnostics echo `placement_sampling` alongside bound profile/model/camera/plane

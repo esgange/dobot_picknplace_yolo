@@ -177,7 +177,7 @@ def exercise_geometry():
     assert not disjoint_candidates
     assert disjoint_rejected == [{"source_index": 0,
                                   "reason": "item footprint fully outside bin ROI"}]
-    for z in (600, 900):
+    for z in (600, 750):
         depth[:] = z
         depth_settings = {**settings, "geometry": {**settings["geometry"],
                           "height": z*.1, "width": z*.04}}
@@ -1091,11 +1091,70 @@ def exercise_height_corrected_size():
                        [.08, .05], atol=1e-6)
 
 
+def exercise_surface_floor_guard():
+    import copy
+    import cv2
+    import numpy as np
+    from item_perception_yolo.item_geometry import generate_candidates
+    from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+    from item_perception_yolo.surface_guard import SurfaceGeometryError
+
+    cv2.setNumThreads(1)
+    camera = {"k": [1000., 0., 320., 0., 1000., 240., 0., 0., 1.], "d": [0.] * 5}
+    optical = np.diag([1., -1., -1., 1.])
+    optical[2, 3] = .8
+    context = {"camera": camera, "depth_camera": camera,
+               "platform_from_optical": optical.tolist(),
+               "roi": [[-.3, -.2], [-.3, .2], [.3, .2], [.3, -.2]],
+               "pick_planning": {"home_matrix": np.eye(4).tolist(),
+                                 "base_from_platform": np.eye(4).tolist(),
+                                 "link6_from_robot_camera": np.eye(4).tolist(),
+                                 "pick_rotation_deg": 0., "standoff_height_mm": 300.}}
+    settings = {"geometry_source": "mask", "quality": dict(QUALITY_DEFAULTS),
+                "bin_clearance": dict.fromkeys(("p1_p2", "p2_p3", "p3_p4", "p4_p1")),
+                "geometry": {"depth_frame_count": 3, "height": 70., "width": 28.,
+                             "tolerance": 100., "pickdepth_radius": 30.,
+                             "nearby_depth_radius_mm": 30., "nearby_depth_height_mm": 60.},
+                "yolo": {"class_ids": [1], "confidence": .5}}
+    rgb = np.zeros((480, 640, 3), np.uint8)
+    polygon = np.array([[270, 220], [370, 220], [370, 260], [270, 260]], np.float32)
+    item = {"index": 0, "class_id": 1, "class_name": "test", "confidence": .9,
+            "polygon": polygon, "rectangle": polygon, "center": np.array([320., 240.])}
+    other = {**item, "index": 1, "polygon": polygon + [150., 0.],
+             "rectangle": polygon + [150., 0.], "center": item["center"] + [150., 0.]}
+    for flipped in (False, True):
+        ctx = copy.deepcopy(context)
+        if flipped:
+            flip = np.diag([1., -1., -1., 1.])
+            ctx["platform_from_optical"] = (flip @ optical).tolist()
+            ctx["pick_planning"]["base_from_platform"] = flip.tolist()
+        for depth_mm, accepted in ((700, True), (800, True), (900, False)):
+            depth = np.full((480, 640), depth_mm, np.uint16)
+            _, _, poses, reasons = generate_candidates(
+                [item], rgb, depth, ctx, settings, cv2, np, render_images=False)
+            assert bool(poses) is accepted
+            if not accepted:
+                assert "below bin floor" in reasons[0]["reason"]
+                assert "deficit=100.000 mm" in reasons[0]["reason"]
+        depth = np.full((480, 640), 700, np.uint16)
+        depth[210:270, 260:380] = 900
+        _, _, poses, reasons = generate_candidates(
+            [item, other], rgb, depth, ctx, settings, cv2, np,
+            render_images=False, candidate_limit=1)
+        assert [p["source_index"] for p in poses] == [1]
+        assert reasons[0]["source_index"] == 0 and "below bin floor" in reasons[0]["reason"]
+    context["pick_planning"]["base_from_platform"] = [
+        [0., 0., 1., 0.], [0., 1., 0., 0.], [-1., 0., 0., 0.], [0., 0., 0., 1.]]
+    with pytest.raises(SurfaceGeometryError, match="parallel to vertical travel"):
+        generate_candidates([], rgb, depth, context, settings, cv2, np, render_images=False)
+
+
 @pytest.mark.parametrize("exercise", [
     "exercise_geometry", "exercise_registered_depth", "exercise_resolution_depth_coverage",
     "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking",
     "exercise_nearby_depth_filter", "exercise_nearby_overlay_projection",
-    "exercise_ranked_nearby_acquisition", "exercise_height_corrected_size"])
+    "exercise_ranked_nearby_acquisition", "exercise_height_corrected_size",
+    "exercise_surface_floor_guard"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"
