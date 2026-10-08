@@ -343,3 +343,100 @@ def test_gap_retains_the_published_cloud_not_an_unpublished_result(preview):
     diagnostic = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
     assert diagnostic["source_stamp_ns"] == first["stamp_ns"]
     assert diagnostic["age_sec"] == 1.
+
+
+def test_capture_cloud_reuses_owned_request_frames_without_inference(preview):
+    visual, node, _ = preview
+    node.settings = {"quality": dict(QUALITY_DEFAULTS)}
+    node.background_suspended = lambda: True
+    context = {"camera": node._color_info, "depth_camera": node._depth_info}
+    rgb, depth = deepcopy(node._image), deepcopy(node._depth)
+    node.native.call.return_value = ({"state": "ok", "generation": 3, "point_count": 1,
+                                     "nearby_overlay": False, "unchecked": [],
+                                     "candidates": [], "rejected": []}, snapshot()["data"])
+    with node.request_lock, node.operation_lock:
+        result = visual.compute_capture(rgb, depth, context, .75)
+        assert node.request_lock.locked() and node.operation_lock.locked()
+    assert result["capture"] and not result["candidates"]
+    assert result["data"] == snapshot()["data"]
+    assert result["stamp_ns"] == rgb["stamp_ns"]
+    assert result["depth_stamp_ns"] == depth["stamp_ns"]
+    header, payload, timeout = node.native.call.call_args.args
+    assert header["operation"] == "teaching_rviz" and "model" not in header
+    assert header["settings"] is None and header["detections"] == []
+    assert header["nearby_overlay"] is False
+    assert payload == rgb["rgb"] + depth["depth"] and timeout == .75
+    assert "pick_planning" not in context
+    visual.cloud_publisher.publish.assert_not_called()  # Owning request must validate first.
+    with pytest.raises(RuntimeError, match="owned request"):
+        visual.compute_capture(rgb, depth, context, .75)
+    node.native.call.assert_called_once()
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_capture_validation_preserves_request_locks(preview, corrupt):
+    visual, node, _ = preview
+    node.settings = {"quality": dict(QUALITY_DEFAULTS)}
+    context = {"camera": node._color_info, "depth_camera": node._depth_info}
+
+    def reply(*_):
+        if not corrupt:
+            node._camera_generation += 1
+        return ({"state": "ok", "generation": 3, "point_count": 1,
+                 "nearby_overlay": False, "unchecked": [], "candidates": [], "rejected": []},
+                b"truncated" if corrupt else snapshot()["data"])
+
+    node.native.call.side_effect = reply
+    with node.request_lock, node.operation_lock:
+        if corrupt:
+            with pytest.raises(RuntimeError, match="Invalid native RViz"):
+                visual.compute_capture(node._image, node._depth, context, 1.)
+            assert node.native.failed
+        else:
+            result = visual.compute_capture(node._image, node._depth, context, 1.)
+            assert "invalidated" in result["error"]
+        assert node.request_lock.locked() and node.operation_lock.locked()
+    visual.cloud_publisher.publish.assert_not_called()
+
+
+def test_each_capture_updates_during_production_then_idle_stream_resumes(preview):
+    visual, node, clock = preview
+    visual.publish(snapshot())
+    node.selected_pose_broadcaster.reset_mock()
+    node.background_suspended = lambda: True
+    visual.publish({**snapshot(), "stamp_ns": 100_050_000_000})
+    assert visual.cloud_publisher.publish.call_count == 1  # In-flight idle work stays suspended.
+    node._image = node._depth = None  # Captured data stays independent of newer input gaps.
+    for index in range(3):
+        clock[0] += .1
+        stamp = int(clock[0]*1e9)
+        captured = {**snapshot(), "capture": True, "candidates": [], "rejected": [],
+                    "unchecked": [], "stamp_ns": stamp, "depth_stamp_ns": stamp}
+        visual.publish(captured)
+        assert visual.cloud_publisher.publish.call_count == index + 2
+        assert visual.displayed is captured
+        assert not visual.displayed_grey
+        visual.hold("Production active; waiting for next pose capture")
+    node.selected_pose_broadcaster.sendTransform.assert_not_called()
+    # An older or duplicate idle result cannot overwrite the new request's cloud/poses.
+    visual.publish(snapshot())
+    visual.publish({**captured, "capture": False, "candidates": snapshot()["candidates"]})
+    assert visual.displayed is captured and visual.current is captured
+    clock[0] += 5.1
+    visual.tick()
+    assert visual.displayed_grey
+    assert visual.cloud_publisher.publish.call_count == 5
+    status = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert status["source"] == "pose_capture" and status["status"] == "stale_grey"
+    assert status["source_stamp_ns"] == captured["stamp_ns"]
+    node.background_suspended = lambda: False
+    node._image = {"width": 2, "height": 2}
+    node._depth = {"width": 2, "height": 2}
+    clock[0] += 1.
+    fresh(node, clock)
+    visual.publish({**snapshot(), "stamp_ns": node._image["stamp_ns"],
+                    "depth_stamp_ns": node._depth["stamp_ns"]})
+    assert visual.cloud_publisher.publish.call_count == 6 and not visual.displayed_grey
+    node.selected_pose_broadcaster.sendTransform.assert_called_once()
+    status = json.loads(visual.diagnostic_publisher.publish.call_args.args[0].data)
+    assert status["source"] == "background_preview"

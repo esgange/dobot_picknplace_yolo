@@ -55,15 +55,31 @@ class TeachingRvizPreview:
         self.diagnostic_publisher = node.create_publisher(String, DIAGNOSTIC_TOPIC, 1)
         node.create_timer(.2, self.tick)
 
-    def compute(self, view, options):
-        """Run in the GUI's existing single job slot, with no additional YOLO prediction."""
+    def compute_capture(self, rgb, depth, context, timeout):
+        """Reuse a pose request's owned worker and exact frames for cloud geometry only."""
+        node = self.node
+        view = {"observation": {"rgb": rgb, "depth": depth, "context": context,
+                                "epoch": node.arm_epoch,
+                                "camera_generation": node._camera_generation, "error": ""}}
+        options = {"quality": copy.deepcopy(node.settings["quality"]), "settings": None,
+                   "candidate_limit": None, "planning": None, "pose_error": ""}
+        result = self.compute(view, options, request_owned=True, timeout=timeout)
+        return {**result, "capture": True}
+
+    def compute(self, view, options, *, request_owned=False, timeout=None):
+        """Use the existing worker, owned by the GUI job or the current pose request."""
         node = self.node
         if view is None:
             return None
         if options.get("error"):
             return {"error": options["error"]}
-        if (node.background_suspended() or node.request_lock.locked()
-                or not node.operation_lock.acquire(blocking=False)):
+        if request_owned:
+            if (not node.request_lock.locked() or not node.operation_lock.locked()
+                    or options["settings"] is not None or "observation" not in view):
+                raise RuntimeError(
+                    "Capture voxels require an owned request and cloud-only snapshot")
+        elif (node.background_suspended() or node.request_lock.locked()
+              or not node.operation_lock.acquire(blocking=False)):
             return {"error": "Pose request has priority; RViz preview waiting"}
         try:
             node._validate_sources()
@@ -107,7 +123,8 @@ class TeachingRvizPreview:
             if overlay_requested:
                 payload += view["rgb"] + view["depth_rgb"]
             result, data = node.native.call(
-                header, payload, options["quality"]["request_timeout_sec"])
+                header, payload,
+                options["quality"]["request_timeout_sec"] if timeout is None else timeout)
             try:
                 if (set(result) != {"state", "generation", "point_count", "candidates", "rejected",
                                     "nearby_overlay", "unchecked"}
@@ -152,18 +169,32 @@ class TeachingRvizPreview:
         except (ValueError, OSError, TransformException) as exc:
             return {"error": str(exc)}
         finally:
-            node.operation_lock.release()
+            if not request_owned:
+                node.operation_lock.release()
 
     def publish(self, snapshot):
         with self.lock:
             if snapshot is None or "error" in snapshot:
                 self.hold("No RViz snapshot" if snapshot is None else snapshot["error"])
                 return
+            if self.node.background_suspended() and not snapshot.get("capture"):
+                self.hold("Production active; waiting for next pose capture")
+                return
             if snapshot["point_count"] == 0:
                 self.hold("No valid depth voxels; waiting for next frame")
                 return
+            if self.displayed is not None and all(
+                    snapshot[key] == self.displayed[key] for key in ("epoch", "camera_generation")):
+                if (any(snapshot[key] < self.displayed[key]
+                        for key in ("stamp_ns", "depth_stamp_ns"))
+                        or (self.displayed.get("capture") and not snapshot.get("capture")
+                            and snapshot["stamp_ns"] == self.displayed["stamp_ns"]
+                            and snapshot["depth_stamp_ns"] == self.displayed["depth_stamp_ns"])):
+                    return  # A late background job cannot replace a newer request capture.
             self.current = snapshot
             self.waiting_reason = ""
+            if snapshot.get("capture"):
+                self.next_publish = 0.  # Every completed request, even within the idle 1 Hz slot.
             self.tick()
 
     def hold(self, reason):
@@ -205,6 +236,7 @@ class TeachingRvizPreview:
         age = max(0., (self.node.get_clock().now().nanoseconds - sample["stamp_ns"]) / 1e9)
         self.diagnostic_publisher.publish(String(data=json.dumps({
             "status": "stale_grey" if self.displayed_grey else "retained_cloud",
+            "source": "pose_capture" if sample.get("capture") else "background_preview",
             "reason": self.waiting_reason, "source_stamp_ns": sample["stamp_ns"],
             "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
             "refresh_age_sec": max(0., time.monotonic() - self.displayed_at),
@@ -240,7 +272,7 @@ class TeachingRvizPreview:
             except (ValueError, OSError) as exc:
                 self.clear(str(exc))
                 return
-            if not self.waiting_reason:
+            if not self.waiting_reason and not sample.get("capture"):
                 try:
                     with node.condition:
                         validate_pair(node._image, node._depth, node._color_info, node._depth_info,
@@ -283,6 +315,7 @@ class TeachingRvizPreview:
             self.marker_publisher.publish(MarkerArray(markers=markers))
             self.diagnostic_publisher.publish(String(data=json.dumps({
                 "status": "snapshot", "source_stamp_ns": sample["stamp_ns"],
+                "source": "pose_capture" if sample.get("capture") else "background_preview",
                 "depth_stamp_ns": sample["depth_stamp_ns"], "age_sec": age,
                 "refresh_age_sec": max(0., time.monotonic() - self.displayed_at),
                 "voxel_size_mm": 10, "point_count": sample["point_count"],

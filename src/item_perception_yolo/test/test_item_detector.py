@@ -815,3 +815,59 @@ def test_controller_capture_is_published_only_after_the_request_completes(servic
         thread.join(3)
     assert not thread.is_alive()
     assert node.capture_preview.take()["response"].success
+
+
+@pytest.mark.parametrize("simulated", [False, True])
+@pytest.mark.parametrize("empty", [False, True])
+def test_pose_captures_publish_voxels_after_validation_even_for_empty_results(
+        service_node, simulated, empty):
+    node, _ = service_node
+    cloud = {"capture": True, "data": b"synthetic cloud"}
+    node.rviz = MagicMock()
+    if empty:
+        node.infer.return_value["metadata"]["candidates"] = []
+
+    def compute(rgb, depth, context, timeout):
+        assert node.request_lock.locked() and node.operation_lock.locked()
+        assert (rgb, depth) == node._snapshot.return_value[:2]
+        assert context["pick_planning"] == {"planning": True}
+        assert 0 < timeout <= node.settings["quality"]["request_timeout_sec"]
+        node.rviz.publish.assert_not_called()
+        return cloud
+
+    node.rviz.compute_capture.side_effect = compute
+    response, _ = node._pose_batch(
+        GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+                             pose_convention=GetItemPoses.Request.POSE_CONVENTION),
+        GetItemPoses.Response(), simulation_path=Path("profile.yaml") if simulated else None,
+        expected_digest="a"*64)
+    assert response.success and (response.status == "NO_VALID_ITEMS") is empty
+    node.infer.assert_called_once()
+    node._snapshot.assert_called_once()
+    node.rviz.compute_capture.assert_called_once()
+    node.rviz.publish.assert_called_once_with(cloud)
+    assert "capture_voxel_ms" in json.loads(response.diagnostics_json)["timings_ms"]
+    assert not node.request_lock.locked() and not node.operation_lock.locked()
+
+
+@pytest.mark.parametrize("failure", ["changed", "native", "timeout"])
+def test_invalid_capture_never_updates_voxels(service_node, monkeypatch, failure):
+    node, _ = service_node
+    node.rviz = MagicMock()
+    now = [100.]
+    monkeypatch.setattr(detector.time, "monotonic", lambda: now[0])
+
+    def compute(*_):
+        if failure == "changed":
+            node.arm_epoch += 1
+        elif failure == "timeout":
+            now[0] += 11.
+        else:
+            raise RuntimeError("Malformed native RViz response")
+        return {"capture": True}
+
+    node.rviz.compute_capture.side_effect = compute
+    response = call(node)
+    assert not response.success and not response.candidates
+    node.rviz.publish.assert_not_called()
+    assert not node.request_lock.locked() and not node.operation_lock.locked()

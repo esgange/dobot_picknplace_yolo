@@ -1132,6 +1132,7 @@ class ItemDetectNode(Node):
         view = None
         simulated = simulation_path is not None
         capture_preview = getattr(self, "capture_preview", None)
+        capture_rviz = getattr(self, "rviz", None)
 
         def check_active():
             if (epoch != self.arm_epoch or revision != getattr(self, "_input_revision", 0)
@@ -1204,6 +1205,14 @@ class ItemDetectNode(Node):
             stages["native_roundtrip_ms"] = view["native_roundtrip_ms"]
             stages["native_transport_ms"] = max(
                 0., view["native_roundtrip_ms"] - result["inference_ms"])
+            if capture_rviz is not None:
+                check_active()
+                stage_started = time.monotonic()
+                if stage_started >= deadline:
+                    raise ValueError("Request deadline exceeded before capture voxels")
+                view["rviz"] = capture_rviz.compute_capture(
+                    rgb, depth, context, max(0.001, deadline - stage_started))
+                stages["capture_voxel_ms"] = (time.monotonic() - stage_started)*1000.
             stage_started = time.monotonic()
             if len(result["candidates"]) > request.max_candidates:
                 raise RuntimeError("Detector exceeded requested candidate acquisition count")
@@ -1289,6 +1298,8 @@ class ItemDetectNode(Node):
                                batch_id=response.batch_id, status=response.status,
                                evidence=evidence,
                                candidates=result["candidates"])
+            if capture_rviz is not None:
+                capture_rviz.publish(view["rviz"])
         except Exception as exc:
             response.success, response.status, response.message = False, "ERROR", str(exc)
             response.candidates = []

@@ -1452,6 +1452,7 @@ def test_paired_model_must_match_saved_task_classes_and_geometry(window, paired_
 
 def test_scaled_letterbox_click_resumes_captured_pair(window):
     response, view = simulation_setup(window)
+    window.node.rviz.clear.reset_mock()
     window._show_capture({"response": response, "view": view}, "Controller")
     window._refresh_video()
     frozen = window.displayed_view
@@ -1462,6 +1463,7 @@ def test_scaled_letterbox_click_resumes_captured_pair(window):
     window._select_detection(center)
     assert window.frozen_view is None and window.selected_detection is None
     assert not window.node.show_simulated_poses.called
+    window.node.rviz.clear.assert_not_called()
     label = gui.QtWidgets.QLabel()
     label.resize(800, 600)
     label.setAlignment(gui.QtCore.Qt.AlignCenter)
@@ -1867,6 +1869,7 @@ def test_missing_calibration_loads_once_when_selected_files_become_available(win
 
 def test_controller_capture_replaces_simulation_and_restarts_five_second_hold(window, monkeypatch):
     response, view = simulation_setup(window)
+    window.node.rviz.clear.reset_mock()
     clock = [100.]
     monkeypatch.setattr(gui, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     window._show_capture({"response": response, "view": view}, "Simulated")
@@ -1890,6 +1893,7 @@ def test_controller_capture_replaces_simulation_and_restarts_five_second_hold(wi
     assert window.displayed_view["rgb"] == frame["rgb"]
     assert "Live passive video" in window.rgb_feedback.text()
     window.node.arm.assert_not_called()
+    window.node.rviz.clear.assert_not_called()  # Display/expiry cannot grey fresh request voxels.
 
 
 @pytest.mark.parametrize("failed", [False, True])

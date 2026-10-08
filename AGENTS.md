@@ -1891,6 +1891,18 @@ containment. Waiting for a reply does not stop already-queued motion. Keep all
 pose, suction, source and output gates; update diary/FSM and regenerate exports.
 No live restart, robot command, new setting/schema or hardware-command retry.
 
+Rule 250 refreshes Item Teach's RViz cloud from every successful real or simulated
+pose capture, including valid empty batches, while active production suspends
+background refresh. Reuse the exact captured RGB/median-depth/TF in the existing
+owned worker for cloud geometry only; no second YOLO prediction, frame acquisition
+or candidate calculation. Publish after final request/source validation, even
+within the idle 1 Hz slot, with original timestamps and no new candidate TFs.
+Retain live 1 Hz background clouds when idle, 10 mm voxels, five-second greying,
+source invalidation and transient-local retention. Late background results cannot
+overwrite captures; image display/resume/expiry must not clear capture clouds.
+Keep headless Item Detect and tray visualization unchanged. No controller motion,
+profile/schema, new worker/executor, automatic restart or hardware commands.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

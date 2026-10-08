@@ -201,6 +201,7 @@ The existing `inference_ms` is aggregate native processing, including YOLO,
 geometry, clearance and optional rendering. `timings_ms` separates those stages,
 source validation, preview wait, capture (including median), median preparation,
 planning validation, native round-trip/transport and total detector duration.
+Item Teach adds `capture_voxel_ms` for the request's cloud-only worker processing.
 Controller `candidate_timing` records validation, service wait and total latency.
 Native transport is the round-trip residual outside measured native processing;
 it also includes dispatch/scheduling and worker preparation.
@@ -215,10 +216,22 @@ file bytes; files and model hashes are still read at validation boundaries. File
 size/mtime alone never authorizes reuse of changed artifacts.
 
 Item Teach subscribes read-only to `/robot_controller/status`. Fresh active Pick,
-Place or Auto Run suspends new background YOLO/voxel jobs, retains age-labelled
-visualization and raw RGB, and resumes on fresh idle status. An already-running
-job finishes normally. Missing/stale status uses existing request-priority scheduling;
-headless remains independent. No extra executor, hardware client or worker kill.
+Place or Auto Run suspends background YOLO/voxel refresh. Every successful real
+or simulated pose capture, including `NO_VALID_ITEMS`, instead refreshes
+`/item_teach/voxel_cloud` once using that request's exact RGB, temporal-median
+depth and calibrated transform. The already-owned native worker calculates only
+cloud geometry, with no second YOLO prediction, new frames or candidate filtering.
+Cloud processing stays within the request's existing deadline and source checks;
+publication follows final request validation and is independent of debug saving.
+Each capture bypasses the idle 1 Hz publication limit and retains its original
+timestamps. Request clouds add no candidate TFs/markers; existing simulated TFs
+remain separate. Diagnostics identify `source=pose_capture` or `background_preview`.
+Idle restores the live 1 Hz background stream. Already-running background work
+finishes but cannot publish during active production or overwrite a newer capture.
+The previous cloud remains visible and greys after five seconds without replacement;
+showing/dismissing/expiring the image capture does not clear it. Missing/stale status
+uses existing request-priority scheduling; headless Item Detect still has no voxel
+publisher. No extra executor, hardware client, worker kill or tray behavior change.
 
 Older schemas open only as unarmed recovery drafts. Review changed floor-relative
 measurement, radius/height, proposed three-frame median and effective minimum, then

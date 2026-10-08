@@ -865,10 +865,11 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Edits update automatically, disarm and require saving before re-arming."
         )
 
-    def _resume_live(self, *, clear_pending_capture=True):
+    def _resume_live(self, *, clear_pending_capture=True, preserve_rviz=False):
         if clear_pending_capture:
             self.node.capture_preview.take()
-        self.node.rviz.clear()
+        if not preserve_rviz:
+            self.node.rviz.clear()
         if (self.frozen_view is not None or self.pending_pose is not None
                 or self.pending_simulation is not None or self.simulation_busy):
             self.preview_revision += 1
@@ -888,7 +889,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
     def _show_capture(self, value, source):
         response, view = value["response"], value["view"]
-        self._resume_live(clear_pending_capture=False)
+        self._resume_live(clear_pending_capture=False, preserve_rviz=True)
         if not response.success:
             self.preview_error = response.message
             self._message(f"{source} capture failed: {response.message}")
@@ -917,7 +918,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._resume_live()  # Cancel display/request eligibility, never interrupt native work.
             return
         if self.frozen_view is not None:
-            self._resume_live()
+            self._resume_live(preserve_rviz=self.simulation_response is not None)
             return
         if view.get("preview_mode") != "all":
             return
@@ -1555,7 +1556,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.armed_toggle.setChecked(False)
         if (self.simulation_expires_at is not None
                 and time.monotonic() >= self.simulation_expires_at):
-            self._resume_live(clear_pending_capture=False)
+            self._resume_live(clear_pending_capture=False, preserve_rviz=True)
             self.preview_status = "Capture finished after 5 seconds; live passive video resumed"
             self._message(self.preview_status)
         if self.simulation_response is not None:
@@ -1583,9 +1584,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
                       lambda: self._preview_with_rviz(action, options))
         suspended = self.node.background_suspended()
         if suspended:
-            self.node.rviz.hold("Production active; background preview suspended")
+            self.node.rviz.hold("Production active; waiting for next pose capture")
             self.preview_status = (
-                "Production active: live video; background RViz refresh suspended")
+                "Production active: live video; RViz updates with each pose capture")
         rgb, depth = self.node.passive_snapshot()
         view = self.passive_camera.make(rgb, depth, self.node.get_clock().now().nanoseconds)
         roi_note = ""

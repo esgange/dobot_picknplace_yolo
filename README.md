@@ -637,8 +637,11 @@ Production/simulation use distinct post-request frames and a strict-majority
 float32 median for all pose, clearance and image paths. Item-only depth limits
 start at max(500 mm, configured minimum); tray limits stay unchanged.
 Review these changed measurements and frame settings explicitly before Save.
-Debug-disabled headless production skips rendering; fresh active controller status suspends
-new Item Teach background jobs. Source validation still reads/verifies contents.
+Debug-disabled headless production skips rendering. During active Pick/Place/Auto Run,
+Item Teach updates RViz voxels from each completed pose capture, including empty
+batches, while background jobs pause. Idle retains the live 1 Hz voxel stream.
+Captures reuse their exact RGB/depth/TF with no second YOLO prediction; unchanged
+clouds turn grey after five seconds. Source validation still reads/verifies contents.
 See the [capture and timing contract](src/item_perception_yolo/README.md#schema-13-capture-and-request-scheduling)
 for deployment/restart and measurement details.
 

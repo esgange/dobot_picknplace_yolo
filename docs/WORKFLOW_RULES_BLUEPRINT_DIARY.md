@@ -10105,6 +10105,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve unrelated RViz, .env, calibration, teaching/model and runtime files;
   scoped commit and verified push follow the standing workflow.
 
+### 2026-10-08 — Rule 250: refresh Item Teach voxels on pose captures during production
+
+- The operator observed that Item Teach's RViz cloud stopped refreshing during
+  Auto Run and requested one update per new pose capture while retaining the live
+  idle stream. Rule 237 deliberately suspends background YOLO/voxel jobs during
+  fresh active Pick/Place/Auto Run status. Headless Item Detect has no voxel
+  publisher; Tray Detect's separate cloud stream is unchanged by this change.
+- After Item Teach's real or simulated pose inference, reuse that request's exact
+  RGB, float32 temporal-median depth and calibrated transform in the already-owned
+  native worker's existing cloud-only operation. Do not capture another frame,
+  rerun YOLO or recalculate candidates. Keep the original request deadline and
+  source/CameraInfo/settings checks; record `capture_voxel_ms` separately. Native
+  malformed geometry remains terminal. Headless requests incur no cloud work.
+- Publish the 10 mm colored cloud only after successful final request validation,
+  including NO_VALID_ITEMS when the scene has usable depth. Every capture may
+  publish immediately, even within an idle 1 Hz publication interval, preserving
+  original RGB/depth timestamps. Empty clouds retain previous geometry. Request
+  clouds add no candidate TFs/markers; simulated candidate TFs remain separate.
+  Diagnostics distinguish `pose_capture` from `background_preview`.
+- Keep production background work suspended; already-running idle jobs may finish
+  but cannot publish during production or replace newer captures. Restore the
+  existing 1 Hz live stream on idle. Preserve reliable transient-local retention,
+  five-second greying without replacement, and source/settings invalidation.
+  Decouple captured-image display, click-to-resume and five-second expiry from
+  clearing RViz, so these GUI actions cannot grey a freshly published cloud.
+- Validation: all **637 Item Perception tests pass**, including synthetic native
+  geometry and ROS service transport. New tests cover owned-lock reuse, exact
+  snapshot payloads, remaining-deadline propagation, real/simulated and empty
+  captures, changed-source/timeout/native failures, rapid successive cloud
+  publications, no new production candidate TFs, old background suppression,
+  retained greying, idle recovery and GUI display/resume/expiry independence.
+  Production-module lint, changed-test-line lint and whitespace checks pass.
+- Update AGENTS and root/package READMEs. No controller behavior or FSM change,
+  interface/schema, worker/executor, native protocol or vendor modification.
+  Installed Python modules resolve to source; no build is needed. The operator
+  must restart Item Teach to activate; no live process was restarted, camera
+  re-armed or robot commanded. Live operation remains unverified. Preserve the
+  unrelated RViz edit, .env, calibration, teaching/model and runtime artifacts;
+  commit/push only this tested scope under the standing workflow.
+
 ### Future entry template
 
 ```text
