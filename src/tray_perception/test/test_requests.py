@@ -330,7 +330,7 @@ def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth)
 
     node.snapshot.side_effect = snapshot
     node.native.call = MagicMock(return_value=({
-        "state": "ok", "surface_base": [.12, .13, .24], "accepted_samples": 3,
+        "state": "ok", "surface_base": [.12, .13, .24], "accepted_samples": 2,
         "total_samples": 10, "median_mm": 700., "sigma_mm": 1.}, b""))
     sample = sampling_from_item({"geometry": {"pickdepth_radius": 30.},
                                  "quality": dict(QUALITY_DEFAULTS)}, 20., 30.)
@@ -351,7 +351,7 @@ def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth)
         assert response.placement.valid is sample_depth
         if sample_depth:
             evidence = json.loads(response.diagnostics_json)
-            assert evidence["placement_sampling"]["minimum_depth_fraction"] == .3
+            assert evidence["placement_sampling"]["minimum_depth_fraction"] == .2
         responses.append(response)
     assert responses[0].batch_id != responses[1].batch_id
     for response in responses:

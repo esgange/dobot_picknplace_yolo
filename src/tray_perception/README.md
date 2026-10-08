@@ -474,7 +474,7 @@ Do not run it while Tray Teach is Armed. An unarmed teaching GUI may still previ
 `GetTrayPose.sample_placement_depth=true` enables a `PlacementDepthRequest` containing
 positive tray-local X/Y in mm, the physical Item Teach depth sampling **diameter**,
 and quality settings. Controller Place Item, Auto Run and Preview requests use a
-fixed **30%** `minimum_depth_fraction`, independent of the saved Item pick threshold;
+fixed **20%** `minimum_depth_fraction`, independent of the saved Item pick threshold;
 all other quality settings come from Item Teach unchanged. The provider takes
 fresh synchronized RGB/depth
 after the trigger, performs the usual single tray inference, and samples the

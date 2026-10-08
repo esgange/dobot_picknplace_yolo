@@ -10145,6 +10145,36 @@ Never use a floating “latest” version in an issue, script, or deployment not
   unrelated RViz edit, .env, calibration, teaching/model and runtime artifacts;
   commit/push only this tested scope under the standing workflow.
 
+### 2026-10-08 — Rule 251: 20% tray placement depth coverage
+
+- The operator requested lowering placement's valid-depth requirement from 30%
+  to 20% after a capture retained 254/1055 pixels (24.1%). Supersede rule 243's
+  threshold only: the shared controller sampling builder now sends 0.2 for
+  Place Item, Auto Run and Preview. That reported sample passes coverage;
+  other placement validation remains required.
+- Keep Item pick quality and all operator files unchanged. Preserve the sampling
+  diameter, full-circle denominator, tray containment, range/MAD filtering,
+  empty/zero-valid rejection, freshness/source checks, retries and motion/I/O.
+  Providers and controller admission still use the explicit requested fraction;
+  no schema, interface, configuration field or automatic migration is added.
+- Validation: **1,398 tests pass** across the full controller suite and targeted
+  tray native-depth/request suites, using isolated ROS domain 81 and offscreen
+  Qt. Updated existing tests cover exact 20%, below-threshold coverage, 254/1055
+  acceptance, 210/1055 rejection and 211/1055 acceptance, unchanged saved pick
+  fractions, native 360p/720p sampling, stricter explicit fractions and GUI/headless
+  provider parity at 2/10 valid pixels. Scoped lint and whitespace checks pass.
+- Update AGENTS, root/Item/Tray/controller READMEs and the FSM review, placement
+  diagram, Auto Run diagram and admission guard. Regenerate all nine HTML/PDF
+  diagrams; verify source SHA-256
+  `4dbf6f2de3c63cfd7423bc702aafde96700c68ecb9040e1d560bfd3f33bfa467`
+  against both exports, check 20% on placement/Auto Run pages, and visually inspect
+  the placement page. Installed placement Python resolves to source; no build
+  is needed. Restart Robot Controller and Preview when idle to activate; existing
+  tray providers already honor the request value. No live process was restarted,
+  perception armed or robot commanded. Live verification remains pending.
+  Preserve unrelated RViz, .env, calibration, teaching/model and runtime artifacts;
+  scoped commit/push follows the standing workflow.
+
 ### Future entry template
 
 ```text

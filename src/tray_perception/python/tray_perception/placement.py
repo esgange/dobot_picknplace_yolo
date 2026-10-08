@@ -6,7 +6,7 @@ from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS, validate_qual
 
 
 FIELDS = ("x_mm", "y_mm", "diameter_mm", *QUALITY_DEFAULTS)
-PLACEMENT_MINIMUM_DEPTH_FRACTION = 0.3
+PLACEMENT_MINIMUM_DEPTH_FRACTION = 0.2
 
 
 def validate_sampling(value):

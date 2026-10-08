@@ -902,7 +902,7 @@ displayed on a 0–100 scale (greater than zero) and stored as
 after range/MAD filtering and item-mask inclusion; the denominator is every
 original depth pixel in the physical sampling circle. Empty footprints and
 zero valid pixels fail. There is no additional fixed pixel-count minimum.
-Tray placement uses a separate fixed 30% requirement, with tray containment
+Tray placement uses a separate fixed 20% requirement, with tray containment
 instead of the item mask, while retaining the saved diameter and other quality
 settings. Item picking keeps its saved percentage. Plane-based tray pose
 measurement itself needs no live depth.

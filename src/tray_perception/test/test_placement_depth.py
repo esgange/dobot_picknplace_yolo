@@ -58,7 +58,7 @@ def exercise_placement_depth():
         circle = np.argwhere((xx - width / 2)**2 + (yy - height / 2)**2
                              <= (.005 * focal / .8)**2)
         total = len(circle)
-        for fraction in (.3, .5):
+        for fraction in (.2, .3, .5):
             request["sampling"]["minimum_depth_fraction"] = fraction
             minimum = int(np.ceil(total * fraction))
             for good in (0, minimum - 1, minimum, total):
