@@ -398,6 +398,40 @@ def restorable_sources(window, monkeypatch):
     return path, camera, model
 
 
+def test_reload_profiles_waits_for_preview_and_discards_old_result(window, monkeypatch):
+    from tray_perception import documents
+    from test_documents import ready_form
+    _, camera, model = restorable_sources(window, monkeypatch)
+    window.node.preview = MagicMock(return_value={"generation": -1})
+    saved = []
+    for name, width in (("first_tray", 100.), ("second_tray", 150.)):
+        form, configured = ready_form(), settings()
+        form["draft"].update(name=name, width_mm=str(width))
+        configured["name"] = name
+        configured["geometry"]["width_mm"] = width
+        path, _, _, _ = documents.save_document(
+            form, configured, position(), plane(), camera, model, window.node.root)
+        saved.append((path, configured, path.read_bytes(), path.with_suffix(".pt").read_bytes()))
+    for path, configured, yaml_bytes, model_bytes in (saved[0], saved[1], saved[0]):
+        window.future = old_preview = Future()
+        window.job_kind, window.completion = "preview", MagicMock()
+        stale_callback = window.completion
+        monkeypatch.setattr(window, "_choose", lambda *_: path)
+        window._load_tray()
+        assert window.pending_job[2] == "read_profile" and window.future is old_preview
+        assert not window.load_teach_button.isEnabled()
+        old_preview.set_result({"obsolete": True})
+        finish_jobs(window)
+        stale_callback.assert_not_called()
+        assert window.profile_path == path and window._trigger_settings() == configured
+        assert window.preview_toggle.isChecked() and not window.armed_toggle.isChecked()
+        assert not window.node.fatal_error and not window.node.native.failed
+        assert not window.closing and window.load_teach_button.isEnabled()
+        assert path.read_bytes() == yaml_bytes
+        assert path.with_suffix(".pt").read_bytes() == model_bytes
+    assert window.node.inspect_model.call_count == 3
+
+
 @pytest.mark.parametrize("draft", [False, True])
 def test_startup_reopens_exact_saved_pair_plane_pose_and_save_target(window, monkeypatch, draft):
     from tray_perception import documents

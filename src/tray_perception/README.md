@@ -50,8 +50,10 @@ Both teaching windows share compact fixed three-line capture bands: source/resul
 pose count, age/processing time/five-second countdown, then rejection counts or a
 short reason when no pose was returned. Full pose values, batch identity, settings
 and rejection evidence remain in tooltips and request diagnostics.
-Between captures the RGB/depth panes show clean live camera pixels, without
-masks, axes, circles or labels. Passive depth uses the same Turbo palette over
+Between captures, YOLO ON shows only masks and object borders: red for invalid
+size, green for eligible trays and gray for unchecked or other rejected trays.
+Tray Teach has no passive height filter or yellow rejection state. YOLO OFF shows
+plain live video. Passive depth uses the same Turbo palette over
 200–1000 mm, with out-of-range pixels black; this display range is not a pose gate.
 Background inference/RViz diagnostics remain independent. Passive clicks do not
 inspect stale detections from another observation. Explicit four-corner teaching

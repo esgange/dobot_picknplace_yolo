@@ -10316,6 +10316,35 @@ Never use a floating “latest” version in an issue, script, or deployment not
   calibration, .env, teaching/model and runtime artifacts; scoped commit/push
   follows the standing workflow.
 
+### 2026-10-08 — Tray Teach reload and native-result regression audit
+
+- The operator requested checking Tray Teach for the Item Teach reload crash fixed
+  by 85d362a. The latest repository Tray log contains successful profile/model
+  restoration and no corresponding fatal failure. Tray uses its own result
+  validator and emits no Item rejection_stage field; inspection and reproduction
+  found no matching contract defect. Do not relax Tray validation or add retries.
+- Extend the existing private-native test to pass actual serialized tray results
+  and rendered pixels through TrayTeachNode.preview. Cover accepted trays, invalid
+  sizes, unselected classes, absent plane/calibration, image-edge rejection, an
+  empty rejected cleaned mask and no detections, in both passive/captured styles.
+  All expected rejections remain ordinary observations with no accepted tray.
+- Generate tiny synthetic segmentation/OBB weights in the test directory and
+  switch OBB -> segmentation -> reload segmentation through the actual parent
+  inspect/preview methods in one real private worker. Verify both preview styles,
+  valid replies and unchanged worker PID. No operator weights are executed.
+- Add an offscreen GUI regression that loads two distinct saved profile pairs and
+  reloads the first while an old preview is outstanding each time. Confirm queued
+  loading, discarded old results, restored size/class settings, resumed YOLO,
+  Armed OFF, no fatal state and unchanged YAML/model bytes.
+- Validation: the full Tray Perception suite passes **261 tests**, with synthetic
+  inputs, isolated ROS domain 82 and offscreen Qt. Changed test lines pass flake8;
+  git diff --check passes. Correct the package README's remaining obsolete claim
+  that passive YOLO shows no masks. Runtime/controller/FSM behavior is unchanged,
+  so no build, export regeneration or restart is needed. Live profile switching
+  remains operator verification; tests do not guarantee against unrelated faults.
+  Item Teach was running during inspection and was left untouched. Preserve all
+  operator files and unrelated RViz changes; scoped commit/push follows the workflow.
+
 ### Future entry template
 
 ```text

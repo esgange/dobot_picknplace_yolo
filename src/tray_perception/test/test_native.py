@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -330,17 +332,58 @@ def exercise_tray_axis_overlays():
     first, _ = native.corner_frame(square, np.array([0., 0., 1.]), np, short_x=True)
     second, _ = native.corner_frame(square[::-1], np.array([0., 0., 1.]), np, short_x=True)
     assert np.allclose(first, second)
+    # Return actual renderer output across JSON to the ROS-side preview validator.
+    # Exercise normal rejections as well as success, in passive and capture styles.
+    from tray_perception.mask_clean import clean_mask
+    _, _, evidence = clean_mask(np.zeros((8, 8), np.uint8), cv2, np)
+    evidence["source_touches_image_edge"] = False
+    mask_rejected = [{**objects[0], "polygon": np.empty((0, 2), np.float32),
+                      "mask_clean": evidence}]
+    edge = [{**objects[0], "polygon": np.array(
+        [[0., 200.], [100., 200.], [100., 250.], [0., 250.]], np.float32)}]
+    samples = []
+    for label, override, detected in (
+            ("valid", {}, objects),
+            ("size", {"settings": bad_size}, objects),
+            ("class", {"settings": {**accepted_settings, "accepted_class_ids": []}}, objects),
+            ("plane", {"plane": None}, objects),
+            ("calibration", {"camera_context": None}, objects),
+            ("edge", {}, edge), ("mask", {}, mask_rejected), ("empty", {}, [])):
+        native.clean_objects = lambda *_: detected
+        for passive in (False, True):
+            request = {**accepted_request, **override, "passive_overlay": passive}
+            reply, pixels = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
+            assert (reply["selected"] is not None) is (label == "valid")
+            assert all("rejection_stage" not in d for d in reply["detections"])
+            samples.append({"request": request, "result": {**reply, "inference_ms": 1.},
+                            "pixels": base64.b64encode(pixels).decode("ascii")})
+    return samples
 
 
 def test_private_tray_axes_and_inspection_overlays():
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"
-    command = "import sys,runpy; sys.path.insert(0,sys.argv[1]); " \
-        "runpy.run_path(sys.argv[2])['exercise_tray_axis_overlays']()"
+    command = "import sys,runpy,json; sys.path.insert(0,sys.argv[1]); " \
+        "print(json.dumps(runpy.run_path(sys.argv[2])['exercise_tray_axis_overlays']()))"
     result = subprocess.run(["/usr/bin/python3", "-c", command, str(runtime), __file__],
                             env=dict(os.environ, OPENBLAS_NUM_THREADS="1"),
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
+    from tray_perception.node import TrayTeachNode
+    from test_gui_node import preview_node
+    for sample in json.loads(result.stdout):
+        request, reply = sample["request"], sample["result"]
+        pixels = base64.b64decode(sample["pixels"])
+        raw = {"rgb": bytes(len(pixels)), "width": reply["width"], "height": reply["height"],
+               "stamp_ns": 100_000_000_000}
+        view = {"generation": 4, "rgb": raw, "camera_context": request["camera_context"]}
+        node = preview_node(view, reply)
+        node.plane = request["plane"]
+        node.native.call.return_value = reply, pixels
+        validated = TrayTeachNode.preview(
+            node, request["settings"], generation=4, passive_overlay=request["passive_overlay"])
+        assert validated["result"] == reply and validated["overlay"] == pixels
+        assert validated["passive_overlay"] is request["passive_overlay"]
 
 
 def test_real_private_worker_plane_and_prediction(tmp_path):
@@ -353,12 +396,16 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
         "lib/item_perception_yolo/yolo_runtime"
     config = tmp_path / "synthetic.yaml"
     model = tmp_path / "synthetic.pt"
+    obb_config = tmp_path / "synthetic_obb.yaml"
     config.write_text("nc: 2\nbackbone:\n  - [-1, 1, Conv, [16, 3, 2]]\n"
                       "  - [-1, 1, Conv, [32, 3, 2]]\n"
                       "head:\n  - [[0, 1], 1, Segment, [nc, 32, 64]]\n")
-    code = "import sys; sys.path.insert(0,sys.argv[1]); from ultralytics import YOLO; " \
-        "YOLO(sys.argv[2],task='segment').save(sys.argv[3])"
-    subprocess.run(["/usr/bin/python3", "-c", code, str(runtime), str(config), str(model)],
+    obb_config.write_text(config.read_text().replace("Segment, [nc, 32, 64]", "OBB, [nc, 1]"))
+    code = "import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); " \
+        "from ultralytics import YOLO; " \
+        "[YOLO(p,task=t).save(str(Path(p).with_suffix('.pt'))) " \
+        "for p,t in ((sys.argv[2],'segment'),(sys.argv[3],'obb'))]"
+    subprocess.run(["/usr/bin/python3", "-c", code, str(runtime), str(config), str(obb_config)],
                    env=dict(os.environ, YOLO_CONFIG_DIR=str(tmp_path), YOLO_OFFLINE="true",
                             YOLO_AUTOINSTALL="false", MPLCONFIGDIR=str(tmp_path)),
                    check=True, capture_output=True, timeout=30)
@@ -451,5 +498,31 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
              "model": {**model_config, "task": "segment", "yolo": settings["yolo"]}},
             bytes(64 * 48 * 3))
         assert result["reason"] == "No eligible tray" and not client.failed
+        # Switch tasks and reload in the same lifetime worker, then validate its
+        # first passive/captured predictions through the actual parent node path.
+        from tray_perception.node import TrayTeachNode
+        from test_gui_node import preview_node
+        view = {"generation": 4, "rgb": {"rgb": rgb, "width": 64, "height": 48,
+                                        "stamp_ns": 100_000_000_000},
+                "camera_context": context}
+        node = preview_node(view, {})
+        node.native, node.events, node.plane = client, MagicMock(), plane
+
+        def invalidate():
+            node.generation += 1
+            node.selected = None
+        node.invalidate = invalidate
+        for path, task, source in ((obb_config.with_suffix(".pt"), "obb", "obb"),
+                                   (model, "segment", "mask"), (model, "segment", "mask")):
+            metadata = TrayTeachNode.inspect_model(node, path, file_sha256(path))
+            assert metadata["task"] == task and client.process.pid == worker_pid
+            view["generation"] = node.generation
+            loaded_settings = {**settings, "model_task": task, "geometry_source": source}
+            for passive in (True, False):
+                validated = TrayTeachNode.preview(
+                    node, loaded_settings, generation=node.generation, passive_overlay=passive)
+                assert validated["result"]["selected"] is None
+                assert len(validated["overlay"]) == len(rgb)
+                assert not client.failed and client.process.pid == worker_pid
     finally:
         client.close()
