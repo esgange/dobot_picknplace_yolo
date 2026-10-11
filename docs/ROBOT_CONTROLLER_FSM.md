@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Missed-pick approach review: **2026-10-11**, baseline **`586ced9`** plus rule
+**264**. After the old item's upward lifts and exit transit, queue the next entry
+transit, pre-pick and final pick, matching the first approach. Omit only the next
+clearance from ordinary missed retries shared by manual Pick and Auto Run. Keep
+common safety Z, the independently selected next attitude at entry and through
+descent, selected CP blending, rates, timed I/O, reset evidence and Stop/Pause
+gates. Add no intermediate arrival or J6 check; blending can round the transit,
+so orientation completion before descent is not physically confirmed. Automatic
+dropped-item Return Item retains its clearance/ownership handoff. Synthetic tests
+do not establish that the observed robot alarm has been resolved.
+
 Auto Run repick reacquisition review: **2026-10-11**, baseline **`69c4c1a`** plus
 rule **263**. When a blocked prefetch becomes obsolete because confirmed placement
 clears its source area, finish the owned placement/Home, check cancellation and
@@ -983,13 +994,22 @@ flowchart TD
     PutBack -->|Eligible saved candidate; same queue| Entry
     PutBack -->|No eligible poses; return confirmed| Unsafe
     Miss --> More{"Another unblocked candidate with safe updated trickle target?"}
-    More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry transit → next clearance → next pre-pick → final approach"]
+    More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry with selected attitude → next pre-pick → final approach; blended"]
     Retry --> Sense
     More -->|No| Exhausted["Empty retract → clearance → exit transit → joint Home"]
     Exhausted --> Unsafe{"Remaining poses rejected by trickle guard?"}
     Unsafe -->|Yes| SafeEnd["READY / NO_PICK; no capture retry loop"]
     Unsafe -->|No| Limit
 ```
+
+Ordinary missed retries retain the old upward lifts and both safety-Z transits,
+then use the first approach's entry → pre-pick → pick sequence. Entry, pre-pick
+and pick share the next candidate's selected X/Y/attitude; only Z changes on
+descent. The next clearance is omitted from this branch only. All six targets
+remain in one ordered CP-blended group with no midpoint arrival wait; OPEN stays
+at 50% of next-entry travel, SUCK at 20% of final descent, and the next pickup
+still requires observed suction reset. Automatic dropped-item put-back keeps its
+separate clearance-based ownership boundary.
 
 Repick history is owned by the controller and shared by manual Pick and Auto Run.
 Use the original measured platform XY before offsets. All positive radii include
@@ -1819,6 +1839,7 @@ Names below are relative to `/robot_controller/`.
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
 | Measured surface floor/plane (perception / controller / Preview) | Base Z at actual target X/Y must be no more than 20 mm below calibrated bin floor or saved tray plane before tool offsets, with 0.001 mm numerical tolerance at that limit; either normal sign and tilted planes; reject without clamping; skip bin candidates/use empty retry budget, retry tray observations/use acquisition pause; invalid geometry/evidence remains fatal |
 | Controller item priority (manual Pick / Auto Run / Preview) | Validate detector order and all source/timestamp/pose evidence first; then rank returned item XYZ in base_link by 3D distance from taught Home Link6 XYZ, exact ties by detector priority; preserve IDs and fixed order for the batch; never expand the detector's returned set |
+| Missed-pick next candidate (rule 264) | Old lifts and both common-safety-Z transits, then next pre-pick/pick; omit next clearance only in ordinary missed retry; next selected attitude at entry and throughout descent; one blended group, terminal confirmation only, no midpoint orientation/J6 wait; preserve timed I/O and observed vacuum reset |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
 | Pick nearby-depth eligibility (perception) | No usable median-depth point inside/on the physical outer bin and camera-XY radius reaches the saved floor-relative height difference from the candidate surface; evaluate platform Z=0 beneath each point along camera Z; exclude standoff; schema-13 defaults 150/60 mm and three frames; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |

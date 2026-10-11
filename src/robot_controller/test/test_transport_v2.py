@@ -9,7 +9,7 @@ import robot_controller.hardware as hardware_module
 from robot_controller.errors import (CommandRejected, CommandResponseTimeout,
                                      FeedbackFailure, HeldSuctionLost, HeldUnknown)
 from robot_controller.hardware import DobotTransport, HOME_JOINT_TOLERANCE_RAD
-from robot_controller.motion import MotionIO, Target, home_targets
+from robot_controller.motion import Target, home_targets
 
 
 class EventLog:
@@ -723,6 +723,8 @@ def test_suction_interrupt_during_dispatch_prevents_later_motion(monkeypatch):
 
 
 def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypatch):
+    from test_motion_v2 import FakeHardware, item_pose, matrix, settings, tray_target
+    from robot_controller.motion import PickExecutor, pick_targets
     clock = [0.0]
     monkeypatch.setattr(
         hardware_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
@@ -771,7 +773,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
         captured.extend(calls)
         assert outputs_by_call == [{13: False, 1: True},
                                    {2: False, 14: False, 1: False, 13: False},
-                                   {2: False, 14: True}, {}, {1: False, 13: True}]
+                                   {}, {2: False, 14: True}, {}, {1: False, 13: True}]
         transport.pending_motion_outputs = {13: False, 1: True}
         progress(sample(vacuum_off))
         transport.pending_motion_outputs = {
@@ -780,18 +782,15 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
         return (SimpleNamespace(robot_return="{7}"),) * len(calls)
 
     transport.call_group = call_group
-    targets = (
-        Target("old_retract", np.eye(4), 100, 100, motion_io=(
-            MotionIO(80, 13, False), MotionIO(80, 1, True))),
-        Target("old_clearance", np.eye(4), 100, 100, motion_io=(
-            MotionIO(0, 2, False), MotionIO(0, 14, False),
-            MotionIO(0, 1, False), MotionIO(0, 13, False))),
-        Target("next_clearance", np.eye(4), 100, 100, motion_io=(
-            MotionIO(50, 2, False), MotionIO(50, 14, True))),
-        Target("next_prepick", np.eye(4), 100, 100),
-        Target("next_pick", np.eye(4), 6, 100, motion_io=(
-            MotionIO(20, 1, False), MotionIO(20, 13, True))),
-    )
+    planner = FakeHardware([False, False])
+    plans = [pick_targets(matrix(1.), item_pose(x=.1 * index), settings(), index)
+             for index in (1, 2)]
+    PickExecutor(planner, finish_home=True).run(
+        plans, settings(), tray_target=tray_target(), check=lambda _index: None,
+        return_home=lambda **_kwargs: None)
+    targets = planner.targets[1]
+    assert [target.name for target in targets] == [
+        "p1_retract", "p1_final", "p1_transit_exit", "p2_transit", "p2_prepick", "p2_pick"]
 
     acquired, stopped_pose = transport.move_batch(
         targets, batch_name="retry", stop_on_suction=True,
@@ -801,8 +800,9 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
     assert np.allclose(stopped_pose, np.eye(4))
     assert clock[0] == pytest.approx(0.2)
     assert [name for name, _fields in captured] == [
-        "MovLIO", "MovLIO", "MovLIO", "MovL", "MovLIO"]
+        "MovLIO", "MovLIO", "MovL", "MovLIO", "MovL", "MovLIO"]
     assert [fields["param_value"] for _name, fields in captured] == [
+        ["user=0", "tool=0", "v=100", "a=100"],
         ["user=0", "tool=0", "v=100", "a=100"],
         ["user=0", "tool=0", "v=100", "a=100"],
         ["user=0", "tool=0", "v=100", "a=100"],

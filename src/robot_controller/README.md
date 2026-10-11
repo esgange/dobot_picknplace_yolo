@@ -1250,9 +1250,9 @@ joints. Its tray detector need not be armed; Pick only travels to the saved pose
    line while preserving taught tool Z;
 5. attempt eligible saved candidates in controller Home-distance order, excluding terminal
    states; new batch size still comes from Item Teach `pose_candidates`;
-6. after an intermediate miss, retract to that candidate's final clearance and
-   proceed through the next candidate's safety-Z transit, clearance, pre-pick
-   and final pick without returning Home;
+6. after an intermediate miss, rise through that candidate's pre-pick and final
+   clearance, queue its safety-Z exit and the next candidate's entry transit,
+   then descend through the next pre-pick and final pick without returning Home;
 7. after success, lift to pre-pick, lift to clearance, then move directly to saved
    Tray Detect joints and finish HOLDING there with suction on;
 8. after full exhaustion, confirm Home and repeat from a fresh batch, up to three
@@ -1526,7 +1526,7 @@ the same saved tray destination and includes its TF for every candidate success.
 A missed non-final candidate starts one
 `candidate_N_pick_to_retry_M_pick` CP-blended group: old final to old pre-pick,
 old pre-pick to old clearance, N's exit `park_transit`, M's entry `park_transit`,
-then descend through M's clearance and pre-pick to M's final pick. The exit
+then descend directly through M's pre-pick to M's final pick. The exit
 preserves actual stopped X/Y/attitude; the entry uses M's X/Y/attitude. Both use
 `max(stopped Z, taught Home Z)` and taught travel rates. The exit is named
 `pN_transit_exit` and has no I/O. The entry's command name remains `pM_transit`
@@ -1537,10 +1537,15 @@ already-confirmed entry transit. Missed retries retain both entry and exit
 transits queued. Shared item return uses its Home-Z approach and retract. Both
 are blended under CP (default 100%) and can be rounded without an
 intermediate arrival wait or dwell; coincident coordinates still get separate
-requests. Direct Stop can always prevent later requests from being sent.
+requests. This next-item descent matches the first approach: command M's selected
+attitude at entry, then retain its X/Y/attitude while changing Z through pre-pick
+and pick. Rule 264 omits only M's clearance from ordinary missed-pick retries;
+automatic dropped-item Return Item retains its clearance/ownership handoff.
+No physical orientation or J6 confirmation is added before descent, and blending
+can round the transit. Direct Stop can always prevent later requests from being sent.
 At 80% of the first rise the group enters EXHAUST. At 0% of the second rise it
 enters both finger and vacuum NEUTRAL. At 50% of the transfer to M's transit it
-enters OPEN; M's clearance has no I/O. At 20% of M's final descent
+enters OPEN; M's pre-pick has no I/O. At 20% of M's final descent
 it enters SUCK. Each service must return `res=0` before the next is sent, while
 only M's final target is physically checked. A late DI1 from candidate N is
 ignored throughout its latched-miss recovery; candidate M is armed only after

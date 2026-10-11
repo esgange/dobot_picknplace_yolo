@@ -416,6 +416,15 @@ Home Z must be above saved pre-pick so the retract is upward; no fixed 50 mm
 release offset or minimum pre-pick height is introduced. All return speeds are
 100%, scaled by global SpeedFactor.
 
+For an ordinary missed pick, rise through the old item's pre-pick and clearance,
+then queue its exit transit and the next item's entry transit at the same safety
+Z. The entry commands the next item's selected attitude; descend directly through
+its pre-pick to final pick with that attitude, matching the first-item approach.
+The next item's extra clearance waypoint is omitted. Keep CP blending and OPEN
+at 50% of entry travel; there is no intermediate arrival or joint-orientation
+check. Blending can round the transit, so orientation is not physically confirmed
+complete before descent.
+
 A drop during Pause appends taught Home and remains PAUSED. Active automatic
 recovery instead joins the next saved candidate directly after the shared
 retract, in the same ordered queue. It retains the dropped source until execution

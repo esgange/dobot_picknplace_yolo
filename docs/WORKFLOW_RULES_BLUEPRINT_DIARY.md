@@ -10824,6 +10824,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   source on the next controller launch; operator relaunch and live verification
   remain pending. Commit and push only this scope under the standing workflow.
 
+### 2026-10-11 — Rule 264: match missed-retry descent to the first approach
+
+- User accepts blending and requests the next missed-pick candidate approach to
+  follow the first item's pattern after retracting to safe Z. Baseline 586ced9
+  already commands the next selected attitude at entry and retains it during
+  descent, but ordinary missed retries add a next-item clearance waypoint.
+  Remove only that waypoint: old pre-pick rise, old clearance rise, old exit
+  transit, next entry transit, next pre-pick, next final pick. Entry and descent
+  retain the independently selected candidate X/Y/attitude; exit/entry share
+  max(actual stopped Z, taught Home Z). Manual Pick and Auto Run share this path.
+- Preserve one ordered CP-blended group, both old-item lifts/transits, travel and
+  approach rates, EXHAUST at 80% of the first rise, NEUTRAL at 0% of the second,
+  OPEN at 50% of entry and SUCK at 20% of final descent. Keep observed DO13-OFF /
+  DI1-LOW reset before arming the next pickup, final settling, Stop/Pause and
+  candidate ledger gates. Add no intermediate arrival, orientation or J6 check;
+  a blended entry remains an approximate control point. First pick, successful
+  pickup, final exhaustion, placement and Home routes are unchanged. Automatic
+  dropped-item Return Item keeps its next clearance and execution-based source
+  ownership boundary; the removed target applies only to ordinary missed retries.
+- Extend synthetic route cases with large next-attitude changes and stopped Z
+  below/near/above Home. Verify next entry/pre-pick/pick share X/Y/attitude, old
+  lifts stay upward with actual source attitude, no additional pose sampling,
+  correct rates and output events, and terminal-only confirmation. Feed the
+  actual generated six-target retry into the transport test and verify services,
+  inherited CP, reset evidence and taught settling. Eight focused cases fail on
+  the original extra clearance and pass with this change. The full controller
+  suite passes **1,486 tests**; isolated robot_controller build succeeds under
+  build/retry_approach and install/retry_approach using unchanged installed deps.
+  Eight focused cases also pass through that overlay and its installed motion
+  module resolves to the edited source. Scoped flake8, AST and diff checks pass.
+- Update AGENTS, root/package READMEs and FSM review, Pick diagram and guard table;
+  regenerate adjacent offline HTML/PDF exports and verify source hashes, nine SVG
+  diagrams/nine PDF pages, updated retry text, viewer navigation and zoom; inspect
+  the changed node and viewer visually. No vendor, interface, schema,
+  .env or operator-artifact change; no offline-transfer milestone is claimed.
+  Preserve unrelated RViz edits and station/teach/model/runtime files. No robot
+  commands, arming, live restart or canonical build; next controller launch loads
+  this Python source through the existing symlink install. Operator relaunch and
+  live verification remain pending. The earlier MovL #558 returned alarm-state
+  -2 after accepted #557; removing this waypoint does not establish the robot's
+  underlying alarm cause or prove it resolved. Commit/push only this scope.
+
 ### Future entry template
 
 ```text

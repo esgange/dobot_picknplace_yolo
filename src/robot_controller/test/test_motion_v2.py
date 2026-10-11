@@ -498,15 +498,16 @@ def test_success_and_exhaustion_keep_vertical_safety_exit_before_final_travel(
 
 
 @pytest.mark.parametrize("stopped_z", [0.3, 0.997, 1.1])
-def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_z):
+@pytest.mark.parametrize("yaw_pair", [(20., 40.), (83., -75.5)])
+def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_z, yaw_pair):
     taught = settings()
     taught["acceleration"]["travel_percent"] = 80
     taught["acceleration"]["retract_percent"] = 40
     hardware = FakeHardware([False, False])
-    hardware.pose = item_pose(x=.102, y=.198, z=stopped_z, yaw_deg=1.)
-    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index, yaw_deg=20. * index),
-                          taught, index)
-             for index in (1, 2)]
+    hardware.pose = item_pose(x=.102, y=.198, z=stopped_z, yaw_deg=yaw_pair[0] + .3)
+    plans = [pick_targets(matrix(1.0), item_pose(x=0.1 * index), taught, index,
+                          rotation=item_pose(yaw_deg=yaw)[:3, :3])
+             for index, yaw in enumerate(yaw_pair, 1)]
     order = []
     returned = []
 
@@ -540,15 +541,14 @@ def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_
     retry = next(entry for entry in hardware.log if entry[0] == "move"
                  and entry[2]["batch_name"] == "candidate_1_pick_to_retry_2_pick")
     assert retry[1] == ("p1_retract", "p1_final", "p1_transit_exit", "p2_transit",
-                        "p2_initial", "p2_prepick", "p2_pick")
+                        "p2_prepick", "p2_pick")
     assert retry[2]["stop_on_suction"] is True
     assert np.array_equal(retry[2]["pickup_retract_pose"], plans[1][4].matrix)
     assert retry[2]["require_suction_reset"] is True
     assert retry[2]["pick_settling_sec"] == pytest.approx(0.2)
     assert retry[2]["return_terminal_pose"] is True
     assert np.allclose(retry[2]["confirmed_start_pose"], hardware.pose)
-    (retract, old_clearance, old_exit, transit, next_approach,
-     next_prepick, next_pick) = hardware.targets[1]
+    retract, old_clearance, old_exit, transit, next_prepick, next_pick = hardware.targets[1]
     assert retract.speed_percent == 100
     assert retract.acceleration_percent == 80
     assert retract.matrix[2, 3] == pytest.approx(max(stopped_z, plans[0][4].matrix[2, 3]))
@@ -573,8 +573,16 @@ def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_
     assert np.array_equal(transit.matrix[:3, :3], plans[1][0].matrix[:3, :3])
     assert transit.speed_percent == taught["speed"]["travel_percent"]
     assert transit.acceleration_percent == taught["acceleration"]["travel_percent"]
-    assert np.array_equal(next_approach.matrix, plans[1][1].matrix)
-    assert not next_approach.motion_io
+    assert next_prepick is plans[1][2] and next_pick is plans[1][3]
+    # Match the first approach: next-item XY and attitude at transit, then only Z changes.
+    for target in (next_prepick, next_pick):
+        assert np.array_equal(target.matrix[:2, 3], transit.matrix[:2, 3])
+        assert np.array_equal(target.matrix[:3, :3], transit.matrix[:3, :3])
+    assert transit.matrix[2, 3] > next_prepick.matrix[2, 3] > next_pick.matrix[2, 3]
+    assert (next_prepick.speed_percent, next_prepick.acceleration_percent) == (
+        taught["speed"]["travel_percent"], taught["acceleration"]["travel_percent"])
+    assert (next_pick.speed_percent, next_pick.acceleration_percent) == (
+        taught["speed"]["approach_percent"], taught["acceleration"]["approach_percent"])
     assert [(event.percent, event.channel, event.active)
             for event in transit.motion_io] == [
                 (50, 2, False), (50, 14, True)]
@@ -615,14 +623,12 @@ def test_missed_pick_opens_and_neutralizes_without_pickup_close():
         check=lambda _index: None,
         return_home=lambda **_kwargs: pytest.fail("Home was not requested"))
 
-    (retract, old_clearance, old_exit, transit, next_approach,
-     next_prepick, _pick) = hardware.targets[1]
+    retract, old_clearance, old_exit, transit, next_prepick, _pick = hardware.targets[1]
     assert retract.motion_io == vacuum_exhaust_events(80)
     assert old_clearance.motion_io == (
         gripper_neutral_events(0) + vacuum_neutral_events(0))
     assert transit.motion_io == gripper_open_events(50)
     assert not old_exit.motion_io
-    assert not next_approach.motion_io
     assert not next_prepick.motion_io
     assert not any(event.active and event.channel == 2
                    for batch in hardware.targets for target in batch

@@ -389,10 +389,11 @@ class PickExecutor:
             if remember_prepick is not None:
                 remember_prepick(next_plan[2], settings["gripper"])
             # Queue the old exit and next entry at the same safety Z before descent.
+            # Match the first approach: entry transit, pre-pick, then final pick.
             # Timed output events travel with their owning motion.
             next_transit = candidate_transit(upward[-1].matrix, next_plan)
             acquired, return_origin = self.hardware.move_batch(
-                (*upward, next_transit, next_plan[1], next_plan[2], next_plan[3]),
+                (*upward, next_transit, next_plan[2], next_plan[3]),
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
                 relax_pick_fingers=not close_on_pick,
