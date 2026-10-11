@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 
 from .motion import Target, candidate_transit
 from .release import release_targets
+from .repick import TrickleTargetRejected, trickle_plan
 
 
 @dataclass
@@ -16,7 +17,7 @@ class Attempt:
 
 class PickSession:
     def __init__(self, identifiers, plans, changed=None, *, previous_attempted=0,
-                 batch=None, configuration=None, repick=None):
+                 batch=None, configuration=None, repick=None, clearing_area_id=None):
         if len(identifiers) != len(plans):
             raise ValueError("Candidate identifiers and plans must match")
         self.attempts = [Attempt(name, tuple(plan)) for name, plan in zip(identifiers, plans)]
@@ -28,6 +29,10 @@ class PickSession:
         self.batch = batch
         self.configuration = configuration
         self.repick = repick
+        self.nominal_plans = tuple(attempt.plan for attempt in self.attempts)
+        self.clearing_area_id = clearing_area_id
+        self.trickle_rejections = {}
+        self.trickle_details = {}
 
     def reusable(self, configuration):
         """Saved candidates belong to this exact loaded configuration and process."""
@@ -97,7 +102,48 @@ class PickSession:
         """An interrupted approach stays eligible ahead of later pending candidates."""
         return next((index for index, attempt in enumerate(self.attempts, 1)
                      if attempt.state in ("PENDING", "INTERRUPTED")
-                     and not self.blocked(index)), None)
+                     and not self.blocked(index) and self.prepare_trickle(index)), None)
+
+    def prepare_trickle(self, index):
+        """Refresh pending targets after each outcome; an interrupted attempt is unchanged."""
+        step = self.repick.settings["trickle_depth"] if self.repick else 0.
+        if not step or not self.repick.settings["blaclist_trigger"]:
+            return True
+        attempt = self.attempts[index - 1]
+        if attempt.state != "PENDING":
+            return True
+        prior, area_id = self.repick.prior_attempts(
+            self.batch.candidates[index - 1].position_m,
+            clearing_area_id=self.clearing_area_id)
+        extra = prior * step
+        details = dict(batch_id=self.batch.identifier, candidate_id=attempt.identifier,
+                       area_id=area_id, prior_attempts=prior, extra_depth_mm=extra,
+                       nominal_z_mm=self.nominal_plans[index - 1][3].matrix[2, 3] * 1000)
+        try:
+            plan, height = trickle_plan(self.nominal_plans[index - 1], self.configuration, extra)
+        except TrickleTargetRejected as exc:
+            self.trickle_rejections[index] = str(exc)
+            details["reason"] = str(exc)
+            accepted = False
+            message = f"Candidate {attempt.identifier} skipped: {exc}"
+        else:
+            self.trickle_rejections.pop(index, None)
+            attempt.plan = plan
+            details.update(target_z_mm=height.surface_z_m * 1000,
+                           plane_z_mm=height.plane_z_m * 1000)
+            accepted = True
+            message = (f"Candidate {attempt.identifier}: trickle descent {extra:g} mm "
+                       f"after {prior} completed attempts; "
+                       f"pick Z={height.surface_z_m * 1000:.3f} mm")
+        if self.trickle_details.get(index) != details:
+            self.repick.events.record("INFO", "trickle_target" if accepted else "trickle_rejected",
+                                      message, **details)
+            self.trickle_details[index] = details
+        return accepted
+
+    @property
+    def trickle_exhausted(self):
+        return self.next_eligible is None and bool(self.trickle_rejections)
 
     def blocked(self, index):
         if self.repick is None:

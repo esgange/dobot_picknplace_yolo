@@ -1,5 +1,19 @@
 # Robot Controller — Finite State Machine
 
+Trickle-depth review: **2026-10-11**, baseline **`3d5befb`** plus rule **261**.
+Schema 15 adds finite nonnegative `retry.trickle_depth` (mm), default 0. Positive
+steps require enabled blacklisting. A pending attempt's final pick base Z is its
+nominal target minus prior completed same-area attempts × step; e.g. 0/10/20 mm.
+Only final Z changes. Preserve other waypoints/attitude, rates, I/O and interrupted
+attempt depth. Check this actual endpoint against the floor at its actual base XY
+(20 mm allowance + 0.001 mm numerical tolerance) and the selected camera footprint.
+Reject unsafe endpoints, skip without counting, and Home/NO_PICK when none remain;
+invalid geometry remains an error. The placement bridge plans with only its old
+source area virtually cleared; actual history waits for PLACED. Preview uses the
+same guard with zero prior attempts. Schema-14 recovery keeps blacklist settings
+and proposes trickle 0; older profiles start repick disabled. No automatic artifact
+rewrite or public ROS change. Synthetic verification does not establish live safety.
+
 Repick history review: **2026-10-11**, baseline **`98a56ff`** plus rule **259**.
 Schema-14 Item Teach adds exact retry keys blaclist_trigger, blackist_radius (mm)
 and blackist_cooldown; initial zero values disable filtering until explicitly
@@ -911,7 +925,7 @@ flowchart TD
     Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible poses retained after interruption or Return Item?"}
     Saved -->|No| Detect["Post-request median depth; reject surfaces more than 20 mm below bin floor; rank, exclude active repick circles and nearby-height failures until batch full; optional debug images"]
     Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
-    Reuse --> Entry
+    Reuse --> Trickle
     Detect --> Validate["Validate sources and convention; independently skip surfaces more than 20 mm below bin floor before offsets; independently apply current repick exclusions"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
     Validate -->|Valid| Any{"Any valid candidates?"}
@@ -928,7 +942,10 @@ flowchart TD
     Any -->|Yes| Rank["Controller: nearest received item XYZ to taught Home in base_link; detector priority breaks ties"]
     Rank --> Home["Retain ranked poses; fresh idle + Home joints: skip queue, otherwise reach Home"]
     Home --> Plan["Recheck RGB-offset 90×25×30 mm camera footprint: normal or 180°; save ordered plans and ledger"]
-    Plan --> Entry["Entry park_transit → pre-pick → final approach"]
+    Plan --> Trickle["Choose unblocked pending pose; apply prior attempts × trickle mm to final Z only; retain interrupted depth"]
+    Trickle --> Safe{"Target above floor minus 20 mm; camera footprint safe?"}
+    Safe -->|Yes| Entry["Entry park_transit → pre-pick → final approach"]
+    Safe -->|No| Skip["Skip unsafe pose without counting; try next; no survivors: confirm Home / NO_PICK"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
     Sense -->|Yes| Drain["Latch pickup; block later commands; validate issued replies and active stationary DO echo"]
     Drain --> Acquire["Send one pickup Stop; await acceptance; fresh joint pose"]
@@ -943,12 +960,14 @@ flowchart TD
     HeldReturn -.-> DropGate["At measured pre-pick height: arm drop detection; no queue split; start fresh LOW timer"]
     DropGate -->|DI1 LOW for 500 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
     PutBack -->|Eligible saved candidate; same queue| Entry
-    PutBack -->|Batch exhausted; retract confirmed| Limit
-    Miss --> More{"Another currently unblocked candidate?"}
+    PutBack -->|No eligible poses; return confirmed| Unsafe
+    Miss --> More{"Another unblocked candidate with safe updated trickle target?"}
     More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry transit → next clearance → next pre-pick → final approach"]
     Retry --> Sense
     More -->|No| Exhausted["Empty retract → clearance → exit transit → joint Home"]
-    Exhausted --> Limit
+    Exhausted --> Unsafe{"Remaining poses rejected by trickle guard?"}
+    Unsafe -->|Yes| SafeEnd["READY / NO_PICK; no capture retry loop"]
+    Unsafe -->|No| Limit
 ```
 
 Repick history is owned by the controller and shared by manual Pick and Auto Run.
@@ -965,6 +984,21 @@ area or creates a new one. New activation does not age itself. Bound history to
 Expiry removes count and circle. Successful placement clears its captured area ID
 through the owning session's PLACED transition, including the old Auto Run session.
 Return Item/drop leaves history. Save settings only, never runtime areas to YAML.
+
+For enabled trickle depth, select each pending target just before dispatch using
+that area's completed count, including outcomes earlier in the same captured
+batch. Derive from the immutable nominal plan; update only final pick Z. Repeated
+eligibility checks and Pause/Continue never accumulate descent. Never alter saved
+pre-pick release, retract, clearance, transit, attitude, rates or timed events.
+The actual adjusted endpoint receives the shared plane-height test and camera-body
+containment check. Invalid geometry is an error; unsafe targets are skipped without
+physical-attempt accounting or clamping. An all-unsafe result confirms Home and
+ends NO_PICK. If suction loss required a put-back, an all-unsafe remainder finishes
+the shared Return Item route through Home rather than ending at the bin exit.
+Mixed survivors retain candidate identities and nearest-Home order.
+Logs record candidate/batch, source area, prior count, descent and target/floor Z.
+Existing area expiry, successful placement, manual clear and reload/restart reset
+both the count and derived descent. Return Item and drops do not reset either.
 
 Item requests carry RepickRegion[] in platform_reference metres, revision and
 bin/platform hashes with mandatory repick_exclusions_v1 handshake. Echo and verify
@@ -1340,7 +1374,10 @@ flowchart TD
     Ready -->|No| Wait["Supervise retract; count if completed; wait unheld for result"]
     Wait --> Ready
     Ready -->|Yes| Poses{"Any currently unblocked poses?"}
-    Poses -->|Yes| Append["Append taught Tray Detect MovJIO (50% fingers OPEN) → entry MovL → pre-pick MovL → pick; no Home or midpoint idle wait"]
+    Poses -->|Yes| Trickle["Plan next final Z from completed count; ignore only old source area pending successful placement"]
+    Trickle --> Safe{"Any safe adjusted targets?"}
+    Safe -->|No| UnsafeHome["Finish owned placement; confirm Home; NO_PICK; no extra captures"]
+    Safe -->|Yes| Append["Append taught Tray Detect MovJIO (50% fingers OPEN) → entry MovL → pre-pick MovL → pick; no Home or midpoint idle wait"]
     Poses -->|No| BlockedOnly{"Repick exclusions left no eligible unblocked poses?"}
     BlockedOnly -->|Yes| BlockedHome["Finish owned placement and confirm Home; PLACED clears only source area; count once"]
     BlockedHome --> Changed{"History revision changed since capture?"}
@@ -1731,6 +1768,8 @@ Names below are relative to `/robot_controller/`.
 | API | Main admission guard |
 | --- | --- |
 | `clear_repick_history` service | Configured idle/unheld INACTIVE or READY; reserve operation and recheck state; clear circles/counts and discard saved poses; no hardware command |
+| Trickle target (rule 261) | Positive finite mm step requires enabled blacklist; use prior completed fixed-area count; only final pick Z changes; check floor allowance and camera footprint; skip unsafe without counting, all unsafe Home/NO_PICK; malformed geometry is an error; interrupted attempt retains depth |
+| Placement-to-pick trickle reset | Plan past release ignoring only old source ID; clear real history only on confirmed PLACED; preserve containment and other areas |
 | Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
 | `startup` service | Configured INACTIVE; operation slot free |

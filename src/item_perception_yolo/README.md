@@ -270,7 +270,7 @@ publisher. No extra executor, hardware client, worker kill or tray behavior chan
 
 Older schemas open only as unarmed recovery drafts. Review changed floor-relative
 measurement, radius/height, proposed three-frame median and effective minimum, then
-explicitly Save the schema-14 pair. Manually deploy matching YAML/.pt to the strict
+explicitly Save the schema-15 pair. Manually deploy matching YAML/.pt to the strict
 flat `runtime_teach/` catalog. Rebuild source packages while applications are stopped,
 then manually restart Item Teach/Item Detect and controller consumers and reload
 matching profiles. Do not run GUI/headless pose providers simultaneously. Code
@@ -415,7 +415,7 @@ The main row is **YOLO Detect ON/OFF | Simulate Trigger | Armed ON/OFF**.
 Armed ON is highlighted red so advertised production pose-service state cannot
 be mistaken for the unarmed teaching state; the color does not bypass validation.
 Simulate Trigger is a one-shot action, available with Armed OFF or ON. It needs
-a complete saved/loaded schema-14 profile, its verified model, matching current
+a complete saved/loaded schema-15 profile, its verified model, matching current
 settings, YOLO ON and the applied station/bin. Correct and save recovery drafts
 first. It neither advertises/calls the pose service nor issues robot commands.
 
@@ -484,7 +484,7 @@ rendering and do not send images to a separately running teaching process.
 Arming always validates and uses the production profile. Its service acquires a
 new observation; it cannot
 return teaching-preview detections or a frozen selection. Headless behavior,
-strict production item schema 14, class filters and quality gates remain enforced.
+strict production item schema 15, class filters and quality gates remain enforced.
 
 ### Detailed captured RGB overlays
 
@@ -594,7 +594,7 @@ if weight replacement precedes a YAML write failure, restore the original model.
 YAML is the commit marker: interrupted mixed pairs fail strict hash validation,
 never silently load. A success dialog names both files; the original external
 model remains untouched and the pair works without it.
-**Load Item Teach** accepts only that directory. Complete schema-14 files load
+**Load Item Teach** accepts only that directory. Complete schema-15 files load
 normally and immediately count as saved, including startup named-file restoration.
 No redundant Save is required before Simulate Trigger or manual Armed, but model
 verification, YOLO ON and fresh station inputs remain mandatory. Loading
@@ -610,7 +610,7 @@ The warning/Activity log explains every cleared field. Missing internal
 Recovery also applies to named-file startup prefill; any independently verified
 paired model then loads automatically. Missing/changed pairs never execute.
 No recovered draft can simulate, arm or be validated in the controller until
-reviewed and saved as a strict schema-14 pair. Same known item name overwrites
+reviewed and saved as a strict schema-15 pair. Same known item name overwrites
 the loaded file with its previous-version backup; changed/unknown original name
 creates a new pair. Loading alone leaves files untouched. Shared
 UI-state schema 6 remains strict; no recovered field autosave. Headless and
@@ -652,7 +652,7 @@ zero means the detected surface. Placement drop Z = detected tray surface Z +
 `trayplace_height`, independent of pick heights. Robot Controller and Preview
 use this same endpoint; approach/retract remain at taught Home Z above it.
 New profiles start with this height blank. Schema-9 and older files recover with
-it blank too; enter the intended clearance and Save a valid schema-14 pair before
+it blank too; enter the intended clearance and Save a valid schema-15 pair before
 controller use or runtime deployment. Loading never invents or writes a height.
 `pick_rotation` is a separate required 0–90° value. It is an unsigned offset
 from the detected short-axis line; Robot Controller chooses the lower-travel
@@ -715,8 +715,9 @@ lifetime if its own process stops. Item Teach closing shuts down its launched
 display process. No trusted model, bin selection, inference or camera stream is
 needed to show a validated mounting pose. Controller/headless launches do not
 start this node; shared clearance checks never depend on visualization.
-Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance Z=pre-pick Z+retract,
-in robot base Z. zheight_offset is removed. GUI-only old-file recovery leaves
+Nominal pick Z=item Z+standoff, pre-pick Z=pick Z+prepick and clearance
+Z=pre-pick Z+retract, in robot base Z. Controller trickle depth lowers only final
+pick Z from that baseline; pre-pick and clearance stay at their nominal heights. zheight_offset is removed. GUI-only old-file recovery leaves
 old retract_height blank because its reference changed; correction/Save is
 required. Existing calibration/bin/shared UI schemas are unchanged.
 
@@ -725,7 +726,7 @@ percentages: travel/Home, final approach, pick-to-prepick retract. All must be
 integers 1–100. New-profile speed is explicitly 100/6/6 and acceleration
 100/100/100; loaded profiles retain their exact values. Speed and acceleration
 edits disarm and invalidate saved eligibility without interrupting read-only
-inference or automatically saving/commanding hardware. Save writes schema 14 with
+inference or automatically saving/commanding hardware. Save writes schema 15 with
 percentage units and separate groups, both using `travel_percent`,
 `approach_percent`, `retract_percent`. Controller supplies each motion's `v=`/`a=`;
 global SpeedFactor starts at 100% and the controller can adjust it explicitly
@@ -758,14 +759,24 @@ fresh verification of the selected file, not restoration of an old worker result
 ### Repick candidates
 
 The former Pose candidates group retains `pose_candidates` and adds mandatory
-`retry.blaclist_trigger`, `retry.blackist_radius` and `retry.blackist_cooldown`.
-These exact spellings are the YAML/UI contract. All three new fields default to
-zero: trigger 0 disables the feature, including on recovered older profiles.
+`retry.blaclist_trigger`, `retry.blackist_radius`, `retry.blackist_cooldown` and
+`retry.trickle_depth` (mm).
+These exact spellings are the YAML/UI contract. All four fields default to zero.
+Trigger 0 disables tracking; positive trickle_depth requires enabled blacklisting.
 Enabled trigger and cooldown are integers 1–1000; radius is finite and positive
 in millimetres. Disabled profiles may retain configured nonnegative values.
-Production readers require schema 14; old files load only as GUI recovery drafts
-for explicit review/save, with repick disabled. Edits disarm as usual. No .env key,
+Production readers require schema 15; old files load only as GUI recovery drafts
+for explicit review/save. Schema 14 retains its blacklist settings and proposes
+trickle_depth=0; earlier files start repick disabled. Missing/invalid current fields
+remain invalid. Edits disarm as usual. No .env key,
 automatic rewrite, model execution, arming or physical pick is introduced.
+
+Trickle depth is finite, nonnegative millimetres per prior completed same-area
+attempt: step 10 means extra descent 0/10/20 mm. The controller lowers only final
+pick Z from each candidate's nominal target, with floor and camera-body checks.
+Travel/retract heights, measurement overlays and returned perception poses stay
+unchanged. Reset follows the area's existing placement/expiry/clear lifecycle.
+Local simulation has no physical history and does not apply an artificial descent.
 
 Only the robot controller owns physical attempt history. Controller requests
 carry active `RepickRegion` circles in `platform_reference` XY metres, plus a
@@ -991,11 +1002,11 @@ Tray placement uses a separate fixed 20% requirement, with tray containment
 instead of the item mask, while retaining the saved diameter and other quality
 settings. Item picking keeps its saved percentage. Plane-based tray pose
 measurement itself needs no live depth.
-Schema 11 removed `minimum_depth_samples`; current schema 14 additionally requires
+Schema 11 removed `minimum_depth_samples`; current schema 15 additionally requires
 the nearby depth radius and height. Open older profiles in Item Teach, review the
 retained percentage and the proposed 150/60 mm defaults for absent new fields,
 then Save, reload the controller and manually deploy the updated pair before
-headless startup. Missing/invalid schema-14 fields remain blank in recovery;
+headless startup. Missing/invalid schema-15 fields remain blank in recovery;
 production readers reject incomplete or older profiles. Recovery never saves or arms.
 There is no
 result-age field: an accepted batch remains valid until invalidated or replaced.

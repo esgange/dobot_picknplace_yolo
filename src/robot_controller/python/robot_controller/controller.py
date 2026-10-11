@@ -1562,6 +1562,11 @@ class RobotController(Node):
                             result.selected_candidate_id = candidate.identifier
                             self._transition("HOLDING", "Pick completed; item held at Tray Detect")
                             result.outcome = result.SUCCESS
+                        elif self.managed.session.trickle_exhausted:
+                            self._transition(
+                                "READY", "No safe trickle-depth targets; "
+                                "no item picked; robot Home")
+                            result.outcome = result.NO_PICK
                         elif not batch.candidates:
                             self._transition(
                                 "READY", "No eligible unblocked item poses; robot Home. "

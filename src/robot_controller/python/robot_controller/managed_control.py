@@ -485,7 +485,9 @@ class ManagedControl:
             # The shared return prefix and next candidate are dispatched in one
             # ordered group. No release/retract arrival wait separates them.
             return operation.plan, current
-        operation.run(node, finish_home=home_if_exhausted)
+        # A trickle-rejected remainder ends this Pick instead of acquiring a
+        # fresh batch from the bin exit. Complete the shared Home return as well.
+        operation.run(node, finish_home=home_if_exhausted or self.session.trickle_exhausted)
         return None
 
     def _check_parked(self, sample):

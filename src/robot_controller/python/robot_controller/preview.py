@@ -34,6 +34,7 @@ from .motion import (candidate_pose_in_base, candidate_exit_transit,
                      tray_arrival_targets, tray_detect_targets)
 from .pick_session import return_targets
 from .placement import TRAY_SPEED_PERCENT, place_targets, validate_target
+from .repick import TrickleTargetRejected, trickle_plan
 from .tray_client import TrayClient
 
 
@@ -174,6 +175,7 @@ class RobotControllerPreview(rclpy.node.Node):
             at_home = np.allclose(sample.joints, config.home_joints,
                                   atol=math.radians(1.), rtol=0)
             targets = []
+            trickle_rejected = 0
             tray_travel_only = False
             if request.operation == request.HOME:
                 if not at_home:
@@ -203,6 +205,17 @@ class RobotControllerPreview(rclpy.node.Node):
                     plan = pick_targets(
                         config.home_matrix, item_pose, config.profile, index,
                         rotation=attitude.rotation)
+                    if config.profile.get("retry", {}).get("trickle_depth", 0.):
+                        # Preview has no physical attempt history: show attempt 1,
+                        # with the same actual-endpoint guard as hardware.
+                        try:
+                            plan, _height = trickle_plan(plan, config, 0.)
+                        except TrickleTargetRejected as exc:
+                            trickle_rejected += 1
+                            self.events.record("INFO", "trickle_rejected", str(exc),
+                                               batch_id=batch.identifier,
+                                               candidate_id=candidate.identifier)
+                            continue
                     targets.extend(plan)
                     exit_transit = candidate_exit_transit(plan[5].matrix, plan)
                     targets.append(exit_transit)
@@ -254,6 +267,9 @@ class RobotControllerPreview(rclpy.node.Node):
                                 if frames else "Already at Home; no motion targets required")
             if request.operation == request.PICK:
                 response.message += "; one fresh batch, all candidate/return branches"
+                if config.profile.get("retry", {}).get("trickle_depth", 0.):
+                    response.message += ("; trickle preview is attempt 1 (0 mm extra); "
+                                         f"{trickle_rejected} unsafe targets skipped")
                 if not batch.candidates:
                     response.message += "; no valid item candidates"
             if tray_travel_only:

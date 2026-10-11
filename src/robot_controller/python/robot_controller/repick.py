@@ -1,9 +1,40 @@
 """Controller-owned physical-attempt history; no motion, clocks or disk persistence."""
 
 from dataclasses import replace
+import math
 import threading
 
+import numpy as np
+
+from item_perception_yolo.pick_planning import (
+    camera_body_fits, camera_body_footprint, rigid_matrix)
 from item_perception_yolo.repick import MAX_REGIONS, blocking_region, contains, rejection_reason
+from item_perception_yolo.surface_guard import HeightPlane
+
+
+class TrickleTargetRejected(ValueError):
+    """A valid configuration produced an unsafe adjusted endpoint; skip that pose."""
+
+
+def trickle_plan(plan, configuration, extra_mm):
+    """Lower only nominal final pick Z; validate the actual endpoint without clamping."""
+    if not math.isfinite(extra_mm) or extra_mm < 0:
+        raise ValueError("Trickle descent must be finite and nonnegative")
+    matrix = rigid_matrix(plan[3].matrix, "Nominal pick target").copy()
+    matrix[2, 3] -= extra_mm / 1000.
+    selection = configuration.selection
+    platform = selection.station.platform.base_from_platform
+    height = HeightPlane(platform, "bin floor").measure(matrix[:3, 3])
+    if height.below_plane:
+        raise TrickleTargetRejected(height.reason.replace(
+            "Measured surface", "Trickle pick target").replace("surface Z=", "target Z="))
+    camera = (np.linalg.inv(platform) @ matrix
+              @ rigid_matrix(selection.robot_camera.reference_from_camera_link,
+                             "Robot camera mounting"))
+    if not camera_body_fits(camera_body_footprint(camera),
+                            [[p.x_m, p.y_m] for p in selection.bin.points]):
+        raise TrickleTargetRejected("Trickle pick target moves robot-camera body outside Bin ROI")
+    return (*plan[:3], replace(plan[3], matrix=matrix), *plan[4:]), height
 
 
 class RepickHistory:
@@ -24,6 +55,18 @@ class RepickHistory:
 
     def blocked(self, position):
         return blocking_region(self.snapshot()[1], position)
+
+    def prior_attempts(self, position, *, clearing_area_id=None):
+        """Use the same oldest fixed circle as completed(), without changing history.
+
+        A placement bridge may plan past its confirmed-release boundary: that
+        next pick must treat only the old item's area as cleared. Actual history
+        is still cleared exclusively by the PLACED callback.
+        """
+        with self.lock:
+            region = next((r for r in self.regions
+                           if r["id"] != clearing_area_id and contains(r, position)), None)
+            return (region["attempts"], region["id"]) if region else (0, None)
 
     def completed(self, position, candidate_id):
         """Called once per confirmed HELD/FAILED outcome, including after Resume."""

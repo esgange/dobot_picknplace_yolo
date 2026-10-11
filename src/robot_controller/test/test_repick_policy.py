@@ -18,7 +18,7 @@ from test_managed_control import Rig
 
 def history(trigger=3, cooldown=5):
     return RepickHistory({"blaclist_trigger": trigger, "blackist_radius": 30.,
-                          "blackist_cooldown": cooldown}, Mock())
+                          "blackist_cooldown": cooldown, "trickle_depth": 0.}, Mock())
 
 
 def complete(h, x=0., z=.1):

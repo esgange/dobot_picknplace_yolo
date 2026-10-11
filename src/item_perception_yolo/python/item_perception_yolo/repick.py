@@ -4,7 +4,8 @@ import math
 
 
 REPICK_CONTRACT = "repick_exclusions_v1"
-REPICK_DEFAULTS = {"blaclist_trigger": 0, "blackist_radius": 0.0, "blackist_cooldown": 0}
+REPICK_DEFAULTS = {"blaclist_trigger": 0, "blackist_radius": 0.0,
+                   "blackist_cooldown": 0, "trickle_depth": 0.0}
 MAX_REGIONS = 1000
 
 

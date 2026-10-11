@@ -10641,6 +10641,75 @@ Never use a floating “latest” version in an issue, script, or deployment not
   scoped commit/push. Earlier canonical schema-14 rebuilds succeeded on explicit
   operator request; this addition does not require another interface rebuild.
 
+### 2026-10-11 — Rule 261: guarded per-area trickle pick depth
+
+- Add exact `retry.trickle_depth` in mm under Item Teach Repick candidates. The
+  operator confirmed it works only with enabled blacklisting. Default 0 disables
+  extra descent; require a finite nonnegative number and a positive trigger for
+  positive depth. Retain existing positive radius/cooldown requirements. Advance
+  strict production Item Teach to schema 15. GUI-only schema-14 recovery preserves
+  the three blacklist values and proposes trickle 0; earlier recovery disables
+  the entire repick group. Missing/invalid current fields stay invalid. Explicit
+  review/Save/deployment remains operator-owned; never rewrite their artifacts.
+- Controller computes additional downward base-Z descent as prior completed
+  HELD/FAILED attempts in the oldest matching fixed platform-XY circle times
+  trickle_depth. Step 10 means 0/10/20 mm for attempts 1/2/3. Trigger 3 still allows
+  that third attempt, then blocks later ones. Use the original measured XY for
+  area membership and each candidate's immutable nominal target as the baseline.
+  Recompute pending candidates after outcomes even within one captured batch;
+  repeated selection never compounds descent. ACTIVE/INTERRUPTED attempts retain
+  their selected depth across Pause/Continue. Drops/returns do not clear history;
+  PLACED clears only its original area; cooldown expiry, manual Clear Repick
+  History and configuration reload/restart reset the count and derived descent.
+- Replace only final pick target base Z. Preserve pre-pick/retract/clearance,
+  entry/exit transits, saved Return Item release, taught travel, attitude, rates,
+  blending and every timed output tuple. Existing pickup observation/probe logic
+  uses the resulting final endpoint and original pre-pick height. Perception
+  returns actual measured poses unchanged; no public ROS/interface/.env change.
+- Independently check the actual adjusted Link6 endpoint against the calibrated
+  bin floor at its real base XY, using the shared 20 mm downward allowance and
+  0.001 mm numeric tolerance. Recheck the selected camera body's full footprint
+  at that endpoint; do not choose a new attitude. Skip unsafe endpoints without
+  counting a physical attempt; never clamp. Unusable geometry stays an error.
+  Preserve survivor IDs/order; all unsafe finishes Home/NO_PICK without consuming
+  ordinary empty-observation retries. If suction loss required a put-back, finish
+  the existing shared return through Home instead of the normal exhausted-drop
+  bin exit. Other empty/physical retry budgets and freshness rules are unchanged.
+- A queued placement-to-pick session plans past the release boundary with only
+  the old source area virtually cleared. Actual history remains owned by the old
+  session until confirmed PLACED; early Stop/failure cannot clear it. Other areas
+  retain counts. If every prefetched endpoint is unsafe, finish the owned
+  placement and Home before reporting no pick. Existing release/source/count
+  handoff and containment remain intact.
+- Record structured trickle_target/trickle_rejected diagnostics with candidate,
+  batch, area, prior count, extra descent and endpoint/floor evidence. TF Preview
+  uses the same guard at attempt 1 (0 extra mm) and labels that limitation; local
+  Preview/Simulate Trigger never use or mutate physical history. Measured image
+  overlays and purple blacklist circles retain their existing meanings.
+- Validation: final coverage comprises **1,472 controller, 729 Item Perception,
+  and 265 Tray Perception tests** (2,466 distinct tests), synthetic/offscreen on
+  isolated ROS domains. The complete initial run exposed one obsolete schema-14
+  success assertion; update it to include strict schema-15 acceptance. The full
+  rerun passes 2,465 tests. Add the dropped-item/all-unsafe regression afterward;
+  all 160 focused edge tests and the final entire 1,472-test controller suite
+  pass. Tests cover 0/10/20 actual dispatch, unchanged waypoints/rates/I/O, fresh
+  measurement baselines, interrupted attempts, resets, mixed/all-unsafe results,
+  tilt/reversed normals, the exact floor allowance, invalid geometry, deeper
+  camera-footprint rejection, Preview, placement-prefetch reset ownership, GUI
+  decimals/disarming, strict validation and read-only legacy recovery.
+- Isolated colcon build of item_perception_yolo and robot_controller passes under
+  build/trickle, using canonical dependency installs without overwriting them.
+  Update AGENTS, root/package READMEs and controller FSM; regenerate the adjacent
+  HTML/PDF from Markdown. Verify nine SVG diagrams/nine PDF pages, matching source
+  hashes, trickle labels and visually inspect Pick/Auto Run pages. Changed Python
+  AST, changed-line lint and whitespace checks pass. No vendor patch or new dependency.
+- No robot command, arming, Auto Run, process restart, canonical rebuild or live
+  verification. Preserve .env, calibration, teach/model/runtime artifacts and the
+  unrelated RViz edit. Stop affected applications, perform the canonical rebuild
+  when requested, review/save schema-15 Item Teach, redeploy matching files where
+  needed, then relaunch under operator control. Synthetic tests do not establish
+  physical picking success. Scoped commit/push follows the standing workflow.
+
 ### Future entry template
 
 ```text

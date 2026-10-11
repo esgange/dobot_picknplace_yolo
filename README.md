@@ -32,10 +32,11 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
-Item Teach schema 14 adds **Repick candidates** settings under `retry`:
-`pose_candidates`, `blaclist_trigger`, `blackist_radius` (mm), and
-`blackist_cooldown` (other physical picks). The three new values start at zero;
-trigger zero disables filtering. To enable, explicitly set all three positive,
+Item Teach schema 15 adds **Repick candidates** settings under `retry`:
+`pose_candidates`, `blaclist_trigger`, `blackist_radius` (mm),
+`blackist_cooldown` (other physical picks), and `trickle_depth` (mm). The four
+repick controls default to zero; `pose_candidates` retains its configured count.
+Trigger zero disables filtering. To enable, set trigger/radius/cooldown positive,
 for example trigger 3, radius 30 mm and cooldown 5. These exact key spellings are
 intentional. Completed pickups/misses count within a fixed platform-XY circle;
 the triggering attempt is allowed, then later poses inside/on it are skipped
@@ -46,17 +47,29 @@ History survives fresh batches and Pause/Continue in the controller process.
 next Pick captures afresh. If no unblocked poses remain, return Home and report it;
 detection retries cannot age the cooldown. See the [repick behavior](src/robot_controller/README.md#repick-history).
 
+Set `trickle_depth` only with blacklisting enabled. A 10 mm step gives 0, 10,
+then 20 mm additional downward final-pick travel for successive completed attempts
+in the same area. Each new measurement supplies the baseline; taught pre-pick and
+travel heights stay unchanged. Reject adjusted targets beyond the existing bin-floor
+limit (20 mm below the plane) or outside camera-body clearance; never clamp them.
+Successful placement, cooldown expiry or clearing history resets the area's depth.
+Pause/Continue retains the same attempt depth. Preview shows attempt 1 without
+using hardware history.
+
 Controller-triggered Item Teach captures show purple blacklist floor footprints
 and skipped-pick X marks on RGB/depth. `BL1 R30mm 5 left` identifies area 1,
 its radius and cooldown. The same overlays appear in requested debug images;
 the five-second capture then returns to passive video. The top band distinguishes
 disabled filtering, zero active areas and active exclusions.
 
-This changes the Item Detect ROS request. After stopping affected processes,
-rebuild `item_perception_interfaces`, `item_perception_yolo` and `robot_controller`,
+Repick exclusions require matching Item Detect clients and providers. After
+stopping affected processes, rebuild `item_perception_interfaces`,
+`item_perception_yolo` and `robot_controller`,
 then relaunch matching providers/clients. Review/save old Item Teach files as
-schema 14; new/recovered repick settings start disabled. Deploy matching YAML/model
-pairs manually when using `runtime_teach/`. Do not overwrite a live mapped library.
+schema 15; schema-14 recovery preserves blacklist settings and proposes
+`trickle_depth=0`. Older profiles start repick disabled. No operator file is
+migrated automatically. Deploy matching YAML/model pairs manually when using
+`runtime_teach/`. Do not overwrite a live mapped library.
 
 The motion controls form one four-button grid:
 
@@ -609,7 +622,7 @@ ros2 launch robot_controller robot_controller.launch.py
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-14 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-15 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -638,15 +651,15 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-14 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-15 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-14 profiles; they never recover old files.
+accept only complete schema-15 profiles; they never recover old files.
 The removed zheight_offset is not recovered. Old retract_height is blank in GUI
 drafts because it now means extra clearance above pre-pick, not above pick.
 Schema-7 and older drafts also leave `pick_rotation` blank; explicitly enter
-0–90° before saving schema 14. Schema-8 and older drafts leave all four optional
+0–90° before saving schema 15. Schema-8 and older drafts leave all four optional
 bin-wall clearance fields blank for explicit review. Schema-9 and older drafts
 leave `trayplace_height` blank; enter the intended tray clearance explicitly and
 Save before loading the new profile into the controller or deploying it for
@@ -665,12 +678,12 @@ nearby height in that order. Skip blocked candidates and stop immediately once
 the requested number pass (for example, three), or the ranked list is exhausted.
 Later candidates stay unchecked; the controller receives only checked poses.
 Teaching preview, Simulate Trigger and headless detection share this sequence.
-Schema 14 saves these as
+Schema 15 saves these as
 `geometry.nearby_depth_radius_mm` and `geometry.nearby_depth_height_mm`.
 Older profiles open as recovery drafts proposing the new defaults for review.
 Save and manually redeploy the pair, then reload all consumers; runtime readers
-require complete schema 14. Existing operator artifacts are not rewritten.
-Schema 14 also requires `geometry.depth_frame_count`: 1, 3 (default) or 5.
+require complete schema 15. Existing operator artifacts are not rewritten.
+Schema 15 also requires `geometry.depth_frame_count`: 1, 3 (default) or 5.
 Production/simulation use distinct post-request frames and a strict-majority
 float32 median for all pose, clearance and image paths. Item-only depth limits
 start at max(500 mm, configured minimum); tray limits stay unchanged.
@@ -680,7 +693,7 @@ Item Teach updates RViz voxels from each completed pose capture, including empty
 batches, while background jobs pause. Idle retains the live 1 Hz voxel stream.
 Captures reuse their exact RGB/depth/TF with no second YOLO prediction; unchanged
 clouds turn grey after five seconds. Source validation still reads/verifies contents.
-See the [capture and timing contract](src/item_perception_yolo/README.md#schema-14-capture-and-request-scheduling)
+See the [capture and timing contract](src/item_perception_yolo/README.md#schema-15-capture-and-request-scheduling)
 for deployment/restart and measurement details.
 
 To inspect this check, Item Teach overlays both RGB and registered depth:
@@ -717,7 +730,7 @@ Item capture uses `pose_candidates` as its acquisition limit and reports how man
 remaining candidates were left unchecked. `valid_count` reports validated returned poses, not an
 exhaustive count of every potentially usable item in the image.
 
-Item Teach schema 14 provides optional inward clearances for Bin Teach edges
+Item Teach schema 15 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
 valid inset is projected in light blue on both RGB and registered depth. The
 green ROI ignores a detection only when its platform-plane footprint is fully

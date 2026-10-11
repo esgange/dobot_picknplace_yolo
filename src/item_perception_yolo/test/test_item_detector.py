@@ -145,7 +145,8 @@ def service_node(monkeypatch, tmp_path):
     node.infer = MagicMock(return_value={"metadata": result, "native_roundtrip_ms": 11., "rgb": b""})
     node._pose_batch = lambda *a, **kw: detector.ItemDetectNode._pose_batch(node, *a, **kw)
     profile = {"retry": {"pose_candidates": 3,
-                         "blaclist_trigger": 0, "blackist_radius": 0., "blackist_cooldown": 0},
+                         "blaclist_trigger": 0, "blackist_radius": 0.,
+                         "blackist_cooldown": 0, "trickle_depth": 0.},
                "home": {"positions_rad": [0.]*6},
                "pick_rotation": 0., "motion": {"standoff_height": 90.}}
     node._validate_pose_profile = MagicMock(return_value=(profile, "a"*64))
@@ -486,7 +487,8 @@ def test_simulation_failure_never_freezes_or_returns_old_candidates(service_node
     elif failure == "queued_hash":
         node._validate_pose_profile.return_value = (
             {"retry": {"pose_candidates": 3, "blaclist_trigger": 0,
-                       "blackist_radius": 0., "blackist_cooldown": 0}}, "f"*64)
+                       "blackist_radius": 0., "blackist_cooldown": 0,
+                       "trickle_depth": 0.}}, "f" * 64)
     elif failure == "source":
         node._validate_sources.side_effect = ValueError("Station source changed")
     elif failure == "hash":

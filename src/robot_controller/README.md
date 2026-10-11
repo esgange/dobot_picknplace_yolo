@@ -13,9 +13,10 @@ It does not launch Dobot bringup, cameras, Item Detect, or RViz.
 
 ## Repick history
 
-Schema-14 Item Teach `retry` contains pose_candidates plus the exact keys
-blaclist_trigger, blackist_radius (mm) and blackist_cooldown. Trigger zero disables
-tracking/filtering; new and recovered profiles default all three values to zero.
+Schema-15 Item Teach `retry` contains pose_candidates plus the exact keys
+blaclist_trigger, blackist_radius (mm), blackist_cooldown and trickle_depth (mm).
+New profiles default all four to zero. Schema-14 GUI recovery preserves the first
+three values and proposes trickle_depth=0; older files start repick disabled.
 Enabled trigger/cooldown are whole numbers 1–1000 and radius must be positive.
 
 Record one attempt only on a confirmed HELD or FAILED pickup outcome, after the
@@ -38,6 +39,29 @@ starts empty. Bound history to 1000 areas; at capacity retire the oldest inactiv
 observation, never silently evict an active exclusion. Ordinary candidate-ledger
 rules still exclude failed/dropped/returned poses in a retained batch.
 
+`trickle_depth` is finite and nonnegative; positive values require blacklisting.
+Immediately before each pending attempt, lower nominal final pick Z by prior
+completed attempts in its oldest matching fixed circle × step / 1000. A 10 mm
+step gives 0/10/20 mm on attempts 1/2/3; trigger 3 then excludes that area. Recompute
+from each fresh measured candidate, never from an already-adjusted target. Keep
+interrupted attempts at their selected depth. Save pre-pick/retract/clearance,
+Return Item release and travel targets, orientation, rates and timed I/O unchanged.
+Check the actual adjusted endpoint against the calibrated floor at its base XY:
+20 mm downward allowance plus 0.001 mm numeric tolerance. Recheck the selected
+camera body's footprint at that endpoint without changing attitude. Reject, never
+clamp. Geometry/configuration errors remain errors. Skip unsafe candidates without
+counting an attempt; if none remain, confirm Home and report NO_PICK without
+spending empty acquisition retries. After a dropped pickup, this also completes
+the shared put-back through Home. Preserve survivor IDs and order.
+
+The queued placement-to-pick bridge plans as though only its old source area has
+been cleared, because next pick executes after the confirmed release boundary.
+It never clears real history early; PLACED remains the only success reset. A
+failed/interrupted placement retains ownership and containment. Other areas keep
+their counts. Preview uses the same endpoint guard with zero prior attempts and
+reports that limitation. Structured `trickle_target` / `trickle_rejected` events
+include candidate/batch, area, prior count, extra descent and target/floor heights.
+
 Send immutable, revisioned exclusion snapshots with bin/platform source hashes to
 Item Detect. Validate the exact echo and independently filter returned poses;
 retain nearest-Home ordering among survivors. The provider filters before the
@@ -57,7 +81,7 @@ control. Repick events and detector rejection diagnostics report area/count/cool
 
 Rebuild item_perception_interfaces, item_perception_yolo and robot_controller in
 an isolated install while processes run; canonical rebuild and coordinated relaunch
-are operator tasks. Review/save/deploy schema-14 Item Teach files explicitly.
+are operator tasks. Review/save/deploy schema-15 Item Teach files explicitly.
 Local Simulate Trigger and controller TF Preview request no exclusions and never
 mutate real pick history. Hardware independently enforces current history.
 
@@ -448,12 +472,12 @@ That initial Pick route skips its lower clearance/initial point. For surface Z
 approach/retract Z 800 mm. The final pose stays above the tray at this height
 with the detect-relative attitude; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
-blocks the placement queue. Require a complete schema-14 Item Teach profile with
+blocks the placement queue. Require a complete schema-15 Item Teach profile with
 a finite, nonnegative `trayplace_height`. To use older profiles, open them in
 Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
 the updated pair. Production readers do not supply a fallback height.
 Schema-10 profiles retain that height during GUI recovery; review the retained
-**Minimum valid depth (%)** and Save as schema 14 to remove the fixed-count field.
+**Minimum valid depth (%)** and Save as schema 15 to remove the fixed-count field.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
 Then send three Cartesian commands in one queue:
@@ -1300,7 +1324,7 @@ of Item Teach's display. Canonical RViz includes the new topic; reload its confi
 if already open. No camera TF, command client or hardware action is added.
 This pick-pose body check does not model mounts/cables or the swept travel path.
 
-Item Teach schema 14 also requires the nearby depth radius/height settings
+Item Teach schema 15 also requires the nearby depth radius/height settings
 (defaults 150/60 mm). The detector rejects any candidate with a usable depth
 point inside/on the outer bin and camera-XY radius with a floor-relative height
 difference at/above the configured threshold, excluding standoff. The platform
@@ -1324,8 +1348,9 @@ consumers. Temporal depth capture preserves motion queues and bounded ordinary
 empty-result Home/reacquisition retries. Schema 14 additionally extends the item
 request for repick exclusions, with separate all-blocked handling described above.
 
-The schema-14 geometry uses pick Z equal to item Z plus `standoff_height`,
-pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
+The nominal geometry uses pick Z equal to item Z plus `standoff_height`,
+pre-pick adds `prepick_height`, and clearance adds `retract_height`. Enabled
+trickle lowers only final pick Z from that baseline; the other heights stay fixed. Home/travel
 uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed
 pick's same rise uses `v=100` and taught travel acceleration. The next clearance

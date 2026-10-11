@@ -21,7 +21,7 @@ def region():
 
 def enabled():
     return {"pose_candidates": 3, "blaclist_trigger": 3,
-            "blackist_radius": 30., "blackist_cooldown": 5}
+            "blackist_radius": 30., "blackist_cooldown": 5, "trickle_depth": 0.}
 
 
 def test_capture_note_distinguishes_disabled_empty_active_and_local_simulation():
@@ -39,7 +39,7 @@ def test_new_profiles_start_disabled_and_recover_schema13_without_changing_file(
     profile["retry"] = {"pose_candidates": 3}
     path.write_text(yaml.safe_dump(profile))
     before = path.read_bytes()
-    with pytest.raises(ValueError, match="exactly 14"):
+    with pytest.raises(ValueError, match="exactly 15"):
         core.load_item_profile(path, root=root)
     draft = recover_item_fields(path, root=root)
     assert all(draft.values[k] == v for k, v in core.REPICK_DEFAULTS.items())
@@ -65,6 +65,50 @@ def test_enabled_settings_round_trip_exact_spelling(pair):  # noqa: F811
     path, _ = core.save_item_profile(fields, profile["home"], model, root=root)
     loaded, _ = core.load_item_profile(path, root=root)
     assert loaded["retry"] == enabled()
+
+
+@pytest.mark.parametrize("step", [-1., float("nan"), float("inf"), True, "10"])
+def test_trickle_depth_requires_finite_nonnegative_number(settings, step):  # noqa: F811
+    settings["retry"] = {**enabled(), "trickle_depth": step}
+    with pytest.raises(ValueError, match="trickle_depth"):
+        core.validate_settings(settings)
+
+
+def test_positive_trickle_requires_enabled_blacklist(settings):  # noqa: F811
+    settings["retry"]["trickle_depth"] = 10.
+    with pytest.raises(ValueError, match="requires enabled repick"):
+        core.validate_settings(settings)
+
+
+def test_schema14_recovery_keeps_blacklist_values_and_proposes_zero_trickle(pair):  # noqa: F811
+    import yaml
+    root, _, path, profile = pair
+    profile["schema_version"] = 14
+    profile["retry"] = enabled()
+    del profile["retry"]["trickle_depth"]
+    path.write_text(yaml.safe_dump(profile))
+    before = path.read_bytes()
+    draft = recover_item_fields(path, root=root)
+    assert draft.values["trickle_depth"] == 0.
+    for key in ("blaclist_trigger", "blackist_radius", "blackist_cooldown"):
+        assert draft.values[key] == enabled()[key]
+    assert path.read_bytes() == before
+
+
+def test_schema15_round_trip_and_missing_trickle_stays_invalid(pair):  # noqa: F811
+    root, model, _, profile = pair
+    fields = core.settings_from_profile(profile)
+    fields["retry"] = {**enabled(), "trickle_depth": 10.5}
+    path, saved = core.save_item_profile(fields, profile["home"], model, root=root)
+    loaded, _ = core.load_item_profile(path, root=root)
+    assert loaded["schema_version"] == 15 and loaded["retry"]["trickle_depth"] == 10.5
+    del saved["retry"]["trickle_depth"]
+    import yaml
+    path.write_text(yaml.safe_dump(saved))
+    with pytest.raises(ValueError, match="trickle_depth"):
+        core.load_item_profile(path, root=root)
+    draft = recover_item_fields(path, root=root)
+    assert draft.values["trickle_depth"] is None
 
 
 @pytest.mark.parametrize("damage", ["disabled", "radius", "nan", "duplicate", "count", "cooldown"])

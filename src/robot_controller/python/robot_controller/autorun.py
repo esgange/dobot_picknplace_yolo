@@ -275,10 +275,23 @@ class AutoRunOperation:
                 plans = [candidate.plan for candidate in session.attempts]
             else:
                 plans = node._plan_candidate_batch(batch)
+                clearing_area_id = None
+                if (bridge is not None and not bridge.completed
+                        and bridge.old_session.held_index is not None):
+                    clearing_area_id = bridge.old_session.attempts[
+                        bridge.old_session.held_index - 1].area_id
                 session = PickSession(
                     [candidate.identifier for candidate in batch.candidates], plans,
                     node._attempt_changed, previous_attempted=attempted,
-                    batch=batch, configuration=config, repick=getattr(node, "repick", None))
+                    batch=batch, configuration=config, repick=getattr(node, "repick", None),
+                    clearing_area_id=clearing_area_id)
+            if session.trickle_exhausted and bridge is not None:
+                # Complete the already-owned placement before returning Home;
+                # never use an empty next-pick queue to bypass its release owner.
+                self.finish_home(bridge)
+                node._transition(
+                    "READY", "Auto Run stopped: no safe trickle-depth targets; robot Home")
+                return False
             for plan in plans:
                 return_targets(plan)
             extra = dict(after_placement=bridge is not None)
@@ -299,6 +312,10 @@ class AutoRunOperation:
                 node.holding_item = True
                 node._transition("HOLDING", "Auto Run: item held at Tray Detect")
                 return True
+            if session.trickle_exhausted:
+                node._transition(
+                    "READY", "Auto Run stopped: no safe trickle-depth targets; robot Home")
+                return False
             node.events.record("INFO", "pick_batch_exhausted", "Auto Run Pick batch exhausted",
                                attempt=attempt, max_attempts=3, batch_id=batch.identifier,
                                attempted=attempted)

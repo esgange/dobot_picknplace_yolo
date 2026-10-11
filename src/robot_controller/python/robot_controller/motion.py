@@ -248,7 +248,7 @@ class PickExecutor:
         if start_index is None:
             return_home(require_suction=False, forbid_suction=True)
             return {"picked": False, "candidate": None, "holding_item": False}
-        plan = plans[start_index - 1]
+        plan = session.attempts[start_index - 1].plan if session else plans[start_index - 1]
         if held is not None:
             if session.resuming:
                 if grip:
@@ -305,7 +305,7 @@ class PickExecutor:
                 return_terminal_pose=True, pickup_retract_pose=plan[4].matrix, **origin)
         index = start_index
         while index is not None:
-            plan = plans[index - 1]
+            plan = session.attempts[index - 1].plan if session else plans[index - 1]
             if session is not None:
                 session.set_state(index, "HELD" if acquired else "FAILED")
             if acquired and holding_changed is not None:
@@ -385,7 +385,7 @@ class PickExecutor:
             if progress is not None:
                 progress("CANDIDATE", f"Attempting candidate {next_index}", next_index)
             check(next_index)
-            next_plan = plans[next_index - 1]
+            next_plan = session.attempts[next_index - 1].plan if session else plans[next_index - 1]
             if remember_prepick is not None:
                 remember_prepick(next_plan[2], settings["gripper"])
             # Queue the old exit and next entry at the same safety Z before descent.

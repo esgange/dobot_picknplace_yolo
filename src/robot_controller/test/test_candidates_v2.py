@@ -19,7 +19,8 @@ class Events:
 
 def configuration():
     profile = {
-        "retry": {"blaclist_trigger": 0, "blackist_radius": 0., "blackist_cooldown": 0},
+        "retry": {"blaclist_trigger": 0, "blackist_radius": 0.,
+                  "blackist_cooldown": 0, "trickle_depth": 0.},
         "model": {"sha256": "model"}, "geometry": {"depth_frame_count": 3},
         "yolo": {"confidence": 0.4, "class_ids": [0, 2]},
         "quality": {"sync_tolerance_sec": 0.1},

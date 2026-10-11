@@ -2018,6 +2018,21 @@ status band; explain floor projection/parallax in its tooltip. Passive preview
 and local simulation never acquire controller history. Keep filtering, physical
 history, controller behavior, interfaces, schema and all robot commands unchanged.
 
+Rule 261 adds schema-15 retry.trickle_depth in millimetres, default zero, positive
+only with enabled blacklisting. Before each pending physical attempt, lower only
+nominal final pick base Z by prior completed same-area attempts times this step.
+Preserve all other waypoints, attitude, rates and I/O. Pause/Continue retains that
+attempt's selected depth. Use existing fixed-circle accounting/reset semantics;
+placement prefetch plans past release with only the old source area virtually
+cleared, while real history changes only on PLACED. Independently check the actual
+endpoint against the bin floor (20 mm allowance, 0.001 mm arithmetic tolerance)
+and selected robot-camera footprint. Skip unsafe targets, never clamp or count
+rejections; all unsafe confirms Home/NO_PICK without acquisition retry spinning.
+Malformed geometry remains an error. Preview uses the same guard at attempt 1,
+without physical history. Schema-14 GUI recovery preserves blacklist values and
+proposes trickle zero; older recovery disables repick. Never rewrite operator
+artifacts. Update diary/FSM and regenerate HTML/PDF; live verification is manual.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

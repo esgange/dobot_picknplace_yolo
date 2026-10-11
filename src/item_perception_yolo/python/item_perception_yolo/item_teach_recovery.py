@@ -170,9 +170,14 @@ def recover_item_fields(path, *, root=None):
                             "trigger/radius/cooldown before enabling")
     else:
         for key in core.REPICK_DEFAULTS:
+            if key == "trickle_depth" and payload["schema_version"] < 15:
+                draft.values[key] = 0.0
+                draft.issues.append("Trickle depth starts disabled (0 mm); review before Save")
+                continue
             value = retry.get(key)
             valid = (type(value) in (int, float) and 0 <= value < float("inf")
-                     if key == "blackist_radius" else type(value) is int and 0 <= value <= 1000)
+                     if key in ("blackist_radius", "trickle_depth")
+                     else type(value) is int and 0 <= value <= 1000)
             accept(key, value, valid)
     for key in core.QUALITY_DEFAULTS:
         high = (1 if key == "minimum_depth_fraction" else

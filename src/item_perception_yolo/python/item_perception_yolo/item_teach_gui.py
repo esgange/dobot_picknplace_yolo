@@ -657,6 +657,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
                                     "to block an area"),
                 "blackist_radius": "Fixed exclusion circle radius in millimetres",
                 "blackist_cooldown": "Other completed physical picks before an area expires",
+                "trickle_depth": ("Extra downward pick depth per prior completed attempt in "
+                                  "the same area, in mm. 0 disables; requires blacklisting. "
+                                  "Only final pick Z changes; unsafe targets are rejected."),
             }[key])
             self.inputs[key] = field
             retry.addRow(key, field)
@@ -2105,7 +2108,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "timing": {"pick_settling": self._number("pick_settling")},
             "gripper": {key: self.inputs[key].isChecked() for key in GRIPPER_FIELDS},
             "retry": {"pose_candidates": self._number("pose_candidates", int),
-                      **{key: self._number(key, float if key == "blackist_radius" else int)
+                      **{key: self._number(key, float if key in (
+                          "blackist_radius", "trickle_depth") else int)
                          for key in REPICK_DEFAULTS}},
             **self._inference_settings(),
         }

@@ -26,7 +26,7 @@ from .repick import REPICK_DEFAULTS
 from .depth_snapshot import validate_depth_frame_count, item_depth_limits
 
 
-ITEM_SCHEMA_VERSION = 14
+ITEM_SCHEMA_VERSION = 15
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height", "trayplace_height")
@@ -222,6 +222,9 @@ def validate_settings(settings):
     _integer(retry["blaclist_trigger"], "blaclist_trigger", low=0, high=1000)
     _integer(retry["blackist_cooldown"], "blackist_cooldown", low=0, high=1000)
     _number(retry["blackist_radius"], "blackist_radius")
+    _number(retry["trickle_depth"], "trickle_depth")
+    if retry["trickle_depth"] and not retry["blaclist_trigger"]:
+        raise ValueError("Positive trickle_depth requires enabled repick blacklisting")
     if retry["blaclist_trigger"] and (
             retry["blackist_cooldown"] == 0 or retry["blackist_radius"] == 0):
         raise ValueError("Enabled repick requires positive blackist_radius and blackist_cooldown")
@@ -385,9 +388,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 14 "
-            "(repick history settings); "
-            "schemas 1–13 require review and Save in Item Teach; no compatibility reader")
+            "Item teach schema_version must be exactly 15 "
+            "(repick history and trickle depth settings); "
+            "schemas 1–14 require review and Save in Item Teach; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",

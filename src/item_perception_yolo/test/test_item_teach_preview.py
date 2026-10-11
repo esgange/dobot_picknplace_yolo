@@ -242,7 +242,8 @@ def simulation_setup(window):
     window.saved_path = Path("saved.yaml")
     window.node._validate_pose_profile = MagicMock(return_value=(
         {"retry": {"pose_candidates": 3,
-                   "blaclist_trigger": 0, "blackist_radius": 0., "blackist_cooldown": 0}}, "a"*64))
+                   "blaclist_trigger": 0, "blackist_radius": 0.,
+                   "blackist_cooldown": 0, "trickle_depth": 0.}}, "a" * 64))
     candidate = ItemCandidate(class_name="part", priority=1, length=.08, width=.032,
                               filtered_camera_depth=.7, accepted_depth_count=100,
                               rejected_depth_count=2)
@@ -956,7 +957,8 @@ def paired_teach(window, tmp_path, monkeypatch):
         "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": .5}, "gripper": {"use_grip": True, "grip_onpick": True},
         "retry": {"pose_candidates": 3,
-                  "blaclist_trigger": 0, "blackist_radius": 0., "blackist_cooldown": 0},
+                  "blaclist_trigger": 0, "blackist_radius": 0.,
+                  "blackist_cooldown": 0, "trickle_depth": 0.},
         "geometry": {"depth_frame_count": 3, "nearby_depth_radius_mm": 150., "nearby_depth_height_mm": 60.,
                      "height": 80., "width": 40., "tolerance": 5., "pickdepth_radius": 45.},
         "yolo": {"confidence": .63, "iou": .35, "max_detections": 17,
@@ -1123,7 +1125,8 @@ def test_repick_group_starts_disabled_loads_exact_values_and_edits_disarm(window
         assert window.inputs[key].parentWidget() is group
         assert float(window.inputs[key].text()) == value
     path, profile, _, _, _ = paired_teach
-    profile["retry"].update(blaclist_trigger=3, blackist_radius=30., blackist_cooldown=5)
+    profile["retry"].update(blaclist_trigger=3, blackist_radius=30., blackist_cooldown=5,
+                            trickle_depth=10.5)
     path.write_text(yaml.safe_dump(profile))
     window._load_dialog()
     finish_model_job(window)
@@ -1133,6 +1136,10 @@ def test_repick_group_starts_disabled_loads_exact_values_and_edits_disarm(window
     assert window.saved_path is None and not window.armed_toggle.isChecked()
     window.node.disarm.assert_called()
     assert window._settings()["retry"]["blackist_radius"] == 40.
+    window.node.disarm.reset_mock()
+    window.inputs["trickle_depth"].setText("12.5")
+    window.node.disarm.assert_called()
+    assert window._settings()["retry"]["trickle_depth"] == 12.5
 
 
 def test_schema_four_gui_recovery_does_not_prefill_unknown_motion_rates(window, paired_teach):
@@ -1280,7 +1287,7 @@ def test_depth_percentage_load_recovery_and_save(
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
     window._save()
     saved, _ = core.load_item_profile(path, root=tmp_path)
-    assert saved["schema_version"] == 14
+    assert saved["schema_version"] == 15
     assert saved["quality"]["minimum_depth_fraction"] == .75
     assert "minimum_depth_samples" not in saved["quality"]
     window._load(path, prefill=True)
@@ -1321,7 +1328,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 14
+    assert saved["schema_version"] == 15
     assert saved["retry"] == {"pose_candidates": 3, **core.REPICK_DEFAULTS}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
