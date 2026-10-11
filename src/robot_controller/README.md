@@ -293,7 +293,7 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 | MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and tray attitude plus rotation at Home Z |
 | MovLIO descent | Exact saved pre-pick target at 100% | Detected surface Z + trayplace_height at 100% |
 | At 80% descent | DO2 OFF, DO14 ON (open), DO13 OFF, DO1 ON (exhaust) | DO2 OFF, DO14 ON only; suction remains ON |
-| At 99% descent | No new event | DO13 OFF then DO1 ON (exhaust) |
+| At 90% descent | No new event | DO13 OFF then DO1 ON (exhaust) |
 | Queue admission | One complete ordered group; no drop-arrival wait | Same |
 | MovLIO retract | Same item X/Y/attitude back to Home Z | Same tray X/Y/attitude back to Home Z |
 | At 0% ascent (start) | DO2/DO14/DO1/DO13 OFF | Same |
@@ -309,8 +309,8 @@ SpeedFactor. Approach/Home
 use taught travel acceleration, descent uses approach acceleration, and retract
 uses retract acceleration. Finger OPEN, suction OFF and exhaust ON occur at 80%;
 exhaust ends as retract begins. No separate 100% event is sent.
-The shared planner/observer keeps release supervision identical; rule 266 moves
-only tray placement's vacuum event to 99%, leaving Return Item at 80%.
+The shared planner/observer keeps release supervision identical; rule 267 moves
+only tray placement's vacuum event to 90%, leaving Return Item at 80%.
 Observed release means finger-open/exhaust outputs ON, finger-close
 and suction OFF, and DI1 LOW; DI12 can be HIGH or LOW.
 Only final Home completion marks the candidate RETURNED and clears its
@@ -491,7 +491,7 @@ Then send three Cartesian commands in one queue:
 | Command | Target | Timed outputs |
 | --- | --- | --- |
 | MovLIO when Use Grip OFF; otherwise MovL | Pre-place | Use Grip OFF: at 80%, DO2 OFF then DO14 ON; preserve vacuum |
-| MovLIO | Release height | At 80%: DO2 OFF, DO14 ON (open); at 99%: DO13 OFF then DO1 ON |
+| MovLIO | Release height | At 80%: DO2 OFF, DO14 ON (open); at 90%: DO13 OFF then DO1 ON |
 | MovLIO | Back to pre-place | At 0% (start): DO2 OFF, DO14 OFF, DO1 OFF, DO13 OFF |
 
 All placement segments and Tray Detect Position use **speed 100%**, scaled by
@@ -500,7 +500,7 @@ Item Teach travel for Tray Detect Position, then travel / approach / retract
 for placement. Item Pick retains its taught speeds. No teach-file edit is required.
 There is no placement settling, separate release call, fixed-duration exhaust
 pulse, extra retract-height waypoint or separate Home action. At 80% of descent,
-open fingers; at 99%, turn suction OFF then exhaust ON. Exhaust lasts
+open fingers; at 90%, turn suction OFF then exhaust ON. Exhaust lasts
 until the upward command starts. Zero uses the existing distance-mode
 start trigger (`{1,0,channel,0}`), carried by MovLIO. All commands inherit CP (default 100%); control points
 can blend through the complete group. There is no drop-arrival, settling or
@@ -1486,12 +1486,12 @@ of travel to the pre-place target. There are no separate DO calls or output wait
 before placement. Auto Run starts fresh next-bin inference before queue admission;
 all three placement motions must still be accepted before appending the next Pick.
 `use_grip=true` retains MovL pre-place and stays closed until the existing 80%
-descent finger event. Suction remains ON until its 99% descent release.
+descent finger event. Suction remains ON until its 90% descent release.
 Track approach output changes only after that command is issued,
 including feedback during its response wait. Opening preserves suction and held
 monitoring; it cannot confirm release. No DI12 or intermediate arrival wait is
 added. Stop/drop interruption prevents later commands. Release recovery never
-reopens or repeats release. Place releases vacuum at 99%, Return at 80%; both
+reopens or repeats release. Place releases vacuum at 90%, Return at 80%; both
 retain 0% retract reset and 80% descent finger opening.
 Return Item's approach has no new finger event. Hardware, Auto Run and Preview
 share the placement targets.

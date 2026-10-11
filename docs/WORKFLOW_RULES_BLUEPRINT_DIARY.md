@@ -10927,6 +10927,25 @@ Never use a floating “latest” version in an issue, script, or deployment not
   relaunch and live verification remain with the operator; scoped commit/push
   follows the standing workflow.
 
+### 2026-10-11 — Rule 267: restore tray-placement vacuum release to 90%
+
+- User requests the previous 90% descent trigger, superseding rule 266's 99%.
+  Restore only placement's DO13 OFF then DO1 ON timing. Manual Place, Auto Run
+  and Preview share the plan. Keep finger OPEN at 80%, pre-place finger timing,
+  0% retract neutral, Return Item/missed-pick 80% exhaust, unchanged geometry,
+  offsets, rates, blending and all existing release/held-item/Stop supervision.
+- Restore existing timing assertions; **1,488 controller tests pass**, covering
+  exact service tuples, intermediate held feedback, both grip modes, Preview
+  and Return Item. Scoped flake8, AST and diff checks pass. Isolated build in
+  build/place_vacuum_restore_90 and install/place_vacuum_restore_90 succeeds;
+  installed modules resolve to source with placement 90% and shared default 80%.
+- Update AGENTS, READMEs and the current FSM; regenerate HTML/PDF and verify
+  matching source hash, nine SVG diagrams/nine PDF pages, restored release text
+  and offline navigation/zoom. No offline-transfer milestone is claimed.
+  Preserve unrelated RViz edits, .env and operator calibration/debug/teach/model/
+  runtime artifacts. No robot command, canonical build, arming or live restart.
+  Operator relaunch/live verification remain pending; commit/push only this scope.
+
 ### Future entry template
 
 ```text
