@@ -47,6 +47,10 @@ History survives fresh batches and Pause/Continue in the controller process.
 next Pick captures afresh. If no unblocked poses remain, return Home and report it;
 detection retries cannot age the cooldown. See the [repick behavior](src/robot_controller/README.md#repick-history).
 
+If successful placement clears an area that blocked the prefetched batch, Auto Run
+confirms Home, restores `PICKING` and requests fresh poses with the current history.
+The next pickup retains normal success and automatic suction-loss return handling.
+
 Set `trickle_depth` only with blacklisting enabled. A 10 mm step gives 0, 10,
 then 20 mm additional downward final-pick travel for successive completed attempts
 in the same area. Each new measurement supplies the baseline; taught pre-pick and

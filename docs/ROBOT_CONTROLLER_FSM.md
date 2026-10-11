@@ -1,5 +1,14 @@
 # Robot Controller — Finite State Machine
 
+Auto Run repick reacquisition review: **2026-10-11**, baseline **`69c4c1a`** plus
+rule **263**. When a blocked prefetch becomes obsolete because confirmed placement
+clears its source area, finish the owned placement/Home, check cancellation and
+restore PICKING before requesting fresh poses. Home's READY state must not remain
+active during the next pickup. Keep the existing action owner and count; normal
+success reaches HOLDING and confirmed suction loss enters automatic RETURNING_ITEM
+from PICKING. Strict lifecycle edges, retry budgets, fresh observations and all
+motion/I/O remain unchanged. Synthetic verification does not replace a live run.
+
 Tray observation recovery review: **2026-10-11**, baseline **`3e52eaf`** plus
 rule **262**. A provider rejects a complete observation when finite, well-formed
 tray detection corners, axes or dimensions disagree. A healthy worker/service
@@ -1403,7 +1412,7 @@ flowchart TD
     Poses -->|No| BlockedOnly{"Repick exclusions left no eligible unblocked poses?"}
     BlockedOnly -->|Yes| BlockedHome["Finish owned placement and confirm Home; PLACED clears only source area; count once"]
     BlockedHome --> Changed{"History revision changed since capture?"}
-    Changed -->|Yes| Reacquire["Fresh request with current exclusions; do not age history"]
+    Changed -->|Yes| Reacquire["Check cancellation; READY → PICKING; fresh request with current exclusions; do not age history"]
     Reacquire --> Retried
     Changed -->|No| BlockedEnd["READY / NO_PICK; report blocked areas; partial count; no empty retry loop"]
     BlockedOnly -->|No| RetryHome["Reserve retry; finish/confirm Home; count placement once; fresh item request"]
@@ -1476,6 +1485,12 @@ request poses again. Allow nine empty-result retries per owning Pick, confirming
 Home each time; a tenth empty result ends NO_PICK with the partial count. This
 budget cannot reset after a physical miss. Empty observations do not consume its
 three nonempty physical-pick batches.
+An all-blocked prefetch also finishes the owned placement and confirms Home.
+If successful placement changed its exclusion revision, check cancellation and
+restore PICKING from Home's READY before reacquiring. The same Auto Run owner
+retains its count and installs the new candidate ledger; pickup success and
+automatic suction-loss return therefore use PICKING → HOLDING / RETURNING_ITEM.
+An unchanged all-blocked result ends READY / NO_PICK without acquisition spinning.
 If observation is slower than placement, finish normal retract
 supervision, count the placement and wait for the request while supervising unheld
 idle feedback. Retain that completed placement context: the next nonempty batch
@@ -1814,6 +1829,7 @@ Names below are relative to `/robot_controller/`.
 | Tray rectangle observation rejection | Finite, structurally valid detection evidence disagrees: provider returns no pose, remains armed while healthy, requires newer RGB; controller uses existing ten-request budget then acquisition pause; malformed evidence/invalid reference planes/worker failures remain terminal |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; exact taught Tray Detect joint return (MovJIO, OPEN at 50%) precedes linear entry/pre-pick/pick; no cancellation or added midpoint arrival wait |
+| Auto Run repick reacquisition (rule 263) | Blocked prefetch revision changed after owned placement/Home; check cancellation and restore PICKING before fresh acquisition/motion; retain action owner and count; unchanged exclusions end READY / NO_PICK; no new READY → HOLDING / RETURNING_ITEM edges |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the placement-specific 20% of the full sampling circle after tray containment/range/MAD filtering; empty/zero-valid samples fail; no fixed count floor; item pick percentage unchanged |
 | Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; pre-place MovLIO has 80% DO2 OFF then DO14 ON; reconcile only issued approach transitions; no separate DO/output wait; suction/held monitoring preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |

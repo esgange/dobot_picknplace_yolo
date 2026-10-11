@@ -10779,6 +10779,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   rejected observations; synthetic tests do not prove the live run resolved.
   Commit/push only this scope under the standing workflow.
 
+### 2026-10-11 — Rule 263: restore Pick state after blacklist-clearing Home
+
+- Incident (UTC, baseline 69c4c1a): next-bin prefetch returned NO_UNBLOCKED_ITEMS
+  at 10:48:47.716 using revision 348. Placement 88 cleared area 103 at
+  10:48:49.073, advancing history to revision 349; Home confirmed READY at
+  10:48:49.815. Fresh capture returned one candidate at 10:48:50.293, but the
+  changed-history branch continued inside the acquisition loop without restoring
+  PICKING. Pickup acquired suction at 10:48:52.564, then confirmed loss at
+  10:48:53.926. Automatic put-back rejected READY -> RETURNING_ITEM after Stop
+  confirmation. Calls #1820 through #1837 all returned res=0; no put-back motion
+  was dispatched. Containment ended RECOVERY_REQUIRED at 88/100, 903.2 seconds.
+  Logs establish DI1 loss, not its physical cause. Preserve the event snapshots
+  under ignored log/ready_return_edge_20261011T105002Z_* for local investigation.
+- In Auto Run's blocked-prefetch branch, after finishing the owned placement
+  and confirming Home, check cancellation and transition to PICKING before a
+  fresh request against changed exclusions. Keep the same operation owner and
+  completed count. Reacquired pickups now enter their existing HOLDING success
+  or automatic RETURNING_ITEM loss path from PICKING. Do not expand READY's
+  allowed transitions or bypass loss/Stop containment.
+- Preserve all-blocked Home/NO_PICK when exclusions did not change, nine ordinary
+  empty-result retries, three physical Pick batches, fresh frame/batch validation,
+  real placement-owned history clearing, candidate IDs and ordering. No trajectory,
+  motion service, speed, blending, I/O, schema, ROS interface or .env change.
+- Extend the synthetic placement/repick fixture through a fresh valid candidate:
+  verify successful HOLDING, actual managed-loss containment/RETURNING_ITEM entry
+  and saved-source put-back dispatch, plus direct Stop after Home preventing
+  reacquisition. Confirm placement counts once and the old source is PLACED.
+  Three regression cases fail on the original READY state and pass after the fix;
+  unchanged-history termination and cancellation remain covered.
+- Validation: **1,483 Robot Controller tests pass**, including 27 repick tests.
+  An isolated robot_controller symlink build under build/repick_state_fix and
+  install/repick_state_fix succeeds using the installed unchanged dependencies;
+  its 27 repick tests pass and installed Auto Run resolves to the edited source.
+  Scoped 100-column flake8, Python AST and whitespace checks pass. Correct the new
+  status line's length and existing test-parameter indentation found during lint.
+  Update AGENTS, root/controller READMEs and FSM review/diagram/guard table;
+  regenerate HTML/PDF locally and verify nine SVG diagrams, nine PDF pages,
+  matching source hashes and the new PICKING node. Inspect the changed node and
+  viewer and check navigation/zoom controls.
+- No hardware commands, arming, Auto Run, canonical rebuild, process restarts or
+  operator-artifact writes. Preserve unrelated RViz edits, .env, calibration,
+  teach/model and runtime files. The existing Python symlink install uses this
+  source on the next controller launch; operator relaunch and live verification
+  remain pending. Commit and push only this scope under the standing workflow.
+
 ### Future entry template
 
 ```text

@@ -4,12 +4,13 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 
 from item_perception_yolo.repick import REPICK_DEFAULTS, contains
-from robot_controller.candidates import CandidateBatch
-from robot_controller.errors import FeedbackFailure
-from robot_controller.motion import PickExecutor, pick_tray_target
+from robot_controller.candidates import Candidate, CandidateBatch
+from robot_controller.errors import FeedbackFailure, HeldSuctionLost, OperationCanceled
+from robot_controller.motion import PickExecutor, pick_targets, pick_tray_target
 from robot_controller.pick_session import PickSession
 from robot_controller.repick import RepickHistory
 from test_candidates_v2 import client, configuration, valid_result
@@ -171,8 +172,8 @@ def test_history_snapshot_and_batch_are_not_mutated_by_prefetch_or_placement():
     assert h.filter_batch(batch).blacklist_only  # caller must reacquire omitted poses
 
 
-@pytest.mark.parametrize("position,blocked", [((.03, 0.), True), ((0., -.03), True),
-                                            ((.03, .001), False)])
+@pytest.mark.parametrize("position,blocked", [
+    ((.03, 0.), True), ((0., -.03), True), ((.03, .001), False)])
 def test_circle_is_radial_not_square(position, blocked):
     assert contains({"x_m": 0., "y_m": 0., "radius_m": .03}, position) is blocked
 
@@ -193,9 +194,7 @@ def test_blacklisted_only_manual_pick_homes_without_empty_acquisition_loop(monke
     assert "unblocked" in result.message
 
 
-@pytest.mark.parametrize("placement_clears", [False, True])
-def test_auto_blacklisted_prefetch_confirms_release_then_rechecks_changed_history(placement_clears):
-    from robot_controller.errors import OperationCanceled
+def blacklisted_prefetch_rig(placement_clears=True):
     from test_auto_run import queue_rig
     from test_placement_queue import RELEASE, OPEN
     rig, run, bridge = queue_rig(quantity=2)
@@ -211,13 +210,21 @@ def test_auto_blacklisted_prefetch_confirms_release_then_rechecks_changed_histor
         dict(outputs=0, inputs=OPEN, currentCommandId=4),
         dict(outputs=0, inputs=0, home=True),
     ])
+    batch = CandidateBatch("blocked-prefetch", 1, 1, (), {}, "OFF", True, h.revision)
+    return rig, run, bridge, batch
+
+
+@pytest.mark.parametrize("placement_clears", [False, True])
+def test_auto_blacklisted_prefetch_confirms_release_then_rechecks_changed_history(placement_clears):
+    rig, run, bridge, batch = blacklisted_prefetch_rig(placement_clears)
+    h = rig.node.repick
 
     def fresh(*_args, **_kwargs):
         assert bridge.completed and run.completed == 1
         assert not h.regions
+        assert rig.node.machine.state == "PICKING"
         raise OperationCanceled("Fresh request reached after successful placement")
     rig.node.candidates = SimpleNamespace(request=Mock(side_effect=fresh))
-    batch = CandidateBatch("blocked-prefetch", 1, 1, (), {}, "OFF", True, h.revision)
     if placement_clears:
         with pytest.raises(OperationCanceled, match="Fresh request"):
             run._pick(batch, bridge)
@@ -227,6 +234,79 @@ def test_auto_blacklisted_prefetch_confirms_release_then_rechecks_changed_histor
         rig.node.candidates.request.assert_not_called()
         assert h.blocked((0., 0.))
     assert bridge.completed and run.completed == 1
+    assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovJ"]
+
+
+@pytest.mark.parametrize("dropped", [False, True])
+def test_auto_reacquired_pick_can_hold_or_enter_drop_return(monkeypatch, dropped):
+    rig, run, bridge, batch = blacklisted_prefetch_rig()
+    node = rig.node
+    surface = np.eye(4)
+    surface[:3, 3] = [.4, .1, .25]
+    plan = pick_targets(node.configuration.home_matrix, surface, node.configuration.profile, 1)
+    candidate = Candidate("fresh:0", 1, 0, .9, (.4, .1, .25), (0., 0., 0., 1.))
+    node.candidates = SimpleNamespace(request=Mock(return_value=CandidateBatch(
+        "fresh", 2, 2, (candidate,), {}, "OFF")))
+    node._plan_candidate_batch = Mock(return_value=[plan])
+    node._execute_home = Mock()  # Already physically confirmed by the real placement bridge.
+    node._attempt_changed = Mock()
+    node._candidate_progress = Mock()
+
+    def pick(_executor, plans, _profile, *, session, **_kwargs):
+        assert bridge.completed and run.completed == 1
+        assert node.machine.state == "PICKING" and node.active_action == "pick"
+        assert plans == [plan] and session is node.managed.session
+        assert session.batch.identifier == "fresh"
+        session.set_state(1, "ACTIVE")
+        session.set_state(1, "HELD")
+        node.holding_item = True
+        if dropped:
+            node.expected_outputs[13] = True
+            rig.emit(outputs=1 << 12, inputs=0, running=0)
+            # Exercise ManagedControl's actual loss containment and state transition.
+            node.hardware.request_stop = Mock(return_value=object())
+            node.hardware._acknowledge_stop = Mock()
+            node.hardware.resolve_interrupted_commands = Mock()
+            node.hardware.confirm_stop = Mock()
+            raise HeldSuctionLost("Synthetic pickup lost suction")
+        return {"picked": True, "candidate": 1, "holding_item": True}
+
+    monkeypatch.setattr(PickExecutor, "run", pick)
+    node.managed._put_back = Mock(side_effect=OperationCanceled("Return dispatch reached"))
+    if dropped:
+        with pytest.raises(OperationCanceled, match="Return dispatch reached"):
+            run._pick(batch, bridge)
+        assert node.machine.state == "RETURNING_ITEM"
+        assert node.managed.session.attempts[0].state == "DROPPED"
+        node.hardware.confirm_stop.assert_called_once()
+        node.managed._put_back.assert_called_once_with(
+            dropped=True, continue_candidates=True, home_if_exhausted=False)
+    else:
+        assert run._pick(batch, bridge)
+        assert node.machine.state == "HOLDING" and node.holding_item
+        node.managed._put_back.assert_not_called()
+    assert run.completed == 1 and bridge.old_session.attempts[0].state == "PLACED"
+    node.candidates.request.assert_called_once()
+    assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovJ"]
+
+
+def test_auto_stop_after_blacklist_clearing_home_preempts_reacquisition():
+    rig, run, bridge, batch = blacklisted_prefetch_rig()
+    node = rig.node
+    node.candidates = SimpleNamespace(request=Mock())
+    finish_home = run.finish_home
+
+    def stop_after_home(placement_bridge):
+        finish_home(placement_bridge)
+        node._transition("STOPPING", "Direct Stop after confirmed Home")
+        node.raise_if_cancelled.side_effect = OperationCanceled("Direct Stop")
+
+    run.finish_home = stop_after_home
+    with pytest.raises(OperationCanceled, match="Direct Stop"):
+        run._pick(batch, bridge)
+    assert node.machine.state == "STOPPING"
+    assert bridge.completed and run.completed == 1 and not node.repick.regions
+    node.candidates.request.assert_not_called()
     assert [name for name, _ in rig.requests] == ["MovL", "MovLIO", "MovLIO", "MovJ"]
 
 

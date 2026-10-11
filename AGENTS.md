@@ -2047,6 +2047,15 @@ Keep fresh post-trigger RGB/depth, zero added settling, source/ownership checks,
 robot supervision and motion unchanged. No worker restart, automatic rearming,
 interface/schema/.env change or operator artifact rewrite.
 
+Rule 263 restores Auto Run's PICKING state before a fresh item request when
+placement-time repick exclusions changed after completing the owned placement
+and confirming Home. Check cancellation before this transition; retain the one
+operation owner and completed count. A reacquired pickup must use the existing
+HOLDING or automatic RETURNING_ITEM paths from PICKING, never run in READY.
+Keep the strict lifecycle edges, all-blocked termination, retry budgets, fresh
+frames, motion/I/O and Stop containment unchanged. Update diary/FSM and regenerate
+exports; verify with synthetic inputs and leave live relaunch to the operator.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

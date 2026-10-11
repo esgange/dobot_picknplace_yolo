@@ -239,7 +239,11 @@ class AutoRunOperation:
                         node._execute_home()
                     if history is not None and batch.blacklist_revision != history.snapshot()[0]:
                         # Confirmed placement may have removed the source exclusion
-                        # after prefetch. Reacquire once against the current history.
+                        # after prefetch. Home completed in READY; restore PICKING
+                        # before reacquiring against the current history.
+                        node.raise_if_cancelled()
+                        node._transition(
+                            "PICKING", "Auto Run: rechecking poses after repick history changed")
                         batch = None
                         continue
                     node._transition(

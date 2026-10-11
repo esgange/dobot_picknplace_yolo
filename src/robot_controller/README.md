@@ -69,7 +69,11 @@ requested count. All-blocked results confirm Home and finish NO_PICK rather than
 spending the nine empty-acquisition retries. Ordinary empty results retain that
 budget. For empty prefetched results, confirm any owned placement first; if its
 successful release changed history, reacquire against the new revision before
-concluding no unblocked poses remain. Preserve placement count/source handoff,
+concluding no unblocked poses remain. After Home confirms READY, check cancellation
+and restore PICKING before that fresh request and its pickup. The existing action
+retains ownership; successful acquisition can reach HOLDING and suction loss can
+enter automatic RETURNING_ITEM. READY does not permit either transition directly.
+Preserve placement count/source handoff,
 physical request budgets, fresh inputs, motion geometry/rates/blending and I/O.
 
 The GUI's Clear Repick History calls the typed Command service
