@@ -52,7 +52,7 @@ def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
     release_z = surface[2] + motion["trayplace_height"] / 1000
     matrix[:3, 3] = [surface[0], surface[1], release_z]
     plan = release_targets(matrix, settings, home_matrix, prefix="place",
-                           vacuum_release_percent=90)
+                           vacuum_release_percent=99)
     if not settings["gripper"]["use_grip"]:
         plan = (replace(plan[0], motion_io=gripper_open_events(80)), *plan[1:])
     return plan

@@ -231,7 +231,7 @@ this MovL/MovJ pair after its linear lifts and Safety Z exit, retaining taught
 travel rates. Selected CP may blend into MovJ before the linear endpoint; this
 does not guarantee cable-safe wrist travel. Placement and upward retract stay linear.
 After fresh detection, placement queues pre-place → release (open fingers at 80%,
-suction OFF then exhaust ON at 90% of descent) → retract at Home Z
+suction OFF then exhaust ON at 99% of descent) → retract at Home Z
 (neutral at its 0% start) in one ordered group, without a drop-arrival wait or settling.
 There is no Home move. All placement segments and Tray Detect Position use speed
 100%, scaled by the operator's global SpeedFactor. Item Teach acceleration
@@ -794,7 +794,7 @@ relaxes both finger outputs; `use_grip=true, grip_onpick=false` closes them.
 With both flags true they stay closed. Clearance has no timed finger event.
 After valid tray pose/depth, `use_grip=false` reopens at 80% of travel to pre-place
 using MovLIO (DO2 OFF then DO14 ON), while next-bin inference can run. There are
-no separate pre-placement DO calls. Suction stays on until the 90% descent vacuum release;
+no separate pre-placement DO calls. Suction stays on until the 99% descent vacuum release;
 fingers still open at 80%. Return Item retains its 80% vacuum release.
 Motion requests wait for
 queue-admission responses in order but not intermediate physical arrival;

@@ -2075,6 +2075,13 @@ exhaust remain at 80%; geometry, rates, CP, queue ordering, Stop/drop gates and
 operator settings are unchanged. Update diary/FSM, regenerate exports and verify
 with synthetic inputs; do not command hardware or restart live processes.
 
+Rule 266 supersedes rule 265's tray-placement vacuum trigger with 99% of descent:
+DO13 OFF then DO1 ON. Preserve 80% finger OPEN, pre-place finger timing, 0%
+retract neutral, Return Item/missed-pick 80% exhaust and every existing release,
+held-item, motion and Stop gate. Manual Place, Auto Run and Preview share this
+single timing change. Update diary/FSM and regenerate exports; verify offline,
+commit/push only this scope and leave process relaunch/live tests to the operator.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

@@ -10901,6 +10901,32 @@ Never use a floating “latest” version in an issue, script, or deployment not
   controller relaunch and live verification remain pending; commit/push only
   this scope under the standing workflow.
 
+### 2026-10-11 — Rule 266: tray-placement vacuum release at 99% descent
+
+- User supersedes rule 265's 90% with 99%. Change only the placement planner's
+  internal vacuum trigger: DO13 OFF then DO1 ON at 99% of descent. Manual Place,
+  Auto Run and Preview share this plan. Keep finger OPEN at 80%, the existing
+  pre-place opening, all outputs neutral at 0% retract and Return Item/missed-pick
+  exhaust at 80%. Exhaust still ends when upward retract starts; no fixed pulse
+  or dwell is added. Geometry, offsets, rates, blending, command admission,
+  source ownership, held-item/release supervision and Stop gates are unchanged.
+- Update existing synthetic geometry, transport, intermediate feedback and
+  Preview assertions for the exact 80% finger / 99% vacuum tuples. The full
+  controller suite passes **1,488 tests**, including both grip modes, Return
+  Item and interrupted release. Scoped flake8, AST and diff checks pass.
+  Isolated robot_controller build succeeds in build/place_vacuum_99 and
+  install/place_vacuum_99; installed placement/release resolve to source and
+  retain the independent 99% placement / 80% shared-default triggers.
+- Update AGENTS, root/package READMEs and current FSM review, diagrams and guard
+  table; regenerate adjacent HTML/PDF. Verify matching source hash, nine SVG
+  diagrams/nine PDF pages, both updated release labels and offline navigation/
+  zoom; inspect both changed diagram nodes. No offline-transfer milestone is
+  claimed. No vendor, ROS interface, schema, .env or operator-artifact changes.
+  Preserve unrelated RViz and calibration/debug/teach/model/runtime files.
+  No robot commands, arming, live restart or canonical build. Controller
+  relaunch and live verification remain with the operator; scoped commit/push
+  follows the standing workflow.
+
 ### Future entry template
 
 ```text

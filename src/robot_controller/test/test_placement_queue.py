@@ -146,7 +146,7 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])
     assert list(rig.requests[1][1].mdis) == [
-        '{0,80,2,0}', '{0,80,14,1}', '{0,90,13,0}', '{0,90,1,1}']
+        '{0,80,2,0}', '{0,80,14,1}', '{0,99,13,0}', '{0,99,1,1}']
     assert list(rig.requests[2][1].mdis) == [
         '{1,0,2,0}', '{1,0,14,0}', '{1,0,1,0}', '{1,0,13,0}']
     assert all(not any(v.startswith(('cp=', 'r=')) for v in request.param_value)
@@ -161,19 +161,19 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
 
 
 @pytest.mark.parametrize('use_grip', [False, True])
-def test_descent_finger_open_keeps_holding_until_90_percent_vacuum_release(use_grip):
+def test_descent_finger_open_keeps_holding_until_99_percent_vacuum_release(use_grip):
     rig = QueueRig()
     node, operation = rig.node, rig.node.placement
     node.configuration.profile['gripper']['use_grip'] = use_grip
     rig.steps = iter(rig.script)
     operation.run(node)
-    # After the 80% finger event, suction remains ON until the 90% event.
+    # After the 80% finger event, suction remains ON until the 99% event.
     opened = (1 << 12) | (1 << 13)
     operation.observe(node, rig.emit(outputs=opened, inputs=1))
     assert node.holding_item and not operation.release_confirmed
     assert node.managed.session.held_index is not None
     assert node.expected_outputs[13] and not node.expected_outputs[1]
-    assert list(rig.requests[1][1].mdis)[-2:] == ['{0,90,13,0}', '{0,90,1,1}']
+    assert list(rig.requests[1][1].mdis)[-2:] == ['{0,99,13,0}', '{0,99,1,1}']
     operation.observe(node, rig.emit(outputs=RELEASE, inputs=OPEN))
     assert not node.holding_item and operation.release_confirmed
     assert not node.expected_outputs[13] and node.expected_outputs[1]
