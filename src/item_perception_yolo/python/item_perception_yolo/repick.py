@@ -49,3 +49,12 @@ def rejection_reason(region):
     return (f"Repick area {region['id']} blocked: radius={region['radius_m'] * 1000:g} mm, "
             f"attempts={region['attempts']}, "
             f"cooldown={region['cooldown_remaining']} other picks")
+
+
+def capture_note(settings, regions, *, simulated=False):
+    if not settings["blaclist_trigger"]:
+        return "Repick OFF"
+    if simulated:
+        return "Repick: controller history not applied"
+    return (f"Repick: {len(regions)} active (purple)" if regions
+            else "Repick ON: 0 active areas")

@@ -34,7 +34,7 @@ from .bin_teach_core import (
 from .platform_teach_core import (
     PackageEventLogger, resolve_base_from_camera_link, workspace_root,
 )
-from .repick import REPICK_CONTRACT, region_dict, validate_regions
+from .repick import REPICK_CONTRACT, capture_note, region_dict, validate_regions
 from .item_teach_core import (file_sha256, load_item_profile, settings_from_profile,
                               validate_detection_settings, detection_settings, validate_quality,
                               validate_bin_clearance, inset_bin_roi, BIN_CLEARANCE_FIELDS,
@@ -1315,7 +1315,9 @@ class ItemDetectNode(Node):
             response.diagnostics_json = json.dumps(evidence, allow_nan=False)
             if simulated or capture_preview is not None:
                 view = {**view, "simulation_profile": (str(profile_path), profile_digest),
-                        "simulation_epoch": epoch}
+                        "simulation_epoch": epoch,
+                        "repick_note": capture_note(_profile["retry"], regions,
+                                                    simulated=simulated)}
             self.events.record("INFO", "item_simulated_batch" if simulated else "item_pose_batch",
                                response.message,
                                batch_id=response.batch_id, status=response.status,

@@ -2008,6 +2008,16 @@ Simulation/Preview never mutate history. Keep motion/I/O and other guards; updat
 diary/FSM/exports, build isolated around live processes, leave schema migration,
 canonical rebuild, coordinated relaunch and live verification to the operator.
 
+Rule 260 adds read-only repick visualization to controller-triggered Item Teach
+RGB/depth captures and requested debug images. Draw thin purple platform-Z=0
+floor footprints with area ID, radius and remaining other picks; mark skipped
+pick points at their measured heights with purple X. Use each pane's lens model,
+clip safely, and retain request-time history, the completed-pair refresh and
+five-second hold. Distinguish OFF, ON/zero areas and active areas in the fixed
+status band; explain floor projection/parallax in its tooltip. Passive preview
+and local simulation never acquire controller history. Keep filtering, physical
+history, controller behavior, interfaces, schema and all robot commands unchanged.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

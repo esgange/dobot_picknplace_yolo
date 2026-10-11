@@ -9,7 +9,7 @@ from item_perception_interfaces.msg import RepickRegion
 from item_perception_interfaces.srv import GetItemPoses
 from item_perception_yolo import item_detector as detector, item_teach_core as core
 from item_perception_yolo.item_teach_recovery import recover_item_fields
-from item_perception_yolo.repick import REPICK_CONTRACT, validate_regions
+from item_perception_yolo.repick import REPICK_CONTRACT, capture_note, validate_regions
 from test_item_detector import service_node  # noqa: F401
 from test_item_teach import settings, home, pair  # noqa: F401
 
@@ -22,6 +22,13 @@ def region():
 def enabled():
     return {"pose_candidates": 3, "blaclist_trigger": 3,
             "blackist_radius": 30., "blackist_cooldown": 5}
+
+
+def test_capture_note_distinguishes_disabled_empty_active_and_local_simulation():
+    assert capture_note(core.REPICK_DEFAULTS, []) == "Repick OFF"
+    assert capture_note(enabled(), []) == "Repick ON: 0 active areas"
+    assert capture_note(enabled(), [region()]) == "Repick: 1 active (purple)"
+    assert capture_note(enabled(), [], simulated=True) == "Repick: controller history not applied"
 
 
 def test_new_profiles_start_disabled_and_recover_schema13_without_changing_file(pair):  # noqa: F811
@@ -83,6 +90,8 @@ def test_untrusted_exclusions_must_match_profile(damage):
 def test_provider_echoes_bound_exclusions_or_rejects_before_inference(
         service_node, damage):  # noqa: F811
     node, _ = service_node
+    from item_perception_yolo.item_preview import CaptureMailbox
+    node.capture_preview = CaptureMailbox()
     node._validate_pose_profile.return_value[0]["retry"] = enabled()
     request = GetItemPoses.Request(
         max_candidates=3, profile_sha256="a" * 64,
@@ -110,3 +119,4 @@ def test_provider_echoes_bound_exclusions_or_rejects_before_inference(
         assert evidence["repick"]["regions"] == [region()]
         assert evidence["repick"]["revision"] == 8
         assert node.infer.call_args.args[2]["repick_regions"] == [region()]
+        assert node.capture_preview.take()["view"]["repick_note"] == "Repick: 1 active (purple)"

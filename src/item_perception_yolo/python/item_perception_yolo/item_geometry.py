@@ -567,7 +567,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                         unchecked=None, render_images=True, prepared_scene=None, timings=None,
                         roi_status=None):
     started = time.monotonic()
-    from .nearby_depth_overlay import draw_nearby_depth_overlays
+    from .nearby_depth_overlay import draw_nearby_depth_overlays, draw_repick_overlays
     from .repick import blocking_region, rejection_reason
     if candidate_limit is not None and (type(candidate_limit) is not int
                                         or not 1 <= candidate_limit <= 1000):
@@ -603,6 +603,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
     camera_plans = {}
     candidate_optical = {}
     nearby_checks = {}
+    repick_skipped = []
     scene_depth, scene_error = None, None
     for item in objects:
         center = item["center"]
@@ -719,6 +720,8 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
             rejected.append({"source_index": source_id, "reason": reason,
                              "rejection_stage": "blacklist"})
             labels[source_id] += " | " + reason
+            if render_images or nearby_views is not None:
+                repick_skipped.append(candidate["position"])
             continue
         drawing = {} if render_images or nearby_views is not None else None
         try:
@@ -804,8 +807,10 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                              max(22, round(float(center[1]))-15)),
                             cv2.FONT_HERSHEY_SIMPLEX, .55, (255, 255, 255), 1, cv2.LINE_AA)
         draw_nearby_depth_overlays((overlay, depth_view), context, nearby_checks, cv2, np)
+        draw_repick_overlays((overlay, depth_view), context, repick_skipped, cv2, np)
     elif nearby_views is not None:
         draw_nearby_depth_overlays(nearby_views, context, nearby_checks, cv2, np)
+        draw_repick_overlays(nearby_views, context, repick_skipped, cv2, np)
     if timings is not None:
         timings.update(geometry_ms=geometry_ms, clearance_ms=clearance_ms,
                        rendering_ms=(time.monotonic() - render_started)*1000.)

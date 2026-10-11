@@ -966,6 +966,66 @@ def exercise_nearby_overlay_projection():
     assert np.array_equal(views[0], unchanged)
 
 
+def exercise_repick_overlay():
+    import copy
+    import cv2
+    import numpy as np
+    from item_perception_yolo.nearby_depth_overlay import (
+        draw_repick_overlays, projected_base_points, REPICK_COLOR)
+    from item_perception_yolo.pick_planning import rpy_matrix
+
+    camera = {"k": [500., 0., 320., 0., 500., 240., 0., 0., 1.],
+              "d": [.3, -.1, 0., 0., 0.]}
+    depth_camera = {**camera, "d": [0.] * 5}
+    transform = np.diag([1., -1., -1., 1.])
+    transform[:3, :3] = rpy_matrix(.1, -.1, .2) @ transform[:3, :3]
+    transform[2, 3] = .8
+    region = {"id": 4, "x_m": .14, "y_m": .02, "radius_m": .03,
+              "attempts": 3, "cooldown_remaining": 5}
+    context = {"camera": camera, "depth_camera": depth_camera,
+               "platform_from_optical": transform.tolist(), "repick_regions": [region]}
+    original = copy.deepcopy(context)
+    labels = []
+
+    class Drawing:
+        def __getattr__(self, name):
+            return getattr(cv2, name)
+
+        def putText(self, view, label, *args):
+            labels.append(label)
+            return cv2.putText(view, label, *args)
+
+    views = tuple(np.zeros((480, 640, 3), np.uint8) for _ in range(2))
+    skipped = [[.14, .02, .2]]  # Different projection from its floor footprint.
+    draw_repick_overlays(views, context, skipped, Drawing(), np)
+    assert context == original and labels == ["BL4 R30mm 5 left"] * 2
+    assert not np.array_equal(*views)  # Each pane uses its own distortion model.
+    for view, model in zip(views, (camera, depth_camera)):
+        for point in ([.17, .02, 0.], skipped[0]):
+            # Actual metric circle edge, or skipped pose at its measured height.
+            x, y = np.rint(projected_base_points([point], transform, model, cv2, np)[0])
+            patch = view[int(y)-2:int(y)+3, int(x)-2:int(x)+3].astype(int)
+            assert ((patch[:, :, 2] > patch[:, :, 0] + 20)
+                    & (patch[:, :, 0] > patch[:, :, 1] + 20)).any()
+        x, y = np.rint(projected_base_points([skipped[0]], transform, model, cv2, np)[0])
+        assert tuple(view[int(y), int(x)]) == REPICK_COLOR
+        center = projected_base_points([[.14, .02, 0.]], transform, model, cv2, np)[0]
+        assert not view[int(round(center[1])), int(round(center[0]))].any()  # No filled disk.
+    untouched = [v.copy() for v in views]
+    draw_repick_overlays(views, {**context, "repick_regions": []}, [], cv2, np)
+    assert all(np.array_equal(a, b) for a, b in zip(views, untouched))
+    # Off-screen and behind-camera areas produce neither clamped labels nor unsafe coordinates.
+    hidden_views = tuple(np.zeros_like(v) for v in views)
+    hidden = {**context, "repick_regions": [{**region, "x_m": 10.}]}
+    draw_repick_overlays(hidden_views, hidden, [], cv2, np)
+    assert not any(v.any() for v in hidden_views)
+    behind = np.diag([1., -1., -1., 1.])
+    behind[2, 3] = -.8
+    draw_repick_overlays(hidden_views, {**context, "platform_from_optical": behind.tolist()},
+                        [], cv2, np)
+    assert not any(v.any() for v in hidden_views)
+
+
 def exercise_height_corrected_size():
     import copy
     from types import SimpleNamespace
@@ -1155,9 +1215,14 @@ def exercise_surface_floor_guard():
         assert [p["source_index"] for p in poses] == [1]
         assert reasons[0]["rejection_stage"] == "blacklist"
         assert "cooldown=5 other picks" in reasons[0]["reason"]
-        _, _, poses, reasons = generate_candidates(
+        overlay, depth_view, poses, reasons = generate_candidates(
             [item], rgb, depth, ctx, settings, cv2, np, candidate_limit=1)
         assert not poses and reasons[0]["rejection_stage"] == "blacklist"
+        from item_perception_yolo.nearby_depth_overlay import REPICK_COLOR
+        assert tuple(overlay[240, 320]) == tuple(depth_view[240, 320]) == REPICK_COLOR
+        _, _, plain_poses, plain_reasons = generate_candidates(
+            [item], rgb, depth, ctx, settings, cv2, np, candidate_limit=1, render_images=False)
+        assert plain_poses == poses and plain_reasons == reasons
     context["pick_planning"]["base_from_platform"] = [
         [0., 0., 1., 0.], [0., 1., 0., 0.], [-1., 0., 0., 0.], [0., 0., 0., 1.]]
     with pytest.raises(SurfaceGeometryError, match="parallel to vertical travel"):
@@ -1169,7 +1234,7 @@ def exercise_surface_floor_guard():
     "exercise_candidate_batch_overlay", "exercise_robot_camera_rejects_before_ranking",
     "exercise_nearby_depth_filter", "exercise_nearby_overlay_projection",
     "exercise_ranked_nearby_acquisition", "exercise_height_corrected_size",
-    "exercise_surface_floor_guard"])
+    "exercise_surface_floor_guard", "exercise_repick_overlay"])
 def test_private_native_geometry(exercise):
     runtime = Path(get_package_prefix("item_perception_yolo")) / \
         "lib/item_perception_yolo/yolo_runtime"

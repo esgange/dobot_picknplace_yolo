@@ -1727,6 +1727,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
                     + (f"…{count}" if count > 1 else "") + " (frozen)" if count else
                     "RViz TF: no candidate frames (empty batch)")
             batch_lines.append(f"Batch: {batch.batch_id}")
+            if view.get("repick_note"):
+                batch_lines.append(view["repick_note"])
+                batch_lines.append("Purple repick rings: floor-XY footprint; X: skipped pick. "
+                                   "BL labels: area ID, radius in mm, other picks left.")
             batch_lines.extend(f"#{entry['source_index']}: {entry['reason']}"
                                for entry in metadata.get("rejected", []))
             if metadata.get("unchecked"):
@@ -1892,6 +1896,8 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 if rejected and not response.valid_count else
                 f"{response.detected_count} detected · {len(rejected)} rejected · "
                 f"{len(result.get('unchecked', []))} unchecked")
+        if view.get("repick_note"):
+            note = f"{view['repick_note']} · {note}"
         return capture_status(self.capture_source, response.status, response.valid_count,
                               age, result.get("inference_ms", 0.),
                               self.simulation_expires_at - time.monotonic(), note)

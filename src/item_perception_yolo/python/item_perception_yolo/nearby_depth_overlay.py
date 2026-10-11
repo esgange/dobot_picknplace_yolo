@@ -6,6 +6,7 @@ from .floor_clearance import floor_depth
 RADIUS_COLOR = (255, 210, 0)
 HEIGHT_COLOR = (255, 140, 0)
 OBSTACLE_COLOR = (255, 0, 0)
+REPICK_COLOR = (185, 90, 255)
 
 
 def projected_base_points(points, base_from_optical, camera, cv2, np):
@@ -37,6 +38,7 @@ def _lines(view, segments, color, cv2, np):
         # previous segment's color and make a solid circle appear dashed.
         cv2.polylines(view, clipped, False, (0, 0, 0), 3, cv2.LINE_AA)
         cv2.polylines(view, clipped, False, color, 1, cv2.LINE_AA)
+    return bool(clipped)
 
 
 def _text(view, message, origin, color, cv2):
@@ -48,6 +50,37 @@ def _text(view, message, origin, color, cv2):
     y = max(text_height + 2, min(int(origin[1]), height - baseline - 2))
     cv2.rectangle(view, (x-1, y-text_height-1), (x+text_width+1, y+baseline+1), (0, 0, 0), -1)
     cv2.putText(view, message, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
+
+
+def draw_repick_overlays(views, context, skipped, cv2, np):
+    """Show request-time exclusion footprints at platform Z=0 and actual skipped picks."""
+    regions = context.get("repick_regions", [])
+    if not regions:
+        return
+    transform = np.asarray(context["platform_from_optical"], dtype=np.float64)
+    angles = np.linspace(0., 2*np.pi, 97)
+    unit_circle = np.column_stack((np.cos(angles), np.sin(angles), np.zeros(len(angles))))
+    for view, camera in zip(views, (context["camera"], context["depth_camera"])):
+        for region in regions:
+            points = unit_circle * region["radius_m"] + [region["x_m"], region["y_m"], 0.]
+            ring = projected_base_points(points, transform, camera, cv2, np)
+            visible = _lines(view, zip(ring[:-1], ring[1:]), REPICK_COLOR, cv2, np)
+            finite = ring[np.isfinite(ring).all(axis=1)]
+            if visible and len(finite):
+                anchor = finite[np.argmin(finite[:, 1])] + [4, -4]
+                label = (f"BL{region['id']} R{region['radius_m'] * 1000:g}mm "
+                         f"{region['cooldown_remaining']} left")
+                _text(view, label, anchor, REPICK_COLOR, cv2)
+        # The floor footprint is independent of item elevation. Mark rejected
+        # pick positions at their measured heights to make parallax explicit.
+        pixels = projected_base_points(skipped, transform, camera, cv2, np)
+        for point in pixels:
+            if not (np.isfinite(point).all() and 0 <= point[0] < view.shape[1]
+                    and 0 <= point[1] < view.shape[0]):
+                continue
+            pixel = tuple(np.rint(point).astype(int))
+            cv2.drawMarker(view, pixel, (0, 0, 0), cv2.MARKER_TILTED_CROSS, 13, 3)
+            cv2.drawMarker(view, pixel, REPICK_COLOR, cv2.MARKER_TILTED_CROSS, 11, 1)
 
 
 def draw_nearby_depth_overlays(views, context, checks, cv2, np):

@@ -1508,6 +1508,21 @@ def test_scaled_letterbox_click_resumes_captured_pair(window):
     label.close()
 
 
+def test_repick_capture_feedback_is_compact_on_both_panes_and_expires(window, monkeypatch):
+    response, view = simulation_setup(window)
+    view["repick_note"] = "Repick: 1 active (purple)"
+    window._show_capture({"response": response, "view": view}, "Controller")
+    window._refresh_video()
+    for label in (window.rgb_feedback, window.depth_feedback):
+        assert "Repick: 1 active (purple)" in label.text()
+        assert len(label.text().splitlines()) == 3
+        assert "floor-XY footprint" in label.toolTip()
+    monkeypatch.setattr(gui.time, "monotonic", lambda: window.simulation_expires_at + .1)
+    window._refresh_video()
+    assert window.frozen_view is None
+    assert "Repick:" not in window.rgb_feedback.text()
+    assert "Repick:" not in window.depth_feedback.text()
+
 
 def test_empty_capture_shows_depth_rejection_without_an_old_pose(window):
     response, view = simulation_setup(window)

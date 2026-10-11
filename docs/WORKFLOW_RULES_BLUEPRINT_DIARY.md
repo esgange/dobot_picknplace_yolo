@@ -10597,6 +10597,50 @@ Never use a floating “latest” version in an issue, script, or deployment not
   restarted, perception re-armed or robot commanded. Live operation is unverified;
   synthetic tests do not establish hardware success. Commit/push only this scope.
 
+### 2026-10-11 — Rule 260: visible repick exclusion feedback
+
+- The operator requested visual confirmation that repick blacklisting is active.
+  Add thin purple rings for every active request-time exclusion to both RGB and
+  registered-depth capture images, including empty/all-blocked batches. Project
+  each true metric circle at platform Z=0 using the calibrated transform and
+  that pane's own intrinsics/distortion. Clip drawing to image bounds and omit
+  invalid/behind-camera/off-screen geometry without changing pose eligibility.
+- Label each visible area compactly, for example BL1 R30mm 5 left: controller
+  area ID, radius (not diameter), and other completed physical picks remaining.
+  No filled disk. Mark each examined blacklist-rejected candidate with a purple
+  X at its actual measured surface height. Rings show the floor-XY footprint of
+  a height-independent exclusion; item elevation may shift a rejected X outside
+  its floor ring in image space. Explain this projection and labels in the tooltip.
+- Keep rendering inside the existing native completed-pair pipeline, after other
+  geometry overlays, with no second inference or blinking redraw pass. Requested
+  debug images save these exact RGB/depth buffers. Headless debug-off skips
+  rendering. Draw from immutable request exclusions; never modify circles/counts,
+  accepted candidates or controller history for visualization.
+- The existing fixed three-line GUI capture band now distinguishes Repick OFF,
+  Repick ON with zero active areas, and the active area count/purple legend.
+  Local Simulate Trigger says controller history is not applied when enabled.
+  Preserve the five-second capture hold, then return to passive video without
+  stale history overlays. Future controller captures refresh the snapshot;
+  no passive/history subscription, ROS interface, schema or .env key is added.
+- Validation: **720 Item Perception tests, 265 Tray Perception tests and 62 focused
+  controller repick/candidate tests pass** (1,047 total), using synthetic inputs,
+  offscreen Qt and separate ROS domains 88/89/90 through the existing isolated
+  overlay. Cover metric radius/tilt/lens projection, distinct RGB/depth distortion,
+  skipped-point surface height, no filled disk, off-screen/behind-camera clipping,
+  unchanged request/history and render-on/off candidate/rejection parity, native
+  all-blocked images, provider-to-GUI status, both panes' compact band and expiry.
+  Visually inspect a synthetic two-pane sample. Changed-line lint, Python AST and
+  whitespace checks pass after removing an extra blank line in the test file.
+- Update AGENTS and root/Item Perception READMEs. Controller behavior and FSM are
+  unchanged, so no FSM source/export regeneration is needed. All five changed
+  installed Python modules resolve to the edited source; no rebuild or shared
+  library replacement is needed. Item Teach and native Item/Tray workers are live;
+  leave them untouched and let the operator relaunch affected Item Teach/Detect
+  processes to load the update. No robot command, process restart, arming, live
+  verification or operator-artifact change. Preserve unrelated RViz edits and
+  scoped commit/push. Earlier canonical schema-14 rebuilds succeeded on explicit
+  operator request; this addition does not require another interface rebuild.
+
 ### Future entry template
 
 ```text

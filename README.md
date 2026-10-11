@@ -46,6 +46,12 @@ History survives fresh batches and Pause/Continue in the controller process.
 next Pick captures afresh. If no unblocked poses remain, return Home and report it;
 detection retries cannot age the cooldown. See the [repick behavior](src/robot_controller/README.md#repick-history).
 
+Controller-triggered Item Teach captures show purple blacklist floor footprints
+and skipped-pick X marks on RGB/depth. `BL1 R30mm 5 left` identifies area 1,
+its radius and cooldown. The same overlays appear in requested debug images;
+the five-second capture then returns to passive video. The top band distinguishes
+disabled filtering, zero active areas and active exclusions.
+
 This changes the Item Detect ROS request. After stopping affected processes,
 rebuild `item_perception_interfaces`, `item_perception_yolo` and `robot_controller`,
 then relaunch matching providers/clients. Review/save old Item Teach files as

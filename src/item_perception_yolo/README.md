@@ -775,7 +775,7 @@ against the saved profile. Apply circle exclusions before filling max_candidates
 and before the expensive nearby-depth scan; later candidates may fill the batch.
 Inside/on the circle is excluded regardless of height. Record rejection_stage
 `blacklist`, area ID, radius, attempts and remaining other picks in existing
-rejection evidence. No large circle overlay is added. Echo the exact request
+rejection evidence. Echo the exact request
 snapshot in diagnostics.repick. No returned candidates with blacklist rejections
 uses NO_UNBLOCKED_ITEMS; ordinary empty acquisition keeps NO_VALID_ITEMS.
 
@@ -784,6 +784,20 @@ Passive preview, local Simulate Trigger and TF Preview never record physical
 attempts or age history; local simulation/Preview use empty exclusions. Their
 poses are read-only and do not bypass controller admission. Trigger captures
 retain the existing five-second hold, requested debug images and fresh inputs.
+
+Controller-triggered RGB/depth captures draw active areas as thin **purple** rings
+at the calibrated floor (platform Z=0), with compact labels such as
+`BL1 R30mm 5 left`: area ID, true radius, and other completed picks remaining.
+Each pane uses its own lens model. These are floor-XY footprints; the actual
+exclusion ignores height. Purple X marks a skipped pick at its measured surface
+height, so elevation can put the X outside the floor ring's image projection.
+Rings remain visible even with no accepted detections, and the same completed
+overlays are saved when debug capture is requested. No filled disks or blinking
+overlay pass is added. The top band reports Repick OFF, ON with zero active areas,
+or the active area count; its tooltip explains the floor projection and labels.
+The existing five-second capture hold then resumes passive video. The view is the
+request-time history snapshot, refreshed by the next controller capture; passive
+preview and local Simulate Trigger do not invent or retain controller exclusions.
 
 ### Pose generation contract
 
