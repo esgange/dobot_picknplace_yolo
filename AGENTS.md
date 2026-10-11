@@ -2067,6 +2067,14 @@ check. Automatic dropped-item Return Item handoff retains its clearance target.
 Document and test the shared manual Pick/Auto Run route, regenerate FSM exports
 and leave process relaunch/live verification to the operator.
 
+Rule 265 delays only tray-placement vacuum release to 90% of descent: DO13 OFF
+then DO1 ON on the release MovLIO. Keep finger OPEN at 80%, pre-place finger
+timing, neutral outputs at 0% retract and observed-suction-OFF release supervision.
+Manual Place, Auto Run and Preview share the targets. Return Item and missed-pick
+exhaust remain at 80%; geometry, rates, CP, queue ordering, Stop/drop gates and
+operator settings are unchanged. Update diary/FSM, regenerate exports and verify
+with synthetic inputs; do not command hardware or restart live processes.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

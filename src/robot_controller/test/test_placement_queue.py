@@ -146,7 +146,7 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     assert all((request.a, request.b) == pytest.approx((300., 200.))
                for _, request in rig.requests[:3])
     assert list(rig.requests[1][1].mdis) == [
-        '{0,80,2,0}', '{0,80,14,1}', '{0,80,13,0}', '{0,80,1,1}']
+        '{0,80,2,0}', '{0,80,14,1}', '{0,90,13,0}', '{0,90,1,1}']
     assert list(rig.requests[2][1].mdis) == [
         '{1,0,2,0}', '{1,0,14,0}', '{1,0,1,0}', '{1,0,13,0}']
     assert all(not any(v.startswith(('cp=', 'r=')) for v in request.param_value)
@@ -158,6 +158,28 @@ def test_real_transport_queues_three_moves_with_exact_percentages_and_no_settlin
     completed = [call for call in rig.node.events.record.call_args_list
                  if call.args[1] == 'motion_batch_completed']
     assert completed[-1].kwargs['terminal_stable_sec'] == 0.
+
+
+@pytest.mark.parametrize('use_grip', [False, True])
+def test_descent_finger_open_keeps_holding_until_90_percent_vacuum_release(use_grip):
+    rig = QueueRig()
+    node, operation = rig.node, rig.node.placement
+    node.configuration.profile['gripper']['use_grip'] = use_grip
+    rig.steps = iter(rig.script)
+    operation.run(node)
+    # After the 80% finger event, suction remains ON until the 90% event.
+    opened = (1 << 12) | (1 << 13)
+    operation.observe(node, rig.emit(outputs=opened, inputs=1))
+    assert node.holding_item and not operation.release_confirmed
+    assert node.managed.session.held_index is not None
+    assert node.expected_outputs[13] and not node.expected_outputs[1]
+    assert list(rig.requests[1][1].mdis)[-2:] == ['{0,90,13,0}', '{0,90,1,1}']
+    operation.observe(node, rig.emit(outputs=RELEASE, inputs=OPEN))
+    assert not node.holding_item and operation.release_confirmed
+    assert not node.expected_outputs[13] and node.expected_outputs[1]
+    rig.steps = iter([dict(outputs=0, inputs=OPEN, retract=True)])
+    operation.finish_pending(node)
+    assert operation.phase == 'DONE' and not any(node.expected_outputs.values())
 
 
 @pytest.mark.parametrize('inputs', [0, 1, OPEN, OPEN | 1])
@@ -187,6 +209,7 @@ def test_tray_observation_starts_prefetch_then_queues_reopen_on_pre_place(
     if not use_grip:
         rig.node.expected_outputs.update({2: False, 14: False})
         rig.emit(outputs=suction, inputs=1, running=0)
+
         def echo(index):
             if index == 1:
                 # The 80% event can execute before its MovLIO response arrives.

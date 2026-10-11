@@ -10866,6 +10866,41 @@ Never use a floating “latest” version in an issue, script, or deployment not
   -2 after accepted #557; removing this waypoint does not establish the robot's
   underlying alarm cause or prove it resolved. Commit/push only this scope.
 
+### 2026-10-11 — Rule 265: tray-placement vacuum release at 90% descent
+
+- User requests DO13 OFF/exhaust ON later in item placement, at 90% rather than
+  80% of descent. Change only the tray release vacuum pair: ordered DO13 OFF,
+  DO1 ON at 90%. Keep DO2 OFF/DO14 ON at 80%, the existing pre-place finger
+  opening for use_grip=false, and all four outputs neutral at 0% retract. Exhaust
+  remains a motion-distance interval, ending as retract starts, not a fixed pulse.
+- The shared release planner accepts an internal vacuum trigger, default 80;
+  placement explicitly supplies 90. Manual Place, Auto Run and TF Preview share
+  that plan. All explicit/paused/automatic Return Item routes retain 80%, as do
+  ordinary missed-pick EXHAUST rises. No teach setting/schema, ROS interface,
+  .env key, vendor patch or operator artifact changes. Geometry, offsets, speed,
+  acceleration, CP blending and ordered command admission remain unchanged.
+- Retain held-item/drop supervision while fingers are open and suction remains
+  ON; only observed commanded suction OFF ends holding. Queue acceptance alone
+  still cannot confirm physical release. Preserve Stop, source ownership,
+  final retract/neutral/DI1-LOW completion and interrupted-release recovery.
+- Validation: **1,488 controller tests pass**, including 205 focused placement,
+  real-transport, Preview and Return Item cases. Check exact 80% finger / 90%
+  vacuum MovLIO tuples, unchanged targets/rates/0% neutral and both grip modes.
+  New feedback cases verify the intermediate fingers-open/suction-ON state
+  stays held, then observed vacuum release and final neutral complete normally.
+  Existing Return Item tests still require 80% vacuum and all drop/Stop tests pass.
+- Update AGENTS, root/package READMEs and the FSM review, diagrams and guard table;
+  regenerate adjacent offline HTML/PDF. Isolated robot_controller build succeeds
+  under build/place_vacuum_90 and install/place_vacuum_90; installed release and
+  placement modules resolve to the edited source. Scoped flake8, AST and diff
+  checks pass. Verify matching FSM source hashes, nine SVG diagrams/nine PDF
+  pages, changed release text and working navigation/zoom; visually inspect both
+  changed diagram nodes. No offline-transfer milestone is claimed.
+  No robot commands, arming, Auto Run or live restart. Preserve unrelated RViz
+  edits, calibration, debug/teach/model/runtime artifacts and .env. Operator
+  controller relaunch and live verification remain pending; commit/push only
+  this scope under the standing workflow.
+
 ### Future entry template
 
 ```text
