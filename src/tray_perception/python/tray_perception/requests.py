@@ -29,21 +29,58 @@ from .contract import SERVICE_NAME
 REQUEST_TIMEOUT = 10.0
 
 
+class TrayObservationGeometryError(Exception):
+    """Well-formed, finite detection evidence disagrees within one observation."""
+
+    def __init__(self, evidence):
+        self.evidence = evidence
+        super().__init__(
+            f"Tray detection #{evidence['source_index']}: corners, axes or dimensions disagree; "
+            "observation discarded, waiting for a new frame")
+
+
+def check_rejected_frame(node, view):
+    rejected = getattr(node, "rejected_observation", None)
+    if (rejected is not None and rejected[:2] == (view["generation"], view["connection"])
+            and view["rgb"]["stamp_ns"] <= rejected[2]):
+        raise ValueError("Waiting for a newer RGB frame after rejected tray geometry")
+
+
 def pose_extents(selected):
     try:
         corners = np.asarray(selected["corners_base_m"], dtype=float)
-        if corners.shape != (4, 3) or not np.isfinite(corners).all():
-            raise ValueError("Invalid tray corners")
+        position = np.asarray(selected["position"], dtype=float)
+        quaternion = np.asarray(selected["quaternion"], dtype=float)
+        dimensions = np.asarray([selected["width_mm"], selected["length_mm"]], dtype=float)
+        if (corners.shape != (4, 3) or position.shape != (3,) or quaternion.shape != (4,)
+                or not all(np.isfinite(v).all() for v in
+                           (corners, position, quaternion, dimensions))
+                or abs(np.linalg.norm(quaternion) - 1) > 1e-6
+                or not 0 < dimensions[0] <= dimensions[1]):
+            raise ValueError("Malformed corners, pose or dimensions")
         axes = corners[[1, 3]] - corners[0]
         lengths = np.linalg.norm(axes, axis=1)
-        rotation = quaternion_to_rotation_matrix(*selected["quaternion"])
-        if (np.any(lengths <= 0) or not np.allclose(corners[0], selected["position"], atol=1e-6)
+        if not np.isfinite(lengths).all() or np.any(lengths <= 0):
+            raise ValueError("Degenerate tray axes")
+        rotation = quaternion_to_rotation_matrix(*quaternion)
+        if (not np.allclose(corners[0], position, atol=1e-6)
                 or not np.allclose(axes / lengths[:, None], rotation[:, :2].T, atol=1e-5)
                 or not np.allclose(corners[2], corners[0] + axes.sum(axis=0), atol=1e-6)
-                or not np.allclose(lengths,
-                                   [selected["width_mm"] / 1000, selected["length_mm"] / 1000],
-                                   atol=1e-6)):
-            raise ValueError("Tray corners, axes or dimensions disagree")
+                or not np.allclose(lengths, dimensions / 1000, atol=1e-6)):
+            evidence = {
+                "source_index": selected["source_index"], "corners_base_m": corners.tolist(),
+                "position": position.tolist(), "quaternion": quaternion.tolist(),
+                "edge_lengths_mm": (lengths * 1000).tolist(),
+                "reported_width_length_mm": dimensions.tolist(),
+                "origin_error_mm": float(np.linalg.norm(corners[0] - position) * 1000),
+                "closure_error_mm": float(np.linalg.norm(
+                    corners[2] - corners[0] - axes.sum(axis=0)) * 1000),
+                "axis_error": float(np.max(np.abs(axes / lengths[:, None] - rotation[:, :2].T)))}
+            if not np.isfinite(evidence["edge_lengths_mm"] + [
+                    evidence["origin_error_mm"], evidence["closure_error_mm"],
+                    evidence["axis_error"]]).all():
+                raise ValueError("Nonfinite derived tray geometry")
+            raise TrayObservationGeometryError(evidence)
         return tuple(float(value) for value in lengths)
     except (KeyError, ValueError, TypeError) as exc:
         raise RuntimeError(f"Invalid native tray extent evidence: {exc}") from exc
@@ -236,6 +273,7 @@ class TrayRequests:
                         time.sleep(.01)
                         continue
                     self.node._check_snapshot(view)
+                    check_rejected_frame(self.node, view)
                     return view
             except (ValueError, TransformException) as exc:
                 reason = str(exc)
@@ -435,15 +473,33 @@ class TrayRequests:
                                         if not d["valid"]],
                                     elapsed_sec=time.monotonic() - started)
         except Exception as exc:
+            recoverable = isinstance(exc, TrayObservationGeometryError)
+            if recoverable:
+                try:
+                    check()
+                    self.prepare(path, settings, request.profile_sha256)
+                    self._sole_provider()
+                    self.node._reject_observation(view, [exc])
+                except Exception as validation_error:
+                    exc, recoverable = validation_error, False
             response = GetTrayPose.Response(success=False, found=False,
-                                            status="ERROR", message=str(exc))
+                                            status="NO_VALID_TRAY" if recoverable else "ERROR",
+                                            message=str(exc))
             if isinstance(exc, SurfaceGeometryError):
                 response.status = "INVALID_GEOMETRY"
+            if recoverable:
+                response.diagnostics_json = json.dumps({
+                    "request_id": request_id, "geometry_rejection": exc.evidence}, allow_nan=False)
             view = None
-            self.status = f"ERROR: {exc}"
+            self.status = f"{response.status}: {exc}"
             self.node.events.record(
-                "ERROR", "tray_request_failed", str(exc), request_id=request_id, phase=phase,
-                elapsed_sec=time.monotonic() - started, traceback=traceback.format_exc())
+                "WARNING" if recoverable else "ERROR",
+                "tray_observation_rejected" if recoverable else "tray_request_failed",
+                str(exc), request_id=request_id, phase=phase,
+                elapsed_sec=time.monotonic() - started,
+                **({"geometry_rejection": exc.evidence} if recoverable else
+                   {"traceback": "".join(traceback.format_exception(
+                       type(exc), exc, exc.__traceback__))}))
             terminal = isinstance(exc, (RuntimeError, SurfaceGeometryError)) \
                 and not self.node.native.closed
             if self.node.native.failed or terminal:

@@ -15,6 +15,7 @@ from test_auto_run import request
 import test_status_ui
 from test_status_ui import acquisition_paused_status
 from test_tray_acquisition_pause import acquisition_rig
+from test_operation_retries import GEOMETRY_REJECTION
 
 
 window = test_status_ui.window
@@ -29,7 +30,7 @@ def paused_run(monkeypatch, replies):
     return node, tray, run
 
 
-@pytest.mark.parametrize('reply', [None, 'timeout'])
+@pytest.mark.parametrize('reply', [None, 'timeout', GEOMETRY_REJECTION])
 @pytest.mark.parametrize('rounds', [1, 2])
 def test_continue_retries_same_held_item_and_count_after_confirmed_pause(
         monkeypatch, reply, rounds):
@@ -69,8 +70,9 @@ def test_continue_retries_same_held_item_and_count_after_confirmed_pause(
     run.close()
 
 
-def test_return_from_auto_pause_finishes_ready_and_cancels_run_without_counting(monkeypatch):
-    node, tray, run = paused_run(monkeypatch, [None] * 10)
+@pytest.mark.parametrize('reply', [None, GEOMETRY_REJECTION])
+def test_return_from_auto_pause_finishes_ready_and_cancels_run_without_counting(monkeypatch, reply):
+    node, tray, run = paused_run(monkeypatch, [reply] * 10)
     node._record_auto_run_result = lambda *args: RobotController._record_auto_run_result(
         node, *args)
     monkeypatch.setattr(controller_module, 'AutoRunOperation', lambda *_args: run)

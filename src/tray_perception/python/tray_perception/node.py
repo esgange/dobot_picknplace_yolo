@@ -26,7 +26,8 @@ from item_perception_yolo.platform_teach_core import (
 from .core import EventLogger, load_profile, validate_plane, validate_preview
 from .calibration import active_robot_camera, camera_provenance
 from .rviz import TrayRvizPreview
-from .requests import pose_extents, TrayRequests
+from .requests import (
+    check_rejected_frame, pose_extents, TrayObservationGeometryError, TrayRequests)
 from .simulation import TraySimulationPreview
 from .mask_clean import validate_evidence
 
@@ -61,6 +62,7 @@ class TrayTeachNode(Node):
             self.create_subscription(
                 JointState, "/joint_states", self._on_joints, qos_profile_sensor_data)
         self.selected = None
+        self.rejected_observation = None
         self._published_key = None
         self.fatal_error = ""
         self.shutdown_requested = threading.Event()
@@ -280,6 +282,7 @@ class TrayTeachNode(Node):
             self.validate_sources()
         if view["generation"] != self.generation:
             raise ValueError("Tray observation was invalidated; acquire another frame")
+        check_rejected_frame(self, view)
         if calibrated and view["camera_context"]["camera"] != self.color_info:
             raise ValueError("CameraInfo changed; acquire another frame")
 
@@ -324,6 +327,7 @@ class TrayTeachNode(Node):
         view = self.raw_snapshot() if view is None else view
         if view["generation"] != generation:
             raise ValueError("Tray preview was invalidated before processing")
+        check_rejected_frame(self, view)
         try:
             if not supplied:
                 view = self.snapshot(view=view)
@@ -378,6 +382,7 @@ class TrayTeachNode(Node):
         except (ValueError, KeyError, TypeError) as exc:
             raise RuntimeError(f"Invalid native selected tray pose: {exc}") from exc
         if settings is not None:
+            geometry_errors = []
             try:
                 identities = []
                 for detection in result["detections"]:
@@ -406,7 +411,6 @@ class TrayTeachNode(Node):
                             and detection["length_mm"] >= detection["width_mm"] >= 0):
                         raise ValueError("Malformed dimensions")
                     if "rectangle" in detection:
-                        pose_extents(detection)
                         for key in ("rectangle", "depth_rectangle"):
                             if key not in detection:
                                 continue
@@ -414,11 +418,21 @@ class TrayTeachNode(Node):
                             if (rectangle.shape != (4, 2) or not np.isfinite(rectangle).all()
                                     or np.any(np.abs(rectangle) > 2_000_000_000)):
                                 raise ValueError("Malformed projected tray rectangle")
+                        try:
+                            pose_extents(detection)
+                        except TrayObservationGeometryError as exc:
+                            geometry_errors.append(exc)
                     identities.append(detection["source_index"])
                 if len(identities) > result["count"] or len(set(identities)) != len(identities):
                     raise ValueError("Duplicate or excess detections")
             except (ValueError, TypeError, KeyError) as exc:
                 raise RuntimeError(f"Invalid native tray detections: {exc}") from exc
+            if geometry_errors:
+                # Check every detection for malformed evidence before allowing
+                # the narrower, finite consistency failure to be retried.
+                self._check_snapshot(view, calibrated=context is not None)
+                self._reject_observation(view, geometry_errors)
+                raise geometry_errors[0]
         displayed = ([selected] if selected is not None else []) if returned_only else \
             result.get("detections", [])
         visuals = (self.visuals(view, displayed,
@@ -433,6 +447,24 @@ class TrayTeachNode(Node):
                 raise ValueError("Tray preview was invalidated while processing")
         return {**view, **visuals, "overlay": pixels, "result": result,
                 "passive_overlay": passive_overlay and settings is not None}
+
+    def _reject_observation(self, view, errors):
+        """Revoke this frame's visualization, without revoking its saved sources."""
+        with self.lock:
+            if view["generation"] != self.generation:
+                raise ValueError("Tray preview was invalidated while processing")
+            stamp = view["rgb"]["stamp_ns"]
+            rejected = (view["generation"], view["connection"], stamp)
+            if self.rejected_observation == rejected:
+                return  # Request validation may repeat the preview's rejection.
+            self.rejected_observation = rejected
+            self.selected = self._published_key = None
+            self.rviz.clear_pose()
+            self.rviz.hold(str(errors[0]))
+            for exc in errors:
+                exc.evidence["source_stamp_ns"] = stamp
+                self.events.record("WARNING", "tray_geometry_rejected", str(exc),
+                                   **exc.evidence)
 
     def accept_view(self, view):
         """Only the observation accepted by the GUI may replace the displayed cloud/pose."""

@@ -309,8 +309,14 @@ class TrayRig:
         return self.observer.request(self.config, 30., 40., attempts=self.attempts, **kwargs)
 
 
+GEOMETRY_REJECTION = GetTrayPose.Response(
+    success=False, found=False, status="NO_VALID_TRAY",
+    message="Tray detection #2: corners, axes or dimensions disagree; "
+            "observation discarded, waiting for a new frame")
+
+
 @pytest.mark.parametrize("failure", [
-    None, "timeout",
+    None, "timeout", GEOMETRY_REJECTION,
     GetTrayPose.Response(success=True, found=False, status="NO_VALID_TRAY", message="No tray"),
     GetTrayPose.Response(status="ERROR", message="No fresh calibrated observation"),
     GetTrayPose.Response(
@@ -341,7 +347,7 @@ def test_tray_retries_missing_pose_or_reply_and_accepts_third_fresh_result(
 
 
 @pytest.mark.parametrize("failure", [
-    None, "timeout",
+    None, "timeout", GEOMETRY_REJECTION,
     GetTrayPose.Response(
         status="ERROR", message="Insufficient accepted placement depth samples/fraction"),
 ])

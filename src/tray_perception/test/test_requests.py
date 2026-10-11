@@ -41,12 +41,14 @@ def selected():
 
 @pytest.fixture
 def backend(tmp_path, artifact):
+    from tray_perception.node import TrayTeachNode
     path, camera, model = artifact
     camera.settings = SimpleNamespace(camera_prefix="cam")
     node = SimpleNamespace(
         root=tmp_path, deployment=False, yolo_enabled=True, native=SimpleNamespace(
             failed=False, closed=False), fatal_error="", work_lock=threading.RLock(),
         lock=threading.RLock(), generation=4, camera=camera, camera_prefix="cam",
+        rejected_observation=None, rviz=MagicMock(),
         model={"path": str(model), "sha256": core.file_sha256(model), "task": "segment"},
         model_metadata={"classes": {"0": "tray", "1": "other"}},
         plane=plane(), position=position(),
@@ -74,6 +76,7 @@ def backend(tmp_path, artifact):
 
     node.preview = MagicMock(side_effect=preview)
     node.requests = requests.TrayRequests(node)
+    node._reject_observation = lambda *args: TrayTeachNode._reject_observation(node, *args)
 
     def invalidate(reason):
         node.generation += 1
@@ -779,19 +782,139 @@ def test_headless_launch_is_argument_free_and_local_only(monkeypatch):
     assert len(factory().entities) == 1
 
 
-@pytest.mark.parametrize("cause", ["nan", "wrong_axis", "wrong_origin", "long_x"])
-def test_tray_extent_evidence_cannot_return_invalid_geometry(cause):
+@pytest.mark.parametrize("cause", ["wrong_axis", "wrong_origin", "long_x", "closure"])
+def test_finite_inconsistent_tray_extent_evidence_rejects_the_observation(cause):
     value = selected()
-    if cause == "nan":
-        value["corners_base_m"][1][0] = float("nan")
-    elif cause == "wrong_axis":
+    if cause == "wrong_axis":
         value["quaternion"] = [0., 0., 1., 0.]
     elif cause == "long_x":
         value["corners_base_m"] = [[.1, .1, .2], [.3, .1, .2], [.3, .2, .2], [.1, .2, .2]]
+    elif cause == "closure":
+        value["corners_base_m"][2][0] += .01
     else:
         value["position"][0] += .1
-    with pytest.raises(RuntimeError, match="extent evidence"):
+    with pytest.raises(requests.TrayObservationGeometryError, match="observation discarded") as err:
         requests.pose_extents(value)
+    assert err.value.evidence["source_index"] == 2
+    assert err.value.evidence["reported_width_length_mm"] == [100., 200.]
+    json.dumps(err.value.evidence, allow_nan=False)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("corners_base_m", [[float("nan"), 0., 0.]] * 4),
+    ("corners_base_m", [[0., 0., 0.]] * 4),
+    ("corners_base_m", [[0., 0., 0.]] * 3),
+    ("position", [0., float("inf"), 0.]), ("position", [0., 0.]),
+    ("quaternion", [0., 0., 0., 0.]), ("quaternion", [0., 0., 0.]),
+    ("width_mm", 0.), ("width_mm", 300.), ("length_mm", float("nan")),
+    ("position", None),
+])
+def test_malformed_tray_extent_evidence_remains_terminal(field, value):
+    candidate = selected()
+    candidate[field] = value
+    with pytest.raises(RuntimeError, match="extent evidence"):
+        requests.pose_extents(candidate)
+
+
+@pytest.mark.parametrize("simulated", [False, True])
+@pytest.mark.parametrize("deployment", [False, True])
+@pytest.mark.parametrize("in_preview", [False, True])
+def test_geometry_rejection_keeps_provider_armed_and_next_trigger_recovers(
+        backend, simulated, deployment, in_preview):
+    from item_perception_yolo.item_preview import CaptureMailbox
+    node, path, digest = backend
+    node.deployment = deployment
+    if deployment:
+        directory = node.root / "runtime_teach"
+        directory.mkdir()
+        for source in (path, path.with_suffix(".pt")):
+            shutil.copyfile(source, directory / source.name)
+        path = directory / path.name
+        node.model["path"] = str(path.with_suffix(".pt"))
+        node.get_name = lambda: "tray_detect"
+        node.get_node_names_and_namespaces = lambda: [("tray_detect", "/")]
+        backend = node, path, digest
+    node.capture_preview = CaptureMailbox()
+    provider = arm(backend)
+    handle, epoch = provider.service, provider.epoch
+    preview = node.preview.side_effect
+    snapshot = node.snapshot.side_effect
+    stamps = iter(range(100_000_000_001, 100_000_000_010))
+
+    def fresh_snapshot():
+        view = snapshot()
+        view["rgb"]["stamp_ns"] = next(stamps)
+        return view
+
+    node.snapshot.side_effect = fresh_snapshot
+
+    def inconsistent(*args, **kwargs):
+        view = preview(*args, **kwargs)
+        view["result"]["selected"]["position"][0] += .01
+        if in_preview:
+            requests.pose_extents(view["result"]["selected"])
+        return view
+
+    def capture():
+        if simulated:
+            return provider.simulate(path, settings(), digest, None)["response"]
+        return trigger(backend)
+
+    node.preview.side_effect = inconsistent
+    result = capture()
+    assert not result.success and not result.found and result.status == "NO_VALID_TRAY"
+    assert not result.placement.valid
+    assert json.loads(result.diagnostics_json)["geometry_rejection"]["origin_error_mm"] > 9
+    assert provider.service is handle and provider.epoch == epoch and not node.fatal_error
+    assert node.selected is None
+    node.rviz.clear_pose.assert_called_once()
+    node.destroy_service.assert_not_called()
+    if not simulated:
+        assert node.capture_preview.take()["view"] is None
+    node.preview.side_effect = preview
+    result = capture()
+    assert result.success and result.found
+    assert provider.service is handle and provider.epoch == epoch
+
+
+@pytest.mark.parametrize("worker_failed", [False, True])
+def test_geometry_rejection_cannot_hide_terminal_validation_failure(backend, worker_failed):
+    node, _, _ = backend
+    provider = arm(backend)
+
+    def bad_preview(*_args, **_kwargs):
+        node.validate_sources.side_effect = RuntimeError("Native tray worker failed")
+        node.native.failed = worker_failed
+        raise requests.TrayObservationGeometryError({"source_index": 2})
+
+    node.preview.side_effect = bad_preview
+    result = trigger(backend)
+    assert not result.success and result.status == "ERROR"
+    assert "corners, axes or dimensions disagree" not in result.message
+    assert node.fatal_error == result.message and provider.service is None
+
+
+def test_capture_waits_for_new_frame_after_passive_geometry_rejection(backend):
+    node, _, _ = backend
+    provider = arm(backend)
+    original = node.snapshot.side_effect
+    first = original()
+    node.rejected_observation = (node.generation, 1, first["rgb"]["stamp_ns"])
+    stamps = iter([first["rgb"]["stamp_ns"], first["rgb"]["stamp_ns"] + 1])
+
+    def snapshot():
+        view = original()
+        view["rgb"]["stamp_ns"] = next(stamps)
+        return view
+
+    node.snapshot.side_effect = snapshot
+    node.snapshot.reset_mock()
+    response = trigger(backend)
+    assert response.success and response.found
+    assert node.snapshot.call_count == 2
+    assert node.preview.call_count == 1
+    assert response.header.stamp.nanosec == 2
+    assert provider.service is not None
 
 
 @pytest.mark.parametrize("debug", [False, True])

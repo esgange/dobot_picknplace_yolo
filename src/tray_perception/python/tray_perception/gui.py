@@ -23,6 +23,7 @@ from item_perception_yolo.item_preview import (
     validate_prefix, passive_inference_view)
 from item_perception_yolo.item_teach_core import file_sha256, NEW_PROFILE_IMAGE_SIZE
 from .node import TrayTeachNode
+from .requests import TrayObservationGeometryError
 from .contract import SERVICE_NAME
 from .execution import spin_checked
 from .simulation import FRAME as SIMULATED_FRAME
@@ -1336,6 +1337,9 @@ class TrayTeachWindow(QtWidgets.QWidget):
                 if terminal or not obsolete:
                     if kind == "simulate" or self.simulation_view is not None:
                         self._resume_live()
+                    if isinstance(exc, TrayObservationGeometryError):
+                        self.last_view = self.detail_sample = None
+                        self.detail_label.setText("Observation rejected; waiting for a new frame.")
                     self.node.selected = None
                     self._message(message, error=True)
                     if kind == "preview":

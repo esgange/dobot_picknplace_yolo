@@ -999,6 +999,14 @@ The separate `tray_perception` package currently provides the read-only
 ros2 launch tray_perception tray_teach.launch.py
 ```
 
+If finite tray rectangle corners, axes and dimensions disagree, Tray Teach
+rejects that observation, clears its pose/overlays and retries a newer RGB frame
+at the normal preview cadence. A healthy armed service stays available. Captures
+return no usable tray and use the controller's existing ten-request limit, then
+paused Continue / Return Item. Malformed data, native failures, invalid reference
+planes and changed sources retain their error/disarming behavior; see the
+[Tray Perception validation notes](src/tray_perception/README.md).
+
 Enter the setup's camera prefix and **Connect RGB**, then browse a YOLO model
 to load it automatically. RGB detection works independently of calibration and a
 completed profile; live settings update after a 300 ms typing pause. Side-by-side

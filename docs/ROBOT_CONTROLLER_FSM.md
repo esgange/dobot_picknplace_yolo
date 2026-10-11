@@ -1,5 +1,17 @@
 # Robot Controller — Finite State Machine
 
+Tray observation recovery review: **2026-10-11**, baseline **`3e52eaf`** plus
+rule **262**. A provider rejects a complete observation when finite, well-formed
+tray detection corners, axes or dimensions disagree. A healthy worker/service
+remains active: passive preview clears its pose/overlay and retries newer RGB at
+1 Hz; triggered capture returns NO_VALID_TRAY (success/found false, no usable
+pose/depth). Existing controller acquisition handling uses ten requests total,
+then PAUSED with Continue / Return Item. Keep fresh post-trigger frames, zero
+added settling and all held-item/Stop/source/ownership checks. Malformed native
+evidence, invalid reference planes and worker/protocol failures remain terminal;
+invalid successful service replies still stop immediately. No controller motion,
+retry budget, public interface or teach schema changes. Live verification is pending.
+
 Trickle-depth review: **2026-10-11**, baseline **`3d5befb`** plus rule **261**.
 Schema 15 adds finite nonnegative `retry.trickle_depth` (mm), default 0. Positive
 steps require enabled blacklisting. A pending attempt's final pick base Z is its
@@ -1158,8 +1170,9 @@ flowchart TD
     Arrive --> Depth
     Travel -->|Failure or Stop| Stop["Stop and report failure; preserve outputs"]
     Arrive -->|Failure or Stop| Stop
-    Depth -->|No usable result, surface more than 20 mm below plane or timeout| Budget{"Requests left?"}
-    Budget -->|Yes; stay at observation pose| Depth
+    Depth -->|Unavailable / rectangle mismatch| Budget{"Requests left?"}
+    Budget -->|Yes| FreshRetry["Stay at Tray Detect; next request needs newer RGB/depth"]
+    FreshRetry --> Depth
     Budget -->|No| AcquisitionPause["Confirm Stop; PAUSED at Tray Detect; preserve grip and Place ownership"]
     AcquisitionPause -->|Continue / Place Item Retry| Reset["Operator grants 10 new requests; recheck sources and position"]
     Reset --> Observe
@@ -1239,6 +1252,15 @@ Provider NO_VALID_PLACEMENT_DEPTH keeps the sampled evidence and optional debug
 images with placement.valid=false. The controller validates that evidence and
 independently reproduces the rejection before retrying; an inconsistent rejection
 is malformed. INVALID_GEOMETRY is terminal. No target is clamped.
+
+Finite, well-formed detection corner/axis/dimension disagreements are rejected
+inside the tray provider before returning any pose. The provider stays armed and
+returns NO_VALID_TRAY with success/found false, numeric rejection diagnostics and
+no usable placement depth. This is an unavailable observation, distinct from an
+invalid *successful* response. Passive preview discards the whole frame, clears
+pose/overlays and waits for newer RGB at its normal cadence, without consuming the
+controller budget. Degenerate/nonfinite/malformed evidence and native worker or
+reference-plane failure remain terminal; changed sources still invalidate/disarm.
 
 Retry missing pose/depth, no-result/error/BUSY responses and unanswered requests
 at most ten times total, including the first request. Each request has the
@@ -1397,6 +1419,7 @@ flowchart TD
     Next --> Tray
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK; Home after misses or bin exit after final drop; partial count"]
     Next -->|3 physical batches or empty retry exhausted| Empty
+    Observe -->|Rectangle mismatch / unavailable; budget remains| Observe
     Observe -->|10 requests exhausted| Paused["Confirm Stop; PAUSED at Tray Detect; retain item, target, owner and count"]
     Paused -->|Continue / Place Item Retry| Observe
     Paused -->|Return Item| PutBack["Shared return queue through Home; READY / CANCELED; unchanged partial count"]
@@ -1788,6 +1811,7 @@ Names below are relative to `/robot_controller/`.
 | Pickup finger relaxation (internal) | grip_onpick=false; confirmed final-pick idle or accepted eligible acquisition Stop; DO2 OFF then DO14 OFF with fresh echoes before probing/lifting; suction ON/exhaust OFF and DI1 supervision through both waits; no extra settling interval |
 | Tray arrival pair (internal) | Admit MovL then MovJ to identical taught angles/rates, waiting only for ordered service acceptance; preserve outputs/Stop/drop gates; no midpoint arrival or mismatch decision; final MovJ execution/idle and all raw joints within ±1° required before completion or detection |
 | Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
+| Tray rectangle observation rejection | Finite, structurally valid detection evidence disagrees: provider returns no pose, remains armed while healthy, requires newer RGB; controller uses existing ten-request budget then acquisition pause; malformed evidence/invalid reference planes/worker failures remain terminal |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; exact taught Tray Detect joint return (MovJIO, OPEN at 50%) precedes linear entry/pre-pick/pick; no cancellation or added midpoint arrival wait |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the placement-specific 20% of the full sampling circle after tray containment/range/MAD filtering; empty/zero-valid samples fail; no fixed count floor; item pick percentage unchanged |

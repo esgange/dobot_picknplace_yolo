@@ -337,6 +337,30 @@ background. Obsolete observations cannot restore a pose or overwrite the edit
 status; native/protocol failures remain terminal even if the preview was
 invalidated. See [NOTICE.md](NOTICE.md) for attribution.
 
+A detected rectangle whose finite, structurally valid corners, pose axes or
+reported dimensions disagree is rejected as one unavailable observation (rule
+262). Reject the entire frame, including any other detections, clear the current
+pose/overlays and keep the healthy worker and armed service. Passive preview
+tries again at its normal 1 Hz cadence using a strictly newer RGB timestamp;
+a delayed old display result cannot restore the rejected observation. Retain
+scene voxels under the existing five-second greying policy. No geometry check or
+tolerance is relaxed, and no old pose is substituted.
+
+Simulate Trigger and headless/controller capture share this validation. A capture
+returns `success=false`, `found=false`, `status=NO_VALID_TRAY`, no usable pose/depth
+and numeric `geometry_rejection` diagnostics. Controller requests use their
+existing ten-request budget and fresh post-trigger RGB/depth requirements, with
+zero added settling. Exhaustion pauses with Continue / Return Item available;
+passive preview retries do not consume controller requests. Log
+`tray_geometry_rejected` with source timestamp, detection ID, corners, quaternion,
+reported/measured edge lengths, origin/closure error in mm and axis error;
+`tray_observation_rejected` also identifies the request and failing phase.
+Malformed/nonfinite data, zero-length axes, invalid quaternions or reference
+planes, worker/protocol/executor failures and source invalidation retain their
+existing terminal/disarming handling. There is no worker restart or automatic
+rearming. This addresses observation failure containment; the historical offending
+corners were not saved, so the precise numerical cause remains unconfirmed.
+
 ## Trigger, arming and controller requests
 
 The top row follows Item Teach: **YOLO Detect**, **Simulate Trigger**, and
@@ -352,7 +376,7 @@ provider keeps Place disabled before any observation travel.
 The GUI and headless node supervise their ROS executor thread. An unexpected
 exit or callback exception sets a terminal error, revokes arming and records
 `tray_executor_failed` with the Python traceback. The GUI displays the failure;
-headless exits. There is no silent thread restart or inference retry. Ordinary
+headless exits. There is no silent thread restart or retry of a failed native worker. Ordinary
 no-tray/depth failures remain request results, keeping reception and preview live.
 Each request logs its start, completion duration or failing phase and traceback
 in `logs/tray_perception/events.jsonl`. Repeated identical GUI messages update the

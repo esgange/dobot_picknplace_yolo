@@ -1277,12 +1277,107 @@ def preview_node(view, response):
     view.update(depth=None, info=None, depth_info=None, metric_error="", depth_error="")
     return SimpleNamespace(
         lock=threading.RLock(), model={"task": "segment"}, plane=None, generation=4, selected=None,
-        deployment=False,
+        deployment=False, rejected_observation=None,
         raw_snapshot=lambda: view, snapshot=lambda **_: view,
         get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=100)),
         native=SimpleNamespace(call=MagicMock(return_value=(response, bytes(12)))),
         visuals=MagicMock(return_value={"cloud": None, "depth_overlay": b"", "samples": []}),
         _check_snapshot=MagicMock())
+
+
+@pytest.mark.parametrize("valid", [False, True])
+def test_inconsistent_preview_clears_pose_and_requires_new_frame(valid):
+    from test_requests import selected
+    from tray_perception.requests import TrayObservationGeometryError
+
+    detection = selected()
+    detection.update(valid=valid, polygon=[[0., 0.], [1., 0.], [1., 1.]],
+                     rectangle=[[0., 0.], [1., 0.], [1., 1.], [0., 1.]],
+                     size_status="pass" if valid else "fail")
+    detection["position"][0] += .01
+    view = {"generation": 4, "connection": 1, "camera_context": None,
+            "rgb": {"width": 2, "height": 2, "rgb": bytes(12), "stamp_ns": 100}}
+    response = {"state": "ok", "width": 2, "height": 2, "count": 1,
+                "selected": detection if valid else None, "detections": [detection],
+                "reason": "", "inference_ms": 1.}
+    node = preview_node(view, response)
+    node.rviz, node.events = MagicMock(), MagicMock()
+    node.selected, node._published_key = "previous pose", 99
+    node._reject_observation = lambda *args: TrayTeachNode._reject_observation(node, *args)
+    with pytest.raises(TrayObservationGeometryError):
+        TrayTeachNode.preview(node, preview_settings(), generation=4)
+    assert node.selected is None and node._published_key is None
+    node.rviz.clear_pose.assert_called_once()
+    node.visuals.assert_not_called()
+    evidence = node.events.record.call_args.kwargs
+    assert evidence["source_stamp_ns"] == 100 and evidence["source_index"] == 2
+    with pytest.raises(ValueError, match="newer RGB frame"):
+        TrayTeachNode.preview(node, preview_settings(), generation=4)
+    with pytest.raises(ValueError, match="newer RGB frame"):
+        TrayTeachNode._check_snapshot(node, view, calibrated=False)
+    assert node.native.call.call_count == 1
+    view["rgb"]["stamp_ns"] += 1
+    detection["position"][0] -= .01
+    result = TrayTeachNode.preview(node, preview_settings(), generation=4)
+    assert result["rgb"]["stamp_ns"] == 101 and node.native.call.call_count == 2
+    TrayTeachNode.accept_view(node, result)
+    assert (node.selected is not None) is valid
+
+
+def test_rejected_frame_gate_is_scoped_to_source_generation_and_connection():
+    from tray_perception.requests import check_rejected_frame
+    node = SimpleNamespace(rejected_observation=(4, 1, 100))
+    view = {"generation": 4, "connection": 1, "rgb": {"stamp_ns": 99}}
+    with pytest.raises(ValueError, match="newer RGB frame"):
+        check_rejected_frame(node, view)
+    check_rejected_frame(node, {**view, "generation": 5})
+    check_rejected_frame(node, {**view, "connection": 2})
+
+
+def test_malformed_detection_is_fatal_even_after_an_inconsistent_detection():
+    from test_requests import selected
+    first = selected()
+    first.update(polygon=[[0., 0.], [1., 0.], [1., 1.]], size_status="pass",
+                 rectangle=[[0., 0.], [1., 0.], [1., 1.], [0., 1.]])
+    first["position"][0] += .01
+    second = copy.deepcopy(first)
+    second["source_index"] = 3
+    second["corners_base_m"][0][0] = float("nan")
+    view = {"generation": 4, "camera_context": None,
+            "rgb": {"width": 2, "height": 2, "rgb": bytes(12), "stamp_ns": 100}}
+    response = {"state": "ok", "width": 2, "height": 2, "count": 2,
+                "selected": first, "detections": [first, second],
+                "reason": "", "inference_ms": 1.}
+    node = preview_node(view, response)
+    with pytest.raises(RuntimeError, match="extent evidence"):
+        TrayTeachNode.preview(node, preview_settings(), generation=4)
+
+
+@pytest.mark.parametrize("worker_failed", [False, True])
+def test_preview_geometry_failure_keeps_gui_open_unless_worker_failed(
+        window, monkeypatch, worker_failed):
+    from tray_perception.requests import TrayObservationGeometryError
+    service = window.node.requests.service = object()
+    window.node.native.failed = worker_failed
+    window.last_view = window.detail_sample = {"old": "geometry"}
+    window.node.selected = "old pose"
+    window.future = Future()
+    window.job_kind, window.completion = "preview", MagicMock()
+    window.future.set_exception(TrayObservationGeometryError({"source_index": 2}))
+    critical = MagicMock()
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, "critical", critical)
+    started = time.monotonic()
+    window._tick()
+    assert window.last_view is None and window.detail_sample is None
+    assert window.node.selected is None
+    assert critical.call_count == int(worker_failed)
+    assert window.closing is worker_failed
+    if not worker_failed:
+        assert not window.node.fatal_error
+        assert window.node.requests.service is service
+        window.node.requests.disarm.assert_not_called()
+        assert window.next_preview >= started + 1.
+        assert "observation discarded" in window.status.text()
 
 
 @pytest.mark.parametrize("fault", [None, "missing", "malformed", "area", "reason"])

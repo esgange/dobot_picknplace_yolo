@@ -10710,6 +10710,75 @@ Never use a floating “latest” version in an issue, script, or deployment not
   needed, then relaunch under operator control. Synthetic tests do not establish
   physical picking success. Scoped commit/push follows the standing workflow.
 
+### 2026-10-11 — Rule 262: retry inconsistent tray observations without losing the provider
+
+- Approved scope: a finite tray rectangle consistency failure must reject the
+  observation and retry fresh inputs while keeping a healthy Tray Teach service
+  armed. Preserve terminal native/protocol/executor/configuration failures and
+  existing controller acquisition budgets, Pause choices and robot safety gates.
+- Incident evidence (UTC, baseline 3e52eaf): last successful tray response at
+  08:08:33.031; placement 48 confirmed at 08:08:36.246. Passive preview resumed
+  at 08:08:38.224; Tray Teach logged `Invalid native tray extent evidence: Tray
+  corners, axes or dimensions disagree` at 08:08:42.524 and disarmed at
+  08:08:42.668. The held next item reached Tray Detect with accepted motion
+  replies; controller found no sole tray provider at 08:08:44.408, confirmed
+  Stop and ended Auto Run at 48/50, 476.3 seconds. The operator subsequently
+  recovered and returned the item; read-only inspection found READY/unheld and
+  no Tray Teach provider. The offending frame/corners were not archived, so a
+  precise numerical root cause (including a rounding hypothesis) is unproven.
+- Introduce a narrow typed observation exception for structurally valid, finite
+  corners/pose/dimensions that fail the existing extent consistency tolerances.
+  Validate every detection's structure first, including detections already
+  rejected by size/class, so one recoverable inconsistency cannot hide malformed
+  evidence elsewhere. Do not relax tolerances, repair rectangles or substitute
+  previous measurements. Nonfinite values, degenerate axes, invalid quaternion
+  or dimensions remain native-evidence errors.
+- Reject the whole observation. Clear selected pose/guide and GUI geometry/detail
+  overlays, retain scene voxels under their existing greying policy, and log
+  detection identity, RGB timestamp, exact corners/quaternion, measured/reported
+  side lengths, origin/closure errors in mm and axis error. Track the rejected
+  RGB timestamp per source generation/connection; processing and accepting an
+  older/equal observation cannot restore it. Passive preview retries at normal
+  1 Hz cadence on newer frames. Neither generation nor service epoch changes;
+  no automatic worker restart, rearming or new executor is introduced.
+- GUI simulation, armed Tray Teach and headless captures share the rejection.
+  Revalidate request/source/ownership before classifying it as unavailable;
+  return success=false/found=false/NO_VALID_TRAY with no usable pose/depth and
+  structured request-ID/geometry diagnostics. Both preview and response-side
+  extent checks revoke the rejected frame. Worker/protocol/executor failures,
+  invalid saved plane geometry and source invalidation retain existing terminal
+  or disarming handling. Invalid successful ROS responses still fail strictly.
+- Controller production code is unchanged: this response uses its existing ten
+  requests total with fresh post-trigger RGB/depth and zero added settling.
+  Exhaustion confirms Stop and pauses with the same held item, target, operation
+  owner and placement count. Continue grants another ten requests; Return Item
+  uses the retained source and cancels the run without counting a placement.
+  Missing/duplicate providers, source/feedback/output faults and direct Stop
+  retain their existing handling. No motion, I/O, rates, offsets, interfaces,
+  teaching schema or .env changes.
+- Validation: isolated Tray Perception colcon build passes under build/tray_retry;
+  final combined Tray Perception / Robot Controller suites pass **1,773 tests**
+  using synthetic inputs, offscreen Qt and ROS_DOMAIN_ID=92. Cover finite
+  inconsistency versus malformed/degenerate evidence, mixed detection failures,
+  GUI survival versus native failure, service retention in GUI/headless and
+  simulation, new-frame gating, terminal validation precedence, ten-request
+  exhaustion, Auto Run Continue and Return Item. Initial focused/full passes
+  exposed only new fixture assumptions (headless artifacts must be deployed to
+  the test runtime directory; worker-failed readiness reports its earlier guard
+  message); correct those fixtures/assertions and rerun to the final passing
+  result. Final response-side invalidation also passes the full suite.
+- Update AGENTS, root/package READMEs and controller FSM review/diagram/guard
+  table. Regenerate adjacent HTML/PDF locally; verify nine SVGs/nine PDF pages,
+  matching source hashes and retry labels, and inspect changed placement/Auto
+  Run diagrams. Changed Python AST/lint and whitespace checks pass. No new
+  dependency or vendor patch; offline source requirements remain unchanged.
+- Controller/camera processes remain running; no robot service command,
+  canonical rebuild, automatic arming or process restart. Preserve .env,
+  calibration, teach/model/runtime artifacts and the unrelated RViz edit.
+  Operator relaunch and live verification remain pending. This change contains
+  rejected observations; synthetic tests do not prove the live run resolved.
+  Commit/push only this scope under the standing workflow.
+
 ### Future entry template
 
 ```text
