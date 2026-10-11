@@ -49,6 +49,8 @@ class GuiNode(rclpy.node.Node):
             "continue": self.create_client(Command, "/robot_controller/continue"),
             "stop": self.create_client(Command, "/robot_controller/stop"),
             "return_item": self.create_client(Command, "/robot_controller/return_item"),
+            "clear_repick_history": self.create_client(
+                Command, "/robot_controller/clear_repick_history"),
             "speed": self.create_client(
                 SetGlobalSpeed, "/robot_controller/set_global_speed"),
             "cp": self.create_client(SetGlobalCP, "/robot_controller/set_global_cp"),
@@ -190,6 +192,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         header.addWidget(self.teach_panel, 4, QtCore.Qt.AlignTop)
         layout.addLayout(header)
 
+        self.clear_repick = QtWidgets.QPushButton("Clear Repick History")
+        self.clear_repick.clicked.connect(lambda: self._command("clear_repick_history"))
+        teach.addWidget(self.clear_repick, 4, 0, 1, 3)
         lifecycle = QtWidgets.QHBoxLayout()
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
         self.pause = QtWidgets.QToolButton()
@@ -864,6 +869,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "QToolButton:disabled{background:#e2e2e2;color:#999}")
         self.place_item.setText("Place Item (Retry)" if retry else "Place Item")
         buttons = {
+            "clear_repick_history": self.clear_repick,
             "configure": self.configure, "recover": self.recover, managed_name: self.pause,
             "home": self.home_button, "pick": self.pick_item, "place": self.place_item,
             "preview_toggle": self.preview_toggle, "speed": self.speed_slider,
@@ -871,6 +877,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "auto_run": self.auto_run_button,
         }
         descriptions = {
+            "clear_repick_history": "Clear tracked pick attempts and active exclusion circles",
             "auto_run": "Pick and place the requested quantity, then return Home",
             "configure": "Load teach files, enable and initialize the robot to READY",
             "continue": ("Retest suction at Home after clearing the item or obstruction"

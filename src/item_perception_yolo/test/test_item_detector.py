@@ -144,7 +144,9 @@ def service_node(monkeypatch, tmp_path):
     result["timings_ms"] = {"yolo_ms": 5., "geometry_ms": 3., "clearance_ms": 1., "rendering_ms": 1.}
     node.infer = MagicMock(return_value={"metadata": result, "native_roundtrip_ms": 11., "rgb": b""})
     node._pose_batch = lambda *a, **kw: detector.ItemDetectNode._pose_batch(node, *a, **kw)
-    profile = {"retry": {"pose_candidates": 3}, "home": {"positions_rad": [0.]*6},
+    profile = {"retry": {"pose_candidates": 3,
+                         "blaclist_trigger": 0, "blackist_radius": 0., "blackist_cooldown": 0},
+               "home": {"positions_rad": [0.]*6},
                "pick_rotation": 0., "motion": {"standoff_height": 90.}}
     node._validate_pose_profile = MagicMock(return_value=(profile, "a"*64))
     monkeypatch.setattr(detector, "load_item_profile", lambda _: (profile, "a"*64))
@@ -155,7 +157,8 @@ def service_node(monkeypatch, tmp_path):
 def call(node, count=3, digest="a"*64, convention=GetItemPoses.Request.POSE_CONVENTION):
     return detector.ItemDetectNode._request(
         node,
-        GetItemPoses.Request(max_candidates=count, profile_sha256=digest,
+        GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1", max_candidates=count, profile_sha256=digest,
                              pose_convention=convention), GetItemPoses.Response())
 
 
@@ -196,7 +199,8 @@ def test_requested_debug_pair_is_exact_annotated_result_and_bounded_to_debug_dir
     rgb = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
     depth = bytes([0, 0, 0, 255, 0, 0, 0, 0, 0, 255, 0, 0])
     node.infer.return_value.update(width=2, height=2, rgb=rgb, depth_rgb=depth)
-    request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+    request = GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1", max_candidates=3, profile_sha256="a"*64,
                                    save_debug_images=True,
                                    pose_convention=GetItemPoses.Request.POSE_CONVENTION)
     result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
@@ -226,7 +230,8 @@ def test_debug_image_failure_is_diagnostic_only(service_node, monkeypatch):
     node.infer.return_value.update(width=2, height=2, rgb=bytes(12), depth_rgb=bytes(12))
     monkeypatch.setattr(detector, "save_pick_debug_pair",
                         MagicMock(side_effect=OSError("synthetic disk failure")))
-    request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+    request = GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1", max_candidates=3, profile_sha256="a"*64,
                                    save_debug_images=True,
                                    pose_convention=GetItemPoses.Request.POSE_CONVENTION)
     result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
@@ -244,7 +249,8 @@ def test_debug_saving_cannot_return_invalidated_candidates(service_node, monkeyp
         return {"rgb_path": "rgb.png", "depth_path": "depth.png"}
 
     monkeypatch.setattr(detector, "save_pick_debug_pair", saved)
-    request = GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+    request = GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1", max_candidates=3, profile_sha256="a"*64,
                                    save_debug_images=True,
                                    pose_convention=GetItemPoses.Request.POSE_CONVENTION)
     result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
@@ -261,7 +267,8 @@ def test_debug_saving_does_not_expire_an_accepted_batch(service_node, monkeypatc
 
     monkeypatch.setattr(detector, "save_pick_debug_pair", saved)
     result = detector.ItemDetectNode._request(
-        node, GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+        node, GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1", max_candidates=3, profile_sha256="a"*64,
                                    save_debug_images=True,
                                    pose_convention=GetItemPoses.Request.POSE_CONVENTION),
         GetItemPoses.Response())
@@ -477,7 +484,9 @@ def test_simulation_failure_never_freezes_or_returns_old_candidates(service_node
     elif failure == "invalid_profile":
         node._validate_pose_profile.side_effect = ValueError("Invalid saved profile")
     elif failure == "queued_hash":
-        node._validate_pose_profile.return_value = ({"retry": {"pose_candidates": 3}}, "f"*64)
+        node._validate_pose_profile.return_value = (
+            {"retry": {"pose_candidates": 3, "blaclist_trigger": 0,
+                       "blackist_radius": 0., "blackist_cooldown": 0}}, "f"*64)
     elif failure == "source":
         node._validate_sources.side_effect = ValueError("Station source changed")
     elif failure == "hash":
@@ -791,6 +800,7 @@ def test_controller_capture_uses_debug_buffers_without_forcing_disk_save(
     save = MagicMock(return_value={"rgb_path": "rgb.png", "depth_path": "depth.png"})
     monkeypatch.setattr(detector, "save_pick_debug_pair", save)
     response = detector.ItemDetectNode._request(node, GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1",
         max_candidates=3, profile_sha256="a"*64, save_debug_images=debug,
         pose_convention=GetItemPoses.Request.POSE_CONVENTION), GetItemPoses.Response())
     assert response.success
@@ -855,7 +865,8 @@ def test_pose_captures_publish_voxels_after_validation_even_for_empty_results(
 
     node.rviz.compute_capture.side_effect = compute
     response, _ = node._pose_batch(
-        GetItemPoses.Request(max_candidates=3, profile_sha256="a"*64,
+        GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1", max_candidates=3, profile_sha256="a"*64,
                              pose_convention=GetItemPoses.Request.POSE_CONVENTION),
         GetItemPoses.Response(), simulation_path=Path("profile.yaml") if simulated else None,
         expected_digest="a"*64)

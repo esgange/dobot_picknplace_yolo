@@ -34,6 +34,7 @@ from .bin_teach_core import (
 from .platform_teach_core import (
     PackageEventLogger, resolve_base_from_camera_link, workspace_root,
 )
+from .repick import REPICK_CONTRACT, region_dict, validate_regions
 from .item_teach_core import (file_sha256, load_item_profile, settings_from_profile,
                               validate_detection_settings, detection_settings, validate_quality,
                               validate_bin_clearance, inset_bin_roi, BIN_CLEARANCE_FIELDS,
@@ -294,7 +295,8 @@ def validate_candidate_selection(result, candidate_limit, *, source_ids=None):
     if (type(rejected) is not list or any(
             type(entry) is not dict or set(entry) - {"rejection_stage"} not in (
                 {"source_index", "reason"}, {"source_index", "reason", "nearby_depth_filter"})
-            or ("rejection_stage" in entry and entry["rejection_stage"] != "height")
+            or ("rejection_stage" in entry
+                and entry["rejection_stage"] not in ("height", "blacklist"))
             or type(entry["source_index"]) is not int or entry["source_index"] < 0
             or type(entry["reason"]) is not str or not entry["reason"] for entry in rejected)):
         raise RuntimeError("Malformed candidate rejection diagnostics")
@@ -1118,7 +1120,8 @@ class ItemDetectNode(Node):
     def simulate_trigger(self, path, *, expected_digest, requested_at=None, cancelled=None):
         """Local-only equivalent of a service request; never advertises or calls a service."""
         response, view = self._pose_batch(
-            GetItemPoses.Request(pose_convention=GetItemPoses.Request.POSE_CONVENTION),
+            GetItemPoses.Request(pose_convention=GetItemPoses.Request.POSE_CONVENTION,
+                                 repick_contract=REPICK_CONTRACT),
             GetItemPoses.Response(), simulation_path=Path(path),
             requested_at=requested_at, cancelled=cancelled, expected_digest=expected_digest)
         return {"response": response, "view": view}
@@ -1159,6 +1162,18 @@ class ItemDetectNode(Node):
             else:
                 profile_path, profile_digest = self.profile_path, self.profile_digest
                 count = self.pose_candidates
+            if request.repick_contract != REPICK_CONTRACT:
+                raise ValueError("Repick contract mismatch; rebuild/restart the pose client")
+            if request.blacklist_regions and (
+                    request.blacklist_bin_sha256 != self.bin_artifact.sha256
+                    or request.blacklist_platform_sha256 != self.applied.platform.sha256):
+                raise ValueError("Repick exclusion bin/platform source mismatch")
+            regions = [region_dict(r) for r in request.blacklist_regions]
+            repick_evidence = {"contract": REPICK_CONTRACT,
+                               "revision": request.blacklist_revision,
+                               "bin_sha256": request.blacklist_bin_sha256,
+                               "platform_sha256": request.blacklist_platform_sha256,
+                               "regions": regions}
             if request.profile_sha256 != profile_digest:
                 raise ValueError("Requested item profile SHA-256 mismatch")
             if not 1 <= request.max_candidates <= count:
@@ -1182,6 +1197,7 @@ class ItemDetectNode(Node):
                 load_item_profile(profile_path, root=self.root, deployment=True)
                 if getattr(self, "deployment", False)
                 else load_item_profile(profile_path))
+            validate_regions(regions, _profile["retry"])
             if digest != profile_digest:
                 self.disarm("Item profile contents changed before acquisition")
                 raise ValueError("Item profile changed")
@@ -1192,7 +1208,8 @@ class ItemDetectNode(Node):
             stages["capture_ms"] = (time.monotonic() - stage_started)*1000.
             stages["median_ms"] = depth["median_ms"]
             stage_started = time.monotonic()
-            context = {**context, "pick_planning": self.pick_planning_context(
+            context = {**context, "repick_regions": regions,
+                       "pick_planning": self.pick_planning_context(
                 _profile["home"], _profile["pick_rotation"],
                 _profile["motion"]["standoff_height"])}
             stages["planning_validation_ms"] = (time.monotonic() - stage_started)*1000.
@@ -1248,7 +1265,9 @@ class ItemDetectNode(Node):
                 response.candidates.append(candidate)
             response.success = True
             if not response.candidates:
-                response.status = "NO_VALID_ITEMS"
+                response.status = ("NO_UNBLOCKED_ITEMS" if any(
+                    r.get("rejection_stage") == "blacklist" for r in result["rejected"])
+                    else "NO_VALID_ITEMS")
             elif len(response.candidates) < request.max_candidates:
                 response.status = "SHORTAGE"
             else:
@@ -1278,7 +1297,8 @@ class ItemDetectNode(Node):
                 if time.monotonic() > deadline:
                     raise ValueError("Request deadline exceeded while saving debug images")
             stages["detector_total_ms"] = (time.monotonic() - started)*1000.
-            evidence = {"timings_ms": stages, "depth_frame_stamps_ns": depth["frame_stamps_ns"],
+            evidence = {"repick": repick_evidence, "timings_ms": stages,
+                        "depth_frame_stamps_ns": depth["frame_stamps_ns"],
                         "depth_capture_span_ms": depth["capture_span_ms"],
                         "pose_convention": GetItemPoses.Request.POSE_CONVENTION,
                         "profile_sha256": profile_digest,

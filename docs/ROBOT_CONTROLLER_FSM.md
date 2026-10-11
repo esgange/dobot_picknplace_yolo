@@ -1,5 +1,23 @@
 # Robot Controller — Finite State Machine
 
+Repick history review: **2026-10-11**, baseline **`98a56ff`** plus rule **259**.
+Schema-14 Item Teach adds exact retry keys blaclist_trigger, blackist_radius (mm)
+and blackist_cooldown; initial zero values disable filtering until explicitly
+configured. Count one confirmed HELD/FAILED outcome in a fixed platform-XY circle,
+oldest matching center first, ignoring height. Allow the trigger-th attempt before
+blocking subsequent poses. Each completed attempt outside an active circle ages
+its cooldown; expiry deletes circle/count. Confirmed PLACED clears only that
+item's original area ID; acquisition, drops and Return Item do not clear it.
+Controller memory survives new batches, Pause/Stop/recovery but not reload/restart.
+Provider applies bound revisioned exclusions before count limits; controller
+validates the echo, rechecks admission and dynamically skips blocked saved poses.
+All-blocked returns Home/NO_PICK without empty-request spinning. Complete owned
+placement first; if prefetch exclusions changed, reacquire before declaring no
+unblocked poses. Clear Repick History is exclusive, idle/unheld INACTIVE/READY,
+clears memory and cancels saved poses, without hardware commands. Local Preview
+and Simulate Trigger do not track physical attempts. Motion geometry/I/O and
+ordinary empty/physical retry budgets remain unchanged. Live validation is pending.
+
 Plane allowance review: **2026-10-08**, baseline **`1dc12d7`** plus rule **258**.
 Permit measured surfaces up to **20 mm below** the calibrated bin floor or exact
 saved tray plane, retaining 0.001 mm arithmetic tolerance at that limit. This
@@ -891,13 +909,15 @@ typed status and failed service responses include the complete guidance.
 ```mermaid
 flowchart TD
     Request["READY: PickItem accepted; recorded tray joints; physical attempt 1 of 3"] --> Saved{"Eligible poses retained after interruption or Return Item?"}
-    Saved -->|No| Detect["Post-request median depth; reject surfaces more than 20 mm below bin floor; rank and nearby-height check until batch full; optional debug images"]
+    Saved -->|No| Detect["Post-request median depth; reject surfaces more than 20 mm below bin floor; rank, exclude active repick circles and nearby-height failures until batch full; optional debug images"]
     Saved -->|Yes| Reuse["Validate sources; retain plans/order/states; ensure Home or resume parked approach"]
     Reuse --> Entry
-    Detect --> Validate["Validate sources and convention; independently skip surfaces more than 20 mm below bin floor before offsets"]
+    Detect --> Validate["Validate sources and convention; independently skip surfaces more than 20 mm below bin floor before offsets; independently apply current repick exclusions"]
     Validate -->|Mismatch| Reject["Reject batch; existing failure containment"]
     Validate -->|Valid| Any{"Any valid candidates?"}
-    Any -->|No| EmptyBudget{"All nine empty-result retries used?"}
+    Any -->|No| BlockedOnly{"Repick exclusions left no eligible unblocked poses?"}
+    BlockedOnly -->|Yes| BlockedHome["Confirm Home; READY / NO_PICK; report repick areas; no capture-based cooldown"]
+    BlockedOnly -->|No| EmptyBudget{"All nine empty-result retries used?"}
     EmptyBudget -->|Yes| Empty["READY / NO_PICK; robot Home"]
     EmptyBudget -->|No| RetryHome["Reserve retry; confirm Home or skip if matched; zero added delay; Pause retains budget"]
     RetryHome --> Detect
@@ -916,20 +936,45 @@ flowchart TD
     Settle -->|DI1 HIGH| Drain
     Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 50% toward pre-pick at approach rates; fingers unchanged"]
     Probe -->|DI1 HIGH| Drain
-    Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; log settling + upward-lift check without DI1"]
-    Acquire --> Fingers["grip_onpick ON: CLOSE; OFF: confirm RELAX if not already done"]
+    Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; record one repick attempt; activate circle at trigger; log no DI1"]
+    Acquire --> Fingers["Record HELD repick attempt; grip_onpick ON: CLOSE; OFF: confirm RELAX if not already done"]
     Fingers --> HeldReturn["Pre-pick lift: at 50%, use_grip OFF stays/becomes relaxed; ON closes/stays closed; clearance → Safety Z exit → MovL then MovJ to Tray Detect; no intermediate wait"]
     HeldReturn -->|Final MovJ execution, raw joints, idle and grip confirmed| Success["HOLDING / SUCCESS at Tray Detect"]
     HeldReturn -.-> DropGate["At measured pre-pick height: arm drop detection; no queue split; start fresh LOW timer"]
     DropGate -->|DI1 LOW for 500 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
     PutBack -->|Eligible saved candidate; same queue| Entry
     PutBack -->|Batch exhausted; retract confirmed| Limit
-    Miss --> More{"Another candidate?"}
+    Miss --> More{"Another currently unblocked candidate?"}
     More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry transit → next clearance → next pre-pick → final approach"]
     Retry --> Sense
     More -->|No| Exhausted["Empty retract → clearance → exit transit → joint Home"]
     Exhausted --> Limit
 ```
+
+Repick history is owned by the controller and shared by manual Pick and Auto Run.
+Use the original measured platform XY before offsets. All positive radii include
+the boundary (1 nm arithmetic tolerance); never recenter existing areas. Enabled
+trigger/cooldown are 1–1000, radius finite positive; zero trigger disables tracking.
+The trigger attempt creates an active exclusion for subsequent candidate selection.
+Both successful acquisition and confirmed miss count once. Interrupted approaches
+remain eligible under the existing ledger but do not count before an outcome.
+
+The physical outcome ages active areas elsewhere, then records the oldest matching
+area or creates a new one. New activation does not age itself. Bound history to
+1000 areas; at capacity retire the oldest inactive observation, never active areas.
+Expiry removes count and circle. Successful placement clears its captured area ID
+through the owning session's PLACED transition, including the old Auto Run session.
+Return Item/drop leaves history. Save settings only, never runtime areas to YAML.
+
+Item requests carry RepickRegion[] in platform_reference metres, revision and
+bin/platform hashes with mandatory repick_exclusions_v1 handshake. Echo and verify
+those fields. Filter before max_candidates; recheck current history before selecting
+saved/prefetched targets. Skipped saved poses do not count as physical attempts.
+NO_UNBLOCKED_ITEMS means no returned poses and at least one blacklist exclusion;
+other detections may fail independent filters. Confirm Home and end NO_PICK.
+For Auto Run, finish owned placement/Home first; if history changed after prefetch,
+request a fresh observation before concluding no unblocked poses remain. Ordinary
+empty observations retain nine Home retries and fresh-frame requirements.
 
 - The pose provider is exactly one of headless `item_detect` or explicitly armed
   `item_teach`, through `/item_detect/get_item_poses`. Inference is requested for
@@ -1283,26 +1328,34 @@ flowchart TD
     Start["READY: Auto Run quantity and placement target; start elapsed timer"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Pick --> Tray["Linear lifts and exit; queue MovL then MovJ to identical tray joints without intermediate wait; confirm only final MovJ joints, execution and idle"]
     Tray --> Observe["Fresh tray pose/depth: 20% valid pixels and surface within 20 mm below saved plane or higher before offsets; debug RGB/depth; at most 10 attempts; zero added delay"]
-    Observe --> Prefetch["If another item needed: start fresh next-bin worker even with unused old poses"]
+    Observe --> Prefetch["If another item needed: start fresh next-bin worker with revisioned repick exclusions"]
     Prefetch --> Valid["Validate placement geometry and sources; keep suction"]
     Valid --> Place["Queue approach (use_grip OFF: MovLIO opens fingers at 80%) → timed release → final retract; require all 3 accepted replies"]
     Prefetch -.-> Capture["In parallel: post-trigger RGB and median depth/TF; validate and retain batch ranked by distance from Home"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append MovJ Home behind placement"]
-    Home --> Done["PLACED; cancel unused poses; count execution/release; confirm Home + neutral + DI1 LOW; freeze total seconds; READY"]
+    Home --> Done["PLACED; clear only source repick area; cancel unused poses; count once; confirm Home + neutral + DI1 LOW; freeze total seconds; READY"]
     Last -->|No| Ready{"Fresh next-bin request finished?"}
     Capture -.-> Ready
     Ready -->|No| Wait["Supervise retract; count if completed; wait unheld for result"]
     Wait --> Ready
-    Ready -->|Yes| Poses{"Any valid poses?"}
+    Ready -->|Yes| Poses{"Any currently unblocked poses?"}
     Poses -->|Yes| Append["Append taught Tray Detect MovJIO (50% fingers OPEN) → entry MovL → pre-pick MovL → pick; no Home or midpoint idle wait"]
-    Poses -->|No| RetryHome["Reserve retry; finish/confirm Home; count placement once; fresh item request"]
+    Poses -->|No| BlockedOnly{"Repick exclusions left no eligible unblocked poses?"}
+    BlockedOnly -->|Yes| BlockedHome["Finish owned placement and confirm Home; PLACED clears only source area; count once"]
+    BlockedHome --> Changed{"History revision changed since capture?"}
+    Changed -->|Yes| Reacquire["Fresh request with current exclusions; do not age history"]
+    Reacquire --> Retried
+    Changed -->|No| BlockedEnd["READY / NO_PICK; report blocked areas; partial count; no empty retry loop"]
+    BlockedOnly -->|No| RetryHome["Reserve retry; finish/confirm Home; count placement once; fresh item request"]
     RetryHome --> Retried{"Poses returned?"}
     Retried -->|Yes| Next
-    Retried -->|No| EmptyBudget{"All nine empty-result retries used?"}
+    Retried -->|No| RetryBlocked{"Repick-only empty result?"}
+    RetryBlocked -->|Yes| BlockedHome
+    RetryBlocked -->|No| EmptyBudget{"All nine empty-result retries used?"}
     EmptyBudget -->|Yes| Empty
     EmptyBudget -->|No| RetryHome
-    Append --> Boundary["Pre-pick ID + neutral/DI1 LOW history, or already confirmed retract: old PLACED; count once; install fresh ledger"]
+    Append --> Boundary["Pre-pick ID + neutral/DI1 LOW history, or confirmed retract: old PLACED; clear its repick area; count once; install fresh ledger"]
     Boundary --> Next["Acquire next item; normal retries/lifts"]
     Next --> Tray
     Pick -->|3 physical batches or empty retry exhausted| Empty["End NO_PICK; Home after misses or bin exit after final drop; partial count"]
@@ -1677,6 +1730,8 @@ Names below are relative to `/robot_controller/`.
 
 | API | Main admission guard |
 | --- | --- |
+| `clear_repick_history` service | Configured idle/unheld INACTIVE or READY; reserve operation and recheck state; clear circles/counts and discard saved poses; no hardware command |
+| Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |

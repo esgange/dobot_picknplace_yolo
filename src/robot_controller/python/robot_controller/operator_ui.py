@@ -53,7 +53,7 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
                   managed_pending=False, target_error="", item_selected=False,
                   bin_selected=False, tray_selected=False):
     """Empty reason means enabled; local service availability is applied by the GUI."""
-    names = ("configure", "recover", "pause", "return_item", "continue",
+    names = ("clear_repick_history", "configure", "recover", "pause", "return_item", "continue",
              "home", "pick", "place", "preview_toggle", "speed", "cp", "auto_run")
     reasons = dict.fromkeys(names, "Unavailable in the current state")
     if state is None:
@@ -71,6 +71,9 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
             "Select an Item Teach file" if not item_selected else
             "Connect robot feedback before loading and preparing"
             if not state.feedback_fresh else "")
+    if idle and not preview and current in ("INACTIVE", "READY") and not state.holding_item:
+        reasons["clear_repick_history"] = (
+            "" if state.configured else "Load teach configuration first")
     reasons["preview_toggle"] = (
         "" if preview else "Load teach configuration first" if not state.configured else
         "" if idle and state.preview_ready

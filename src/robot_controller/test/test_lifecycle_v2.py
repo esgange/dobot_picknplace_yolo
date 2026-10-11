@@ -3,6 +3,7 @@ import threading
 
 import numpy as np
 import pytest
+from item_perception_yolo.repick import REPICK_DEFAULTS
 from PyQt5 import QtWidgets
 from rclpy.action import GoalResponse
 from robot_controller_interfaces.action import GoHome
@@ -135,7 +136,8 @@ def configuration_node(state="READY", *, headless=False):
 
 def test_ready_configuration_reload_prepares_robot_under_the_same_operation(monkeypatch):
     node, old, calls = configuration_node()
-    new = SimpleNamespace(configuration_id="new", validate_sources=lambda _root: None)
+    new = SimpleNamespace(configuration_id="new", validate_sources=lambda _root: None,
+                          profile={"retry": dict(REPICK_DEFAULTS)})
     monkeypatch.setattr(controller_module, "load_configuration", lambda *_args, **_kwargs: new)
     request = SimpleNamespace(
         item_teach_file="item.yaml", bin_teach_file="bin.yaml", tray_teach_file="")

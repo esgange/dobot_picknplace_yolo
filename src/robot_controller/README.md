@@ -11,6 +11,56 @@ physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview 
 plus Auto Run with an adjacent quantity field, completed count and elapsed seconds.
 It does not launch Dobot bringup, cameras, Item Detect, or RViz.
 
+## Repick history
+
+Schema-14 Item Teach `retry` contains pose_candidates plus the exact keys
+blaclist_trigger, blackist_radius (mm) and blackist_cooldown. Trigger zero disables
+tracking/filtering; new and recovered profiles default all three values to zero.
+Enabled trigger/cooldown are whole numbers 1–1000 and radius must be positive.
+
+Record one attempt only on a confirmed HELD or FAILED pickup outcome, after the
+existing suction/settling/probe logic. Queue admission, interrupted/canceled
+approaches, sensing failures, captures and Preview do not count. Anchor a new
+circle at the first measured platform-XY pick point, before tool offsets. Later
+points inside/on that radius count despite changed detection IDs or height.
+Centers never move; overlapping inactive circles assign to the oldest containing
+area. The trigger-th attempt is allowed, then activates its circle. Recheck
+pending/interrupted saved candidates before choosing each next motion group;
+skipped poses keep their identities and do not become physical attempts.
+
+Each other completed physical attempt ages existing active circles once. The
+triggering attempt does not age its own new circle. Expiry removes both circle
+and count. Confirmed PLACED clears only the original area's ID, even when Auto Run
+has installed a different next session. Acquisition alone, Return Item and drops
+do not clear it. History persists through fresh batches, Auto Run cycles, Pause,
+Stop and recovery within the same loaded configuration/process. Reload/restart
+starts empty. Bound history to 1000 areas; at capacity retire the oldest inactive
+observation, never silently evict an active exclusion. Ordinary candidate-ledger
+rules still exclude failed/dropped/returned poses in a retained batch.
+
+Send immutable, revisioned exclusion snapshots with bin/platform source hashes to
+Item Detect. Validate the exact echo and independently filter returned poses;
+retain nearest-Home ordering among survivors. The provider filters before the
+requested count. All-blocked results confirm Home and finish NO_PICK rather than
+spending the nine empty-acquisition retries. Ordinary empty results retain that
+budget. For empty prefetched results, confirm any owned placement first; if its
+successful release changed history, reacquire against the new revision before
+concluding no unblocked poses remain. Preserve placement count/source handoff,
+physical request budgets, fresh inputs, motion geometry/rates/blending and I/O.
+
+The GUI's Clear Repick History calls the typed Command service
+`/robot_controller/clear_repick_history`. Require configured INACTIVE/READY,
+unheld state and the exclusive operation slot; recheck state after admission.
+It clears history and cancels/discards saved candidate poses so rearranged bins
+require a fresh capture. No hardware command is sent. Preview disables this
+control. Repick events and detector rejection diagnostics report area/count/cooldown.
+
+Rebuild item_perception_interfaces, item_perception_yolo and robot_controller in
+an isolated install while processes run; canonical rebuild and coordinated relaunch
+are operator tasks. Review/save/deploy schema-14 Item Teach files explicitly.
+Local Simulate Trigger and controller TF Preview request no exclusions and never
+mutate real pick history. Hardware independently enforces current history.
+
 ## Pick priority
 
 After validating an Item Detect response in its original priority order, the
@@ -398,12 +448,12 @@ That initial Pick route skips its lower clearance/initial point. For surface Z
 approach/retract Z 800 mm. The final pose stays above the tray at this height
 with the detect-relative attitude; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
-blocks the placement queue. Require a complete schema-13 Item Teach profile with
+blocks the placement queue. Require a complete schema-14 Item Teach profile with
 a finite, nonnegative `trayplace_height`. To use older profiles, open them in
 Item Teach, explicitly fill this blank recovery field, Save and reload/redeploy
 the updated pair. Production readers do not supply a fallback height.
 Schema-10 profiles retain that height during GUI recovery; review the retained
-**Minimum valid depth (%)** and Save as schema 13 to remove the fixed-count field.
+**Minimum valid depth (%)** and Save as schema 14 to remove the fixed-count field.
 The arrival check adds no fixed settling interval, new FeedInfo tick or pose query.
 Recheck idle and saved joints during observation and before using its result.
 Then send three Cartesian commands in one queue:
@@ -536,8 +586,9 @@ initial/next-item detection and every tray acquisition. Tray observation retries
 and Pause/Continue retain the original choice. Unchecked requests and controller
 Preview do not save images. Saving uses each detector's existing request snapshot
 and diagnostic error reporting, without another inference or background archive.
-`PlaceItem` now includes `bool save_debug_images`; rebuild interfaces/controller
-and restart controller and GUI together. Detector service definitions are unchanged.
+`PlaceItem` includes `bool save_debug_images`; rebuild interfaces/controller
+and restart controller and GUI together. The Item Detect request also carries
+the repick exclusion contract described above.
 
 Actions:
 
@@ -1249,7 +1300,7 @@ of Item Teach's display. Canonical RViz includes the new topic; reload its confi
 if already open. No camera TF, command client or hardware action is added.
 This pick-pose body check does not model mounts/cables or the swept travel path.
 
-Item Teach schema 13 also requires the nearby depth radius/height settings
+Item Teach schema 14 also requires the nearby depth radius/height settings
 (defaults 150/60 mm). The detector rejects any candidate with a usable depth
 point inside/on the outer bin and camera-XY radius with a floor-relative height
 difference at/above the configured threshold, excluding standoff. The platform
@@ -1261,7 +1312,7 @@ only the filtered profile-bound batch; the controller has no depth subscription
 or separate scene scan. Open older profiles in Item Teach, review the proposed
 new defaults, Save and manually redeploy/reload matching profiles. Motion and
 tray placement filtering are unchanged.
-Schema 13 requires `geometry.depth_frame_count` (1, 3 or 5; default 3). The
+Schema 14 requires `geometry.depth_frame_count` (1, 3 or 5; default 3). The
 controller validates all contributing post-request depth timestamps and the newest
 response depth stamp without aging out an already accepted batch. Detection uses
 one immutable median and an item-only effective minimum of 500 mm.
@@ -1269,10 +1320,11 @@ one immutable median and an item-only effective minimum of 500 mm.
 Within a validation pass, reuse the already verified item/model pair rather than
 reading it twice; all existing content/hash and dynamic binding checks remain.
 After explicit GUI review/Save, manually deploy matching profiles and restart/reload
-consumers. Service/action message layouts, motion queues and bounded empty-result
-Home/reacquisition retries are unchanged.
+consumers. Temporal depth capture preserves motion queues and bounded ordinary
+empty-result Home/reacquisition retries. Schema 14 additionally extends the item
+request for repick exclusions, with separate all-blocked handling described above.
 
-The schema-13 geometry uses pick Z equal to item Z plus `standoff_height`,
+The schema-14 geometry uses pick Z equal to item Z plus `standoff_height`,
 pre-pick adds `prepick_height`, and clearance adds `retract_height`. Home/travel
 uses taught travel rates and final descent uses approach rates. A successful
 pick's first rise to pre-pick uses taught retract speed/acceleration. A missed

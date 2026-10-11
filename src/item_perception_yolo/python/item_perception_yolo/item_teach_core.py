@@ -22,10 +22,11 @@ import yaml
 
 from camera_calibration_gui.calibration_core import workspace_root
 
+from .repick import REPICK_DEFAULTS
 from .depth_snapshot import validate_depth_frame_count, item_depth_limits
 
 
-ITEM_SCHEMA_VERSION = 13
+ITEM_SCHEMA_VERSION = 14
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
 MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height", "trayplace_height")
@@ -215,8 +216,15 @@ def validate_settings(settings):
     _fields(settings["gripper"], GRIPPER_FIELDS, "gripper")
     if any(type(settings["gripper"][key]) is not bool for key in GRIPPER_FIELDS):
         raise ValueError("Gripper flags must be booleans")
-    _fields(settings["retry"], ("pose_candidates",), "retry")
+    _fields(settings["retry"], ("pose_candidates", *REPICK_DEFAULTS), "retry")
     _integer(settings["retry"]["pose_candidates"], "pose_candidates", high=1000)
+    retry = settings["retry"]
+    _integer(retry["blaclist_trigger"], "blaclist_trigger", low=0, high=1000)
+    _integer(retry["blackist_cooldown"], "blackist_cooldown", low=0, high=1000)
+    _number(retry["blackist_radius"], "blackist_radius")
+    if retry["blaclist_trigger"] and (
+            retry["blackist_cooldown"] == 0 or retry["blackist_radius"] == 0):
+        raise ValueError("Enabled repick requires positive blackist_radius and blackist_cooldown")
     _fields(settings["geometry"], GEOMETRY_FIELDS, "geometry")
     for key in GEOMETRY_FIELDS:
         _number(settings["geometry"][key], key)
@@ -377,9 +385,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 13 "
-            "(floor-relative clearance and temporal depth); "
-            "schemas 1–12 require review and Save in Item Teach; no compatibility reader")
+            "Item teach schema_version must be exactly 14 "
+            "(repick history settings); "
+            "schemas 1–13 require review and Save in Item Teach; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",

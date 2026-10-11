@@ -46,6 +46,7 @@ from .placement import (PlacementOperation, TRAY_SPEED_PERCENT, acquisition_paus
 from .recovery import HomeRecovery
 from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
+from .repick import RepickHistory
 from .state_machine import ControllerStateMachine
 
 
@@ -76,6 +77,7 @@ class RobotController(Node):
         self.kinematics = Cr10Kinematics(model_path)
         self.machine = ControllerStateMachine()
         self.configuration = None
+        self.repick = None
         self.startup_complete = False
         self.global_speed_percent = None
         self.global_cp_percent = None
@@ -143,6 +145,9 @@ class RobotController(Node):
         self.return_service = self.create_service(
             Command, "/robot_controller/return_item", self._return_item,
             callback_group=self.control_group)
+        self.clear_repick_service = self.create_service(
+            Command, "/robot_controller/clear_repick_history", self._clear_repick_history,
+            callback_group=self.control_group)
         self.configure_service = self.create_service(
             Configure, "/robot_controller/configure", self._configure,
             callback_group=self.control_group)
@@ -181,6 +186,7 @@ class RobotController(Node):
 
         if self.headless:
             self.configuration = load_runtime_configuration(self.root, self.kinematics)
+            self.repick = RepickHistory(self.configuration.profile["retry"], self.events)
             self._transition("INACTIVE", "Runtime teach loaded; explicit Startup required")
             self._log_configuration("runtime_configuration_loaded")
         self.create_timer(0.2, self.publish_status)
@@ -501,6 +507,34 @@ class RobotController(Node):
         if self.managed.session is not None and not self.managed.executing:
             self.managed.motion_admitted(target)
 
+    def _clear_repick_history(self, _request, response):
+        acquired = False
+        try:
+            if (self.machine.state not in ("INACTIVE", "READY")
+                    or self.holding_item or self.configuration is None):
+                raise CommandRejected("Clear repick history requires "
+                                      "idle, configured, unheld state")
+            self._begin_operation("clear_repick_history")
+            acquired = True
+            with self.stop_guard:
+                self.raise_if_cancelled()
+                if self.machine.state not in ("INACTIVE", "READY") or self.holding_item:
+                    raise CommandRejected("Repick reset state changed before admission")
+                self.repick.clear()
+                if self.managed.session is not None:
+                    self.managed.session.cancel_remaining()
+                    self.managed.session = None
+            response.success = True
+            response.message = "Repick history cleared"
+            self.publish_operator_log("INFO", response.message)
+        except Exception as exc:
+            response.success, response.message = False, str(exc)
+        finally:
+            if acquired:
+                self._end_operation()
+        response.state = self.machine.state
+        return response
+
     def _attempt_changed(self, index, attempt):
         message = attempt.state
         if attempt.state == "FAILED":
@@ -548,6 +582,7 @@ class RobotController(Node):
             with self.stop_guard:
                 self.raise_if_cancelled()
                 self.configuration = config
+                self.repick = RepickHistory(config.profile["retry"], self.events)
                 installed = True
                 self.startup_complete = False
                 self.global_speed_percent = None
@@ -1482,7 +1517,8 @@ class RobotController(Node):
                             if batch.identifier in seen_batches:
                                 raise FeedbackFailure("Detector reused an earlier Pick batch ID")
                             seen_batches.add(batch.identifier)
-                            if not batch.candidates and empty_retries < EMPTY_POSE_RETRY_LIMIT:
+                            if (not batch.candidates and not getattr(batch, "blacklist_only", False)
+                                    and empty_retries < EMPTY_POSE_RETRY_LIMIT):
                                 # Reserve each retry before Home so Pause cannot
                                 # reset its budget or request again before arrival.
                                 empty_retries += 1
@@ -1494,7 +1530,7 @@ class RobotController(Node):
                                     max_retries=EMPTY_POSE_RETRY_LIMIT)
                                 batch = None
                                 continue
-                        if batch.candidates:
+                        if batch.candidates or getattr(batch, "blacklist_only", False):
                             # Retain the accepted batch if Home is interrupted.
                             self._execute_home()
                         self.candidate_total = len(batch.candidates)
@@ -1507,7 +1543,7 @@ class RobotController(Node):
                             [candidate.identifier for candidate in batch.candidates], plans,
                             self._attempt_changed,
                             previous_attempted=result.attempted_candidates,
-                            batch=batch, configuration=config)
+                            batch=batch, configuration=config, repick=getattr(self, "repick", None))
                         for plan in plans:
                             return_targets(plan)
 
@@ -1528,7 +1564,10 @@ class RobotController(Node):
                             result.outcome = result.SUCCESS
                         elif not batch.candidates:
                             self._transition(
-                                "READY", f"No item poses; all {EMPTY_POSE_RETRY_LIMIT} Home "
+                                "READY", "No eligible unblocked item poses; robot Home. "
+                                "Rearrange the bin and Clear Repick History when appropriate."
+                                if getattr(batch, "blacklist_only", False) else
+                                f"No item poses; all {EMPTY_POSE_RETRY_LIMIT} Home "
                                 "acquisition retries used; no item picked; robot Home")
                             result.outcome = result.NO_PICK
                             self.events.record(

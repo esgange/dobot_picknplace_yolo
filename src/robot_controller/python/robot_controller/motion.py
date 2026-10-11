@@ -303,10 +303,8 @@ class PickExecutor:
                 stop_on_suction=True, pick_settling_sec=settling,
                 relax_pick_fingers=not close_on_pick,
                 return_terminal_pose=True, pickup_retract_pose=plan[4].matrix, **origin)
-        indices = [index for index in range(start_index, len(plans) + 1)
-                   if session is None or index == start_index
-                   or session.attempts[index - 1].state in ("PENDING", "INTERRUPTED")]
-        for offset, index in enumerate(indices):
+        index = start_index
+        while index is not None:
             plan = plans[index - 1]
             if session is not None:
                 session.set_state(index, "HELD" if acquired else "FAILED")
@@ -366,7 +364,9 @@ class PickExecutor:
                     confirmed_start_pose=return_origin,
                     batch_name=f"candidate_{index}_pick_to_tray")
                 return {"picked": True, "candidate": index, "holding_item": True}
-            if offset == len(indices) - 1:
+            next_index = (session.next_eligible if session is not None else
+                          index + 1 if index < len(plans) else None)
+            if next_index is None:
                 # Complete EXHAUST -> NEUTRAL and queue the remaining Home route.
                 # DI1 was sampled through settling already; any later change is
                 # deliberately not reclassified as this candidate's success.
@@ -382,7 +382,6 @@ class PickExecutor:
                         upward, batch_name=f"candidate_{index}_miss_retract",
                         confirmed_start_pose=return_origin)
                 break
-            next_index = indices[offset + 1]
             if progress is not None:
                 progress("CANDIDATE", f"Attempting candidate {next_index}", next_index)
             check(next_index)
@@ -400,4 +399,5 @@ class PickExecutor:
                 pick_settling_sec=settling, return_terminal_pose=True,
                 pickup_retract_pose=next_plan[4].matrix,
                 confirmed_start_pose=return_origin)
+            index = next_index
         return {"picked": False, "candidate": None, "holding_item": False}

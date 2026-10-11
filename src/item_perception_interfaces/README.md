@@ -21,15 +21,15 @@ poses; it is not an exhaustive count of all usable objects in the image.
 nearby-height check was not needed. These are neither returned poses nor failures.
 The controller receives the same checked retry batch without a per-pick scan.
 
-Schema 13 uses one float32 per-pixel median of 1/3/5 post-request depth frames
+Schema 14 uses one float32 per-pixel median of 1/3/5 post-request depth frames
 (default 3, strict majority). `depth_stamp` is the newest frame, while
 `diagnostics_json.depth_frame_stamps_ns` records all contributing frames.
 `clearance` and measured rejection evidence identify `platform_floor_camera_z_v1`
 and include candidate/maximum floor heights, difference and point counts. Radius
 uses camera XY; floor height follows camera Z at each point’s own physical XY.
 `timings_ms` separates processing stages; legacy `inference_ms` remains aggregate
-native processing, not YOLO alone. ROS layouts are unchanged. Restart updated
-native/parent processes together and explicitly review/save/deploy schema-13 profiles.
+native processing, not YOLO alone. The capture evidence layout is retained. Restart updated
+native/parent processes together and explicitly review/save/deploy schema-14 profiles.
 
 Requests must set `pose_convention` to the generated request constant
 `POSE_CONVENTION` (`item_short_x_long_y_v1`). Successful replies repeat that
@@ -38,3 +38,19 @@ planning. Missing/older conventions are rejected. Rebuild and restart detector
 and controller clients together after this interface change. This prevents an
 older long-X/short-Y consumer from silently turning the gripper by 90 degrees.
 No hardware driver or command interface belongs in this package.
+
+Schema 14 extends GetItemPoses with mandatory repick_contract=REPICK_CONTRACT
+(`repick_exclusions_v1`), blacklist_revision, blacklist_bin_sha256,
+blacklist_platform_sha256 and blacklist_regions (RepickRegion[]). Region coordinates
+and radius use metres in platform_reference XY, ignoring Z; each has a positive
+controller area ID, trigger attempt count and remaining cooldown. Reject source
+mismatches and invalid/profile-mismatched regions before inference. Empty regions
+are valid for disabled filtering and local read-only simulation/Preview.
+
+Filter active regions before filling max_candidates. Echo contract, revision,
+source hashes and exact regions in diagnostics_json.repick. Rejections use
+rejection_stage=blacklist. NO_UNBLOCKED_ITEMS means no returned candidates and at
+least one exclusion; other detections may also fail independent geometry filters.
+The controller separately enforces its current history. Rebuild this package,
+item_perception_yolo and robot_controller and relaunch all GetItemPoses clients
+and providers together; old clients fail the explicit contract handshake.

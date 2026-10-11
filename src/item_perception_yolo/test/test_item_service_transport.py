@@ -57,7 +57,9 @@ def exercise_service():
             **settings, "model": {"declared_task": "segment", "sha256": "b"*64},
             "item": {}, "home": {"positions_rad": [0.] * 6}, "pick_rotation": 0.0,
             "motion": {"standoff_height": 90.}, "speed": {}, "acceleration": {},
-            "timing": {}, "gripper": {}, "retry": {"pose_candidates": 3}}
+            "timing": {}, "gripper": {},
+            "retry": {"pose_candidates": 3, "blaclist_trigger": 0,
+                      "blackist_radius": 0., "blackist_cooldown": 0}}
         module.load_item_profile = lambda _: (profile, "a"*64)
         module.file_sha256 = lambda _: "a"*64
         detector.model_config = {"sha256": "b"*64}
@@ -110,6 +112,7 @@ def exercise_service():
         detector.infer = infer
         start = sensor.get_clock().now().nanoseconds
         future = client.call_async(GetItemPoses.Request(
+            repick_contract="repick_exclusions_v1",
             max_candidates=3, profile_sha256="a"*64,
             pose_convention=GetItemPoses.Request.POSE_CONVENTION))
         done = threading.Event()

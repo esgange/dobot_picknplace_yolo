@@ -133,6 +133,7 @@ def window(tmp_path):
                         for name in ("home", "pick", "place")},
         service_clients={name: client for name in (
             "configure", "startup", "recover", "pause", "continue", "stop", "return_item",
+            "clear_repick_history",
             "speed", "cp", "preview")})
     view = ControllerWindow(node)
     view.timer.stop()

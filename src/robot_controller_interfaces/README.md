@@ -35,7 +35,8 @@ it to all item/tray requests, including prefetch and acquisition retries. Saved
 images go to `debug/pick_img/` and `debug/tray_img/` respectively. The flag is
 retained through Pause/Continue; Preview never requests captures. Rebuild this
 package and Robot Controller, then restart controller and GUI together: the
-`PlaceItem` goal definition has changed. Perception service definitions are unchanged.
+`PlaceItem` goal definition has changed. Rebuild the Item Detect interfaces too
+when deploying the schema-14 repick request contract.
 
 `ControllerStatus.auto_run_active`, `auto_run_requested`, `auto_run_completed`,
 `auto_run_elapsed_sec` and operation `auto_run` identify the owner while lifecycle states describe its current
@@ -156,3 +157,8 @@ last confirmed value (100 if unknown). All motion inherits this setting without
 per-command overrides. Preview and Auto Run disable the manual control.
 Rebuild interfaces/controller and manually restart controller, preview and GUI
 together; clients must use the same new ControllerStatus definition.
+
+`/robot_controller/clear_repick_history` uses the existing typed Command service.
+It requires a configured, unheld, idle INACTIVE/READY controller and the exclusive
+operation slot. Clear physical pick history and discard saved candidate poses;
+no robot command is issued. Success does not change the lifecycle state.

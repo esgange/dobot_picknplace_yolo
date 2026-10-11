@@ -19,6 +19,7 @@ class Events:
 
 def configuration():
     profile = {
+        "retry": {"blaclist_trigger": 0, "blackist_radius": 0., "blackist_cooldown": 0},
         "model": {"sha256": "model"}, "geometry": {"depth_frame_count": 3},
         "yolo": {"confidence": 0.4, "class_ids": [0, 2]},
         "quality": {"sync_tolerance_sec": 0.1},
@@ -42,6 +43,8 @@ def valid_result(*, candidate_count=1):
     result.header.frame_id = "platform_reference"
     result.header.stamp.sec = result.depth_stamp.sec = 100
     result.diagnostics_json = json.dumps({
+        "repick": {"contract": "repick_exclusions_v1", "revision": 0,
+                   "bin_sha256": "bin", "platform_sha256": "platform", "regions": []},
         "pose_convention": GetItemPoses.Request.POSE_CONVENTION,
         "profile_sha256": "profile", "model_sha256": "model",
         "camera_sha256": "camera", "platform_sha256": "platform",

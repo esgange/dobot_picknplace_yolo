@@ -4,6 +4,13 @@ bool save_debug_images
 # Required convention handshake; reject older clients instead of rotating their picks.
 string POSE_CONVENTION=item_short_x_long_y_v1
 string pose_convention
+# Mandatory handshake: old clients must not silently omit repick exclusions.
+string REPICK_CONTRACT=repick_exclusions_v1
+string repick_contract
+uint64 blacklist_revision
+string blacklist_bin_sha256
+string blacklist_platform_sha256
+item_perception_interfaces/RepickRegion[] blacklist_regions
 ---
 bool success
 string status

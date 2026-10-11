@@ -7,6 +7,8 @@ from pathlib import Path
 import threading
 import time
 
+from item_perception_interfaces.msg import RepickRegion
+from item_perception_yolo.repick import REPICK_CONTRACT, validate_regions, blocking_region
 from item_perception_interfaces.srv import GetItemPoses
 from item_perception_yolo.pick_planning import candidate_pose_in_base, rigid_matrix
 from item_perception_yolo.surface_guard import HeightPlane
@@ -42,6 +44,8 @@ class CandidateBatch:
     candidates: tuple
     evidence: dict
     debug_message: str
+    blacklist_only: bool = False
+    blacklist_revision: int = 0
 
 
 class CandidateClient:
@@ -67,7 +71,17 @@ class CandidateClient:
                 raise FeedbackFailure("Canonical item_detect pose service is unavailable")
             self.node.check_detector_owner()
             profile = configuration.profile
+            history = getattr(self.node, "repick", None)
+            revision, regions = history.snapshot() if history is not None else (0, [])
+            exclusions = {"contract": REPICK_CONTRACT, "revision": revision,
+                          "bin_sha256": configuration.selection.bin.sha256,
+                          "platform_sha256": configuration.selection.station.platform.sha256,
+                          "regions": regions}
             request = GetItemPoses.Request(
+                repick_contract=REPICK_CONTRACT, blacklist_revision=revision,
+                blacklist_bin_sha256=exclusions["bin_sha256"],
+                blacklist_platform_sha256=exclusions["platform_sha256"],
+                blacklist_regions=[RepickRegion(**region) for region in regions],
                 max_candidates=configuration.pose_candidates,
                 profile_sha256=configuration.profile_sha256,
                 pose_convention=GetItemPoses.Request.POSE_CONVENTION,
@@ -97,7 +111,8 @@ class CandidateClient:
                 message = "" if result is None else result.message
                 raise FeedbackFailure(f"Detector {status}: {message}".strip())
             batch = self._validate_result(result, configuration, bool(save_debug_images),
-                                          requested_at_ns=requested_at_ns)
+                                          requested_at_ns=requested_at_ns,
+                                          expected_repick=exclusions)
             self.node.events.record(
                 "INFO", "candidate_timing", "Validated item acquisition stage timings",
                 batch_id=batch.identifier, validation_before_ms=validation_before_ms,
@@ -109,7 +124,8 @@ class CandidateClient:
         finally:
             self.lock.release()
 
-    def _validate_result(self, result, configuration, save_debug_images, *, requested_at_ns=None):
+    def _validate_result(self, result, configuration, save_debug_images, *, requested_at_ns=None,
+                         expected_repick=None):
         profile, selection = configuration.profile, configuration.selection
         try:
             evidence = json.loads(result.diagnostics_json)
@@ -129,6 +145,28 @@ class CandidateClient:
         for key, expected in expected_evidence.items():
             if evidence.get(key) != expected:
                 raise FeedbackFailure(f"Detector/controller {key} mismatch")
+        repick = evidence.get("repick")
+        if (type(repick) is not dict or set(repick) != {
+                "contract", "revision", "bin_sha256", "platform_sha256", "regions"}
+                or repick["contract"] != REPICK_CONTRACT
+                or type(repick["revision"]) is not int or repick["revision"] < 0
+                or repick["bin_sha256"] != selection.bin.sha256
+                or repick["platform_sha256"] != selection.station.platform.sha256
+                or (expected_repick is not None and repick != expected_repick)):
+            raise FeedbackFailure("Malformed or mismatched repick response evidence")
+        try:
+            validate_regions(repick["regions"], profile["retry"])
+        except (ValueError, KeyError) as exc:
+            raise FeedbackFailure(f"Invalid repick regions: {exc}") from exc
+        rejected = evidence.get("rejected", [])
+        if type(rejected) is not list or any(type(r) is not dict for r in rejected):
+            raise FeedbackFailure("Malformed detector rejection evidence")
+        blacklist_only = not result.candidates and any(
+            r.get("rejection_stage") == "blacklist" for r in rejected)
+        if blacklist_only and not repick["regions"]:
+            raise FeedbackFailure("Detector reported blacklist rejection without exclusions")
+        if result.status == "NO_UNBLOCKED_ITEMS" and not blacklist_only:
+            raise FeedbackFailure("Malformed blacklist-only detector result")
         capture = evidence.get("debug_capture")
         if (type(capture) is not dict
                 or set(capture) != {"requested", "rgb_path", "depth_path", "error"}
@@ -201,6 +239,7 @@ class CandidateClient:
             platform = selection.station.platform.base_from_platform
             floor = HeightPlane(platform, "bin floor")
             ranked = []
+            blocked_count = 0
             for candidate in found:
                 item = candidate_pose_in_base(
                     platform, candidate.position_m, candidate.quaternion)
@@ -211,6 +250,12 @@ class CandidateClient:
                         batch_id=result.batch_id, candidate_id=candidate.identifier,
                         detector_priority=candidate.priority)
                     continue
+                if blocking_region(repick["regions"], candidate.position_m) is not None:
+                    blocked_count += 1
+                    self.node.events.record(
+                        "INFO", "candidate_blacklisted", "Repick exclusion skipped candidate",
+                        candidate_id=candidate.identifier, batch_id=result.batch_id)
+                    continue
                 distance = math.dist(home, item[:3, 3])
                 if not math.isfinite(distance):
                     raise ValueError("Candidate distance from Home must be finite")
@@ -220,7 +265,12 @@ class CandidateClient:
             raise FeedbackFailure(f"Cannot prioritize item poses from Home: {exc}") from exc
         batch = CandidateBatch(result.batch_id, stamps[0], stamps[1],
                                tuple(candidate for _, candidate in ranked),
-                               evidence, debug_message)
+                               evidence, debug_message,
+                               blacklist_only=blacklist_only or (not ranked and blocked_count > 0),
+                               blacklist_revision=repick["revision"])
+        history = getattr(self.node, "repick", None)
+        if history is not None:
+            batch = history.filter_batch(batch)
         self.node.events.record(
             "INFO", "candidate_response", result.message,
             batch_id=batch.identifier, candidates=len(batch.candidates),

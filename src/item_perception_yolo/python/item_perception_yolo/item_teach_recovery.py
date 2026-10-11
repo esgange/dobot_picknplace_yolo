@@ -162,8 +162,18 @@ def recover_item_fields(path, *, root=None):
         retry = {"pose_candidates": retry["retry_limit"]}
         draft.issues.append("Recovered retry_limit as pose_candidates; review the requested count")
     count = retry.get("pose_candidates")
-    accept("pose_candidates", count, set(retry) == {"pose_candidates"}
+    accept("pose_candidates", count, set(retry) <= {"pose_candidates", *core.REPICK_DEFAULTS}
            and type(count) is int and 1 <= count <= 1000)
+    if payload["schema_version"] < 14:
+        draft.values.update(core.REPICK_DEFAULTS)
+        draft.issues.append("Repick filtering starts disabled; configure "
+                            "trigger/radius/cooldown before enabling")
+    else:
+        for key in core.REPICK_DEFAULTS:
+            value = retry.get(key)
+            valid = (type(value) in (int, float) and 0 <= value < float("inf")
+                     if key == "blackist_radius" else type(value) is int and 0 <= value <= 1000)
+            accept(key, value, valid)
     for key in core.QUALITY_DEFAULTS:
         high = (1 if key == "minimum_depth_fraction" else
                 30 if key == "request_timeout_sec" else None)

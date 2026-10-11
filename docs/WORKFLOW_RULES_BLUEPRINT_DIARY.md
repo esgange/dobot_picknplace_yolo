@@ -10521,6 +10521,82 @@ Never use a floating “latest” version in an issue, script, or deployment not
   .env key or operator-file changes. Preserve unrelated RViz edits, calibration,
   teaching/model and runtime artifacts; scoped commit/push follows the workflow.
 
+### 2026-10-11 — Rule 259: opt-in repick area history
+
+- Rename Item Teach's Pose candidates group to Repick candidates, retaining
+  pose_candidates and adding the operator's exact keys under retry:
+  blaclist_trigger, blackist_radius (millimetres) and blackist_cooldown. Advance
+  production Item Teach to schema 14. All three start at zero; trigger zero
+  disables tracking/filtering. Enabled trigger/cooldown must be integers 1–1000,
+  with a finite positive radius. Older files become GUI-only recovery drafts
+  with disabled settings for explicit review/save; no operator file is rewritten.
+- Controller-owned in-memory history records exactly one confirmed HELD or FAILED
+  physical pickup outcome. Neither queue admission, interrupted approaches,
+  captures, detection retries nor Preview count. Fix each circle at the original
+  measured platform-XY point before tool offsets, ignore Z, include the boundary
+  with 1 nm arithmetic tolerance, and assign overlaps to the oldest containing
+  area. Allow the triggering attempt, then block later candidates inside/on it.
+  The example trigger 3/radius 30/cooldown 5 permits three completed attempts,
+  then excludes a true 30 mm radius until five other physical attempts complete.
+- Each completed attempt outside an active area reduces its cooldown once;
+  triggering does not age its own circle. Expiry deletes the circle and count.
+  As explicitly confirmed by the operator, successful tray placement clears only
+  that item's original area ID. Acquisition alone, Return Item and drops do not
+  clear it. Preserve memory through new batches, Auto Run, Pause, Stop and recovery;
+  reload/restart resets it. Bound history to 1000 areas, retiring only the oldest
+  inactive area at capacity; never evict an active exclusion to make space.
+- Extend GetItemPoses with typed RepickRegion exclusions, revision, bin/platform
+  hashes and a mandatory repick_exclusions_v1 handshake. Validate settings/source
+  binding before inference; echo the immutable request in diagnostics_json.repick.
+  Exclude active areas before max_candidates truncation and expensive nearby-depth
+  scanning, so later detections can fill the batch. Record blacklist rejection
+  reasons with area, radius, attempt count and remaining other picks. Use existing
+  displays/debug evidence without adding large circle overlays. Local Simulate
+  Trigger and TF Preview send empty exclusions and cannot mutate physical history.
+- Independently enforce exclusions at controller response admission, preserving
+  candidate IDs and nearest-Home order, then recheck saved PENDING/INTERRUPTED
+  candidates when choosing the next motion group. Newly blocked neighbors are
+  skipped without becoming attempts. NO_UNBLOCKED_ITEMS confirms Home and ends
+  NO_PICK without spending ordinary empty-acquisition retries or aging cooldown.
+  Auto Run completes owned placement first; when placement changed a prefetched
+  exclusion revision, request fresh poses before concluding no unblocked poses.
+  Retain the old placement source/count ownership until its existing execution
+  boundary; only its PLACED transition clears that associated area.
+- Add Clear Repick History to the controller GUI via the existing typed Command
+  interface at /robot_controller/clear_repick_history. Require configured,
+  idle/unheld INACTIVE or READY and exclusive operation admission; recheck under
+  the Stop guard. Clear history and discard/cancel saved poses, forcing fresh
+  acquisition after bin rearrangement. No robot command or extra confirmation.
+- Preserve every existing motion target, speed, acceleration, CP/blending setting,
+  timed I/O and taught route; selection changes which candidates are attempted.
+  Keep all other perception/surface/camera-body guards, nine ordinary empty-item
+  retries, three physical batch budget, ten tray requests and fresh-frame rules.
+  No new .env key, vendor patch, runtime history file or external dependency.
+- Validation: **717 Item Perception, 1,435 Robot Controller and 265 Tray Perception
+  tests pass** (2,417 total), with synthetic inputs, offscreen Qt and isolated ROS
+  domains. Cover disabled defaults, schema-13 recovery without writes, exact key
+  round trips, GUI loading/edit disarming, invalid settings/regions/source/echo,
+  native exclusion before count limits, circle boundaries/overlap/jitter/Z,
+  threshold/cooldown/expiry, bounded-history retention, placement-only clearing,
+  saved-neighbor skipping, all-blocked Home, placement/prefetch revision changes,
+  reset admission/discarding, and existing Preview/retry/recovery/transport paths.
+  Initial failures were obsolete current-schema/request/client fixture fields
+  and new test fixture setup; correct them and rerun the complete affected suites.
+- An isolated build of item_perception_interfaces, item_perception_yolo and
+  robot_controller passes under build/repick with separate build/install trees.
+  Test the generated interfaces from that overlay; do not overwrite the running
+  canonical interface/driver libraries. Changed-line lint, Python AST and
+  whitespace checks pass. Update AGENTS, root/package READMEs and controller FSM
+  review, diagrams and guards. Regenerate adjacent offline HTML/PDF; verify the
+  Markdown hash, nine diagrams/pages and new labels, and inspect changed pages.
+- Deployment remains operator-owned: stop affected perception/controller apps,
+  canonical rebuild of those three packages, then coordinated provider/client
+  relaunch. Explicitly review/save schema-14 Item Teach and manually redeploy
+  matching YAML/model pairs when using runtime_teach. Preserve .env, calibration,
+  teaching/model/runtime artifacts and unrelated RViz edits. No live process is
+  restarted, perception re-armed or robot commanded. Live operation is unverified;
+  synthetic tests do not establish hardware success. Commit/push only this scope.
+
 ### Future entry template
 
 ```text

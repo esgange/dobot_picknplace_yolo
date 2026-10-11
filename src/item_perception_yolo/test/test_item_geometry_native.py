@@ -1145,6 +1145,19 @@ def exercise_surface_floor_guard():
             render_images=False, candidate_limit=1)
         assert [p["source_index"] for p in poses] == [1]
         assert reasons[0]["source_index"] == 0 and "below bin floor" in reasons[0]["reason"]
+        # A blocked nearest pose must not consume the requested candidate count.
+        ctx["repick_regions"] = [{"id": 1, "x_m": 0., "y_m": 0., "radius_m": .03,
+                                  "attempts": 3, "cooldown_remaining": 5}]
+        depth[:] = 700
+        _, _, poses, reasons = generate_candidates(
+            [item, other], rgb, depth, ctx, settings, cv2, np,
+            render_images=False, candidate_limit=1)
+        assert [p["source_index"] for p in poses] == [1]
+        assert reasons[0]["rejection_stage"] == "blacklist"
+        assert "cooldown=5 other picks" in reasons[0]["reason"]
+        _, _, poses, reasons = generate_candidates(
+            [item], rgb, depth, ctx, settings, cv2, np, candidate_limit=1)
+        assert not poses and reasons[0]["rejection_stage"] == "blacklist"
     context["pick_planning"]["base_from_platform"] = [
         [0., 0., 1., 0.], [0., 1., 0., 0.], [-1., 0., 0., 0.], [0., 0., 0., 1.]]
     with pytest.raises(SurfaceGeometryError, match="parallel to vertical travel"):

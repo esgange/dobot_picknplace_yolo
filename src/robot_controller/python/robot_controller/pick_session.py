@@ -11,11 +11,12 @@ class Attempt:
     identifier: str
     plan: tuple
     state: str = "PENDING"
+    area_id: int | None = None
 
 
 class PickSession:
     def __init__(self, identifiers, plans, changed=None, *, previous_attempted=0,
-                 batch=None, configuration=None):
+                 batch=None, configuration=None, repick=None):
         if len(identifiers) != len(plans):
             raise ValueError("Candidate identifiers and plans must match")
         self.attempts = [Attempt(name, tuple(plan)) for name, plan in zip(identifiers, plans)]
@@ -26,6 +27,7 @@ class PickSession:
         self.previous_attempted = previous_attempted
         self.batch = batch
         self.configuration = configuration
+        self.repick = repick
 
     def reusable(self, configuration):
         """Saved candidates belong to this exact loaded configuration and process."""
@@ -51,6 +53,12 @@ class PickSession:
         if state not in allowed[attempt.state]:
             raise ValueError(f"Invalid candidate transition {attempt.state} -> {state}")
         attempt.state = state
+        if self.repick is not None:
+            if state in ("HELD", "FAILED"):
+                attempt.area_id = self.repick.completed(
+                    self.batch.candidates[index - 1].position_m, attempt.identifier)
+            elif state == "PLACED":
+                self.repick.placed(attempt.area_id)
         if state == "HELD":
             self.held_index = index
         if self.changed:
@@ -88,7 +96,19 @@ class PickSession:
     def next_eligible(self):
         """An interrupted approach stays eligible ahead of later pending candidates."""
         return next((index for index, attempt in enumerate(self.attempts, 1)
-                     if attempt.state in ("PENDING", "INTERRUPTED")), None)
+                     if attempt.state in ("PENDING", "INTERRUPTED")
+                     and not self.blocked(index)), None)
+
+    def blocked(self, index):
+        if self.repick is None:
+            return False
+        return self.repick.blocked(self.batch.candidates[index - 1].position_m) is not None
+
+    @property
+    def blacklist_only(self):
+        return self.next_eligible is None and any(
+            attempt.state in ("PENDING", "INTERRUPTED") and self.blocked(index)
+            for index, attempt in enumerate(self.attempts, 1))
 
     @property
     def attempted_count(self):

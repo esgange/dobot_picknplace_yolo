@@ -225,8 +225,27 @@ class AutoRunOperation:
                 if batch.identifier in self.seen_batches:
                     raise FeedbackFailure("Detector reused an earlier Auto Run batch ID")
                 self.seen_batches.add(batch.identifier)
+                history = getattr(node, "repick", None)
+                if history is not None:
+                    batch = history.filter_batch(batch)
                 if batch.candidates:
                     break
+                if getattr(batch, "blacklist_only", False):
+                    if bridge is not None:
+                        self.finish_home(bridge)
+                        bridge = None
+                        node.active_action = "pick"
+                    else:
+                        node._execute_home()
+                    if history is not None and batch.blacklist_revision != history.snapshot()[0]:
+                        # Confirmed placement may have removed the source exclusion
+                        # after prefetch. Reacquire once against the current history.
+                        batch = None
+                        continue
+                    node._transition(
+                        "READY", "Auto Run stopped: no eligible unblocked item poses; robot Home. "
+                        "Rearrange the bin and Clear Repick History when appropriate.")
+                    return False
                 if empty_retries >= EMPTY_POSE_RETRY_LIMIT:
                     node._transition(
                         "READY", f"Auto Run stopped: no item poses; all {EMPTY_POSE_RETRY_LIMIT} "
@@ -259,7 +278,7 @@ class AutoRunOperation:
                 session = PickSession(
                     [candidate.identifier for candidate in batch.candidates], plans,
                     node._attempt_changed, previous_attempted=attempted,
-                    batch=batch, configuration=config)
+                    batch=batch, configuration=config, repick=getattr(node, "repick", None))
             for plan in plans:
                 return_targets(plan)
             extra = dict(after_placement=bridge is not None)

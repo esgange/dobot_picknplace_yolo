@@ -568,6 +568,7 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
                         roi_status=None):
     started = time.monotonic()
     from .nearby_depth_overlay import draw_nearby_depth_overlays
+    from .repick import blocking_region, rejection_reason
     if candidate_limit is not None and (type(candidate_limit) is not int
                                         or not 1 <= candidate_limit <= 1000):
         raise RuntimeError("Invalid candidate acquisition limit")
@@ -712,6 +713,13 @@ def generate_candidates(objects, rgb, depth_mm, context, settings, cv2, np,
         # Select in final rank order, then scan nearby depth only until the
         # requested batch is full. Later geometric candidates stay unchecked.
         source_id = candidate["source_index"]
+        region = blocking_region(context.get("repick_regions", []), candidate["position"])
+        if region is not None:
+            reason = rejection_reason(region)
+            rejected.append({"source_index": source_id, "reason": reason,
+                             "rejection_stage": "blacklist"})
+            labels[source_id] += " | " + reason
+            continue
         drawing = {} if render_images or nearby_views is not None else None
         try:
             if scene_depth is None and scene_error is None:

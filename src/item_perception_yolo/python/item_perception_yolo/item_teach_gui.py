@@ -20,7 +20,7 @@ from robot_controller_interfaces.msg import ControllerStatus
 from tf2_ros import TransformBroadcaster
 
 from .item_teach_core import (
-    GRIPPER_FIELDS, MODEL_TASKS, MOTION_FIELDS,
+    GRIPPER_FIELDS, MODEL_TASKS, MOTION_FIELDS, REPICK_DEFAULTS,
     item_directory, load_item_profile, record_home, save_item_profile,
     settings_from_profile, item_save_target, file_sha256,
     GEOMETRY_FIELDS, DEFAULT_PICKDEPTH_DIAMETER_MM, QUALITY_DEFAULTS, NEARBY_DEPTH_DEFAULTS,
@@ -645,11 +645,21 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self.inputs[key] = field
             label = {"confidence": "Confidence (0–1)", "iou": "Overlap IoU (0–1)"}
             yolo.addRow(label.get(key, key), field)
-        retry = group("Pose candidates", 10)
+        retry = group("Repick candidates", 10)
         limit = QtWidgets.QLineEdit()
         limit.setPlaceholderText("Required; e.g. 3 = up to three ranked poses")
         self.inputs["pose_candidates"] = limit
         retry.addRow("pose_candidates", limit)
+        for key, initial in REPICK_DEFAULTS.items():
+            field = QtWidgets.QLineEdit(str(initial))
+            field.setToolTip({
+                "blaclist_trigger": ("0 disables repick filtering; otherwise completed picks "
+                                    "to block an area"),
+                "blackist_radius": "Fixed exclusion circle radius in millimetres",
+                "blackist_cooldown": "Other completed physical picks before an area expires",
+            }[key])
+            self.inputs[key] = field
+            retry.addRow(key, field)
         explanation = QtWidgets.QLabel(
             "Maximum ranked poses requested for the controller to use for retries.\n"
             "Check nearby height in rank order until this many pass; leave the rest unchecked."
@@ -2088,7 +2098,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 key: self._number(f"acceleration_{key}", int) for key in SPEED_FIELDS},
             "timing": {"pick_settling": self._number("pick_settling")},
             "gripper": {key: self.inputs[key].isChecked() for key in GRIPPER_FIELDS},
-            "retry": {"pose_candidates": self._number("pose_candidates", int)},
+            "retry": {"pose_candidates": self._number("pose_candidates", int),
+                      **{key: self._number(key, float if key == "blackist_radius" else int)
+                         for key in REPICK_DEFAULTS}},
             **self._inference_settings(),
         }
 
