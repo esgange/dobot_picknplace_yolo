@@ -1,12 +1,15 @@
 """Shared GUI/headless read-only detector. No robot command clients or cv2 imports."""
 
 import copy
+from contextlib import contextmanager
+import fcntl
 from collections import deque
 from datetime import datetime, timezone
 import json
 import math
 import os
 from pathlib import Path
+import re
 import struct
 import threading
 import time
@@ -84,6 +87,65 @@ def encode_rgb_png(pixels, width, height):
             + _png_chunk(b"IDAT", zlib.compress(scanlines)) + _png_chunk(b"IEND", b""))
 
 
+MAX_DEBUG_CAPTURES = 500
+_DEBUG_CAPTURE_PATTERNS = {
+    'pick': re.compile(r'(pick_\d{8}T\d{6}_\d{6}Z_[a-f0-9]{32})_(?:rgb|depth)\.png'),
+    'tray': re.compile(r'(tray_[a-f0-9]{32})_(?:rgb|depth)\.png'),
+}
+
+
+@contextmanager
+def debug_capture_directory(root, kind):
+    """Serialize save/cleanup; never follow a linked debug directory or wait on a writer."""
+    if kind not in _DEBUG_CAPTURE_PATTERNS:
+        raise ValueError('Unknown debug capture kind')
+    parent = Path(root) / 'debug'
+    directory = parent / f'{kind}_img'
+    if parent.is_symlink() or directory.is_symlink():
+        raise ValueError('Debug capture directories must not be symlinks')
+    directory.mkdir(parents=True, exist_ok=True)
+    fd = os.open(directory / '.capture.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'a') as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield directory
+
+
+def trim_debug_captures(directory, kind, current_paths):
+    """Remove oldest owned groups after a successful save; return a diagnostic on failure.
+
+    Caller holds the directory's capture lock. RGB and optional depth count as
+    one capture. Preserve the just-saved files even after a clock adjustment.
+    """
+    current = {Path(path).name for path in current_paths}
+    try:
+        groups = {}
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                match = _DEBUG_CAPTURE_PATTERNS[kind].fullmatch(entry.name)
+                if match is None or not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    stamp = entry.stat(follow_symlinks=False).st_mtime_ns
+                except FileNotFoundError:
+                    continue
+                groups.setdefault(match[1], []).append((stamp, Path(entry.path)))
+        excess = len(groups) - MAX_DEBUG_CAPTURES
+        ordered = sorted(groups.items(), key=lambda item: (
+            max(stamp for stamp, _path in item[1]), item[0]))
+        for _identifier, files in ordered:
+            if excess <= 0:
+                break
+            if any(path.name in current for _stamp, path in files):
+                continue
+            for _stamp, path in files:
+                if not path.is_symlink() and path.is_file():
+                    path.unlink(missing_ok=True)
+            excess -= 1
+    except OSError as exc:
+        return f'Debug images saved, but oldest-capture cleanup failed: {exc}'
+    return ''
+
+
 def save_pick_debug_pair(root, batch_id, view):
     """Atomically persist the exact annotated result pair for one explicit request."""
     if (type(batch_id) is not str or len(batch_id) != 32
@@ -92,24 +154,27 @@ def save_pick_debug_pair(root, batch_id, view):
     width, height = view["width"], view["height"]
     images = {"rgb": view["rgb"], "depth": view["depth_rgb"]}
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
-    directory = Path(root) / "debug/pick_img"
-    directory.mkdir(parents=True, exist_ok=True)
-    finals = {kind: directory / f"pick_{stamp}_{batch_id}_{kind}.png" for kind in images}
-    temporary = {}
-    try:
-        for kind, pixels in images.items():
-            path = directory / f".{finals[kind].name}.{uuid.uuid4().hex}.tmp"
-            temporary[kind] = path
-            path.write_bytes(encode_rgb_png(pixels, width, height))
-        for kind in images:
-            os.replace(temporary[kind], finals[kind])
-        return {f"{kind}_path": str(finals[kind].resolve()) for kind in images}
-    except Exception:
-        for path in temporary.values():
-            path.unlink(missing_ok=True)
-        for path in finals.values():
-            path.unlink(missing_ok=True)
-        raise
+    with debug_capture_directory(root, "pick") as directory:
+        finals = {kind: directory / f"pick_{stamp}_{batch_id}_{kind}.png" for kind in images}
+        temporary = {}
+        try:
+            for kind, pixels in images.items():
+                path = directory / f".{finals[kind].name}.{uuid.uuid4().hex}.tmp"
+                temporary[kind] = path
+                path.write_bytes(encode_rgb_png(pixels, width, height))
+            for kind in images:
+                os.replace(temporary[kind], finals[kind])
+        except Exception:
+            for path in temporary.values():
+                path.unlink(missing_ok=True)
+            for path in finals.values():
+                path.unlink(missing_ok=True)
+            raise
+        result = {f"{kind}_path": str(finals[kind].resolve()) for kind in images}
+        error = trim_debug_captures(directory, "pick", finals.values())
+        if error:
+            result["error"] = error
+        return result
 
 
 def validate_roi_status(status):
@@ -1280,7 +1345,8 @@ class ItemDetectNode(Node):
                 try:
                     debug_capture.update(save_pick_debug_pair(self.root, response.batch_id, view))
                     self.events.record(
-                        "INFO", "pick_debug_images_saved",
+                        "WARNING" if debug_capture["error"] else "INFO", "pick_debug_images_saved",
+                        debug_capture["error"] or
                         "Saved annotated RGB/depth pair for requested candidate batch",
                         batch_id=response.batch_id, **debug_capture)
                 except Exception as exc:

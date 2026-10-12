@@ -870,7 +870,15 @@ still block poses. No resizing, depth interpolation, silent registration,
 unit guessing, replacement distortion or old-frame substitution. When the
 explicit debug flag is true, the detector atomically saves this request's exact
 already-rendered RGB and registered-depth result pair as PNG under root
-`debug/pick_img/` and returns the absolute paths in diagnostics. It never creates
+`debug/pick_img/` and returns the absolute paths in diagnostics. Keep at most
+**500 captures** in this folder: each RGB/depth pair counts as one, and every
+successful save removes the oldest capture groups over the limit, ordered by
+their latest image modification time. Always retain the just-saved pair. Only
+regular files matching the generated capture names are eligible; preserve
+unrelated files, subdirectories and symlinks. A nonblocking directory lock
+serializes saving with cleanup. A busy writer or cleanup failure is diagnostic
+only; cleanup failure preserves the new images and their returned paths.
+Existing captures are counted on the next explicit debug save. It never creates
 a second camera subscription or continuous archive. A persistence error is a
 reported warning and does not change an otherwise valid candidate response.
 An on-hand camera additionally uses live `base_link <- Link6` at the RGB

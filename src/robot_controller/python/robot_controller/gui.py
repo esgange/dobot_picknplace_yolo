@@ -264,7 +264,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.debug_images = QtWidgets.QCheckBox("Save item/tray debug RGB/depth")
         self.debug_images.setToolTip(
             "Save detection images for Pick Item, Place Item and Auto Run. "
-            "Item images: debug/pick_img; tray images: debug/tray_img.")
+            "Item images: debug/pick_img; tray images: debug/tray_img. "
+            "Keep the newest 500 captures per detector; delete older RGB/depth sets together.")
         self.preview_toggle.toggled.connect(self._toggle_preview)
         self.home_button.clicked.connect(lambda: self._action("home"))
         self.pick_item.clicked.connect(lambda: self._action("pick"))

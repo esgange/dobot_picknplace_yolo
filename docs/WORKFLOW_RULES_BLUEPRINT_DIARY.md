@@ -11322,6 +11322,47 @@ Never use a floating “latest” version in an issue, script, or deployment not
   symlinks; the operator's next GUI launch reads this change. Physical operation
   remains unverified. Commit/push only this tested scope under the standing workflow.
 
+### 2026-10-12 — Rule 277: keep 500 requested debug captures per detector
+
+- User requests local oldest-first retention for Item/Tray debug images and
+  explicitly selects 500 captures per detector, with RGB/depth kept together.
+  Keep independent limits in debug/pick_img and debug/tray_img. An RGB-only
+  tray result counts as one capture. Shared GUI/headless writers apply the same
+  fixed limit after each successful explicit debug save, including existing
+  captures; do not add a watcher, startup purge, setting or background archive.
+- Reuse Item Detect's existing shared PNG helper module for directory locking
+  and retention; no new production module needs installation. Group only exact
+  generated filenames, sort by each group's latest image mtime with deterministic
+  name ties, and remove oldest overflow while always keeping the just-saved
+  capture (including clock rollback). Preserve unknown files, nested directories,
+  image symlinks and other debug/log archives. Refuse linked debug directories
+  and lock files. A nonblocking per-directory filesystem lock covers save/prune;
+  contention reports a diagnostic instead of blocking the request indefinitely.
+- Failed image saves do not prune earlier history; Tray now removes partial
+  newly saved files if its second image fails, matching Item's rollback behavior.
+  Cleanup failures retain the new images/paths and report diagnostic warnings;
+  otherwise valid item/tray detections remain valid. No change to image content,
+  request flags, freshness/source/deadline checks, detection or robot behavior.
+  Update controller checkbox help, READMEs, AGENTS and FSM capture description.
+- Validation: **286 focused tests pass**, including 19 added cases for real
+  500-capture overflow, complete-pair and RGB-only retention, timestamp ordering,
+  clock rollback, separate detector folders, symlink/unrelated-file preservation,
+  lock contention, write rollback, cleanup errors and valid pose responses.
+  Temporary captures stay under ignored test logs; no actual debug image is
+  written or deleted. Changed Python AST checks pass; scoped lint adds no findings
+  (existing continuation/format warnings in Item detector/tests remain unchanged).
+  Regenerated FSM HTML/PDF pass matching-source-hash, nine-diagram/page and offline
+  navigation/zoom verification. Canonical imports resolve changed modules to
+  source symlinks and share the same fixed 500 limit without creating ROS nodes.
+- Controller/Preview/GUI and both headless detectors are running. Isolated
+  item_perception_yolo, tray_perception and robot_controller builds succeed in
+  build/install/debug_retention against canonical dependency installs. No live
+  restart, canonical rebuild, mapped-library overwrite, arming, detection or robot
+  command occurs. Existing debug directories are below the limit and are left
+  untouched; retention takes effect on the next detector launch and explicit
+  debug save. Preserve .env, unrelated RViz edits and operator calibration/teach/
+  model/runtime files. Commit/push only this tested scope under the standing workflow.
+
 ### Future entry template
 
 ```text

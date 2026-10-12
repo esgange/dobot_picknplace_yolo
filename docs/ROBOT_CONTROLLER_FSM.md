@@ -446,13 +446,19 @@ upward-lift check.` N comes from loaded `pick_settling`; typed state remains
 FAILED. Probe events include actual distance/rates, including zero rise. This
 supersedes the rule-221 settling-only message and miss boundary.
 
-Shared debug-capture review: **2026-10-06**, baseline **`aa59259`** plus rule **220**.
+Shared debug-capture review: **2026-10-12**, baseline **`9386bba`** plus rule **277**.
 The controller's Save item/tray debug RGB/depth checkbox passes one action-scoped
 choice to both detectors. Pick Item uses item requests; Place Item now carries
 `save_debug_images` and forwards it to tray pose/depth requests; Auto Run uses its
 existing flag for initial item detection, next-bin prefetch and every tray
 observation. Retries and Pause/Continue retain that choice. Existing request
-writers save into `debug/pick_img/` and `debug/tray_img/`; unchecked and Preview
+writers save into `debug/pick_img/` and `debug/tray_img/`, retaining the newest
+500 captures in each directory independently. RGB and available depth count as
+one capture. A successful save removes oldest generated regular-file groups
+by their latest member mtime; preserve the new capture, unrelated files and
+symlinks. Nonblocking save/cleanup locking protects in-progress captures.
+Cleanup errors keep new images/paths and remain diagnostic only. Other archives
+and controller admission/state/motion are unchanged. Unchecked and Preview
 requests save nothing. No extra inference/worker or motion/I/O/Stop changes.
 Rebuild interfaces/controller and restart controller/GUI together for the new
 PlaceItem goal; perception service definitions remain unchanged.

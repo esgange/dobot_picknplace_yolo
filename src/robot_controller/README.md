@@ -749,7 +749,11 @@ service.
 
 The **Save item/tray debug RGB/depth** checkbox is captured when Pick Item,
 Place Item or Auto Run starts. Item requests save under `debug/pick_img/`;
-tray requests save under `debug/tray_img/`. Auto Run passes the same flag to
+tray requests save under `debug/tray_img/`. Each detector keeps its newest
+**500 captures**, with RGB/depth retained and removed as a group; tray RGB-only
+captures count as one. A successful save removes the oldest overflow, preserving
+the just-saved capture and unrelated files. Cleanup errors remain diagnostic only.
+Auto Run passes the same flag to
 initial/next-item detection and every tray acquisition. Tray observation retries
 and Pause/Continue retain the original choice. Unchecked requests and controller
 Preview do not save images. Saving uses each detector's existing request snapshot

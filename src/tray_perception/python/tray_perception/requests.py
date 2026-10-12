@@ -15,7 +15,8 @@ from rclpy.time import Time
 from tf2_ros import TransformException
 from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
 
-from item_perception_yolo.item_detector import encode_rgb_png
+from item_perception_yolo.item_detector import (
+    encode_rgb_png, debug_capture_directory, trim_debug_captures)
 from item_perception_yolo.item_teach_core import file_sha256, depth_coverage_ok
 from item_perception_yolo.surface_guard import HeightPlane, SurfaceGeometryError
 from tray_perception_interfaces.srv import GetTrayPose
@@ -102,23 +103,35 @@ def fingerprints(paths):
 
 
 def save_debug(root, identifier, view):
-    directory = Path(root) / "debug/tray_img"
-    directory.mkdir(parents=True, exist_ok=True)
-    result = {"requested": True, "rgb_path": "", "depth_path": "", "error": ""}
-    rgb = view["rgb"]
-    for kind, data in (("rgb", view["overlay"]), ("depth", view["depth_overlay"])):
-        if not data:
-            result["error"] = "Registered depth unavailable; saved RGB only"
-            continue
-        target = directory / f"tray_{identifier}_{kind}.png"
-        temporary = directory / f".{target.name}.tmp"
+    if (type(identifier) is not str or len(identifier) != 32
+            or any(character not in "0123456789abcdef" for character in identifier)):
+        raise ValueError("Debug image batch ID is invalid")
+    with debug_capture_directory(root, "tray") as directory:
+        result = {"requested": True, "rgb_path": "", "depth_path": "", "error": ""}
+        rgb = view["rgb"]
+        saved = []
         try:
-            temporary.write_bytes(encode_rgb_png(data, rgb["width"], rgb["height"]))
-            os.replace(temporary, target)
-            result[f"{kind}_path"] = str(target)
-        finally:
-            temporary.unlink(missing_ok=True)
-    return result
+            for kind, data in (("rgb", view["overlay"]), ("depth", view["depth_overlay"])):
+                if not data:
+                    result["error"] = "Registered depth unavailable; saved RGB only"
+                    continue
+                target = directory / f"tray_{identifier}_{kind}.png"
+                temporary = directory / f".{target.name}.tmp"
+                try:
+                    temporary.write_bytes(encode_rgb_png(data, rgb["width"], rgb["height"]))
+                    os.replace(temporary, target)
+                    result[f"{kind}_path"] = str(target)
+                    saved.append(target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        except Exception:
+            for path in saved:
+                path.unlink(missing_ok=True)
+            raise
+        error = trim_debug_captures(directory, "tray", (
+            result["rgb_path"], result["depth_path"]))
+        result["error"] = "; ".join(value for value in (result["error"], error) if value)
+        return result
 
 
 class TrayRequests:

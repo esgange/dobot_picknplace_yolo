@@ -2207,6 +2207,18 @@ Keep manual Load/Reload, all controller startup/output/Stop gates and explicit
 Auto Run; add no automatic Home or cycle, lifecycle state, interface or config.
 Update diary/FSM/exports, test synthetically and isolate builds while live.
 
+Rule 277 limits explicit request debug images to the newest 500 captures per
+detector, separately in debug/pick_img and debug/tray_img. RGB and available
+depth count as one; a tray RGB-only capture also counts as one. After a successful
+save, prune the oldest generated regular-file groups by their latest member mtime,
+always preserving the new capture. Serialize save/prune with a nonblocking
+directory lock; do not follow directory/lock symlinks or prune unknown files,
+subdirectories or linked images. Failed saves retain prior history; cleanup
+failure retains new images/paths and reports diagnostics without invalidating
+poses. Existing captures join the limit on the next explicit save. Preserve the
+request-only flag, other archives, models/teaching/calibration and all robot
+behavior. Test only temporary captures, document the limit and isolate live builds.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

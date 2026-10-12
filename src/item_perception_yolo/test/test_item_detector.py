@@ -242,6 +242,20 @@ def test_debug_image_failure_is_diagnostic_only(service_node, monkeypatch):
     assert not capture["rgb_path"] and not capture["depth_path"]
 
 
+def test_debug_cleanup_failure_keeps_saved_images_and_valid_candidates(service_node, monkeypatch):
+    node, _ = service_node
+    node.infer.return_value.update(width=2, height=2, rgb=bytes(12), depth_rgb=bytes(12))
+    monkeypatch.setattr(detector, 'trim_debug_captures', lambda *_: 'Cleanup failed: permission')
+    request = GetItemPoses.Request(
+        repick_contract="repick_exclusions_v1", max_candidates=3, profile_sha256="a" * 64,
+        save_debug_images=True, pose_convention=GetItemPoses.Request.POSE_CONVENTION)
+    result = detector.ItemDetectNode._request(node, request, GetItemPoses.Response())
+    capture = json.loads(result.diagnostics_json)['debug_capture']
+    assert result.success and len(result.candidates) == 1
+    assert capture['error'] == 'Cleanup failed: permission'
+    assert all(Path(capture[key]).is_file() for key in ('rgb_path', 'depth_path'))
+
+
 def test_debug_saving_cannot_return_invalidated_candidates(service_node, monkeypatch):
     node, _ = service_node
 

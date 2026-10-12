@@ -174,7 +174,11 @@ Rebuild interfaces/controller and manually restart their clients after upgrading
 
 **Save item/tray debug RGB/depth** applies to Pick Item, Place Item and Auto Run.
 Checked requests save item images under `debug/pick_img/` and tray images under
-`debug/tray_img/`, using the detectors' existing per-request capture. The choice
+`debug/tray_img/`, using the detectors' existing per-request capture. Each folder
+keeps the newest **500 captures** (RGB plus available depth counts as one).
+After a successful save, delete the oldest complete capture groups over that
+limit; preserve the new capture and unrelated files. Cleanup failures appear in
+diagnostics without invalidating detections. The choice
 is retained through acquisition retries and Pause/Continue; unchecked requests
 and controller Preview do not save images. Rebuild `robot_controller_interfaces`
 and `robot_controller`, then restart controller and GUI together after this update

@@ -550,6 +550,60 @@ def test_debug_images_only_on_request_and_missing_depth_is_nonfatal(backend):
     assert len(list((node.root / "debug/tray_img").glob("*.png"))) == 1
 
 
+@pytest.mark.parametrize('depth', [False, True])
+def test_debug_retains_500_tray_captures_with_optional_depth(tmp_path, depth):
+    import os
+    folder = tmp_path / 'debug/tray_img'
+    folder.mkdir(parents=True)
+    old = []
+    for index in range(500):
+        pair = [folder / f'tray_{index:032x}_{channel}.png' for channel in ('rgb', 'depth')]
+        for path in pair:
+            path.write_bytes(b'old capture')
+            os.utime(path, ns=(index + 1, index + 1))
+        old.append(pair)
+    result = requests.save_debug(tmp_path, 'f' * 32, {
+        'rgb': {'width': 1, 'height': 1}, 'overlay': bytes(3),
+        'depth_overlay': bytes(3) if depth else None})
+    assert all(not path.exists() for path in old[0])
+    assert all(path.exists() for group in old[1:] for path in group)
+    assert len(list(folder.glob('*.png'))) == (1000 if depth else 999)
+    assert Path(result['rgb_path']).is_file()
+    assert bool(result['depth_path']) is depth
+    assert bool(result['error']) is not depth
+
+
+def test_failed_debug_depth_write_preserves_history_and_removes_partial_capture(
+        tmp_path, monkeypatch):
+    view = {'rgb': {'width': 1, 'height': 1}, 'overlay': bytes(3), 'depth_overlay': bytes(3)}
+    previous = requests.save_debug(tmp_path, 'a' * 32, view)
+    encode = requests.encode_rgb_png
+    calls = 0
+
+    def fail_depth(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError('Depth write failed')
+        return encode(*args)
+    monkeypatch.setattr(requests, 'encode_rgb_png', fail_depth)
+    with pytest.raises(OSError, match='Depth write failed'):
+        requests.save_debug(tmp_path, 'b' * 32, view)
+    assert set((tmp_path / 'debug/tray_img').glob('*.png')) == {
+        Path(previous[key]) for key in ('rgb_path', 'depth_path')}
+
+
+def test_tray_cleanup_error_preserves_valid_observation_and_saved_rgb(backend, monkeypatch):
+    node, _, _ = backend
+    arm(backend)
+    monkeypatch.setattr(requests, 'trim_debug_captures', lambda *_: 'Cleanup failed: permission')
+    result = trigger(backend, debug=True)
+    evidence = json.loads(result.diagnostics_json)['debug_capture']
+    assert result.success and result.found
+    assert Path(evidence['rgb_path']).is_file()
+    assert 'Cleanup failed' in evidence['error'] and 'depth unavailable' in evidence['error']
+
+
 def test_arming_rejects_another_canonical_provider(backend):
     node, _, _ = backend
     node.get_node_names_and_namespaces = lambda: [("tray_detect", "/")]

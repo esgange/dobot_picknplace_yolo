@@ -457,7 +457,16 @@ reference frame, not a commanded robot TCP orientation. Diagnostics include the
 profile/model/calibration hashes, reference-plane evidence and detection reasons.
 
 `save_debug_images=true` writes only that request's annotated RGB and available
-depth image under ignored `debug/tray_img/`. Default service requests additionally
+depth image under ignored `debug/tray_img/`. Retain the newest **500 captures**
+in this folder, independently of Item Detect. RGB plus optional depth counts as
+one capture; RGB-only captures also count as one. After a successful save,
+remove older generated capture groups using their latest image modification
+time; always preserve the new capture. Shared nonblocking save/cleanup locking
+prevents pruning another writer's in-progress pair. Cleanup considers only
+matching regular files, preserving unrelated files, directories and symlinks.
+Failed saves preserve earlier history; cleanup errors retain new images and are
+reported in diagnostics. Existing captures are counted on the next debug save.
+Default service requests additionally
 use the sampled diagnostic archive described below; passive previews and
 simulation do not automatically archive images. Missing depth or image-save
 failure is reported in diagnostics without
