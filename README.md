@@ -1288,28 +1288,30 @@ Follow connection attempts and results live with:
 tail -f logs/dobot_bringup_v4/events.jsonl
 ```
 
-The bringup command also opens the read-only actual-robot and TF viewer on the
-graphical desktop. It owns a separate viewer launch session: closing RViz or a
-viewer failure stops the viewer and its robot TF publisher while the driver
-continues. Ctrl-C in the bringup terminal stops both, and driver exit also stops
-the owned viewer. No robot enable or motion command is added, and closing RViz
-is not a robot Stop command. Viewer exit is reported without automatic restart.
+Bringup starts the driver and an owned headless robot-TF session containing the
+actual-joint monitor and fixed CR10 `robot_state_publisher`. It does not start
+RViz or require a graphical desktop. `/joint_states`, robot TF and headless
+detection remain available with no viewer running. Ctrl-C in the bringup terminal
+or driver exit also stops its TF session. A failed joint monitor or TF publisher
+stops only that session and reports unavailable robot TF; the driver continues,
+without automatic TF restart or any added robot command.
 
-To reopen a viewer that has exited, use a second sourced terminal while bringup
-is still publishing. Run only one viewer at a time to avoid duplicate robot TF
-publishers:
+To open the optional read-only viewer, use a separate sourced terminal:
 
 ```bash
 ros2 launch dobot_rviz dobot_rviz.launch.py
 ```
 
-The fixed CR10 `robot_state_publisher` consumes canonical `/joint_states`
-directly and RViz displays the resulting robot model plus every TF available on
-the local ROS graph. The viewer has no launch arguments, manual joint sliders,
-relay topic, zero-position generator, or non-hardware mode. It requires the
-configured Dobot bringup node to be the only `/joint_states` publisher; missing,
-malformed, ambiguous, or stale feedback terminates the viewer and is recorded
-under `logs/dobot_rviz/events.jsonl`.
+This launch starts RViz only: opening, closing or reopening it never starts or
+stops a robot TF publisher, joint monitor or driver. RViz displays the existing
+robot model and TF from the local ROS graph and sends no robot commands.
+The headless `robot_state_publisher` consumes canonical `/joint_states` directly.
+Its monitor requires the configured Dobot bringup node to be the only publisher;
+missing, malformed, ambiguous or stale feedback ends the TF session and is logged
+under `logs/dobot_rviz/events.jsonl`. There are no manual joint sliders, relay
+topics, synthetic positions or model/configuration launch overrides. A failed TF
+session needs an explicit operator restart after the feedback problem is resolved;
+reopening RViz does not repair it.
 
 `motion_debug` is launched separately and does not start bringup. If bringup is
 not running, the GUI prompts the operator to start the Dobot bringup command and

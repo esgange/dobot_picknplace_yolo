@@ -2,24 +2,25 @@
 
 ROS 2 TCP/IP driver for the physical Dobot CR10. The node publishes joint state, robot status, and tool-vector feedback and exposes the retained Dobot command services. Streaming `ServoJ` and `ServoP` services are intentionally not built or exposed.
 
-The canonical launch also starts the existing `dobot_rviz` viewer, including
-its actual-joint monitor and CR10 `robot_state_publisher`. A graphical desktop
-is required to display RViz. Do not start a second viewer while this one is
-running: it would duplicate the robot TF publisher.
+The canonical launch starts the driver and an owned headless session with the
+actual-joint monitor and CR10 `robot_state_publisher`. Their existing executable
+and model assets remain in `dobot_rviz`; `robot_state.launch.py` contains only
+these two nodes. Bringup never starts RViz and needs no graphical desktop.
+Headless perception can obtain timestamped `base_link -> Link6` TF without a viewer.
 
-The viewer runs in an owned child launch session. Closing RViz, a viewer crash,
-or a failed viewer feedback check stops that viewer session and its robot TF
-publisher while the Dobot driver continues. The terminal reports viewer exit;
-there is no automatic restart. The standalone
-`ros2 launch dobot_rviz dobot_rviz.launch.py` command can reopen it after it has
-exited. Ctrl-C in the bringup terminal stops both sessions, and driver exit also
-shuts down the owned viewer. Closing RViz is not a robot Stop command.
+Ctrl-C in the bringup terminal or driver exit stops the owned TF session.
+Monitor or publisher failure stops that session, reports unavailable robot TF,
+and leaves the driver and its command/feedback services running. No automatic
+restart is added. The monitor retains its five-second startup, one-second
+receipt freshness, exact joint-message and sole-publisher checks. A TF failure
+must be resolved before an explicit operator restart.
 
-RViz remains read-only. The launch adds no Enable, Home, motion, or gripper
-commands. Connection retries, service responses and feedback publication retain
-their existing behavior; the viewer retains its five-second startup and
-one-second stream-freshness checks. Display/GPU failures remain local to the
-viewer, but applications requiring its robot TF lose that TF when it exits.
+The separate `ros2 launch dobot_rviz dobot_rviz.launch.py` command starts only
+the optional viewer. Opening, closing, crashing or reopening it has no effect on
+the driver, monitor or TF publisher and cannot create duplicate robot TF.
+The launch adds no Enable, Home, motion, Stop or gripper commands. Connection
+retries, service responses, feedback publication and controller containment
+remain unchanged.
 
 The bringup launch is strict and requires the repository root `.env`:
 

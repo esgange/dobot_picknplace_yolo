@@ -389,16 +389,17 @@ def generate_launch_description():
             parameters=dobot_ros2_params,
             on_exit=[EmitEvent(event=Shutdown(reason="Dobot bringup exited"))],
         ),
-        # The viewer emits Shutdown when any of its processes exits. Keep that
-        # event in a child launch session so closing RViz cannot stop the driver.
-        # Noninteractive mode forwards parent shutdown to the viewer's nodes.
+        # TF and its joint monitor share an owned headless session. A failed
+        # monitor stops TF without taking down the driver's command/feedback
+        # services. Parent shutdown still stops both child processes.
         ExecuteProcess(
             cmd=[FindExecutable(name="ros2"), "launch", "--noninteractive",
-                 "dobot_rviz", "dobot_rviz.launch.py"],
-            name="dobot_rviz_launch",
+                 "dobot_rviz", "robot_state.launch.py"],
+            name="dobot_robot_state_launch",
             output="screen",
             on_exit=[LogInfo(msg=(
-                "Dobot RViz viewer exited; the driver continues while bringup is running."
+                "Dobot robot TF session exited; robot TF is unavailable. "
+                "The driver continues while bringup is running; no automatic restart."
             ))],
         ),
     ])

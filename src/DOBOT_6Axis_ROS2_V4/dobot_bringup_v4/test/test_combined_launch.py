@@ -1,6 +1,7 @@
 """Exercise the real launch lifecycles with local dummy processes, never hardware."""
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import signal
@@ -31,7 +32,8 @@ if role == 'dummy':
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     try:
-        (root / (name + '.started')).touch()
+        with (root / (name + '.started')).open('a') as marker:
+            marker.write(str(os.getpid()) + '\\n')
         trigger = root / (name + '.exit')
         while not trigger.exists():
             time.sleep(0.02)
@@ -48,28 +50,31 @@ def dummy_node(**kwargs):
         cmd=[sys.executable, __file__, 'dummy', kwargs['executable']],
         name=kwargs['name'], output='screen', on_exit=kwargs['on_exit'])
 
-def viewer_process(**kwargs):
+def state_process(**kwargs):
     context = LaunchContext()
     command = [part if isinstance(part, str) else perform_substitutions(context, [part])
                for part in kwargs['cmd']]
     assert Path(command[0]).name == 'ros2'
-    assert command[1:] == ['launch', '--noninteractive', 'dobot_rviz', 'dobot_rviz.launch.py']
-    kwargs['cmd'] = [sys.executable, __file__, 'viewer', command[2]]
+    assert command[1:] == ['launch', '--noninteractive', 'dobot_rviz', 'robot_state.launch.py']
+    kwargs['cmd'] = [sys.executable, __file__, 'state', command[2]]
     return ExecuteProcess(**kwargs)
 
-launch_file = root / 'src' / (
-    'dobot_bringup_ros2.launch.py' if role == 'parent' else 'dobot_rviz.launch.py')
+launch_file = root / 'src' / {
+    'parent': 'dobot_bringup_ros2.launch.py',
+    'state': 'robot_state.launch.py',
+    'viewer': 'dobot_rviz.launch.py',
+}[role]
 with patch('launch_ros.actions.Node', dummy_node):
     module = runpy.run_path(str(launch_file))
     if role == 'parent':
-        module['generate_launch_description'].__globals__['ExecuteProcess'] = viewer_process
+        module['generate_launch_description'].__globals__['ExecuteProcess'] = state_process
     description = module['generate_launch_description']()
 service = LaunchService(noninteractive=role == 'parent' or '--noninteractive' in sys.argv)
 service.include_launch_description(description)
 raise SystemExit(service.run())
 '''
 
-VIEWER_PROCESSES = ('rviz2', 'robot_state_publisher', 'actual_joint_state_monitor.py')
+STATE_PROCESSES = ('robot_state_publisher', 'actual_joint_state_monitor.py')
 DRIVER = 'dobot_bringup_v4_node'
 
 
@@ -82,12 +87,13 @@ def wait_for(process, log_path, predicate):
 
 
 @pytest.fixture
-def running_launch(tmp_path):
+def launch_workspace(tmp_path):
     source = tmp_path / 'src'
     source.mkdir()
     for package, filename in (
         ('dobot_bringup_v4', 'dobot_bringup_ros2.launch.py'),
         ('dobot_rviz', 'dobot_rviz.launch.py'),
+        ('dobot_rviz', 'robot_state.launch.py'),
     ):
         shutil.copyfile(VENDOR_ROOT / package / 'launch' / filename, source / filename)
     (source / 'package.xml').write_text(
@@ -96,17 +102,20 @@ def running_launch(tmp_path):
         shutil.copyfile(PROJECT_ROOT / '.env.example', tmp_path / name)
     harness = tmp_path / 'harness.py'
     harness.write_text(HARNESS, encoding='utf-8')
-    log_path = tmp_path / 'launch.log'
-    environment = dict(os.environ, ROS_LOCALHOST_ONLY='1', ROS_LOG_DIR=str(tmp_path / 'ros_logs'))
+    return tmp_path
+
+
+@contextmanager
+def launch_process(root, role):
+    log_path = root / (role + '.log')
+    harness = root / 'harness.py'
+    environment = dict(os.environ, ROS_LOCALHOST_ONLY='1', ROS_LOG_DIR=str(root / 'ros_logs'))
     with log_path.open('w', encoding='utf-8') as log:
         process = subprocess.Popen(
-            [sys.executable, str(harness), 'parent'], env=environment,
+            [sys.executable, str(harness), role], env=environment,
             stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            wait_for(process, log_path, lambda: all(
-                (tmp_path / (name + '.started')).exists()
-                for name in (*VIEWER_PROCESSES, DRIVER)))
-            yield process, tmp_path, log_path
+            yield process, log_path
         finally:
             # Only this fixture's process group can be signalled, including on failure.
             try:
@@ -122,17 +131,27 @@ def running_launch(tmp_path):
                     pass
 
 
+@pytest.fixture
+def running_launch(launch_workspace):
+    root = launch_workspace
+    with launch_process(root, 'parent') as (process, log_path):
+        wait_for(process, log_path, lambda: all(
+            (root / (name + '.started')).exists() for name in (*STATE_PROCESSES, DRIVER)))
+        assert not (root / 'rviz2.started').exists(), 'Bringup must never launch RViz'
+        yield process, root, log_path
+
+
 @pytest.mark.parametrize('name,code', [
-    ('rviz2', 0),
-    ('rviz2', 1),
+    ('robot_state_publisher', 0),
+    ('robot_state_publisher', 1),
     ('actual_joint_state_monitor.py', 1),
 ])
-def test_viewer_exit_stops_only_viewer_processes(running_launch, name, code):
+def test_tf_failure_stops_tf_session_but_preserves_driver(running_launch, name, code):
     process, root, log_path = running_launch
     (root / (name + '.exit')).write_text(str(code), encoding='utf-8')
     wait_for(process, log_path, lambda: all(
-        (root / (name + '.stopped')).exists() for name in VIEWER_PROCESSES))
-    wait_for(process, log_path, lambda: 'Dobot RViz viewer exited' in log_path.read_text())
+        (root / (name + '.stopped')).exists() for name in STATE_PROCESSES))
+    wait_for(process, log_path, lambda: 'Dobot robot TF session exited' in log_path.read_text())
     assert process.poll() is None
     assert not (root / (DRIVER + '.stopped')).exists()
     # Prove the surviving driver still owns parent lifetime and can exit normally.
@@ -141,7 +160,7 @@ def test_viewer_exit_stops_only_viewer_processes(running_launch, name, code):
 
 
 @pytest.mark.parametrize('exit_driver', [False, True])
-def test_parent_shutdown_stops_viewer_and_driver(running_launch, exit_driver):
+def test_parent_shutdown_stops_tf_and_driver(running_launch, exit_driver):
     process, root, log_path = running_launch
     if exit_driver:
         (root / (DRIVER + '.exit')).write_text('1', encoding='utf-8')
@@ -149,4 +168,31 @@ def test_parent_shutdown_stops_viewer_and_driver(running_launch, exit_driver):
         os.killpg(process.pid, signal.SIGINT)
     assert process.wait(timeout=10) == 0, log_path.read_text()
     assert all((root / (name + '.stopped')).exists()
-               for name in (*VIEWER_PROCESSES, DRIVER)), log_path.read_text()
+               for name in (*STATE_PROCESSES, DRIVER)), log_path.read_text()
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_separate_viewer_exit_and_reopen_leave_tf_and_driver_running(running_launch, exit_code):
+    parent, root, parent_log = running_launch
+    for _ in range(2):
+        with launch_process(root, 'viewer') as (viewer, viewer_log):
+            wait_for(viewer, viewer_log, lambda: (root / 'rviz2.started').exists())
+            (root / 'rviz2.exit').write_text(str(exit_code), encoding='utf-8')
+            assert viewer.wait(timeout=10) == 0, viewer_log.read_text()
+        assert (root / 'rviz2.stopped').exists()
+        assert parent.poll() is None, parent_log.read_text()
+        for name in (*STATE_PROCESSES, DRIVER):
+            assert not (root / (name + '.stopped')).exists()
+            assert len((root / (name + '.started')).read_text().splitlines()) == 1
+        for suffix in ('exit', 'started', 'stopped'):
+            (root / ('rviz2.' + suffix)).unlink()
+
+
+def test_viewer_alone_never_starts_driver_monitor_or_tf(launch_workspace):
+    root = launch_workspace
+    with launch_process(root, 'viewer') as (viewer, log_path):
+        wait_for(viewer, log_path, lambda: (root / 'rviz2.started').exists())
+        (root / 'rviz2.exit').write_text('0', encoding='utf-8')
+        assert viewer.wait(timeout=10) == 0, log_path.read_text()
+        for name in (*STATE_PROCESSES, DRIVER):
+            assert not (root / (name + '.started')).exists()

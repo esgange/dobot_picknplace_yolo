@@ -51,9 +51,9 @@ There is no package-local configuration or compatibility path.
 | Package | Role |
 | --- | --- |
 | `cra_description` | CR10 URDF/Xacro and visual/collision meshes |
-| `dobot_bringup_v4` | Controller TCP/IP driver, feedback, and ROS services |
+| `dobot_bringup_v4` | Controller TCP/IP driver, feedback, ROS services and owned headless robot TF |
 | `dobot_msgs_v4` | Dobot ROS messages and services |
-| `dobot_rviz` | Read-only actual-feedback CR10 and ROS TF viewer |
+| `dobot_rviz` | CR10 model, monitored robot-TF launch and optional read-only viewer |
 
 ## Safe entry points
 
@@ -64,8 +64,8 @@ checks documented in the repository root README:
 ros2 launch dobot_bringup_v4 dobot_bringup_ros2.launch.py
 ```
 
-After bringup is connected and publishing actual joint feedback, visualize the
-robot without commanding it:
+Bringup also owns the headless robot TF publisher and joint-feedback monitor;
+it never opens RViz. After bringup is publishing, optionally open the viewer:
 
 ```bash
 ros2 launch dobot_rviz dobot_rviz.launch.py
@@ -77,8 +77,14 @@ The current feedback path is:
 Dobot controller TCP feedback
   → dobot_bringup_v4
   → /joint_states
-  → robot_state_publisher and RViz
+  → bringup-owned robot_state_publisher
+  → /tf and /tf_static → perception and optional RViz
 ```
+
+Closing or reopening RViz leaves the driver and robot TF running. Parent
+shutdown/driver exit stops the owned TF session. A joint-monitor or TF failure
+ends that session and reports missing TF while preserving driver services;
+there is no automatic restart or added robot command.
 
 ## Safety
 

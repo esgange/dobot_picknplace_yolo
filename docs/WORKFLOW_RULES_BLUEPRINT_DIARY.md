@@ -11363,6 +11363,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   debug save. Preserve .env, unrelated RViz edits and operator calibration/teach/
   model/runtime files. Commit/push only this tested scope under the standing workflow.
 
+### 2026-10-12 — Rule 278: bringup owns headless robot TF; RViz is optional
+
+- User requests robot TF and joint-feedback monitoring independent of RViz,
+  then explicitly removes automatic RViz startup from bringup. Supersede rules
+  16/114's process ownership: canonical bringup starts the unchanged driver and
+  an owned headless `dobot_rviz/robot_state.launch.py` child session containing
+  the actual-joint monitor and fixed CR10 `robot_state_publisher`. Keep their
+  executable/model assets in the existing package; no new package or dependency
+  is needed. Use descriptive `dobot_actual_joint_state_monitor` and
+  `dobot_robot_state_publisher` node names; canonical joint/TF topics are unchanged.
+- The separate `dobot_rviz.launch.py` now starts only RViz. Bringup needs no
+  display, and closing, crashing or reopening the viewer cannot stop or duplicate
+  robot TF/monitoring. Preserve canonical `/joint_states` directly, the exact
+  six-joint finite/nonzero-stamp message contract, sole configured publisher,
+  five-second startup and one-second receipt-freshness checks. Preserve strict
+  root configuration in the TF launch and local-only ROS in both launches.
+- Keep the established independent failure boundary: monitor or publisher exit
+  shuts down both TF-session nodes, explicitly reports unavailable TF, and leaves
+  driver services/feedback running. Parent shutdown or driver exit stops the
+  owned session through noninteractive launch signal forwarding. No restart
+  loop, feedback relay, synthetic production joints, hardware command, new
+  configuration, controller behavior or artifact change is added. The existing
+  monitor logger remains under `logs/dobot_rviz/`; rename its lifecycle events
+  to `joint_monitor_startup`/`joint_monitor_shutdown` so they no longer claim RViz
+  is running. Controller FSM and exports remain unchanged because no controller
+  states, motion/feedback guards or behavior are changed.
+- Intentional vendor integration patch: the two existing launch descriptions,
+  new headless launch, monitor event wording, package description and launch
+  lifecycle tests, plus root/package documentation and source index. C++ driver,
+  transport, robot model and operator-modified RViz configuration are untouched.
+- Validation: **13 tests pass** (eight real launch-lifecycle tests with only
+  dummy local processes and five existing monitor-contract tests). Exercise
+  bringup without any viewer; normal/faulted TF exit and monitor failure while
+  driver survives; driver exit/parent Ctrl-C cleanup; independent normal/crashed
+  viewer closure and reopening without duplicate publishers; and viewer-only
+  launch without driver/TF/monitor side effects. Scoped Python lint, syntax,
+  package XML, installed-launch checks and `git diff --check` pass.
+- Rechecked processes and mapped canonical driver before building: no driver,
+  TF publisher or RViz process is running. Canonical `dobot_rviz` and
+  `dobot_bringup_v4` symlink builds succeed in 4.05 seconds. No robot or camera
+  process is started, no live process restarted, and no robot command issued.
+  Changes apply on the operator's next bringup launch; real robot TF/perception
+  and display operation remain unverified. An older running combined viewer must
+  be stopped before using the new bringup to avoid its old extra TF publisher.
+  Preserve .env, calibration, teaching/model/runtime artifacts and unrelated RViz
+  edits. No offline-transfer milestone is claimed. Commit/push only this scope.
+
 ### Future entry template
 
 ```text

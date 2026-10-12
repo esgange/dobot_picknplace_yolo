@@ -32,9 +32,9 @@ All packages in `DOBOT_6Axis_ROS2_V4/` come from the vendored Dobot ROS 2 V4 sna
 | Package | Role |
 | --- | --- |
 | [`cra_description`](DOBOT_6Axis_ROS2_V4/cra_description/) | CR10 URDF/Xacro description and meshes |
-| [`dobot_bringup_v4`](DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/) | Dobot TCP/IP ROS 2 driver and services |
+| [`dobot_bringup_v4`](DOBOT_6Axis_ROS2_V4/dobot_bringup_v4/) | Dobot TCP/IP driver, services and owned headless robot TF |
 | [`dobot_msgs_v4`](DOBOT_6Axis_ROS2_V4/dobot_msgs_v4/) | Dobot messages and service definitions |
-| [`dobot_rviz`](DOBOT_6Axis_ROS2_V4/dobot_rviz/) | CR10 RViz visualization |
+| [`dobot_rviz`](DOBOT_6Axis_ROS2_V4/dobot_rviz/) | CR10 model, monitored robot TF and optional RViz viewer |
 
 Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`,
 and the Dobot `ServoJ`/`ServoP` interfaces are intentionally absent from the

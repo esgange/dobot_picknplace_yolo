@@ -3,7 +3,7 @@
 <package format="3">
   <name>dobot_rviz</name>
   <version>0.0.0</version>
-  <description>Actual CR10 joint-state and ROS TF viewer for RViz.</description>
+  <description>Canonical CR10 robot TF, joint-state monitoring and optional RViz viewer.</description>
   <maintainer email="futingxing@dobot-robot.com">FTX</maintainer>
   <license>MIT</license>
 

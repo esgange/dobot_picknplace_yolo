@@ -135,7 +135,7 @@ class ActualJointStateMonitor(Node):
         self.create_timer(CHECK_PERIOD_SEC, self._check_stream)
         self._event_logger.record(
             'INFO',
-            'viewer_startup',
+            'joint_monitor_startup',
             f'waiting for canonical actual joint states on {JOINT_STATE_TOPIC}',
             expected_publisher=f'/{self._expected_publisher}',
             startup_timeout_sec=STARTUP_TIMEOUT_SEC,
@@ -235,7 +235,7 @@ def main() -> None:
     except KeyboardInterrupt:
         exit_code = 0
     except Exception as error:
-        print(f'[DOBOT RVIZ] Actual joint-state monitor failed: {error}', file=sys.stderr)
+        print(f'[DOBOT TF] Actual joint-state monitor failed: {error}', file=sys.stderr)
         if node is not None:
             try:
                 node.event_logger.record('ERROR', 'monitor_failed', str(error))
@@ -246,7 +246,8 @@ def main() -> None:
         if node is not None:
             if exit_code == 0:
                 try:
-                    node.event_logger.record('INFO', 'viewer_shutdown', 'RViz viewer stopped')
+                    node.event_logger.record(
+                        'INFO', 'joint_monitor_shutdown', 'Robot joint-state monitor stopped')
                 except Exception:
                     pass
             node.destroy_node()
