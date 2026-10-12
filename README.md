@@ -33,7 +33,7 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 ## Robot Controller
 
 The controller window is now a **Station HMI** with four pages: **Operate**,
-**Teach**, **Tools / Debug**, and **Auto / Remote**. Robot/gripper status and
+**Teach**, **Tools / Debug**, and **Auto**. Robot/gripper status and
 Recover/Pause/STOP remain visible throughout. Teach opens the non-headless Item,
 Tray, Bin and Platform teaching windows; Tools opens RViz, camera setup,
 calibration and eligible direct maintenance tools. Each explicit launch is owned
@@ -41,6 +41,24 @@ by the HMI; closing the HMI closes those tools and its headless detector pair.
 Applications opened elsewhere remain external. Direct robot maintenance requires
 the production controller to be closed. **RabbitMQ integration is the next phase;
 no remote command listener is implemented yet.** See [Station HMI](src/robot_controller/README.md#station-hmi).
+
+The normal launch now starts the **offline station**: canonical Dobot bringup,
+robot TF, both supervised cameras, controller, Preview and HMI. No server or RViz
+is required. Opening it does not load a recipe, enable the robot or start motion.
+Select files on Teach, press **Load Auto** on Auto, then **Auto Run** on Operate.
+Load Auto starts the headless detectors and prepares the robot as before.
+
+```bash
+source scripts/source_ros_workspace.bash
+ros2 launch robot_controller robot_controller.launch.py
+```
+
+Close existing station processes before this complete launch; detected existing
+owners are refused without stopping them. To keep separately managed bringup and
+cameras, use `start_dependencies:=false`. Closing the HMI closes its owned station:
+controller shutdown/Stop handling finishes before cameras and bringup are stopped.
+Dependency failure also ends the owned station, without an outer restart loop.
+The camera supervisor retains its existing bounded three-attempt policy.
 
 **Manual Run / Auto Run:** both use the same Quantity, X/Y, Rotation and debug
 settings. Manual Run uses armed Item Teach and Tray Teach. Auto Run requires
@@ -377,8 +395,8 @@ the cause and require explicit Recover. Stop cancels preparation without a delay
 restart. Load/Reload is disabled while Preview is ON. Headless `runtime_teach/` configuration is
 immutable until the process is restarted.
 
-The GUI top row shows **Robot status** and **Gripper status** side by side,
-with compact Item/Bin/Tray Teach loading at the right. Robot status uses NOT READY,
+The GUI top row shows **Robot status**, **Gripper status** and observed station
+services; Item/Bin/Tray Teach loading is on Teach. Robot status uses NOT READY,
 READY, BUSY, HOLDING ITEM, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED and OFFLINE, with activity
 and failure reasons always visible. Emergency stop has a prominent red override.
 The lifecycle row has Recover, a Pause/Continue/Return Item control and a **permanent
@@ -683,11 +701,13 @@ slower, unstamped `ToolVectorActual` topic.
 
 ## Item Teach and controller
 
-In separate terminals after building and sourcing the workspace:
+Start the offline HMI after building and sourcing the workspace, then open Item
+Teach from its Teach page. For separately managed bringup/cameras, the equivalent
+separate-terminal workflow is:
 
 ```bash
 ros2 launch item_perception_yolo item_teach.launch.py
-ros2 launch robot_controller robot_controller.launch.py
+ros2 launch robot_controller robot_controller.launch.py start_dependencies:=false
 ```
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,

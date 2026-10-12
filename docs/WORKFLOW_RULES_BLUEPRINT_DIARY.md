@@ -11474,6 +11474,64 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve .env, calibration, teaching/model/runtime artifacts and unrelated RViz
   modifications; scoped commit/push follows the standing workflow.
 
+### 2026-10-12 — Rule 280: one offline station launch with HMI dependencies
+
+- User explicitly defers RabbitMQ/online mode and requests all default station
+  dependencies alongside the HMI. Clarification confirms cameras, bringup and
+  robot TF start with the HMI, while Load Auto stays explicit for recipe
+  deployment, both headless detectors and robot preparation. No recipe restore,
+  perception arming, robot enable, Home or cycle is added merely on opening HMI.
+- Normal `robot_controller.launch.py` now starts an offline station supervisor
+  which owns canonical installed bringup (including robot TF), headless camera
+  supervisor and controller/Preview/HMI launch sessions. Add the supervisor
+  executable/module and explicit Dobot bringup runtime dependency. Use private
+  process sessions and the existing parent-death wrapper; preserve strict root
+  configuration and every camera startup/stream/collision/three-attempt rule.
+  No outer retry, camera configuration writer, vendor patch or robot client is
+  introduced. Launching the offline station is the operator's camera-start action.
+- Validate all installed launch paths before any child spawn, serialize offline
+  ownership with a workspace lock and refuse detected existing local driver/TF/
+  camera/controller/detector/maintenance owners, including other domains and
+  startup phases. Do not adopt or stop them. Existing runtime ownership checks
+  remain authoritative against later races. `start_dependencies:=false` preserves
+  core-only GUI use with separately managed services; `headless:=true` continues
+  to start only the existing hardware controller with its runtime catalog.
+- HMI/core/Preview exit, dependency launch exit (even zero) or terminal shutdown
+  closes the owned station. Stop the core session first so controller shutdown
+  can run its existing bounded Stop/confirmation while bringup is available;
+  then stop cameras, then bringup/TF. Isolated sessions prevent terminal Ctrl-C
+  reaching the driver prematurely. Bound SIGINT/SIGTERM/SIGKILL waits to 40/5/2
+  seconds per session, extend core controller/HMI graceful waits to 30 seconds,
+  and log escalation. Forced death or failed bringup cannot guarantee physical
+  Stop confirmation. Preserve outputs and never signal a foreign process.
+- Rename Auto / Remote to Auto, describe the offline load/run sequence and show
+  observed camera-supervisor/TF presence separately from live controller feedback.
+  Presence is not readiness. Keep teaching/tools explicit, last selections as
+  prefill, Load Auto/Auto Run green readiness, and existing preparation/run guards.
+  No RabbitMQ dependency, listener, remote-control state, interface or setting.
+- Validation: **1,772 controller tests pass**, including 23 new offline tests
+  covering startup selection, foreign-process refusal, missing installation,
+  competing supervisor lock, pre-start cancellation, spawn failure, every child
+  exit, owned cleanup and driver-last shutdown. Real harmless dummy sessions
+  exercise the actual outer launch Ctrl-C path and verify the driver is still
+  available during simulated controller cleanup. No real ROS application,
+  camera, model, detector request or hardware command is started by these tests.
+  Scoped lint has no new findings (two existing GUI line-length findings remain);
+  package XML, installed imports/executable and diff checks pass. Synthetic
+  offscreen Operate/Auto pages fit the existing 1054 × 735 window.
+- Isolated robot_controller build succeeds in build/install/offline_hmi in 6.06
+  seconds against canonical dependencies. Controller/Preview/HMI remain running;
+  leave their canonical installation and PIDs untouched. No live bringup/cameras
+  or detectors are started by this work. Rebuild the canonical controller after
+  stopping the current launch before using the new normal entry point.
+- Update root/package README, AGENTS and FSM descriptions/guard table/operator
+  diagram. Regenerate adjacent HTML/PDF; verify matching source hash, nine diagrams
+  and pages, offline startup/shutdown labels and navigation/zoom without external
+  requests. Software checks do not constitute physical operation validation; no
+  offline-transfer milestone is claimed. Preserve .env, calibration, teach/model/
+  runtime data, debug artifacts and unrelated RViz edits. Commit/push only this
+  scope under the standing workflow.
+
 ### Future entry template
 
 ```text

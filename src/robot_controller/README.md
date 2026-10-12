@@ -23,8 +23,8 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 `robot_controller` is the sole production application-level authority for the
 physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle,
 plus Manual Run and Auto Run with one quantity field, completed count and elapsed seconds.
-Explicit Load Auto owns the two headless detectors. It does not launch Dobot
-bringup or cameras automatically. The HMI can explicitly open teaching/setup
+The normal HMI launch owns Dobot bringup, robot TF and both supervised cameras.
+Explicit Load Auto owns the two headless detectors. The HMI can open teaching/setup
 windows and the passive RViz viewer.
 
 ## Station HMI
@@ -38,9 +38,10 @@ Pages scroll on smaller displays and retain the same action and input guards.
 | Operate | Home/Pick/Place, Preview, placement X/Y/Rotation, shared Quantity, Manual Run/Auto Run, debug captures and speed/CP |
 | Teach | Item/Bin/Tray file selection, Load/Reload, Clear Repick History, Item Teach, Tray Teach, Bin Teach and Platform Teach windows |
 | Tools / Debug | Passive RViz, camera setup, camera calibration, Motion Debug and Gripper Diagnostics |
-| Auto / Remote | Selected teach summary, existing Load Auto deploy/start/prepare toggle and readiness; RabbitMQ explicitly pending |
+| Auto | Selected teach summary, Load Auto deploy/start/prepare toggle and readiness; local offline production |
 
-Opening the HMI or a page never opens a tool, deploys a recipe, arms perception
+The standard launch starts the offline dependencies described below. Opening the
+HMI or a page never opens a teaching/debug tool, deploys a recipe, arms perception
 or prepares/moves the robot. Each **Open** explicitly launches the canonical
 installed application in an owned process group. **Close** affects only that
 owned window/session. A tool discovered on the ROS graph is labelled **External**
@@ -74,7 +75,8 @@ Closing the HMI stops its owned detector pair and tools, including their launch
 children. Before removing owned Item/Tray providers during an active operation,
 send independent controller Stop. Existing preparation-cancellation Stop handling
 remains. Foreign applications stay running. The normal controller launch still
-shuts its controller/preview down when its HMI exits. Linux parent-death signals
+shuts its controller/preview down when its HMI exits, then closes owned cameras
+and bringup. Linux parent-death signals
 also terminate owned tool launches if the HMI disappears. Camera setup retains
 its separate operator-terminal diagnostic ownership rules.
 
@@ -105,7 +107,7 @@ To use Auto Run:
    Preview. Disarm Item Teach and Tray Teach and stop independently launched
    headless detectors. Cameras and canonical bringup must already be available.
 2. On **Teach**, browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
-3. On **Auto / Remote**, turn **Load Auto ON**. It validates the files, both same-stem model
+3. On **Auto**, turn **Load Auto ON**. It validates the files, both same-stem model
    hashes and saved calibration choices, then stages and verifies ordinary copies.
    It replaces the entire root `runtime_teach/` directory contents with exactly
    those three YAMLs and two models. Failed validation/copy leaves the old catalog
@@ -771,11 +773,50 @@ separate commissioning.
 - `robot_controller_gui` is a client of the controller and preview APIs. It has
   no Dobot command client.
 
-The normal launch starts all three:
+The normal launch is the offline station entry point. It starts these three
+processes plus canonical Dobot bringup (driver, actual-joint monitor and robot TF)
+and the canonical headless camera supervisor (both cameras, in saved slot order):
 
 ```bash
 ros2 launch robot_controller robot_controller.launch.py
 ```
+
+The `robot_controller_station` supervisor starts canonical installed launch files
+in private sessions. It has no robot-command clients. The camera supervisor keeps
+its strict stream/collision checks and exactly three complete-set attempts; the
+station adds no restart loop. RViz remains optional and is opened from Tools.
+Status shows observed TF/camera-supervisor presence separately from live robot
+feedback; node presence alone does not establish readiness. Load Auto continues
+to validate actual inputs, detector services and robot preparation.
+
+Before spawning, check every installed launch and refuse detected existing local
+driver/TF/camera/controller/detector or direct-maintenance processes, including
+other ROS domains and startup phases. A workspace lock excludes another station
+supervisor. Nothing external is adopted or stopped. This is a startup check, not
+a replacement for existing runtime command/publisher ownership checks. For an
+installation whose dependencies are already managed separately, use:
+
+```bash
+ros2 launch robot_controller robot_controller.launch.py start_dependencies:=false
+```
+
+HMI/controller/Preview exit, dependency launch exit (including exit code zero),
+or terminal Ctrl-C closes the owned station. Graceful shutdown stops the core
+session first, allowing its existing active-operation Stop/confirmation while
+bringup remains available, then stops cameras and finally bringup/robot TF.
+Sessions receive SIGINT with a 40-second limit, then SIGTERM for five seconds,
+then SIGKILL for two seconds; escalation is logged. Controller/HMI nodes have a
+30-second graceful window inside their launch. Hardware Stop cannot be confirmed
+if bringup itself has failed; existing containment diagnostics still apply.
+Parent-death signals clean up children after an unexpected supervisor death;
+forced kills cannot promise orderly Stop confirmation. No foreign process is
+signalled. Root configuration, calibration, teach/models and runtime files are
+unchanged merely by launching or closing the station.
+
+Opening the HMI leaves Load Auto OFF and saved selections as prefill. Select the
+Item/Bin/Tray files, explicitly enable Load Auto to deploy/start both headless
+detectors and prepare the robot, then press Auto Run. No server connection is
+needed; RabbitMQ and online command handling remain deferred.
 
 Headless mode starts only the hardware controller and loads exactly one Item
 Teach YAML/paired `.pt` plus one Bin Teach YAML from the flat root

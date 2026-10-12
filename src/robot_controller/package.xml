@@ -27,6 +27,7 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>dobot_rviz</exec_depend>
+  <exec_depend>dobot_bringup_v4</exec_depend>
   <exec_depend>orbbec_camera_launcher</exec_depend>
   <exec_depend>motion_debug</exec_depend>
   <exec_depend>gripper_control</exec_depend>

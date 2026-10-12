@@ -1,7 +1,22 @@
 # Robot Controller — Finite State Machine
 
+Offline station review: **2026-10-12**, baseline **`95bf80f`** plus rule **280**.
+The normal GUI launch owns canonical bringup/robot TF, both supervised cameras
+and controller/Preview/HMI. Auto is a local page with no server requirement.
+Keep explicit Load Auto for deployment, detector startup and robot preparation;
+saved fields are prefill only. Opening the HMI never enables, moves or starts a
+cycle. Refuse detected existing owners before spawn; no adoption/foreign cleanup.
+Core-only GUI remains available with start_dependencies:=false; headless launch
+remains core-only. HMI/core/dependency exit or terminal shutdown closes owned
+sessions, allowing controller shutdown/Stop before cameras and bringup close.
+Private sessions isolate terminal signals; bounded escalation and parent-death
+cleanup remain. Bringup failure/forced death cannot guarantee confirmed Stop.
+The camera supervisor retains rule 15's bounded policy; no outer restart loop,
+RabbitMQ, new hardware state, command or interface is added. Tests use dummy
+sessions, including the actual outer launch's Ctrl-C path, never station hardware.
+
 Station HMI review: **2026-10-12**, baseline **`e1b68ee`** plus rule **279**.
-Four pages separate Operate, Teach, Tools / Debug and Auto / Remote while robot,
+Four pages separate Operate, Teach, Tools / Debug and Auto (rule 280) while robot,
 gripper, observed services and Recover/Pause/STOP stay visible. Only an explicit
 Open launches a canonical tool in an owned session; no launch on page selection
 or saved UI restoration. External windows are observed, never closed. Launches
@@ -862,8 +877,10 @@ outside the four scrollable pages. **Operate** contains motion/Preview, shared
 placement/Quantity, Manual Run/Auto Run, debug capture and speed/CP. **Teach**
 contains selected artifacts, Load/Reload, Clear Repick History and Item/Tray/Bin/
 Platform Teach launchers. **Tools / Debug** opens passive RViz, camera setup,
-calibration and eligible direct maintenance applications. **Auto / Remote**
-shows selected sources and Load Auto; RabbitMQ is explicitly not connected.
+calibration and eligible direct maintenance applications. **Auto**
+shows selected sources and Load Auto for offline production. The normal launch
+starts bringup/robot TF and both supervised cameras; teaching/debug windows stay
+explicit. Station-service presence is observational, separate from readiness.
 Tool launches never bypass their own model trust, arming or maintenance guards.
 Existing external windows are displayed and cannot be closed by the HMI.
 
@@ -929,7 +946,7 @@ Load Auto RUNNING and exactly the owned headless providers. Both send the same n
 action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
-Load Auto is on **Auto / Remote** and is green when its supervisor is
+Load Auto is on **Auto** and is green when its supervisor is
 RUNNING after confirmed preparation. Auto Run is green only when its normal
 admission gates enable the button. These colors change no guards.
 ON validates the browsed production
@@ -962,8 +979,9 @@ arming of teaching GUIs, Home, pick/place cycle or direct driver client is added
 
 ```mermaid
 flowchart TD
+    Launch["Offline HMI launch: owned bringup + robot TF + supervised cameras + controller / Preview / HMI"] --> TeachPage
     TeachPage["Teach page: select files; explicitly open teaching windows"] --> Manual
-    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Auto / Remote: explicit Load Auto ON; idle, unheld; no competing providers"]
+    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Auto: explicit Load Auto ON; idle, unheld; no competing providers"]
     Deploy --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
     Detect --> Prepare["PREPARING: Configure selected teach files; enable and initialize robot"]
@@ -972,6 +990,7 @@ flowchart TD
     Manual["Manual Run: both teaching GUIs armed"] --> Run["Shared native counted run; same quantity and placement; bind detector mode"]
     Auto --> Run
     Run -->|HMI exit with owned pose providers| HmiExit["Independent controller Stop; close owned tools and detectors"]
+    HmiExit --> StationExit["Controller shutdown finishes before owned cameras and bringup stop"]
     Loaded -->|Idle OFF, exit, service loss or child failure| End["Stop owned pair only; no restart; deployed files remain"]
     Detect -->|Cancel or failure| End
     Prepare -->|Cancel or failure| CancelPrepare["Stop issued preparation; ignore late readiness; stop owned detectors"]
@@ -2075,6 +2094,7 @@ Names below are relative to `/robot_controller/`.
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
 | Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; all three paths; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
 | HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; non-RViz changes require no operation/held item/queued motion/pending command or active Load Auto; opening direct maintenance requires controller and competing command applications closed, closing an owned maintenance tool remains available; external processes are never closed |
+| Offline HMI launch (not a robot API) | Default GUI entry starts bringup/robot TF, supervised cameras and core; installed paths and existing local owners checked before spawn; no recipe/enable/Auto Run on launch; core stops before owned cameras/bringup; no outer restart |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |
@@ -2252,6 +2272,7 @@ Source map for the next review:
 | [gui.py](../src/robot_controller/python/robot_controller/gui.py) | Button meanings, feedback display and recovery instructions |
 | [auto_detection.py](../src/robot_controller/python/robot_controller/auto_detection.py) / [auto_deploy.py](../src/robot_controller/python/robot_controller/auto_deploy.py) | GUI-owned headless pair, catalog replacement, child cleanup; no robot commands |
 | [hmi_tools.py](../src/robot_controller/python/robot_controller/hmi_tools.py) | Explicit owned teaching/setup/debug launches, admission guards, external-process preservation and bounded shutdown |
+| [offline_station.py](../src/robot_controller/python/robot_controller/offline_station.py) | Default offline dependencies, duplicate-process preflight and ordered owned-session shutdown |
 | [perception_mode.py](../src/robot_controller/python/robot_controller/perception_mode.py) | Shared run provider-type selection and enforcement |
 | [Controller README](../src/robot_controller/README.md) / [blueprint diary](WORKFLOW_RULES_BLUEPRINT_DIARY.md) | Operational detail and superseding project rules |
 

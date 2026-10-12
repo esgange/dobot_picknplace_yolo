@@ -20,14 +20,14 @@ from test_status_ui import status, window  # noqa: F401
 def test_hmi_pages_keep_stop_visible_and_do_not_start_tools(window):  # noqa: F811
     window.show()
     assert [window.pages.tabText(i) for i in range(window.pages.count())] == [
-        'Operate', 'Teach', 'Tools / Debug', 'Auto / Remote']
+        'Operate', 'Teach', 'Tools / Debug', 'Auto']
     for index in range(window.pages.count()):
         window.pages.setCurrentIndex(index)
         QtWidgets.QApplication.processEvents()
         assert window.stop.isVisible() and window.pause.isVisible()
         assert window.robot_panel.isVisible() and window.gripper_panel.isVisible()
     assert window.tools.active() == set()
-    assert 'RabbitMQ is not connected' in ' '.join(
+    assert 'No server connection is needed' in ' '.join(
         label.text() for label in window.pages.findChildren(QtWidgets.QLabel))
 
 

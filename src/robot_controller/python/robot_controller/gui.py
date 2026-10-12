@@ -142,7 +142,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             'QTabBar::tab{padding:10px 22px;font-size:14px}'
             'QTabBar::tab:selected{font-weight:700;color:#146c43}')
         self.page_layouts = {}
-        for name in ('Operate', 'Teach', 'Tools / Debug', 'Auto / Remote'):
+        for name in ('Operate', 'Teach', 'Tools / Debug', 'Auto'):
             page = QtWidgets.QWidget()
             page_layout = QtWidgets.QVBoxLayout(page)
             page_layout.setAlignment(QtCore.Qt.AlignTop)
@@ -153,7 +153,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.pages.addTab(scroll, name)
             self.page_layouts[name] = page_layout
         operate = self.page_layouts['Operate']
-        production = self.page_layouts['Auto / Remote']
+        production = self.page_layouts['Auto']
 
         header = QtWidgets.QHBoxLayout()
         self.robot_panel, robot_layout = self._status_panel("Robot status")
@@ -247,7 +247,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto.setCheckable(True)
         self.load_auto.clicked.connect(self._toggle_auto)
         auto_intro = QtWidgets.QLabel(
-            'Headless production uses the teach files selected on the Teach page. '
+            'Offline production uses the teach files selected on the Teach page. '
             'Load Auto deploys those files, opens Item Detect and Tray Detect, '
             'then prepares the robot. Start the cycle from Operate.')
         auto_intro.setWordWrap(True)
@@ -264,16 +264,16 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto_status.setStyleSheet('font-size:12px')
         self.load_auto_status.setMinimumHeight(32)
         production.addWidget(self.load_auto_status)
-        remote = QtWidgets.QGroupBox('Remote master — next phase')
-        remote_layout = QtWidgets.QVBoxLayout(remote)
-        remote_note = QtWidgets.QLabel(
-            'RabbitMQ is not connected in this version. Production starts locally. '
-            'Remote recipe loading, command ownership and job reporting will be added next.')
-        remote_note.setWordWrap(True)
-        remote_layout.addWidget(remote_note)
-        production.addWidget(remote)
+        startup_note = QtWidgets.QLabel(
+            'The standard HMI launch starts bringup, robot TF and both supervised cameras. '
+            'Select the files on Teach, enable Load Auto here, then press Auto Run on Operate. '
+            'Load Auto prepares/enables the robot; opening the HMI does not. '
+            'No server connection is needed.')
+        startup_note.setWordWrap(True)
+        production.addWidget(startup_note)
         close_note = QtWidgets.QLabel(
-            'Closing this HMI closes the detector pair and tool windows it started. '
+            'Closing this HMI closes its detectors and tools. The standard station launch '
+            'also stops its controller, cameras and bringup. '
             'Applications opened separately are left running.')
         close_note.setWordWrap(True)
         production.addWidget(close_note)
@@ -581,13 +581,22 @@ class ControllerWindow(QtWidgets.QMainWindow):
             return ('Teach + headless' if len(present) == 2 else
                     'Teach' if prefix + '_teach' in present else
                     'Headless' if present else 'Not running')
+        status = self.node.status
+        cameras = ('Supervisor seen' if ('supervisor', '/camera_watchdog') in self.hmi_nodes
+                   else 'No supervisor')
         self.station_services.setText(
-            f'Controller: {"Online" if self.node.status is not None else "Offline"}\n'
-            f'Item: {detector("item")}\nTray: {detector("tray")}\n'
+            f'Controller: {"Connected" if status is not None else "Unavailable"}\n'
+            f'Robot feedback: {"Live" if status and status.feedback_fresh else "Unavailable"}'
+            f' · TF: {"Seen" if "dobot_robot_state_publisher" in names else "Missing"}\n'
+            f'Cameras: {cameras}\n'
+            f'Item: {detector("item")} · Tray: {detector("tray")}\n'
             f'RViz: {"Open" if "dobot_rviz" in names else "Closed (optional)"}')
+        self.station_services.setToolTip(
+            'Observed services only; seeing a node does not prove input readiness. '
+            'Load Auto verifies both detectors and robot preparation before enabling Auto Run.')
         self.station_mode.setText(
-            'Headless detectors active · Local control' if auto_state == 'RUNNING' else
-            'Local operator control · RabbitMQ not connected')
+            'Offline · Headless detectors active' if auto_state == 'RUNNING' else
+            'Offline · Local operator control')
         self.production_recipe.setText('Selected teach files\n' + '\n'.join(
             f'{label}: {os.path.basename(field.text().strip()) or "Select on Teach page"}'
             for label, field in (('Item', self.item_path), ('Bin', self.bin_path),
