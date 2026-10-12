@@ -10946,6 +10946,65 @@ Never use a floating “latest” version in an issue, script, or deployment not
   runtime artifacts. No robot command, canonical build, arming or live restart.
   Operator relaunch/live verification remain pending; commit/push only this scope.
 
+### 2026-10-12 — Rule 268: daily retained archives and tray/Auto Run time studies
+
+- User requests complete 50-item time studies and evidence to assess Tray AI
+  speed/accuracy, with a new log file each day and 30-day retention. Replace the
+  controller, Item Perception and Tray Perception 1,000-record file reset with
+  shared standard-library daily JSONL writing. Use Dubai calendar filenames,
+  UTC and monotonic timestamps, process/event identity and locked append across
+  restarts/concurrent writers. Retain today plus 29 previous dates; prune only
+  owned expired files on later activity. Preserve legacy events.jsonl files,
+  operator files and the GUI/operator topic's bounded buffer. Other package and
+  vendor logging is unchanged. The log compiler reads legacy/daily formats and
+  accepts an optional Dubai date filter.
+- Auto Run logs its identity/settings and stable cycle context, including
+  next-item prefetch on its own thread. Motion-group and service audits preserve
+  origin context through asynchronous replies without leaving ambient context
+  installed across queue-only generator yields. Emit per-run JSON/CSV reports
+  on normal, canceled and failed completion, with exclusive observed phase
+  totals, incomplete-cycle flags, retries, pauses, latency distributions and
+  separate overlapping item/tray acquisition durations. Placement ends at the
+  existing confirmed execution/handoff boundary, which can include next-item
+  departure; no intermediate blended-motion arrival times are inferred. A hard
+  process kill leaves its daily trace without a completed report.
+- Tray request diagnostics separate predict/model preprocessing/inference/
+  postprocessing, mask preparation, geometry, rendering, native roundtrip,
+  visualization, worker/fresh-frame waits, source validation, depth sampling and
+  image saving. Preserve legacy combined inference_ms for UI compatibility.
+  Record all detection confidence/dimensions/reasons/polygons, model/profile/
+  calibration identity, settings, image timestamps/resolution, accepted/total
+  depth pixels and available median/dispersion. Existing diagnostics_json
+  carries request/timing/evidence identity back to the controller; no public
+  ROS interface, teach schema or .env change.
+- Save original RGB, polygon SVG and unlabelled detection metadata for failed
+  service observations with fresh frames and successful observations 1, 11,
+  21, ... per provider process. Keep evidence under dated package log folders;
+  reports/evidence also retain 30 days. No passive/simulation auto-archive or
+  additional inference; explicit debug-image saving remains independent.
+  These records measure operational acceptance, not ground-truth model accuracy;
+  image review/manual labels remain necessary. Missing frames are recorded as
+  missing, never substituted. Disk errors or malformed supplemental timings
+  remain diagnostic and cannot invalidate an otherwise usable observation.
+- Validation: **733 Item Perception, 300 Tray Perception and 1,493 controller
+  tests pass**. Exercise 50 synthetic cycles with overlapping prefetch and
+  retries; exact exclusive elapsed totals; cancellation/pause; thread/callback
+  identity; >1,000 retained events; Dubai midnight/restart; 30-day boundaries;
+  preserved legacy/operator/symlink files; evidence failure/success sampling;
+  nonfatal write/timing failures; native prediction stage timings; structured
+  insufficient-depth evidence. Existing motion, Stop, retry, placement and
+  Preview tests still pass with unchanged request payloads/geometry/rates/I/O.
+- Isolated builds of all three packages succeed in build/daily_diagnostics and
+  install/daily_diagnostics using canonical interface dependencies. AST,
+  scoped flake8 and diff checks pass. Update root/package READMEs, AGENTS and
+  the FSM; regenerate HTML/PDF and verify matching source hash, nine SVGs/nine
+  PDF pages, new audit node and offline navigation/zoom. No offline-transfer
+  milestone is claimed. Preserve unrelated RViz edits, .env and calibration/
+  debug/teach/model/runtime artifacts. No robot command, arming, Auto Run,
+  canonical build or live restart. New modules require a canonical three-package
+  rebuild before operator relaunch; live verification remains pending. Commit
+  and push only this scope under the standing workflow.
+
 ### Future entry template
 
 ```text

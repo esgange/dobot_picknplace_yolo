@@ -173,9 +173,9 @@ def test_model_copy_never_overwrites_or_accepts_changed_sources(tmp_path, artifa
                           core.file_sha256(model), tmp_path)
 
 
-def test_event_log_caps_at_1000(tmp_path):
+def test_event_log_preserves_more_than_1000(tmp_path):
     logger = core.EventLogger(tmp_path)
-    logger.path.parent.mkdir(parents=True)
+    logger.path.parent.mkdir(parents=True, exist_ok=True)
     logger.path.write_text("{}\n" * 1000)
     logger.record("INFO", "synthetic", "test")
-    assert len(logger.path.read_text().splitlines()) == 1
+    assert len(logger.path.read_text().splitlines()) == 1001

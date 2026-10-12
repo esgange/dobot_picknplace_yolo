@@ -255,6 +255,36 @@ Headless supervisors retain the explicit Startup service after deployment loadin
 
 ## Cycle audit and acquisition performance
 
+Rule 268 supplies daily archives and automatic Auto Run JSON/CSV time studies.
+Daily files append across restarts and midnight without a count limit; keep today
+plus the previous 29 Dubai dates. UTC timestamps correlate packages; monotonic
+nanoseconds measure durations within a process. Session/event IDs, run IDs,
+cycle context, candidate IDs and motion-group IDs disambiguate repeated commands.
+Next-item prefetch retains its own cycle context while placement is executing.
+
+`auto_run_started` records the profiles, debug setting, global speed and CP.
+`auto_run_result` closes a report on success, no-pick, Return Item, Stop or failure.
+Reports are `logs/robot_controller/run-YYYY-MM-DD-<run_id>.json` and `.csv` and have
+30-day retention. An abrupt process kill leaves a partial daily trace without a
+completed report; no success is inferred. The JSON includes per-cycle phases,
+mean/median/p95/min/max, per-attempt tray latency, failed-request time, first-request
+usable counts and worker timing distributions. CSV contains exclusive phase
+seconds per cycle plus final Home. Retry/return and pause time remain visible.
+
+Phases use observed group dispatch, pickup, tray arrival, acquisition and placement
+handoff events. They include dispatch/feedback latency; they do not claim exact
+intermediate physical waypoint times. The existing placement handoff can be the
+next pre-pick or Home command ID, so its interval includes some departure travel.
+Acquisition work overlaps placement; request durations are separate from exclusive
+wall-clock phase totals. An idle wait for the next item is counted as `item_wait`.
+`tray_request_timing` joins the provider through request/batch identity, includes
+controller validation and service wait, and reports failures as well as successes.
+A usable tray rate is not model accuracy; review the provider's image evidence.
+Logging/report I/O failures are visible diagnostics, without changing control gates.
+The GUI and operator-log topic still retain 1,000 entries. Existing legacy files
+are preserved. Rebuild all three controller/perception packages before relaunch.
+
+
 The 2026-10-01 audit before rule 202 checked manual Pick/Place, missed candidates, held-loss
 put-back, Return Item, Auto Run handoff and final Home against their shared
 planners/executors. The latest complete recorded Auto Run finished 3/3 in 53.65 s
@@ -279,8 +309,9 @@ Robot Controller, then manually restart the controller to use this optimization.
 Further work suggested by the audit: measure per-request validation, preview-lock
 wait, inference, geometry and reply validation separately; avoid overlay generation
 in production requests when no display/debug image consumes it; record failed depth
-sample counts/rejection reasons; retain a complete run trace across the current
-1,000-event log reset. These are follow-ups, not changes to this cycle's behavior.
+sample counts/rejection reasons; retain a complete run trace across the former
+1,000-event log reset. Rule 268 implements those timing/retention diagnostics;
+production overlay optimization remains separate.
 
 ## Return Item compared with tray placement
 
@@ -1178,7 +1209,7 @@ uses authoritative FeedInfo `EnableStatus`, mode, error/collision, user/tool and
 queue fields so an asynchronous status sample cannot cancel an accepted move.
 
 Every actual canonical Dobot call has paired audit output in the ROS console and
-`logs/robot_controller/events.jsonl`. Each `SEND` and terminal accepted,
+`logs/robot_controller/events-YYYY-MM-DD.jsonl`. Each `SEND` and terminal accepted,
 rejected, timed-out, canceled, errored or late-response record contains a
 process-local request ID, exact endpoint/request fields, ROS response `res`,
 available `robot_return`, and elapsed milliseconds. This covers Startup/Recover
@@ -1600,7 +1631,7 @@ Service acknowledgement is acceptance only; actual
 feedback confirms every result. A coherent miss advances to the next pending
 candidate; Continue retries an approach interrupted by Pause. All command,
 feedback, state, cancellation, and result events
-are written to ignored `logs/robot_controller/events.jsonl`, capped at 1,000.
+are written to ignored `logs/robot_controller/events-YYYY-MM-DD.jsonl`, retained for 30 Dubai calendar days.
 Each candidate plan also records its source quaternion, transformed short axis,
 commanded green axis, configured offset, selected CW/CCW side, rotation from the
 taught Home reference, and target RPY.

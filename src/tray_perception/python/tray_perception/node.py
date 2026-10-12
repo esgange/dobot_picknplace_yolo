@@ -357,11 +357,25 @@ class TrayTeachNode(Node):
             if returned_only:
                 request["returned_only"] = True
         remaining = 10 if deadline is None else max(.001, deadline - time.monotonic())
+        native_started = time.monotonic()
         result, pixels = self.native.call(request, rgb["rgb"], timeout=remaining)
+        native_ms = (time.monotonic() - native_started) * 1000
+        if settings is not None:
+            timings = result.get("timings_ms", {})
+            if (type(timings) is not dict or any(
+                    type(v) not in (int, float) or not np.isfinite(v) or v < 0
+                    for v in timings.values())):
+                self.events.record("WARNING", "tray_timing_invalid",
+                                   "Ignoring invalid diagnostic timings; validating pose normally")
+                timings = {}
+            timings = dict(timings, native_roundtrip_ms=native_ms)
+            view["diagnostic_result"] = result
+            view["diagnostic_timings_ms"] = timings
         fields = {"state", "width", "height", "error"} if settings is None else {
             "state", "width", "height", "count", "detections", "selected", "reason",
             "inference_ms"}
-        if (set(result) != fields or result.get("width") != rgb["width"]
+        optional = {"timings_ms"} if settings is not None else set()
+        if (set(result) - optional != fields or result.get("width") != rgb["width"]
                 or result.get("height") != rgb["height"]
                 or len(pixels) != rgb["width"] * rgb["height"] * 3):
             raise RuntimeError("Invalid native tray image reply")
@@ -435,12 +449,15 @@ class TrayTeachNode(Node):
                 raise geometry_errors[0]
         displayed = ([selected] if selected is not None else []) if returned_only else \
             result.get("detections", [])
+        visuals_started = time.monotonic()
         visuals = (self.visuals(view, displayed,
                                 cloud=context is not None and not self.deployment,
                                 deadline=deadline, plane=plane, passive_source=(
                                     settings["geometry_source"] if passive_overlay
                                     and settings is not None else None)) if visualize else
                    {"depth_overlay": b"", "samples": [], "cloud": None})
+        if settings is not None:
+            timings["visualization_ms"] = (time.monotonic() - visuals_started) * 1000
         self._check_snapshot(view, calibrated=context is not None)
         with self.lock:
             if view["generation"] != self.generation:

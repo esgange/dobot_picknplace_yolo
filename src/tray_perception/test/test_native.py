@@ -230,6 +230,8 @@ def exercise_tray_axis_overlays():
     # Simulation keeps the exact detection evidence but draws no rejected pose.
     frozen_result, frozen = native.predict_trays(
         {**request, "returned_only": True}, None, rgb, {1: "tray"}, cv2, np)
+    assert all(value >= 0 for value in frozen_result.pop("timings_ms").values())
+    assert all(value >= 0 for value in result.pop("timings_ms").values())
     assert frozen_result == result
     _, plain_rgb = native.overlay_plane(
         {"width": 640, "height": 480, "plane": plane, "camera_context": context},
@@ -241,10 +243,13 @@ def exercise_tray_axis_overlays():
     accepted_result, _ = native.predict_trays(accepted_request, None, rgb, {1: "tray"}, cv2, np)
     returned_result, returned_pixels = native.predict_trays(
         {**accepted_request, "returned_only": True}, None, rgb, {1: "tray"}, cv2, np)
+    assert all(value >= 0 for value in returned_result.pop("timings_ms").values())
+    assert all(value >= 0 for value in accepted_result.pop("timings_ms").values())
     assert returned_result == accepted_result and returned_result["selected"] is not None
     assert returned_pixels != plain_rgb
     passive_result, passive_pixels = native.predict_trays(
         {**accepted_request, "passive_overlay": True}, None, rgb, {1: "tray"}, cv2, np)
+    assert all(value >= 0 for value in passive_result.pop("timings_ms").values())
     assert passive_result == accepted_result  # Rendering cannot affect tray selection.
     passive = np.frombuffer(passive_pixels, np.uint8).reshape(rgb.shape)
     assert passive[240, 320].tolist() == [0, 55, 0]
@@ -276,6 +281,7 @@ def exercise_tray_axis_overlays():
     far_plane = {**plane, "corners_base_m": (corners + [10000., 0., 0.]).tolist()}
     far_result, far_pixels = native.predict_trays(
         {**request, "plane": far_plane}, None, rgb, {1: "tray"}, cv2, np)
+    assert all(value >= 0 for value in far_result.pop("timings_ms").values())
     assert far_result == result and far_pixels == overlay.tobytes()
     # Size failure still provides inspection geometry, but never a production winner.
     settings["geometry"] = {"length_mm": 300., "width_mm": 150., "tolerance_mm": 1.}
@@ -461,6 +467,10 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
             bytes(64 * 48 * 3))
         assert result["selected"] is None and result["reason"] == "No eligible tray"
         assert len(data) == 64 * 48 * 3 and not client.failed
+        timings = result["timings_ms"]
+        assert all(timings[key] >= 0 for key in (
+            "yolo_predict_ms", "model_preprocess_ms", "model_inference_ms",
+            "model_postprocess_ms", "geometry_ms", "rendering_ms"))
         # None of the preview operations projects saved-plane corners, even when
         # the camera is so close that drawing them would previously overflow.
         worker_pid = client.process.pid
@@ -502,8 +512,8 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
         # first passive/captured predictions through the actual parent node path.
         from tray_perception.node import TrayTeachNode
         from test_gui_node import preview_node
-        view = {"generation": 4, "rgb": {"rgb": rgb, "width": 64, "height": 48,
-                                        "stamp_ns": 100_000_000_000},
+        view = {"generation": 4,
+                "rgb": {"rgb": rgb, "width": 64, "height": 48, "stamp_ns": 100_000_000_000},
                 "camera_context": context}
         node = preview_node(view, {})
         node.native, node.events, node.plane = client, MagicMock(), plane

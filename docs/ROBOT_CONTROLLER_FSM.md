@@ -1,5 +1,17 @@
 # Robot Controller — Finite State Machine
 
+Time-study review: **2026-10-12**, baseline **`f3d80cc`** plus rule **268**.
+Controller/Item/Tray logs append by Dubai calendar day with UTC and monotonic
+timestamps; retain today plus 29 prior days. Auto Run identifies runs, cycles,
+prefetches and motion groups and emits JSON/CSV summaries on normal or interrupted
+completion. Observed phase intervals are exclusive; overlapping perception work
+is reported separately. Placement still ends at its existing execution/handoff
+boundary, which can include next-item departure. No intermediate blended-motion
+arrival time is fabricated. Tray diagnostics separate predict/model, geometry,
+capture, depth and visualization/I/O timings, retaining unlabelled failed/sample
+success frames. Logging failures do not alter motion or valid perception results.
+All states, motion/IO, speed, blending, freshness, retry and Stop guards remain.
+
 Tray vacuum timing review: **2026-10-11**, baseline **`f14b560`** plus rule
 **267** (superseding rule 266). Manual Place, Auto Run and Preview command
 DO13 OFF then DO1 ON at 90% of tray descent. Keep finger OPEN at 80%, pre-place
@@ -1423,7 +1435,8 @@ handling, and use trusted held-item placement even when launched from the GUI.
 
 ```mermaid
 flowchart TD
-    Start["READY: Auto Run quantity and placement target; start elapsed timer"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
+    Start["READY: Auto Run quantity and placement target; start elapsed timer and run ID"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
+    Start -.-> Audit["Read-only daily events: run/cycle/request/group IDs; 30-day retention; JSON/CSV on finish; no added motion waits"]
     Pick --> Tray["Linear lifts and exit; queue MovL then MovJ to identical tray joints without intermediate wait; confirm only final MovJ joints, execution and idle"]
     Tray --> Observe["Fresh tray pose/depth: 20% valid pixels and surface within 20 mm below saved plane or higher before offsets; debug RGB/depth; at most 10 attempts; zero added delay"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker with revisioned repick exclusions"]
@@ -1946,7 +1959,7 @@ progress updates. Its DI1/DI12 LEDs show Detected / Not detected, or Unknown if 
 unavailable; status itself also expires after one second by source and local
 receipt age. `OFFLINE` is a GUI display condition, not a controller FSM state.
 Full audit details remain in `/robot_controller/operator_log` and the ignored
-`logs/robot_controller/events.jsonl`.
+`logs/robot_controller/events-YYYY-MM-DD.jsonl`.
 
 ## 9. Exact allowed lifecycle transitions
 

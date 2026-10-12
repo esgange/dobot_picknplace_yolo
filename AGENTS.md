@@ -2089,6 +2089,27 @@ existing motion/release supervision unchanged. Update diary/FSM and regenerate
 exports; test offline and follow the scoped commit/push workflow. Live relaunch
 and verification remain with the operator.
 
+Rule 268 adds daily controller/Item Perception/Tray Perception JSONL archives,
+superseding their 1,000-record file reset only. Use Dubai calendar filenames,
+UTC and monotonic timestamps, process/event identity, append across restarts,
+and retain today plus the previous 29 days. Prune only owned expired archives,
+run reports and tray evidence on subsequent activity; preserve legacy logs and
+operator files. Keep other packages and GUI/operator-log buffers unchanged.
+Record Auto Run identity, immutable candidate/prefetch cycle context, command
+and group identity, observed exclusive phase intervals and separate overlapping
+acquisition durations; emit JSON/CSV on normal, canceled or failed completion.
+Tray requests log pure predict/model timings separately from mask/geometry,
+visualization, fresh capture/worker waits, validation, depth and evidence saving;
+include all detections, source/settings/model identity and separate depth rejection
+evidence. Save original RGB, polygon-overlay SVG and unlabelled detections for
+failed service observations with frames and the first/every tenth subsequent
+successful service observation; passive preview/simulation do not auto-archive.
+Evidence and reports have the same 30-day retention. Disk/diagnostic failure must
+not alter robot gates or a valid observation; report it visibly. No new ROS
+interface, teach schema, .env key, motion, retry, arming or restart is introduced.
+Update diary/FSM/exports and test with synthetic inputs; live deployment remains
+an operator action after rebuilding all three affected packages.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

@@ -1,5 +1,7 @@
 """Tray geometry executed only in the pinned private YOLO/OpenCV worker."""
 
+import time
+
 from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternion
 from camera_calibration_gui.calibration_core import quaternion_to_rotation_matrix
 from item_perception_yolo.item_geometry import (
@@ -14,12 +16,21 @@ from .placement import validate_sampling
 from .mask_clean import clean_objects
 
 
+class DepthObservationUnavailable(ValueError):
+    def __init__(self, message, evidence):
+        super().__init__(message)
+        self.evidence = evidence
+
+
 def placement_depth(request, data, cv2, np):
     try:
         return _placement_depth(request, data, cv2, np)
     except ValueError as exc:
         # Missing/insufficient depth is a failed observation, not a dead worker.
-        return {"state": "ok", "error": str(exc)}, b""
+        result = {"state": "ok", "error": str(exc)}
+        if isinstance(exc, DepthObservationUnavailable):
+            result["depth_evidence"] = exc.evidence
+        return result, b""
 
 
 def _placement_depth(request, data, cv2, np):
@@ -65,9 +76,13 @@ def _placement_depth(request, data, cv2, np):
     good, total = int(accepted.sum()), len(pixels)
     if not depth_coverage_ok(good, total, settings["minimum_depth_fraction"]):
         fraction = good / total if total else 0.
-        raise ValueError(
+        raise DepthObservationUnavailable(
             f"Insufficient valid placement depth pixels: {good}/{total} ({fraction:.1%}); "
-            f"requires {settings['minimum_depth_fraction']:.1%}")
+            f"requires {settings['minimum_depth_fraction']:.1%}",
+            {"accepted_samples": good, "total_samples": total, "valid_fraction": fraction,
+             "required_fraction": settings["minimum_depth_fraction"],
+             "median_mm": float(median) if median is not None and np.isfinite(median) else None,
+             "sigma_mm": float(sigma) if sigma is not None and np.isfinite(sigma) else None})
     measured = optical[:3, :3] @ (rays([center], context["camera"], cv2, np)[0]
                                   * median / 1000) + optical[:3, 3]
     # X/Y are the requested tray coordinates. Only height comes from depth.
@@ -292,6 +307,8 @@ def evaluate_objects(objects, settings, plane, context, width, height, cv2, np):
 
 
 def predict_trays(request, result, rgb, names, cv2, np):
+    started = time.monotonic()
+    timings = {"geometry_ms": 0., "rendering_ms": 0.}
     settings, plane, context = request["settings"], request["plane"], request["camera_context"]
     validate_preview(settings)
     returned_only = request.get("returned_only", False)
@@ -318,8 +335,11 @@ def predict_trays(request, result, rgb, names, cv2, np):
         if settings["geometry_source"] != "mask":
             objects = objects_from_result(result, settings["geometry_source"], names,
                                           settings["yolo"]["max_detections"], cv2, np)
+        timings["mask_preparation_ms"] = (time.monotonic() - started) * 1000
+        geometry_started = time.monotonic()
         detections, selected = evaluate_objects(
             objects, settings, plane, context, rgb.shape[1], rgb.shape[0], cv2, np)
+        timings["geometry_ms"] = (time.monotonic() - geometry_started) * 1000
         measured = sum("rectangle" in item for item in detections)
         if selected is not None:
             reason = "One valid tray selected"
@@ -338,6 +358,7 @@ def predict_trays(request, result, rgb, names, cv2, np):
         if rejected_masks:
             reason += (f" | Detection Mask Clean rejected {len(rejected_masks)} "
                        "ambiguous/empty mask(s)")
+        rendering_started = time.monotonic()
         displayed = ([selected] if selected is not None else []) if returned_only else detections
         if settings["geometry_source"] == "mask" and not passive:
             overlay = shade_masks(rgb, [d["polygon"] for d in displayed if len(d["polygon"]) >= 3],
@@ -350,15 +371,20 @@ def predict_trays(request, result, rgb, names, cv2, np):
                      "unchecked": (160, 160, 160)}[detection["size_status"]]
             cv2.polylines(overlay, [polygon], True, color, 2)
             draw_tray_axes(overlay, detection, cv2, np)
+        timings["rendering_ms"] += (time.monotonic() - rendering_started) * 1000
     if passive:
+        rendering_started = time.monotonic()
         from item_perception_yolo.item_geometry import passive_overlay, preview_detections
         drawn = detections
         if settings["geometry_source"] == "none":
             drawn = preview_detections(result, "none", names, settings["yolo"]["max_detections"],
                                        None, reason, cv2, np, diameter_mm=1.)
         overlay = passive_overlay(rgb, drawn, settings["geometry_source"], cv2, np, tray=True)
+        timings["rendering_ms"] += (time.monotonic() - rendering_started) * 1000
+    timings["native_postprocess_ms"] = (time.monotonic() - started) * 1000
     return {"state": "ok", "width": rgb.shape[1], "height": rgb.shape[0], "count": count,
-            "detections": detections, "selected": selected, "reason": reason}, overlay.tobytes()
+            "detections": detections, "selected": selected, "reason": reason,
+            "timings_ms": timings}, overlay.tobytes()
 
 
 def tray_visuals(request, data, cv2, np):

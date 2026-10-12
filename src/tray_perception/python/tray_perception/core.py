@@ -7,11 +7,11 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
-import threading
 
 import numpy as np
 import yaml
 
+from item_perception_yolo.daily_events import DailyEventLogger
 from item_perception_yolo.item_teach_core import (
     _fields, _number, _timestamp, _UniqueKeyLoader, file_sha256,
     utc_now, validate_home, validate_yolo_settings)
@@ -201,20 +201,9 @@ def save_profile(settings, position, plane, camera, model, expected_sha256, root
     return output
 
 
-class EventLogger:
+class EventLogger(DailyEventLogger):
     def __init__(self, root, node="tray_teach"):
-        self.path = Path(root) / "logs/tray_perception/events.jsonl"
-        self.node = node
-        self.lock = threading.Lock()
-
-    def record(self, level, event, message, **fields):
-        record = {"timestamp_utc": utc_now(), "package": "tray_perception", "node": self.node,
-                  "level": level, "event": event, "message": str(message), **fields}
-        with self.lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            count = len(self.path.read_text().splitlines()) if self.path.exists() else 0
-            with self.path.open("w" if count >= 1000 else "a") as stream:
-                stream.write(json.dumps(record, allow_nan=False) + "\n")
+        super().__init__(root, "tray_perception", node)
 
 
 def session_path(root):

@@ -541,6 +541,7 @@ def test_native_auto_action_reports_quantity_and_releases_its_one_owner(monkeypa
     import robot_controller.controller as controller_module
 
     run = SimpleNamespace(quantity=3, completed=3 if outcome == "success" else 1,
+                          run_id="fixture", save_debug_images=False,
                           close=Mock(), finish_timer=Mock(return_value=45.6))
     run.run = Mock(return_value=outcome == "success")
     if outcome == "failure":
@@ -550,6 +551,8 @@ def test_native_auto_action_reports_quantity_and_releases_its_one_owner(monkeypa
     monkeypatch.setattr(controller_module, "AutoRunOperation", lambda *_args: run)
     node = SimpleNamespace(
         machine=SimpleNamespace(state="READY"), placement=None, events=Mock(),
+        configuration=SimpleNamespace(configuration_id="fixture", profile={}, tray=None),
+        global_speed_percent=100, global_cp_percent=100,
         raise_if_cancelled=Mock(), _transition=Mock(), _end_operation=Mock(),
         _failure_outcome=RobotController._failure_outcome)
     node._record_auto_run_result = lambda *args: RobotController._record_auto_run_result(
@@ -575,6 +578,8 @@ def test_native_auto_action_reports_quantity_and_releases_its_one_owner(monkeypa
     assert node.last_auto_run_result is result
     assert node.events.record.call_args.kwargs["elapsed_sec"] == 45.6
     run.finish_timer.assert_called_once()
+    node.events.start_run.assert_called_once()
+    node.events.finish_run.assert_called_once()
 
 
 def test_final_home_suction_reappearance_faults_after_counted_placement():

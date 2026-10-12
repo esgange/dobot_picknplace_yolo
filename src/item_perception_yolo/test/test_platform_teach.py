@@ -298,7 +298,7 @@ def test_camera_calibration_change_blocks_save(tmp_path):
         )
 
 
-def test_package_event_log_overwrites_before_record_1001(tmp_path):
+def test_package_event_log_preserves_records_after_1000(tmp_path):
     logger = core.PackageEventLogger(tmp_path)
     logger.path.parent.mkdir(parents=True, exist_ok=True)
     logger.path.write_text(
@@ -307,8 +307,8 @@ def test_package_event_log_overwrites_before_record_1001(tmp_path):
     )
     logger.record("INFO", "bounded", "new session record")
     lines = logger.path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    record = json.loads(lines[0])
+    assert len(lines) == 1001
+    record = json.loads(lines[-1])
     assert record["package"] == "item_perception_yolo"
     assert record["node"] == "platform_teach"
     assert record["event"] == "bounded"

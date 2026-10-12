@@ -425,6 +425,12 @@ def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth)
     for response in responses:
         response.batch_id = ""
         response.tray.id = response.tray.id.split(":", 1)[1]
+        # Only request identity, elapsed timing and sampled file paths differ.
+        evidence = json.loads(response.diagnostics_json)
+        assert evidence["timings_ms"]["total_ms"] >= 0
+        for key in ("request_id", "timings_ms", "worker_timings_ms", "diagnostic_evidence"):
+            evidence.pop(key)
+        response.diagnostics_json = json.dumps(evidence, sort_keys=True)
     assert responses[0] == responses[1]
     assert node.preview.call_count == 2
     assert node.native.call.call_count == (2 if sample_depth else 0)
@@ -944,3 +950,66 @@ def test_controller_capture_matches_saved_debug_and_saving_stays_optional(
                 (saved["overlay"], saved["depth_overlay"])
         assert node.capture_preview.take() is None
     assert not (node.root / "debug").exists()
+
+
+def test_diagnostics_sample_successes_and_retain_failed_frame(backend):
+    node, _, _ = backend
+    arm(backend)
+    original = node.preview.side_effect
+    for index in range(12):
+        response = trigger(backend)
+        diagnostics = json.loads(response.diagnostics_json)
+        assert diagnostics['diagnostic_evidence']['saved'] is (index in (0, 10))
+        assert diagnostics['timings_ms']['total_ms'] >= 0
+        assert diagnostics['rejection_category'] == 'usable'
+    assert node.preview.call_count == 12
+
+    def failed(*args, **kwargs):
+        view = original(*args, **kwargs)
+        view['result']['selected'] = None
+        view['result']['detections'][0].update(
+            valid=False, reason='Tray dimensions outside tolerance',
+            polygon=[[0, 0], [1, 0], [1, 1], [0, 1]])
+        return view
+
+    node.preview.side_effect = failed
+    response = trigger(backend)
+    diagnostics = json.loads(response.diagnostics_json)
+    evidence = diagnostics['diagnostic_evidence']
+    assert response.status == 'NO_VALID_TRAY'
+    assert evidence['saved'] and diagnostics['rejection_category'] == 'tray_geometry_or_filter'
+    assert Path(evidence['raw_path']).read_bytes().startswith(b'\x89PNG')
+    saved = json.loads(Path(evidence['detections_path']).read_text())
+    assert saved['ground_truth'] is None
+    assert saved['detections'][0]['confidence'] == selected()['confidence']
+    assert saved['settings']['geometry'] == settings()['geometry']
+    assert saved['model_sha256'] == node.model['sha256']
+    assert 'stroke="red"' in Path(evidence['overlay_path']).read_text()
+    logged = [call for call in node.events.record.call_args_list
+              if call.args[1] == 'tray_request_diagnostics'][-1]
+    assert logged.kwargs['request_id'] == diagnostics['request_id']
+    assert logged.kwargs['valid_count'] == 0
+    assert node.requests.service is not None
+
+
+def test_evidence_save_error_does_not_change_valid_pose(backend, monkeypatch):
+    from tray_perception import diagnostics as module
+    node, _, _ = backend
+    arm(backend)
+    monkeypatch.setattr(module, 'save_evidence', MagicMock(side_effect=OSError('disk full')))
+    response = trigger(backend)
+    assert response.success and response.found and response.status == 'OK'
+    evidence = json.loads(response.diagnostics_json)['diagnostic_evidence']
+    assert evidence['error'] == 'disk full'
+    assert node.requests.service is not None and not node.fatal_error
+
+
+def test_simulation_keeps_diagnostics_without_automatic_image_archive(backend):
+    node, path, digest = backend
+    arm(backend)
+    response = node.requests.simulate(
+        path, settings(), digest,
+        (node.get_clock().now().nanoseconds, time.monotonic()))['response']
+    assert response.success
+    assert not json.loads(response.diagnostics_json)['diagnostic_evidence']['saved']
+    assert not (node.root / 'logs/tray_perception/evidence').exists()

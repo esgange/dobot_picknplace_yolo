@@ -277,7 +277,8 @@ session form edits. Its saved plane and joint pose are restored from that file.
 Session schema 2 explicitly imports validated schema-1 sessions and replaces
 them on the next draft save. Malformed or unknown formats fail explicitly;
 write failures are reported and preserve the previous session.
-Events are timestamped and capped at 1000 in the package's `events.jsonl`.
+Events append to `logs/tray_perception/events-YYYY-MM-DD.jsonl`, with Dubai
+calendar dates, UTC/monotonic timestamps and 30-day retention; no event-count reset.
 An arbitrary preview prefix is session-only; loading calibration or a saved tray
 restores its calibrated prefix. Named incomplete saves use a distinct
 `tray_teach_draft` artifact (draft schema 1) in the same teaching directory.
@@ -379,9 +380,9 @@ exit or callback exception sets a terminal error, revokes arming and records
 headless exits. There is no silent thread restart or retry of a failed native worker. Ordinary
 no-tray/depth failures remain request results, keeping reception and preview live.
 Each request logs its start, completion duration or failing phase and traceback
-in `logs/tray_perception/events.jsonl`. Repeated identical GUI messages update the
+in `logs/tray_perception/events-YYYY-MM-DD.jsonl`. Repeated identical GUI messages update the
 display but are logged at most every 30 seconds, preserving useful history within
-the existing 1,000-event limit. Normal shutdown does not report an executor fault.
+daily archive retention. Normal shutdown does not report an executor fault.
 
 Arming requires YOLO ON with valid settings, an explicitly saved/loaded unchanged
 profile whose detection settings/plane match the form, its verified mask/OBB model,
@@ -456,8 +457,10 @@ reference frame, not a commanded robot TCP orientation. Diagnostics include the
 profile/model/calibration hashes, reference-plane evidence and detection reasons.
 
 `save_debug_images=true` writes only that request's annotated RGB and available
-depth image under ignored `debug/tray_img/`. Default requests and previews save
-no images. Missing depth or image-save failure is reported in diagnostics without
+depth image under ignored `debug/tray_img/`. Default service requests additionally
+use the sampled diagnostic archive described below; passive previews and
+simulation do not automatically archive images. Missing depth or image-save
+failure is reported in diagnostics without
 discarding an otherwise valid tray pose. Simulate Trigger does not archive images.
 
 ## Headless Tray Detect
@@ -543,3 +546,43 @@ response never becomes a placement target. Perception issues no robot or I/O cal
 Rebuild these interfaces and restart all tray providers and controller clients
 together; the v3 `PlacementDepthRequest` removes `minimum_depth_samples`.
 Earlier tray endpoints are not used as fallbacks.
+
+## Daily performance and quality diagnostics
+
+Service and simulated acquisitions record `tray_request_diagnostics`, including
+request/batch ID, RGB/depth stamp, model/profile/calibration hashes, camera
+resolution, CPU device, YOLO settings, expected dimensions/tolerance, all returned
+detections and rejection reasons. Confidence and filter acceptance are unlabelled
+observations, not measured precision/recall. Filtering/calibration/depth failures
+remain distinguishable from an empty model result.
+
+`timings_ms` measures request phases: request/source validation, preview-worker
+wait, fresh capture, inference pipeline, placement depth, debug saving, response
+validation and evidence saving. `worker_timings_ms` nests `yolo_predict_ms` (the
+complete predict call), reported model preprocess/inference/postprocess timings,
+mask preparation, geometry, rendering, native roundtrip and visualization.
+Parent/child timings are not additive. The legacy UI `inference_ms` still means
+the combined native prediction/geometry/rendering interval. Controller service
+wait includes callback/logging overhead after the provider's measured total.
+Cold/warm runtime events and model hashes allow equivalent runs to be compared.
+
+Successful and insufficient-coverage depth observations include accepted/total
+pixels, valid fraction, median and dispersion when available; the request keeps
+its exact sampling settings. Unavailable numeric estimates are null. No depth
+threshold or model setting changes. On failure before capture, log the unavailable
+frame reason; never save a different/stale frame as that attempt's evidence.
+
+Service observations save the original RGB as `raw.png`, all detection polygon
+outlines as `overlay.svg` (green accepted/red rejected, hover for reason), and
+`detections.json` with `ground_truth: null`. Save every failed observation with a
+frame and successful observations 1, 11, 21, ... per provider process. Files live
+under `logs/tray_perception/evidence/YYYY-MM-DD/<request_id>/`. Explicit debug
+saves continue independently. No additional inference runs to make this archive;
+failed writes are reported without invalidating a usable pose or disarming.
+
+Daily archives and diagnostic evidence retain the current Dubai date plus 29
+prior dates. Cleanup runs on later activity and removes only owned expired files;
+legacy logs, explicit `debug/tray_img/`, operator models and teaching files are
+preserved. Keep success samples as well as failures when reviewing accuracy;
+manual labels are needed to measure missed/incorrect trays or mask quality.
+Rebuild Item Perception, Tray Perception and Robot Controller before relaunch.

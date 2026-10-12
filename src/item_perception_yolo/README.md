@@ -1012,7 +1012,7 @@ There is no
 result-age field: an accepted batch remains valid until invalidated or replaced.
 Edit and save these fields deliberately; a file missing them is rejected.
 Frames/overlays are bounded transient memory, never saved as an accumulating
-archive. Events remain timestamped and bounded at 1,000 package records.
+archive. Events use daily archives with UTC/monotonic timestamps and 30-day retention.
 
 ### Headless detection and controller request
 
@@ -1215,8 +1215,12 @@ alignment from a matching frame name.
 It stores no RGB frame or overlay. Saving hard-fails if the selected camera
 calibration changed after it was applied or if the output path already exists.
 
-Package events are written to `logs/item_perception_yolo/events.jsonl` with UTC
-timestamps and the project-wide 1,000-record overwrite limit.
+Package events append to `logs/item_perception_yolo/events-YYYY-MM-DD.jsonl`.
+Dubai calendar dates select files; UTC/monotonic timestamps and process/event IDs
+identify records. Keep today plus 29 prior days, pruning owned expired daily
+files on subsequent activity. No 1,000-event reset; legacy logs are preserved.
+Item image-saving behavior is unchanged. The standard-library daily writer is
+also reused by controller and tray packages; no logger-only ROS package is added.
 
 ## Bin-teach contract
 

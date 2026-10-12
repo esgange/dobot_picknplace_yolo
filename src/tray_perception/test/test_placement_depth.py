@@ -72,6 +72,11 @@ def exercise_placement_depth():
                         assert good < 30
                 else:
                     assert f"requires {fraction:.1%}" in result["error"]
+                    evidence = result["depth_evidence"]
+                    assert evidence["accepted_samples"] == good
+                    assert evidence["total_samples"] == total
+                    assert evidence["valid_fraction"] == good / total
+                    assert evidence["required_fraction"] == fraction
 
 
 def test_private_placement_depth_geometry():
@@ -106,6 +111,8 @@ def test_real_worker_survives_unusable_placement_depth():
     try:
         failed, _ = client.call(request, bytes(64 * 48 * 2))
         assert failed["error"] and not client.failed
+        assert failed["depth_evidence"]["accepted_samples"] == 0
+        assert failed["depth_evidence"]["median_mm"] is None
         pid = client.process.pid
         good, _ = client.call(request, np.full((48, 64), 600, "<u2").tobytes())
         assert good["median_mm"] == 600 and good["accepted_samples"] >= 3

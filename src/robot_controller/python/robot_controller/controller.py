@@ -1028,6 +1028,12 @@ class RobotController(Node):
         run = None
         try:
             run = self.auto_run = AutoRunOperation(self, goal.request)
+            self.events.start_run(
+                run.run_id, run.quantity, configuration_id=self.configuration.configuration_id,
+                profile=self.configuration.profile, tray_profile=(
+                    self.configuration.tray.profile if self.configuration.tray else None),
+                global_speed_percent=self.global_speed_percent,
+                global_cp_percent=self.global_cp_percent, save_debug_images=run.save_debug_images)
             success = run.run()
             run.close()
             self.raise_if_cancelled()
@@ -1076,6 +1082,9 @@ class RobotController(Node):
         self.events.record(level, "auto_run_result", result.message,
                            completed=result.completed_quantity,
                            requested=result.requested_quantity, elapsed_sec=result.elapsed_sec)
+        self.events.finish_run(completed=result.completed_quantity,
+                               requested=result.requested_quantity, elapsed_sec=result.elapsed_sec,
+                               outcome=result.outcome, final_state=result.final_state)
 
     def _execute_place_action(self, goal):
         self.active_goal = goal

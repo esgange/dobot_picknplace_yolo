@@ -1,11 +1,9 @@
 import hashlib
 import ipaddress
-import json
 import math
 import os
 import re
 import tempfile
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +29,8 @@ from camera_calibration_gui.calibration_core import (
     workspace_root,
 )
 
+from .daily_events import DailyEventLogger
+
 from .ui_state import (
     PACKAGE_UI_STATE_SCHEMA_VERSION,
     load_package_ui_state,
@@ -54,9 +54,7 @@ PLATFORM_REFERENCE_DEFINITION = {
 PLATFORM_UI_STATE_SCHEMA_VERSION = PACKAGE_UI_STATE_SCHEMA_VERSION
 TARGET_MAX_AGE_SEC = 0.5
 ROBOT_TF_MAX_AGE_SEC = 1.0
-MAX_LOG_EVENTS = 1000
 UI_STATE_FILENAME = "last_session.json"
-EVENT_LOG_FILENAME = "events.jsonl"
 _ENV_KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
@@ -995,33 +993,6 @@ def write_ui_state(
     return state
 
 
-class PackageEventLogger:
+class PackageEventLogger(DailyEventLogger):
     def __init__(self, root: Path | None = None, node_name: str = "platform_teach") -> None:
-        self.path = package_log_directory(root) / EVENT_LOG_FILENAME
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._node_name = node_name
-
-    def record(self, level: str, event: str, message: str, **fields) -> None:
-        record = {
-            "timestamp_utc": datetime.now(timezone.utc).isoformat().replace(
-                "+00:00",
-                "Z",
-            ),
-            "package": "item_perception_yolo",
-            "node": self._node_name,
-            "level": str(level),
-            "event": str(event),
-            "message": str(message),
-            **fields,
-        }
-        with self._lock:
-            count = 0
-            if self.path.is_file():
-                with self.path.open("r", encoding="utf-8") as stream:
-                    count = sum(1 for line in stream if line.strip())
-            mode = "w" if count >= MAX_LOG_EVENTS else "a"
-            with self.path.open(mode, encoding="utf-8") as stream:
-                stream.write(
-                    json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
-                )
+        super().__init__(root or workspace_root(), "item_perception_yolo", node_name)

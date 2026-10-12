@@ -240,6 +240,13 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 header, pixels = predictions[request["operation"]](
                     request, results[0], rgb, names, cv2, np)
                 header["inference_ms"] = round((time.monotonic() - start) * 1000, 1)
+                header.setdefault("timings_ms", {})["yolo_predict_ms"] = yolo_ms
+                speed = getattr(results[0], "speed", {}) or {}
+                header["timings_ms"].update({f"model_{key}_ms": float(value)
+                                             for key, value in speed.items()
+                                             if key in ("preprocess", "inference", "postprocess")
+                                             and isinstance(value, (int, float))
+                                             and np.isfinite(value) and value >= 0})
                 send_packet(output_stream, header, pixels)
                 continue
             boxes = results[0].obb if model.task == "obb" else results[0].boxes

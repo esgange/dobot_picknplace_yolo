@@ -1454,6 +1454,21 @@ def test_missing_depth_keeps_plane_pose_and_only_display_commits_it():
     node.rviz.hold.assert_called_once()
 
 
+@pytest.mark.parametrize("timings", [None, {"inference_ms": float('nan')}, {"depth_ms": -1}])
+def test_bad_diagnostic_timings_do_not_reject_an_otherwise_valid_observation(timings):
+    view = {"generation": 4, "camera_context": {},
+            "rgb": {"width": 2, "height": 2, "rgb": bytes(12), "stamp_ns": 100}}
+    response = {"state": "ok", "width": 2, "height": 2, "count": 0,
+                "selected": None, "detections": [], "reason": "No tray", "inference_ms": 1.,
+                "timings_ms": timings}
+    node = preview_node(view, response)
+    node.events = MagicMock()
+    result = TrayTeachNode.preview(node, preview_settings(), generation=4)
+    assert result["result"]["count"] == 0
+    assert result["diagnostic_timings_ms"]["native_roundtrip_ms"] >= 0
+    assert node.events.record.call_args.args[1] == "tray_timing_invalid"
+
+
 @pytest.mark.parametrize("when", ["before_snapshot", "before_commit"])
 def test_preview_cannot_publish_old_settings_after_edit(when):
     view = {"generation": 4, "camera_context": {},

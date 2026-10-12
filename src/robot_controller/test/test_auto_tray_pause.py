@@ -23,6 +23,10 @@ window = test_status_ui.window
 
 def paused_run(monkeypatch, replies):
     node, tray = acquisition_rig(monkeypatch, replies)
+    node.configuration.configuration_id = "fixture"
+    node.events.start_run = Mock()
+    node.events.finish_run = Mock()
+    node.global_speed_percent = node.global_cp_percent = 100
     run = node.auto_run = AutoRunOperation(node, request(3))
     run.completed = 2
     run._pick = Mock(return_value=True)

@@ -436,7 +436,7 @@ def test_source_artifact_change_blocks_bin_save(tmp_path):
         )
 
 
-def test_bin_events_use_shared_bounded_package_log(tmp_path):
+def test_bin_events_use_shared_daily_package_log(tmp_path):
     logger = platform_teach_core.PackageEventLogger(tmp_path, node_name="bin_teach")
     logger.path.write_text(
         "".join(f'{{"existing":{index}}}\n' for index in range(1000)),
@@ -444,8 +444,8 @@ def test_bin_events_use_shared_bounded_package_log(tmp_path):
     )
     logger.record("INFO", "bin_test", "bounded bin event")
     lines = logger.path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    record = json.loads(lines[0])
+    assert len(lines) == 1001
+    record = json.loads(lines[-1])
     assert record["node"] == "bin_teach"
     assert record["event"] == "bin_test"
 

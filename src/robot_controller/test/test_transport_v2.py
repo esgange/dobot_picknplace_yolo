@@ -143,6 +143,9 @@ def test_move_batch_queues_both_transits_before_only_terminal_arrival_check(coin
         order.append(("reached", target.name)) or True)
 
     def call_group(calls, **_kwargs):
+        from item_perception_yolo.daily_events import current_event_context
+        assert current_event_context()["motion_group_id"] == \
+            events.entries[0][1]["motion_group_id"]
         order.extend(("call", service, fields["param_value"],
                       tuple(fields[key] for key in "abc"))
                      for service, fields in calls)
@@ -154,6 +157,8 @@ def test_move_batch_queues_both_transits_before_only_terminal_arrival_check(coin
     attach_batch_monitor(transport)
 
     assert transport.move_batch(targets, batch_name="forward") is False
+    from item_perception_yolo.daily_events import current_event_context
+    assert current_event_context() == {}
     parameters = ["user=0", "tool=0", "v=100", "a=100"]
     assert order == [("call", "MovL", parameters, tuple(first[:3, 3])),
                      ("call", "MovL", parameters, tuple(second[:3, 3])),
@@ -1252,6 +1257,7 @@ def test_only_fresh_coherent_opposite_di1_becomes_a_missed_pick():
 
 
 def test_service_audit_records_exact_send_and_terminal_response():
+    from item_perception_yolo.daily_events import event_context
     transport = object.__new__(DobotTransport)
     transport.service_audit_lock = __import__("threading").Lock()
     transport.service_audit_sequence = 0
@@ -1262,7 +1268,8 @@ def test_service_audit_records_exact_send_and_terminal_response():
     transport.node = SimpleNamespace(
         events=events, get_logger=lambda: logger)
 
-    audit = transport._begin_service_audit("SpeedFactor", {"ratio": 37})
+    with event_context(run_id="run", cycle_index=2, motion_group_id="group"):
+        audit = transport._begin_service_audit("SpeedFactor", {"ratio": 37})
     transport._finish_service_audit(
         audit, "accepted", result=SimpleNamespace(res=0, robot_return="{}"))
 
@@ -1275,6 +1282,8 @@ def test_service_audit_records_exact_send_and_terminal_response():
     assert sent["endpoint"] == "/dobot_bringup_ros2/srv/SpeedFactor"
     assert response["response_res"] == 0
     assert response["robot_return"] == "{}"
+    assert response["run_id"] == "run" and response["cycle_index"] == 2
+    assert response["motion_group_id"] == "group"
 
 
 class HomeReachedMonitor:

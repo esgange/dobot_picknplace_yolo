@@ -24,6 +24,8 @@ from .core import load_profile, ORIGIN_CONVENTION
 from .documents import detection_profile, load_document
 from .placement import sampling_from_message
 from .contract import SERVICE_NAME
+from .diagnostics import TrayRequestDiagnostics, SUCCESS_SAMPLE_INTERVAL, prune_evidence
+from item_perception_yolo.daily_events import log_day
 
 
 REQUEST_TIMEOUT = 10.0
@@ -131,6 +133,8 @@ class TrayRequests:
         self.callbacks = 0
         self.last_reply = 0.
         self.status = "Disarmed — no tray pose service"
+        self.diagnostic_successes = 0
+        self.evidence_pruned_day = None
 
     @property
     def busy(self):
@@ -321,6 +325,12 @@ class TrayRequests:
         capture_preview = getattr(self.node, "capture_preview", None)
         request_id = uuid.uuid4().hex
         phase = "validate_request"
+        diagnostics = TrayRequestDiagnostics(self.node, request, request_id, started, simulated)
+
+        def set_phase(value):
+            nonlocal phase
+            phase = value
+            diagnostics.phase_changed(value)
 
         def check():
             self._check(epoch, generation, deadline, simulated=simulated)
@@ -332,33 +342,38 @@ class TrayRequests:
                 sample_placement_depth=bool(request.sample_placement_depth))
             sampling = (sampling_from_message(request.placement)
                         if request.sample_placement_depth else None)
+            diagnostics.sampling = sampling
             if sampling is not None:
                 deadline = started + sampling["request_timeout_sec"]
             check()
             binding = self.binding
             if not simulated and (binding is None or request.profile_sha256 != binding["digest"]):
                 raise ValueError("Requested Tray Teach profile SHA-256 mismatch")
-            phase = "wait_for_preview"
+            set_phase("wait_for_preview")
             while not acquired:
                 check()
                 acquired = self.node.work_lock.acquire(
                     timeout=min(.02, max(.001, deadline - time.monotonic())))
             check()
             path, settings = simulation if simulated else (binding["path"], binding["settings"])
-            phase = "validate_sources"
+            diagnostics.settings = copy.deepcopy(settings)
+            set_phase("validate_sources")
             verified = self.prepare(path, settings, request.profile_sha256)
             floor = (None if sampling is None else HeightPlane(
                 verified["profile"]["reference_plane"]["base_from_plane"], "tray plane"))
             check()
-            phase = "fresh_observation"
+            set_phase("fresh_observation")
             view = self._fresh_view(start_ns, started, deadline, check, sampling)
-            phase = "inference"
+            diagnostics.view = view
+            set_phase("inference")
             result_view = self.node.preview(
                 preview_settings(settings, self.node.model_metadata), generation=generation,
                 view=view, visualize=(simulated or request.save_debug_images
                                       or capture_preview is not None), deadline=deadline,
                 returned_only=True,
                 **({"depth_quality": sampling} if sampling is not None else {}))
+            diagnostics.view = result_view
+            set_phase("validate_after")
             check()
             self.prepare(path, settings, request.profile_sha256)
             if not simulated:
@@ -386,7 +401,7 @@ class TrayRequests:
                 pose.extent_x, pose.extent_y = pose_extents(selected)
                 pose.center_distance_px = float(selected["center_distance_px"])
                 if sampling is not None:
-                    phase = "placement_depth"
+                    set_phase("placement_depth")
                     if view["depth"] is None:
                         raise ValueError("Placement requires synchronized registered depth")
                     measured, data = self.node.native.call({
@@ -395,7 +410,9 @@ class TrayRequests:
                         "camera_context": view["camera_context"], "sampling": sampling},
                         view["depth"]["depth"], timeout=max(.001, deadline - time.monotonic()))
                     check()
-                    if (not data and set(measured) == {"state", "error"}
+                    diagnostics.depth = measured.get("depth_evidence", measured)
+                    if (not data and set(measured) in (
+                            {"state", "error"}, {"state", "error", "depth_evidence"})
                             and type(measured["error"]) is str and measured["error"]):
                         raise ValueError(measured["error"])
                     if (data or set(measured) != {
@@ -427,6 +444,7 @@ class TrayRequests:
                             request_id=request_id, batch_id=response.batch_id, tray_id=pose.id)
                     self.prepare(path, settings, request.profile_sha256)
                     self._sole_provider()
+            set_phase("debug_save")
             debug = {"requested": bool(request.save_debug_images), "rgb_path": "",
                      "depth_path": "", "error": ""}
             if request.save_debug_images:
@@ -436,6 +454,7 @@ class TrayRequests:
                     debug["error"] = str(exc)
                 check()
                 self.prepare(path, settings, request.profile_sha256)
+            set_phase("response_validation")
             response.diagnostics_json = json.dumps({
                 "profile_sha256": verified["digest"], "model_sha256": self.node.model["sha256"],
                 "camera_sha256": self.node.camera.sha256, "origin_convention": ORIGIN_CONVENTION,
@@ -506,6 +525,20 @@ class TrayRequests:
                 self.node.fatal_error = str(exc)
                 self.disarm(str(exc))
         finally:
+            try:
+                usable = bool(response.success and response.found and (
+                    not request.sample_placement_depth or response.placement.valid))
+                if usable and not simulated:
+                    self.diagnostic_successes += 1
+                day = log_day()
+                if self.evidence_pruned_day != day:
+                    prune_evidence(Path(self.node.root) / "logs/tray_perception/evidence", day)
+                    self.evidence_pruned_day = day
+                diagnostics.complete(response, view, sample_success=(
+                    self.diagnostic_successes % SUCCESS_SAMPLE_INTERVAL == 1))
+            except Exception as exc:
+                self.node.events.record("WARNING", "tray_diagnostics_failed", str(exc),
+                                        request_id=request_id)
             if not simulated and capture_preview is not None:
                 capture_preview.put(response, view)
             if acquired:

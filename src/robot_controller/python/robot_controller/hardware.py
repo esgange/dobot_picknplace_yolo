@@ -5,6 +5,9 @@ import math
 import re
 import threading
 import time
+import uuid
+
+from item_perception_yolo.daily_events import current_event_context, event_context
 from contextlib import nullcontext
 from dataclasses import replace
 
@@ -129,6 +132,7 @@ class DobotTransport:
             "fields": dict(fields),
             "started": time.monotonic(),
             "terminal": False,
+            "log_context": current_event_context(),
         }
         details = json.dumps(fields, sort_keys=True, separators=(",", ":"))
         suffix = f" reason={reason}" if reason else ""
@@ -168,7 +172,7 @@ class DobotTransport:
             level, event, audit["name"], request_id=audit["request_id"],
             endpoint=audit["endpoint"], fields=audit["fields"], outcome=outcome,
             response_res=res, robot_return=robot_return, duration_ms=duration_ms,
-            detail=detail)
+            detail=detail, **audit.get("log_context", {}))
 
     def _pending_completed(self, name, future, audit):
         with self.response_lock:
@@ -1215,6 +1219,18 @@ class DobotTransport:
                     confirmed_start_pose=None, preserve_outputs=False, placement=None,
                     placement_bridge=None, pickup_retract_pose=None,
                     relax_pick_fingers=False):
+        group_id, log_context = uuid.uuid4().hex, current_event_context()
+
+        def record(level, event, message, **fields):
+            self.node.events.record(level, event, message, motion_group_id=group_id,
+                                    **log_context, **fields)
+
+        def call_group(*args, **kwargs):
+            # Scope dispatch only; queue-only generators must not leave ambient
+            # context installed while another group or prefetch runs.
+            with event_context(**{**log_context, "motion_group_id": group_id}):
+                return self.call_group(*args, **kwargs)
+
         targets = tuple(targets)
         if (not targets or not isinstance(batch_name, str) or not batch_name.strip()
                 or sum((require_suction, forbid_suction, stop_on_suction,
@@ -1277,7 +1293,7 @@ class DobotTransport:
         last_progress = started
         last_vector = np.asarray(initial.joints, dtype=float)
         queued_targets = []
-        self.node.events.record(
+        record(
             "INFO", "motion_batch_dispatch_started", batch_name,
             batch=batch_name, targets=[target.name for target in targets],
             policy="admit_each_reply_in_order_then_verify_terminal_feedback")
@@ -1320,7 +1336,7 @@ class DobotTransport:
                 planned_outputs={} if placement is not None else self.pending_motion_outputs,
                 suction_armed=suction_armed)
             if self.suction_interrupted and not was_interrupted:
-                self.node.events.record(
+                record(
                     "INFO", "pickup_detected",
                     "DI1 acquired; finish issued command before pickup Stop", batch=batch_name)
 
@@ -1354,12 +1370,12 @@ class DobotTransport:
                 relaxed_finger_channels.add(channel)
             observe(self._ready_snapshot())
             fingers_relaxed = True
-            self.node.events.record(
+            record(
                 "INFO", "pickup_fingers_relaxed", "Fingers relaxed; suction preserved",
                 batch=batch_name, trigger=trigger)
 
         def finish_suction_interrupt():
-            self.node.events.record(
+            record(
                 "INFO", "motion_batch_interrupted", batch_name,
                 batch=batch_name, queued_targets=queued_targets,
                 reason="DI1 acquired during pickup")
@@ -1389,7 +1405,7 @@ class DobotTransport:
                     or not sample.feed["digital_outputs"] & (1 << 12)):
                 raise FeedbackFailure("Suction lost after acquisition Stop")
             return_origin = self.pose_from_snapshot(sample)
-            self.node.events.record(
+            record(
                 "INFO", "pickup_stop_acknowledged",
                 "Pickup accepted; queue return without stationary confirmation",
                 batch=batch_name, stationary_confirmation=False)
@@ -1439,7 +1455,7 @@ class DobotTransport:
                 issuing = getattr(placement_bridge, "issued", None)
                 if issuing is not None:
                     extra["issuing"] = issuing
-            replies = self.call_group(
+            replies = call_group(
                 calls, progress=progress, outputs_by_call=outputs_by_call,
                 admitted=lambda index: (
                     placement_bridge.admitted(targets[index]) if placement_bridge is not None
@@ -1450,7 +1466,7 @@ class DobotTransport:
             for target, events in target_records[0:len(replies)]:
                 expected_outputs.update({event.channel: event.active
                                          for event in target.motion_io})
-                self.node.events.record(
+                record(
                     "INFO", "motion_queued", target.name,
                     batch=batch_name,
                     speed_percent=target.speed_percent,
@@ -1466,7 +1482,7 @@ class DobotTransport:
             terminal_command_id = (self._motion_command_id(replies[-1])
                                    if calls[-1][0] in ("MovJ", "MovL") else None)
             accepted = self.monitor.snapshot(require_enabled=True)
-            self.node.events.record(
+            record(
                 "INFO", "motion_batch_queued", batch_name,
                 batch=batch_name, targets=queued_targets,
                 terminal_target=targets[-1].name, terminal_command_id=terminal_command_id)
@@ -1541,7 +1557,7 @@ class DobotTransport:
                         fixed_outputs.update({
                             channel: bool(bits & (1 << (channel - 1)))
                             for channel in (1, 2, 13, 14)})
-                        self.node.events.record(
+                        record(
                             "INFO", "pickup_probe_started", "Settling expired; try 50% upward lift",
                             batch=batch_name, settling_sec=pick_settling_sec,
                             lift_mm=lift * 1000, speed_percent=tail.speed_percent,
@@ -1566,12 +1582,12 @@ class DobotTransport:
                         self.node.operation_progress(
                             "MOTION", "No DI1 after settling; trying 50% upward lift",
                             waypoint=tail.name)
-                        replies = self.call_group(
+                        replies = call_group(
                             [("MovL", fields)], progress=progress, outputs_by_call=[{}],
                             admitted=lambda _index: self._target_admitted(tail))
                         if replies:
                             queued_targets.append(tail.name)
-                            self.node.events.record(
+                            record(
                                 "INFO", "motion_queued", tail.name, batch=batch_name,
                                 speed_percent=tail.speed_percent,
                                 acceleration_percent=tail.acceleration_percent, motion_io=[])
@@ -1581,7 +1597,7 @@ class DobotTransport:
                             raise FeedbackFailure("Pickup probe was not admitted")
                         terminal_command_id = self._motion_command_id(replies[0])
                         accepted = self.monitor.snapshot(require_enabled=True)
-                        self.node.events.record(
+                        record(
                             "INFO", "pickup_probe_queued", tail.name, batch=batch_name,
                             terminal_command_id=terminal_command_id)
                         terminal_stable_sec = 0.
@@ -1617,7 +1633,7 @@ class DobotTransport:
                 self.late_miss_suction = True
             self.pending_motion_outputs = {}
             acquired_at_settle = False
-            self.node.events.record(
+            record(
                 "INFO", "motion_batch_completed", batch_name,
                 batch=batch_name, terminal_target=tail.name,
                 targets=queued_targets, pickup_probe_attempted=probe_started,

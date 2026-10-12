@@ -1,6 +1,10 @@
 """One controller owner for counted cycles and ordered placement-to-pick queues."""
 
 from concurrent.futures import Future
+from contextvars import copy_context
+import uuid
+
+from item_perception_yolo.daily_events import event_context
 import threading
 from time import monotonic
 
@@ -37,7 +41,9 @@ class CandidatePrefetch:
             except Exception as exc:
                 self.future.set_exception(exc)
 
-        self.thread = threading.Thread(target=acquire, name="auto_run_item_poses", daemon=True)
+        context = copy_context()
+        self.thread = threading.Thread(target=lambda: context.run(acquire),
+                                       name="auto_run_item_poses", daemon=True)
         self.thread.start()
 
     def close(self):
@@ -139,6 +145,7 @@ class PlacementBridge:
 class AutoRunOperation:
     def __init__(self, node, request):
         self.node = node
+        self.run_id = uuid.uuid4().hex
         self.quantity = validate_quantity(request.quantity)
         self.target = validate_target(request.x_mm, request.y_mm, request.rotation_deg)
         self.save_debug_images = bool(request.save_debug_images)
@@ -196,6 +203,11 @@ class AutoRunOperation:
         self.bridge = None
 
     def _pick(self, batch=None, bridge=None):
+        cycle = self.completed + 1 + int(bridge is not None and not bridge.completed)
+        with event_context(run_id=self.run_id, cycle_index=cycle):
+            return self._pick_impl(batch, bridge)
+
+    def _pick_impl(self, batch=None, bridge=None):
         node, config = self.node, self.configuration
         node.active_action = "pick"
         attempted = 0
@@ -333,8 +345,10 @@ class AutoRunOperation:
             raise FeedbackFailure("Auto Run already has a next-bin request")
         self.node.operation_progress(
             "AUTO_PREFETCH", "Tray pose/depth accepted; acquiring next bin batch during placement")
-        self.prefetch = CandidatePrefetch(
-            self.node, self.configuration, self.save_debug_images)
+        with event_context(run_id=self.run_id, cycle_index=self.completed + 2,
+                           acquisition_mode="prefetch"):
+            self.prefetch = CandidatePrefetch(
+                self.node, self.configuration, self.save_debug_images)
 
     def run(self):
         while True:
@@ -372,7 +386,8 @@ class AutoRunOperation:
             last_item = self.completed + 1 == self.quantity
             while True:
                 try:
-                    placement.run(node, on_observed=None if last_item else self._start_prefetch)
+                    with event_context(run_id=self.run_id, cycle_index=self.completed + 1):
+                        placement.run(node, on_observed=None if last_item else self._start_prefetch)
                     break
                 except ManagedInterruption:
                     # Keep the held source, target and quantity in the owning

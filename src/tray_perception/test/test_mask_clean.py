@@ -128,6 +128,8 @@ def exercise_pipeline():
     live, pixels = native.predict_trays(request, result(mask), rgb, names, cv2, np)
     simulated, _ = native.predict_trays({**request, "returned_only": True}, result(mask),
                                         rgb, names, cv2, np)
+    assert all(value >= 0 for value in simulated.pop("timings_ms").values())
+    assert all(value >= 0 for value in live.pop("timings_ms").values())
     assert simulated == live and live["count"] == 1
     chosen = live["selected"]
     assert chosen["valid"] and chosen["mask_clean"]["status"] == "cleaned"

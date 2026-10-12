@@ -178,11 +178,11 @@ def test_idle_supervision_preempts_unexpected_motion():
     assert "_finish_stop_state" in block
 
 
-def test_package_event_log_is_bounded(tmp_path):
+def test_package_event_log_retains_more_than_1000_events(tmp_path):
     logger = PackageEventLogger(tmp_path, "fixture")
     for index in range(1001):
         logger.record("INFO", "test", "event", index=index)
     values = [json.loads(line) for line in logger.path.read_text().splitlines()]
-    assert len(values) == 1
-    assert values[0]["index"] == 1000
-    assert values[0]["node"] == "fixture"
+    assert len(values) == 1001
+    assert values[-1]["index"] == 1000
+    assert values[-1]["node"] == "fixture"

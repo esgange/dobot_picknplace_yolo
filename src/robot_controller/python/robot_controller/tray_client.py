@@ -160,6 +160,7 @@ class TrayClient:
         while attempts.count < TRAY_ATTEMPT_LIMIT:
             node.wait_for_resume()
             check_item()
+            preparation_started = time.monotonic()
             config.validate_sources(node.root)
             self.check_owner()
             if not self.client.service_is_ready():
@@ -167,7 +168,8 @@ class TrayClient:
                     "Tray pose v2 service is unavailable; restart tray and controller applications "
                     "after updating, then arm Tray Teach or start Tray Detect")
             try:
-                return self._observe(config, sampling, check_item, attempts, save_debug_images)
+                return self._observe(config, sampling, check_item, attempts, save_debug_images,
+                                     preparation_ms=(time.monotonic()-preparation_started)*1000)
             except TrayObservationUnavailable as exc:
                 attempts.reason = str(exc)
                 node.events.record(
@@ -182,7 +184,28 @@ class TrayClient:
         raise TrayAcquisitionExhausted(
             f"Tray observation failed after {TRAY_ATTEMPT_LIMIT} attempts: {attempts.reason}")
 
-    def _observe(self, config, sampling, check_item, attempts, save_debug_images):
+    def _observe(self, config, sampling, check_item, attempts, save_debug_images, *,
+                 preparation_ms=0.):
+        started = time.monotonic()
+        self._observation_details = {"validation_before_ms": preparation_ms}
+        usable, reason = False, ""
+        try:
+            point = self._observe_impl(config, sampling, check_item, attempts, save_debug_images)
+            usable = True
+            return point
+        except Exception as exc:
+            reason = str(exc)
+            self._observation_details.setdefault("status", type(exc).__name__)
+            raise
+        finally:
+            self.node.events.record(
+                "INFO" if usable else "WARNING", "tray_request_timing",
+                "Controller tray acquisition attempt completed", attempt=attempts.count,
+                usable=usable, reason=reason,
+                total_ms=(time.monotonic()-started)*1000 + preparation_ms,
+                **self._observation_details)
+
+    def _observe_impl(self, config, sampling, check_item, attempts, save_debug_images):
         node = self.node
         request = GetTrayPose.Request(profile_sha256=config.tray.sha256,
                                       save_debug_images=bool(save_debug_images),
@@ -195,6 +218,8 @@ class TrayClient:
         deadline = time.monotonic() + sampling["request_timeout_sec"] + 1
         attempts.count += 1
         attempts.reason = "Tray observation interrupted before a usable result"
+        sent_at = time.monotonic()
+        received_at = None
         future = self.client.call_async(request)
         self.pending = (future, deadline)
         try:
@@ -205,6 +230,22 @@ class TrayClient:
                     future.cancel()
                     raise TrayObservationUnavailable("Tray depth request timed out")
                 node.wait_control(.02)
+            response = future.result()
+            received_at = time.monotonic()
+            self._observation_details.update(
+                service_wait_ms=(received_at-sent_at)*1000,
+                status=getattr(response, "status", "NO_RESPONSE"),
+                batch_id=getattr(response, "batch_id", ""))
+            try:
+                diagnostics = json.loads(response.diagnostics_json or '{}')
+                self._observation_details.update(
+                    request_id=diagnostics.get("request_id"),
+                    provider_timings_ms=diagnostics.get("timings_ms", {}),
+                    worker_timings_ms=diagnostics.get("worker_timings_ms", {}),
+                    rejection_category=diagnostics.get("rejection_category"),
+                    diagnostic_evidence=diagnostics.get("diagnostic_evidence", {}))
+            except (AttributeError, ValueError, TypeError):
+                pass  # The existing validation below owns malformed-response handling.
             node.wait_for_resume()
             check_item()
             config.validate_sources(node.root)
@@ -212,11 +253,17 @@ class TrayClient:
             if time.monotonic() > deadline:
                 raise TrayObservationUnavailable("Tray depth reply arrived after its deadline")
             point, evidence = validate_result(
-                future.result(), config, sampling, start, node.get_clock().now().nanoseconds)
+                response, config, sampling, start, node.get_clock().now().nanoseconds)
+            self._observation_details["validation_after_ms"] = (time.monotonic()-received_at)*1000
             node.events.record("INFO", "placement_depth", "Fresh tray depth accepted",
                                surface_base_m=point.tolist(), sampling=sampling,
                                tray_sha256=evidence["profile_sha256"], attempt=attempts.count)
             return point
         finally:
+            finished_at = time.monotonic()
+            self._observation_details.setdefault("service_wait_ms", (finished_at-sent_at)*1000)
+            if received_at is not None:
+                self._observation_details.setdefault(
+                    "validation_after_ms", (finished_at-received_at)*1000)
             if future.done() or future.cancelled():
                 self.pending = None

@@ -1283,13 +1283,33 @@ Motion Debug and camera launcher accept and validate them. Item Teach and
 headless Item Detect use them to choose calibrations; Item Detect requires a
 complete selection and never writes `.env`.
 
-Runtime datalogs are isolated per package under `logs/<package-name>/events.jsonl`; the bringup launch creates the package files before starting the node. Compile the timestamped package records into a separate universal file only when needed:
+Controller, Item Perception and Tray Perception events append to
+`logs/<package>/events-YYYY-MM-DD.jsonl`. Files roll over at Dubai midnight;
+records keep UTC and monotonic timestamps. Keep today and the previous 29 days,
+with cleanup on subsequent logging activity. There is no event-count truncation.
+Legacy `events.jsonl` files are preserved; other packages retain their existing
+bounded logs. Compile legacy and daily records, optionally selecting a Dubai day:
 
 ```bash
-python3 scripts/compile_logs.py --workspace-root . --output /tmp/picknplace-events.jsonl
+python3 scripts/compile_logs.py --workspace-root . --date 2026-10-12 --output log/compiled-2026-10-12.jsonl
 ```
 
-Each package log overwrites itself before record 1,001. The compiler is a standalone script, not a ROS package; its output location is explicit.
+Omit `--date` to compile all retained dates. The output location is explicit.
+Auto Run also writes `logs/robot_controller/run-YYYY-MM-DD-<run_id>.json` and `.csv`
+with observed cycle phases, retries and separate acquisition timing distributions.
+These reports retain 30 days. Blended motion groups remain combined; placement
+ends at the existing confirmed handoff, which can include next-item departure.
+Prefetched detection time is not added twice to cycle totals.
+
+Tray `tray_request_diagnostics` separates YOLO prediction/model execution from
+capture, worker wait, geometry, depth, visualization and diagnostic I/O. All
+candidate confidence, dimensions/rejections, model/profile hashes and settings
+are retained. Failed service observations and sampled successes save raw RGB,
+a polygon overlay and unlabelled metadata under
+`logs/tray_perception/evidence/YYYY-MM-DD/<request_id>/`, also retained 30 days.
+Accepted/rejected counts are operational results, not ground-truth model accuracy.
+Rebuild `item_perception_yolo`, `tray_perception` and `robot_controller`, then
+manually relaunch them; existing processes do not acquire these changes.
 
 The `gripper_control` GUI requires the separately launched bringup to already be
 connected. It uses only the default Dobot V4 DO service and feedback topics; if

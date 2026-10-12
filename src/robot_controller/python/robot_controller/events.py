@@ -1,39 +1,33 @@
-"""Bounded controller/preview event logging, independent of hardware authority."""
+"""Controller-owned daily audit and observed Auto Run time studies."""
 
-import fcntl
-import json
-import os
-from pathlib import Path
-import threading
+import sys
 
-from item_perception_yolo.item_teach_core import utc_now
+from item_perception_yolo.daily_events import DailyEventLogger
+from .time_study import RunStudy
 
 
-class PackageEventLogger:
-    """Package-owned bounded JSONL event recorder."""
-
+class PackageEventLogger(DailyEventLogger):
     def __init__(self, root, node_name="robot_controller"):
-        self.path = Path(root) / "logs/robot_controller/events.jsonl"
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock = threading.Lock()
-        self.node_name = node_name
+        super().__init__(root, "robot_controller", node_name)
+        self.study = None
 
-    def record(self, level, event, message, **fields):
-        payload = {
-            "timestamp_utc": utc_now(), "package": "robot_controller",
-            "node": self.node_name, "level": level, "event": event,
-            "message": message, **fields,
-        }
+    def start_run(self, run_id, quantity, **metadata):
         with self.lock:
-            with self.path.open("a+", encoding="utf-8") as stream:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-                stream.seek(0)
-                count = sum(bool(line.strip()) for line in stream)
-                if count >= 1000:
-                    stream.seek(0)
-                    stream.truncate()
-                else:
-                    stream.seek(0, os.SEEK_END)
-                stream.write(json.dumps(payload, sort_keys=True, allow_nan=False) + "\n")
-                stream.flush()
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            self.context = {"run_id": run_id}
+            self.study = RunStudy(run_id, quantity)
+            self.observer = self.study.observe
+            self.record("INFO", "auto_run_started", "Auto Run time study started",
+                        requested=quantity, **metadata)
+
+    def finish_run(self, **result):
+        with self.lock:
+            study, self.study = self.study, None
+            self.observer = None
+            if study is not None:
+                try:
+                    paths = study.finish(self.directory, result)
+                    self.record("INFO", "auto_run_time_study", "Run timing report saved", **paths)
+                except (OSError, ValueError, TypeError) as exc:
+                    print(f"Run timing report failed: {exc}", file=sys.stderr)
+                    self.record("WARNING", "auto_run_time_study_failed", str(exc))
+            self.context = {}
