@@ -1,5 +1,19 @@
 # Robot Controller
 
+**Waiting for operator intervention:** exhausted item acquisition/pick retries,
+blocked-only poses or all unsafe trickle targets now confirm Home and Stop and
+show **WAITING FOR ITEMS** (`PAUSED`, phase `ITEM_ACQUISITION_PAUSED`). Manual Pick
+and Auto Run keep their action ownership; Auto Run retains its count and elapsed
+timer. Refill/rearrange the bin, then press **Continue**. This explicit choice
+clears repick exclusions and trickle-depth counts, discards saved poses, and grants
+a new bounded acquisition/pick window using fresh observations. Entering the wait
+or pressing Stop does not clear history. Ordinary Pause/Continue preserves history
+and budgets. There is no automatic polling or restart. Ten failed tray requests
+show **WAITING FOR TRAY** at Tray Detect with the held item preserved; Continue
+retries that same item and target without resetting bin history. Return Item is
+available there with a trusted held source. Both waits supervise feedback, pose,
+queue and outputs; STOP and faults retain their containment behavior.
+
 Visual guide: [Controller finite state machine](../../docs/ROBOT_CONTROLLER_FSM.md).
 It covers the current lifecycle, candidate ledger and operation/recovery routes;
 update it in the same change whenever those behaviors change.
@@ -50,7 +64,7 @@ Check the actual adjusted endpoint against the calibrated floor at its base XY:
 20 mm downward allowance plus 0.001 mm numeric tolerance. Recheck the selected
 camera body's footprint at that endpoint without changing attitude. Reject, never
 clamp. Geometry/configuration errors remain errors. Skip unsafe candidates without
-counting an attempt; if none remain, confirm Home and report NO_PICK without
+counting an attempt; if none remain, confirm Home and enter WAITING FOR ITEMS without
 spending empty acquisition retries. After a dropped pickup, this also completes
 the shared put-back through Home. Preserve survivor IDs and order.
 
@@ -65,7 +79,7 @@ include candidate/batch, area, prior count, extra descent and target/floor heigh
 Send immutable, revisioned exclusion snapshots with bin/platform source hashes to
 Item Detect. Validate the exact echo and independently filter returned poses;
 retain nearest-Home ordering among survivors. The provider filters before the
-requested count. All-blocked results confirm Home and finish NO_PICK rather than
+requested count. All-blocked results confirm Home and enter the item wait rather than
 spending the nine empty-acquisition retries. Ordinary empty results retain that
 budget. For empty prefetched results, confirm any owned placement first; if its
 successful release changed history, reacquire against the new revision before
@@ -193,8 +207,8 @@ Source/hash/attitude checks and three nonempty batches per Pick remain in force.
 Each Pick has nine retries for empty pose results: confirm Home before each
 new request (ten requests total if all are empty). An empty prefetch uses the
 owned placement-to-Home route and counts the
-completed placement before this retry. A tenth empty result ends NO_PICK at Home
-with the completed quantity. Empty observations do not consume physical-pick batches.
+completed placement before this retry. A tenth empty result enters WAITING FOR ITEMS at Home
+with the completed quantity retained. Empty observations do not consume physical-pick batches.
 
 The handoff retains the previous placement and source until advancing FeedInfo
 reports the next pre-pick MovL's returned queue ID (or a later ID), with observed neutral
@@ -227,7 +241,7 @@ clients until a new run replaces them or the controller restarts. Rebuild both
 interfaces and controller, then restart controller/GUI/status/action clients together.
 
 Three exhausted nonempty Pick batches, or an empty result after all nine Home
-acquisition retries are used, end READY/NO_PICK at Home. Ten unavailable tray
+acquisition retries are used, enter WAITING FOR ITEMS at Home. Ten unavailable tray
 requests confirm Stop and enter **PAUSED at Tray Detect**, retaining the item,
 source, target, operation owner and completed count. The same paused controls
 offer **Continue**, **Return Item** and permanent **STOP**; Place Item (Retry) is
@@ -239,8 +253,8 @@ partial count. Return requires no tray provider; Continue requires the provider
 and unchanged safe parked state. A fault or held loss while awaiting the operator
 cannot resume counted production automatically; normal Stop containment applies.
 Malformed successful detector evidence and robot/transport faults still require
-explicit recovery; no fourth physical-pick batch, extra empty-result retry
-or automatic restart is granted. STOP
+explicit recovery. Only explicit item-wait Continue grants a new bounded retry
+window; it clears repick/trickle history and saved poses. No automatic restart is granted. STOP
 cancels the run and outstanding prefetch, discarding its result. Tray exhaustion
 prevents prefetch; held loss or another fault during placement discards it.
 Explicit Recover cancels remaining poses; reloading configuration and process
@@ -662,16 +676,16 @@ Actions:
   fresh ones. Poses retained after interruption/return may still be used. Then
   ensure Home before candidate motion. Valid empty
   results allow nine Home-and-acquisition retries per Pick, preserved across Pause
-  and later physical misses. The tenth empty result ends READY/NO_PICK at Home.
+  and later physical misses. The tenth empty result enters WAITING FOR ITEMS at Home.
   Empty results do not consume physical-pick attempts. After exhausting a
   nonempty batch, confirm Home and request a fresh batch.
-  Success ends immediately in HOLDING; three exhausted nonempty batches end
-  READY/NO_PICK at Home. `attempted_candidates` totals actual candidate attempts
+  Success ends immediately in HOLDING; three exhausted nonempty batches wait
+  at Home for explicit Continue. `attempted_candidates` totals actual candidate attempts
   in that Pick action across all batches, including canceled/faulted results.
   Successful placement cancels unattempted poses; the next manual/Auto Run Pick
   acquires a fresh batch.
-  Pause/Continue retains
-  the current batch and attempt count; direct Stop/Recover ends the action.
+  Ordinary Pause/Continue retains
+  the current batch and attempt count; refill Continue clears old poses/history and starts a new window; direct Stop/Recover ends the action.
   Item detector errors/timeouts, source/pose validation failures and robot faults
   remain terminal. Reject reused IDs in new detector replies; intentionally
   continuing the retained batch is permitted. No teach schema, retry
@@ -763,7 +777,7 @@ Turning Preview OFF never starts preparation; click Load/Reload explicitly.
 Preview motion buttons retain their read-only behavior, including while disabled.
 
 The window title is **Robot Controller**. The main status is NOT READY, READY,
-BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED or OFFLINE. Starting, homing,
+BUSY, HOLDING ITEM, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED or OFFLINE. Starting, homing,
 picking, placing, parking, returning and recovering appear in the activity line;
 PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
@@ -784,7 +798,8 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | BUSY, startup/recovery/return/parking/stopping | STOP |
 | HOLDING ITEM | Home preserving grip; Place Item; Pause; Preview; speed; CP; STOP |
 | PAUSED, ordinary | Continue; Return Item with trusted held source; STOP |
-| PAUSED, tray acquisition exhausted (Place / Auto Run) | Continue / Place Item (Retry); Return Item with trusted held source; STOP |
+| WAITING FOR ITEMS (PAUSED, Pick / Auto Run) | Continue clears history/poses and detects afresh; STOP |
+| WAITING FOR TRAY (PAUSED, Place / Auto Run) | Continue / Place Item (Retry); Return Item with trusted held source; STOP |
 | ATTENTION REQUIRED | Recover when configured with fresh feedback and no active operation; STOP |
 | OFFLINE | STOP if reachable; loading/preparation waits for fresh robot feedback |
 | EMERGENCY STOP PRESSED | STOP; explicit Recover rechecks alarms after physical release |
@@ -1278,7 +1293,7 @@ joints. Its tray detector need not be armed; Pick only travels to the saved pose
    and rank by 3D distance from taught Home, using detector priority for ties;
 3. run the same Home function once poses are available, skipping motion when already
    matched. If the result is empty, confirm Home before each of nine acquisition retries per
-   Pick; a tenth empty result ends NO_PICK at Home;
+   Pick window; a tenth empty result waits at Home for Continue;
 4. offset Link6 green/Y by the taught `pick_rotation` from each item's short-axis
    line while preserving taught tool Z;
 5. attempt eligible saved candidates in controller Home-distance order, excluding terminal
@@ -1289,12 +1304,12 @@ joints. Its tray detector need not be armed; Pick only travels to the saved pose
 7. after success, lift to pre-pick, lift to clearance, then move directly to saved
    Tray Detect joints and finish HOLDING there with suction on;
 8. after full exhaustion, confirm Home and repeat from a fresh batch, up to three
-   nonempty batches total; three physically exhausted batches finish READY/NO_PICK.
+   nonempty batches per window; three exhausted batches wait at Home for Continue.
 
 The nine empty-result retries are separate from physical-pick attempts and cannot
-reset after a miss or Pause. This permits at most twelve pose requests per Pick
+reset after a miss or ordinary Pause. This permits at most twelve pose requests per window
 when nine empty observations occur among three nonempty batches. If all initial
-requests are empty, stop after the tenth. Detector errors/timeouts and invalid evidence
+requests are empty, wait after the tenth. Item-wait Continue grants a new window. Detector errors/timeouts and invalid evidence
 remain terminal; no hardware command is retried after uncertain acceptance.
 
 Item and tray retries have **zero added settling delay**. Each new request

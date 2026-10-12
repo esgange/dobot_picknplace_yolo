@@ -847,7 +847,8 @@ class RobotController(Node):
     def _continue(self, _request, response):
         try:
             if (getattr(self, "auto_run", None) is not None
-                    and not acquisition_pause_active(self)):
+                    and not (acquisition_pause_active(self) or (
+                        self.machine.state == "PAUSED" and self.managed.item_waiting))):
                 raise CommandRejected("Manual controls are disabled during Auto Run; use STOP")
             self.managed.continue_operation()
             response.success = True
@@ -1578,8 +1579,7 @@ class RobotController(Node):
                             result.outcome = result.NO_PICK
                         elif not batch.candidates:
                             self._transition(
-                                "READY", "No eligible unblocked item poses; robot Home. "
-                                "Rearrange the bin and Clear Repick History when appropriate."
+                                "READY", "No eligible unblocked item poses; robot Home"
                                 if getattr(batch, "blacklist_only", False) else
                                 f"No item poses; all {EMPTY_POSE_RETRY_LIMIT} Home "
                                 "acquisition retries used; no item picked; robot Home")
@@ -1607,7 +1607,16 @@ class RobotController(Node):
                             result.outcome = result.NO_PICK
                         result.message = self.machine.message
                         result.final_state = self.machine.state
-                        goal.succeed()
+                        if result.outcome != result.NO_PICK:
+                            goal.succeed()
+                    if result.outcome == result.NO_PICK:
+                        # Release the managed lock so Continue/Stop can reach
+                        # the waiting owner. Keep the cumulative attempt count.
+                        self.managed.wait_for_items(result.message)
+                        batch = None
+                        completed_batches = empty_retries = 0
+                        retry_home_pending = reuse_home_pending = False
+                        continue
                     self.events.record(
                         "INFO", "action_result", result.message, operation="pick",
                         outcome=int(result.outcome), attempted=result.attempted_candidates,

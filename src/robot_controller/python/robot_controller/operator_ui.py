@@ -20,6 +20,12 @@ def acquisition_paused(state):
                 and state.phase == "TRAY_ACQUISITION_PAUSED")
 
 
+def item_acquisition_paused(state):
+    return bool(state is not None and state.state == "PAUSED"
+                and state.operation in ("pick", "auto_run")
+                and state.phase == "ITEM_ACQUISITION_PAUSED")
+
+
 def presentation(state, preview=False):
     if state is None:
         return "OFFLINE", "Controller status is missing or older than 1 second."
@@ -29,6 +35,11 @@ def presentation(state, preview=False):
         return "PREVIEW", "No robot motion. Home, Pick Item and Place Item show planned TFs."
     if not state.feedback_fresh:
         return "OFFLINE", "Robot feedback unavailable. " + state.motion_block_reason
+    if item_acquisition_paused(state) or acquisition_paused(state):
+        count = (f"{state.auto_run_completed}/{state.auto_run_requested} placed\n"
+                 if getattr(state, "auto_run_active", False) else "")
+        return ("WAITING FOR ITEMS" if item_acquisition_paused(state) else "WAITING FOR TRAY",
+                count + state.message)
     if getattr(state, "auto_run_active", False):
         return ("PAUSED" if state.state == "PAUSED" else "AUTO RUN"), (
             f"{state.auto_run_completed}/{state.auto_run_requested} placed\n" + state.message)
@@ -62,7 +73,8 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
             reasons["preview_toggle"] = ""
         return reasons
     current = state.state
-    if getattr(state, "auto_run_active", False) and not acquisition_paused(state):
+    if getattr(state, "auto_run_active", False) and not (
+            acquisition_paused(state) or item_acquisition_paused(state)):
         return dict.fromkeys(names, "Auto Run owns the robot; use STOP to end the run")
     idle = not (state.operation_active or action_pending or pending or managed_pending)
     if (current in ("UNCONFIGURED", "INACTIVE", "READY") and idle
@@ -114,6 +126,8 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
     if current == "PAUSED":
         reasons["continue"] = (state.continue_block_reason or "Continue is unavailable"
                                if not state.can_continue else "")
+        if item_acquisition_paused(state) and not state.item_detector_ready:
+            reasons["continue"] = "Arm Item Teach or start Item Detect with exactly one provider"
         if state.can_return_item and state.motion_ready:
             reasons["return_item"] = ""
         if acquisition_paused(state):

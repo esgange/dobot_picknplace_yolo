@@ -630,7 +630,11 @@ def test_prefetch_requires_successful_pick_and_confirmed_tray_arrival(monkeypatc
         with pytest.raises(error):
             run.run()
     else:
-        assert not run.run()
+        node.managed.wait_for_items = Mock(
+            side_effect=OperationCanceled('Stop while awaiting refill'))
+        with pytest.raises(OperationCanceled, match='awaiting refill'):
+            run.run()
+        node.managed.wait_for_items.assert_called_once()
     run.close()
     assert not order and not workers and node.placement is None
 

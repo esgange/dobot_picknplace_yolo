@@ -58,7 +58,7 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract", prepick=
     def home(**kwargs):
         if rig.managed.session is None:
             rig.feed["tool_vector_actual"] = pose_values(cfg.home_matrix)
-        else:
+        elif not rig.hardware.home_already_reached(cfg.home_joints):
             original_home(**kwargs)
     rig._execute_home = home
     rig.hardware.acquisitions = iter([True] * count)
@@ -88,6 +88,17 @@ def action_rig(monkeypatch, *, count=2, losses=(1,), loss_at="retract", prepick=
         abort=lambda: rig.finished.append("abort"),
         canceled=lambda: rig.finished.append("canceled"))
     rig.execute = lambda: RobotController._execute_pick_action(rig, rig.goal)
+    rig._perception_ready = lambda _action: True
+
+    def operator_choice():
+        # Exhaustion now retains the action. Existing route tests end that
+        # operator wait with Stop; refill/Continue is exercised separately.
+        if rig.managed.item_waiting:
+            rig.wait_message = rig.machine.message
+            rig.cancel_event.set()
+        else:
+            rig.managed.continue_operation()
+    rig.on_wait = operator_choice
     return rig
 
 
@@ -102,14 +113,14 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
 
     def confirmed(future, **kwargs):
         confirm(future, **kwargs)
-        if di1_recovers:
+        if di1_recovers and rig.managed.containing_loss:
             rig.set_di1(True)
     rig.hardware.confirm_stop = confirmed
     result = rig.execute()
 
-    assert rig.finished == ["success"]
-    assert result.outcome == (result.NO_PICK if count == 1 else result.SUCCESS)
-    assert result.final_state == ("READY" if count == 1 else "HOLDING")
+    assert rig.finished == (["abort"] if count == 1 else ["success"])
+    assert result.outcome == (result.CANCELED if count == 1 else result.SUCCESS)
+    assert result.final_state == ("RECOVERY_REQUIRED" if count == 1 else "HOLDING")
     assert result.attempted_candidates == count
     assert result.selected_candidate_id == ("" if count == 1 else "item1")
     assert [a.state for a in rig.seen_sessions[0].attempts] == (
@@ -117,7 +128,7 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
     assert rig.requests == ["detect"] * (11 if count == 1 else 1)
     assert not any(entry[0] == "recover" for entry in rig.log)
     assert not any(entry[0] == "state" and entry[1] in (
-        "FAULT", "RECOVERY_REQUIRED", "RECOVERING", "PAUSED") for entry in rig.log)
+        "FAULT", "RECOVERING") for entry in rig.log)
     stop = next(i for i, entry in enumerate(rig.log) if entry[0] == "stop_confirmed")
     release = next(i for i, entry in enumerate(rig.log)
                    if entry[0] == "move" and "return_release" in entry[1])
@@ -133,14 +144,14 @@ def test_active_pick_puts_back_without_recovery_or_action_failure(
     assert ("timed_output", 80, 1, True) in rig.log
     assert ("timed_output", 0, 1, False) in rig.log
     assert not any(entry[0] == "pulse" for entry in rig.log)
-    assert rig.startup_complete
+    assert rig.startup_complete is (count != 1)
     assert not rig.operation_lock.locked()
 
 
 def test_repeated_losses_consume_each_saved_candidate_once(monkeypatch):
     rig = action_rig(monkeypatch, count=3, losses=(1, 2, 3))
     result = rig.execute()
-    assert result.outcome == result.NO_PICK and result.final_state == "READY"
+    assert result.outcome == result.CANCELED and result.final_state == "RECOVERY_REQUIRED"
     assert rig.lost == [1, 2, 3]
     assert [a.state for a in rig.seen_sessions[0].attempts] == ["DROPPED"] * 3
     assert rig.log.count(("timed_output", 80, 1, True)) == 3

@@ -32,6 +32,20 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
+**Waiting for operator intervention:** exhausted item acquisition/pick retries,
+blocked-only poses or all unsafe trickle targets now confirm Home and Stop and
+show **WAITING FOR ITEMS** (`PAUSED`, phase `ITEM_ACQUISITION_PAUSED`). Manual Pick
+and Auto Run keep their action ownership; Auto Run retains its count and elapsed
+timer. Refill/rearrange the bin, then press **Continue**. This explicit choice
+clears repick exclusions and trickle-depth counts, discards saved poses, and grants
+a new bounded acquisition/pick window using fresh observations. Entering the wait
+or pressing Stop does not clear history. Ordinary Pause/Continue preserves history
+and budgets. There is no automatic polling or restart. Ten failed tray requests
+show **WAITING FOR TRAY** at Tray Detect with the held item preserved; Continue
+retries that same item and target without resetting bin history. Return Item is
+available there with a trusted held source. Both waits supervise feedback, pose,
+queue and outputs; STOP and faults retain their containment behavior.
+
 Item Teach schema 15 adds **Repick candidates** settings under `retry`:
 `pose_candidates`, `blaclist_trigger`, `blackist_radius` (mm),
 `blackist_cooldown` (other physical picks), and `trickle_depth` (mm). The four
@@ -44,7 +58,7 @@ before filling the requested count. Five other completed attempts expire that
 circle; successful tray placement clears only its associated source area.
 History survives fresh batches and Pause/Continue in the controller process.
 **Clear Repick History** is idle/unheld-only and also discards saved poses so the
-next Pick captures afresh. If no unblocked poses remain, return Home and report it;
+next Pick captures afresh. If no unblocked poses remain, return Home and wait for Continue;
 detection retries cannot age the cooldown. See the [repick behavior](src/robot_controller/README.md#repick-history).
 
 If successful placement clears an area that blocked the prefetched batch, Auto Run
@@ -98,7 +112,7 @@ not acceptance alone. Auto Run disables manual controls during motion; permanent
 STOP remains available. Ten unavailable tray observations pause at Tray Detect
 with the item held and the count retained. **Continue** retries tray detection
 for that item; **Return Item** puts it back and ends the run at Home/READY with
-its partial count. Three exhausted Pick batches, robot faults and STOP end the
+its partial count. Exhausted Pick budgets wait at Home for Continue. Robot faults and STOP end the
 run; no automatic restart.
 
 Auto Run displays elapsed seconds beside its completed count, then retains the
@@ -249,11 +263,11 @@ headless Item Detect provider. Pick first reuses an eligible saved pose; only an
 absent/exhausted batch requests fresh bin poses before Home. Then ensure Home
 before approaching the candidate. Valid empty results allow nine
 Home-and-acquisition retries per Pick: ten requests total if all are empty,
-then READY/NO_PICK at Home. An empty result does not consume a physical-pick batch.
+then WAITING FOR ITEMS at Home. An empty result does not consume a physical-pick batch.
 Pick uses at most
 **three nonempty candidate batches**:
 exhausting all poses counts as one attempt, then return Home and request a fresh
-batch. Stop on the first held success; three exhausted batches finish READY/NO_PICK.
+batch. Stop on the first held success; three exhausted batches enter WAITING FOR ITEMS at Home.
 Place retries a missing tray/depth result or response timeout with at most **ten
 requests total**, while staying at Tray Detect Pose. Stop/Pause, source validation
 and robot feedback checks remain active; malformed pose evidence remains fatal.
@@ -323,7 +337,7 @@ immutable until the process is restarted.
 
 The GUI top row shows **Robot status** and **Gripper status** side by side,
 with compact Item/Bin/Tray Teach loading at the right. Robot status uses NOT READY,
-READY, BUSY, HOLDING ITEM, PAUSED, ATTENTION REQUIRED and OFFLINE, with activity
+READY, BUSY, HOLDING ITEM, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED and OFFLINE, with activity
 and failure reasons always visible. Emergency stop has a prominent red override.
 The lifecycle row has Recover, a Pause/Continue/Return Item control and a **permanent
 red STOP**. Empty pauses show Continue; held pauses show Return Item with Continue

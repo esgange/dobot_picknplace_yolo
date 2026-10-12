@@ -259,12 +259,11 @@ class AutoRunOperation:
                         batch = None
                         continue
                     node._transition(
-                        "READY", "Auto Run stopped: no eligible unblocked item poses; robot Home. "
-                        "Rearrange the bin and Clear Repick History when appropriate.")
+                        "READY", "No eligible unblocked item poses; robot Home")
                     return False
                 if empty_retries >= EMPTY_POSE_RETRY_LIMIT:
                     node._transition(
-                        "READY", f"Auto Run stopped: no item poses; all {EMPTY_POSE_RETRY_LIMIT} "
+                        "READY", f"No item poses; all {EMPTY_POSE_RETRY_LIMIT} "
                         "Home acquisition retries used")
                     node.events.record(
                         "INFO", "pick_pose_acquisition_exhausted", node.machine.message,
@@ -306,7 +305,7 @@ class AutoRunOperation:
                 # never use an empty next-pick queue to bypass its release owner.
                 self.finish_home(bridge)
                 node._transition(
-                    "READY", "Auto Run stopped: no safe trickle-depth targets; robot Home")
+                    "READY", "No safe trickle-depth targets; robot Home")
                 return False
             for plan in plans:
                 return_targets(plan)
@@ -330,13 +329,13 @@ class AutoRunOperation:
                 return True
             if session.trickle_exhausted:
                 node._transition(
-                    "READY", "Auto Run stopped: no safe trickle-depth targets; robot Home")
+                    "READY", "No safe trickle-depth targets; robot Home")
                 return False
             node.events.record("INFO", "pick_batch_exhausted", "Auto Run Pick batch exhausted",
                                attempt=attempt, max_attempts=3, batch_id=batch.identifier,
                                attempted=attempted)
             batch = None
-        node._transition("READY", "Auto Run stopped: all three Pick attempts exhausted")
+        node._transition("READY", "All three Pick attempts exhausted")
         return False
 
     def _start_prefetch(self):
@@ -365,7 +364,10 @@ class AutoRunOperation:
                 self.close()
                 self.bridge = None
                 if not self.node.managed.continue_after_loss():
-                    return False
+                    self.node.active_action = "pick"
+                    self.node.managed.wait_for_items(
+                        "No eligible candidates remain after item return")
+                    continue
                 self.resume_held = True
 
     def _run_cycles(self):
@@ -375,7 +377,10 @@ class AutoRunOperation:
             picked = self.resume_held
             self.resume_held = False
             if not picked and not self._pick(batch, bridge):
-                return False
+                node.active_action = "pick"
+                node.managed.wait_for_items(node.machine.message)
+                batch, bridge = None, None
+                continue
             batch = None
             node.raise_if_cancelled()
             node.active_action = "place"

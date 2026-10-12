@@ -189,9 +189,9 @@ def test_blacklisted_only_manual_pick_homes_without_empty_acquisition_loop(monke
         return batch
     rig.candidates.request = excluded
     result = rig.execute()
-    assert result.outcome == result.NO_PICK and result.attempted_candidates == 0
+    assert result.outcome == result.CANCELED and result.attempted_candidates == 0
     assert len(rig.requests) == 1 and ("ensure_home",) in rig.log
-    assert "unblocked" in result.message
+    assert "unblocked" in rig.wait_message
 
 
 def blacklisted_prefetch_rig(placement_clears=True):

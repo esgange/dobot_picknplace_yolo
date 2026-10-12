@@ -195,9 +195,9 @@ def test_all_unsafe_targets_confirm_home_without_spending_detection_retry_budget
         assert not AutoRunOperation(rig, request())._pick()
     else:
         result = rig.execute()
-        assert result.outcome == result.NO_PICK and result.attempted_candidates == 0
+        assert result.outcome == result.CANCELED and result.attempted_candidates == 0
     assert len(rig.requests) == 1
-    assert "trickle-depth" in rig.machine.message
+    assert "trickle-depth" in (rig.machine.message if auto else rig.wait_message)
     assert np.array_equal(rig.hardware.current_pose(), rig.configuration.home_matrix)
     assert not any(row[0] == "move" and row[2].get("stop_on_suction") for row in rig.log)
 
@@ -261,9 +261,9 @@ def test_drop_with_only_unsafe_saved_targets_finishes_return_at_home(monkeypatch
         return batch
     node.candidates.request = same_area
     result = node.execute()
-    assert result.outcome == result.NO_PICK and result.attempted_candidates == 1
+    assert result.outcome == result.CANCELED and result.attempted_candidates == 1
     assert node.requests == ["detect"] and node.lost == [1]
-    assert "trickle-depth" in result.message
+    assert "trickle-depth" in node.wait_message
     assert np.array_equal(node.hardware.current_pose(), node.configuration.home_matrix)
     assert node.repick.prior_attempts((0., 0.))[0] == 1  # return is not placement
 

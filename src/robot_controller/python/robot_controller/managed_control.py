@@ -26,6 +26,7 @@ class ManagedControl:
         self.return_progress = None
         self.held_loss_pending = False
         self.containing_loss = False
+        self.item_waiting = False
 
     def checkpoint(self):
         self.node.raise_if_cancelled()
@@ -142,6 +143,8 @@ class ManagedControl:
             if self.drop_pending or (node.holding_item and not sample.suction_present):
                 return "Suction lost; item return must finish before Continue"
             placement = getattr(node, "placement", None)
+            if self.item_waiting and not node._perception_ready("pick"):
+                return "Arm Item Teach or start Item Detect with exactly one provider"
             if placement is not None:
                 if placement.release_issued and not placement.release_confirmed:
                     return "Placement release unconfirmed; use Stop, then Recover"
@@ -504,6 +507,79 @@ class ManagedControl:
         if not node.holding_item and sample.feed["digital_input_bits"] & 1:
             raise HeldUnknown("Unexpected DI1 while parked without an item")
 
+    def wait_for_items(self, reason):
+        """Retain the action at Home until explicit Continue authorizes a fresh bin."""
+        node = self.node
+        node.raise_if_cancelled()
+        if node.holding_item or getattr(node, "placement", None) is not None:
+            raise FeedbackFailure("Item wait requires completed placement and no held item")
+        node._execute_home()
+        with self.lock:
+            self.checkpoint()
+            self.executing = True
+            self.kind = "pause"
+            self.previous = node.machine.state
+            self.resume.clear()
+            node.pause_event.set()
+        try:
+            with node.stop_guard:
+                node.raise_if_cancelled()
+                node._transition("PAUSING", "Confirming Home Stop before waiting for items")
+            node.hardware.ensure_no_pending_response()
+            node.hardware.confirm_stop(node.hardware.request_stop("Item acquisition wait"))
+            node.configuration.validate_sources(node.root)
+            node._preflight_item_state(False)
+            if not node.hardware.home_already_reached(node.configuration.home_joints):
+                raise FeedbackFailure("Item wait requires confirmed taught Home joints")
+            sample = node.monitor.snapshot(require_enabled=True)
+            self.parked_pose = node.hardware.pose_from_snapshot(sample)
+            self._check_parked(sample)
+            message = (f"{reason}. Waiting for items at Home. Refill or rearrange the bin, "
+                       "then Continue to clear repick/trickle history and detect fresh; "
+                       "STOP ends the operation.")
+            with self.lock, node.stop_guard:
+                node.raise_if_cancelled()
+                self.item_waiting = True
+                node._transition("PAUSED", message)
+                node.operation_progress("ITEM_ACQUISITION_PAUSED", message,
+                                        candidate_index=0, candidate_total=0)
+            node.events.record("INFO", "item_acquisition_paused", message)
+            while True:
+                node.raise_if_cancelled()
+                self._check_parked(node.monitor.snapshot(require_enabled=True))
+                with self.lock:
+                    node.raise_if_cancelled()
+                    if self.resume.is_set():
+                        node.configuration.validate_sources(node.root)
+                        self._check_parked(node.monitor.snapshot(require_enabled=True))
+                        if not node._perception_ready("pick"):
+                            self.resume.clear()
+                            node.machine.update(
+                                "Item detector unavailable; restore it, then Continue")
+                            continue
+                        # Source hashing/provider checks must not hold the direct
+                        # Stop lock. Commit only after rechecking cancellation.
+                        with node.stop_guard:
+                            node.raise_if_cancelled()
+                            if self.session is not None:
+                                self.session.cancel_remaining()
+                                self.session = None
+                            history = getattr(node, "repick", None)
+                            if history is not None:
+                                history.clear()
+                            self._clear_request()
+                            node._transition(
+                                "PICKING", "Continue: history cleared; detecting fresh items")
+                        node.events.record(
+                            "INFO", "item_acquisition_retry",
+                            "Operator cleared repick/trickle history; new retry budget")
+                        return
+                node.wait_control(.02)
+        finally:
+            with self.lock:
+                if self.executing:
+                    self._clear_request()
+
     def handle(self):
         node = self.node
         self.executing = True
@@ -581,6 +657,7 @@ class ManagedControl:
                     self._clear_request()
 
     def _clear_request(self):
+        self.item_waiting = False
         self.executing = False
         self.parking_held = False
         self.drop_pending = False

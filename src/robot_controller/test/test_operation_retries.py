@@ -64,10 +64,10 @@ def test_pick_success_ends_retries_and_counts_all_previous_candidates(
 def test_pick_exhausts_three_complete_batches_and_returns_home_between_them(monkeypatch, counts):
     rig = pick_rig(monkeypatch, counts, [False] * sum(counts))
     result = rig.execute()
-    assert result.outcome == result.NO_PICK and result.final_state == "READY"
+    assert result.outcome == result.CANCELED and result.final_state == "RECOVERY_REQUIRED"
     assert result.attempted_candidates == sum(counts)
-    assert "3 Pick attempts" in result.message
-    assert len(rig.requests) == len(counts) and rig.finished == ["success"]
+    assert "3 Pick attempts" in rig.wait_message
+    assert len(rig.requests) == len(counts) and rig.finished == ["abort"]
     for attempt, count in enumerate(counts, 1):
         start = rig.log.index(("detect", attempt))
         end = rig.log.index(("detect", attempt + 1)) if attempt < len(counts) else len(rig.log)
@@ -95,9 +95,13 @@ def test_pick_requests_poses_before_home_and_homes_before_candidate_motion(monke
 def test_empty_pose_results_allow_nine_retries_after_home_without_added_wait(monkeypatch, counts):
     found = counts[-1]
     rig = pick_rig(monkeypatch, counts, [True] if found else [])
-    rig.wait_control = Mock(side_effect=AssertionError("No retry settling delay"))
+
+    def wait_only_after_exhaustion(_seconds):
+        assert rig.managed.item_waiting, "No retry settling delay"
+        rig.on_wait()
+    rig.wait_control = wait_only_after_exhaustion
     result = rig.execute()
-    assert result.outcome == (result.SUCCESS if found else result.NO_PICK)
+    assert result.outcome == (result.SUCCESS if found else result.CANCELED)
     assert result.attempted_candidates == found
     assert len(rig.requests) == len(counts)
     for attempt in range(1, len(counts)):
@@ -105,7 +109,7 @@ def test_empty_pose_results_allow_nine_retries_after_home_without_added_wait(mon
         after = rig.log.index(("detect", attempt + 1))
         assert ("ensure_home",) in rig.log[before + 1:after]
     if not found:
-        assert "9 Home acquisition retries" in result.message
+        assert "9 Home acquisition retries" in rig.wait_message
         assert not any(row[0] == "move" for row in rig.log)
         assert np.array_equal(rig.hardware.current_pose(), rig.configuration.home_matrix)
 
@@ -113,9 +117,9 @@ def test_empty_pose_results_allow_nine_retries_after_home_without_added_wait(mon
 def test_empty_retry_budget_survives_a_physical_pick_miss(monkeypatch):
     rig = pick_rig(monkeypatch, [0, 1] + [0] * 9, [False])
     result = rig.execute()
-    assert result.outcome == result.NO_PICK and result.attempted_candidates == 1
+    assert result.outcome == result.CANCELED and result.attempted_candidates == 1
     assert len(rig.requests) == 11
-    assert "9 Home acquisition retries" in result.message
+    assert "9 Home acquisition retries" in rig.wait_message
 
 
 @pytest.mark.parametrize("counts", [[1]] + [[0] * n for n in range(1, 10)])
@@ -162,7 +166,7 @@ def test_pause_during_home_preserves_acquired_batch_and_retry_budget(
         return home(**kwargs)
     rig._execute_home = pause
     result = rig.execute()
-    assert result.outcome == (result.SUCCESS if counts[0] else result.NO_PICK)
+    assert result.outcome == (result.SUCCESS if counts[0] else result.CANCELED)
     assert len(rig.requests) == len(counts) and ("state", "PAUSED") in rig.log
 
 
@@ -197,7 +201,7 @@ def test_pick_pause_between_batches_preserves_budget(monkeypatch):
         progress(phase, message, **kwargs)
     rig.operation_progress = pause
     result = rig.execute()
-    assert result.outcome == result.NO_PICK and result.attempted_candidates == 3
+    assert result.outcome == result.CANCELED and result.attempted_candidates == 3
     assert paused and len(rig.requests) == 3
     assert ("state", "PAUSED") in rig.log
 

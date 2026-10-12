@@ -95,9 +95,9 @@ def test_all_below_floor_uses_existing_nine_home_retries(monkeypatch, tmp_path):
 
     rig.candidates.request = filtered
     result = rig.execute()
-    assert result.outcome == result.NO_PICK and result.final_state == "READY"
+    assert result.outcome == result.CANCELED and result.final_state == "RECOVERY_REQUIRED"
     assert result.attempted_candidates == 0 and len(rig.requests) == 10
-    assert sum(row == ("ensure_home",) for row in rig.log) == 9
+    assert sum(row == ("ensure_home",) for row in rig.log) == 10
     assert not any(row[0] == "move" and row[2].get("stop_on_suction") for row in rig.log)
 
 

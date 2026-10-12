@@ -11081,6 +11081,43 @@ Never use a floating “latest” version in an issue, script, or deployment not
   robot command, interface/schema change or offline-transfer claim. Operator
   relaunch/live verification remain pending. Follow scoped commit/push workflow.
 
+### 2026-10-12 — Rule 272: wait for refill or tray intervention, then explicit Continue
+
+- User requests a waiting state after item/tray exhaustion, preserving the run
+  while the operator refills/rearranges the bin or replaces a missing tray.
+  They explicitly select Continue rather than automatic polling, and correct
+  their history choice to clear repick exclusions/trickle counts on item Continue.
+- Manual Pick and Auto Run retain their original action after ten empty item
+  requests, blocked-only/all-unsafe-trickle results or three exhausted physical
+  batches. Finish any owned placement and count it once, then confirm taught
+  Home, issued replies and physical Stop before PAUSED with
+  ITEM_ACQUISITION_PAUSED / WAITING FOR ITEMS. No new perception/motion is issued
+  while waiting. Keep the count, elapsed timer and exclusive operation owner.
+- Item Continue checks sources, exactly one item provider and fresh enabled,
+  stationary parked pose/queue/output feedback with raw DI1 LOW. After another
+  cancellation check, clear history and saved poses and grant a fresh bounded
+  window. Manual attempted_candidates remains cumulative; old batch IDs remain
+  rejected. Entering the wait or Stop never clears history. Ordinary Pause
+  preserves its original budget, history and poses. A still-empty bin waits again.
+- Existing tray exhaustion remains confirmed pre-release PAUSED at Tray Detect,
+  now displayed as WAITING FOR TRAY. Keep source/item/outputs/target/count;
+  Continue grants ten fresh tray requests without clearing bin history. Preserve
+  Return Item and direct Stop. No automatic startup/arming/restart, new executor,
+  interface/schema/configuration key or relaxed geometry/I/O gate is introduced.
+- Validation and deployment: **1,530 controller tests pass** with synthetic
+  inputs, including retained 95/100 progress, repeated refill windows, history
+  reset only after Continue, and Stop/fault/provider/source checks. Changed
+  Python AST, scoped flake8 and diff checks pass. The isolated controller build
+  under build/install/item_acquisition_wait succeeds against canonical installed
+  dependencies. Regenerated FSM HTML/PDF match the source hash, contain nine
+  diagrams/pages and both wait labels; all navigation/zoom controls work offline
+  without network requests or browser errors. Controller, Item Teach and Tray
+  Teach were running, so no canonical rebuild or process restart was performed.
+  No robot commands were issued; operator deployment/relaunch and physical
+  verification remain pending. Preserve .env, unrelated vendor RViz edits and
+  all operator calibration/teach/model/runtime artifacts. Commit/push only this
+  tested scope under the standing workflow.
+
 ### Future entry template
 
 ```text

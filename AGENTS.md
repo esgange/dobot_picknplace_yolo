@@ -2138,6 +2138,21 @@ final descent. Use existing distance-mode-zero MovLIO encoding, in order:
 retain all closing, travel, retry and feedback behavior. Update diary/FSM/exports,
 validate synthetically and use isolated builds while affected processes run.
 
+Rule 272 retains manual Pick and Auto Run on item exhaustion in confirmed
+PAUSED at taught Home, with ITEM_ACQUISITION_PAUSED and WAITING FOR ITEMS.
+Cover ten empty acquisitions, blocked-only/no-safe-trickle results and three
+exhausted physical batches. Finish any owned placement before Home/Stop; keep
+count, action ownership and elapsed time. Do not detect or move while waiting.
+Explicit Continue validates fresh safe parked feedback, unchanged sources and
+the item provider, then clears repick exclusions/trickle counts, discards saved
+poses and grants a fresh bounded retry window. Clear nothing merely on wait or
+Stop. Ordinary Pause preserves history/budgets. Tray exhaustion keeps its held
+pre-release PAUSED at Tray Detect and displays WAITING FOR TRAY; Continue retries
+the same item with ten fresh requests and no bin-history reset, Return Item and
+STOP remain. Direct Stop/cancel and faults pre-empt all waits; no automatic
+poll/restart, arming, new state/interface/schema/configuration or executor is added.
+Update the diary/FSM and regenerate/verify exports; isolate builds while live.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

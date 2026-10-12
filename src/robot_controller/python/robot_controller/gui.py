@@ -23,7 +23,7 @@ from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlob
 from .ui_state import load_state, save_state
 from .feedback import FEEDBACK_MAX_AGE_SEC
 from .placement import validate_target
-from .operator_ui import acquisition_paused, button_policy, presentation
+from .operator_ui import acquisition_paused, button_policy, item_acquisition_paused, presentation
 
 
 class GuiNode(rclpy.node.Node):
@@ -386,7 +386,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.status_detail.setText(detail)
         color = ("#61dfa5" if label == "READY" else
                  "#ff9393" if label in ("ATTENTION REQUIRED", "EMERGENCY STOP PRESSED") else
-                 "#ffd077" if label in ("PAUSED", "OFFLINE", "HOLDING ITEM") else "#edf3f8")
+                 "#ffd077" if label in (
+                     "PAUSED", "OFFLINE", "HOLDING ITEM", "WAITING FOR ITEMS", "WAITING FOR TRAY")
+                 else "#edf3f8")
         size = 18 if len(label) > 14 else 24
         self.status.setWordWrap(True)
         self.status.setStyleSheet(f"font-size:{size}px;font-weight:700;color:{color}")
@@ -881,7 +883,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "auto_run": "Pick and place the requested quantity, then return Home",
             "configure": "Load teach files, enable and initialize the robot to READY",
             "continue": ("Retest suction at Home after clearing the item or obstruction"
-                         if recovery_paused else "Resume the retained operation"),
+                         if recovery_paused else
+                         "Clear repick/trickle history and retry with fresh item detections"
+                         if item_acquisition_paused(state) else
+                         "Retry tray detection for the retained item" if retry else
+                         "Resume the retained operation"),
             "recover": "Cancel the action, preserve grip to Home, then test suction",
             "pause": "Stop and confirm the operation's paused position",
             "return_item": "Return the held item to its saved bin position, then Home",

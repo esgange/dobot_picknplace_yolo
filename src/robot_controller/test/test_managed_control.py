@@ -754,9 +754,18 @@ def test_feedback_callback_latches_confirmed_paused_drop_even_after_di1_recovers
 def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, count):
     import robot_controller.controller as controller_module
     from robot_controller.controller import RobotController
+    from test_recovery_return import RecoveryRig
 
-    rig = Rig(count=count)
+    rig = RecoveryRig(count=count)
     rig.machine = ControllerStateMachine(initial="READY")
+    rig.startup_complete = True
+    rig.holding_item = False
+    rig.set_di1(False)
+    rig.expected_outputs = dict.fromkeys((1, 2, 13, 14), False)
+    rig.feed['digital_outputs'] = 0
+    rig._begin_operation('pick')
+    rig.on_wait = lambda: (rig.cancel_event.set() if rig.managed.item_waiting
+                           else rig.managed.continue_operation())
     rig.candidate_total = 0
     rig.cancel_requested = rig.cancel_event.is_set
     rig.wait_for_resume = rig.managed.checkpoint
@@ -764,7 +773,7 @@ def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, co
     rig._attempt_changed = lambda *_args: None
     rig._end_operation = lambda: rig.operation_lock.release()
     rig._failure_outcome = RobotController._failure_outcome
-    rig._action_failure = lambda *_args: pytest.fail("Unexpected Pick failure: " + str(_args[2]))
+    rig._action_failure = lambda *args: RobotController._action_failure(rig, *args)
     cfg = rig.configuration
     cfg.selection = SimpleNamespace(
         station=SimpleNamespace(platform=SimpleNamespace(base_from_platform=np.eye(4))),
@@ -805,13 +814,14 @@ def test_pick_action_retries_same_candidate_after_repeated_pause(monkeypatch, co
     rig.hardware.on_move = interrupt
     finished = []
     goal = SimpleNamespace(request=SimpleNamespace(save_debug_images=False),
+                           is_cancel_requested=False,
                            succeed=lambda: finished.append("success"),
                            abort=lambda: finished.append("abort"))
     result = RobotController._execute_pick_action(rig, goal)
     assert requests == ["detect"] * 11
-    assert result.outcome == result.NO_PICK
+    assert result.outcome == result.CANCELED
     assert result.attempted_candidates == count
-    assert finished == ["success"]
+    assert finished == ["abort"]
     assert [attempt.state for attempt in sessions[0].attempts] == ["FAILED"] * count
     assert approaches[:3] == [("p1_transit", "p1_prepick", "p1_pick"),
                               ("p1_prepick", "p1_pick"), ("p1_prepick", "p1_pick")]

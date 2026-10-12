@@ -144,7 +144,7 @@ def test_failure_pause_exposes_continue_return_and_stop_with_pending_action(wind
         auto_run_requested=3, auto_run_completed=2)
     window.result_future = SimpleNamespace(done=lambda: False)
     window._refresh()
-    assert presentation(window.node.status)[0] == 'PAUSED'
+    assert presentation(window.node.status)[0] == 'WAITING FOR TRAY'
     assert window.pause.menu() is window.pause_menu
     assert window.managed_actions['continue'].isEnabled()
     assert window.managed_actions['return_item'].isEnabled()

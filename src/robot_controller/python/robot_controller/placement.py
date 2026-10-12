@@ -212,11 +212,12 @@ class PlacementOperation(ReleaseQueue):
             if self.acquisition_paused:
                 if not node.hardware.home_already_reached(node.configuration.tray.detect_joints):
                     raise FeedbackFailure("Not at Tray Detect position; acquisition Pause blocked")
-                choices = "Use Continue / Place Item (Retry)"
+                choices = "use Continue / Place Item (Retry)"
                 if node.holding_item:
                     choices += " or Return Item"
-                message = (f"{self.acquisition_failure}; paused at Tray Detect. "
-                           f"{choices}")
+                message = (f"{self.acquisition_failure}; waiting at Tray Detect. "
+                           f"Replace or reposition the tray, then {choices}. "
+                           "Detection waits for your command; STOP ends the operation.")
             else:
                 message = "Placement stopped in place; Continue resumes it"
             node._transition("PAUSED", message)
