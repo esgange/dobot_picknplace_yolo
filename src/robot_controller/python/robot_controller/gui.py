@@ -121,6 +121,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.cp_pending_percent = None
         self.cp_syncing = False
         self.auto_detectors = AutoDetectors(node)
+        self.auto_preparing = False
+        self.auto_prepare_canceled = False
+        self.auto_stop_again = False
         self.setWindowTitle("Robot Controller")
         self.resize(1050, 445)
         central = QtWidgets.QWidget()
@@ -516,6 +519,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.preview_clear_deadline = time.monotonic() + 5.0
 
     def closeEvent(self, event):
+        if self.auto_preparing and not self.auto_prepare_canceled:
+            self._immediate_stop()
         self.auto_detectors.close()
         if self.preview_mode or "preview" in self.pending:
             self._clear_preview()
@@ -538,14 +543,42 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _configure(self):
         if self._availability()["configure"]:
             return
+        self._configure_paths(tuple(field.text().strip() for field in (
+            self.item_path, self.bin_path, self.tray_path)))
+
+    def _configure_paths(self, paths):
         request = Configure.Request()
-        request.item_teach_file = self.item_path.text().strip()
-        request.bin_teach_file = self.bin_path.text().strip()
-        request.tray_teach_file = self.tray_path.text().strip()
-        self.saved_selection = (request.item_teach_file, request.bin_teach_file,
-                                request.tray_teach_file)
+        request.item_teach_file, request.bin_teach_file, request.tray_teach_file = paths
+        self.saved_selection = paths
         if not self._call("configure", request):
             self.saved_selection = None
+            return False
+        return True
+
+    def _prepare_auto(self):
+        auto_state = self.auto_detectors.snapshot[0]
+        if (self.auto_preparing and not self.auto_prepare_canceled
+                and auto_state in ('STOPPING', 'FAILED', 'OFF')):
+            # Detector failure/cancellation must also contain an issued Configure.
+            self._immediate_stop()
+        paths = self.auto_detectors.take_preparation()
+        if paths is None:
+            return
+        reason = idle_reason(self.node.status)
+        if (reason or self.preview_mode or self.pending or self.pending_goal is not None
+                or self.result_future is not None or self.preview_clear_future is not None):
+            self.auto_detectors.prepared(error=reason or 'Another GUI operation is pending')
+            return
+        self.auto_preparing = True
+        self.auto_prepare_canceled = False
+        try:
+            if not self._configure_paths(paths):
+                self.auto_preparing = False
+                self.auto_detectors.prepared(error='Controller Configure service is unavailable')
+        except Exception as exc:
+            self.auto_detectors.prepared(error=str(exc))
+            self._immediate_stop()
+            self.auto_preparing = False
 
     def _command(self, name):
         if name != "stop" and self._availability().get(name, "Unavailable command"):
@@ -558,6 +591,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if self.preview_mode:
             self._clear_preview()
         # Dispatch the independent Stop before optional action cancellation.
+        if self.auto_detectors.snapshot[0] in ('DEPLOYING', 'STARTING', 'PREPARING'):
+            self.auto_detectors.stop()
+        if self.auto_preparing:
+            self.auto_prepare_canceled = True
         self._command("stop")
         if self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
@@ -716,6 +753,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._refresh_controls()
 
     def _collect(self):
+        self._prepare_auto()
         if self.preview_clear_future is not None and (
                 self.preview_clear_future.done()
                 or time.monotonic() > self.preview_clear_deadline):
@@ -737,8 +775,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
             try:
                 result = future.result()
                 accepted = result is not None and result.success
+                if (name == 'configure' and self.auto_preparing
+                        and self.auto_prepare_canceled and accepted):
+                    # The service may have completed after cancellation's first Stop.
+                    self.auto_stop_again = True
                 if result is None or not result.success:
                     message = "No response" if result is None else result.message
+                    if name == 'configure' and self.auto_preparing:
+                        self.auto_detectors.prepared(error=message)
                     if name == "speed":
                         self.speed_pending_percent = None
                         if result is not None and result.confirmed_percent >= 1:
@@ -753,6 +797,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                         self.node.root / "logs/robot_controller/last_session.json",
                         *self.saved_selection)
                     self._clear_preview()
+                    if self.auto_preparing and not self.auto_prepare_canceled:
+                        self.auto_detectors.prepared(result.configuration_id)
                 elif name == "speed":
                     self.speed_pending_percent = result.confirmed_percent
                     self._sync_speed_slider(result.confirmed_percent)
@@ -773,16 +819,24 @@ class ControllerWindow(QtWidgets.QMainWindow):
                         "Fingers are relaxed, suction and "
                         "exhaust are OFF, and DI1 is LOW. The interrupted action was cancelled.")
             except Exception as exc:
+                if name == 'configure' and self.auto_preparing:
+                    self.auto_detectors.prepared(error=str(exc))
+                    self._immediate_stop()
                 if name == "speed":
                     self.speed_pending_percent = None
                 elif name == "cp":
                     self.cp_pending_percent = None
                 QtWidgets.QMessageBox.warning(self, f"{name} failed", str(exc))
             finally:
+                if name == 'configure':
+                    self.auto_preparing = False
                 if name == "pause" and not accepted:
                     self.pause_requested_locally = False
                 if name == "return_item" and not accepted:
                     self.return_requested_locally = False
+        if self.auto_stop_again and 'stop' not in self.pending:
+            if self._command('stop'):
+                self.auto_stop_again = False
         if self.pending_goal is not None and self.pending_goal.done():
             try:
                 handle = self.pending_goal.result()
@@ -821,11 +875,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _auto_change_reason(self):
         state, _message = self.auto_detectors.snapshot
-        if state in ('DEPLOYING', 'STARTING'):
-            return ''  # Cancel startup without touching the robot.
+        if state in ('DEPLOYING', 'STARTING', 'PREPARING'):
+            return ''  # PREPARING cancellation also uses the independent Stop.
         if state == 'STOPPING':
             return 'Wait for the owned detectors to stop'
-        if (self.preview_mode or self.pending or self.pending_goal is not None
+        if (self.preview_mode or self.pending or self.auto_stop_again
+                or self.pending_goal is not None
                 or self.result_future is not None or self.preview_clear_future is not None):
             return 'Finish the pending action and leave Preview before changing detectors'
         reason = idle_reason(self.node.status)
@@ -845,7 +900,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 except ValueError as exc:
                     QtWidgets.QMessageBox.warning(self, 'Load Auto', str(exc))
             else:
-                self.auto_detectors.stop()
+                if self.auto_preparing:
+                    self._immediate_stop()
+                else:
+                    self.auto_detectors.stop()
         self._refresh_controls()
 
     def _run_reason(self, mode):
@@ -869,9 +927,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
             target_error = "Enter positive X/Y in mm and a valid rotation"
         reasons = button_policy(
             self.node.status, preview=self.preview_mode,
-            pending=bool(self.pending or self.preview_clear_future is not None
+            pending=bool(self.pending or self.auto_stop_again
+                         or self.preview_clear_future is not None
                          or self.auto_detectors.snapshot[0] in
-                         ('DEPLOYING', 'STARTING', 'STOPPING')),
+                         ('DEPLOYING', 'STARTING', 'PREPARING', 'STOPPING')),
             action_pending=self.pending_goal is not None or self.result_future is not None,
             managed_pending=self.pause_requested_locally or self.return_requested_locally,
             target_error=target_error, item_selected=bool(self.item_path.text().strip()),
@@ -1003,7 +1062,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto.setToolTip(auto_reason or (
             'OFF stops the owned detectors. ON replaces runtime_teach with the selected '
             'teach files and models, then starts Item Detect and Tray Detect. '
-            'Load Teach Configuration is separate.'))
+            'It also loads the selected teach configuration and prepares/enables the robot. '
+            'Auto Run remains a separate click.'))
         self.load_auto_status.setText(auto_message if len(auto_message) <= 180 else
                                       'Load Auto failed; see command log for details')
         self.load_auto_status.setToolTip(auto_message)

@@ -30,8 +30,9 @@ bringup, cameras or RViz.
 
 The old **Auto Run** button is now **Manual Run** and uses armed Item Teach and
 Tray Teach. The new **Auto Run** uses the headless pair started by **Load Auto**.
-Load Auto is green while ON with both detectors ready; Auto Run is green when
-enabled. A NOT READY controller still needs Load Teach Configuration before running.
+Load Auto also loads the selected teach configuration and prepares/enables the
+robot. It turns green after preparation and both detectors are ready; Auto Run
+is green when enabled. No separate Load Teach Configuration click is required.
 Both use the same Quantity, X/Y, Rotation and debug-image checkbox and the same
 native counted-cycle engine. They preserve count, timing, motion, placement,
 retry/intervention waits and direct STOP behavior. The existing AUTO RUN status
@@ -48,26 +49,36 @@ To use Auto Run:
    It replaces the entire root `runtime_teach/` directory contents with exactly
    those three YAMLs and two models. Failed validation/copy leaves the old catalog
    intact. Source teaching files, calibration and `.env` are never rewritten.
-4. Wait for **Headless Item Detect and Tray Detect are ready**. Models and saved
-   profiles load automatically; service requests still acquire fresh observations.
-   Use **Load Teach Configuration** separately to load/prepare the controller.
+4. Wait through **PREPARING** for **Robot prepared; headless Item Detect and Tray
+   Detect are ready**. The GUI sends one existing Configure request with the same
+   selected Item/Bin/Tray paths, then requires its successful response and matching
+   fresh, enabled, idle READY status. Models/profiles load automatically; detection
+   service requests still acquire fresh observations.
 5. Set Quantity and placement inputs and click **Auto Run** when READY.
 
 Load Auto starts OFF on every GUI launch; there is no saved toggle, automatic
 restart or directory watcher. Files remain deployed after OFF. To change files,
 turn OFF while idle/unheld, browse again, then ON to replace the catalog again.
 Teach selections are locked during deployment and while detectors run. Startup
-can be canceled. Both services must become ready within 180 seconds. A child
+can be canceled. Both services must become ready within 180 seconds. Preparation
+has a separate 180-second bound, and its successful response must be followed by
+matching READY status within five seconds. A child
 exit, lost service, conflicting provider or startup failure stops the owned pair
 and reports the reason beneath Load Auto and in the command log. OFF and GUI exit
 terminate only owned detector process groups, including native workers; GUI death
 also signals the child processes. Foreign providers are refused, never stopped
 or automatically disarmed. Manual arming remains an explicit operator step.
 
-Load Auto sends no Configure, Startup, Enable or robot motion command. Changing
-detectors is blocked during an active run, holding, Pause or unavailable feedback;
-direct STOP remains available. The existing Load Teach Configuration button still
-prepares/enables hardware and is independent of detector deployment.
+Load Auto reuses Configure's existing guarded preparation (including enable,
+settings and unheld output initialization); it never starts Home or a pick/place
+cycle. Changing detectors is blocked during an active run, holding, Pause or
+unavailable feedback. OFF, STOP, GUI exit or detector failure during an issued
+preparation sends independent controller Stop and prevents deferred readiness.
+A late successful Configure after cancellation gets another Stop once the prior
+Stop reply is collected. Preparation failure stops the owned pair; no automatic
+retry occurs. Turning OFF after preparation leaves the robot prepared and stops
+only the detectors. The Load Teach Configuration button remains available for
+manual use and explicit reload.
 
 Both buttons bind provider type in `AutoRun.detector_mode`: Manual uses TEACH=1,
 Auto uses HEADLESS=2. The controller checks that type before admission and on

@@ -11280,6 +11280,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve unrelated RViz and calibration/teach/model/runtime artifacts.
   Commit/push only this validated visual scope under the standing workflow.
 
+### 2026-10-12 — Rule 276: Load Auto also prepares the robot
+
+- User supersedes rule 275's separate preparation choice. Explicit Load Auto ON
+  validates/deploys the selected catalog and starts the owned headless pair as
+  before. Once both services are ready, enter GUI PREPARING and send exactly one
+  existing Configure request using the frozen selected Item/Bin/Tray paths.
+  Reuse manual Load's saved-selection handling and the controller's existing
+  guarded load/enable/settings/unheld-output initialization, without another
+  hardware client or changing startup behavior. Recheck idle/unheld fresh robot
+  feedback and absence of competing GUI operations before Configure dispatch.
+- RUNNING/green ON requires Configure success, its nonempty configuration ID,
+  matching fresh enabled idle READY and both detector services. Preparation has
+  its own 180-second bound; matching status must follow success within five
+  seconds. Lock conflicting controls and selections throughout PREPARING, keep
+  cancellation and direct Stop available, and never start Home or Auto Run.
+  Manual Load/Reload and all existing motion/run admission gates remain.
+- OFF/STOP/GUI exit or detector failure while Configure is pending sends the
+  independent controller Stop and prevents delayed readiness. A late successful
+  Configure after cancellation requests another Stop once the previous reply is
+  collected. Cancellation wins over a concurrent supervisor-ready transition.
+  Preparation failure stops owned detectors without retry; no foreign process
+  is stopped. OFF after completed preparation leaves the robot prepared. There
+  is no new lifecycle state, public interface, schema, setting or startup action
+  merely from opening the GUI. Existing catalog rollback/source preservation,
+  provider ownership, detector supervision and readiness bounds remain intact.
+- Validation: **1,725 controller tests pass**, including 21 additional cases for
+  one-time frozen-path preparation, admission rechecks, response/service failure,
+  preparation/READY timeout, cancellation before and during Configure, detector
+  failure, late accepted replies and cancellation/readiness races. Tests use
+  synthetic GUI/controller inputs and existing harmless process fixtures, never
+  real detector/robot startup. Scoped lint/diff checks and the isolated controller
+  build in build/install/auto_prepare pass against canonical dependency installs.
+  Update AGENTS, root/package/interface READMEs and FSM. Regenerated adjacent
+  HTML/PDF pass matching-source-hash, nine-diagram/page, preparation-label and
+  offline navigation/zoom checks. Offscreen PREPARING/ready states are inspected.
+- Controller/Preview/GUI and both headless detectors are running. No canonical
+  rebuild, process restart, real toggle, robot command or deployment is performed.
+  Preserve .env, unrelated vendor RViz edits and all operator calibration/teach/
+  model/runtime artifacts. The canonical GUI/supervisor modules use source
+  symlinks; the operator's next GUI launch reads this change. Physical operation
+  remains unverified. Commit/push only this tested scope under the standing workflow.
+
 ### Future entry template
 
 ```text

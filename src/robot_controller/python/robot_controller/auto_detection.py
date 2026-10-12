@@ -54,14 +54,19 @@ class AutoDetectors:
         self.thread = None
         self.children = {}
         self.messages = deque()
+        self.selections = ()
+        self.preparation_claimed = False
+        self.preparation_result = None
 
     @property
     def snapshot(self):
         with self.lock:
             return self.state, self.message
 
-    def _state(self, state, message):
+    def _state(self, state, message, *, expected=None):
         with self.lock:
+            if expected is not None and (self.state != expected or self.cancel.is_set()):
+                return
             self.state, self.message = state, message
             self.messages.append((state, message))
         self.events.record('ERROR' if state == 'FAILED' else 'INFO',
@@ -99,9 +104,27 @@ class AutoDetectors:
         if self.thread is not None and self.thread.is_alive():
             raise ValueError('Load Auto is already active')
         self.cancel.clear()
+        self.selections = tuple(selections)
+        self.preparation_claimed = False
+        self.preparation_result = None
         self._state('DEPLOYING', 'Validating and copying the selected teach files…')
         self.thread = threading.Thread(target=self._run, args=(tuple(selections),), daemon=True)
         self.thread.start()
+
+    def take_preparation(self):
+        """Hand the GUI one Configure request after both detectors are ready."""
+        with self.lock:
+            if (self.state != 'PREPARING' or self.cancel.is_set()
+                    or self.preparation_claimed):
+                return None
+            self.preparation_claimed = True
+            return self.selections
+
+    def prepared(self, configuration_id='', *, error=''):
+        with self.lock:
+            if self.state == 'PREPARING' and not self.cancel.is_set():
+                self.preparation_result = (configuration_id, error or (
+                    '' if configuration_id else 'Robot preparation returned no configuration ID'))
 
     def stop(self):
         if self.thread is not None and self.thread.is_alive():
@@ -181,6 +204,8 @@ class AutoDetectors:
                 self._spawn(kind, executable)
             deadline = time.monotonic() + 180.
             ready_once = False
+            preparation_deadline = None
+            ready_deadline = None
             while not self.cancel.wait(.2):
                 for kind, (process, tail) in self.children.items():
                     if process.poll() is not None:
@@ -192,12 +217,34 @@ class AutoDetectors:
                     raise RuntimeError('Conflicting detection provider; stopping owned detectors')
                 ready = all(available.values())
                 if ready and not ready_once:
-                    self._state('RUNNING', 'Headless Item Detect and Tray Detect are ready')
+                    self._state('PREPARING', 'Detectors ready; loading teach files and '
+                                'preparing the robot…', expected='STARTING')
+                    preparation_deadline = time.monotonic() + 180.
                     ready_once = True
                 elif not ready and ready_once:
                     raise RuntimeError('A headless detection service disappeared')
                 if not ready_once and time.monotonic() >= deadline:
                     raise TimeoutError('Headless detectors did not become ready within 180 seconds')
+                with self.lock:
+                    preparing = self.state == 'PREPARING'
+                    result = self.preparation_result
+                if preparing:
+                    if result is not None:
+                        configuration_id, error = result
+                        if error:
+                            raise RuntimeError('Robot preparation failed: ' + error)
+                        if ready_deadline is None:
+                            ready_deadline = time.monotonic() + 5.
+                        status = self.node.status
+                        if (not idle_reason(status) and status.state == 'READY'
+                                and status.startup_complete and status.robot_enabled
+                                and status.configuration_id == configuration_id):
+                            self._state('RUNNING', 'Robot prepared; headless Item Detect '
+                                        'and Tray Detect are ready', expected='PREPARING')
+                        elif time.monotonic() >= ready_deadline:
+                            raise TimeoutError('Robot preparation did not confirm matching READY')
+                    if self.snapshot[0] == 'PREPARING' and time.monotonic() >= preparation_deadline:
+                        raise TimeoutError('Robot preparation did not finish within 180 seconds')
         except InterruptedError:
             pass
         except Exception as exc:

@@ -1,6 +1,6 @@
 # Robot Controller — Finite State Machine
 
-Load Auto / run-source review: **2026-10-12**, baseline **`d211ea8`** plus rule **275**.
+Load Auto / run-source review: **2026-10-12**, baseline **`44920b2`** plus rule **276**.
 The GUI's previous Auto Run becomes Manual Run (armed teaching providers). A new
 Auto Run requires the headless Item/Tray pair owned by explicit Load Auto. Both
 freeze the same quantity, placement and debug inputs in the shared native action;
@@ -9,14 +9,22 @@ all count, motion, retry/intervention and Stop behavior remains. Its new goal
 Enforce the selected type before admission, requests/retries and observation use.
 Load Auto starts OFF, validates/stages the selected Item/Bin/Tray YAML and two
 models, replaces the complete runtime catalog, then starts the detector pair.
-Readiness requires both services within 180 seconds. OFF/exit/child failure/lost
-or conflicting service stops only owned children, with no restart. Existing
+Both services must appear within 180 seconds. GUI PREPARING then sends one existing
+Configure request with the frozen selected paths; recheck idle/unheld feedback
+and GUI ownership before dispatch. Configure performs the existing guarded robot
+preparation, including enable/settings/output initialization. Require its successful
+reply and matching fresh enabled idle READY before RUNNING/green ON. Bound this
+stage to 180 seconds, with five seconds for matching status after its response.
+OFF/exit/child failure/lost or conflicting service stops owned children, with no
+restart; during an issued preparation, also send independent controller Stop.
+Canceling suppresses deferred readiness, and a late successful Configure after
+cancellation gets another Stop after the prior Stop reply is collected. Existing
 providers are refused, never disarmed/killed. Files/selections are locked while
 active; changes require idle/unheld and fresh stationary feedback, or canceling
-startup. Load Auto has no robot/configuration action: controller preparation is
-still the separate Load Teach Configuration button. These are GUI supervisor
-states, not new hardware lifecycle states. Rebuild interfaces/controller and
-relaunch clients together. Synthetic tests do not establish live readiness.
+startup. Load Teach Configuration remains for manual use/reload; Auto Run remains
+an explicit separate click. These are GUI supervisor states, not new hardware
+lifecycle states. Controller startup and motion behavior are unchanged. Synthetic
+tests do not establish live readiness.
 
 Nearest placement review: **2026-10-12**, baseline **`6f3e6c3`** plus rule **274**.
 Treat the two placement attitudes 180° apart about unchanged taught tool Z as
@@ -810,7 +818,7 @@ Keep controller state records separate from the GUI detector supervisor:
 | --- | --- | --- |
 | Controller lifecycle | What the whole controller is doing | `PICKING`, `PAUSED`, `RECOVERING` |
 | Candidate ledger | What happened to each item pose in the accepted batch | `PENDING`, `INTERRUPTED`, `HELD` |
-| GUI Load Auto supervisor | Owned deployment/detector lifetime, independent of robot lifecycle | `OFF`, `DEPLOYING`, `STARTING`, `RUNNING`, `STOPPING`, `FAILED` |
+| GUI Load Auto supervisor | Owned deployment/detector lifetime and request for existing controller preparation | `OFF`, `DEPLOYING`, `STARTING`, `PREPARING`, `RUNNING`, `STOPPING`, `FAILED` |
 
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
 Pick's initial Home travel still reports `PICKING`; it is not a separate Home
@@ -887,8 +895,8 @@ action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
 Load Auto sits below Clear Repick History and is green when its supervisor is
-RUNNING. Auto Run is green only when its normal admission gates enable the button;
-NOT READY still requires Load Teach Configuration. These colors change no guards.
+RUNNING after confirmed preparation. Auto Run is green only when its normal
+admission gates enable the button. These colors change no guards.
 ON validates the browsed production
 sources and saved calibrations without executing models, then copies three YAMLs
 and two paired models into staging and verifies hashes/catalog before replacing
@@ -896,16 +904,23 @@ all contents of root runtime_teach. Failed validation/copy preserves the old cat
 Sources, calibration and .env stay unchanged. Start the canonical installed headless
 executables only after deployment; they load models and arm after input validation.
 Require no armed teaching provider or independently running headless detector.
-OFF stops only owned processes and leaves files deployed. GUI exit does the same;
-children receive a parent-death signal if the GUI disappears. No automatic restart,
-arming of teaching GUIs, controller Configure/Startup or robot command is added.
+Once both are ready, request Configure with the frozen browsed paths, reusing the
+same load/preparation and saved-selection handling as Load Teach Configuration.
+Failure ends the sequence and stops the owned pair. OFF stops owned processes and
+leaves files deployed. GUI exit does the same;
+children receive a parent-death signal if the GUI disappears. OFF/STOP/exit or
+detector failure during an issued Configure also sends controller Stop and prevents
+later readiness. A late successful reply after cancellation requires another Stop.
+OFF after completed preparation leaves the robot prepared. No automatic restart,
+arming of teaching GUIs, Home, pick/place cycle or direct driver client is added.
 
 | Load Auto state | Meaning / next explicit control |
 | --- | --- |
 | OFF | Default on every GUI launch; idle/unheld with fresh stationary feedback and all three paths selected can enable |
 | DEPLOYING | Validate/copy/verify complete catalog off the GUI thread; selections and conflicting controls locked; OFF cancels |
 | STARTING | Owned pair starting; wait for both sole canonical services, at most 180 seconds; OFF cancels |
-| RUNNING | Auto Run additionally follows normal READY/action gates; Load Teach Configuration remains separate; idle/unheld OFF stops pair |
+| PREPARING | Both detectors ready; GUI sends Configure once and waits for success plus matching fresh enabled idle READY; at most 180 seconds overall / five seconds after response; OFF cancels, with Stop if issued |
+| RUNNING | Preparation completed; Auto Run additionally follows normal READY/action gates; manual Load/Reload remains available; idle/unheld OFF stops pair |
 | STOPPING | Wait for owned children/native workers to terminate; no new start |
 | FAILED | Pair stopped; reason visible and logged; correct problem and explicitly enable again |
 
@@ -913,12 +928,15 @@ arming of teaching GUIs, controller Configure/Startup or robot command is added.
 flowchart TD
     Deploy["Explicit Load Auto ON: idle, unheld; selected teach files; no competing providers"] --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
-    Detect --> Loaded["Load Auto ON; separate Load Teach Configuration prepares robot"]
+    Detect --> Prepare["PREPARING: Configure selected teach files; enable and initialize robot"]
+    Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
     Loaded --> Auto["Auto Run: owned headless pair ready"]
     Manual["Manual Run: both teaching GUIs armed"] --> Run["Shared native counted run; same quantity and placement; bind detector mode"]
     Auto --> Run
     Loaded -->|Idle OFF, exit, service loss or child failure| End["Stop owned pair only; no restart; deployed files remain"]
     Detect -->|Cancel or failure| End
+    Prepare -->|Cancel or failure| CancelPrepare["Stop issued preparation; ignore late readiness; stop owned detectors"]
+    CancelPrepare --> End
     Buttons["Home / Pick Item / Place Item"] --> Mode{"Preview toggle?"}
     Mode -->|OFF| Action["Typed hardware action; existing admission and safety gates"]
     Mode -->|ON| Inputs["Fresh canonical joints and stationary feedback; selected sources"]

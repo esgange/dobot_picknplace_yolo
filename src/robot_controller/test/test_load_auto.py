@@ -1,6 +1,7 @@
 """Deployment/lifetime ownership and run-source separation; no robot or ROS nodes."""
 
 from collections import deque
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,6 +13,7 @@ import pytest
 from rclpy.action import GoalResponse
 
 from robot_controller import auto_deploy, auto_detection
+from robot_controller import gui as gui_module
 from robot_controller.auto_detection import AutoDetectors, idle_reason
 from robot_controller.controller import RobotController
 from robot_controller.errors import FeedbackFailure
@@ -162,20 +164,22 @@ def test_run_buttons_share_quantity_target_and_debug_but_pin_source(window, mode
     assert window.stop.isEnabled()
 
 
-@pytest.mark.parametrize('auto_state', ['OFF', 'DEPLOYING', 'STARTING', 'STOPPING', 'FAILED'])
+@pytest.mark.parametrize('auto_state', [
+    'OFF', 'DEPLOYING', 'STARTING', 'PREPARING', 'STOPPING', 'FAILED'])
 def test_headless_run_requires_owned_ready_pair(window, auto_state):  # noqa: F811
     window.node.status = status(tray_position_recorded=True)
     client = Mock(server_is_ready=Mock(return_value=True))
     window.node.action_clients['auto_run'] = client
     graph(window.node, [('item_detect', '/'), ('tray_detect', '/')])
     window.auto_detectors.state = auto_state
+    window.auto_detectors.preparation_claimed = True  # Admission-only fixture.
     window._refresh()
     assert not window.headless_run_button.isEnabled()
     window._action('auto_run', detector_mode=HEADLESS)
     client.send_goal_async.assert_not_called()
 
 
-def test_load_auto_default_off_and_never_configures_or_enables_robot(window):  # noqa: F811
+def test_load_auto_default_off_waits_for_detectors_before_preparing(window):  # noqa: F811
     assert not window.load_auto.isChecked()
     for field, text in zip((window.item_path, window.bin_path, window.tray_path), ('i', 'b', 't')):
         field.setText(text)
@@ -192,12 +196,131 @@ def test_load_auto_default_off_and_never_configures_or_enables_robot(window):  #
     assert not window.item_path.isEnabled() and not window.configure.isEnabled()
     window.auto_detectors.state = 'RUNNING'
     window._refresh()
-    assert window.configure.isEnabled()  # Separate explicit controller preparation.
+    assert window.configure.isEnabled()  # Explicit reload remains available.
     assert not window.item_path.isEnabled()
     window.auto_detectors.stop = Mock()
     window.load_auto.click()
     window.auto_detectors.stop.assert_called_once()
     assert not window.pending  # Fixture fails if any robot/configuration call is made.
+
+
+@pytest.fixture
+def preparing(window, monkeypatch):  # noqa: F811
+    graph(window.node, [('item_detect', '/'), ('tray_detect', '/')])
+    window.auto_detectors.selections = ('item.yaml', 'bin.yaml', 'tray.yaml')
+    window.auto_detectors._state('PREPARING', 'Preparing robot')
+    window._clear_preview = Mock()
+    monkeypatch.setattr(gui_module, 'save_state', Mock())
+    monkeypatch.setattr(gui_module.QtWidgets.QMessageBox, 'warning', Mock())
+    future = Future()
+    window.node.service_clients['configure'] = Mock(
+        service_is_ready=Mock(return_value=True), call_async=Mock(return_value=future))
+    window.node.service_clients['stop'] = Mock(
+        service_is_ready=Mock(return_value=True), call_async=Mock(side_effect=lambda _: Future()))
+
+    def stop():
+        window.auto_detectors.cancel.set()
+        window.auto_detectors._state('STOPPING', 'Canceled')
+    window.auto_detectors.stop = Mock(side_effect=stop)
+    yield window, future
+    # Fixture shutdown is not another operator action.
+    window.auto_preparing = False
+
+
+def test_ready_detectors_prepare_exact_frozen_selection_once(preparing):
+    view, future = preparing
+    # Browsed fields cannot replace the deployment's frozen selection.
+    view.item_path.setText('other.yaml')
+    view.node.status = status(state='UNCONFIGURED', configured=False, startup_complete=False)
+    view._refresh()
+    client = view.node.service_clients['configure']
+    request = client.call_async.call_args.args[0]
+    assert (request.item_teach_file, request.bin_teach_file, request.tray_teach_file) == (
+        'item.yaml', 'bin.yaml', 'tray.yaml')
+    assert view.load_auto.isEnabled() and view.load_auto.isChecked()
+    assert not view.configure.isEnabled() and not view.headless_run_button.isEnabled()
+    assert not view.item_path.isEnabled() and view.stop.isEnabled()
+    view._refresh()
+    client.call_async.assert_called_once()
+    future.set_result(SimpleNamespace(success=True, configuration_id='new', message='Ready'))
+    view._refresh()
+    assert view.auto_detectors.preparation_result == ('new', '')
+    assert view.auto_detectors.state == 'PREPARING'  # Supervisor must verify matching READY.
+    view._refresh()
+    client.call_async.assert_called_once()
+    view.node.service_clients['stop'].call_async.assert_not_called()
+
+
+@pytest.mark.parametrize('failure', ['rejected', 'empty', 'exception', 'unavailable'])
+def test_failed_preparation_cannot_make_load_auto_running(preparing, failure):
+    view, future = preparing
+    client = view.node.service_clients['configure']
+    if failure == 'unavailable':
+        client.service_is_ready.return_value = False
+    view._refresh()
+    if failure == 'exception':
+        future.set_exception(RuntimeError('broken reply'))
+    elif failure != 'unavailable':
+        future.set_result(None if failure == 'empty' else SimpleNamespace(
+            success=False, message='Preparation refused'))
+    view._refresh()
+    assert view.auto_detectors.preparation_result[1]
+    assert not view.headless_run_button.isEnabled()
+    assert not view.auto_preparing
+    if failure == 'exception':
+        view.node.service_clients['stop'].call_async.assert_called_once()
+    if failure == 'unavailable':
+        client.call_async.assert_not_called()
+
+
+@pytest.mark.parametrize('cancel', ['off', 'stop', 'close', 'detector_failure'])
+def test_preparation_cancel_contains_issued_request_and_ignores_late_success(preparing, cancel):
+    view, future = preparing
+    view._refresh()
+    if cancel == 'off':
+        view.load_auto.click()
+    elif cancel == 'stop':
+        view._immediate_stop()
+    elif cancel == 'close':
+        view.close()
+    else:
+        view.auto_detectors._state('FAILED', 'Detector exited')
+        view._refresh()
+    assert view.auto_prepare_canceled
+    stop_client = view.node.service_clients['stop']
+    stop_client.call_async.assert_called_once()
+    first_stop = view.pending['stop']
+    future.set_result(SimpleNamespace(success=True, configuration_id='late', message='Ready'))
+    view._refresh()
+    assert view.auto_detectors.preparation_result is None
+    assert view.auto_stop_again
+    first_stop.set_result(SimpleNamespace(success=True))
+    view._refresh()
+    assert stop_client.call_async.call_count == 2
+    assert not view.auto_stop_again and 'stop' in view.pending
+    assert view.auto_detectors.state != 'RUNNING'
+
+
+@pytest.mark.parametrize('stage', ['DEPLOYING', 'STARTING', 'PREPARING'])
+def test_stop_before_preparation_blocks_deferred_configure(preparing, stage):
+    view, _future = preparing
+    view.auto_detectors.state = stage
+    view._immediate_stop()
+    view._refresh()
+    view.node.service_clients['configure'].call_async.assert_not_called()
+    view.node.service_clients['stop'].call_async.assert_called_once()
+    assert view.auto_detectors.take_preparation() is None
+
+
+@pytest.mark.parametrize('fields', [
+    dict(holding_item=True), dict(operation_active=True),
+    dict(feedback_fresh=False), dict(digital_input_bits=1)])
+def test_preparation_rechecks_robot_admission_after_detector_start(preparing, fields):
+    view, _future = preparing
+    view.node.status = status(**fields)
+    view._refresh()
+    view.node.service_clients['configure'].call_async.assert_not_called()
+    assert view.auto_detectors.preparation_result[1]
 
 
 @pytest.mark.parametrize('fields', [
@@ -276,7 +399,8 @@ def test_unarmed_headless_process_blocks_deployment(manager):
 
 
 @pytest.mark.parametrize('failure', [
-    'second_spawn', 'child_exit', 'conflict', 'service_lost', 'timeout', 'cancel'])
+    'second_spawn', 'child_exit', 'conflict', 'service_lost', 'timeout', 'cancel',
+    'prepare_rejected', 'prepare_timeout', 'ready_timeout'])
 def test_supervisor_cleans_owned_pair_without_restart(manager, monkeypatch, failure):
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
     manager._check = lambda: None
@@ -304,19 +428,26 @@ def test_supervisor_cleans_owned_pair_without_restart(manager, monkeypatch, fail
         nonlocal ticks
         ticks += 1
         assert ticks < 8
-        return (failure == 'cancel' and ticks == 2) or ticks == 5
+        if ticks == 2:
+            if failure in ('cancel', 'service_lost', 'ready_timeout'):
+                manager.prepared('test-configuration')
+            elif failure == 'prepare_rejected':
+                manager.prepared(error='Configure rejected')
+        return (failure == 'cancel' and ticks == 3) or ticks == 5
 
     def available(_node, kind):
-        if failure == 'timeout' or (failure == 'service_lost' and ticks > 1):
+        if failure == 'timeout' or (failure == 'service_lost' and ticks > 2):
             return []
         return [('item_teach', '/')] if failure == 'conflict' else [
             (auto_detection.NODES[kind], '/')]
     manager._spawn = spawn
     manager.cancel = SimpleNamespace(is_set=lambda: False, wait=wait)
     monkeypatch.setattr(auto_detection, 'providers', available)
-    if failure == 'timeout':
+    if failure in ('timeout', 'prepare_timeout', 'ready_timeout'):
         timer = iter(range(0, 10000, 200))
         monkeypatch.setattr(auto_detection.time, 'monotonic', lambda: next(timer))
+    if failure == 'ready_timeout':
+        manager.node.status.configuration_id = 'old'
     manager._run(('item', 'bin', 'tray'))
     assert manager.snapshot[0] == ('OFF' if failure == 'cancel' else 'FAILED')
     assert not manager.children
@@ -327,6 +458,17 @@ def test_supervisor_cleans_owned_pair_without_restart(manager, monkeypatch, fail
     assert states.count('STARTING') == 1
     if failure in ('cancel', 'service_lost'):
         assert 'RUNNING' in states
+    elif failure.startswith('prepare') or failure == 'ready_timeout':
+        assert 'PREPARING' in states and 'RUNNING' not in states
+
+
+def test_cancel_wins_over_concurrent_ready_transition(manager):
+    manager.state = 'PREPARING'
+    manager.cancel.set()
+    manager._state('RUNNING', 'Must not publish readiness', expected='PREPARING')
+    manager.prepared('late')
+    assert manager.state == 'PREPARING' and manager.preparation_result is None
+    assert manager.take_preparation() is None
 
 
 def test_owned_process_group_cleanup_with_harmless_executable(manager):

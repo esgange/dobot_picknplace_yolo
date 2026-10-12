@@ -25,7 +25,9 @@ ANY=0 (default) accepts either existing canonical provider, TEACH=1 requires
 The GUI's Manual Run sends TEACH; Auto Run sends HEADLESS and additionally requires
 its Load Auto pair to be ready. The controller enforces type at goal admission
 and on perception requests/retries and returned observations. Load Auto is a GUI
-deployment/process control only and never calls Configure or Startup. Rebuild
+workflow: deploy/start the pair, then call the existing Configure service once
+with the selected files to prepare the robot; require its success and matching
+READY status before presenting ON. No new robot API is added. Rebuild
 interfaces/controller and relaunch all their clients together for this changed
 goal wire layout. It requires unheld READY, a complete
 Item/Bin/Tray configuration and both canonical pose providers. One operation

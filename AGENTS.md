@@ -2184,8 +2184,8 @@ owned headless Item/Tray Detect. Failed validation/copy preserves the old catalo
 OFF/exit/failure stops only owned children and native workers, without restart.
 Reject armed teaching services or existing headless detectors; never disarm or
 kill foreign nodes. Require idle, unheld controller and fresh stationary feedback;
-lock teach selections while deployed. Load Auto never configures/enables/moves
-the robot; Load Teach Configuration remains separate. Rename the old run button
+lock teach selections while deployed. Rule 276 supersedes the original separate
+robot-preparation step. Rename the old run button
 Manual Run and add Auto Run, sharing quantity/placement/debug inputs. Manual
 pins teaching providers; Auto requires the owned ready pair and pins headless
 providers. The shared AutoRun goal adds detector_mode ANY=0/TEACH=1/HEADLESS=2;
@@ -2193,6 +2193,19 @@ ANY preserves native client choice. Recheck selected provider type at admission,
 requests/retries and returned observations; never fall back between modes. Keep
 all motion/count/Stop/retry behavior. Update diary/FSM/exports, test synthetically,
 and rebuild interfaces/controller together without replacing live mapped code.
+
+Rule 276 makes explicit Load Auto ON also prepare the robot. After validation,
+deployment and both owned detectors becoming ready, enter GUI PREPARING and send
+one existing Configure request with the frozen selected Item/Bin/Tray paths.
+Recheck idle/unheld/fresh feedback and GUI ownership before dispatch. Require a
+successful reply and matching fresh enabled idle READY before RUNNING/green ON;
+bound preparation to 180 seconds and post-response READY confirmation to five.
+OFF/STOP/exit or detector failure during an issued preparation uses independent
+controller Stop; cancellation prevents delayed readiness and a late successful
+Configure requires another Stop. Failure stops the owned detectors without retry.
+Keep manual Load/Reload, all controller startup/output/Stop gates and explicit
+Auto Run; add no automatic Home or cycle, lifecycle state, interface or config.
+Update diary/FSM/exports, test synthetically and isolate builds while live.
 
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.

@@ -684,6 +684,7 @@ def test_gui_pause_acceptance_does_not_dispatch_another_stop():
         pending={"pause": Future()}, pending_goal=None, result_future=None,
         preview_clear_future=None,
         pause_requested_locally=True, return_requested_locally=False,
+        _prepare_auto=lambda: None, auto_stop_again=False,
         _immediate_stop=lambda: calls.append("stop"))
     ControllerWindow._collect(window)
     assert calls == []
@@ -709,6 +710,7 @@ def test_successful_gui_reload_saves_selection_and_clears_preview(monkeypatch, t
         pending={"configure": Future()}, pending_goal=None, result_future=None,
         preview_clear_future=None,
         saved_selection=("item.yaml", "bin.yaml"),
+        _prepare_auto=lambda: None, auto_preparing=False, auto_stop_again=False,
         node=SimpleNamespace(root=tmp_path),
         _clear_preview=lambda: cleared.append(True))
 

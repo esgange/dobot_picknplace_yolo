@@ -36,10 +36,14 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 settings. Manual Run uses armed Item Teach and Tray Teach. Auto Run requires
 **Load Auto: ON** with both owned headless detectors ready. Load Auto validates
 the three browsed teach YAML files and paired models, replaces `runtime_teach/`
-with those five files, then starts Item Detect and Tray Detect. Disarm teaching
+with those five files, then starts Item Detect and Tray Detect. Once both are
+ready, it also loads the selected teach configuration and prepares/enables the
+robot through the existing controller Configure service. Disarm teaching
 GUIs and stop existing headless detectors first. OFF or GUI exit stops only its
-owned detectors. It never starts a cycle or prepares the robot: use **Load Teach
-Configuration** separately. Selections stay locked until Load Auto is OFF.
+owned detectors; canceling an issued preparation also sends controller Stop.
+Wait for Load Auto ON and robot READY, then explicitly click **Auto Run**.
+**Load Teach Configuration** remains available for manual use/reload.
+Selections stay locked until Load Auto is OFF.
 Rebuild `robot_controller_interfaces` and `robot_controller`, then relaunch their
 clients together for the new run goal field. See [Load Auto](src/robot_controller/README.md#load-auto-and-run-buttons).
 
