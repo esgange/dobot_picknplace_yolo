@@ -11258,6 +11258,28 @@ Never use a floating “latest” version in an issue, script, or deployment not
   verification remain pending. No offline-transfer milestone is claimed; use
   the standing scoped commit/push workflow.
 
+### 2026-10-12 — Green indicators for ready auto controls
+
+- User requests a green indication for the enabled auto workflow. Load Auto is
+  green when the owned detector pair is RUNNING/ON, with a muted green disabled
+  appearance while changes are locked. The Auto Run action is green only when
+  enabled by its existing controller/provider gates. NOT READY keeps that action
+  disabled; Load Teach Configuration still prepares the robot separately.
+- Presentation only: no controller state, source selection, arming, process,
+  motion or button admission change. Update controller README and FSM wording;
+  regenerate and verify adjacent HTML/PDF exports: matching source hash, nine
+  diagrams/pages and working offline navigation/zoom. All 216 focused GUI,
+  Auto Run, Load Auto and preview tests pass, as do scoped flake8 and diff
+  checks. Offscreen synthetic checks cover ready/not-ready/OFF styling, with
+  visual inspection; no new CSS-value tests are added.
+- Controller/Preview/GUI and both headless detectors are running. Build only
+  in isolated build/install/auto_highlight; the controller build passes. No
+  canonical rebuild, process restart, real toggle,
+  robot command or operator-file modification. The canonical GUI source is
+  symlinked, so the operator's next GUI launch reads the updated styling.
+  Preserve unrelated RViz and calibration/teach/model/runtime artifacts.
+  Commit/push only this validated visual scope under the standing workflow.
+
 ### Future entry template
 
 ```text

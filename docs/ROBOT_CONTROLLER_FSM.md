@@ -886,7 +886,10 @@ Load Auto RUNNING and exactly the owned headless providers. Both send the same n
 action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
-Load Auto sits below Clear Repick History. ON validates the browsed production
+Load Auto sits below Clear Repick History and is green when its supervisor is
+RUNNING. Auto Run is green only when its normal admission gates enable the button;
+NOT READY still requires Load Teach Configuration. These colors change no guards.
+ON validates the browsed production
 sources and saved calibrations without executing models, then copies three YAMLs
 and two paired models into staging and verifies hashes/catalog before replacing
 all contents of root runtime_teach. Failed validation/copy preserves the old catalog.

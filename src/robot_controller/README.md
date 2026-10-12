@@ -30,6 +30,8 @@ bringup, cameras or RViz.
 
 The old **Auto Run** button is now **Manual Run** and uses armed Item Teach and
 Tray Teach. The new **Auto Run** uses the headless pair started by **Load Auto**.
+Load Auto is green while ON with both detectors ready; Auto Run is green when
+enabled. A NOT READY controller still needs Load Teach Configuration before running.
 Both use the same Quantity, X/Y, Rotation and debug-image checkbox and the same
 native counted-cycle engine. They preserve count, timing, motion, placement,
 retry/intervention waits and direct STOP behavior. The existing AUTO RUN status

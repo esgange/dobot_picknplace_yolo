@@ -29,6 +29,14 @@ from .perception_mode import ANY, TEACH, HEADLESS, check_mode
 from .errors import FeedbackFailure
 
 
+AUTO_READY_STYLE = (
+    'QPushButton{background:#198754;color:white;font-weight:700;'
+    'border:1px solid #146c43;border-radius:3px;padding:3px}'
+    'QPushButton:enabled:hover{background:#157347}'
+    'QPushButton:enabled:pressed{background:#12643e}'
+    'QPushButton:disabled{background:#d7eadf;color:#5b7867}')
+
+
 class GuiNode(rclpy.node.Node):
     def __init__(self):
         super().__init__("robot_controller_gui")
@@ -982,6 +990,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
             button.setEnabled(not reason)
             button.setToolTip(reason or description)
         auto_state, auto_message = self.auto_detectors.snapshot
+        self.headless_run_button.setStyleSheet(
+            AUTO_READY_STYLE if self.headless_run_button.isEnabled() else '')
+        self.load_auto.setStyleSheet(AUTO_READY_STYLE if auto_state == 'RUNNING' else '')
         auto_active = auto_state not in ('OFF', 'FAILED')
         self.load_auto.blockSignals(True)
         self.load_auto.setChecked(auto_active)
