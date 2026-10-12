@@ -527,11 +527,11 @@ or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST
 (DO13 OFF then DO1 ON), or NEUTRAL (both OFF). Opposing outputs are never
 intentionally active together and such feedback aborts motion. The first pick
 group goes Home-Z item X/Y with OPEN at 50%, directly to pre-pick, then to final
-pick with SUCK at 50%. A miss latches only after final-pose `pick_settling`
+pick with SUCK at its start. A miss latches only after final-pose `pick_settling`
 and the 50% last-chance upward lift both finish without DI1.
 Retry rises to the old pre-pick with EXHAUST at 80%, enters both NEUTRAL states
 at the start of the old-clearance rise, enters OPEN at 50% of travel to the
-next candidate's safety-Z transit, and enters SUCK at 50% of the next final
+next candidate's safety-Z transit, and enters SUCK at the start of the next final
 descent. A late DI1 from an already missed attempt cannot become success or
 block that retry.
 Each candidate rotates only around the unchanged taught tool Z. Its green/Y axis
@@ -576,7 +576,7 @@ machine, raw CLI examples, timing policy and commissioning requirements.
 
 The first Home-to-pick group contains item-X/Y transit at Home Z, pre-pick and
 final pick; only the terminal pick/stopped pose is checked. OPEN occurs at 50%
-of transit and SUCK at 50% of final descent. DI1 is eligible only after SUCK and
+of transit and SUCK at the start of final descent. DI1 is eligible only after SUCK and
 is evaluated while the final pose, queue-idle state and commanded outputs remain
 coherent for the taught `pick_settling` time. This one profile-driven interval
 replaces the fixed 300 ms final-pick gate and has no later suction wait.
@@ -591,7 +591,7 @@ Both use taught travel rates and CP (default 100%) blending, with no intermediat
 wait or dwell. Even coincident transit coordinates are sent as separate commands.
 The group enters EXHAUST at 80% of the first rise,
 finger/vacuum NEUTRAL at the start of the second rise, OPEN at 50% of transfer,
-and SUCK at 50% of the new final descent. A final miss queues the same
+and SUCK at the start of the new final descent. A final miss queues the same
 EXHAUST/NEUTRAL rise, explicit exit transit and exact joint Home in one
 ordered group. Clearance and transits remain blended control points; only exact
 joint Home is physically confirmed. A confirmed pickup lifts through
@@ -786,7 +786,7 @@ the terminal pick/stopped pose and final saved-joint destination are physically
 confirmed. Successful Pick ends at Tray Detect after its two lifts and Safety Z exit;
 exhausted Pick uses the same exit transit and exact Home. Successful travel preserves
 SUCK and grip behavior; exhausted returns use EXHAUST then
-NEUTRAL. At 50% of final descent, neutralize DO2/DO14 before suction starts.
+NEUTRAL. At the start of final descent, neutralize DO2/DO14 before suction starts.
 `grip_onpick=true` closes at confirmed final-pick arrival before the taught DI1
 settling interval, independently of `use_grip`; early DI1 retains Stop and closes
 at the stopped pickup position. Closing does not require DI1 HIGH, so a missed

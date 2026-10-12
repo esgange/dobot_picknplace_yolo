@@ -19,7 +19,7 @@ CLOSED = VACUUM | 2
 
 def pick(rig, settling=.3):
     target = Target('pick', matrix(.1), 10, 35,
-                    motion_io=gripper_neutral_events(50) + vacuum_suck_events(50))
+                    motion_io=gripper_neutral_events(0) + vacuum_suck_events(0))
     return rig.run(targets=(target,), stop_on_suction=True, close_pick_fingers=True,
                    pick_settling_sec=settling, pickup_retract_pose=matrix(.14),
                    return_terminal_pose=True)

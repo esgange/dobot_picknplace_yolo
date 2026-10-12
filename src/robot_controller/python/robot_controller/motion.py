@@ -201,7 +201,7 @@ def pick_targets(home, item_in_base, settings, candidate_index, *, rotation=None
         elif name == "pick":
             # Stop powering OPEN before suction starts; pickup closing belongs
             # to confirmed arrival (or an accepted early suction Stop).
-            events = gripper_neutral_events(50) + vacuum_suck_events(50)
+            events = gripper_neutral_events(0) + vacuum_suck_events(0)
         targets.append(Target(f"p{candidate_index}_{name}", matrix, percentage, acceleration,
                               motion_io=events))
     return tuple(targets)

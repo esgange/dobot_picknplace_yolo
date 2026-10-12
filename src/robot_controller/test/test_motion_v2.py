@@ -131,7 +131,7 @@ def test_pick_geometry_rates_and_real_timed_io():
     assert [event.vendor_value() for event in plan[0].motion_io] == [
         "{0,50,2,0}", "{0,50,14,1}"]
     assert [event.vendor_value() for event in plan[3].motion_io] == [
-        "{0,50,2,0}", "{0,50,14,0}", "{0,50,1,0}", "{0,50,13,1}"]
+        "{1,0,2,0}", "{1,0,14,0}", "{1,0,1,0}", "{1,0,13,1}"]
     assert all(not target.motion_io for target in (plan[1], plan[2], plan[4], plan[5]))
 
 
@@ -582,7 +582,7 @@ def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_
             for event in transit.motion_io] == [
                 (50, 2, False), (50, 14, True)]
     assert not next_prepick.motion_io
-    assert next_pick.motion_io == gripper_neutral_events(50) + vacuum_suck_events(50)
+    assert next_pick.motion_io == gripper_neutral_events(0) + vacuum_suck_events(0)
     assert not any(entry[0] == "output" and entry[1] in (1, 2, 13, 14)
                    for entry in hardware.log)
     assert not any(entry[0] == "sensor" and entry[1] is True

@@ -11063,6 +11063,24 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Operator relaunch/live verification remain pending; scoped commit/push uses
   the standing workflow.
 
+### 2026-10-12 — Rule 271: pickup neutral/suction at final-descent start
+
+- User moves the complete rule-270 event from 50% to final-descent start.
+  Use the existing distance-mode-zero encoding, in order: {1,0,2,0},
+  {1,0,14,0}, {1,0,1,0}, {1,0,13,1}. Shared targets cover first picks,
+  retries and placement-to-pick. Arrival/early-Stop closing, first-lift grip
+  timing, geometry, rates, blending and all response/feedback gates stay intact.
+- Update existing exact initial/retry payload and closing fixtures. All
+  **1,508 controller tests pass** with synthetic inputs; scoped flake8 and
+  diff checks pass. Controller/Preview and teach processes are running, so
+  build only in build/pick_suction_start and install/pick_suction_start;
+  isolated controller build succeeds against canonical dependency installs.
+- Update AGENTS, READMEs and FSM; regenerate HTML/PDF and verify matching
+  source hash, nine diagrams/pages and the start-of-descent label. Preserve
+  operator configuration/artifacts and unrelated RViz edits. No live restart,
+  robot command, interface/schema change or offline-transfer claim. Operator
+  relaunch/live verification remain pending. Follow scoped commit/push workflow.
+
 ### Future entry template
 
 ```text
