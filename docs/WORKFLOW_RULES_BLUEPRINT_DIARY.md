@@ -11410,6 +11410,70 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve .env, calibration, teaching/model/runtime artifacts and unrelated RViz
   edits. No offline-transfer milestone is claimed. Commit/push only this scope.
 
+### 2026-10-12 — Rule 279: station HMI with owned teaching and production tools
+
+- User requests an HMI for local non-headless teaching/debug and headless Auto
+  Run, with eventual RabbitMQ master control. Explicit clarifications: implement
+  HMI/launch controls first and RabbitMQ later; closing HMI stops processes it
+  started. This phase does not implement a broker connection, job protocol,
+  remote-control lease or autonomous remote command listener.
+- Reorganize the existing Qt client into Operate, Teach, Tools / Debug and
+  Auto / Remote. Keep compact robot/gripper/observed-service panels and
+  Recover/Pause/STOP visible outside every page. Scroll content on small windows;
+  preserve all existing actions, Preview, selected files, input validation,
+  quantity/progress, speed/CP, run-source selection and green auto controls.
+  Teach owns the existing browse/load/reload/history controls; Auto / Remote
+  shows their selected filenames and the existing Load Auto deploy/prepare flow.
+  Its remote panel explicitly says RabbitMQ is not connected.
+- Add explicit owned launches for Item Teach, Tray Teach, Bin Teach, Platform
+  Teach, passive RViz, camera setup, Camera Calibration, Motion Debug and Gripper
+  Diagnostics. Run only canonical installed launch files through the inherited
+  local ROS environment in separate process groups. Extend the existing Linux
+  parent-death executable wrapper to forward launch arguments without changing
+  detector calls. Bounded background supervisors retain a short stderr tail,
+  report failures in the HMI/normal controller daily events, serialize each tool
+  with a filesystem lock, and never automatically restart applications.
+- Recheck controller/held-item/pending-operation/Load Auto/duplicate-node guards
+  before spawning. A discovered external window stays external, never closed.
+  During a run, passive RViz stays available; owned direct maintenance may also
+  be closed to resolve conflicts. Direct maintenance can open only without the
+  production controller or competing maintenance applications. Motion Debug's
+  existing initialization/enable is explicit in its card; Camera Calibration
+  opens read-only and retains its own guarded, confirmed automatic-capture flow.
+  A standalone HMI can be run with the existing GUI executable after closing the
+  normal controller launch for direct maintenance. No ownership bypass, driver
+  client, automatic controller suspension or bringup launch is added.
+- Require HMI-owned teaching/calibration/maintenance windows closed before
+  Load Auto; camera setup and RViz may stay open. Existing foreign-provider gates
+  remain. Model trust/load, teaching Save and arming stay explicit in their apps.
+  HMI exit cancels/terminates owned tools and detector processes, leaving foreign
+  apps alone. If it owns Item/Tray providers during an active operation, dispatch
+  independent controller Stop before removing them. Preserve preparation Stop/
+  late-response handling and the normal launch's controller/preview shutdown on
+  HMI exit. No new controller lifecycle state or ROS interface is introduced.
+- Validation: **1,749 controller tests pass**, including 24 new HMI tests for
+  page-independent Stop visibility, external ownership, active/held/queued and
+  headless guards, duplicate launch/lock refusal, cancellation before spawn,
+  failure cleanup without restart, and real harmless owned-process argument/
+  shutdown behavior. Update the existing operation-grid location test for its
+  new page. Final focused tests pass (118); scoped lint has no new findings
+  (two pre-existing GUI line-length warnings remain), Python AST/package XML and
+  diff checks pass. Offscreen synthetic screenshots verify the four pages fit
+  1054 × 735 with scrolling; no real teaching/debug application is launched.
+- Isolated robot_controller build succeeds under build/install/hmi in 5.12
+  seconds, using canonical installed dependencies. Verify its installed imports
+  and all nine tool definitions. Update FSM descriptions, guard/state tables and
+  the existing operator diagram; regenerate HTML/PDF and verify matching source
+  hash, nine diagrams/pages, HMI labels and all offline navigation/zoom controls
+  without browser errors or external requests.
+- Controller, Preview, GUI and both headless detectors are running. Do not
+  rebuild their canonical installation, restart them, arm/request perception,
+  deploy teaching artifacts or issue robot commands. Operator must stop the
+  controller launch and rebuild robot_controller before the next HMI launch so
+  the new module is installed. Live application/robot behavior remains unverified.
+  Preserve .env, calibration, teaching/model/runtime artifacts and unrelated RViz
+  modifications; scoped commit/push follows the standing workflow.
+
 ### Future entry template
 
 ```text

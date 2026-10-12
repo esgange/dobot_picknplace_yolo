@@ -1,5 +1,23 @@
 # Robot Controller — Finite State Machine
 
+Station HMI review: **2026-10-12**, baseline **`e1b68ee`** plus rule **279**.
+Four pages separate Operate, Teach, Tools / Debug and Auto / Remote while robot,
+gripper, observed services and Recover/Pause/STOP stay visible. Only an explicit
+Open launches a canonical tool in an owned session; no launch on page selection
+or saved UI restoration. External windows are observed, never closed. Launches
+recheck duplicate/operation/held-item/command-ownership gates immediately before
+spawn; per-tool locks prevent competing HMI starts. RViz remains passive during
+runs. Teaching/setup changes require no operation or active Load Auto; direct
+Motion Debug/Gripper Diagnostics additionally require the controller and competing
+maintenance applications closed to open; closing an owned direct-maintenance
+window remains available to resolve conflicts. Their initialization/confirmation rules
+remain. Load Auto requires owned teaching/maintenance windows closed and retains
+its existing deploy/start/Configure/READY flow. Closing HMI stops owned tools and
+detectors, issuing independent Stop before removing owned Item/Tray providers
+from an active operation. Parent-death cleanup remains; no automatic restart or
+new controller state/API exists. RabbitMQ and remote authority are explicitly
+not implemented in this phase. Tests use synthetic state and dummy applications.
+
 Load Auto / run-source review: **2026-10-12**, baseline **`44920b2`** plus rule **276**.
 The GUI's previous Auto Run becomes Manual Run (armed teaching providers). A new
 Auto Run requires the headless Item/Tray pair owned by explicit Load Auto. Both
@@ -825,6 +843,7 @@ Keep controller state records separate from the GUI detector supervisor:
 | Controller lifecycle | What the whole controller is doing | `PICKING`, `PAUSED`, `RECOVERING` |
 | Candidate ledger | What happened to each item pose in the accepted batch | `PENDING`, `INTERRUPTED`, `HELD` |
 | GUI Load Auto supervisor | Owned deployment/detector lifetime and request for existing controller preparation | `OFF`, `DEPLOYING`, `STARTING`, `PREPARING`, `RUNNING`, `STOPPING`, `FAILED` |
+| HMI tool launch | Owned application session, separate from robot readiness; external windows are not owned | `OFF`, `STARTING`, `RUNNING`, `STOPPING`, `FAILED` |
 
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
 Pick's initial Home travel still reports `PICKING`; it is not a separate Home
@@ -832,11 +851,21 @@ action. Flowchart boxes below describe steps unless explicitly named as states.
 
 ## 1a. Operator status, buttons and preview
 
-The window title is **Robot Controller**. The main status is NOT READY, READY,
+The window title is **Pick & Place — Station HMI**. The main status is NOT READY, READY,
 BUSY, HOLDING ITEM, AUTO RUN, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED or OFFLINE. Starting, homing,
 picking, placing, parking, returning and recovering appear in the activity line;
 PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
+
+Robot/gripper status, observed station services and the lifecycle row remain
+outside the four scrollable pages. **Operate** contains motion/Preview, shared
+placement/Quantity, Manual Run/Auto Run, debug capture and speed/CP. **Teach**
+contains selected artifacts, Load/Reload, Clear Repick History and Item/Tray/Bin/
+Platform Teach launchers. **Tools / Debug** opens passive RViz, camera setup,
+calibration and eligible direct maintenance applications. **Auto / Remote**
+shows selected sources and Load Auto; RabbitMQ is explicitly not connected.
+Tool launches never bypass their own model trust, arming or maintenance guards.
+Existing external windows are displayed and cannot be closed by the HMI.
 
 The lifecycle row is Recover / Clear Error, a managed Pause/Continue/Return Item
 control, and a **permanent red STOP**. STOP always calls the independent Stop service when
@@ -900,7 +929,7 @@ Load Auto RUNNING and exactly the owned headless providers. Both send the same n
 action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
-Load Auto sits below Clear Repick History and is green when its supervisor is
+Load Auto is on **Auto / Remote** and is green when its supervisor is
 RUNNING after confirmed preparation. Auto Run is green only when its normal
 admission gates enable the button. These colors change no guards.
 ON validates the browsed production
@@ -913,7 +942,8 @@ Require no armed teaching provider or independently running headless detector.
 Once both are ready, request Configure with the frozen browsed paths, reusing the
 same load/preparation and saved-selection handling as Load Teach Configuration.
 Failure ends the sequence and stops the owned pair. OFF stops owned processes and
-leaves files deployed. GUI exit does the same;
+leaves files deployed. GUI exit also stops owned tools; if an operation is active
+and the HMI owns Item/Tray providers, issue independent Stop before removing them;
 children receive a parent-death signal if the GUI disappears. OFF/STOP/exit or
 detector failure during an issued Configure also sends controller Stop and prevents
 later readiness. A late successful reply after cancellation requires another Stop.
@@ -932,13 +962,16 @@ arming of teaching GUIs, Home, pick/place cycle or direct driver client is added
 
 ```mermaid
 flowchart TD
-    Deploy["Explicit Load Auto ON: idle, unheld; selected teach files; no competing providers"] --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
+    TeachPage["Teach page: select files; explicitly open teaching windows"] --> Manual
+    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Auto / Remote: explicit Load Auto ON; idle, unheld; no competing providers"]
+    Deploy --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
     Detect --> Prepare["PREPARING: Configure selected teach files; enable and initialize robot"]
     Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
     Loaded --> Auto["Auto Run: owned headless pair ready"]
     Manual["Manual Run: both teaching GUIs armed"] --> Run["Shared native counted run; same quantity and placement; bind detector mode"]
     Auto --> Run
+    Run -->|HMI exit with owned pose providers| HmiExit["Independent controller Stop; close owned tools and detectors"]
     Loaded -->|Idle OFF, exit, service loss or child failure| End["Stop owned pair only; no restart; deployed files remain"]
     Detect -->|Cancel or failure| End
     Prepare -->|Cancel or failure| CancelPrepare["Stop issued preparation; ignore late readiness; stop owned detectors"]
@@ -2041,6 +2074,7 @@ Names below are relative to `/robot_controller/`.
 | Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
 | Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; all three paths; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
+| HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; non-RViz changes require no operation/held item/queued motion/pending command or active Load Auto; opening direct maintenance requires controller and competing command applications closed, closing an owned maintenance tool remains available; external processes are never closed |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |
@@ -2217,6 +2251,7 @@ Source map for the next review:
 | [feedback.py](../src/robot_controller/python/robot_controller/feedback.py) | Freshness, coherent samples and suction-loss debounce |
 | [gui.py](../src/robot_controller/python/robot_controller/gui.py) | Button meanings, feedback display and recovery instructions |
 | [auto_detection.py](../src/robot_controller/python/robot_controller/auto_detection.py) / [auto_deploy.py](../src/robot_controller/python/robot_controller/auto_deploy.py) | GUI-owned headless pair, catalog replacement, child cleanup; no robot commands |
+| [hmi_tools.py](../src/robot_controller/python/robot_controller/hmi_tools.py) | Explicit owned teaching/setup/debug launches, admission guards, external-process preservation and bounded shutdown |
 | [perception_mode.py](../src/robot_controller/python/robot_controller/perception_mode.py) | Shared run provider-type selection and enforcement |
 | [Controller README](../src/robot_controller/README.md) / [blueprint diary](WORKFLOW_RULES_BLUEPRINT_DIARY.md) | Operational detail and superseding project rules |
 

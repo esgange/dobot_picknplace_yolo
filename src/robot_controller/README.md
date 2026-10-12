@@ -24,7 +24,68 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle,
 plus Manual Run and Auto Run with one quantity field, completed count and elapsed seconds.
 Explicit Load Auto owns the two headless detectors. It does not launch Dobot
-bringup, cameras or RViz.
+bringup or cameras automatically. The HMI can explicitly open teaching/setup
+windows and the passive RViz viewer.
+
+## Station HMI
+
+The window is **Pick & Place — Station HMI**. Robot/gripper status, station
+service observations and Recover/Pause/STOP remain visible on every page.
+Pages scroll on smaller displays and retain the same action and input guards.
+
+| Page | Controls |
+| --- | --- |
+| Operate | Home/Pick/Place, Preview, placement X/Y/Rotation, shared Quantity, Manual Run/Auto Run, debug captures and speed/CP |
+| Teach | Item/Bin/Tray file selection, Load/Reload, Clear Repick History, Item Teach, Tray Teach, Bin Teach and Platform Teach windows |
+| Tools / Debug | Passive RViz, camera setup, camera calibration, Motion Debug and Gripper Diagnostics |
+| Auto / Remote | Selected teach summary, existing Load Auto deploy/start/prepare toggle and readiness; RabbitMQ explicitly pending |
+
+Opening the HMI or a page never opens a tool, deploys a recipe, arms perception
+or prepares/moves the robot. Each **Open** explicitly launches the canonical
+installed application in an owned process group. **Close** affects only that
+owned window/session. A tool discovered on the ROS graph is labelled **External**
+and cannot be closed by this HMI. Recheck graph/controller guards immediately
+before spawning; a per-tool lock prevents competing HMI launches. Report launch
+failures in the card and bounded command log; there is no automatic restart.
+
+Teaching/setup changes are blocked during an operation, held item, queued motion,
+pending HMI command or active Load Auto. RViz remains available during a run.
+Closing an owned direct-maintenance window remains available to resolve conflicts.
+Close HMI-owned teaching/calibration/maintenance windows before enabling Load Auto;
+camera setup and RViz may remain open. Existing externally opened armed providers
+still block Load Auto and are never disarmed automatically. Teaching windows
+retain their own explicit model trust, loading, Save and arming actions.
+
+Motion Debug and Gripper Diagnostics require the production controller and other
+competing maintenance applications to be closed. Motion Debug retains its existing
+automatic initialization/enable on opening; its card says so. For direct maintenance,
+close the normal controller launch and open the HMI alone in a sourced terminal:
+
+```bash
+ros2 run robot_controller robot_controller_gui
+```
+
+The HMI alone does not start a controller/driver. Bringup must already be available
+for direct maintenance. Camera Calibration opens read-only; automatic capture still
+requires its existing explicit confirmation and exclusive-command checks. No new
+controller suspension, ownership takeover or direct Dobot client is introduced.
+
+Closing the HMI stops its owned detector pair and tools, including their launch
+children. Before removing owned Item/Tray providers during an active operation,
+send independent controller Stop. Existing preparation-cancellation Stop handling
+remains. Foreign applications stay running. The normal controller launch still
+shuts its controller/preview down when its HMI exits. Linux parent-death signals
+also terminate owned tool launches if the HMI disappears. Camera setup retains
+its separate operator-terminal diagnostic ownership rules.
+
+This phase has **no RabbitMQ connection or remote command listener**. Auto Run
+continues to be explicitly started locally. Remote recipe/job commands and
+local/remote command ownership are subsequent work; closing the HMI is intended
+to end its owned production processes in that future mode too.
+
+After stopping the running controller/Preview/HMI, rebuild `robot_controller`
+and relaunch to install the new HMI module. Software verification uses an isolated
+build while the existing station processes remain running.
 
 ## Load Auto and run buttons
 
@@ -43,8 +104,8 @@ To use Auto Run:
 1. Finish any active operation; leave the controller idle, unheld and out of
    Preview. Disarm Item Teach and Tray Teach and stop independently launched
    headless detectors. Cameras and canonical bringup must already be available.
-2. Browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
-3. Turn **Load Auto ON**. It validates the production files, both same-stem model
+2. On **Teach**, browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
+3. On **Auto / Remote**, turn **Load Auto ON**. It validates the files, both same-stem model
    hashes and saved calibration choices, then stages and verifies ordinary copies.
    It replaces the entire root `runtime_teach/` directory contents with exactly
    those three YAMLs and two models. Failed validation/copy leaves the old catalog
@@ -54,7 +115,7 @@ To use Auto Run:
    selected Item/Bin/Tray paths, then requires its successful response and matching
    fresh, enabled, idle READY status. Models/profiles load automatically; detection
    service requests still acquire fresh observations.
-5. Set Quantity and placement inputs and click **Auto Run** when READY.
+5. On **Operate**, set Quantity and placement inputs and click **Auto Run** when READY.
 
 Load Auto starts OFF on every GUI launch; there is no saved toggle, automatic
 restart or directory watcher. Files remain deployed after OFF. To change files,
@@ -873,7 +934,7 @@ Load/Reload is disabled in Preview because loading now prepares real hardware.
 Turning Preview OFF never starts preparation; click Load/Reload explicitly.
 Preview motion buttons retain their read-only behavior, including while disabled.
 
-The window title is **Robot Controller**. The main status is NOT READY, READY,
+The window title is **Pick & Place — Station HMI**. The main status is NOT READY, READY,
 BUSY, HOLDING ITEM, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED or OFFLINE. Starting, homing,
 picking, placing, parking, returning and recovering appear in the activity line;
 PAUSED appears only after confirmed parking/Stop. The reason is always visible.
@@ -1292,10 +1353,11 @@ do not drive these LEDs. DI12 Not detected does not prove that fingers are close
 The held-item decision uses its 500 ms loss debounce independently of the raw
 DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
-Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the smaller
-top-right panel. Full paths remain editable and available in field tooltips;
+Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the **Teach**
+page. Full paths remain editable and available in field tooltips;
 prefill, explicit load, reload gates and validated persistence are unchanged.
-Lifecycle/action controls, global speed/CP and the command-log toggle remain below.
+Lifecycle controls and the command-log toggle stay outside the pages; motion
+and speed/CP controls are on **Operate**.
 The GUI consumes only controller APIs. It adds no Dobot/camera subscription or
 I/O command. Missing/stale canonical feedback turns both LEDs Unknown; a
 controller status older than one second by source timestamp or local receipt

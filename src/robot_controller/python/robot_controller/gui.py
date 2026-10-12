@@ -27,6 +27,7 @@ from .operator_ui import acquisition_paused, button_policy, item_acquisition_pau
 from .auto_detection import AutoDetectors, idle_reason, providers
 from .perception_mode import ANY, TEACH, HEADLESS, check_mode
 from .errors import FeedbackFailure
+from .hmi_tools import BY_KEY, TOOLS, ToolLaunches, change_reason
 
 
 AUTO_READY_STYLE = (
@@ -124,11 +125,35 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.auto_preparing = False
         self.auto_prepare_canceled = False
         self.auto_stop_again = False
-        self.setWindowTitle("Robot Controller")
-        self.resize(1050, 445)
+        self.tools = ToolLaunches(node)
+        self.tool_controls = {}
+        self.hmi_nodes = ()
+        self.hmi_graph_at = -float('inf')
+        self.setWindowTitle("Pick & Place — Station HMI")
+        self.resize(1120, 760)
+        font = self.font()
+        font.setPointSize(10)
+        self.setFont(font)
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
+        self.pages = QtWidgets.QTabWidget()
+        self.pages.setStyleSheet(
+            'QTabBar::tab{padding:10px 22px;font-size:14px}'
+            'QTabBar::tab:selected{font-weight:700;color:#146c43}')
+        self.page_layouts = {}
+        for name in ('Operate', 'Teach', 'Tools / Debug', 'Auto / Remote'):
+            page = QtWidgets.QWidget()
+            page_layout = QtWidgets.QVBoxLayout(page)
+            page_layout.setAlignment(QtCore.Qt.AlignTop)
+            scroll = QtWidgets.QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+            scroll.setWidget(page)
+            self.pages.addTab(scroll, name)
+            self.page_layouts[name] = page_layout
+        operate = self.page_layouts['Operate']
+        production = self.page_layouts['Auto / Remote']
 
         header = QtWidgets.QHBoxLayout()
         self.robot_panel, robot_layout = self._status_panel("Robot status")
@@ -165,10 +190,18 @@ class ControllerWindow(QtWidgets.QMainWindow):
         gripper_layout.addLayout(indicators, 1)
         header.addWidget(self.robot_panel, 3)
         header.addWidget(self.gripper_panel, 3)
+        self.station_panel, station_layout = self._status_panel('Station services')
+        self.station_services = QtWidgets.QLabel('Waiting for station status…')
+        self.station_services.setTextFormat(QtCore.Qt.PlainText)
+        self.station_services.setWordWrap(True)
+        station_layout.addWidget(self.station_services)
+        station_layout.addStretch()
+        self.station_mode = QtWidgets.QLabel('Local operator control')
+        station_layout.addWidget(self.station_mode)
+        header.addWidget(self.station_panel, 3)
 
         self.teach_panel = QtWidgets.QGroupBox("Teach files")
         self.teach_panel.setMinimumWidth(300)
-        self.teach_panel.setMaximumWidth(420)
         self.teach_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
                                        QtWidgets.QSizePolicy.Maximum)
         teach = QtWidgets.QGridLayout(self.teach_panel)
@@ -204,7 +237,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.configure.clicked.connect(self._configure)
         teach.addWidget(self.configure, 3, 0, 1, 3)
         teach.setColumnStretch(1, 1)
-        header.addWidget(self.teach_panel, 4, QtCore.Qt.AlignTop)
+        self.page_layouts['Teach'].addWidget(self.teach_panel)
         layout.addLayout(header)
 
         self.clear_repick = QtWidgets.QPushButton("Clear Repick History")
@@ -213,13 +246,37 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto = QtWidgets.QPushButton("Load Auto: OFF")
         self.load_auto.setCheckable(True)
         self.load_auto.clicked.connect(self._toggle_auto)
-        teach.addWidget(self.load_auto, 5, 0, 1, 3)
+        auto_intro = QtWidgets.QLabel(
+            'Headless production uses the teach files selected on the Teach page. '
+            'Load Auto deploys those files, opens Item Detect and Tray Detect, '
+            'then prepares the robot. Start the cycle from Operate.')
+        auto_intro.setWordWrap(True)
+        production.addWidget(auto_intro)
+        self.production_recipe = QtWidgets.QLabel()
+        self.production_recipe.setTextFormat(QtCore.Qt.PlainText)
+        self.production_recipe.setWordWrap(True)
+        production.addWidget(self.production_recipe)
+        self.load_auto.setMinimumHeight(48)
+        production.addWidget(self.load_auto)
         self.load_auto_status = QtWidgets.QLabel()
         self.load_auto_status.setTextFormat(QtCore.Qt.PlainText)
         self.load_auto_status.setWordWrap(True)
         self.load_auto_status.setStyleSheet('font-size:12px')
         self.load_auto_status.setMinimumHeight(32)
-        teach.addWidget(self.load_auto_status, 6, 0, 1, 3)
+        production.addWidget(self.load_auto_status)
+        remote = QtWidgets.QGroupBox('Remote master — next phase')
+        remote_layout = QtWidgets.QVBoxLayout(remote)
+        remote_note = QtWidgets.QLabel(
+            'RabbitMQ is not connected in this version. Production starts locally. '
+            'Remote recipe loading, command ownership and job reporting will be added next.')
+        remote_note.setWordWrap(True)
+        remote_layout.addWidget(remote_note)
+        production.addWidget(remote)
+        close_note = QtWidgets.QLabel(
+            'Closing this HMI closes the detector pair and tool windows it started. '
+            'Applications opened separately are left running.')
+        close_note.setWordWrap(True)
+        production.addWidget(close_note)
         lifecycle = QtWidgets.QHBoxLayout()
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
         self.pause = QtWidgets.QToolButton()
@@ -248,6 +305,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             button.setMinimumHeight(58)
             lifecycle.addWidget(button, 1)
         layout.addLayout(lifecycle)
+        layout.addWidget(self.pages, 1)
 
         operations = QtWidgets.QGridLayout()
         self.preview_toggle = QtWidgets.QPushButton("Preview: OFF")
@@ -322,12 +380,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         auto_row.addWidget(self.auto_quantity)
         auto_row.addWidget(self.auto_progress, 1)
         operations.addLayout(auto_row, 4, 0, 1, 2)
-        layout.addLayout(operations)
+        operate.addLayout(operations)
         self.availability_details = QtWidgets.QLabel()
         self.availability_details.setTextFormat(QtCore.Qt.PlainText)
         self.availability_details.setWordWrap(True)
         self.availability_details.setStyleSheet("color:#785000")
-        layout.addWidget(self.availability_details)
+        operate.addWidget(self.availability_details)
 
         speed = QtWidgets.QHBoxLayout()
         self.speed_label = QtWidgets.QLabel("Global SpeedFactor: unavailable")
@@ -344,7 +402,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.speed_debounce.timeout.connect(self._speed)
         speed.addWidget(self.speed_label)
         speed.addWidget(self.speed_slider, 1)
-        layout.addLayout(speed)
+        operate.addLayout(speed)
 
         cp = QtWidgets.QHBoxLayout()
         self.cp_label = QtWidgets.QLabel("Global CP: unavailable")
@@ -361,7 +419,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.cp_debounce.timeout.connect(self._cp)
         cp.addWidget(self.cp_label)
         cp.addWidget(self.cp_slider, 1)
-        layout.addLayout(cp)
+        operate.addLayout(cp)
+        self._build_tool_pages()
 
         log_header = QtWidgets.QHBoxLayout()
         self.log_toggle = QtWidgets.QPushButton("Show command log")
@@ -402,7 +461,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _status_panel(title):
         panel = QtWidgets.QFrame()
-        panel.setMinimumHeight(170)
+        panel.setMinimumHeight(160)
+        panel.setMaximumHeight(180)
         panel.setStyleSheet("QFrame{background:#202a35;border-radius:6px}"
                             "QLabel{color:#edf3f8;border:0;font-size:14px}")
         column = QtWidgets.QVBoxLayout(panel)
@@ -412,6 +472,126 @@ class ControllerWindow(QtWidgets.QMainWindow):
         heading.setStyleSheet("font-size:17px;font-weight:700;color:white")
         column.addWidget(heading)
         return panel, column
+
+    def _build_tool_pages(self):
+        for title, kinds in (('Teach', {'teach'}),
+                             ('Tools / Debug',
+                              {'viewer', 'camera', 'calibration', 'maintenance'})):
+            grid = QtWidgets.QGridLayout()
+            row = 0
+            for tool in TOOLS:
+                if tool.kind not in kinds:
+                    continue
+                card = QtWidgets.QGroupBox(tool.title)
+                body = QtWidgets.QVBoxLayout(card)
+                description = QtWidgets.QLabel(tool.description)
+                description.setWordWrap(True)
+                body.addWidget(description)
+                line = QtWidgets.QHBoxLayout()
+                label = QtWidgets.QLabel('Not running')
+                label.setWordWrap(True)
+                label.setMinimumWidth(0)
+                label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+                line.addWidget(label, 1)
+                button = QtWidgets.QPushButton('Open')
+                button.clicked.connect(
+                    lambda _checked=False, key=tool.key: self._tool_clicked(key))
+                line.addWidget(button)
+                body.addLayout(line)
+                grid.addWidget(card, row // 2, row % 2)
+                self.tool_controls[tool.key] = (button, label)
+                row += 1
+            self.page_layouts[title].addLayout(grid)
+        note = QtWidgets.QLabel(
+            'Direct robot maintenance requires the robot controller to be closed. '
+            'Camera Calibration opens without moving; its automatic capture keeps its '
+            'existing exclusive-control checks. RViz can be opened during a run.')
+        note.setWordWrap(True)
+        self.page_layouts['Tools / Debug'].addWidget(note)
+
+    def _tools_pending(self):
+        return bool(self.pending or self.pending_goal is not None
+                    or self.result_future is not None)
+
+    def _tool_start_check(self, key):
+        # Also called by the worker immediately before spawn: do not access Qt widgets here.
+        tool = BY_KEY[key]
+        nodes = self.node.get_node_names_and_namespaces()
+        reason = change_reason(tool, self.node.status, nodes, self.auto_detectors.snapshot[0],
+                               self._tools_pending())
+        if reason:
+            raise ValueError(reason)
+        if any(name in tool.nodes for name, _namespace in nodes):
+            raise ValueError(f'{tool.title} is already running; its existing window is external')
+        if tool.kind == 'maintenance' and any(
+                BY_KEY[other].kind in ('maintenance', 'calibration')
+                for other in self.tools.active() - {key}):
+            raise ValueError('Close other maintenance tools before opening this one')
+
+    def _tool_clicked(self, key):
+        tool = BY_KEY[key]
+        state, _message = self.tools.snapshot(key)
+        try:
+            if state not in ('OFF', 'FAILED'):
+                reason = ('' if tool.kind in ('viewer', 'maintenance') else change_reason(
+                    tool, self.node.status, self.hmi_nodes, self.auto_detectors.snapshot[0],
+                    self._tools_pending()))
+                if reason:
+                    raise ValueError(reason)
+                self.tools.stop(key)
+            else:
+                self.tools.start(key, lambda: self._tool_start_check(key))
+        except (ValueError, RuntimeError) as exc:
+            QtWidgets.QMessageBox.warning(self, tool.title, str(exc))
+        self._refresh_hmi()
+
+    def _refresh_hmi(self):
+        if time.monotonic() - self.hmi_graph_at >= 1.:
+            try:
+                self.hmi_nodes = tuple(self.node.get_node_names_and_namespaces())
+            except RuntimeError:
+                self.hmi_nodes = ()
+            self.hmi_graph_at = time.monotonic()
+        names = {name for name, _namespace in self.hmi_nodes}
+        auto_state = self.auto_detectors.snapshot[0]
+        for tool in TOOLS:
+            state, message = self.tools.snapshot(tool.key)
+            button, label = self.tool_controls[tool.key]
+            owned = state not in ('OFF', 'FAILED')
+            external = not owned and bool(names.intersection(tool.nodes))
+            reason = change_reason(tool, self.node.status, self.hmi_nodes, auto_state,
+                                   self._tools_pending())
+            if owned and tool.kind in ('viewer', 'maintenance'):
+                reason = ''
+            button.setText('External' if external else 'Close' if owned else 'Open')
+            button.setEnabled(not external and state != 'STOPPING' and not reason)
+            button.setToolTip('Opened elsewhere; this HMI cannot close it' if external else
+                              reason or ('Close owned window' if owned else tool.description))
+            label.setText('Running outside this HMI' if external else
+                          'Opening…' if state == 'STARTING' else
+                          'Closing…' if state == 'STOPPING' else
+                          'Opened by this HMI' if owned else
+                          'Failed — see log' if state == 'FAILED' else reason or 'Not running')
+            label.setToolTip(message if state == 'FAILED' else reason or message)
+        for key, state, message in self.tools.take_messages():
+            self.log_view.appendPlainText(f'{BY_KEY[key].title} {state}: {message}')
+
+        def detector(prefix):
+            present = names.intersection({prefix + '_teach', prefix + '_detect'})
+            return ('Teach + headless' if len(present) == 2 else
+                    'Teach' if prefix + '_teach' in present else
+                    'Headless' if present else 'Not running')
+        self.station_services.setText(
+            f'Controller: {"Online" if self.node.status is not None else "Offline"}\n'
+            f'Item: {detector("item")}\nTray: {detector("tray")}\n'
+            f'RViz: {"Open" if "dobot_rviz" in names else "Closed (optional)"}')
+        self.station_mode.setText(
+            'Headless detectors active · Local control' if auto_state == 'RUNNING' else
+            'Local operator control · RabbitMQ not connected')
+        self.production_recipe.setText('Selected teach files\n' + '\n'.join(
+            f'{label}: {os.path.basename(field.text().strip()) or "Select on Teach page"}'
+            for label, field in (('Item', self.item_path), ('Bin', self.bin_path),
+                                 ('Tray', self.tray_path))))
 
     def _refresh_status(self, state):
         label, detail = presentation(state, self.preview_mode)
@@ -520,9 +700,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.preview_clear_deadline = time.monotonic() + 5.0
 
     def closeEvent(self, event):
-        if self.auto_preparing and not self.auto_prepare_canceled:
+        state = self.node.status
+        owns_providers = (self.auto_detectors.snapshot[0] not in ('OFF', 'FAILED')
+                          or bool(self.tools.active().intersection({'item', 'tray'})))
+        if ((self.auto_preparing and not self.auto_prepare_canceled)
+                or (owns_providers and state is not None and state.operation_active)):
             self._immediate_stop()
         self.auto_detectors.close()
+        self.tools.close()
         if self.preview_mode or "preview" in self.pending:
             self._clear_preview()
         super().closeEvent(event)
@@ -873,6 +1058,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._append_operator_logs()
         self._collect()
         self._refresh_controls()
+        self._refresh_hmi()
 
     def _auto_change_reason(self):
         state, _message = self.auto_detectors.snapshot
@@ -890,6 +1076,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if state != 'RUNNING' and not all(field.text().strip() for field in (
                 self.item_path, self.bin_path, self.tray_path)):
             return 'Select Item Teach, Bin Teach and Tray Teach first'
+        if state in ('OFF', 'FAILED'):
+            blockers = [BY_KEY[key].title for key in self.tools.active()
+                        if BY_KEY[key].kind in ('teach', 'calibration', 'maintenance')]
+            if blockers:
+                return ('Close HMI teaching/maintenance windows first: '
+                        + ', '.join(sorted(blockers)))
         return ''
 
     def _toggle_auto(self, enabled):

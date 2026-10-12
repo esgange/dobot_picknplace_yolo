@@ -32,6 +32,16 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
+The controller window is now a **Station HMI** with four pages: **Operate**,
+**Teach**, **Tools / Debug**, and **Auto / Remote**. Robot/gripper status and
+Recover/Pause/STOP remain visible throughout. Teach opens the non-headless Item,
+Tray, Bin and Platform teaching windows; Tools opens RViz, camera setup,
+calibration and eligible direct maintenance tools. Each explicit launch is owned
+by the HMI; closing the HMI closes those tools and its headless detector pair.
+Applications opened elsewhere remain external. Direct robot maintenance requires
+the production controller to be closed. **RabbitMQ integration is the next phase;
+no remote command listener is implemented yet.** See [Station HMI](src/robot_controller/README.md#station-hmi).
+
 **Manual Run / Auto Run:** both use the same Quantity, X/Y, Rotation and debug
 settings. Manual Run uses armed Item Teach and Tray Teach. Auto Run requires
 **Load Auto: ON** with both owned headless detectors ready. Load Auto validates
