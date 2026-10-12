@@ -23,6 +23,12 @@ PROVIDERS = {("tray_teach", "/"), ("tray_detect", "/")}
 TRAY_ATTEMPT_LIMIT = 10
 
 
+@dataclass(frozen=True)
+class TrayObservation:
+    surface: np.ndarray
+    rotation: np.ndarray
+
+
 @dataclass
 class TrayAttempts:
     count: int = 0
@@ -190,9 +196,10 @@ class TrayClient:
         self._observation_details = {"validation_before_ms": preparation_ms}
         usable, reason = False, ""
         try:
-            point = self._observe_impl(config, sampling, check_item, attempts, save_debug_images)
+            observation = self._observe_impl(
+                config, sampling, check_item, attempts, save_debug_images)
             usable = True
-            return point
+            return observation
         except Exception as exc:
             reason = str(exc)
             self._observation_details.setdefault("status", type(exc).__name__)
@@ -258,7 +265,8 @@ class TrayClient:
             node.events.record("INFO", "placement_depth", "Fresh tray depth accepted",
                                surface_base_m=point.tolist(), sampling=sampling,
                                tray_sha256=evidence["profile_sha256"], attempt=attempts.count)
-            return point
+            q = response.tray.pose.orientation
+            return TrayObservation(point, quaternion_to_rotation_matrix(q.x, q.y, q.z, q.w))
         finally:
             finished_at = time.monotonic()
             self._observation_details.setdefault("service_wait_ms", (finished_at-sent_at)*1000)

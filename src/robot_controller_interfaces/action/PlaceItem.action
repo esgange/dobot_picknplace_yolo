@@ -1,7 +1,8 @@
 string configuration_id
 float64 x_mm
 float64 y_mm
-# Saved Tray Detect Pose tool orientation followed by this local tool-Z rotation.
+# Zero aligns held item X with observed tray X, preserving taught tool tilt.
+# Additional offset is about that unchanged tool Z.
 float64 rotation_deg
 bool save_debug_images
 ---

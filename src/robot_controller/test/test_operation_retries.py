@@ -334,7 +334,7 @@ def test_tray_retries_missing_pose_or_reply_and_accepts_third_fresh_result(
         monkeypatch, failure, require_held_item, save_images):
     rig = TrayRig(monkeypatch, [failure, failure, "valid"])
     assert rig.request(require_held_item=require_held_item, save_debug_images=save_images
-                       ) == pytest.approx([.13, .24, .25])
+                       ).surface == pytest.approx([.13, .24, .25])
     assert rig.client.call_async.call_count == rig.attempts.count == 3
     assert rig.observer.pending is None
     requests = [call.args[0] for call in rig.client.call_async.call_args_list]
@@ -370,7 +370,7 @@ def test_tray_exhausts_ten_failures_with_typed_final_reason(monkeypatch, failure
 def test_tray_first_usable_observation_ends_retry_without_added_wait(monkeypatch, attempt):
     rig = TrayRig(monkeypatch, [None] * (attempt - 1) + ["valid"])
     rig.node.wait_control = Mock(side_effect=AssertionError("No retry settling delay"))
-    assert rig.request() == pytest.approx([.13, .24, .25])
+    assert rig.request().surface == pytest.approx([.13, .24, .25])
     assert rig.attempts.count == rig.client.call_async.call_count == attempt
 
 
@@ -392,7 +392,7 @@ def test_tray_pause_drains_old_request_and_keeps_ten_attempt_limit(monkeypatch):
     assert rig.observer.pending and rig.attempts.count == 1
     rig.node.wait_for_resume.side_effect = None
     rig.on_send = lambda _: None
-    assert rig.request() == pytest.approx([.13, .24, .25])
+    assert rig.request().surface == pytest.approx([.13, .24, .25])
     assert rig.futures[0].cancelled() and rig.attempts.count == 10
 
 
@@ -405,7 +405,7 @@ def test_tray_discards_late_first_reply_and_validates_new_request_time(monkeypat
             old.placement.surface_base.z = .9
             rig.futures[0].set_result(old)
     rig.on_send = late
-    assert rig.request() == pytest.approx([.13, .24, .25])
+    assert rig.request().surface == pytest.approx([.13, .24, .25])
     assert rig.attempts.count == 2
 
 

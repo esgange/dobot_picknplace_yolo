@@ -8,9 +8,12 @@ bool tray_position_recorded
 # Exactly one canonical provider advertises the corresponding pose service.
 bool item_detector_ready
 bool tray_detector_ready
-# Explicit Place permits an empty robot or an item without trusted pickup context.
+# Explicit Place permits an empty robot; held alignment requires trusted pickup context.
 bool manual_placement_enabled
 bool holding_item
+# Valid only with holding_item and fresh feedback; measured pickup, bound to configuration_id.
+bool held_item_alignment_known
+float64[3] held_item_x_tool
 bool operation_active
 string operation
 bool auto_run_active

@@ -115,7 +115,7 @@ def test_tray_below_plane_retries_fresh_observations_then_accepts(monkeypatch, p
     rig.on_send = lower_first_two
     options = {"check_state": Mock()} if preview else {}
     point = rig.request(**options)
-    assert point == pytest.approx([.13, .24, .25])
+    assert point.surface == pytest.approx([.13, .24, .25])
     assert rig.attempts.count == 3 and stamps == sorted(set(stamps))
     failed = [call for call in rig.node.events.record.call_args_list
               if call.args[1] == "tray_observation_attempt_failed"]

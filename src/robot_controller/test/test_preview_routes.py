@@ -16,7 +16,7 @@ from robot_controller.kinematics import pose_matrix
 from robot_controller.motion import home_targets, pick_targets
 from robot_controller.placement import place_targets
 from test_feedback_v2 import feed, primed_monitor
-from test_placement import operation_node
+from test_placement import operation_node, tray_observation
 from test_operation_retries import TrayRig
 from test_candidates_v2 import client, configuration, valid_result
 
@@ -43,12 +43,13 @@ def preview(monkeypatch):
         get_publishers_info_by_topic=lambda _: [SimpleNamespace(
             node_name="dobot", node_namespace="/")])
     for name in ("_preview", "_clear", "_snapshot", "_broadcast", "_check_observation",
-                 "wait_for_resume", "operation_progress", "_on_joints", "_on_feed"):
+                 "wait_for_resume", "operation_progress", "_on_joints", "_on_feed",
+                 "_placement_axis", "_on_controller_status"):
         setattr(node, name, getattr(RobotControllerPreview, name).__get__(node))
     candidates = [SimpleNamespace(
         position_m=(.1 * i, .2, .3), quaternion=(0., 0., 0., 1.)) for i in range(2)]
     node.client = SimpleNamespace(request=Mock(return_value=SimpleNamespace(candidates=candidates)))
-    node.trays = SimpleNamespace(request=Mock(return_value=np.array([.3, .2, .25])))
+    node.trays = SimpleNamespace(request=Mock(return_value=tray_observation()))
     monkeypatch.setattr(preview_module, "load_configuration", Mock(return_value=config))
     monkeypatch.setattr(preview_module, "select_pick_attitude", lambda *_args: SimpleNamespace(
         accepted=True, rotation=config.home_matrix[:3, :3]))
@@ -203,7 +204,7 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle, use
     assert result.success
     assert [t.name for t in preview.targets] == [
         "place_pre", "place_release", "place_retract"]
-    expected = place_targets(preview.config.tray.detect_matrix, [.3, .2, .25],
+    expected = place_targets(preview.config.tray.detect_matrix, tray_observation(),
                              preview.config.profile, angle, preview.config.home_matrix)
     assert all(t.joints_rad is None and not t.joint_motion for t in preview.targets)
     assert preview.targets[1].matrix[2, 3] == pytest.approx(.2925)
@@ -285,7 +286,7 @@ def test_read_only_tray_requests_keep_retry_bound_without_requiring_robot_enable
     rig.node.monitor.snapshot.side_effect = FeedbackFailure("disabled robot")
     stationary = Mock()
     point = rig.request(require_held_item=False, check_state=stationary)
-    assert point == pytest.approx([.13, .24, .25]) and rig.attempts.count == 3
+    assert point.surface == pytest.approx([.13, .24, .25]) and rig.attempts.count == 3
     assert stationary.call_count >= 6
     rig.node.monitor.snapshot.assert_not_called()
     rig.node._preflight_item_state.assert_not_called()

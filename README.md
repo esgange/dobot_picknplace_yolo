@@ -32,6 +32,16 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
+Placement **Rotation 0°** aligns the item's short X with the detected tray's short
+X; the item's length follows the tray's length. Rotating the tray changes both
+the tray-local placement point and the item heading. Rotation adds an offset to
+this alignment while preserving the saved Tray Detect tool tilt. The controller
+compensates for the actual pickup orientation, including mirrored grasps. A held
+item needs its retained controller pickup; empty placement uses tool Y as a
+reference. Rebuild `robot_controller_interfaces` and `robot_controller`, then
+relaunch controller, GUI and Preview together for the added alignment status.
+See [placement alignment](src/robot_controller/README.md#tray-placement-alignment).
+
 **Waiting for operator intervention:** exhausted item acquisition/pick retries,
 blocked-only poses or all unsafe trickle targets now confirm Home and Stop and
 show **WAITING FOR ITEMS** (`PAUSED`, phase `ITEM_ACQUISITION_PAUSED`). Manual Pick
@@ -230,8 +240,9 @@ Error; the controller verifies alarm clearance before enabling. See the
 
 `robot_controller` is the production hardware authority for Home, Pick, Tray Detect
 Position and Place Item operations. Placement supports positive tray-local X/Y
-and a −180° to +180° tool rotation referenced to the saved Tray Detect Pose, with
-live depth and Item Teach `motion.trayplace_height`. The drop target is the tray
+and a −180° to +180° rotation offset from item-X/tray-X alignment, preserving the
+saved Tray Detect tool tilt. It uses live depth and Item Teach
+`motion.trayplace_height`. The drop target is the tray
 surface Z + `trayplace_height` (mm), independent of pick heights. Pre-place/retract
 uses the placement X/Y at taught Home Z, matching the first item-pick approach
 before pre-pick.

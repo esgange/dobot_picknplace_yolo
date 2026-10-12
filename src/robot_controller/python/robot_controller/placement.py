@@ -8,6 +8,7 @@ import numpy as np
 from .errors import FeedbackFailure, HeldUnknown, ManagedInterruption, ReturnedToHome
 from .motion import gripper_open_events, pose_reached, rigid_matrix
 from .release import ReleaseQueue, release_targets
+from .placement_alignment import aligned_rotation, held_item_axis
 from .tray_client import TRAY_ATTEMPT_LIMIT, TrayAcquisitionExhausted, TrayAttempts
 
 
@@ -33,14 +34,18 @@ def validate_target(x_mm, y_mm, rotation_deg):
     return tuple(map(float, values))
 
 
-def place_targets(detect_matrix, surface, settings, rotation_deg, home_matrix):
-    """Saved tool attitude plus local Z spin; explicit drop height above tray surface."""
+def place_targets(detect_matrix, observation, settings, rotation_deg, home_matrix,
+                  *, item_x_in_tool=(0., 1., 0.)):
+    """Tray-relative item X, preserved tool tilt, and explicit surface drop height.
+
+    Empty placement uses tool Y as its visible reference; held placement must
+    provide its actual saved grasp axis, never infer one from the gripper flags.
+    """
     validate_target(1., 1., rotation_deg)
     matrix = rigid_matrix(detect_matrix, "Recorded Tray Detect Pose").copy()
-    angle = math.radians(rotation_deg)
-    c, s = math.cos(angle), math.sin(angle)
-    matrix[:3, :3] = matrix[:3, :3] @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    surface = np.asarray(surface, dtype=float)
+    matrix[:3, :3] = aligned_rotation(
+        detect_matrix, observation.rotation, item_x_in_tool, rotation_deg)
+    surface = np.asarray(observation.surface, dtype=float)
     if surface.shape != (3,) or not np.isfinite(surface).all():
         raise ValueError("Placement surface must be a finite base-frame point")
     motion = settings["motion"]
@@ -93,9 +98,17 @@ class PlacementOperation(ReleaseQueue):
             # Attended placement still requires healthy, enabled robot feedback.
             node.monitor.snapshot(require_enabled=True)
 
+    def alignment_axis(self, node):
+        if node.holding_item:
+            return held_item_axis(node.managed.session, node.configuration)
+        if node.monitor.snapshot(require_enabled=True).feed["digital_input_bits"] & 1:
+            raise FeedbackFailure("Item alignment unknown; use a controller Pick before placement")
+        return np.array([0., 1., 0.])
+
     def check_observation(self, node):
         node.wait_for_resume()
         self.preflight(node)
+        self.alignment_axis(node)
         if not node.hardware.home_already_reached(node.configuration.tray.detect_joints):
             raise FeedbackFailure("Not at Tray Detect position; tray detection blocked")
 
@@ -121,16 +134,17 @@ class PlacementOperation(ReleaseQueue):
         # An interrupted queue with unchanged outputs can be reobserved.
         self.observing = False
         self.preflight(node)
+        self.alignment_axis(node)  # Reject unknown grasps before observation travel.
         node.operation_progress("TRAY_POSITION", "Checking saved Tray Detect position")
         if not node.hardware.home_already_reached(config.tray.detect_joints):
             node._execute_tray_position()
         node.hardware.wait_tray_position(config.tray.detect_joints)
         try:
-            surface = node.trays.request(config, self.x_mm, self.y_mm,
-                                         save_debug_images=self.save_debug_images,
-                                         require_held_item=self.require_held_item,
-                                         attempts=self.tray_attempts,
-                                         check_state=lambda: self.check_observation(node))
+            observation = node.trays.request(config, self.x_mm, self.y_mm,
+                                             save_debug_images=self.save_debug_images,
+                                             require_held_item=self.require_held_item,
+                                             attempts=self.tray_attempts,
+                                             check_state=lambda: self.check_observation(node))
         except TrayAcquisitionExhausted as exc:
             with node.managed.lock:
                 node.wait_for_resume()
@@ -141,8 +155,16 @@ class PlacementOperation(ReleaseQueue):
         self.check_observation(node)
         if on_observed is not None:
             on_observed()
-        self.plan = place_targets(config.tray.detect_matrix, surface,
-                                  config.profile, self.rotation_deg, config.home_matrix)
+        axis = self.alignment_axis(node)
+        self.plan = place_targets(config.tray.detect_matrix, observation,
+                                  config.profile, self.rotation_deg, config.home_matrix,
+                                  item_x_in_tool=axis)
+        node.events.record(
+            "INFO", "placement_alignment", "Item X aligned to observed tray X with offset",
+            item_x_in_tool=axis.tolist(), tray_x_base=observation.rotation[:, 0].tolist(),
+            rotation_offset_deg=self.rotation_deg, held_context=node.holding_item,
+            target_item_x_base=(self.plan[0].matrix[:3, :3] @ axis).tolist(),
+            target_tool_z_base=self.plan[0].matrix[:3, 2].tolist())
         config.validate_sources(node.root)
         self.preflight(node)
         self.phase = "APPROACH"

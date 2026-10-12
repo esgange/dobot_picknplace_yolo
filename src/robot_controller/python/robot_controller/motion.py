@@ -310,6 +310,9 @@ class PickExecutor:
         while index is not None:
             plan = session.attempts[index - 1].plan if session else plans[index - 1]
             if session is not None:
+                if acquired and session.attempts[index - 1].state != "HELD":
+                    session.attempts[index - 1].pickup_matrix = rigid_matrix(
+                        return_origin, "Measured pickup pose").copy()
                 session.set_state(index, "HELD" if acquired else "FAILED")
             if acquired and holding_changed is not None:
                 # Establish trusted in-memory holding context before return

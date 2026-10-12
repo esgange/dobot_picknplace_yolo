@@ -15,7 +15,7 @@ from robot_controller.kinematics import pose_values
 from robot_controller.motion import tray_detect_targets
 from robot_controller.placement import place_targets
 from test_feedback_v2 import feed, primed_monitor, joint_message
-from test_placement import operation_node
+from test_placement import operation_node, tray_observation
 
 
 HELD = (1 << 12) | 2
@@ -69,7 +69,7 @@ class QueueRig:
             matrix = owner.plan[owner.release_index].matrix
         if retract:
             matrix = place_targets(
-                self.node.configuration.tray.detect_matrix, [.3, .2, .25],
+                self.node.configuration.tray.detect_matrix, tray_observation(),
                 self.node.configuration.profile, self.node.placement.rotation_deg,
                 self.node.configuration.home_matrix)[-1].matrix
         fields = dict(
@@ -290,7 +290,7 @@ def test_approach_open_feedback_requires_issued_timed_event(use_grip, issued):
     node.configuration.profile['gripper']['use_grip'] = use_grip
     node.expected_outputs.update({2: False, 14: False})
     rig.emit(outputs=1 << 12, inputs=1, running=0)
-    operation.plan = place_targets(node.configuration.tray.detect_matrix, [.3, .2, .25],
+    operation.plan = place_targets(node.configuration.tray.detect_matrix, tray_observation(),
                                    node.configuration.profile, 0., node.configuration.home_matrix)
     operation.begin_queue(node)
     if issued:
@@ -313,7 +313,7 @@ def test_pre_place_open_does_not_authorize_vacuum_changes_or_finger_close(output
     node.configuration.profile['gripper']['use_grip'] = False
     node.expected_outputs.update({2: False, 14: False})
     rig.emit(outputs=1 << 12, inputs=1, running=0)
-    operation.plan = place_targets(node.configuration.tray.detect_matrix, [.3, .2, .25],
+    operation.plan = place_targets(node.configuration.tray.detect_matrix, tray_observation(),
                                    node.configuration.profile, 0., node.configuration.home_matrix)
     operation.begin_queue(node)
     operation.issued(0)
@@ -384,8 +384,8 @@ def test_bad_final_grip_is_reported_at_retract_without_an_intermediate_stop(outp
     with pytest.raises(FeedbackFailure, match='Retract reached; final placement'):
         rig.run()
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
-    assert rig.monitor.snapshot().feed['tool_vector_actual'] == pose_values(
-        rig.node.placement.plan[-1].matrix)
+    assert rig.monitor.snapshot().feed['tool_vector_actual'] == pytest.approx(pose_values(
+        rig.node.placement.plan[-1].matrix))
     assert rig.node.managed.session.attempts[0].state == 'HELD'
 
 
@@ -443,7 +443,7 @@ def test_stop_after_release_preserves_exhaust_without_waiting_for_a_pulse_end():
 
     rig = QueueRig()
     node, operation = rig.node, rig.node.placement
-    operation.plan = place_targets(node.configuration.tray.detect_matrix, [.3, .2, .25],
+    operation.plan = place_targets(node.configuration.tray.detect_matrix, tray_observation(),
                                    node.configuration.profile, 0., node.configuration.home_matrix)
     operation.phase = 'APPROACH'
     operation.begin_queue(node)
@@ -468,7 +468,7 @@ def test_ambiguous_partial_release_blocks_recovery_without_releasing_or_descendi
 
     rig = QueueRig()
     node, operation = rig.node, rig.node.placement
-    operation.plan = place_targets(node.configuration.tray.detect_matrix, [.3, .2, .25],
+    operation.plan = place_targets(node.configuration.tray.detect_matrix, tray_observation(),
                                    node.configuration.profile, 0., node.configuration.home_matrix)
     operation.phase = 'APPROACH'
     operation.begin_queue(node)

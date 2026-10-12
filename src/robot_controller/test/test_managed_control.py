@@ -521,10 +521,12 @@ def test_suction_acquired_during_pause_stop_is_retained_as_trusted_held_context(
     rig.set_di1(True)
     rig.hardware.output(13, True)
     rig.hardware.acquisition_eligible = True
+    pickup_pose = rig.hardware.current_pose().copy()
     rig.managed.request("pause")
     rig.managed.handle()
     assert rig.holding_item
     assert states(rig)[0] == "HELD"
+    assert np.array_equal(rig.managed.session.attempts[0].pickup_matrix, pickup_pose)
     assert not any(entry[0] == "pulse" for entry in rig.log)
     assert rig.hardware.deferred_drop_height == pytest.approx(
         rig.managed.session.attempts[0].plan[4].matrix[2, 3])

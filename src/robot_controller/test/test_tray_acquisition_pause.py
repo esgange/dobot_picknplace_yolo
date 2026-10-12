@@ -28,6 +28,14 @@ def acquisition_rig(monkeypatch, replies, *, held=True):
     node.configuration.profile = tray.config.profile
     node.configuration.tray.__dict__.update(tray.config.tray.__dict__)
     node.configuration.validate_sources = Mock()
+    node.configuration.selection = SimpleNamespace(station=SimpleNamespace(
+        platform=SimpleNamespace(base_from_platform=np.eye(4))))
+    node.managed.session.configuration = node.configuration
+    node.managed.session.batch = SimpleNamespace(candidates=tuple(
+        SimpleNamespace(position_m=attempt.plan[3].matrix[:3, 3], quaternion=(0., 0., 0., 1.))
+        for attempt in node.managed.session.attempts))
+    held_attempt = node.managed.session.attempts[node.managed.session.held_index - 1]
+    held_attempt.pickup_matrix = held_attempt.plan[3].matrix.copy()
     node.feed["tool_vector_actual"] = pose_values(node.configuration.tray.detect_matrix)
     if not held:
         node.managed.session = None

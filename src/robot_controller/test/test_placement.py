@@ -21,11 +21,17 @@ from robot_controller.motion import pick_targets
 from robot_controller.pick_session import PickSession
 from robot_controller.placement import PlacementOperation, place_targets, validate_target
 from robot_controller.state_machine import ControllerStateMachine
-from robot_controller.tray_client import validate_result, TrayClient
+from robot_controller.tray_client import validate_result, TrayClient, TrayObservation
 from robot_controller.ui_state import load_state, save_state
 from tray_perception.core import ORIGIN_CONVENTION
 from tray_perception.placement import sampling_from_item
 from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
+
+
+def tray_observation(surface=(.3, .2, .25), rotation=None):
+    if rotation is None:
+        rotation = pose_matrix([0, 0, 0, 180, 0, -90])[:3, :3]
+    return TrayObservation(np.array(surface), rotation)
 
 
 def settings():
@@ -40,12 +46,13 @@ def settings():
 
 @pytest.mark.parametrize("angle", [-180., -90., 0., 90., 180.])
 @pytest.mark.parametrize("use_grip", [False, True])
-def test_place_uses_saved_tool_z_rotation_and_exact_depth_heights(angle, use_grip):
+def test_place_preserves_tool_z_and_exact_depth_heights(angle, use_grip):
     detect = pose_matrix([300, 200, 800, 175, 12, 28])
     home = pose_matrix([500, -150, 900, 170, 25, -60])
     profile = settings()
     profile["gripper"]["use_grip"] = use_grip
-    plan = place_targets(detect, [.3, .2, .25], profile, angle, home)
+    tray_rotation = detect[:3, :3] @ np.array([[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]])
+    plan = place_targets(detect, tray_observation(rotation=tray_rotation), profile, angle, home)
     assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract"]
     assert [p.matrix[2, 3] for p in plan] == pytest.approx([.9, .31, .9])
     assert all(np.allclose(p.matrix[:2, 3], [.3, .2]) for p in plan[:3])
@@ -77,7 +84,9 @@ def test_tray_drop_height_is_independent_of_pick_heights(
     detect = pose_matrix([300, 200, 800, 175, 12, 28])
     surface = pose_matrix([300, 200, 250, 0, 0, 0])
     pick = pick_targets(home, surface, profile, 1, rotation=detect[:3, :3])
-    place = place_targets(detect, surface[:3, 3], profile, 0., home)
+    tray_rotation = detect[:3, :3] @ np.array([[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]])
+    place = place_targets(
+        detect, tray_observation(surface[:3, 3], tray_rotation), profile, 0., home)
 
     assert place[1].matrix[2, 3] == pytest.approx(.25 + trayplace / 1000)
     assert pick[2].matrix[2, 3] == pytest.approx(.25 + (standoff + prepick) / 1000)
@@ -94,7 +103,7 @@ def test_tray_drop_height_is_independent_of_pick_heights(
 def test_drop_at_or_above_home_rejects_before_any_placement_command(surface_z, use_grip):
     node = operation_node()
     node.configuration.profile["gripper"]["use_grip"] = use_grip
-    node.trays.request.return_value = np.array([.3, .2, surface_z])
+    node.trays.request.return_value = tray_observation([.3, .2, surface_z])
     with pytest.raises(ValueError, match="Home Z must be above the drop height"):
         run_place(node)
     assert not node.hardware.calls
@@ -238,14 +247,21 @@ def operation_node():
         machine=ControllerStateMachine(initial="PLACING"))
     node._transition = lambda state, msg: node.machine.transition(state, msg)
     node.placement = PlacementOperation(30., 40., 90.)
-    node.trays = SimpleNamespace(request=Mock(return_value=np.array([.3, .2, .25])))
+    node.trays = SimpleNamespace(request=Mock(return_value=tray_observation()))
     node.hardware = Hardware(node)
     node.monitor = SimpleNamespace(
         snapshot=node.hardware.sample,
         output_history=lambda seq: tuple(v for v in node.hardware.history if v[0] > seq))
     node.expected_outputs.update(node.hardware.outputs)
     node.managed = ManagedControl(node)
-    node.managed.session = PickSession(["bottle"], [()])
+    node.configuration.selection = SimpleNamespace(station=SimpleNamespace(
+        platform=SimpleNamespace(base_from_platform=np.eye(4))))
+    candidate = SimpleNamespace(position_m=(.3, .2, .25),
+                                quaternion=(0., 0., -np.sqrt(.5), np.sqrt(.5)))
+    node.managed.session = PickSession(
+        ["bottle"], [()], configuration=node.configuration,
+        batch=SimpleNamespace(candidates=(candidate,)))
+    node.managed.session.attempts[0].pickup_matrix = detect.copy()
     node.managed.session.set_state(1, "ACTIVE")
     node.managed.session.set_state(1, "HELD")
     node._finish_placement_queue = lambda: RobotController._finish_placement_queue(node)
@@ -523,7 +539,7 @@ def test_paused_tray_request_retires_before_a_new_request_and_ignores_old_result
     node.wait_for_resume = Mock()
     point = observer.request(config, sampling["x_mm"], sampling["y_mm"],
                              require_held_item=require_held_item)
-    assert point == pytest.approx([.13, .24, .25])
+    assert point.surface == pytest.approx([.13, .24, .25])
     assert client.call_async.call_count == 2 and observer.pending is None
     if require_held_item:
         node._preflight_item_state.assert_called_with(True)

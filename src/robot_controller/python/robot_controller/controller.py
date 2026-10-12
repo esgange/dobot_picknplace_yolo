@@ -43,6 +43,7 @@ from .motion import (candidate_pose_in_base, home_targets, pick_targets, pick_tr
 from .managed_control import ManagedControl
 from .placement import (PlacementOperation, TRAY_SPEED_PERCENT, acquisition_pause_active,
                         validate_target)
+from .placement_alignment import held_item_axis
 from .recovery import HomeRecovery
 from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
@@ -396,6 +397,13 @@ class RobotController(Node):
         try:
             sample = self.monitor.snapshot(require_enabled=False)
             status.feedback_fresh = True
+            if self.holding_item:
+                try:
+                    status.held_item_x_tool = held_item_axis(
+                        session, self.configuration).tolist()
+                    status.held_item_alignment_known = True
+                except (FeedbackFailure, ValueError):
+                    pass  # Unknown grasp cannot authorize aligned placement.
             status.robot_enabled = bool(sample.feed["EnableStatus"])
             status.robot_running = bool(sample.feed["RunningStatus"])
             status.robot_queue_active = bool(sample.feed["isRunQueuedCmd"])

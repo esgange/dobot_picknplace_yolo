@@ -417,6 +417,8 @@ class ManagedControl:
             if eligible and bits & (1 << 12) and len(active) == 1:
                 plan = self.session.attempts[active[0] - 1].plan
                 node.hardware.defer_pickup_drop(plan[4].matrix, sample)
+                self.session.attempts[active[0] - 1].pickup_matrix = (
+                    node.hardware.pose_from_snapshot(sample).copy())
                 self.session.set_state(active[0], "HELD")
                 node.holding_item = True
             elif not getattr(node.hardware, "late_miss_suction", False):

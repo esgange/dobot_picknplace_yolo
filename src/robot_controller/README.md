@@ -335,7 +335,7 @@ matrix supplies its exact drop position and attitude; `trayplace_height` is unus
 
 | Motion | Return Item | Place Item |
 | --- | --- | --- |
-| MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and tray attitude plus rotation at Home Z |
+| MovL approach | Saved item X/Y and pick attitude at Home Z | Tray target X/Y and item-X/tray-X alignment plus rotation, preserving taught tilt, at Home Z |
 | MovLIO descent | Exact saved pre-pick target at 100% | Detected surface Z + trayplace_height at 100% |
 | At 80% descent | DO2 OFF, DO14 ON (open), DO13 OFF, DO1 ON (exhaust) | DO2 OFF, DO14 ON only; suction remains ON |
 | At 90% descent | No new event | DO13 OFF then DO1 ON (exhaust) |
@@ -473,8 +473,10 @@ Pick Item is enabled only in idle READY with its Item Teach/Detect service
 available and a loaded Tray Teach with recorded Tray Detect joints. Pick does
 not require tray detection to be armed. Place Item needs a recorded Tray Detect Pose and its Tray Teach/Detect
 service. Explicit Place, including through a headless controller,
-is available from idle READY or HOLDING, with or without an item or picked-item
-record. No suction-presence prerequisite applies during observation or approach.
+is available from idle READY or HOLDING with an empty gripper or a trusted
+controller pickup. A held item requires its measured pickup orientation and bound
+candidate; DI1 HIGH without that context rejects before observation travel.
+An empty placement has no suction-presence prerequisite.
 The sequence still commands real hardware; final neutral I/O and DI1 are checked
 at final retract. Auto Run retains its trusted picked-item source and held-suction
 guards. Status reports `manual_placement_enabled=true` for explicit Place in both
@@ -501,10 +503,31 @@ The earlier endpoint is never used as a fallback. Restart Tray Teach/Detect and
 Robot Controller together after rebuilding; an old provider leaves Place disabled
 instead of accepting an incompatible request. No robot motion is sent by detection.
 
+### Tray placement alignment
+
 Enter positive **X (mm)** and **Y (mm)** from the detected tray origin along its
-inward short-X and long-Y axes, and **Rotation (−180° to +180°)**. At 0° the tool uses
-the recorded Tray Detect Pose attitude; the offset rotates about that tool's Z.
-Item axes and pick rotation have no effect on placement orientation.
+inward short-X and long-Y axes, and **Rotation (−180° to +180°)**. At 0°, align the
+held item's +X with the detected tray's +X; any requested rotation is an additional
+offset about the unchanged saved Tray Detect tool Z. The long axes therefore
+follow each other at zero offset. A 90° tray turn rotates the item heading and
+transforms the same tray-local X/Y point into its new base-frame position.
+
+Preserve the taught tilt: alignment compares the X directions projected into the
+plane perpendicular to tool Z; it does not make the item parallel to the tray
+plane. Never copy the tray's Z sign, which can flip when the nearest corner changes.
+Save the measured tool attitude at acquisition, transform the bound candidate's
+item X into that tool frame, and retain it through held travel and Pause/Continue.
+This compensates for pickup rotation, nearest-angle selection and camera mirrors.
+An item without trusted pickup context cannot promise this alignment and is rejected
+before travel. Empty placement uses tool Y as its reference axis.
+
+Keep each validated tray quaternion paired with its sampled surface point. The
+same planner serves hardware and Preview. Held Preview requires a matching
+configuration and fresh `held_item_alignment_known` / `held_item_x_tool` status;
+both source and receipt ages must be within one second. Empty Preview labels its
+tool-Y reference. Record `placement_alignment` with tray/item directions, offset
+and preserved tool Z. Rebuild controller interfaces and controller and relaunch
+controller/GUI/Preview and other status clients together. Operator files stay unchanged.
 
 Placement keeps requested X/Y and measures surface Z using the Item Teach depth
 sampling diameter and quality settings, except placement has its own fixed
@@ -521,7 +544,7 @@ matching the first Item Pick approach (`pN_transit`) before pre-pick (rule 171).
 That initial Pick route skips its lower clearance/initial point. For surface Z
 250 mm, trayplace_height 40 mm and Home Z 800 mm, release is Z 290 mm and
 approach/retract Z 800 mm. The final pose stays above the tray at this height
-with the detect-relative attitude; there is no final Home command.
+with the tray-aligned attitude and taught tilt; there is no final Home command.
 Home Z must be above drop Z for percentage I/O on both legs; invalid geometry
 blocks the placement queue. Require a complete schema-15 Item Teach profile with
 a finite, nonnegative `trayplace_height`. To use older profiles, open them in

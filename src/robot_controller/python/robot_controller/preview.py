@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 import threading
 import math
+import time
 
 import numpy as np
 import rclpy
@@ -21,6 +22,7 @@ from camera_calibration_gui.calibration_core import rotation_matrix_to_quaternio
 from item_perception_yolo.platform_teach_core import _parse_env_file, workspace_root
 from item_perception_yolo.pick_planning import select_pick_attitude
 from robot_controller_interfaces.srv import Preview
+from robot_controller_interfaces.msg import ControllerStatus
 
 from .candidates import (
     CANDIDATE_SERVICE, CANONICAL_CANDIDATE_PROVIDERS, CandidateClient)
@@ -56,6 +58,11 @@ class RobotControllerPreview(rclpy.node.Node):
         self.cancel = threading.Event()
         self.lock = threading.Lock()
         self.state_lock = threading.RLock()
+        self.controller_status = None
+        self.controller_status_received = None
+        self.place_alignment = None
+        self.create_subscription(
+            ControllerStatus, "/robot_controller/status", self._on_controller_status, 10)
         self.generation = 0
         self.configuration = None
         self.origin = None
@@ -126,6 +133,32 @@ class RobotControllerPreview(rclpy.node.Node):
         if self.request_origin is not None and not pose_reached(
                 current, self.request_origin, translation_m=.005, rotation_deg=1.):
             raise FeedbackFailure("Robot position changed during preview observation")
+        binding = getattr(self, "place_alignment", None)
+        if binding is not None and not np.allclose(
+                self._placement_axis(binding[0]), binding[1], atol=1e-9, rtol=0):
+            raise FeedbackFailure("Held item alignment changed during placement preview")
+
+    def _on_controller_status(self, message):
+        with self.state_lock:
+            self.controller_status = message
+            self.controller_status_received = time.monotonic()
+
+    def _placement_axis(self, config):
+        with self.state_lock:
+            status = getattr(self, "controller_status", None)
+            received = getattr(self, "controller_status_received", None)
+        raw_held = bool(self._snapshot().feed["digital_input_bits"] & 1)
+        age = float("inf") if status is None else (
+            self.get_clock().now().nanoseconds - (
+                status.header.stamp.sec * 1_000_000_000 + status.header.stamp.nanosec)) / 1e9
+        if not raw_held and not (status and 0 <= age <= 1. and status.holding_item):
+            return np.array([0., 1., 0.])
+        if (status is None or received is None or time.monotonic() - received > 1.
+                or not 0 <= age <= 1. or not status.feedback_fresh
+                or not status.holding_item or not status.held_item_alignment_known
+                or status.configuration_id != config.configuration_id):
+            raise FeedbackFailure("Placement preview requires fresh matching held-item alignment")
+        return np.asarray(status.held_item_x_tool, dtype=float)
 
     def operation_progress(self, _phase, message):
         self._check_observation()
@@ -136,6 +169,7 @@ class RobotControllerPreview(rclpy.node.Node):
             self.generation += 1
             self.cancel.set()
             self.configuration = self.origin = None
+            self.place_alignment = None
             self.targets = self.frames = ()
 
     def _preview(self, request, response):
@@ -157,13 +191,15 @@ class RobotControllerPreview(rclpy.node.Node):
                 if generation != self.generation:
                     raise OperationCanceled("Preview cleared before planning started")
                 self.configuration = self.origin = None
+                self.place_alignment = None
                 self.targets = self.frames = ()
                 self.cancel.clear()
             if request.operation not in (request.HOME, request.PICK, request.PLACE):
                 raise ValueError("Unknown preview operation")
             config = load_configuration(
                 request.item_teach_file,
-                request.bin_teach_file if request.operation == request.PICK else "",
+                (request.bin_teach_file
+                 if request.operation in (request.PICK, request.PLACE) else ""),
                 self.root, self.kinematics, deployment=False,
                 tray_path=(request.tray_teach_file
                            if request.operation in (request.PICK, request.PLACE) else ""))
@@ -231,6 +267,7 @@ class RobotControllerPreview(rclpy.node.Node):
                                    for t in (release, *retreat))
             if request.operation == request.PLACE:
                 x, y, rotation = validate_target(request.x_mm, request.y_mm, request.rotation_deg)
+                axis = self._placement_axis(config)
                 if config.tray is None or config.tray.detect_joints is None:
                     raise ValueError("Load a Tray Teach with a recorded Tray Detect Pose")
 
@@ -249,11 +286,14 @@ class RobotControllerPreview(rclpy.node.Node):
                     tray_travel_only = True
                 else:
                     check_tray_position()
-                    surface = self.trays.request(
+                    observation = self.trays.request(
                         config, x, y, require_held_item=False, check_state=check_tray_position)
                     check_tray_position()
-                    targets.extend(place_targets(config.tray.detect_matrix, surface,
-                                                 config.profile, rotation, config.home_matrix))
+                    if not np.allclose(axis, self._placement_axis(config), atol=1e-9, rtol=0):
+                        raise FeedbackFailure("Held item alignment changed during observation")
+                    targets.extend(place_targets(
+                        config.tray.detect_matrix, observation, config.profile, rotation,
+                        config.home_matrix, item_x_in_tool=axis))
             config.validate_sources(self.root)
             self._check_observation()
             frames = tuple(f"robot_controller_preview_{target.name}_{index}"
@@ -261,6 +301,8 @@ class RobotControllerPreview(rclpy.node.Node):
             with self.state_lock:
                 self.wait_for_resume()
                 self.configuration, self.origin = config, current.copy()
+                if request.operation == request.PLACE:
+                    self.place_alignment = (config, axis.copy())
                 self.targets, self.frames = tuple(targets), frames
             response.success = True
             response.message = (f"Published {len(frames)} TF-only planned targets; robot unchanged"
@@ -275,6 +317,8 @@ class RobotControllerPreview(rclpy.node.Node):
             if tray_travel_only:
                 response.message += ("; Tray Detect travel only; placement targets require "
                                      "a fresh tray observation at that pose")
+            elif request.operation == request.PLACE:
+                response.message += "; tray-relative alignment; empty reference uses tool Y"
             response.configuration_id = config.configuration_id
             response.tf_frames = list(frames)
             self.events.record(

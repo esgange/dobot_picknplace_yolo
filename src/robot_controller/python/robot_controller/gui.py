@@ -260,7 +260,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_rotation.setDecimals(1)
         self.place_rotation.setValue(0.)
         self.place_rotation.setSuffix("°")
-        self.place_rotation.setToolTip("0° = recorded Tray Detect Pose; rotate about its tool Z")
+        self.place_rotation.setToolTip(
+            "0° aligns item X with detected tray X; add an offset about unchanged taught tool Z")
         target_row = QtWidgets.QHBoxLayout()
         for label, field in (("X (mm)", self.place_x), ("Y (mm)", self.place_y),
                              ("Rotation", self.place_rotation)):

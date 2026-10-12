@@ -1,5 +1,20 @@
 # Robot Controller — Finite State Machine
 
+Tray alignment review: **2026-10-12**, baseline **`52e64be`** plus rule **273**.
+Placement Rotation zero aligns the held item's short +X with the fresh tray's
+short +X, projected perpendicular to the saved Tray Detect tool Z. Preserve that
+taught tilt and add Rotation about that unchanged Z. Retain the actual measured
+pickup attitude and bound candidate frame, including acquisition during Pause;
+never overwrite the grasp during transport or Continue. Keep the accepted tray
+quaternion with its depth point. Thus a 90° tray turn changes placement heading
+as well as tray-local X/Y in base coordinates. Empty Place uses tool Y as its
+reference; unknown held alignment rejects before observation travel. Held Preview
+uses the same planner and fresh configuration-matched alignment status, with both
+source and receipt ages bounded to one second. Rebuild interfaces/controller and
+relaunch all status clients together. Routes, rates, I/O, Stop and retry policy
+are unchanged. **1,637 synthetic controller tests pass**; physical verification
+and canonical deployment remain pending.
+
 Refill/intervention review: **2026-10-12**, baseline **`98a8fa5`** plus rule **272**.
 Manual Pick and Auto Run retain ownership after exhausted empty/physical retries,
 blocked-only poses or all unsafe trickle targets. Confirm any owned placement,
@@ -946,8 +961,10 @@ dependency. Tray Teach/Detect use current intrinsics and image-time TF with the
 unchanged saved base-frame plane. Camera replacement requires explicit reload;
 active hashes remain pinned and returned camera evidence must match the controller.
 Pick and tray operations require those joints. Place requires an armed canonical
-`tray_teach` or headless `tray_detect` provider. Explicit Place permits READY or
-HOLDING without a Pick in either launch mode; Auto Run still requires a trusted item.
+`tray_teach` or headless `tray_detect` provider. Explicit Place permits an empty
+READY robot or a trusted HOLDING item with retained pickup alignment in either
+launch mode; Auto Run still requires a trusted item. Unknown held alignment
+rejects before observation travel.
 Configuration hashes include Tray Teach and its camera; explicit reload includes preparation.
 
 New Pick and Place goals require a currently available pose service from exactly
@@ -1261,7 +1278,7 @@ claim PLACED or RETURNED.
 
 ```mermaid
 flowchart TD
-    Request["PlaceItem: READY/HOLDING, empty or held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
+    Request["PlaceItem: empty READY or trusted HOLDING; require pickup alignment when held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
     Observe -->|Yes immediately| Depth["Fresh tray pose/depth; optional debug RGB/depth; valid pixels meet 20% placement coverage; at most 10 attempts; zero added delay"]
     Observe -->|No| Travel["Queue MovL then MovJ to identical Tray Detect joints; speed 100%; preserve outputs; no intermediate arrival wait"]
     Travel --> Arrive["Confirm only final MovJ execution, raw saved joints and idle before detection"]
@@ -1279,7 +1296,8 @@ flowchart TD
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Surface within 20 mm below saved plane or higher; still at observation position| Valid["Validate placement geometry and sources; keep suction"]
-    Valid --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
+    Valid --> Align["Align item X to fresh tray X at zero; add Rotation offset; preserve taught tool Z/tilt; empty reference is tool Y"]
+    Align --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
     Queue --> Pre["Placement X/Y at Home Z: use_grip OFF uses MovLIO with 80% DO2 OFF then DO14 ON; otherwise MovL"]
     Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN; 90% suction OFF then exhaust ON"]
     Release --> Retract["MovLIO to pre-place in same queue; speed 100%; 0% start fingers + vacuum neutral"]
@@ -1307,9 +1325,17 @@ flowchart TD
 
 X/Y are strictly positive millimetres along the detected tray inward short-X /
 long-Y axes from its nearest-base corner. Reject targets at or beyond either far
-edge. Rotation accepts −180° to +180°; zero is the saved Tray Detect Pose tool
-orientation, followed by the requested local tool-Z rotation. Item axes,
-pick_rotation and the detected tray quaternion do not determine tool attitude.
+edge. Rotation accepts −180° to +180°; zero aligns the held item's +X with the
+detected tray's +X, projected into the plane perpendicular to the saved Tray Detect
+tool Z. Add Rotation around that unchanged Z, preserving taught tilt. Do not copy
+tray Z, which can change sign with the nearest-corner convention. Save measured
+tool attitude at acquisition and transform the bound candidate X into that tool
+frame; pickup rotation, nearest-angle choices and camera mirrors are thereby
+compensated. Preserve this grasp through travel/Pause/Continue. Empty placement
+uses tool Y as its reference; DI1 HIGH without trusted alignment rejects before
+travel. Held Preview requires fresh matching configuration/feedback/alignment
+status, bounded by both ROS source timestamp and monotonic receipt age. Record
+the tray/item directions, offset and preserved tool Z in `placement_alignment`.
 
 As for Pick's initial Home skip, check fresh RobotStatus idle and all six actual
 joints within ±1° of saved Tray Detect. Proceed immediately when matched;
@@ -1404,7 +1430,7 @@ do not affect it. Hardware and Preview share the calculation.
 Pre-place/retract Z = taught Home Z,
 matching the first Item Pick's `pN_transit` height before pre-pick; that initial
 route skips the lower clearance point. Approach/drop/retract keep tray-target
-X/Y and detect-relative tool attitude through the final upward endpoint.
+X/Y and tray-aligned tool attitude with taught tilt through the final upward endpoint.
 Require Home Z above drop Z for timed descent/retract. No extra preliminary
 safety rise is added. Send exactly three commands in one group: pre-place, drop
 and retract. Every segment and the external Tray Detect Position action use 100%.
@@ -1921,7 +1947,7 @@ Names below are relative to `/robot_controller/`.
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
-| `place_item` action | Started READY/HOLDING in either launch mode, empty or held; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
+| `place_item` action | Started READY/HOLDING in either launch mode, empty or trusted held alignment; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
 | `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
 | Measured surface floor/plane (perception / controller / Preview) | Base Z at actual target X/Y must be no more than 20 mm below calibrated bin floor or saved tray plane before tool offsets, with 0.001 mm numerical tolerance at that limit; either normal sign and tilted planes; reject without clamping; skip bin candidates/use empty retry budget, retry tray observations/use acquisition pause; invalid geometry/evidence remains fatal |

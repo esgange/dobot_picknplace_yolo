@@ -88,8 +88,19 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(he
     assert message.digital_outputs == feed["digital_outputs"]
     assert message.digital_input_bits == 1 << 11  # Raw DI1 LOW despite debounced holding.
     assert message.holding_item
+    assert not message.held_item_alignment_known
     assert message.item_detector_ready and not message.tray_detector_ready
     assert message.manual_placement_enabled
+
+    from test_placement import operation_node
+    bound = operation_node()
+    node.configuration = bound.configuration
+    node.configuration.configuration_id = 'bound'
+    node.configuration.tray = None
+    node.managed.session = bound.managed.session
+    RobotController.publish_status(node)
+    assert messages[-1].held_item_alignment_known
+    assert list(messages[-1].held_item_x_tool) == pytest.approx([0., 1., 0.])
 
     def stale(**_kwargs):
         raise FeedbackFailure("stale")
@@ -97,6 +108,7 @@ def test_status_publishes_observed_feed_bits_and_clears_unavailable_telemetry(he
     RobotController.publish_status(node)
     stale_message = messages[-1]
     assert not stale_message.feedback_fresh
+    assert not stale_message.held_item_alignment_known
     assert stale_message.digital_input_bits == stale_message.digital_outputs == 0
     assert not stale_message.robot_enabled and not stale_message.robot_running
     assert stale_message.holding_item  # Logical holding is separate from live I/O.

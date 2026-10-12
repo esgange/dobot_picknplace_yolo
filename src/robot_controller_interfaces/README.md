@@ -60,6 +60,15 @@ detection and DI12 finger fully open. The additional robot flags and output bits
 remain available to API consumers. The stream updates periodically at 5 Hz and
 cannot guarantee display of every short pulse.
 
+`held_item_alignment_known` and `held_item_x_tool` expose the bound candidate's
+short +X in the measured pickup tool frame. They are usable only with trusted
+`holding_item`, `feedback_fresh` and the matching `configuration_id`. Held Preview
+requires both the source timestamp and local receipt age within one second, and
+uses the same tray-relative alignment planner as hardware. Empty placement uses
+tool Y as its reference; unknown held alignment cannot authorize placement.
+These added status fields change the wire layout: rebuild interfaces/controller
+and manually relaunch controller, Preview, GUI and other status clients together.
+
 Operator eligibility fields supplement the unchanged internal state names:
 `configuration_editable` identifies non-headless configuration, `pick_configured`
 requires Item/Bin selection, `motion_ready` and `motion_block_reason` describe
@@ -96,12 +105,14 @@ together. The old preview endpoint cannot satisfy the new GUI.
 `GoTrayDetectPosition` remains available to external clients, carrying the
 configuration ID and saved Tray Teach observation joints. The GUI has no separate
 Tray Detect Position button. Place checks fresh idle status and all six saved tray
-joints within ±1°, proceeding immediately or waiting up to three seconds for
-arrival. It never commands observation travel; timeout reports "Not at Tray Detect
-position" without a detection request. `PlaceItem` carries
+joints within ±1°, proceeding immediately when matched; otherwise it queues the
+shared joint-target MovL/MovJ observation travel and confirms final arrival before
+detecting. `PlaceItem` carries
 the configuration ID plus positive `x_mm`, `y_mm` and
-`rotation_deg` in [−180, +180]. Rotation zero is the saved observation tool attitude,
-with a local tool-Z offset. It is independent of detected item/tray axes.
+`rotation_deg` in [−180, +180]. Rotation zero aligns held item +X with detected tray
++X, projected perpendicular to unchanged saved observation tool Z. The requested
+value adds an offset about that Z; taught tilt is preserved. The measured pickup
+attitude and bound candidate compensate for pickup offsets and camera mirrors.
 `Configure.tray_teach_file` is optional for Home, and a recorded Tray Detect Pose
 is required for Pick and tray actions. Pick skips its initial Home queue when
 fresh idle status and all six joints already match Home. Successful Pick lifts
@@ -109,10 +120,10 @@ through pre-pick/clearance, then moves directly to saved Tray Detect and finishe
 HOLDING there. Pick requests no tray observation; only Place requires tray arming.
 PICK preview requires the same Tray Teach path and includes the success target.
 Status includes `tray_configured`, `tray_position_recorded`, `TRAY_POSITIONING` and
-`PLACING`. Headless Place requires HOLDING with a trusted HELD candidate.
-`manual_placement_enabled` is true only for a non-headless controller: attended
-Place may start from READY or HOLDING without a picked item, and does not require
-suction before release. It still executes real hardware commands and validates
+`PLACING`. `manual_placement_enabled` is true in both launch modes: explicit Place
+may start from READY or HOLDING with an empty gripper or trusted controller pickup.
+DI1 HIGH without a retained grasp orientation rejects before travel. Empty placement
+uses tool Y as a reference. It still executes real hardware commands and validates
 tray/depth and release I/O. It queues approach/drop/retract without final Home.
 `PlaceItem.SUCCESS` acknowledges all three ordered command acceptances; its
 `final_state` is normally PLACING. `ControllerStatus.operation_active` remains true

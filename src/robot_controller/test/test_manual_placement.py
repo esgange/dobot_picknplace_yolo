@@ -8,10 +8,10 @@ from rclpy.action import GoalResponse
 from robot_controller_interfaces.action import PlaceItem
 
 from robot_controller.controller import RobotController
-from robot_controller.errors import OperationCanceled
+from robot_controller.errors import OperationCanceled, FeedbackFailure
 from robot_controller.state_machine import ControllerStateMachine
 from test_feedback_v2 import joint_message
-from test_placement import operation_node, run_place
+from test_placement import operation_node, run_place, tray_observation
 from test_placement_queue import QueueRig, HELD, OPEN
 
 
@@ -38,7 +38,7 @@ def test_explicit_place_admission_allows_empty_or_held_in_either_mode(headless, 
 @pytest.mark.parametrize('held_context,outputs,inputs', [
     (False, 0, 0), (False, HELD, 1), (True, HELD, 1),
 ])
-def test_manual_queue_reaches_retract_regardless_of_initial_item_presence(
+def test_manual_queue_allows_empty_or_known_grasp_and_rejects_unknown_item(
         during_reply, held_context, outputs, inputs):
     rig = QueueRig(during_reply=during_reply)
     node = rig.node
@@ -51,6 +51,11 @@ def test_manual_queue_reaches_retract_regardless_of_initial_item_presence(
         rig.emit(outputs=outputs, inputs=inputs, running=0)
     assert rig.monitor.snapshot(require_enabled=True).suction_present is bool(inputs)
     rig.script[0] = dict(outputs=outputs, inputs=inputs)
+    if not held_context and inputs & 1:
+        with pytest.raises(FeedbackFailure, match='alignment unknown'):
+            rig.run()
+        assert not rig.requests
+        return
     rig.run()
     assert [name for name, _ in rig.requests] == ['MovL', 'MovLIO', 'MovLIO']
     assert node.placement.phase == 'DONE' and not node.holding_item
@@ -123,7 +128,7 @@ def test_place_moves_to_tray_only_if_needed_and_detects_after_arrival(held, at_t
         assert node.expected_outputs == {ch: bool(outputs & (1 << (ch - 1)))
                                          for ch in (1, 2, 13, 14)}
         assert not kwargs['require_held_item']
-        return [.3, .2, .25]
+        return tray_observation()
 
     node.trays.request.side_effect = observe
     node.placement.run(node)

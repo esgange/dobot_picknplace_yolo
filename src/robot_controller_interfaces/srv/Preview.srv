@@ -8,6 +8,7 @@ string bin_teach_file
 string tray_teach_file
 float64 x_mm
 float64 y_mm
+# Same item-X/tray-X offset as PlaceItem; held preview needs matching controller status.
 float64 rotation_deg
 ---
 bool success

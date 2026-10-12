@@ -11118,6 +11118,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   all operator calibration/teach/model/runtime artifacts. Commit/push only this
   tested scope under the standing workflow.
 
+### 2026-10-12 — Rule 273: tray-relative item alignment at placement
+
+- User observed that turning a tray from lengthwise to crosswise left the item
+  heading unchanged. Existing X/Y already followed the detected tray, but tool
+  orientation was saved Tray Detect attitude plus Rotation, ignoring tray and
+  held-item axes. User selected preserving taught tilt, with Rotation zero
+  aligning item X/tray X and all added degrees applied after that alignment.
+- Retain each accepted tray quaternion with its sampled surface point. Save
+  measured tool attitude at acquisition and transform the configuration-bound
+  candidate short +X into that tool frame, including acquisition during Pause.
+  Preserve this grasp through held travel and Continue. This compensates for
+  pickup offsets, nearest-angle choices and camera-mirror attitudes. Align its
+  projection with tray +X perpendicular to unchanged saved Tray Detect tool Z,
+  then add the requested local-Z offset. Never copy the tray Z sign or change
+  taught tilt. The nearest-corner tray convention can reverse its Z.
+- Empty explicit placement uses tool Y as the reference. DI1 HIGH without a
+  retained controller pickup cannot supply item alignment and rejects before
+  observation travel. Hardware and Preview use the same planner. Add typed
+  ControllerStatus held_item_alignment_known / held_item_x_tool, bound to the
+  existing configuration ID and fresh feedback; held Preview requires matching
+  context and both source/receipt ages within one second. It invalidates when
+  that context changes. Log placement_alignment with tray/item directions,
+  requested offset and preserved tool Z.
+- Keep tray-local X/Y, observation travel, approach/drop/retract geometry,
+  speeds, acceleration, blending, release I/O, Stop/Pause and acquisition retry
+  policy. No teach schema/configuration/artifact changes. Measured pickup data
+  does not strengthen the existing early-pickup Stop acceptance policy into
+  physical standstill confirmation.
+- Validation: **1,637 controller tests pass** with synthetic inputs. Coverage
+  includes a 90° tray turn changing both heading and target XY, arbitrary tray
+  yaw, pickup offsets/mirrors, additive placement offsets, unchanged taught
+  tool Z, tray-Z sign reversal, actual acquisition pose retention, Pause pickup,
+  absent source rejection before travel, and stale/mismatched Preview status.
+  Scoped AST, flake8 and diff checks pass. Interfaces/controller build succeeds
+  under build/install/tray_alignment; installed modules match source and the
+  new typed status fields pass a serialization round trip without a ROS node.
+  Update AGENTS, root/package/interface docs and FSM; regenerate HTML/PDF with
+  matching source hash, nine diagrams/pages and offline navigation/zoom checks.
+- Controller/Preview/GUI remain running. No canonical build, process restart,
+  robot command, arming or Auto Run was performed. Rebuild interfaces/controller
+  canonically and relaunch all status clients together before operation;
+  physical alignment verification remains pending. The separate Tray Teach
+  crash audit found a simulation-binding metadata omission; this placement
+  change does not fix it. Preserve .env, unrelated RViz edits and all operator
+  calibration/teach/model/runtime artifacts. No offline-transfer milestone is
+  claimed. Use the standing scoped commit/push workflow.
+
 ### Future entry template
 
 ```text

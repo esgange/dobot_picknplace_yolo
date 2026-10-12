@@ -13,6 +13,7 @@ class Attempt:
     plan: tuple
     state: str = "PENDING"
     area_id: int | None = None
+    pickup_matrix: object = None
 
 
 class PickSession:

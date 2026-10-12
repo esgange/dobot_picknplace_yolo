@@ -2,6 +2,7 @@ string configuration_id
 uint32 quantity
 float64 x_mm
 float64 y_mm
+# Item-X/tray-X alignment offset around unchanged taught tool Z.
 float64 rotation_deg
 bool save_debug_images
 ---
