@@ -46,7 +46,10 @@ def test_placement_follows_tray_for_actual_grasp_and_keeps_taught_tilt(
     angle = np.deg2rad(placement_offset)
     expected = np.array([[np.cos(angle), -np.sin(angle)],
                          [np.sin(angle), np.cos(angle)]]) @ expected
-    assert np.allclose(actual, expected, atol=1e-12)
+    assert abs(np.dot(actual, expected)) == pytest.approx(1.)
+    alternate = placed @ np.diag([-1., -1., 1.])
+    assert np.trace(detect[:3, :3].T @ placed) >= (
+        np.trace(detect[:3, :3].T @ alternate) - 1e-12)
 
 
 def test_quarter_turn_of_tray_turns_item_and_tray_local_position_together():
@@ -62,7 +65,8 @@ def test_quarter_turn_of_tray_turns_item_and_tray_local_position_together():
                              node.configuration.profile, 0., node.configuration.home_matrix,
                              item_x_in_tool=axis)
         results.append(plan[1].matrix)
-        assert np.allclose(unit(plan[1].matrix[:3, :3] @ axis), rotation[:, 0])
+        assert abs(np.dot(unit(plan[1].matrix[:3, :3] @ axis), rotation[:, 0])) == (
+            pytest.approx(1.))
     assert np.allclose(results[0][:2, 3], [.33, .24])
     assert np.allclose(results[1][:2, 3], [.26, .23])
     assert abs(np.dot(results[0][:3, :3] @ axis, results[1][:3, :3] @ axis)) < 1e-12
@@ -152,7 +156,8 @@ def test_held_preview_requires_same_fresh_grasp_as_hardware(
     assert result.success is (damage is None)
     if damage is None:
         target = preview.targets[1].matrix
-        assert np.allclose(target[:3, 0], tray_observation().rotation[:, 0])
+        assert abs(np.dot(target[:3, 0], tray_observation().rotation[:, 0])) == (
+            pytest.approx(1.))
     else:
         assert not preview.targets
 
@@ -166,3 +171,61 @@ def test_tray_client_keeps_quaternion_with_its_validated_depth_point(monkeypatch
     observation = rig.request()
     assert observation.surface == pytest.approx([.06, .23, .25])
     assert observation.rotation[:, 0] == pytest.approx([0., 1., 0.])
+
+
+@pytest.mark.parametrize('heading,offset,current_yaw,expected_yaw', [
+    (170., 0., 0., -10.), (-170., 0., 0., 10.), (180., 0., 0., 0.),
+    (0., 100., 0., -80.), (0., -100., 0., 80.), (0., 180., 0., 0.),
+    (-179., 0., 179., -179.), (179., 0., -179., 179.),
+    (90., 0., 0., 90.), (-90., 0., 0., -90.),
+    (90.2, 0., .5, 90.2), (89.8, 0., -.5, -90.2),
+])
+def test_nearest_equivalent_attitude_after_offset_uses_actual_link6(
+        heading, offset, current_yaw, expected_yaw):
+    detect = pose_matrix([300, 200, 800, 177, 4, -35])
+
+    def spin(angle):
+        return pose_matrix([0, 0, 0, 0, 0, angle])
+
+    current = detect @ spin(current_yaw)
+    tray = detect @ spin(heading)
+    actual = aligned_rotation(detect, tray[:3, :3], [1., 0., 0.], offset,
+                              current_matrix=current)
+    expected = detect[:3, :3] @ spin(expected_yaw)[:3, :3]
+    assert np.allclose(actual, expected, atol=1e-12)
+    assert np.allclose(actual[:, 2], detect[:3, 2], atol=1e-12)
+
+
+def test_placement_uses_measured_origin_for_choice_and_dispatch():
+    from unittest.mock import Mock
+    node = operation_node()
+    detect = node.configuration.tray.detect_matrix
+    origin = detect @ pose_matrix([0, 0, 0, 0, 0, .5])
+    node.hardware.current = origin.copy()
+    node.hardware.home_already_reached = Mock(return_value=True)
+    node.placement.rotation_deg = 0.
+    tray_rotation = (detect @ pose_matrix([0, 0, 0, 0, 0, 180.2]))[:3, :3]
+    node.trays.request.return_value = tray_observation(rotation=tray_rotation)
+    node.hardware.move_batch = Mock()
+    node.placement.run(node)
+    expected = (detect @ pose_matrix([0, 0, 0, 0, 0, 90.2]))[:3, :3]
+    assert np.allclose(node.placement.plan[0].matrix[:3, :3], expected)
+    assert np.array_equal(node.hardware.move_batch.call_args.kwargs['confirmed_start_pose'], origin)
+
+
+def test_invalid_current_pose_cannot_select_placement():
+    with pytest.raises(ValueError, match='Current placement Link6 pose'):
+        aligned_rotation(np.eye(4), np.eye(3), [1., 0., 0.], 0.,
+                         current_matrix=np.zeros((4, 4)))
+
+
+def test_preview_selects_nearest_using_fresh_measured_pose(preview):  # noqa: F811
+    detect = preview.config.tray.detect_matrix
+    current = detect @ pose_matrix([0, 0, 0, 0, 0, .5])
+    preview.kinematics.forward.return_value = current
+    rotation = (detect @ pose_matrix([0, 0, 0, 0, 0, 180.2]))[:3, :3]
+    preview.trays.request.return_value = tray_observation(rotation=rotation)
+    result = preview.run(Preview.Request.PLACE, x_mm=30., y_mm=40.)
+    assert result.success
+    expected = (detect @ pose_matrix([0, 0, 0, 0, 0, 90.2]))[:3, :3]
+    assert np.allclose(preview.targets[0].matrix[:3, :3], expected)

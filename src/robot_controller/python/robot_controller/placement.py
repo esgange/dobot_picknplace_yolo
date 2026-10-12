@@ -35,7 +35,7 @@ def validate_target(x_mm, y_mm, rotation_deg):
 
 
 def place_targets(detect_matrix, observation, settings, rotation_deg, home_matrix,
-                  *, item_x_in_tool=(0., 1., 0.)):
+                  *, item_x_in_tool=(0., 1., 0.), current_matrix=None):
     """Tray-relative item X, preserved tool tilt, and explicit surface drop height.
 
     Empty placement uses tool Y as its visible reference; held placement must
@@ -44,7 +44,8 @@ def place_targets(detect_matrix, observation, settings, rotation_deg, home_matri
     validate_target(1., 1., rotation_deg)
     matrix = rigid_matrix(detect_matrix, "Recorded Tray Detect Pose").copy()
     matrix[:3, :3] = aligned_rotation(
-        detect_matrix, observation.rotation, item_x_in_tool, rotation_deg)
+        detect_matrix, observation.rotation, item_x_in_tool, rotation_deg,
+        current_matrix=current_matrix)
     surface = np.asarray(observation.surface, dtype=float)
     if surface.shape != (3,) or not np.isfinite(surface).all():
         raise ValueError("Placement surface must be a finite base-frame point")
@@ -156,13 +157,19 @@ class PlacementOperation(ReleaseQueue):
         if on_observed is not None:
             on_observed()
         axis = self.alignment_axis(node)
+        origin = node.hardware.current_pose()
+        self.check_observation(node)
         self.plan = place_targets(config.tray.detect_matrix, observation,
                                   config.profile, self.rotation_deg, config.home_matrix,
-                                  item_x_in_tool=axis)
+                                  item_x_in_tool=axis, current_matrix=origin)
         node.events.record(
-            "INFO", "placement_alignment", "Item X aligned to observed tray X with offset",
+            "INFO", "placement_alignment", "Nearest equivalent tray-aligned Link6 attitude",
             item_x_in_tool=axis.tolist(), tray_x_base=observation.rotation[:, 0].tolist(),
             rotation_offset_deg=self.rotation_deg, held_context=node.holding_item,
+            source_tool_x_base=origin[:3, 0].tolist(),
+            link6_attitude_change_deg=math.degrees(math.acos(float(np.clip(
+                (np.trace(origin[:3, :3].T @ self.plan[0].matrix[:3, :3]) - 1.) / 2.,
+                -1., 1.)))),
             target_item_x_base=(self.plan[0].matrix[:3, :3] @ axis).tolist(),
             target_tool_z_base=self.plan[0].matrix[:3, 2].tolist())
         config.validate_sources(node.root)
@@ -172,7 +179,8 @@ class PlacementOperation(ReleaseQueue):
         node.operation_progress("PLACE_QUEUE", "Queueing pre-place, release and final retract",
                                 waypoint="place_retract")
         self.pending_motion = node.hardware.move_batch(
-            self.plan, batch_name="place_to_retract", placement=self, queue_only=True)
+            self.plan, batch_name="place_to_retract", placement=self, queue_only=True,
+            confirmed_start_pose=origin)
 
     def recover(self, node):
         # An interrupted release is never repeated and never descends back to the

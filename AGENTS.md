@@ -2167,6 +2167,16 @@ grasp, tray-Z flip, tilt matching or changed release/path/rate/timing is allowed
 Update the diary/FSM/exports and interface docs. Rebuild controller interfaces
 and controller and relaunch all their clients together; isolate builds while live.
 
+Rule 274 treats the two tray placement attitudes 180° apart about taught tool Z
+as equivalent. Apply item/tray axis alignment and the requested offset first,
+then choose the smaller angular change from fresh measured Link6 attitude at
+Tray Detect. Preserve taught tilt, offsets, target X/Y and all route/rate/I/O
+and retry/Stop behavior. On equal travel retain the directed rule-273 solution.
+Reuse the measured pose as the placement queue origin; Preview uses the same
+selector with fresh joint FK. This minimizes Cartesian attitude change, without
+adding IK, joint-path guarantees or a hardware command. Update diary/FSM/exports,
+test both directions/wrap/ties/offsets, and use isolated builds while live.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

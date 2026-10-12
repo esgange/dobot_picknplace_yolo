@@ -1,5 +1,16 @@
 # Robot Controller — Finite State Machine
 
+Nearest placement review: **2026-10-12**, baseline **`6f3e6c3`** plus rule **274**.
+Treat the two placement attitudes 180° apart about unchanged taught tool Z as
+equivalent. Apply tray-axis alignment and the requested offset first, then
+select the smaller angular change from fresh measured Link6 at Tray Detect.
+On numerical ties retain the directed rule-273 alignment. Hardware reuses the
+measured pose for queue origin; Preview uses the same selector with fresh joint
+FK. Keep tilt, tray-local X/Y, release heights, routes/rates/I/O and all Stop,
+Pause and retry gates. No IK, joint-path guarantee, new state/interface/config or
+live motion is added. This supersedes rule 273's directed-only placement choice;
+physical joint travel remains unverified.
+
 Tray alignment review: **2026-10-12**, baseline **`52e64be`** plus rule **273**.
 Placement Rotation zero aligns the held item's short +X with the fresh tray's
 short +X, projected perpendicular to the saved Tray Detect tool Z. Preserve that
@@ -1296,7 +1307,7 @@ flowchart TD
     AcquisitionPause -->|Direct Stop or safety fault| Stop
     Depth -->|Invalid successful evidence or safety fault| Stop
     Depth -->|Surface within 20 mm below saved plane or higher; still at observation position| Valid["Validate placement geometry and sources; keep suction"]
-    Valid --> Align["Align item X to fresh tray X at zero; add Rotation offset; preserve taught tool Z/tilt; empty reference is tool Y"]
+    Valid --> Align["Align item/tray X axis lines; add offset; choose smallest Link6 turn of two attitudes 180 degrees apart from fresh Tray Detect pose; preserve taught tilt"]
     Align --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
     Queue --> Pre["Placement X/Y at Home Z: use_grip OFF uses MovLIO with 80% DO2 OFF then DO14 ON; otherwise MovL"]
     Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN; 90% suction OFF then exhaust ON"]
@@ -1325,9 +1336,14 @@ flowchart TD
 
 X/Y are strictly positive millimetres along the detected tray inward short-X /
 long-Y axes from its nearest-base corner. Reject targets at or beyond either far
-edge. Rotation accepts −180° to +180°; zero aligns the held item's +X with the
-detected tray's +X, projected into the plane perpendicular to the saved Tray Detect
-tool Z. Add Rotation around that unchanged Z, preserving taught tilt. Do not copy
+edge. Rotation accepts −180° to +180°; zero aligns the held item's X axis line with
+the detected tray's X, projected into the plane perpendicular to saved Tray Detect
+tool Z. Add Rotation around that unchanged Z, preserving taught tilt. Then compare
+both equivalent attitudes 180° apart against fresh measured Link6 at Tray Detect;
+choose the smaller angular change, retaining directed +X alignment on a numerical
+tie. Reuse that measured pose as the placement queue origin. Preview uses the same
+selector with fresh joint FK. This minimizes Cartesian attitude change without
+claiming a particular J6 path from the robot's Cartesian planner. Do not copy
 tray Z, which can change sign with the nearest-corner convention. Save measured
 tool attitude at acquisition and transform the bound candidate X into that tool
 frame; pickup rotation, nearest-angle choices and camera mirrors are thereby

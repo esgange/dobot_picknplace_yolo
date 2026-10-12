@@ -205,7 +205,8 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle, use
     assert [t.name for t in preview.targets] == [
         "place_pre", "place_release", "place_retract"]
     expected = place_targets(preview.config.tray.detect_matrix, tray_observation(),
-                             preview.config.profile, angle, preview.config.home_matrix)
+                             preview.config.profile, angle, preview.config.home_matrix,
+                             current_matrix=preview.kinematics.forward(()))
     assert all(t.joints_rad is None and not t.joint_motion for t in preview.targets)
     assert preview.targets[1].matrix[2, 3] == pytest.approx(.2925)
     assert all(np.allclose(a.matrix, b.matrix) for a, b in zip(preview.targets, expected))

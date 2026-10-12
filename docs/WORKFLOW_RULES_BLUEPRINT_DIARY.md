@@ -11165,6 +11165,40 @@ Never use a floating “latest” version in an issue, script, or deployment not
   calibration/teach/model/runtime artifacts. No offline-transfer milestone is
   claimed. Use the standing scoped commit/push workflow.
 
+### 2026-10-12 — Rule 274: nearest equivalent placement orientation
+
+- User permits the two tray placement attitudes 180° apart and requests the
+  smallest Link6 rotation. Supersede rule 273's directed-only alignment: keep
+  item/tray X axis-line alignment, apply the requested offset, then compare both
+  attitudes about unchanged taught tool Z. Choose the smaller angular change
+  from fresh measured Link6 at Tray Detect; e.g. choose −10° instead of +170°.
+  Retain the original directed solution when travel is equal within numerical
+  tolerance. Equivalent 180° offsets therefore select the same axis line.
+- Hardware obtains the fresh confirmed motion origin after tray observation,
+  rechecks observation-position guards and reuses that pose for queue dispatch.
+  Preview uses the same selector with fresh joint FK. Preserve held-grasp
+  binding, empty tool-Y reference, taught tilt, tray-local X/Y, all heights,
+  routes/rates/I/O, Stop/Pause/recovery and retry behavior. Log the source tool X
+  and selected Link6 attitude change. This minimizes Cartesian attitude change;
+  no inverse kinematics or particular J6 path/turn-count guarantee is added.
+  No new public fields, wire layout, schema or configuration is introduced.
+- Validation: **1,652 controller tests pass** with synthetic inputs. Cover both
+  directions, ±180° wrapping, ±90° ties, offset-before-choice, pickup mirrors,
+  arbitrary tray yaw, measured-versus-taught orientation at the selection
+  boundary, preserved tool Z, invalid origin rejection, shared queue origin and
+  matching Preview selection. Scoped AST, flake8 and diff checks pass. Isolated
+  robot_controller build under build/install/placement_nearest succeeds against
+  canonical dependencies; installed changed modules match source. Update root,
+  package/interface docs, GUI help, AGENTS and FSM. Regenerate HTML/PDF and
+  verify source hashes, nine diagrams/pages and offline navigation/zoom.
+- Controller/Preview/GUI and Item/Tray Teach were running, so this change uses
+  only an isolated build. No canonical rebuild, mapped-library replacement,
+  process restart, arming, Auto Run or robot command was performed. Operator
+  deployment/relaunch and physical verification remain pending. Preserve .env,
+  unrelated vendor RViz edits and all calibration/teach/model/runtime artifacts.
+  No offline-transfer milestone is claimed; scoped commit/push follows the
+  standing workflow.
+
 ### Future entry template
 
 ```text

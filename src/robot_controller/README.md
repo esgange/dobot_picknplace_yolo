@@ -507,10 +507,17 @@ instead of accepting an incompatible request. No robot motion is sent by detecti
 
 Enter positive **X (mm)** and **Y (mm)** from the detected tray origin along its
 inward short-X and long-Y axes, and **Rotation (−180° to +180°)**. At 0°, align the
-held item's +X with the detected tray's +X; any requested rotation is an additional
+held item's X axis line with the detected tray's X; any requested rotation is an additional
 offset about the unchanged saved Tray Detect tool Z. The long axes therefore
 follow each other at zero offset. A 90° tray turn rotates the item heading and
 transforms the same tray-local X/Y point into its new base-frame position.
+Both directions along that line are valid: after applying the offset, choose the
+attitude with the smaller angular difference from fresh measured Link6 at Tray
+Detect. For example, +170° and −10° are equivalent; choose −10°. On a numerical
+tie keep the directed item-+X/tray-+X solution. Hardware reuses that measured pose
+as the queue origin; Preview uses the same selector with fresh joint FK. This
+minimizes Cartesian attitude change, not an IK-derived joint-path cost; the robot's
+existing Cartesian planner still determines actual joint travel.
 
 Preserve the taught tilt: alignment compares the X directions projected into the
 plane perpendicular to tool Z; it does not make the item parallel to the tray

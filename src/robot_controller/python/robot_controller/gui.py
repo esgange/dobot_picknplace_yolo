@@ -261,7 +261,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_rotation.setValue(0.)
         self.place_rotation.setSuffix("°")
         self.place_rotation.setToolTip(
-            "0° aligns item X with detected tray X; add an offset about unchanged taught tool Z")
+            "0° aligns item/tray X axis lines; add offset, then choose the nearest of two "
+            "orientations 180° apart, preserving taught tilt")
         target_row = QtWidgets.QHBoxLayout()
         for label, field in (("X (mm)", self.place_x), ("Y (mm)", self.place_y),
                              ("Rotation", self.place_rotation)):

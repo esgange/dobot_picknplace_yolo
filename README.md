@@ -32,11 +32,13 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
-Placement **Rotation 0°** aligns the item's short X with the detected tray's short
-X; the item's length follows the tray's length. Rotating the tray changes both
-the tray-local placement point and the item heading. Rotation adds an offset to
-this alignment while preserving the saved Tray Detect tool tilt. The controller
-compensates for the actual pickup orientation, including mirrored grasps. A held
+Placement **Rotation 0°** aligns the item's short X axis line with the detected
+tray's short X; the item's length follows the tray's length. Rotating the tray
+changes both the tray-local placement point and the item heading. Rotation adds an offset to
+this alignment while preserving the saved Tray Detect tool tilt. Choose whichever
+of the two equivalent attitudes 180° apart needs the smaller rotation from the
+measured Link6 attitude at Tray Detect (for example, −10° instead of +170°).
+The controller compensates for the actual pickup orientation, including mirrored grasps. A held
 item needs its retained controller pickup; empty placement uses tool Y as a
 reference. Rebuild `robot_controller_interfaces` and `robot_controller`, then
 relaunch controller, GUI and Preview together for the added alignment status.

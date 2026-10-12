@@ -293,7 +293,8 @@ class RobotControllerPreview(rclpy.node.Node):
                         raise FeedbackFailure("Held item alignment changed during observation")
                     targets.extend(place_targets(
                         config.tray.detect_matrix, observation, config.profile, rotation,
-                        config.home_matrix, item_x_in_tool=axis))
+                        config.home_matrix, item_x_in_tool=axis,
+                        current_matrix=self.kinematics.forward(self._snapshot().joints)))
             config.validate_sources(self.root)
             self._check_observation()
             frames = tuple(f"robot_controller_preview_{target.name}_{index}"
@@ -318,7 +319,8 @@ class RobotControllerPreview(rclpy.node.Node):
                 response.message += ("; Tray Detect travel only; placement targets require "
                                      "a fresh tray observation at that pose")
             elif request.operation == request.PLACE:
-                response.message += "; tray-relative alignment; empty reference uses tool Y"
+                response.message += ("; nearest equivalent tray-relative alignment; "
+                                     "empty reference uses tool Y")
             response.configuration_id = config.configuration_id
             response.tf_frames = list(frames)
             self.events.record(

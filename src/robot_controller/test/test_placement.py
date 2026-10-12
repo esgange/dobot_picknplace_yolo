@@ -56,7 +56,8 @@ def test_place_preserves_tool_z_and_exact_depth_heights(angle, use_grip):
     assert [p.name for p in plan] == ["place_pre", "place_release", "place_retract"]
     assert [p.matrix[2, 3] for p in plan] == pytest.approx([.9, .31, .9])
     assert all(np.allclose(p.matrix[:2, 3], [.3, .2]) for p in plan[:3])
-    c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
+    nearest = angle - np.sign(angle) * 180. if abs(angle) > 90. else angle
+    c, s = np.cos(np.deg2rad(nearest)), np.sin(np.deg2rad(nearest))
     expected = detect[:3, :3] @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
     assert all(np.allclose(p.matrix[:3, :3], expected) for p in plan[:3])
     assert all(np.allclose(p.matrix[:3, 2], detect[:3, 2]) for p in plan[:3])

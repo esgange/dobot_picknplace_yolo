@@ -1,8 +1,8 @@
 string configuration_id
 float64 x_mm
 float64 y_mm
-# Zero aligns held item X with observed tray X, preserving taught tool tilt.
-# Additional offset is about that unchanged tool Z.
+# Zero aligns item/tray X axis lines, preserving taught tilt. Add offset about
+# unchanged tool Z, then choose the nearest equivalent attitude (180 degrees apart).
 float64 rotation_deg
 bool save_debug_images
 ---

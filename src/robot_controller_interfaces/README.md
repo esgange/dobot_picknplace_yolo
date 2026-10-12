@@ -109,10 +109,14 @@ joints within ±1°, proceeding immediately when matched; otherwise it queues th
 shared joint-target MovL/MovJ observation travel and confirms final arrival before
 detecting. `PlaceItem` carries
 the configuration ID plus positive `x_mm`, `y_mm` and
-`rotation_deg` in [−180, +180]. Rotation zero aligns held item +X with detected tray
-+X, projected perpendicular to unchanged saved observation tool Z. The requested
+`rotation_deg` in [−180, +180]. Rotation zero aligns the held item X axis line with
+detected tray X, projected perpendicular to unchanged saved observation tool Z. The requested
 value adds an offset about that Z; taught tilt is preserved. The measured pickup
 attitude and bound candidate compensate for pickup offsets and camera mirrors.
+After applying the offset, choose the nearer of two equivalent attitudes 180°
+apart from the fresh measured Link6 attitude at Tray Detect; ties retain the
+directed alignment. Hardware and Preview share this selection. No message fields
+or wire layout change for this nearest-orientation rule.
 `Configure.tray_teach_file` is optional for Home, and a recorded Tray Detect Pose
 is required for Pick and tray actions. Pick skips its initial Home queue when
 fresh idle status and all six joints already match Home. Successful Pick lifts
