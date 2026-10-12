@@ -24,6 +24,9 @@ from .ui_state import load_state, save_state
 from .feedback import FEEDBACK_MAX_AGE_SEC
 from .placement import validate_target
 from .operator_ui import acquisition_paused, button_policy, item_acquisition_paused, presentation
+from .auto_detection import AutoDetectors, idle_reason, providers
+from .perception_mode import ANY, TEACH, HEADLESS, check_mode
+from .errors import FeedbackFailure
 
 
 class GuiNode(rclpy.node.Node):
@@ -109,6 +112,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.speed_syncing = False
         self.cp_pending_percent = None
         self.cp_syncing = False
+        self.auto_detectors = AutoDetectors(node)
         self.setWindowTitle("Robot Controller")
         self.resize(1050, 445)
         central = QtWidgets.QWidget()
@@ -195,6 +199,16 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.clear_repick = QtWidgets.QPushButton("Clear Repick History")
         self.clear_repick.clicked.connect(lambda: self._command("clear_repick_history"))
         teach.addWidget(self.clear_repick, 4, 0, 1, 3)
+        self.load_auto = QtWidgets.QPushButton("Load Auto: OFF")
+        self.load_auto.setCheckable(True)
+        self.load_auto.clicked.connect(self._toggle_auto)
+        teach.addWidget(self.load_auto, 5, 0, 1, 3)
+        self.load_auto_status = QtWidgets.QLabel()
+        self.load_auto_status.setTextFormat(QtCore.Qt.PlainText)
+        self.load_auto_status.setWordWrap(True)
+        self.load_auto_status.setStyleSheet('font-size:12px')
+        self.load_auto_status.setMinimumHeight(32)
+        teach.addWidget(self.load_auto_status, 6, 0, 1, 3)
         lifecycle = QtWidgets.QHBoxLayout()
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
         self.pause = QtWidgets.QToolButton()
@@ -276,17 +290,22 @@ class ControllerWindow(QtWidgets.QMainWindow):
         operations.addLayout(target_row, 2, 0, 1, 2)
         operations.addWidget(self.debug_images, 3, 1)
         auto_row = QtWidgets.QHBoxLayout()
-        self.auto_run_button = QtWidgets.QPushButton("Auto Run")
+        self.auto_run_button = QtWidgets.QPushButton("Manual Run")
         self.auto_run_button.setMinimumHeight(48)
-        self.auto_run_button.clicked.connect(lambda: self._action("auto_run"))
+        self.auto_run_button.clicked.connect(lambda: self._action("auto_run", detector_mode=TEACH))
+        self.headless_run_button = QtWidgets.QPushButton("Auto Run")
+        self.headless_run_button.setMinimumHeight(48)
+        self.headless_run_button.clicked.connect(
+            lambda: self._action("auto_run", detector_mode=HEADLESS))
         self.auto_quantity = QtWidgets.QSpinBox()
         self.auto_quantity.setRange(1, 10000)
         self.auto_quantity.setValue(1)
-        self.auto_quantity.setAccessibleName("Auto Run quantity")
+        self.auto_quantity.setAccessibleName("Run quantity")
         self.auto_progress = QtWidgets.QLabel("0 completed · Elapsed: 0.0 s")
         self.auto_progress.setToolTip(
             "Total run time, including retries, pauses and final Home. Resets on the next run.")
         auto_row.addWidget(self.auto_run_button, 1)
+        auto_row.addWidget(self.headless_run_button, 1)
         auto_row.addWidget(QtWidgets.QLabel("Quantity"))
         auto_row.addWidget(self.auto_quantity)
         auto_row.addWidget(self.auto_progress, 1)
@@ -489,6 +508,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.preview_clear_deadline = time.monotonic() + 5.0
 
     def closeEvent(self, event):
+        self.auto_detectors.close()
         if self.preview_mode or "preview" in self.pending:
             self._clear_preview()
         super().closeEvent(event)
@@ -645,8 +665,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
             suffix = f" · candidate {feedback.candidate_index}/{feedback.candidate_total}"
         self.feedback_message = f"{feedback.phase} · {feedback.message}{suffix}"
 
-    def _action(self, name):
+    def _action(self, name, *, detector_mode=ANY):
         if self._availability()[name]:
+            return
+        if name == 'auto_run' and self._run_reason(detector_mode):
             return
         status = self.node.status
         if not self.preview_mode and name == "place" and self._acquisition_paused(status):
@@ -680,6 +702,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             goal.save_debug_images = self.debug_images.isChecked()
         if name == "auto_run":
             goal.quantity = self.auto_quantity.value()
+            goal.detector_mode = detector_mode
             self.auto_progress.setText(f"0/{goal.quantity} completed")
         self.pending_goal = client.send_goal_async(goal, feedback_callback=self._feedback)
         self._refresh_controls()
@@ -788,6 +811,47 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._collect()
         self._refresh_controls()
 
+    def _auto_change_reason(self):
+        state, _message = self.auto_detectors.snapshot
+        if state in ('DEPLOYING', 'STARTING'):
+            return ''  # Cancel startup without touching the robot.
+        if state == 'STOPPING':
+            return 'Wait for the owned detectors to stop'
+        if (self.preview_mode or self.pending or self.pending_goal is not None
+                or self.result_future is not None or self.preview_clear_future is not None):
+            return 'Finish the pending action and leave Preview before changing detectors'
+        reason = idle_reason(self.node.status)
+        if reason:
+            return reason
+        if state != 'RUNNING' and not all(field.text().strip() for field in (
+                self.item_path, self.bin_path, self.tray_path)):
+            return 'Select Item Teach, Bin Teach and Tray Teach first'
+        return ''
+
+    def _toggle_auto(self, enabled):
+        if not self._auto_change_reason():
+            if enabled:
+                try:
+                    self.auto_detectors.start(tuple(field.text().strip() for field in (
+                        self.item_path, self.bin_path, self.tray_path)))
+                except ValueError as exc:
+                    QtWidgets.QMessageBox.warning(self, 'Load Auto', str(exc))
+            else:
+                self.auto_detectors.stop()
+        self._refresh_controls()
+
+    def _run_reason(self, mode):
+        if mode == ANY:
+            return ''
+        if mode == HEADLESS and self.auto_detectors.snapshot[0] != 'RUNNING':
+            return 'Enable Load Auto and wait for both headless detectors to be ready'
+        try:
+            for kind in ('pick', 'place'):
+                check_mode(providers(self.node, kind), kind, mode)
+        except (FeedbackFailure, RuntimeError) as exc:
+            return str(exc)
+        return ''
+
     def _availability(self):
         try:
             validate_target(float(self.place_x.text()), float(self.place_y.text()),
@@ -797,7 +861,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
             target_error = "Enter positive X/Y in mm and a valid rotation"
         reasons = button_policy(
             self.node.status, preview=self.preview_mode,
-            pending=bool(self.pending or self.preview_clear_future is not None),
+            pending=bool(self.pending or self.preview_clear_future is not None
+                         or self.auto_detectors.snapshot[0] in
+                         ('DEPLOYING', 'STARTING', 'STOPPING')),
             action_pending=self.pending_goal is not None or self.result_future is not None,
             managed_pending=self.pause_requested_locally or self.return_requested_locally,
             target_error=target_error, item_selected=bool(self.item_path.text().strip()),
@@ -909,6 +975,29 @@ class ControllerWindow(QtWidgets.QMainWindow):
             if self.preview_mode and name in ("home", "pick", "place") and not reasons[name]:
                 tip = "Show planned TF targets; no robot motion or gripper output"
             button.setToolTip(tip)
+        for button, mode, description in (
+                (self.auto_run_button, TEACH, 'Run using armed Item Teach and Tray Teach'),
+                (self.headless_run_button, HEADLESS, 'Run using the Load Auto headless detectors')):
+            reason = reasons['auto_run'] or self._run_reason(mode)
+            button.setEnabled(not reason)
+            button.setToolTip(reason or description)
+        auto_state, auto_message = self.auto_detectors.snapshot
+        auto_active = auto_state not in ('OFF', 'FAILED')
+        self.load_auto.blockSignals(True)
+        self.load_auto.setChecked(auto_active)
+        self.load_auto.blockSignals(False)
+        self.load_auto.setText('Load Auto: ' + ('ON' if auto_state == 'RUNNING' else auto_state))
+        auto_reason = self._auto_change_reason()
+        self.load_auto.setEnabled(not auto_reason)
+        self.load_auto.setToolTip(auto_reason or (
+            'OFF stops the owned detectors. ON replaces runtime_teach with the selected '
+            'teach files and models, then starts Item Detect and Tray Detect. '
+            'Load Teach Configuration is separate.'))
+        self.load_auto_status.setText(auto_message if len(auto_message) <= 180 else
+                                      'Load Auto failed; see command log for details')
+        self.load_auto_status.setToolTip(auto_message)
+        for event_state, message in self.auto_detectors.take_messages():
+            self.log_view.appendPlainText(f'Load Auto {event_state}: {message}')
         self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
         editable = (state is not None and not state.operation_active and not self.pending
                     and self.pending_goal is None and self.result_future is None)
@@ -924,7 +1013,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         else:
             self.auto_progress.setText("0 completed · Elapsed: 0.0 s")
         for field in (self.item_path, self.bin_path, self.tray_path, *self.teach_browse_buttons):
-            field.setEnabled(editable and current in ("UNCONFIGURED", "INACTIVE", "READY"))
+            field.setEnabled(editable and not auto_active
+                             and current in ("UNCONFIGURED", "INACTIVE", "READY"))
         self.debug_images.setEnabled(not self.preview_mode and editable)
         visible_reasons = []
         if not self.pending and current in ("READY", "HOLDING", "PAUSED", "INACTIVE",

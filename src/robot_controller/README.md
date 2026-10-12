@@ -22,8 +22,57 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 
 `robot_controller` is the sole production application-level authority for the
 physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle,
-plus Auto Run with an adjacent quantity field, completed count and elapsed seconds.
-It does not launch Dobot bringup, cameras, Item Detect, or RViz.
+plus Manual Run and Auto Run with one quantity field, completed count and elapsed seconds.
+Explicit Load Auto owns the two headless detectors. It does not launch Dobot
+bringup, cameras or RViz.
+
+## Load Auto and run buttons
+
+The old **Auto Run** button is now **Manual Run** and uses armed Item Teach and
+Tray Teach. The new **Auto Run** uses the headless pair started by **Load Auto**.
+Both use the same Quantity, X/Y, Rotation and debug-image checkbox and the same
+native counted-cycle engine. They preserve count, timing, motion, placement,
+retry/intervention waits and direct STOP behavior. The existing AUTO RUN status
+and `/robot_controller/auto_run` endpoint describe this shared engine for both buttons.
+
+To use Auto Run:
+
+1. Finish any active operation; leave the controller idle, unheld and out of
+   Preview. Disarm Item Teach and Tray Teach and stop independently launched
+   headless detectors. Cameras and canonical bringup must already be available.
+2. Browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
+3. Turn **Load Auto ON**. It validates the production files, both same-stem model
+   hashes and saved calibration choices, then stages and verifies ordinary copies.
+   It replaces the entire root `runtime_teach/` directory contents with exactly
+   those three YAMLs and two models. Failed validation/copy leaves the old catalog
+   intact. Source teaching files, calibration and `.env` are never rewritten.
+4. Wait for **Headless Item Detect and Tray Detect are ready**. Models and saved
+   profiles load automatically; service requests still acquire fresh observations.
+   Use **Load Teach Configuration** separately to load/prepare the controller.
+5. Set Quantity and placement inputs and click **Auto Run** when READY.
+
+Load Auto starts OFF on every GUI launch; there is no saved toggle, automatic
+restart or directory watcher. Files remain deployed after OFF. To change files,
+turn OFF while idle/unheld, browse again, then ON to replace the catalog again.
+Teach selections are locked during deployment and while detectors run. Startup
+can be canceled. Both services must become ready within 180 seconds. A child
+exit, lost service, conflicting provider or startup failure stops the owned pair
+and reports the reason beneath Load Auto and in the command log. OFF and GUI exit
+terminate only owned detector process groups, including native workers; GUI death
+also signals the child processes. Foreign providers are refused, never stopped
+or automatically disarmed. Manual arming remains an explicit operator step.
+
+Load Auto sends no Configure, Startup, Enable or robot motion command. Changing
+detectors is blocked during an active run, holding, Pause or unavailable feedback;
+direct STOP remains available. The existing Load Teach Configuration button still
+prepares/enables hardware and is independent of detector deployment.
+
+Both buttons bind provider type in `AutoRun.detector_mode`: Manual uses TEACH=1,
+Auto uses HEADLESS=2. The controller checks that type before admission and on
+requests/retries and observation return. No mode silently switches to the other
+provider. Native clients may use ANY=0 (default) for the existing canonical-provider
+choice. This changes the action wire layout: rebuild interfaces/controller and
+relaunch controller, Preview, GUI and any other interface clients together.
 
 ## Repick history
 
@@ -665,11 +714,11 @@ catalog for Tray Detect and controller placement. Its profile/camera hashes and
 recorded observation joints become part of the controller configuration.
 
 Missing Item YAML, Item model and Bin YAML inputs are reported separately.
-Duplicate errors list the conflicting filenames. Manual or external deployment
+Duplicate errors list the conflicting filenames. Explicit GUI Load Auto, manual or external deployment
 must finish one complete visible set before launch; replacement requires stopping
 the process, replacing the catalog, and restarting it. Hidden dot-prefixed staging
 files are ignored. There is no directory watcher, retry, fallback or automatic
-copy.
+copy during headless startup. Load Auto performs its copy only on an explicit GUI toggle.
 
 ```bash
 ros2 launch robot_controller robot_controller.launch.py headless:=true
@@ -678,7 +727,8 @@ ros2 launch robot_controller robot_controller.launch.py headless:=true
 Canonical Dobot bringup and Item Detect are separate processes. Do not run the
 maintenance `motion_debug` or `gripper_control` application alongside
 production Startup; their presence is rejected as competing command ownership.
-Launch headless Item Detect separately with no arguments; it reads the same
+Start the detector pair with Load Auto, or launch headless Item Detect separately
+with no arguments; it reads the same
 immutable `runtime_teach/` selection and advertises only the read-only pose
 service.
 
@@ -822,7 +872,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; CP; STOP |
+| READY | Home; Pick Item; Place Item; Manual Run / Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; manual controls and edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |

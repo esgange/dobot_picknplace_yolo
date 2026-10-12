@@ -15,6 +15,7 @@ from .pick_session import PickSession, return_targets
 from .placement import PlacementOperation, validate_target
 from .recovery import GRIP_MASK
 from .release import ReleaseQueue
+from .perception_mode import validate_mode
 
 
 def validate_quantity(value):
@@ -149,6 +150,7 @@ class AutoRunOperation:
         self.quantity = validate_quantity(request.quantity)
         self.target = validate_target(request.x_mm, request.y_mm, request.rotation_deg)
         self.save_debug_images = bool(request.save_debug_images)
+        self.detector_mode = validate_mode(request.detector_mode)
         self.configuration = node.configuration
         self.completed = 0
         self.prefetch = None

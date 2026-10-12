@@ -17,6 +17,7 @@ from tray_perception_interfaces.srv import GetTrayPose
 
 from .errors import FeedbackFailure
 from .motion import rigid_matrix
+from .perception_mode import active_mode, check_mode
 
 
 PROVIDERS = {("tray_teach", "/"), ("tray_detect", "/")}
@@ -132,6 +133,7 @@ class TrayClient:
         if len(providers) != 1 or providers[0] not in PROVIDERS:
             raise FeedbackFailure("Placement requires exactly one armed tray_teach or "
                                   "headless tray_detect provider in the root namespace")
+        check_mode(providers, 'place', active_mode(self.node))
 
     def request(self, config, x_mm, y_mm, *, require_held_item=True, attempts=None,
                 check_state=None, save_debug_images=False):

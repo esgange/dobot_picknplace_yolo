@@ -5,6 +5,11 @@ float64 y_mm
 # Item-X/tray-X axis-line offset; choose the nearest equivalent attitude about taught tool Z.
 float64 rotation_deg
 bool save_debug_images
+# GUI Manual Run uses TEACH; GUI Auto Run uses HEADLESS. ANY preserves native client choice.
+uint8 ANY=0
+uint8 TEACH=1
+uint8 HEADLESS=2
+uint8 detector_mode
 ---
 uint8 SUCCESS=0
 uint8 NO_PICK=1

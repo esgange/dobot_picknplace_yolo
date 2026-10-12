@@ -19,14 +19,24 @@ this interface package and restart all clients after updating these fields.
 
 `AutoRun` is the native `/robot_controller/auto_run` action. Its goal carries the
 exact configuration ID, a quantity of 1–10000, placement X/Y/rotation and debug-image
-choice for both item and tray requests. It requires unheld READY, a complete
+choice for both item and tray requests. `detector_mode` freezes source choice:
+ANY=0 (default) accepts either existing canonical provider, TEACH=1 requires
+`/item_teach` and `/tray_teach`, HEADLESS=2 requires `/item_detect` and `/tray_detect`.
+The GUI's Manual Run sends TEACH; Auto Run sends HEADLESS and additionally requires
+its Load Auto pair to be ready. The controller enforces type at goal admission
+and on perception requests/retries and returned observations. Load Auto is a GUI
+deployment/process control only and never calls Configure or Startup. Rebuild
+interfaces/controller and relaunch all their clients together for this changed
+goal wire layout. It requires unheld READY, a complete
 Item/Bin/Tray configuration and both canonical pose providers. One operation
 owner combines Pick/Place, prefetches one
 next bin batch during placement, and appends the next Pick as soon as it is ready,
 without Home between cycles or waiting for placement arrival. Final Home is confirmed.
 Feedback and result include requested/completed quantities and `elapsed_sec`;
-SUCCESS means all requested placements and final Home completed. NO_PICK ends after three exhausted
-Pick batches; other failures/cancellation retain a partial count and use normal
+SUCCESS means all requested placements and final Home completed. Exhausted item
+acquisition/pick retries wait at Home for explicit Continue (clearing repick/trickle
+history and detecting afresh); tray exhaustion waits at Tray Detect with the item.
+Other failures/cancellation retain a partial count and use normal
 Stop containment. The manual Place action's acceptance-only result is unchanged.
 
 `PickItem`, `PlaceItem` and `AutoRun` each accept `bool save_debug_images` (default

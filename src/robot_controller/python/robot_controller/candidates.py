@@ -106,6 +106,7 @@ class CandidateClient:
             result = future.result()
             received_at = time.monotonic()
             configuration.validate_sources(self.root)
+            self.node.check_detector_owner()
             if result is None or not result.success:
                 status = "no response" if result is None else result.status
                 message = "" if result is None else result.message

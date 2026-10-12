@@ -11199,6 +11199,65 @@ Never use a floating “latest” version in an issue, script, or deployment not
   No offline-transfer milestone is claimed; scoped commit/push follows the
   standing workflow.
 
+### 2026-10-12 — Rule 275: Load Auto and separate Manual / Auto Run buttons
+
+- User requests an explicit Load Auto start/stop toggle below the teach controls.
+  ON uses the browsed Item/Bin/Tray selections, cleans/replaces runtime_teach and
+  starts both headless detectors with the copied profiles. User explicitly keeps
+  controller Load Teach Configuration/preparation separate. Rename the previous
+  Auto Run button Manual Run; add Auto Run using the same Quantity, X/Y, Rotation
+  and debug settings, enabled only for the owned ready headless pair.
+- Load Auto defaults OFF without persistence or launch-time work. Require an
+  idle, unheld GUI controller with fresh stationary queue-empty feedback and
+  raw DI1 LOW. Reject armed teaching services, duplicate/conflicting providers
+  and independently running headless detectors, including locally visible
+  processes in other ROS domains. Never disarm or terminate foreign nodes.
+  Lock selected paths while deploying/running. Validate production source YAML,
+  paired model hashes, saved calibration selections and bin binding without
+  executing weights. Stage five ordinary files and verify source/copy hashes
+  plus the strict catalog before replacement; invalid inputs/interrupted copies
+  preserve the prior catalog. Delete old runtime contents only after publishing
+  the complete replacement; preserve original teaching files/calibration/.env.
+- Start the canonical installed Item Detect and Tray Detect executables in owned
+  process groups only after publication, with Linux parent-death signals. Wait
+  at most 180 seconds for both sole canonical services. A child exit, readiness
+  timeout, service loss or conflicting provider stops the pair; no auto restart.
+  OFF, startup cancellation and GUI shutdown stop only owned groups/native
+  workers. Keep a bounded stderr tail and report startup failures in the GUI
+  and package events. OFF leaves the deployed files. Load Auto never sends a
+  controller Configure/Startup/Enable/motion request; normal Load remains separate.
+- Manual Run requires armed /item_teach and /tray_teach; new Auto Run requires
+  Load Auto RUNNING and /item_detect plus /tray_detect. Both use the existing
+  native counted action and its AUTO RUN status/progress. Add AutoRun goal
+  detector_mode ANY=0/TEACH=1/HEADLESS=2. ANY preserves native client choice;
+  GUI buttons explicitly select TEACH/HEADLESS. Validate type before admission
+  and on requests/retries and observation return; no fallback between modes.
+  Preserve quantity/count/timer, all geometry, rates, blending, gripper timing,
+  prefetch, retry budgets, refill/tray waits, Continue history rules and direct
+  Stop/fault containment. There is no new robot lifecycle state, teach schema,
+  .env key, RabbitMQ service or detector inference implementation.
+- Validation: **1,704 controller tests pass**, including 52 new tests covering
+  replacement/rollback/cancellation, symlink preservation, strict-reader errors,
+  GUI provider separation/shared inputs, startup failure/timeout/loss cleanup,
+  owned process-group shutdown with a harmless executable, and controller source
+  enforcement. No real detector or robot process is started in these tests.
+  Scoped flake8/AST/diff checks pass. Inspect an offscreen GUI with synthetic
+  status. Update AGENTS/root/package/interface docs and FSM, regenerate adjacent
+  HTML/PDF and verify matching source hash, nine SVG diagrams/PDF pages, new
+  labels and offline navigation/zoom without browser/network errors.
+- Interfaces/controller first build in isolated build/install/load_auto while
+  live applications are present. A subsequent read-only check finds controller,
+  Preview, GUI and both teaching applications stopped and no mapped canonical
+  controller-interface libraries (unrelated PAM session helper excluded). Build
+  robot_controller_interfaces and robot_controller canonically, then verify new
+  installed module/source hashes, goal serialization and all 1,704 tests against
+  canonical imports. No driver rebuild, mapped-library overwrite, robot command,
+  actual deployment, detector arming/start, Auto Run or process restart occurs.
+  Current runtime_teach, source teaching/models/calibration/.env and unrelated
+  vendor RViz edits remain untouched and unstaged. Operator launch and physical
+  verification remain pending. No offline-transfer milestone is claimed; use
+  the standing scoped commit/push workflow.
+
 ### Future entry template
 
 ```text

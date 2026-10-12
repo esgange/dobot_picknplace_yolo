@@ -1,5 +1,23 @@
 # Robot Controller — Finite State Machine
 
+Load Auto / run-source review: **2026-10-12**, baseline **`d211ea8`** plus rule **275**.
+The GUI's previous Auto Run becomes Manual Run (armed teaching providers). A new
+Auto Run requires the headless Item/Tray pair owned by explicit Load Auto. Both
+freeze the same quantity, placement and debug inputs in the shared native action;
+all count, motion, retry/intervention and Stop behavior remains. Its new goal
+`detector_mode` is ANY=0/TEACH=1/HEADLESS=2; native clients retain ANY by default.
+Enforce the selected type before admission, requests/retries and observation use.
+Load Auto starts OFF, validates/stages the selected Item/Bin/Tray YAML and two
+models, replaces the complete runtime catalog, then starts the detector pair.
+Readiness requires both services within 180 seconds. OFF/exit/child failure/lost
+or conflicting service stops only owned children, with no restart. Existing
+providers are refused, never disarmed/killed. Files/selections are locked while
+active; changes require idle/unheld and fresh stationary feedback, or canceling
+startup. Load Auto has no robot/configuration action: controller preparation is
+still the separate Load Teach Configuration button. These are GUI supervisor
+states, not new hardware lifecycle states. Rebuild interfaces/controller and
+relaunch clients together. Synthetic tests do not establish live readiness.
+
 Nearest placement review: **2026-10-12**, baseline **`6f3e6c3`** plus rule **274**.
 Treat the two placement attitudes 180° apart about unchanged taught tool Z as
 equivalent. Apply tray-axis alignment and the requested offset first, then
@@ -786,12 +804,13 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 - Place's action result acknowledges the queue. Its completion worker retains
   ownership and PLACING until final retract is confirmed; READY means available again.
 
-There are two separate state machines:
+Keep controller state records separate from the GUI detector supervisor:
 
 | State record | What it describes | Example |
 | --- | --- | --- |
 | Controller lifecycle | What the whole controller is doing | `PICKING`, `PAUSED`, `RECOVERING` |
 | Candidate ledger | What happened to each item pose in the accepted batch | `PENDING`, `INTERRUPTED`, `HELD` |
+| GUI Load Auto supervisor | Owned deployment/detector lifetime, independent of robot lifecycle | `OFF`, `DEPLOYING`, `STARTING`, `RUNNING`, `STOPPING`, `FAILED` |
 
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
 Pick's initial Home travel still reports `PICKING`; it is not a separate Home
@@ -815,7 +834,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Auto Run; Preview; reload; speed; CP; STOP |
+| READY | Home; Pick Item; Place Item; Manual Run / Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; all manual controls and input edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
@@ -861,8 +880,42 @@ source, ownership, I/O and feedback validation or guarantee a detection result.
 | Home | Preview: OFF / ON |
 | Pick Item | Place Item |
 
+The counted-run row has **Manual Run**, **Auto Run**, one Quantity field and shared
+progress. Manual Run requires armed Item Teach and Tray Teach. Auto Run also requires
+Load Auto RUNNING and exactly the owned headless providers. Both send the same native
+action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
+The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
+
+Load Auto sits below Clear Repick History. ON validates the browsed production
+sources and saved calibrations without executing models, then copies three YAMLs
+and two paired models into staging and verifies hashes/catalog before replacing
+all contents of root runtime_teach. Failed validation/copy preserves the old catalog.
+Sources, calibration and .env stay unchanged. Start the canonical installed headless
+executables only after deployment; they load models and arm after input validation.
+Require no armed teaching provider or independently running headless detector.
+OFF stops only owned processes and leaves files deployed. GUI exit does the same;
+children receive a parent-death signal if the GUI disappears. No automatic restart,
+arming of teaching GUIs, controller Configure/Startup or robot command is added.
+
+| Load Auto state | Meaning / next explicit control |
+| --- | --- |
+| OFF | Default on every GUI launch; idle/unheld with fresh stationary feedback and all three paths selected can enable |
+| DEPLOYING | Validate/copy/verify complete catalog off the GUI thread; selections and conflicting controls locked; OFF cancels |
+| STARTING | Owned pair starting; wait for both sole canonical services, at most 180 seconds; OFF cancels |
+| RUNNING | Auto Run additionally follows normal READY/action gates; Load Teach Configuration remains separate; idle/unheld OFF stops pair |
+| STOPPING | Wait for owned children/native workers to terminate; no new start |
+| FAILED | Pair stopped; reason visible and logged; correct problem and explicitly enable again |
+
 ```mermaid
 flowchart TD
+    Deploy["Explicit Load Auto ON: idle, unheld; selected teach files; no competing providers"] --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
+    Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
+    Detect --> Loaded["Load Auto ON; separate Load Teach Configuration prepares robot"]
+    Loaded --> Auto["Auto Run: owned headless pair ready"]
+    Manual["Manual Run: both teaching GUIs armed"] --> Run["Shared native counted run; same quantity and placement; bind detector mode"]
+    Auto --> Run
+    Loaded -->|Idle OFF, exit, service loss or child failure| End["Stop owned pair only; no restart; deployed files remain"]
+    Detect -->|Cancel or failure| End
     Buttons["Home / Pick Item / Place Item"] --> Mode{"Preview toggle?"}
     Mode -->|OFF| Action["Typed hardware action; existing admission and safety gates"]
     Mode -->|ON| Inputs["Fresh canonical joints and stationary feedback; selected sources"]
@@ -1514,14 +1567,15 @@ unchanged. Process restart cannot reconstruct retained placement progress.
 
 Auto Run is a native action under one operation lock, not GUI-generated action
 requests. It requires configured, unheld READY, saved Tray Detect joints and both
-canonical pose providers. The goal freezes quantity (1–10000), placement X/Y/rotation
-and debug-image choice. The first Pick uses the existing Home skip/arrival and
+canonical pose providers of the chosen detector mode. Both GUI run buttons use
+this engine. The goal freezes quantity (1–10000), placement X/Y/rotation,
+debug-image choice and detector mode. The first Pick uses the existing Home skip/arrival and
 candidate pipeline. All cycles keep normal Pick motion, acquisition and loss
 handling, and use trusted held-item placement even when launched from the GUI.
 
 ```mermaid
 flowchart TD
-    Start["READY: Auto Run quantity and placement target; start elapsed timer and run ID"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
+    Start["READY: Manual or Auto Run; bind teaching/headless providers, quantity and target; start elapsed timer and run ID"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Start -.-> Audit["Read-only daily events: run/cycle/request/group IDs; 30-day retention; JSON/CSV on finish; no added motion waits"]
     Pick --> Tray["Linear lifts and exit; queue MovL then MovJ to identical tray joints without intermediate wait; confirm only final MovJ joints, execution and idle"]
     Tray --> Observe["Fresh tray pose/depth: 20% valid pixels and surface within 20 mm below saved plane or higher before offsets; debug RGB/depth; at most 10 attempts; zero added delay"]
@@ -1959,12 +2013,13 @@ Names below are relative to `/robot_controller/`.
 | Placement-to-pick trickle reset | Plan past release ignoring only old source ID; clear real history only on confirmed PLACED; preserve containment and other areas |
 | Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
+| Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; all three paths; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |
 | `go_tray_detect_position` action | Started READY / HOLDING; saved tray joints; exact configuration ID; operation slot free |
 | `place_item` action | Started READY/HOLDING in either launch mode, empty or trusted held alignment; saved tray joints; tray detector ready; exact configuration ID; operation slot free; moves to Tray Detect if needed |
-| `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors; positive whole quantity ≤10000; valid placement target; operation slot free |
+| `auto_run` action | Started, configured, unheld READY; exact configuration ID; Item/Bin/Tray with recorded joints; both detectors and valid detector_mode; TEACH/HEADLESS enforce exact canonical names on admission and requests/results, ANY accepts existing canonical choice; positive whole quantity ≤10000; valid placement target; operation slot free |
 | Saved bin-pose reuse for retry/return (manual / Auto Run) | No successful tray placement since acquisition; same loaded configuration, unchanged sources, eligible PENDING/INTERRUPTED candidate; original plans/order/states retained |
 | Measured surface floor/plane (perception / controller / Preview) | Base Z at actual target X/Y must be no more than 20 mm below calibrated bin floor or saved tray plane before tool offsets, with 0.001 mm numerical tolerance at that limit; either normal sign and tilted planes; reject without clamping; skip bin candidates/use empty retry budget, retry tray observations/use acquisition pause; invalid geometry/evidence remains fatal |
 | Controller item priority (manual Pick / Auto Run / Preview) | Validate detector order and all source/timestamp/pose evidence first; then rank returned item XYZ in base_link by 3D distance from taught Home Link6 XYZ, exact ties by detector priority; preserve IDs and fixed order for the batch; never expand the detector's returned set |
@@ -2134,6 +2189,8 @@ Source map for the next review:
 | [hardware.py](../src/robot_controller/python/robot_controller/hardware.py) | Ordered service admission, physical confirmation and motion policies |
 | [feedback.py](../src/robot_controller/python/robot_controller/feedback.py) | Freshness, coherent samples and suction-loss debounce |
 | [gui.py](../src/robot_controller/python/robot_controller/gui.py) | Button meanings, feedback display and recovery instructions |
+| [auto_detection.py](../src/robot_controller/python/robot_controller/auto_detection.py) / [auto_deploy.py](../src/robot_controller/python/robot_controller/auto_deploy.py) | GUI-owned headless pair, catalog replacement, child cleanup; no robot commands |
+| [perception_mode.py](../src/robot_controller/python/robot_controller/perception_mode.py) | Shared run provider-type selection and enforcement |
 | [Controller README](../src/robot_controller/README.md) / [blueprint diary](WORKFLOW_RULES_BLUEPRINT_DIARY.md) | Operational detail and superseding project rules |
 
 This documents software behavior, not new physical validation. Rule 120 addresses

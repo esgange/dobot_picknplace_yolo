@@ -44,6 +44,7 @@ from .managed_control import ManagedControl
 from .placement import (PlacementOperation, TRAY_SPEED_PERCENT, acquisition_pause_active,
                         validate_target)
 from .placement_alignment import held_item_axis
+from .perception_mode import SERVICES as DETECTOR_SERVICES, active_mode, check_mode, validate_mode
 from .recovery import HomeRecovery
 from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
@@ -280,6 +281,7 @@ class RobotController(Node):
             raise FeedbackFailure(
                 "Pose service requires exactly one canonical root provider "
                 f"(/item_detect or /item_teach); got {providers}")
+        check_mode(providers, 'pick', active_mode(self))
 
     def _perception_ready(self, action):
         """Read-only availability check; teaching advertises poses only while armed."""
@@ -1026,7 +1028,11 @@ class RobotController(Node):
         try:
             validate_quantity(request.quantity)
             validate_target(request.x_mm, request.y_mm, request.rotation_deg)
-        except ValueError:
+            mode = validate_mode(request.detector_mode)
+            if mode:
+                for kind, service in DETECTOR_SERVICES.items():
+                    check_mode(self._service_providers(service), kind, mode)
+        except (ValueError, FeedbackFailure, RuntimeError):
             return GoalResponse.REJECT
         return self._reserve_goal("auto_run", request.configuration_id)
 

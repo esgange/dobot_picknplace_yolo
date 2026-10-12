@@ -141,6 +141,10 @@ def window(tmp_path):
         call_async=lambda _request: pytest.fail("Status rendering sent a command"))
     node = SimpleNamespace(
         root=tmp_path, prefill=None, status=status(), take_operator_logs=lambda: (),
+        get_node_names_and_namespaces=lambda: [('item_teach', '/'), ('tray_teach', '/')],
+        get_service_names_and_types_by_node=lambda name, ns: [(
+            '/item_detect/get_item_poses' if name == 'item_teach'
+            else '/tray_detect/get_tray_pose_v3', [])],
         action_clients={name: SimpleNamespace(server_is_ready=lambda: True)
                         for name in ("home", "pick", "place")},
         service_clients={name: client for name in (

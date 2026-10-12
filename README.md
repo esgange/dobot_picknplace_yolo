@@ -32,6 +32,17 @@ The root build contains 17 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
+**Manual Run / Auto Run:** both use the same Quantity, X/Y, Rotation and debug
+settings. Manual Run uses armed Item Teach and Tray Teach. Auto Run requires
+**Load Auto: ON** with both owned headless detectors ready. Load Auto validates
+the three browsed teach YAML files and paired models, replaces `runtime_teach/`
+with those five files, then starts Item Detect and Tray Detect. Disarm teaching
+GUIs and stop existing headless detectors first. OFF or GUI exit stops only its
+owned detectors. It never starts a cycle or prepares the robot: use **Load Teach
+Configuration** separately. Selections stay locked until Load Auto is OFF.
+Rebuild `robot_controller_interfaces` and `robot_controller`, then relaunch their
+clients together for the new run goal field. See [Load Auto](src/robot_controller/README.md#load-auto-and-run-buttons).
+
 Placement **Rotation 0°** aligns the item's short X axis line with the detected
 tray's short X; the item's length follows the tray's length. Rotating the tray
 changes both the tray-local placement point and the item heading. Rotation adds an offset to
@@ -1010,7 +1021,8 @@ and separate `item_detect_yolo_debug` sources/launchers have been removed.
 See [Item Teach](src/item_perception_yolo/README.md) and
 [robot_controller](src/robot_controller/README.md) for details.
 
-Populate `runtime_teach/` manually, or with an external deployment program,
+Populate `runtime_teach/` with the controller GUI's explicit **Load Auto** toggle,
+manually, or with an external deployment program,
 before starting headless Item Detect or Robot Controller. A missing Item YAML,
 Item model or Bin YAML produces its own fatal startup error; a duplicate error
 lists every conflicting filename. There is no watcher or startup retry. Stop the
