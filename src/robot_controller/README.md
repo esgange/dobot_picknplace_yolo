@@ -182,7 +182,7 @@ placement command, with the selected global CP. The new joint return uses
 `MovJIO(mode=true)` with all six saved Tray Detect angles, taught travel speed/
 acceleration, and `{0,50,2,0}` then `{0,50,14,1}` to open fingers at 50%.
 Move this transfer's OPEN event off the next item transit, which uses plain MovL
-to item X/Y at Home Z. Final descent retains SUCK at 20%. There is no intermediate
+to item X/Y at Home Z. Final descent retains SUCK at 50%. There is no intermediate
 arrival wait or new perception request at Tray Detect; CP may blend the waypoint.
 If detection is slower than placement, confirm/count retract and wait unheld,
 then use the same joint return and next Pick without an initial Home.
@@ -1402,7 +1402,7 @@ DO1 exhaust OFF then DO13 ON, EXHAUST is DO13 OFF then DO1 ON, and NEUTRAL is
 both OFF. Timed state changes preserve that order, and feedback showing either
 opposing pair ON together faults the motion. `grip_onpick` controls final-arrival
 pickup closing independently of `use_grip`, which selects finger holding during
-transport. Every candidate enters with OPEN and no DI12 wait. At 20% final descent,
+transport. Every candidate enters with OPEN and no DI12 wait. At 50% final descent,
 MovLIO orders DO2 OFF, DO14 OFF, DO1 OFF, then DO13 ON. With
 `grip_onpick=false`, confirm DO2 OFF then DO14 OFF at final pick arrival, before
 settling/probing. An earlier suction pickup performs the same relaxation after
@@ -1413,7 +1413,7 @@ requires acceptance and fresh output feedback; faults or Stop block further work
 
 The first `candidate_1_home_to_pick` group contains three control points: item
 X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with finger
-NEUTRAL followed by SUCK at 20%. It intentionally skips the item-clearance point on this initial descent.
+NEUTRAL followed by SUCK at 50%. It intentionally skips the item-clearance point on this initial descent.
 DI1 is eligible only after the candidate's SUCK transition. The first eligible
 HIGH during descent or settling immediately latches pickup and blocks later normal
 command admission. Validate every already-issued service reply before sending one
@@ -1586,7 +1586,7 @@ No physical orientation or J6 confirmation is added before descent, and blending
 can round the transit. Direct Stop can always prevent later requests from being sent.
 At 80% of the first rise the group enters EXHAUST. At 0% of the second rise it
 enters both finger and vacuum NEUTRAL. At 50% of the transfer to M's transit it
-enters OPEN; M's pre-pick has no I/O. At 20% of M's final descent
+enters OPEN; M's pre-pick has no I/O. At 50% of M's final descent
 it enters SUCK. Each service must return `res=0` before the next is sent, while
 only M's final target is physically checked. A late DI1 from candidate N is
 ignored throughout its latched-miss recovery; candidate M is armed only after

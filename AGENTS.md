@@ -2125,6 +2125,13 @@ exhaust/neutral return. Apply to first, retry and placement-to-pick acquisition;
 preserve geometry, rates, blending, retry budgets, schemas and operator files.
 Update documentation/FSM/exports and validate synthetically; no live restart.
 
+Rule 270 moves rule 269's final-descent finger-neutral/SUCK event to 50%.
+Keep the same ordered MovLIO tuples: DO2 OFF, DO14 OFF, DO1 OFF, DO13 ON.
+Apply through shared targets to first picks, retries and placement-to-pick;
+preserve arrival/early-Stop closing, transport grip timing, geometry, rates,
+blending and all feedback/retry gates. Update the diary/FSM/exports and validate
+without hardware commands or live restarts.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

@@ -1,7 +1,7 @@
 # Robot Controller — Finite State Machine
 
-Pickup finger timing review: **2026-10-12**, baseline **`29c333b`** plus rule **269**.
-At 20% final descent, order DO2 OFF, DO14 OFF, DO1 OFF, then DO13 ON: neutral
+Pickup finger timing review: **2026-10-12**, baseline **`362dec2`** plus rules **269/270**.
+At 50% final descent, order DO2 OFF, DO14 OFF, DO1 OFF, then DO13 ON: neutral
 fingers before suction. Grab on Pick ON closes DO14 OFF then DO2 ON at confirmed
 final-pick arrival even with DI1 LOW, before its one taught settling interval.
 Hold that state during the pickup probe; a missed attempt can close too. Eligible
@@ -11,7 +11,8 @@ Each output needs acceptance and fresh feedback. DI1 during a finger command
 finishes only that issued response/echo before Stop, then completes remaining
 channels once; no duplicate close after later acquisition. OFF stays relaxed;
 transport grip at 50% of the first held lift, all routes/rates and direct Stop/
-Pause remain unchanged. This supersedes the older suction-success close timing.
+Pause remain unchanged. Rule 270 moves the neutral/SUCK event from 20% to 50% only;
+all other rule-269 behavior is unchanged.
 
 Time-study review: **2026-10-12**, baseline **`f3d80cc`** plus rule **268**.
 Controller/Item/Tray logs append by Dubai calendar day with UTC and monotonic
@@ -295,7 +296,7 @@ rule **231**, with rule **257** adding the taught Tray Detect joint return.
 After all placement replies are accepted, append Tray Detect MovJIO → fresh
 item entry MovL → pre-pick MovL → pick MovLIO without Home or a placement-arrival
 wait. OPEN at 50% of the joint return replaces OPEN on that item entry; retain
-SUCK at 20% final descent. The pre-pick MovL supplies its queue ID for
+SUCK at 50% final descent. The pre-pick MovL supplies its queue ID for
 source/ledger/count handoff; joint return MovJIO returns no ID. Require
 advancing execution at/past pre-pick plus neutral outputs/raw DI1 LOW in placement
 history; handle handoff before interpreting new-pick feedback as old-item output
@@ -1015,7 +1016,7 @@ flowchart TD
     Home --> Plan["Recheck RGB-offset 90×25×30 mm camera footprint: normal or 180°; save ordered plans and ledger"]
     Plan --> Trickle["Choose unblocked pending pose; apply prior attempts × trickle mm to final Z only; retain interrupted depth"]
     Trickle --> Safe{"Target above floor minus 20 mm; camera footprint safe?"}
-    Safe -->|Yes| Entry["Entry OPEN at 50% → pre-pick → final approach: at 20%, finger NEUTRAL then SUCK"]
+    Safe -->|Yes| Entry["Entry OPEN at 50% → pre-pick → final approach: at 50%, finger NEUTRAL then SUCK"]
     Safe -->|No| Skip["Skip unsafe pose without counting; try next; no survivors: confirm Home / NO_PICK"]
     Entry --> Sense{"DI1 HIGH after suction is armed?"}
     Sense -->|Yes| Drain["Latch pickup; block later commands; validate issued replies and active stationary DO echo"]
@@ -1046,7 +1047,7 @@ then use the first approach's entry → pre-pick → pick sequence. Entry, pre-p
 and pick share the next candidate's selected X/Y/attitude; only Z changes on
 descent. The next clearance is omitted from this branch only. All six targets
 remain in one ordered CP-blended group with no midpoint arrival wait; OPEN stays
-at 50% of next-entry travel, SUCK at 20% of final descent, and the next pickup
+at 50% of next-entry travel, SUCK at 50% of final descent, and the next pickup
 still requires observed suction reset. Automatic dropped-item put-back keeps its
 separate clearance-based ownership boundary.
 
@@ -1167,7 +1168,7 @@ empty observations retain nine Home retries and fresh-frame requirements.
   DI1 during either DO finishes that issued output before pickup Stop, then
   completes the other channel after Stop when needed. Never start another DO
   between the latch and Stop, and never repeat a confirmed OFF channel.
-- At 20% final descent, DO2 OFF and DO14 OFF precede DO1 OFF / DO13 ON.
+- At 50% final descent, DO2 OFF and DO14 OFF precede DO1 OFF / DO13 ON.
 - `grip_onpick=true` sends DO14 OFF then DO2 ON at confirmed final-pick idle
   even with DI1 LOW. Confirm outputs before starting the taught settling interval;
   preserve CLOSE through the probe. Early DI1 retains Stop, then closes at that
@@ -1565,7 +1566,7 @@ must also use the taught Tray Detect joint return, skipping ordinary initial Hom
 The planned retract is at Home Z. Append a joint return to the exact six saved
 Tray Detect angles, then next entry, pre-pick and final pick. The return uses
 MovJIO with OPEN at 50% (DO2 OFF then DO14 ON) and taught travel speed/acceleration.
-Entry uses MovL without another OPEN event; final descent keeps SUCK at 20%.
+Entry uses MovL without another OPEN event; final descent keeps SUCK at 50%.
 This joint waypoint is queued with the selected CP and may be blended; no new
 physical arrival barrier or tray observation is added. The third appended target,
 pre-pick MovL, supplies the execution ID that joint return MovJIO cannot return.

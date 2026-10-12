@@ -639,7 +639,7 @@ per-frame detection cap before geometric filtering.
 The two gripper checkboxes are independent. `grip_onpick=true` closes fingers
 at confirmed final-pick arrival before the DI1 settling interval, even with
 `use_grip=false`. Early DI1 retains Stop, then closes at that stopped pickup
-position. At 20% final descent, neutralize DO2/DO14 before starting suction;
+position. At 50% final descent, neutralize DO2/DO14 before starting suction;
 Grab on Pick OFF stays neutral through settling and the probe.
 At 50% of the first upward lift, `use_grip=false` relaxes DO2 and DO14 (both OFF);
 `use_grip=true, grip_onpick=false` closes them, and both true keeps them closed.

@@ -11044,6 +11044,25 @@ Never use a floating “latest” version in an issue, script, or deployment not
   restart; operator relaunch and live verification remain pending. Commit/push
   only this scope under the standing workflow.
 
+### 2026-10-12 — Rule 270: pickup neutral/suction event at 50% descent
+
+- User moves the complete rule-269 final-descent event from 20% to 50%.
+  Shared pick targets now send DO2 OFF, DO14 OFF, DO1 OFF, DO13 ON at 50%,
+  in that order. First picks, retries and placement-to-pick use this target.
+  Preserve final-arrival/early-Stop closing, first-lift grip timing, geometry,
+  rates, CP blending, suction/response/feedback gates and retry budgets.
+- Update existing exact payload/retry/closing fixtures. **1,508 controller
+  tests pass** with synthetic inputs; scoped flake8 and diff checks pass.
+  Confirm affected processes are stopped, then successfully run the canonical
+  symlink build for robot_controller. Verify installed source and all four grip
+  combinations produce the four 50% tuples. No hardware commands or restarts.
+- Update AGENTS, READMEs and FSM; regenerate HTML/PDF and verify source hash,
+  nine SVGs/PDF pages, the 50% diagram label and offline navigation/zoom.
+  Preserve .env, unrelated RViz edits and operator calibration/teach/model/
+  runtime artifacts. No interface/schema changes or offline-transfer claim.
+  Operator relaunch/live verification remain pending; scoped commit/push uses
+  the standing workflow.
+
 ### Future entry template
 
 ```text
