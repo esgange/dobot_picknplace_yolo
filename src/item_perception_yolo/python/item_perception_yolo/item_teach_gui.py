@@ -621,7 +621,9 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Hold fingers closed during transport. When off, relax at 50% of the first "
             "upward lift and reopen after tray detection, before placement.")
         self.inputs["grip_onpick"].setToolTip(
-            "Close immediately after confirmed suction pickup, regardless of use_grip. "
+            "Relax when suction starts during descent. Close at final pick arrival "
+            "even if DI1 remains LOW, regardless of use_grip. "
+            "Early suction Stop closes at the stopped pickup position. "
             "When off with use_grip on, close at 50% of the first upward lift.")
         settle = QtWidgets.QLineEdit()
         settle.setPlaceholderText("Required; seconds to wait at pick if DI1 has not triggered")
@@ -654,7 +656,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             field = QtWidgets.QLineEdit(str(initial))
             field.setToolTip({
                 "blaclist_trigger": ("0 disables repick filtering; otherwise completed picks "
-                                    "to block an area"),
+                                     "to block an area"),
                 "blackist_radius": "Fixed exclusion circle radius in millimetres",
                 "blackist_cooldown": "Other completed physical picks before an area expires",
                 "trickle_depth": ("Extra downward pick depth per prior completed attempt in "

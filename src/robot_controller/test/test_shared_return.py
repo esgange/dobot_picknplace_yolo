@@ -78,7 +78,7 @@ def test_shared_return_and_next_pick_are_one_ordered_queue_with_no_home_or_midpo
     rig.steps = iter([
         dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
         dict(outputs=0, inputs=0, currentCommandId=3),
-        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+        dict(outputs=1 << 12, inputs=1, currentCommandId=7),
     ])
     acquired, _ = rig.transport.move_batch(
         targets, stop_on_suction=True, return_terminal_pose=True,

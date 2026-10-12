@@ -1218,7 +1218,7 @@ class DobotTransport:
                     require_suction_reset=False, return_terminal_pose=False,
                     confirmed_start_pose=None, preserve_outputs=False, placement=None,
                     placement_bridge=None, pickup_retract_pose=None,
-                    relax_pick_fingers=False):
+                    relax_pick_fingers=False, close_pick_fingers=False):
         group_id, log_context = uuid.uuid4().hex, current_event_context()
 
         def record(level, event, message, **fields):
@@ -1240,6 +1240,8 @@ class DobotTransport:
                 or (pick_settling_sec and not stop_on_suction)
                 or (require_suction_reset and not stop_on_suction)
                 or type(relax_pick_fingers) is not bool
+                or type(close_pick_fingers) is not bool
+                or (close_pick_fingers and (not stop_on_suction or relax_pick_fingers))
                 or (relax_pick_fingers and not stop_on_suction)
                 or (pickup_retract_pose is not None and (
                     not stop_on_suction or not self._valid_rigid_matrix(pickup_retract_pose)))
@@ -1285,8 +1287,8 @@ class DobotTransport:
                               and not bool(initial.feed["digital_input_bits"] & 1))
         suction_armed = False
         probe_started = False
-        fingers_relaxed = False
-        relaxed_finger_channels = set()
+        fingers_ready = False
+        confirmed_finger_outputs = {}
         self.pending_motion_outputs = {}
         self.moving = True
         started = time.monotonic()
@@ -1340,9 +1342,9 @@ class DobotTransport:
                     "INFO", "pickup_detected",
                     "DI1 acquired; finish issued command before pickup Stop", batch=batch_name)
 
-        def relax_fingers(trigger):
-            nonlocal fingers_relaxed
-            if not relax_pick_fingers or fingers_relaxed:
+        def prepare_pick_fingers(trigger):
+            nonlocal fingers_ready
+            if not (relax_pick_fingers or close_pick_fingers) or fingers_ready:
                 return
 
             def observe(sample):
@@ -1350,28 +1352,35 @@ class DobotTransport:
                 bits = sample.feed["digital_outputs"]
                 if not bits & (1 << 12) or bits & 1:
                     raise FeedbackFailure(
-                        "Pickup finger relaxation requires suction ON/exhaust OFF")
-                if any(bits & (1 << (channel - 1)) for channel in relaxed_finger_channels):
-                    raise FeedbackFailure("Pickup finger output changed after relaxation")
+                        "Pickup finger preparation requires suction ON/exhaust OFF")
+                if any(bool(bits & (1 << (channel - 1))) != active
+                       for channel, active in confirmed_finger_outputs.items()):
+                    raise FeedbackFailure("Pickup finger output changed after confirmation")
 
             # Only reached from confirmed final-pick idle or accepted pickup
             # Stop. Keep acquisition live through both response/output waits.
-            # Adopt OFF only after fresh feedback, including an intervening DI1.
-            for channel in (2, 14):
+            # Adopt each transition only after fresh feedback, including DI1
+            # arriving while the command response or output echo is pending.
+            outputs = ((14, False), (2, True)) if close_pick_fingers else (
+                (2, False), (14, False))
+            for channel, active in outputs:
                 observe(self._ready_snapshot())
-                if channel in relaxed_finger_channels:
+                if channel in confirmed_finger_outputs:
                     continue
                 if self.suction_interrupted and self.suction_stop_future is None:
                     # Finish only the DO already sent. Remaining finger commands
-                    # resume after pickup Stop, without repeating confirmed OFFs.
+                    # resume after pickup Stop, without repeating confirmed outputs.
                     return
-                self.output(channel, False, progress=observe)
-                expected_outputs[channel] = False
-                relaxed_finger_channels.add(channel)
+                self.output(channel, active, progress=observe)
+                expected_outputs[channel] = active
+                confirmed_finger_outputs[channel] = active
             observe(self._ready_snapshot())
-            fingers_relaxed = True
+            fingers_ready = True
+            fixed_outputs.update(confirmed_finger_outputs)
             record(
-                "INFO", "pickup_fingers_relaxed", "Fingers relaxed; suction preserved",
+                "INFO", "pickup_fingers_closed" if close_pick_fingers else "pickup_fingers_relaxed",
+                "Fingers closed; suction preserved" if close_pick_fingers else
+                "Fingers relaxed; suction preserved",
                 batch=batch_name, trigger=trigger)
 
         def finish_suction_interrupt():
@@ -1399,7 +1408,7 @@ class DobotTransport:
             self.pending_motion_outputs = {}
             if pickup_retract_pose is not None:
                 self.defer_pickup_drop(pickup_retract_pose, sample)
-            relax_fingers("pickup_stop_accepted")
+            prepare_pick_fingers("pickup_stop_accepted")
             sample = self._ready_snapshot()
             if (not sample.suction_present
                     or not sample.feed["digital_outputs"] & (1 << 12)):
@@ -1535,10 +1544,14 @@ class DobotTransport:
                     stable_since, settle_origin = now, snapshot
                 elif not idle:
                     stable_since, settle_origin = None, None
-                if idle and relax_pick_fingers and not fingers_relaxed:
-                    relax_fingers("final_pick_arrival")
+                if idle and (relax_pick_fingers or close_pick_fingers) and not fingers_ready:
+                    prepare_pick_fingers("final_pick_arrival")
+                    if close_pick_fingers:
+                        # Give the closed fingers the one taught DI1 interval;
+                        # no settling/probe can complete ahead of output feedback.
+                        stable_since = settle_origin = None
                     # Recheck DI1, actual pose and the newly confirmed output
-                    # state before settling/probe completion. No extra dwell.
+                    # state before settling/probe completion.
                     continue
                 if (stable_since is not None
                         and now - stable_since >= terminal_stable_sec

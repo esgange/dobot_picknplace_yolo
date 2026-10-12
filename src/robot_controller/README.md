@@ -1400,9 +1400,10 @@ The outputs are explicit mutually exclusive states. Finger OPEN is DO2 OFF then
 DO14 ON, CLOSE is DO14 OFF then DO2 ON, and NEUTRAL is both OFF. Vacuum SUCK is
 DO1 exhaust OFF then DO13 ON, EXHAUST is DO13 OFF then DO1 ON, and NEUTRAL is
 both OFF. Timed state changes preserve that order, and feedback showing either
-opposing pair ON together faults the motion. `grip_onpick` controls immediate
+opposing pair ON together faults the motion. `grip_onpick` controls final-arrival
 pickup closing independently of `use_grip`, which selects finger holding during
-transport. Every candidate approaches with OPEN and no DI12 wait. With
+transport. Every candidate enters with OPEN and no DI12 wait. At 20% final descent,
+MovLIO orders DO2 OFF, DO14 OFF, DO1 OFF, then DO13 ON. With
 `grip_onpick=false`, confirm DO2 OFF then DO14 OFF at final pick arrival, before
 settling/probing. An earlier suction pickup performs the same relaxation after
 Stop acceptance, before the held lift. This applies independently of `use_grip`.
@@ -1411,8 +1412,8 @@ output-feedback waits. No extra settling interval is added. Each transition
 requires acceptance and fresh output feedback; faults or Stop block further work.
 
 The first `candidate_1_home_to_pick` group contains three control points: item
-X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with SUCK
-at 20%. It intentionally skips the item-clearance point on this initial descent.
+X/Y at Home Z with OPEN at 50%, pre-pick with no I/O, then final pick with finger
+NEUTRAL followed by SUCK at 20%. It intentionally skips the item-clearance point on this initial descent.
 DI1 is eligible only after the candidate's SUCK transition. The first eligible
 HIGH during descent or settling immediately latches pickup and blocks later normal
 command admission. Validate every already-issued service reply before sending one
@@ -1423,10 +1424,10 @@ After its successful command acknowledgement, mark the candidate HELD and start
 the upward return from the latest fresh joint-derived pose. Do not wait for
 stationary joints, idle status, an empty-queue sample or the remaining settling
 time before this return. Command acceptance is not a physical-stop confirmation.
-If acquisition occurs during stationary final-pick relaxation, finish only the
-finger DO already sent: require its accepted reply and fresh OFF feedback before
-pickup Stop. After accepted Stop, complete remaining relaxation without repeating
-confirmed OFF channels. An accepted DO is queued, so its reply alone cannot prove
+If acquisition occurs during stationary final-pick finger preparation, finish only
+the DO already sent: require its accepted reply and fresh commanded output feedback
+before pickup Stop. After accepted Stop, finish the remaining channel without
+repeating confirmed outputs. An accepted DO is queued, so its reply alone cannot prove
 the output changed. Keep the five-second output bound and vacuum/output monitoring;
 rejection, unanswered calls, missing output feedback or cancellation block return
 and retain fault containment. Remove the former early pickup Stop followed by a
@@ -1491,9 +1492,13 @@ Direct Stop is sent immediately and its stationary confirmation never waits for
 this timer. The debounce is independent of taught `pick_settling` and motion-timed
 release; it introduces no teach setting, launch argument or schema change.
 
-On success, `grip_onpick=true` enters CLOSE immediately after pickup Stop
-acknowledgement and confirmed suction, regardless of `use_grip`. Both output
-calls require acceptance and output feedback before the lift queue.
+`grip_onpick=true` enters CLOSE at confirmed final-pick arrival, even with DI1 LOW,
+regardless of `use_grip`. Send DO14 OFF then DO2 ON and confirm both responses and
+output echoes before starting the one taught settling interval. Keep CLOSE through
+the pickup probe. Early DI1 still stops descent; after Stop acceptance close at
+that stopped pickup position. Never repeat a confirmed close at later DI1 success.
+Both output calls retain DI1, Stop/Pause, vacuum and five-second response/echo guards.
+Log `pickup_fingers_closed` with `final_pick_arrival` or `pickup_stop_accepted`.
 
 | `use_grip` | `grip_onpick` | At final arrival / pickup | At 50% of first held lift to pre-pick |
 | --- | --- | --- | --- |
@@ -1506,7 +1511,8 @@ The halfway event uses MovLIO: CLOSE is `{0,50,14,0}` then `{0,50,2,1}`;
 RELAX is `{0,50,2,0}` then `{0,50,14,0}`. Clearance has no finger event.
 For both Grip on Pick OFF combinations, DO2/DO14 stay OFF until that halfway
 event, giving suction priority during settling and initial lifting. A missed
-attempt never closes; the next candidate's existing approach reopens the fingers.
+attempt with Grab on Pick ON can close before being declared missed; its existing
+retract/exhaust/neutral sequence remains. Next entry reopens the fingers.
 Held Pause preserves outputs; Continue restores CLOSE for `use_grip=true` or
 RELAX for false before direct Tray Detect travel, including when Pause canceled
 the first lift's event. Suction remains on throughout.

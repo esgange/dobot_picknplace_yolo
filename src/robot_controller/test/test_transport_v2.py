@@ -748,7 +748,7 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
             feed={"tool_vector_actual": [0.0] * 6,
                   "digital_input_bits": 0, "digital_outputs": outputs})
 
-    vacuum_on = (1 << 12) | (1 << 13)
+    vacuum_on = 1 << 12
     vacuum_off = 1 << 13
     transport.current_pose = lambda: np.eye(4)
     transport._target_values = lambda target: list(target.matrix[:3, 3]) + [0.] * 3
@@ -778,11 +778,12 @@ def test_retry_group_uses_global_cp_and_requires_observed_vacuum_reset(monkeypat
         captured.extend(calls)
         assert outputs_by_call == [{13: False, 1: True},
                                    {2: False, 14: False, 1: False, 13: False},
-                                   {}, {2: False, 14: True}, {}, {1: False, 13: True}]
+                                   {}, {2: False, 14: True}, {},
+                                   {2: False, 14: False, 1: False, 13: True}]
         transport.pending_motion_outputs = {13: False, 1: True}
         progress(sample(vacuum_off))
         transport.pending_motion_outputs = {
-            1: False, 2: False, 13: True, 14: True}
+            1: False, 2: False, 13: True, 14: False}
         progress(sample(vacuum_on))
         return (SimpleNamespace(robot_return="{7}"),) * len(calls)
 

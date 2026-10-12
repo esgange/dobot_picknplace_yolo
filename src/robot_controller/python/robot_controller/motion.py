@@ -199,7 +199,9 @@ def pick_targets(home, item_in_base, settings, candidate_index, *, rotation=None
             # OPEN is the universal presentation state before pickup.
             events = gripper_open_events(50)
         elif name == "pick":
-            events = vacuum_suck_events(20)
+            # Stop powering OPEN before suction starts; pickup closing belongs
+            # to confirmed arrival (or an accepted early suction Stop).
+            events = gripper_neutral_events(20) + vacuum_suck_events(20)
         targets.append(Target(f"p{candidate_index}_{name}", matrix, percentage, acceleration,
                               motion_io=events))
     return tuple(targets)
@@ -302,6 +304,7 @@ class PickExecutor:
                                      else f"candidate_{start_index}_home_to_pick"),
                 stop_on_suction=True, pick_settling_sec=settling,
                 relax_pick_fingers=not close_on_pick,
+                close_pick_fingers=close_on_pick,
                 return_terminal_pose=True, pickup_retract_pose=plan[4].matrix, **origin)
         index = start_index
         while index is not None:
@@ -309,15 +312,9 @@ class PickExecutor:
             if session is not None:
                 session.set_state(index, "HELD" if acquired else "FAILED")
             if acquired and holding_changed is not None:
-                # Establish trusted in-memory holding context before any gripper
-                # output or return motion can fail.
+                # Establish trusted in-memory holding context before return
+                # motion can fail; pickup finger preparation is transport-owned.
                 holding_changed(True)
-            if acquired and close_on_pick:
-                if progress is not None:
-                    progress("GRIP", "Suction confirmed; closing fingers", index)
-                # OPEN -> NEUTRAL -> CLOSE; never overlap DO14 and DO2.
-                self.hardware.output(14, False)
-                self.hardware.output(2, True)
             origin_z = return_origin[2, 3]
             upward = []
             for target in plan[4:]:
@@ -397,6 +394,7 @@ class PickExecutor:
                 batch_name=f"candidate_{index}_pick_to_retry_{next_index}_pick",
                 stop_on_suction=True, require_suction_reset=True,
                 relax_pick_fingers=not close_on_pick,
+                close_pick_fingers=close_on_pick,
                 pick_settling_sec=settling, return_terminal_pose=True,
                 pickup_retract_pose=next_plan[4].matrix,
                 confirmed_start_pose=return_origin)

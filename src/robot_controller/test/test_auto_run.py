@@ -90,7 +90,7 @@ def test_direct_pick_is_admitted_after_placement_without_home_or_old_di1_acquisi
             dict(outputs=1 << 13, inputs=OPEN, currentCommandId=4),
             dict(outputs=1 << 13, inputs=OPEN, currentCommandId=5),
             dict(outputs=1 << 13, inputs=OPEN, currentCommandId=6)]),
-        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+        dict(outputs=1 << 12, inputs=1, currentCommandId=7),
     ])
     acquired, _origin = rig.transport.move_batch(
         next_route(rig, plan),
@@ -751,7 +751,7 @@ def test_early_item_result_cannot_append_motion_until_every_placement_ack(reply,
             dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
             dict(outputs=0, inputs=OPEN, currentCommandId=3),
             dict(outputs=0, inputs=OPEN, currentCommandId=4),
-            dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+            dict(outputs=1 << 12, inputs=1, currentCommandId=7),
         ])
         node.hardware.move_batch(
             next_route(rig, plan), stop_on_suction=True,
@@ -972,7 +972,7 @@ def test_direct_pick_handoff_waits_for_prepick_id_and_neutral_release_history():
     assert run.completed == 0 and rig.node.managed.session is bridge.old_session
     # Complete from the new-pick sample itself, without a separate idle sample.
     rig.node.managed.observe_continuous(rig.emit(
-        outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7))
+        outputs=1 << 12, inputs=1, currentCommandId=7))
     assert run.completed == 1 and rig.node.managed.session is bridge.next_session
     assert bridge.next_session.attempts[0].state == "ACTIVE"
     bridge.observe(rig.monitor.snapshot())

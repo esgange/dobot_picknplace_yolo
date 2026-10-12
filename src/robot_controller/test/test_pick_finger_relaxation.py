@@ -28,7 +28,8 @@ def relaxation_rig(monkeypatch):
 
     def echo(request, *, di1=None, outputs=None):
         sample = rig.monitor.snapshot()
-        bits = sample.feed["digital_outputs"] & ~(1 << (request.index - 1))
+        bits = (sample.feed["digital_outputs"] & ~(1 << (request.index - 1))) | (
+            int(request.status) << (request.index - 1))
         rig.emit(z=sample.joints[0], running=sample.feed["RunningStatus"],
                  command_id=sample.feed["currentCommandId"],
                  outputs=bits if outputs is None else outputs,
@@ -98,8 +99,9 @@ def test_pickup_relaxes_once_and_returns_actual_pose_without_extra_standstill(mo
     if phase == "probe":
         before += [dict(z=.1, outputs=VACUUM)] * 8
     height = .15 if phase == "descent" else .112 if phase == "probe" else .1
-    rig.steps = iter([*before, dict(z=height, outputs=OPEN if phase == "descent" else VACUUM,
-                                  running=1, di1=True)])
+    rig.steps = iter([
+        *before,
+        dict(z=height, outputs=OPEN if phase == "descent" else VACUUM, running=1, di1=True)])
     acquired, origin = pick(rig)
     assert acquired and origin[2, 3] == pytest.approx(height)
     assert rig.outputs == [(2, 0, 0), (14, 0, 0)]
@@ -292,7 +294,7 @@ def test_pause_during_either_output_prevents_probe_or_return(monkeypatch, channe
     assert not rig.transport.moving and rig.monitor._motion is None
 
 
-def test_grip_on_pick_enabled_keeps_open_through_probe(monkeypatch):
+def test_no_finger_policy_keeps_legacy_transport_fixture_outputs(monkeypatch):
     rig, _clock = relaxation_rig(monkeypatch)
     rig.steps = iter([dict(z=.1, outputs=OPEN), *[dict(z=.1, outputs=OPEN)] * 8,
                       dict(z=.12, outputs=OPEN, command_id=7)])
@@ -349,6 +351,7 @@ def test_first_and_retry_acquisitions_follow_pick_flag_independently_of_transpor
                     if name == "move" and kwargs.get("stop_on_suction")]
     assert len(acquisitions) == 2
     assert all(k["relax_pick_fingers"] == (not close_on_pick) for k in acquisitions)
+    assert all(k["close_pick_fingers"] == close_on_pick for k in acquisitions)
     close_events = [event for event in hardware.targets[-1][0].motion_io
                     if event.channel == 2 and event.active]
     assert [event.percent for event in close_events] == (

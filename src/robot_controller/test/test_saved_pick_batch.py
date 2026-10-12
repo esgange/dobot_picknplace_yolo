@@ -356,8 +356,8 @@ def test_fresh_batch_skips_home_before_or_after_placement_finishes(slow):
         dict(outputs=RELEASE, inputs=OPEN, currentCommandId=2),
         dict(outputs=0, inputs=OPEN, currentCommandId=3),
         dict(outputs=0, inputs=OPEN, currentCommandId=4),
-        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
-        dict(outputs=(1 << 12) | (1 << 13), inputs=1, currentCommandId=7),
+        dict(outputs=1 << 12, inputs=1, currentCommandId=7),
+        dict(outputs=1 << 12, inputs=1, currentCommandId=7),
         dict(outputs=1 << 12, inputs=1, currentCommandId=7),
     ])
     with pytest.raises(OperationCanceled, match='Reached fresh'):

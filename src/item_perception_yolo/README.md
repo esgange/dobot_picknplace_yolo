@@ -637,11 +637,14 @@ for the controller to use for retries; it does not execute any retry itself.
 `yolo.max_detections=20` is the separate
 per-frame detection cap before geometric filtering.
 The two gripper checkboxes are independent. `grip_onpick=true` closes fingers
-immediately after confirmed suction pickup, even with `use_grip=false`.
+at confirmed final-pick arrival before the DI1 settling interval, even with
+`use_grip=false`. Early DI1 retains Stop, then closes at that stopped pickup
+position. At 20% final descent, neutralize DO2/DO14 before starting suction;
+Grab on Pick OFF stays neutral through settling and the probe.
 At 50% of the first upward lift, `use_grip=false` relaxes DO2 and DO14 (both OFF);
 `use_grip=true, grip_onpick=false` closes them, and both true keeps them closed.
-After a valid tray pose/depth, `use_grip=false` reopens before placement motion.
-Suction remains on until the shared 80% placement/return descent release.
+After valid tray pose/depth, `use_grip=false` reopens at 80% of pre-place motion.
+Suction remains on until 90% of placement descent; Return Item retains 80%.
 These are existing boolean fields; loading/saving preserves both independently.
 Controller rule 57 now defines vertical Home-attitude height equations and
 DI1-monitored final descent; teaching remains non-actuating.

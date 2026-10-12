@@ -11005,6 +11005,45 @@ Never use a floating “latest” version in an issue, script, or deployment not
   rebuild before operator relaunch; live verification remains pending. Commit
   and push only this scope under the standing workflow.
 
+### 2026-10-12 — Rule 269: relax before suction and close Grab on Pick at arrival
+
+- User requires fingers CLOSED or NEUTRAL while suction is commanded and DI1
+  is awaited. With Grab on Pick ON, close at final-pick arrival rather than
+  waiting for successful suction. The user explicitly selects the existing
+  early-DI1 Stop with closing at that stopped pickup position when descent is
+  interrupted before the nominal target.
+- All initial, retry and placement-to-pick final descents now use the same 20%
+  MovLIO event order: DO2 OFF, DO14 OFF, DO1 OFF, DO13 ON. This removes powered
+  OPEN before SUCK. Arrival-owned finger preparation closes DO14 OFF then DO2
+  ON for grip_onpick=true, independently of DI1 and use_grip. Require accepted
+  replies and fresh output echoes before starting the one saved pick_settling
+  interval; preserve CLOSE during the last-chance probe. An attempt may close
+  and subsequently be declared missed. Remove the old acquired-only executor
+  close so later DI1 cannot repeat it.
+- Retain eligible early-DI1 Stop after issued replies and any already-issued
+  stationary finger output echo. After accepted Stop, complete only remaining
+  channels; preserve suction/output checks, cancellation/Pause and five-second
+  bounds. Record pickup_fingers_closed with final_pick_arrival or
+  pickup_stop_accepted. Grab OFF stays neutral, and use_grip still determines
+  CLOSE/RELAX at 50% of the first held lift. Geometry, rates, CP blending, retry
+  budgets, missed-return exhaust/neutral and taught routes remain unchanged.
+- Validation: **1,508 controller tests and 248 Item Teach tests pass** using
+  synthetic inputs. Cover LOW-DI1 arrival closing, zero/nonzero taught settling,
+  early acquisition during descent/settling/probe, DI1 during either output's
+  response/echo wait, once-only channel completion, rejection/timeout/missing
+  echo, output-state loss, direct Stop/Pause and first/retry admission. Existing
+  Auto Run, saved-batch, return and transport tests retain route/rate assertions;
+  update synthetic final feedback for the new neutral-at-suction state.
+- Isolated Item Perception and Robot Controller builds pass in
+  build/grab_on_pick_arrival and install/grab_on_pick_arrival. Scoped AST,
+  flake8 and diff checks pass. Update Item Teach help, READMEs, AGENTS and FSM;
+  regenerate adjacent HTML/PDF with matching source hash, nine diagrams/pages
+  and offline navigation/zoom verification. No offline-transfer milestone is
+  claimed. Preserve .env, unrelated RViz edits and all operator calibration/
+  teaching/model/runtime artifacts. No robot command, arming, Auto Run or live
+  restart; operator relaunch and live verification remain pending. Commit/push
+  only this scope under the standing workflow.
+
 ### Future entry template
 
 ```text

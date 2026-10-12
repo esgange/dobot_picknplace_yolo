@@ -131,7 +131,7 @@ def test_pick_geometry_rates_and_real_timed_io():
     assert [event.vendor_value() for event in plan[0].motion_io] == [
         "{0,50,2,0}", "{0,50,14,1}"]
     assert [event.vendor_value() for event in plan[3].motion_io] == [
-        "{0,20,1,0}", "{0,20,13,1}"]
+        "{0,20,2,0}", "{0,20,14,0}", "{0,20,1,0}", "{0,20,13,1}"]
     assert all(not target.motion_io for target in (plan[1], plan[2], plan[4], plan[5]))
 
 
@@ -282,7 +282,7 @@ class FakeHardware:
         pytest.fail("Pick must reuse the final-pick terminal feedback pose")
 
 
-def test_success_closes_only_after_suction_and_finishes_at_tray_holding():
+def test_success_delegates_arrival_closing_and_finishes_at_tray_holding():
     hardware = FakeHardware([True])
     plan = pick_targets(matrix(1.0), item_pose(), settings(), 1)
     returned = []
@@ -297,8 +297,8 @@ def test_success_closes_only_after_suction_and_finishes_at_tray_holding():
     assert forward[2]["return_terminal_pose"] is True
     assert np.array_equal(forward[2]["pickup_retract_pose"], plan[4].matrix)
     assert forward[1] == ("p1_transit", "p1_prepick", "p1_pick")
-    assert ("output", 14, False) in hardware.log
-    assert ("output", 2, True) in hardware.log
+    assert forward[2]["close_pick_fingers"] is True
+    assert not any(entry[0] == "output" for entry in hardware.log)
     assert not returned
     finish = [entry for entry in hardware.log if entry[0] == "move"][-1]
     assert finish[2]["batch_name"] == "candidate_1_pick_to_tray"
@@ -449,14 +449,9 @@ def test_success_and_exhaustion_keep_vertical_safety_exit_before_final_travel(
         assert outcome["picked"] is acquired
         assert outcome["holding_item"] is acquired
         outputs = [entry for entry in hardware.log if entry[0] == "output"]
-        assert outputs == ([("output", 14, False), ("output", 2, True)]
-                           if acquired and close_on_pick else [])
-        if outputs:
-            # Pickup closes after acquisition, before the lift queue is sent.
-            assert hardware.log.index(outputs[0]) > next(
-                i for i, entry in enumerate(hardware.log) if entry[0] == "move")
-            assert hardware.log.index(outputs[-1]) < max(
-                i for i, entry in enumerate(hardware.log) if entry[0] == "move")
+        assert outputs == []  # Arrival/early-Stop output control belongs to transport.
+        approach = next(entry for entry in hardware.log if entry[0] == "move")
+        assert approach[2]["close_pick_fingers"] is close_on_pick
         assert checks == ([] if acquired else ["sources"])
         assert len(hardware.targets) == 2  # Approach, then one complete finish group.
         group = hardware.targets[-1]
@@ -587,7 +582,7 @@ def test_missed_suction_blends_both_safety_transits_before_next_descent(stopped_
             for event in transit.motion_io] == [
                 (50, 2, False), (50, 14, True)]
     assert not next_prepick.motion_io
-    assert next_pick.motion_io == vacuum_suck_events(20)
+    assert next_pick.motion_io == gripper_neutral_events(20) + vacuum_suck_events(20)
     assert not any(entry[0] == "output" and entry[1] in (1, 2, 13, 14)
                    for entry in hardware.log)
     assert not any(entry[0] == "sensor" and entry[1] is True

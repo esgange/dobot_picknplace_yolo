@@ -180,8 +180,9 @@ execution, queue completion, faults and I/O. Joint/status callbacks wake checks
 immediately; no fixed arrival dwell is added outside taught final-pick settling.
 Eligible DI1 HIGH during Pick immediately blocks further normal commands. Validate
 already-issued replies before sending pickup Stop; an in-flight finger output at
-the stationary pick also needs its OFF feedback before Stop. Complete remaining
-relaxation after accepted Stop, then start the lift/Tray Detect return without
+the stationary pick also needs its commanded output feedback before Stop. Complete
+remaining finger preparation after accepted Stop, then start the lift/Tray Detect
+return without
 stationary confirmation. Operator Stop and fault containment stay immediate;
 response/output waits retain five-second bounds.
 If final-pick settling ends without DI1, keep suction on and try a last-chance
@@ -785,8 +786,11 @@ the terminal pick/stopped pose and final saved-joint destination are physically
 confirmed. Successful Pick ends at Tray Detect after its two lifts and Safety Z exit;
 exhausted Pick uses the same exit transit and exact Home. Successful travel preserves
 SUCK and grip behavior; exhausted returns use EXHAUST then
-NEUTRAL. `grip_onpick=true` closes immediately after confirmed pickup, independently
-of `use_grip`. With `grip_onpick=false`, relax DO2/DO14 OFF at confirmed final
+NEUTRAL. At 20% of final descent, neutralize DO2/DO14 before suction starts.
+`grip_onpick=true` closes at confirmed final-pick arrival before the taught DI1
+settling interval, independently of `use_grip`; early DI1 retains Stop and closes
+at the stopped pickup position. Closing does not require DI1 HIGH, so a missed
+attempt can also close. With `grip_onpick=false`, confirm DO2/DO14 OFF at final
 pick arrival, or after an early pickup Stop, while leaving suction ON. Keep
 fingers relaxed through settling/probing and the first half of the held lift.
 At 50% of the first successful lift to pre-pick, `use_grip=false`
