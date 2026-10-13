@@ -11904,6 +11904,48 @@ Never use a floating “latest” version in an issue, script, or deployment not
   unrelated RViz modifications. No offline-transfer milestone is claimed.
   Commit/push this appearance/documentation scope under rule 8.
 
+### 2026-10-13 — Rule 288: CATARM reference-port handoff
+
+- User explicitly expands the earlier PicknPlace-only scope to update CATARM's
+  `test` branch using this repository as the reference. Audit PicknPlace at
+  `4cfd298432ebbbbe5d680176102ded98042a2c54` and CATARM at `dfbce684`.
+  Keep PicknPlace implementation, restored HMI layout/appearance and operator
+  files unchanged. No subagents are used.
+- Confirmed choices: preserve CATARM DO1 close, DO2 open, DO3 suction, DO4 purge
+  and DI1 HIGH-held mapping; adopt reference IO/approach/retry/return sequences.
+  Retain CATARM teach formats and server/conveyor ownership; hardcode missing
+  reference fields temporarily. Preserve final tray XYZ/orientation and sync.
+  Camera defaults become 640×480 at 60 FPS with station overrides preserved.
+  Recover CATARM's four metric border corners through selected platform/camera
+  calibration while retaining every saved XYZ value, including Z.
+- CATARM adds source-bound post-request RGB/three-depth-frame batches, metric
+  median sampling, Home-distance candidate ordering, guarded ordered motion,
+  final settling/upward probe, retained candidates/drop return, and three-move
+  tray release with neutral/DI1 LOW terminal proof. Preserve the batch through
+  tray acquisition/synchronization until physical placement completes. Port the
+  Orbbec SW D2C output/calibration guard using CATARM's own pinned SDK v2.8.6.
+  CATARM retains its separate server-owned half-cycle acknowledgements rather
+  than importing the typed PicknPlace lifecycle or cross-action queue overlap.
+- Full audit, temporary values, retained behavior and artifact requirements are
+  in CATARM `docs/operations/picknplace-reference-port.md`; CATARM's own diary
+  records the detailed validation and eight reproduced baseline failures.
+  **221 focused tests pass; the final edge-node suite reports 1,542 passes and
+  eight failures also present in an untouched archive of its starting commit.**
+  Six affected packages build successfully under `/tmp/catarm-reference-build`;
+  the SDK alignment CTest passes eighteen synthetic checks. New-module lint,
+  scoped Python syntax and diff checks pass. Two broader undefined-name lint
+  findings are reproduced unchanged on the CATARM baseline.
+- Recheck processes before builds: no affected station processes are running.
+  Use isolated builds throughout. No robot command, Auto Run, perception arming,
+  native model execution, camera launch or live restart occurs. No deployed
+  CATARM teach/calibration YAMLs are present, so station artifacts and physical
+  pick/drop/placement reliability remain unverified. Preserve both repositories'
+  unrelated edits and all calibration/teach/model/runtime/debug artifacts.
+- CATARM scoped commit **`9fd5c4e8968d261f08057c32870f41ace575ddaf`** is pushed to
+  `origin/test`; exact remote SHA is verified. No credential is written to Git
+  configuration, source or committed files. This PicknPlace change is diary-only;
+  its FSM source/HTML/PDF remain unchanged and need no regeneration.
+
 ### Future entry template
 
 ```text
