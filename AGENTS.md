@@ -2342,6 +2342,15 @@ or command side effects. Preserve all source/admission/Stop/ownership/handler
 contracts and shared run inputs; online command integration remains deferred.
 Update diary/FSM/exports and verify synthetic UI states and relevant regressions.
 
+Rule 286 rolls back rule 285's HMI redesign at the user's request. Restore the
+exact UI source and layout from 2f3a7ee: Operate, Setup / Teach and Tools / Debug,
+with the prior control positions, shared run inputs, styling and command log.
+Rules 283/284 again define the layout. Preserve all robot behavior, source and
+ownership guards, Load Auto preparation and remote settings. Prefer the existing
+design; do not apply further cosmetic reorganization without an explicit request.
+Keep rule 285 as history in the diary, update current documentation/FSM and
+regenerate/verify HTML/PDF exports. Validate and build without starting hardware.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

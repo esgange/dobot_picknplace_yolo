@@ -50,7 +50,7 @@ def presentation(state, preview=False):
     if state.state in ("UNCONFIGURED", "INACTIVE"):
         return "NOT READY", (
             "Use Load Auto or reload teach configuration to prepare the robot." if state.configured else
-            "Select files on Recipe, then use Load Auto on Production.")
+            "Select files on Setup / Teach, then choose a preparation method.")
     if state.state == "PAUSED":
         return "PAUSED", state.message
     if state.state == "HOLDING":

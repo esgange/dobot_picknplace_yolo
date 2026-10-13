@@ -1,6 +1,6 @@
 """Presentation-only HMI styling and sections; no state or command handling."""
 
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtWidgets
 
 
 STATION_STYLE = """
@@ -36,7 +36,7 @@ QLineEdit:disabled {
 }
 QTabWidget::pane { border: 0; }
 QTabBar::tab {
-    min-width: 125px; padding: 10px 18px; color: #526477;
+    min-width: 140px; padding: 10px 20px; color: #526477;
     border-bottom: 3px solid transparent;
 }
 QTabBar::tab:selected { color: #164d72; border-bottom-color: #246b9a; font-weight: 700; }
@@ -50,34 +50,8 @@ QSlider::handle:horizontal {
 }
 QSlider::sub-page:horizontal:disabled { background: #aebdca; }
 QSlider::handle:horizontal:disabled { border-color: #aebdca; }
-QProgressBar { background: #e1e7ed; border: 0; border-radius: 4px; }
-QProgressBar::chunk { background: #397aa8; border-radius: 4px; }
-QProgressBar::chunk:disabled { background: #aebdca; }
 QToolTip { background: #203247; color: #ffffff; padding: 6px; border: 0; }
 """
-
-
-class ElidedLabel(QtWidgets.QLabel):
-    """Keep long recipe names within their card and expose the complete name to AT."""
-
-    def __init__(self):
-        super().__init__()
-        self.full_text = ''
-        self.setTextFormat(QtCore.Qt.PlainText)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-
-    def setText(self, text):
-        self.full_text = text
-        self.setAccessibleDescription(text)
-        self._elide()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._elide()
-
-    def _elide(self):
-        super().setText(self.fontMetrics().elidedText(
-            self.full_text, QtCore.Qt.ElideMiddle, self.contentsRect().width()))
 
 
 def section(title):
@@ -90,7 +64,6 @@ def section(title):
 
 def hint(text):
     label = QtWidgets.QLabel(text)
-    label.setTextFormat(QtCore.Qt.PlainText)
     label.setProperty('role', 'hint')
     label.setWordWrap(True)
     label.setMinimumWidth(0)

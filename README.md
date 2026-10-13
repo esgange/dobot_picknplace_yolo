@@ -5,7 +5,7 @@ ROS 2 workspace for a physical Dobot CR10 robot and an Orbbec Gemini 335 depth c
 ## Workspace contents
 
 [`remote_setup`](src/remote_setup/README.md) adds optional CATARM server settings and
-read-only connection tests, available from **HMI → Diagnostics → Remote Setup**
+read-only connection tests, available from **HMI → Tools / Debug → Remote Setup**
 in Manual or Auto. It has UI and one-shot headless modes; remote robot commands
 remain unimplemented. Existing offline production needs no server settings.
 
@@ -48,41 +48,34 @@ The two local run buttons have explicit detector sources:
 Both execute the same counted cycle with shared Quantity, X/Y, Rotation and debug
 capture settings. Both need **Auto — production**; **Manual — tools** releases the
 controller for teaching and direct maintenance. Offline production is the current
-priority; online server-controlled Auto Run is deferred.
+priority; online server-controlled Auto Run is deferred. Rule 283 consolidates
+setup controls and removes duplicate recipe/status/help displays while preserving
+process ownership and motion behavior.
 
-The **Station HMI** separates production from setup and maintenance (rule 285):
+The task-oriented layout (rule 284) puts production quantity, placement and run
+controls together, beside separate single-action controls. Motion settings sit
+below. Setup separates **1 · Select teach files** and **2 · Prepare station** from
+teaching windows. Diagnostics groups inspection/calibration, direct robot tools,
+server settings and **Detection history → Clear Repick History**. Status and
+Recover/Pause/STOP remain visible on every page; all command guards are unchanged.
 
-| Page | Operator task |
-| --- | --- |
-| Production | Review the selected job; Load Auto; Offline Auto Run; confirmed count, progress and elapsed time |
-| Recipe | Select Item/Bin/Tray files and edit the one shared Quantity, tray X/Y and rotation |
-| Teach / Test | Open teaching windows; Load/Reload Teach Configuration; Manual/Test Run; Home/Pick/Place/Preview |
-| Diagnostics | Speed/CP, RViz, camera setup/calibration, Motion Debug, gripper tools, Remote Setup, repick history, debug captures and command log |
-
-Robot/gripper/service status and control ownership stay at the top; Recover,
-Pause/Continue/Return Item and STOP stay in a fixed bottom row on every page.
-Blocked run buttons show their reason without hovering. Navigation only changes
-the page; it never changes ownership, prepares the robot or starts a tool/run.
-Green Load Auto confirms detector/robot preparation; a green Offline Auto Run
-means its admission gates permit starting. Selected ownership uses blue so it
-cannot be mistaken for readiness. The progress bar uses confirmed controller
-counts, never local prediction. The log expands inside Diagnostics without
-resizing the window or moving STOP. This follows consistent, task-based industrial
-HMI navigation; it is not a claim of safety-standard certification.
-
-Each explicit tool launch is owned
+The controller window is a **Station HMI** with three pages: **Operate**,
+**Setup / Teach**, and **Tools / Debug**. Robot/gripper status and
+Recover/Pause/STOP remain visible throughout. Setup / Teach contains file selection,
+Load Teach Configuration and Load Auto together, and opens the non-headless Item,
+Tray, Bin and Platform teaching windows; Tools opens RViz, camera setup,
+calibration and eligible direct maintenance tools. Each explicit launch is owned
 by the HMI; closing the HMI closes those tools and its headless detector pair.
 Applications opened elsewhere remain external. Select **Manual — tools** to stop
 the owned production controller/detectors while keeping bringup and cameras, then
-open **Motion Debug** from Diagnostics. Select **Auto — production** after closing
+open **Motion Debug** from Tools / Debug. Select **Auto — production** after closing
 maintenance tools to restore the controller. **RabbitMQ integration is the next phase;
 no remote command listener is implemented yet.** See [Station HMI](src/robot_controller/README.md#station-hmi).
 
 The normal launch now starts the **offline station**: canonical Dobot bringup,
 robot TF, both supervised cameras, controller, Preview and HMI. No server or RViz
 is required. Opening it does not load a recipe, enable the robot or start motion.
-Select files, Quantity and placement on **Recipe**, then use **Production → Load Auto →
-READY → Offline Auto Run**.
+Select files and press **Load Auto** on Setup / Teach, then **Offline Auto Run** on Operate.
 Load Auto starts the headless detectors and prepares the robot as before.
 
 The mode selector stays visible on every page. Manual requires an idle, unheld
@@ -199,7 +192,7 @@ The motion controls form one four-button grid:
 | Home | Preview: OFF / ON |
 | Pick Item | Place Item |
 
-**Manual/Test Run** on Teach / Test and **Offline Auto Run** on Production share a quantity
+**Manual/Test Run** and **Offline Auto Run**, below this grid, share a quantity
 of 1–10000 and use the displayed
 placement X/Y/rotation for every cycle. Start from unheld READY with both detectors
 available. Each cycle confirms Tray Detect and acquires fresh tray pose/depth.
@@ -445,7 +438,7 @@ restart. Load/Reload is disabled while Preview is ON. Headless `runtime_teach/` 
 immutable until the process is restarted.
 
 The GUI top row shows **Robot status**, **Gripper status** and observed station
-services; Item/Bin/Tray Teach selection is on Recipe. Robot status uses NOT READY,
+services; Item/Bin/Tray Teach loading is on Setup / Teach. Robot status uses NOT READY,
 READY, BUSY, HOLDING ITEM, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED and OFFLINE, with activity
 and failure reasons always visible. Emergency stop has a prominent red override.
 The lifecycle row has Recover, a Pause/Continue/Return Item control and a **permanent
@@ -608,7 +601,7 @@ duration. `motion_debug` remains a direct-command maintenance tool only and must
 not run concurrently with the production controller.
 
 The GUI shows those timestamped state, phase and service-audit lines in a
-read-only controller command log on Diagnostics. The view keeps up to 1,000 lines,
+read-only controller command log below status. The view keeps up to 1,000 lines,
 supports normal selection and Ctrl+C, and **Copy Log** copies the complete
 displayed history. Headless deployments expose the same human-readable stream on
 `/robot_controller/operator_log`; the bounded JSONL file remains authoritative.

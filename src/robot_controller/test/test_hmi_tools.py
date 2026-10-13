@@ -20,7 +20,7 @@ from test_status_ui import status, window  # noqa: F401
 def test_hmi_pages_keep_stop_visible_and_do_not_start_tools(window):  # noqa: F811
     window.show()
     assert [window.pages.tabText(i) for i in range(window.pages.count())] == [
-        'Production', 'Recipe', 'Teach / Test', 'Diagnostics']
+        'Operate', 'Setup / Teach', 'Tools / Debug']
     for index in range(window.pages.count()):
         window.pages.setCurrentIndex(index)
         QtWidgets.QApplication.processEvents()
@@ -29,19 +29,6 @@ def test_hmi_pages_keep_stop_visible_and_do_not_start_tools(window):  # noqa: F8
     assert window.tools.active() == set()
     assert 'No server connection is needed' in ' '.join(
         label.text() for label in window.pages.findChildren(QtWidgets.QLabel))
-    production, recipe, testing, diagnostics = (window.pages.widget(i) for i in range(4))
-    assert production.isAncestorOf(window.headless_run_button)
-    assert production.isAncestorOf(window.load_auto)
-    assert recipe.isAncestorOf(window.auto_quantity)
-    assert testing.isAncestorOf(window.auto_run_button)
-    assert testing.isAncestorOf(window.configure)
-    assert diagnostics.isAncestorOf(window.speed_slider)
-    original_size = window.size()
-    window.log_toggle.setChecked(True)
-    QtWidgets.QApplication.processEvents()
-    assert window.size() == original_size
-    assert window.stop.isVisible() and window.pause.isVisible()
-    assert window.tools.active() == set()
 
 
 @pytest.mark.parametrize('key', ['item', 'tray', 'motion', 'gripper', 'remote'])

@@ -11845,6 +11845,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   debug artifacts and unrelated RViz changes. Commit/push only this tested scope
   under rule 8.
 
+### 2026-10-13 — Rule 286: Roll back the latest HMI redesign
+
+- User finds the rule-285 redesign more confusing and requests rollback, keeping
+  the old UI design. Restore the exact GUI, presentation helper, operator wording,
+  layout test and root/package READMEs from `2f3a7ee`, before `881307d`.
+  Operate, Setup / Teach and Tools / Debug, prior control positions, appearance,
+  shared inputs and command-log behavior are restored. Rules 283/284 govern the
+  layout again. Do not add further cosmetic reorganization without a new request.
+- Preserve all controller behavior, Load Auto preparation, provider selection,
+  process ownership, motion and Stop/Pause/intervention guards. Keep rule 285's
+  diary entry as history and record this reversal as a new scoped commit; no
+  shared history is rewritten. Operator files and unrelated RViz changes remain.
+- Validation: exact byte comparison confirms restored source/test/READMEs match
+  `2f3a7ee`. **491 relevant regression tests pass**; scoped flake8/diff checks pass.
+  Synthetic offscreen checks at 1120×760 and 1024×768 verify the restored pages,
+  no horizontal scrolling, persistent Stop and running/wait/fault/offline/Manual
+  guards. No live operation is verified.
+- Restore current FSM descriptions, add the rollback review and regenerate
+  adjacent HTML/PDF. Verify matching source hash, nine diagrams/pages, restored
+  layout labels and offline navigation/zoom without HTTP requests. SHA-256:
+  `2d95ef11dee60cec7e26242fa0f46bff596faba6bbda1c28fd059ab008c8ed61`.
+- Recheck immediately before canonical build: no affected station processes.
+  robot_controller builds successfully in 13.2 s; installed GUI/helper/operator
+  files and README exactly match `2f3a7ee` under the canonical prefix. The existing
+  duplicate nested remote_setup build warning is unchanged. No node is started,
+  process restarted, perception armed or robot command issued. No offline-transfer
+  milestone is claimed. Commit/push only the rollback source and documentation.
+
 ### Future entry template
 
 ```text

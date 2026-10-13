@@ -1,30 +1,41 @@
 # Robot Controller — Finite State Machine
 
-HMI production layout review: **2026-10-13**, baseline **`2f3a7ee`** plus rule **285**.
-Four pages supersede rules 283/284's layout: Production owns Load Auto, Offline
-Auto Run and controller-confirmed count/progress/time; Recipe owns the one editable
-Item/Bin/Tray selection and shared Quantity/X/Y/rotation fields; Teach / Test owns
-teaching launchers, Load/Reload, Manual/Test Run and Home/Pick/Place/Preview;
-Diagnostics owns speed/CP, maintenance/inspection, remote settings, history,
-debug captures and the bounded command log. Production's selected-job summary
-reflects the form only; successful Load Auto preparation and matching READY prove
-readiness. Disabled runs display their existing refusal reason beside the button.
+HMI rollback review: **2026-10-13**, baseline **`881307d`** plus rule **286**.
+At the user's request, restore the exact UI implementation from **`2f3a7ee`**.
+The three-page layout described below (rules 283/284) is current again; rule 285's
+four-page redesign is withdrawn. Restore previous control positions, appearance,
+shared run fields and log expansion. Robot motion, source/ownership guards,
+preparation, Stop/intervention and remote settings remain unchanged.
 
-Status and ownership stay at the top; Recover/Pause/STOP stay in a fixed footer.
-Page scrolling and log expansion never move that footer or resize the window.
-Blue marks selected ownership, independent of green detector/robot/run readiness.
-Amber intervention and red Stop/fault meanings remain. Page links are navigation
-only: no command, mode switch, preparation, arming, launch or cycle. Preserve all
-existing handlers, source checks, feedback/ownership gates and process lifetimes.
-Offline flow: Recipe → Production / Load Auto → READY → Offline Auto Run. Load Auto
-includes robot preparation; there is no separate Load Teach step for this flow.
-Manual testing opens/loads/arms teaching windows in Manual, returns to Auto and
-uses Load Teach plus Manual/Test Run on Teach / Test, keeping Load Auto OFF.
-Both runs retain the shared native AutoRun engine and frozen inputs. Server
-commands remain deferred; no hardware state, interface or motion change is added.
+HMI organization review: **2026-10-13**, baseline **`ff8718e`** plus rule **284**.
+Keep the three pages and all existing command/provider/ownership guards. Operate
+groups quantity/progress, shared placement/debug fields and both runs in Production
+run, with Single actions beside it and Motion settings below. Setup / Teach has
+numbered file-selection/preparation sections beside compact teaching launchers.
+Tools / Debug groups inspection/calibration, direct robot tools, server settings
+and Detection history; Clear Repick History moves there. Compact status and the
+station-mode/Recover/Pause/STOP rows remain outside page scrolling. Add consistent
+presentation, keyboard focus order and accessible labels; hide empty blocker space
+only. Preserve green readiness and red/amber Stop/intervention meaning. No state,
+motion, process, configuration, automatic action or server-command change.
+
+Local HMI cleanup review: **2026-10-13**, baseline **`072b5a5`** plus rule **283**.
+The HMI buttons are **Manual/Test Run** (armed teaching windows for debug/testing)
+and **Offline Auto Run** (Load Auto headless detector pair). **Setup / Teach** combines
+file selection, Load Teach Configuration, Load Auto and teaching windows. Remove
+the separate Auto page, duplicate recipe list, extra mode summary and repeated
+help; retain Operate and Tools / Debug. Both use the existing native AutoRun action,
+shared Quantity/placement/debug fields and strict detector-source gates. Both need
+Auto — production; Manual — tools releases the production controller. Offline
+setup is select files → Load Auto → READY → Offline Auto Run; Load Auto includes
+robot preparation. Manual testing opens/loads/arms teaching windows in Manual,
+returns to Auto, loads matching controller files and leaves Load Auto OFF. Help,
+tooltips and shared run-blocker labels explain these paths. No lifecycle, process
+ownership, preparation, motion, Stop/intervention, green readiness or online
+command behavior changes; server-controlled Auto Run remains a later phase.
 
 Remote settings review: **2026-10-13**, baseline **`44372cd`** plus rule **282**.
-Diagnostics → Remote Setup opens a separate settings/connection-test window in
+Tools / Debug → Remote Setup opens a separate settings/connection-test window in
 Manual or Auto, including during runs. Opening it does not connect. Explicit
 Save updates only remote root `.env` settings; explicit Test checks broker login,
 the existing CATARM exchange and conveyor health/belt identity with bounded owned
@@ -55,7 +66,7 @@ motion, detector arming, ROS interfaces, saved mode or RabbitMQ are added.
 
 Offline station review: **2026-10-12**, baseline **`95bf80f`** plus rule **280**.
 The normal GUI launch owns canonical bringup/robot TF, both supervised cameras
-and controller/Preview/HMI. Production is local with no server requirement.
+and controller/Preview/HMI. Auto is a local page with no server requirement.
 Keep explicit Load Auto for deployment, detector startup and robot preparation;
 saved fields are prefill only. Opening the HMI never enables, moves or starts a
 cycle. Refuse detected existing owners before spawn; no adoption/foreign cleanup.
@@ -70,8 +81,8 @@ RabbitMQ, new hardware state, command or interface is added. Tests use dummy
 sessions, including the actual outer launch's Ctrl-C path, never station hardware.
 
 Station HMI review: **2026-10-12**, baseline **`e1b68ee`** plus rule **279**.
-Rule 285 defines the current pages; robot/gripper status, observed services and
-Recover/Pause/STOP stay visible. Only an explicit
+Four pages separate Operate, Teach, Tools / Debug and Auto (rule 280) while robot,
+gripper, observed services and Recover/Pause/STOP stay visible. Only an explicit
 Open launches a canonical tool in an owned session; no launch on page selection
 or saved UI restoration. External windows are observed, never closed. Launches
 recheck duplicate/operation/held-item/command-ownership gates immediately before
@@ -927,20 +938,20 @@ picking, placing, parking, returning and recovering appear in the activity line;
 PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
 
-Robot/gripper status and observed station services remain above the four
-scrollable pages; the lifecycle row is in the fixed footer. **Production** shows
-selected-job inputs, Load Auto, Offline Auto Run and confirmed count/progress/time.
-**Recipe** contains the one editable Item/Bin/Tray selection and shared Quantity,
-X/Y/rotation fields. **Teach / Test** contains teaching windows, Load/Reload,
-Manual/Test Run and the Home/Preview/Pick/Place grid. **Diagnostics** contains
-speed/CP, passive RViz, camera setup/calibration, Remote Setup, direct maintenance,
-repick history, debug captures and the bounded log. The normal launch
+Robot/gripper status, observed station services and the lifecycle row remain
+outside the three scrollable pages. **Operate** groups the two runs and shared
+placement/Quantity/progress/debug inputs in Production run, motion/Preview in
+Single actions and speed/CP in Motion settings. **Setup / Teach** contains numbered
+artifact selection and Load/Reload/Load Auto preparation sections, readiness and
+compact Item/Tray/Bin/Platform Teach launchers. **Tools / Debug** groups passive RViz,
+camera setup/calibration, Remote Setup, eligible direct maintenance applications
+and Detection history / Clear Repick History. The normal launch
 starts bringup/robot TF and both supervised cameras; teaching/debug windows stay
 explicit. Station-service presence is observational, separate from readiness.
 Tool launches never bypass their own model trust, arming or maintenance guards.
 Existing external windows are displayed and cannot be closed by the HMI.
 RViz and Remote Setup remain available in either mode, including during runs.
-The persistent Manual/Auto ownership selector stays above the pages. Open teaching/setup/maintenance
+The persistent Manual/Auto selector is above the lifecycle row. Open teaching/setup/maintenance
 tools in Manual after ownership release; stop/close direct maintenance before
 returning to Auto. Production controls, including Load Auto, require Auto. Manual
 Run still uses teaching providers with the production controller in Auto mode.
@@ -1004,14 +1015,13 @@ source, ownership, I/O and feedback validation or guarantee a detection result.
 | Home | Preview: OFF / ON |
 | Pick Item | Place Item |
 
-The counted-run buttons are on separate pages: **Manual/Test Run** on Teach / Test
-and **Offline Auto Run** on Production. They share Recipe's Quantity field and the
-Production run monitor. Manual/Test Run requires armed Item Teach and Tray Teach. Offline Auto Run also requires
+The counted-run row has **Manual/Test Run**, **Offline Auto Run**, one Quantity field and shared
+progress. Manual/Test Run requires armed Item Teach and Tray Teach. Offline Auto Run also requires
 Load Auto RUNNING and exactly the owned headless providers. Both send the same native
 action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
-Load Auto is on **Production**, separate from test preparation, and is green when its supervisor is
+Load Auto is beside Load Teach Configuration on **Setup / Teach** and is green when its supervisor is
 RUNNING after confirmed preparation. Offline Auto Run is green only when its normal
 admission gates enable the button. These colors change no guards.
 ON validates the browsed production
@@ -1051,14 +1061,14 @@ flowchart TD
     ReleaseCore --> Tools["Open teaching / debug tools; one direct command owner; use tool Stop"]
     Tools -->|Close maintenance; select Auto| RestoreCore["Start owned core; fresh status; no automatic preparation"]
     RestoreCore --> TeachPage
-    TeachPage["Recipe: select files, quantity and placement; navigation sends no commands"] -->|Teach / Test: explicit Load Teach; teaching providers armed| Manual
-    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Production: explicit Load Auto ON; idle, unheld; no competing providers"]
+    TeachPage["Setup / Teach: 1 select files; 2 prepare station"] -->|Explicit Load Teach; teaching providers armed| Manual
+    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Same setup page: explicit Load Auto ON; idle, unheld; no competing providers"]
     Deploy --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
     Detect --> Prepare["PREPARING: Configure selected teach files; enable and initialize robot"]
     Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
     Loaded --> Auto["Offline Auto Run: owned headless pair ready"]
-    Manual["Manual/Test Run: both teaching GUIs armed"] --> Run["Shared native counted run: same quantity and placement; bind detector mode; confirmed progress"]
+    Manual["Manual/Test Run: both teaching GUIs armed"] --> Run["Operate / Production run: shared native counted run; same quantity and placement; bind detector mode"]
     Auto --> Run
     Run -->|HMI exit with owned pose providers| HmiExit["Independent controller Stop; close owned tools and detectors"]
     HmiExit --> StationExit["Controller shutdown finishes before owned cameras and bringup stop"]
