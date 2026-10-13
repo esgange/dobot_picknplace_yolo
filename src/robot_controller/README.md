@@ -29,26 +29,25 @@ windows and the passive RViz viewer.
 
 ## Station HMI
 
-Rule 284 organizes the three existing pages around the operator's task. A compact
-status header and persistent station-mode/lifecycle rows leave more room for the
-working page. Operate has a **Production run** section for quantity, controller
-progress, shared tray X/Y/rotation/debug fields and both run buttons, **Single
-actions** alongside, and aligned **Motion settings** below. The headless run is
-first; provider captions distinguish the two buttons. Place Item uses those same
-tray settings. Existing green readiness, red Stop and amber intervention colors
-remain, with visible keyboard focus, accessible field names and logical tab order.
+Rule 285 supersedes the three-page arrangement with four operator tasks:
+**Production**, **Recipe**, **Teach / Test** and **Diagnostics**. Production shows
+the selected file names/settings, one offline run path and controller-confirmed
+progress. Recipe is the only editable file/Quantity/placement form; file names on
+Production are selected inputs, not proof they have loaded. Load Auto's successful
+preparation and matching READY remain authoritative. Test preparation/runs and
+single moves live on Teach / Test. Tuning, captures and logs move to Diagnostics.
 
-Setup / Teach has **1 · Select teach files**, **2 · Prepare station**, and compact
-teaching launchers alongside. Tools / Debug groups **Inspection / calibration**,
-**Direct robot tools**, **Server connection** and **Detection history**. Clear
-Repick History is now in that last group. Empty action-blocker space is hidden;
-real refusal messages remain visible. Pages scroll vertically on smaller displays.
+Status and control ownership remain above every page; Recover/Pause/STOP are in
+a fixed bottom row. Pages scroll without moving those controls. Showing the log
+does not resize the window. Keep consistent navigation, clear text with state
+colors, visible keyboard focus and accessible names. Selected ownership is blue;
+green Load Auto/run readiness, red Stop and amber intervention retain their
+existing meanings. These choices draw on
+[Siemens' navigation guidance](https://docs.tia.siemens.cloud/r/en-us/v2.2/automation-framework-basic/automation-framework-basic-v2.2/7.-hmi-software-architecture/7.3.-navigation?contentId=3xSCLien~91HpQ3MzsFRsg),
+not a safety certification. Page links never prepare, switch ownership, launch
+or send commands. Existing motion, provider, admission and ownership guards remain.
 The presentation helpers in `hmi_widgets.py` contain no state or robot commands.
-No controller, provider, launch, preparation or ownership behavior changes.
 
-Rule 283 consolidates file selection and both preparation controls on **Setup /
-Teach**, removing the separate Auto page, repeated recipe list, extra mode summary
-and repeated workflow paragraphs. Process ownership and robot behavior are unchanged.
 **Offline Auto Run** uses headless Item Detect and
 Tray Detect from **Load Auto**. **Manual/Test Run** uses explicitly armed Item
 Teach and Tray Teach windows for debugging/testing. Both send the same native
@@ -56,16 +55,17 @@ Teach and Tray Teach windows for debugging/testing. Both send the same native
 placement and debug-capture fields. Generic Auto Run references below describe
 that shared controller action. Online Auto Run with server commands is deferred.
 
-For offline production: select the Item/Bin/Tray files on Setup / Teach, use
-**Auto — production → Load Auto**, wait for robot READY and both
-headless detectors, then set Quantity/placement and press **Offline Auto Run** on
-Operate. Load Auto performs controller preparation; a separate Load Teach step
+For offline production: select the Item/Bin/Tray files and Quantity/placement on
+**Recipe**, use **Auto — production → Production → Load Auto**, wait for robot
+READY and both headless detectors, then press **Offline Auto Run**.
+Load Auto performs controller preparation; a separate Load Teach step
 is unnecessary. Close teaching windows before loading headless detection.
 
 For manual testing: use **Manual — tools** to open Item Teach/Tray Teach, load
 matching profiles and arm both explicitly. Keep those windows open when returning
 to **Auto — production**, load matching controller teach files, then press
-**Manual/Test Run** on Operate. Keep Load Auto OFF. The **Manual — tools** station
+**Manual/Test Run** on Teach / Test. Edit shared Quantity/placement on Recipe.
+Keep Load Auto OFF. The **Manual — tools** station
 mode releases the production controller, so counted runs require returning to
 **Auto — production**. Both local workflows remain independent of a server.
 
@@ -84,7 +84,7 @@ separate from the Manual/Test Run / Offline Auto Run choice of perception provid
 
 To run Motion Debug through the normal HMI: finish/Stop and recover any active
 operation, clear held items, leave Preview, select **Manual — tools**, wait for
-the ownership change, then choose **Tools / Debug → Motion Debug → Open**.
+the ownership change, then choose **Diagnostics → Motion Debug → Open**.
 Opening Motion Debug performs its existing initialization/enable sequence.
 Use Motion Debug's own Stop while working there. Stop its motion before closing
 the tool and selecting Auto again. The HMI's **STOP (production)** has no active
@@ -110,9 +110,10 @@ then use Manual/Test Run. Load Auto still requires owned teaching windows closed
 
 | Page | Controls |
 | --- | --- |
-| Operate | Production run: shared Quantity/progress, tray X/Y/rotation/debug settings and both runs; Single actions: Home/Pick/Place/Preview; Motion settings: speed/CP |
-| Setup / Teach | Select Item/Bin/Tray files, prepare with Load Auto or Load/Reload, readiness and teaching windows |
-| Tools / Debug | Inspection/calibration, direct robot tools, Remote Setup and Detection history / Clear Repick History |
+| Production | Selected job, Load Auto, Offline Auto Run, visible refusal reason and confirmed count/progress/time |
+| Recipe | The single editable Item/Bin/Tray selection and shared Quantity/X/Y/rotation fields |
+| Teach / Test | Teaching windows, Load/Reload, Manual/Test Run and Home/Pick/Place/Preview |
+| Diagnostics | Speed/CP, inspection/calibration, direct robot tools, Remote Setup, history, capture checkbox and command log |
 
 The standard launch starts the offline dependencies described below. Opening the
 HMI or a page never opens a teaching/debug tool, deploys a recipe, arms perception
@@ -183,8 +184,9 @@ To use Offline Auto Run:
 1. Finish any active operation; leave the controller idle, unheld and out of
    Preview. Close Item Teach and Tray Teach and stop independently launched
    headless detectors. Cameras and canonical bringup must already be available.
-2. On **Setup / Teach**, browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
-3. Select **Auto — production**, then turn **Load Auto ON** on the same setup page.
+2. On **Recipe**, browse the saved Item Teach, Bin Teach and Tray Teach YAML files;
+   set Quantity, tray X/Y and rotation.
+3. Select **Auto — production**, then turn **Load Auto ON** on **Production**.
    It validates the files, both same-stem model
    hashes and saved calibration choices, then stages and verifies ordinary copies.
    It replaces the entire root `runtime_teach/` directory contents with exactly
@@ -195,7 +197,7 @@ To use Offline Auto Run:
    selected Item/Bin/Tray paths, then requires its successful response and matching
    fresh, enabled, idle READY status. Models/profiles load automatically; detection
    service requests still acquire fresh observations.
-5. On **Operate**, set Quantity and placement inputs and click **Offline Auto Run** when READY.
+5. On **Production**, review the selected job and click **Offline Auto Run** when READY.
 
 Load Auto starts OFF on every GUI launch; there is no saved toggle, automatic
 restart or directory watcher. Files remain deployed after OFF. To change files,
@@ -1477,11 +1479,12 @@ do not drive these LEDs. DI12 Not detected does not prove that fingers are close
 The held-item decision uses its 500 ms loss debounce independently of the raw
 DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
-Item/Bin/Tray Teach fields, Browse buttons, Load/Reload and Load Auto occupy the **Setup / Teach**
-page. Full paths remain editable and available in field tooltips;
+Item/Bin/Tray Teach fields and Browse buttons occupy **Recipe**. Load Auto is on
+**Production**; Load/Reload and single moves are on **Teach / Test**.
+Full paths remain editable and available in field tooltips;
 prefill, explicit load, reload gates and validated persistence are unchanged.
-Lifecycle controls and the command-log toggle stay outside the pages; motion
-and speed/CP controls are on **Operate**.
+Lifecycle controls stay outside the pages; speed/CP and the command log are on
+**Diagnostics**.
 The GUI consumes only controller APIs. It adds no Dobot/camera subscription or
 I/O command. Missing/stale canonical feedback turns both LEDs Unknown; a
 controller status older than one second by source timestamp or local receipt
@@ -1518,10 +1521,10 @@ remains required for completion.
 The authority publishes the same timestamped human-readable state, phase and
 Dobot audit lines on reliable transient-local
 `/robot_controller/operator_log` (`std_msgs/msg/String`) with a retained depth of
-1,000. The GUI lower panel is a read-only, no-wrap 1,000-line view of that topic,
+1,000. The Diagnostics command log is a read-only, no-wrap 1,000-line view of that topic,
 collapsed by default to keep service request/reply traffic out of the main view.
 **Show command log** expands it and exposes Copy Log; **Hide command log**
-collapses it again. Messages continue accumulating while hidden, and expanding
+collapses it again without changing window size. Messages continue accumulating while hidden, and expanding
 shows the full retained buffer. The toggle is a transient diagnostic view;
 no operator setup file or runtime logging policy changes.
 Text is selectable with Ctrl+C, **Copy Log** copies the entire displayed buffer,
@@ -1997,7 +2000,7 @@ application; production Startup rejects competing maintenance command owners.
 
 ## Remote Setup (settings and connection tests only)
 
-**Tools / Debug → Remote Setup** opens the separate `remote_setup` UI in either
+**Diagnostics → Remote Setup** opens the separate `remote_setup` UI in either
 Manual or Auto, including during a run. It requires no controller ownership
 handoff and never opens automatically. Save the server/arm/belt settings, then
 explicitly Test Saved Settings. The HMI owns only windows it launches.

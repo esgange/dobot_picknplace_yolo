@@ -11790,6 +11790,61 @@ Never use a floating “latest” version in an issue, script, or deployment not
   teaching/model/runtime/debug artifacts and unrelated RViz modifications.
   Commit and push only this tested UI/source/documentation scope under rule 8.
 
+### 2026-10-13 — Rule 285: Production-first station HMI
+
+- User authorizes reorganizing the HMI around the agreed production/teaching/
+  diagnostics goals and common industrial HMI practice. Supersede rules 283/284's
+  three-page layout with Production, Recipe, Teach / Test and Diagnostics.
+  Consult Siemens' official HMI navigation guidance for consistent primary task
+  navigation; keep this a local Qt application without new dependencies.
+- Production shows the selected file names and shared settings, Load Auto,
+  Offline Auto Run, inline existing refusal reasons and a run monitor. The
+  monitor's bar/count/time come only from typed controller status; never predict
+  placement completion or infer readiness from selected files. Ellipsize long
+  names with full paths in tooltips and full names available to accessibility.
+- Recipe owns the single editable Item/Bin/Tray selection and Quantity/X/Y/
+  rotation fields. Page links only navigate. Offline flow is Recipe → Production
+  → Load Auto → READY → Offline Auto Run, with no separate Load Teach step.
+  Teach / Test owns teaching launchers, test Load/Reload, Manual/Test Run and
+  the unchanged Home/Preview/Pick/Place grid. Both native runs keep their strict
+  provider modes and shared frozen settings; production requires headless and
+  testing requires armed graphical providers. There is one start per workflow.
+- Diagnostics owns speed/CP, inspection/calibration, maintenance, Remote Setup,
+  repick history, the shared debug-capture option and the bounded command log.
+  Log expansion stays inside the page without resizing the HMI. Keep robot/
+  gripper/service status and ownership above the pages, and Recover/Pause/STOP
+  in a fixed footer outside scrolling. Blue indicates selected ownership rather
+  than readiness; green preparation/run readiness and red/amber meanings remain.
+- Preserve all command handlers, admission/feedback/provider/ownership gates,
+  process lifetimes, maintenance initialization, live status handling, motion,
+  Stop/Pause/Continue and shortage-wait behavior. Navigation never starts tools,
+  switches ownership, prepares, arms or commands anything. Manual production
+  Stop remains unavailable without its controller and directs operators to the
+  active maintenance tool. Server commands remain deferred.
+- Validation: **491 relevant regression tests pass**, covering Load Auto, mode/
+  tool ownership, native counted runs/timing, status/operator UI, lifecycle,
+  Preview, speed/CP and architecture. Extend the existing HMI layout check for
+  workflow separation and log expansion with persistent Stop; no live clients.
+  After the filename elision adjustment, **100 display/tool/Preview tests pass**.
+  Scoped flake8 and diff checks pass. Offscreen views at 1120×760 and 1024×768
+  have no horizontal scrolling; inspect READY, running, item shortage, fault,
+  offline, Manual tools and expanded logs using synthetic data. This is software
+  evidence only; no physical operation is verified.
+- Update root/package README, AGENTS and current FSM text/diagram. Regenerate
+  adjacent HTML/PDF; verify matching source SHA-256, nine diagrams/pages, new
+  Recipe/Production/Teach labels and all offline navigation/zoom with no HTTP
+  requests. Source hash: `4f98051981670a43308092b8b91bd81aecee8fb0b156d94849d6edf025de3a3f`.
+- Immediately recheck processes before canonical installation: no affected
+  station processes are running. Canonical robot_controller builds in 12.4 s.
+  Verify installed GUI/helper/operator imports and README from the canonical
+  prefix without launching nodes. The existing duplicate remote_setup install
+  warning remains; colcon chooses the canonical prefix and ignores its nested
+  generated copy. No offline-transfer milestone is claimed.
+- No robot command, live restart, perception arming, model execution or server
+  connection is performed. Preserve .env, calibration, teaching/model/runtime/
+  debug artifacts and unrelated RViz changes. Commit/push only this tested scope
+  under rule 8.
+
 ### Future entry template
 
 ```text
