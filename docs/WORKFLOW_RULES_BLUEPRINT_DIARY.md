@@ -11613,6 +11613,83 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and unrelated vendor RViz modifications. Commit/push only this tested scope
   under the standing workflow.
 
+### 2026-10-13 — Rule 282: Remote Setup settings and connection checks
+
+- User selected settings/connection testing only for the new `remote_setup` node.
+  Add separate ROS package, Qt UI, one-shot `--headless` executable and shared
+  `headless:=true` launch option. No robot clients, persistent consumer, remote
+  command processing, heartbeat publication, recipe deployment or online mode.
+  ROS node presence is for HMI window observation; no parameter services or executor
+  are needed. Opening the UI never connects; headless explicitly checks once.
+- Study the user-authorized CATARM reference at `05983826`: its aio-pika exchange
+  is `catarm.events`; conveyor-server exposes public `GET /api/health` with
+  status/service/belt identity. Test AMQP login/vhost plus a passive existing-
+  exchange lookup, then validate HTTP 200, JSON service/status and exact belt ID.
+  Never create exchanges/queues, bind, consume, publish or reconnect. The planned
+  routing prefix is display only and reserves no arm identity. API/signing keys
+  are optional stored fields, explicitly untested; passing tests does not prove
+  command permissions, teach compatibility, arm uniqueness or production readiness.
+- Add twelve explicit REMOTE_* keys to root `.env.example` for host, AMQP port/TLS/
+  vhost/user/password, conveyor base URL, belt, arm 1–8, timeout, and optional
+  internal API/signing secrets. All actual edits require validated explicit Save;
+  use atomic replacement, preserve unrelated lines, detect intervening changes,
+  set credential file mode 0600, and reject invalid/missing required settings.
+  Reload discards drafts explicitly; tests refuse unsaved edits and freeze the
+  saved snapshot. UI masks secrets; child stdin carries them without argv/env/log
+  exposure. No credentials/default server are inferred or deployed in this work.
+- Narrow rule-9 exception: recognized remote settings are optional for offline
+  readers, so legacy absent/blank keys do not prevent station startup. Keep the
+  example group commented so older running readers see their unchanged key set
+  until explicit deployment/Save. Item Teach imports the shared recognized key
+  tuple through its explicit orbbec_camera_launcher dependency. Remote
+  validation belongs to Remote Setup. Update shell, shared camera config and
+  Item Teach identity readers; allow literal '=' inside values. Keep other keys
+  required and unknown/duplicate keys rejected. Intentional vendor integration
+  patch: bringup recognizes these optional keys but exports only its existing
+  required station settings, avoiding credential inheritance by driver/TF children.
+  No driver C++ changes or mapped library overwrite.
+- UI and headless tests run in one disposable owned child, with no automatic retry.
+  Each network check uses its configured 1–60-second timeout; parent enforces
+  2 × timeout + 8 seconds overall, including DNS/protocol stalls and cleanup.
+  Cancel/Close kills only that child. Verify TLS using system trust; refuse HTTP
+  redirects/proxies and responses above 64 KiB. Emit sanitized outcome messages
+  and cap package events at 1,000 entries; log failure cannot crash the UI or
+  change a test result. Keep pinned aio-pika/dependencies in requirements.txt and
+  document offline wheel installation; no runtime installer/download fallback.
+- HMI Tools / Debug explicitly opens Remote Setup in Manual or Auto, including
+  active runs, with existing duplicate/external-window and owned-close behavior.
+  Its communication-only role needs no robot ownership handoff and does not block
+  Load Auto. No autostart, detector arming, controller lifecycle, action, motion,
+  safety gate or production shutdown changes. Update README, package index,
+  controller README, AGENTS and FSM guard/diagram descriptions together.
+- Validation: initial broad suite **1,928 passed** (complete controller suite,
+  Remote Setup, camera/config, affected Item Teach/calibration and dummy vendor
+  launch tests). Final broad run had **1,930 passed** and one existing dummy-launch
+  fixture teardown exceeding its five-second deadline; the fixture cleaned its
+  own process group. Focused rerun passed **64 tests**, including that vendor
+  fixture, all **45 Remote Setup tests** and the affected Item Teach reader tests.
+  Final cases include Python 3.10 timeout handling and Unicode line-break rejection.
+  Tests cover passive-only broker calls, TLS/timeout/failure/cancel cleanup,
+  HTTP identity/size/JSON gates, secret handling, atomic save/preservation,
+  all offline readers, UI no-connect opening, child deadlines/close, headless exit
+  codes, and HMI admission without ownership. All network endpoints are fake;
+  harmless child processes test cleanup. No live server or robot test.
+- Isolated four-package build succeeds for remote_setup, orbbec_camera_launcher,
+  item_perception_yolo and robot_controller in build/remote_setup and
+  install/remote_setup (17.4 s).
+  Final four-package rebuild succeeds in 13.5 s and verifies the final package. Installed UI
+  opens offscreen without a child; installed headless rejects unconfigured saved
+  settings with exit 2 before network. Scoped lint/diff checks pass. Regenerate
+  adjacent FSM HTML/PDF; verify matching source hash, nine diagrams/pages, Remote
+  Setup label, offline navigation/zoom. No offline-transfer milestone claimed.
+- Station/HMI, production controller/Preview, camera supervisor and headless
+  detectors are live, so canonical installation/restarts are intentionally not
+  performed. Actual `.env` hash is unchanged. Preserve calibration, teaching/model/
+  runtime/debug artifacts and unrelated vendor RViz edits. Canonical deployment
+  remains an operator-stopped follow-up; no live process or robot command was
+  issued during validation. Commit/push only this scoped tested source/docs under
+  the standing workflow.
+
 ### Future entry template
 
 ```text

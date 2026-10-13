@@ -72,7 +72,7 @@ then use Manual Run. Load Auto still requires owned teaching windows closed.
 | --- | --- |
 | Operate | Home/Pick/Place, Preview, placement X/Y/Rotation, shared Quantity, Manual Run/Auto Run, debug captures and speed/CP |
 | Teach | Item/Bin/Tray file selection, Load/Reload, Clear Repick History, Item Teach, Tray Teach, Bin Teach and Platform Teach windows |
-| Tools / Debug | Passive RViz, camera setup, camera calibration, Motion Debug and Gripper Diagnostics |
+| Tools / Debug | Passive RViz, Remote Setup, camera setup, camera calibration, Motion Debug and Gripper Diagnostics |
 | Auto | Selected teach summary, Load Auto deploy/start/prepare toggle and readiness; local offline production |
 
 The standard launch starts the offline dependencies described below. Opening the
@@ -1954,3 +1954,15 @@ attentive operator.
 `robot_controller` is the sole production/runtime Dobot command issuer.
 `motion_debug` may issue direct commands only as a mutually exclusive maintenance
 application; production Startup rejects competing maintenance command owners.
+
+## Remote Setup (settings and connection tests only)
+
+**Tools / Debug → Remote Setup** opens the separate `remote_setup` UI in either
+Manual or Auto, including during a run. It requires no controller ownership
+handoff and never opens automatically. Save the server/arm/belt settings, then
+explicitly Test Saved Settings. The HMI owns only windows it launches.
+External windows remain external; HMI exit closes its owned window/test child.
+Remote Setup does not block Load Auto or acquire robot command authority.
+See [Remote Setup](../remote_setup/README.md) for `.env` keys, dependencies and
+headless exit codes. No remote commands, heartbeat or server-controlled cycles
+are enabled by opening or successfully testing it.

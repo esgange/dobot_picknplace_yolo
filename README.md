@@ -4,8 +4,14 @@ ROS 2 workspace for a physical Dobot CR10 robot and an Orbbec Gemini 335 depth c
 
 ## Workspace contents
 
+[`remote_setup`](src/remote_setup/README.md) adds optional CATARM server settings and
+read-only connection tests, available from **HMI → Tools / Debug → Remote Setup**
+in Manual or Auto. It has UI and one-shot headless modes; remote robot commands
+remain unimplemented. Existing offline production needs no server settings.
+
 ```text
 src/
+├── remote_setup/          # CATARM settings UI and headless connection tests
 ├── motion_debug/          # project GUI; does not start Dobot bringup
 ├── gripper_control/       # gripper/suction IO GUI; requires live bringup
 ├── orbbec_camera_launcher/ # Gemini 335 configuration and bounded supervisor GUI
@@ -28,7 +34,7 @@ Orbbec's support matrix lists Gemini 335 under the Gemini 330 series. The `v2-ma
 
 ## Package organization
 
-The root build contains 17 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `tray_perception`, `robot_controller`, `robot_controller_interfaces`, `item_perception_interfaces`, and `tray_perception_interfaces` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
+The root build contains 18 ROS packages below `src`: seven packages grouped under the official vendor snapshots and the project-level `motion_debug`, `gripper_control`, `orbbec_camera_launcher`, `camera_calibration`, `item_perception_yolo`, `tray_perception`, `robot_controller`, `robot_controller_interfaces`, `item_perception_interfaces`, `tray_perception_interfaces`, and `remote_setup` packages. Imported `item_pick` is reference-only and excluded by `COLCON_IGNORE`. Gazebo/robot simulation, MoveIt, vendor demonstration nodes, `servo_action`, and the Dobot `ServoJ`/`ServoP` streaming interfaces are deliberately excluded. Each retained package has a package-local README describing its role and safe entry points. See [`src/README.md`](src/README.md) for the complete package index. The vendor grouping is intentional and must remain intact for offline provenance and refreshes.
 
 ## Robot Controller
 

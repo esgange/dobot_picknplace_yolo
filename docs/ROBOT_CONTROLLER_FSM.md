@@ -1,5 +1,15 @@
 # Robot Controller — Finite State Machine
 
+Remote settings review: **2026-10-13**, baseline **`44372cd`** plus rule **282**.
+Tools / Debug → Remote Setup opens a separate settings/connection-test window in
+Manual or Auto, including during runs. Opening it does not connect. Explicit
+Save updates only remote root `.env` settings; explicit Test checks broker login,
+the existing CATARM exchange and conveyor health/belt identity with bounded owned
+process cleanup. It never consumes/publishes commands, owns robot control, starts
+detectors or prepares the robot. HMI exit closes only its owned window/test child;
+external windows remain external. Offline behavior and all controller hardware
+states/transitions are unchanged. Headless tests saved settings once and exits.
+
 HMI ownership review: **2026-10-13**, baseline **`b2643f9`** plus rule **281**.
 Persistent Manual (tools) and Auto (production) modes separate the HMI lifetime
 from its owned controller/Preview. Default Auto starts a new unconfigured core;
@@ -899,13 +909,14 @@ outside the four scrollable pages. **Operate** contains motion/Preview, shared
 placement/Quantity, Manual Run/Auto Run, debug capture and speed/CP. **Teach**
 contains selected artifacts, Load/Reload, Clear Repick History and Item/Tray/Bin/
 Platform Teach launchers. **Tools / Debug** opens passive RViz, camera setup,
-calibration and eligible direct maintenance applications. **Auto**
+calibration, Remote Setup and eligible direct maintenance applications. **Auto**
 shows selected sources and Load Auto for offline production. The normal launch
 starts bringup/robot TF and both supervised cameras; teaching/debug windows stay
 explicit. Station-service presence is observational, separate from readiness.
 Tool launches never bypass their own model trust, arming or maintenance guards.
 Existing external windows are displayed and cannot be closed by the HMI.
-The persistent Manual/Auto selector is above the lifecycle row. Open non-RViz
+RViz and Remote Setup remain available in either mode, including during runs.
+The persistent Manual/Auto selector is above the lifecycle row. Open teaching/setup/maintenance
 tools in Manual after ownership release; stop/close direct maintenance before
 returning to Auto. Production controls, including Load Auto, require Auto. Manual
 Run still uses teaching providers with the production controller in Auto mode.
@@ -1009,6 +1020,7 @@ arming of teaching GUIs, Home, pick/place cycle or direct driver client is added
 ```mermaid
 flowchart TD
     Launch["Offline HMI launch: bringup / TF + cameras + HMI; Auto owns unconfigured core"] --> StationMode{"Station mode"}
+    StationMode -.->|Either mode: explicit Open| Remote["Remote Setup: save settings / bounded connection test; no robot commands"]
     StationMode -->|Auto| TeachPage
     StationMode -->|Manual: fresh idle unheld; no pending requests| ReleaseCore["Stop owned detectors; recheck robot; stop core; wait for process / graph exit"]
     ReleaseCore --> Tools["Open teaching / debug tools; one direct command owner; use tool Stop"]
@@ -2127,7 +2139,7 @@ Names below are relative to `/robot_controller/`.
 | Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
 | Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; all three paths; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
-| HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; non-RViz Open requires Manual mode in managed HMI, no operation/held item/queued motion/pending command or active Load Auto; direct maintenance rechecks graph and local command owners before spawn; closing owned maintenance remains available; external processes are never closed |
+| HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; teaching/setup/maintenance Open requires Manual mode in managed HMI; RViz and Remote Setup are available during runs in either mode; other tool changes require no operation/held item/queued motion/pending command or active Load Auto; direct maintenance rechecks graph and local command owners before spawn; closing owned maintenance remains available; external processes are never closed |
 | HMI Manual / Auto (not a robot API) | Manual: idle editable UNCONFIGURED/INACTIVE/READY, fresh stationary queue-empty feedback, DI1 LOW, no held/retained operation or pending request/Preview; detectors then core stop, process/graph absence before tools. Auto: no competing maintenance/foreign core, new owned core then fresh status; no preparation/cycle on mode selection |
 | Offline HMI launch (not a robot API) | Default GUI entry starts bringup/robot TF, supervised cameras and core; installed paths and existing local owners checked before spawn; no recipe/enable/Auto Run on launch; core stops before owned cameras/bringup; no outer restart |
 | `startup` service | Configured INACTIVE; operation slot free |

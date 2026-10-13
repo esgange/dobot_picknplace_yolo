@@ -2281,6 +2281,24 @@ states, ROS interfaces, saved mode, RabbitMQ or Motion Debug startup changes.
 Close owned tools/detectors/core before station dependencies, with bounded waits.
 Update diary/FSM/exports and test handoffs with synthetic state and dummy processes.
 
+Rule 282 adds separate remote_setup UI and one-shot headless settings/connection
+checks only. Store only canonical REMOTE_* keys in root .env, with explicit
+validated atomic Save preserving other lines and protecting credentials. Supersede
+rule 9 only for this optional remote group: absent/blank settings never block
+offline station readers; Remote Setup requires explicit valid settings to test.
+Mask secrets, keep them out of args/logs, and allow literal equals signs in values.
+Explicit Test checks AMQP login/vhost and existing catarm.events passively, then
+GET /api/health verifies conveyor-server and belt identity. No exchange/queue
+creation, bindings, consumption, publication, heartbeat, robot command or teaching
+deployment. No connection on UI open; no retries or automatic reconnect. Bound
+probes in an owned disposable child; Cancel/Close and headless deadline stop it.
+Headless uses saved settings once and exits with a result; signing/internal API
+keys are optional stored fields, explicitly unverified. HMI Tools / Debug offers
+Remote Setup in Manual and Auto, even during runs, without ownership handoff or
+blocking Load Auto. Keep external-window and owned-close rules. No autostart or
+remote authority. Tests use fake transports; leave live station/.env untouched.
+Update FSM/export HMI descriptions and document dependency/offline installation.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

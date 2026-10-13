@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.8)
+project(remote_setup)
+find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
+ament_python_install_package(${PROJECT_NAME} PACKAGE_DIR python/${PROJECT_NAME})
+install(PROGRAMS scripts/remote_setup DESTINATION lib/${PROJECT_NAME})
+install(FILES launch/remote_setup.launch.py DESTINATION share/${PROJECT_NAME}/launch)
+install(FILES README.md requirements.txt DESTINATION share/${PROJECT_NAME})
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_remote_setup test TIMEOUT 60 ENV
+    "QT_QPA_PLATFORM=offscreen" "ROS_DOMAIN_ID=231"
+    "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python:${CMAKE_CURRENT_SOURCE_DIR}/../orbbec_camera_launcher:$ENV{PYTHONPATH}")
+endif()
+ament_package()

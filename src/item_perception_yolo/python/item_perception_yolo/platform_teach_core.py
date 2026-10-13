@@ -11,6 +11,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from orbbec_camera_launcher.project_config import REMOTE_ENV_KEYS
+
 from camera_calibration_gui.calibration_core import (
     BASE_FRAME,
     CALIBRATION_ARTIFACT_SCHEMA_VERSION,
@@ -171,7 +173,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     for line_number, raw_line in enumerate(lines, start=1):
         if not raw_line or raw_line.startswith("#"):
             continue
-        if raw_line.strip() != raw_line or raw_line.count("=") != 1:
+        if raw_line.strip() != raw_line or "=" not in raw_line:
             raise ValueError(
                 f"Invalid strict KEY=value syntax at {path}:{line_number}"
             )
@@ -188,9 +190,13 @@ def load_robot_lan1_ip(root: Path | None = None) -> str:
     project_root = workspace_root() if root is None else Path(root).resolve()
     example_values = _parse_env_file(project_root / ".env.example")
     values = _parse_env_file(project_root / ".env")
-    if set(values) != set(example_values):
-        missing = sorted(set(example_values) - set(values))
-        unsupported = sorted(set(values) - set(example_values))
+    # Rule 282: remote settings are optional for all offline station readers.
+    optional = set(REMOTE_ENV_KEYS)
+    required = set(example_values) - optional
+    allowed = set(example_values) | optional
+    if not required.issubset(values) or not set(values).issubset(allowed):
+        missing = sorted(required - set(values))
+        unsupported = sorted(set(values) - allowed)
         raise ValueError(
             "Root .env keys must exactly match .env.example; "
             f"missing={missing}, unsupported={unsupported}"

@@ -510,7 +510,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _build_tool_pages(self):
         for title, kinds in (('Teach', {'teach'}),
                              ('Tools / Debug',
-                              {'viewer', 'camera', 'calibration', 'maintenance'})):
+                              {'viewer', 'camera', 'calibration', 'maintenance', 'communication'})):
             grid = QtWidgets.QGridLayout()
             row = 0
             for tool in TOOLS:
@@ -541,7 +541,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             'or another tool. Only one direct robot command application may own the robot. '
             'Use the active tool’s Stop controls in Manual mode. '
             'Camera Calibration opens without moving; its automatic capture keeps its '
-            'existing exclusive-control checks. RViz can be opened during a run.')
+            'existing exclusive-control checks. RViz and Remote Setup can be opened during a run.')
         note.setWordWrap(True)
         self.page_layouts['Tools / Debug'].addWidget(note)
 
@@ -560,7 +560,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._refresh_hmi()
 
     def _manual_tool_reason(self, tool):
-        if (self.modes.managed and tool.kind != 'viewer'
+        if (self.modes.managed and tool.kind not in ('viewer', 'communication')
                 and self.modes.state != 'MANUAL'):
             return 'Select Manual mode before opening teaching/setup/debug tools'
         return ''
@@ -589,7 +589,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         state, _message = self.tools.snapshot(key)
         try:
             if state not in ('OFF', 'FAILED'):
-                reason = ('' if tool.kind in ('viewer', 'maintenance') else change_reason(
+                reason = ('' if tool.kind in ('viewer', 'maintenance', 'communication') else change_reason(
                     tool, self.node.status, self.hmi_nodes, self.auto_detectors.snapshot[0],
                     self._tools_pending()))
                 if reason:
@@ -629,7 +629,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             external = not owned and bool(names.intersection(tool.nodes))
             reason = change_reason(tool, self.node.status, self.hmi_nodes, auto_state,
                                    self._tools_pending())
-            if owned and tool.kind in ('viewer', 'maintenance'):
+            if owned and tool.kind in ('viewer', 'maintenance', 'communication'):
                 reason = ''
             elif not owned:
                 reason = self._manual_tool_reason(tool) or reason

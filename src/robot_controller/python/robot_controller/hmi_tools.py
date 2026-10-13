@@ -27,6 +27,9 @@ class Tool:
 
 
 TOOLS = (
+    Tool('remote', 'Remote Setup', 'remote_setup', 'remote_setup.launch.py',
+         ('remote_setup',), 'communication',
+         'Save server settings and test connections; remote robot commands are not enabled.'),
     Tool('item', 'Item Teach', 'item_perception_yolo', 'item_teach.launch.py',
          ('item_teach',), 'teach', 'Teach items, inspect detections and arm manual picking.'),
     Tool('tray', 'Tray Teach', 'tray_perception', 'tray_teach.launch.py',
@@ -61,7 +64,7 @@ MAINTENANCE_NODES = {'motion_debug_gui', 'motion_debug', 'gripper_control_gui',
 
 def change_reason(tool, status, nodes, auto_state, pending=False):
     """Guard a tool change without sending any robot command or closing another app."""
-    if tool.kind == 'viewer':
+    if tool.kind in ('viewer', 'communication'):
         return ''
     if pending or (status is not None and (
             status.operation_active or status.holding_item or status.robot_running

@@ -59,6 +59,21 @@ _SUPPORTED_ENV_KEYS = {
     "ITEM_TEACH_ROBOT_CAMERA_CALIBRATION",
 }
 _REQUIRED_ENV_KEYS = frozenset(_SUPPORTED_ENV_KEYS)
+# Optional remote_setup settings never participate in hardware configuration.
+_SUPPORTED_ENV_KEYS.update((
+    'REMOTE_SERVER_HOST',
+    'REMOTE_AMQP_PORT',
+    'REMOTE_AMQP_TLS',
+    'REMOTE_AMQP_VHOST',
+    'REMOTE_AMQP_USERNAME',
+    'REMOTE_AMQP_PASSWORD',
+    'REMOTE_CONVEYOR_API_URL',
+    'REMOTE_INTERNAL_API_KEY',
+    'REMOTE_MESSAGE_SIGNING_KEY',
+    'REMOTE_BELT_ID',
+    'REMOTE_ARM_NUMBER',
+    'REMOTE_CONNECT_TIMEOUT_SEC',
+))
 _MAX_LOG_EVENTS = 1000
 
 
@@ -277,7 +292,8 @@ def _load_project_env():
 
     # The project configuration is authoritative. This intentionally replaces
     # inherited values so a shell variable cannot silently select another robot.
-    os.environ.update(values)
+    # Remote credentials must never be inherited by the driver or TF children.
+    os.environ.update({key: values[key] for key in _REQUIRED_ENV_KEYS})
     return env_path.parent, env_path, values
 
 

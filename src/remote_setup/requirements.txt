@@ -1,0 +1,11 @@
+# Install for the /usr/bin/python3 interpreter used by ROS; retain wheels offline.
+# GUI/settings and HTTP checks remain usable if this AMQP dependency is absent.
+aio-pika==9.6.2
+aiormq==6.9.4
+pamqp==3.3.0
+yarl==1.23.0
+multidict==6.7.1
+propcache==0.5.2
+idna==3.3
+exceptiongroup==1.3.1
+typing_extensions==4.15.0

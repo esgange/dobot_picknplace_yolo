@@ -62,6 +62,22 @@ ITEM_TEACH_ENV_KEYS = (
 )
 SUPPORTED_ENV_KEYS = frozenset((*DOBOT_ENV_KEYS, *ORBBEC_ENV_KEYS, *ITEM_TEACH_ENV_KEYS))
 REQUIRED_ENV_KEYS = SUPPORTED_ENV_KEYS
+# Optional until explicitly configured by remote_setup; offline operation is independent.
+REMOTE_ENV_KEYS = (
+    'REMOTE_SERVER_HOST',
+    'REMOTE_AMQP_PORT',
+    'REMOTE_AMQP_TLS',
+    'REMOTE_AMQP_VHOST',
+    'REMOTE_AMQP_USERNAME',
+    'REMOTE_AMQP_PASSWORD',
+    'REMOTE_CONVEYOR_API_URL',
+    'REMOTE_INTERNAL_API_KEY',
+    'REMOTE_MESSAGE_SIGNING_KEY',
+    'REMOTE_BELT_ID',
+    'REMOTE_ARM_NUMBER',
+    'REMOTE_CONNECT_TIMEOUT_SEC',
+)
+SUPPORTED_ENV_KEYS = SUPPORTED_ENV_KEYS.union(REMOTE_ENV_KEYS)
 ORBBEC_LAUNCH_FILE = 'gemini_330_series.launch.py'
 FIXED_CAMERA_COUNT = 2
 ORBBEC_CAMERA_SLOTS = tuple(range(1, FIXED_CAMERA_COUNT + 1))
@@ -166,9 +182,9 @@ def validate_project_config(
     *,
     require_camera_ready: bool,
 ) -> None:
-    if set(values) != REQUIRED_ENV_KEYS:
+    if not REQUIRED_ENV_KEYS.issubset(values) or not set(values).issubset(SUPPORTED_ENV_KEYS):
         missing = sorted(REQUIRED_ENV_KEYS - values.keys())
-        extra = sorted(values.keys() - REQUIRED_ENV_KEYS)
+        extra = sorted(values.keys() - SUPPORTED_ENV_KEYS)
         detail = []
         if missing:
             detail.append('missing=' + ','.join(missing))

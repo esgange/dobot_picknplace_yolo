@@ -1,0 +1,3 @@
+#!/usr/bin/python3
+from remote_setup.main import main
+raise SystemExit(main())

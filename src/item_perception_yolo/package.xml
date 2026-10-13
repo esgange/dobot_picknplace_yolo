@@ -10,6 +10,7 @@
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <depend>rclpy</depend>
+  <exec_depend>orbbec_camera_launcher</exec_depend>
   <depend>camera_calibration</depend>
   <depend>cra_description</depend>
   <depend>geometry_msgs</depend>

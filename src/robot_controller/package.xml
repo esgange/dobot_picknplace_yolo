@@ -30,6 +30,7 @@
   <exec_depend>dobot_bringup_v4</exec_depend>
   <exec_depend>orbbec_camera_launcher</exec_depend>
   <exec_depend>motion_debug</exec_depend>
+  <exec_depend>remote_setup</exec_depend>
   <exec_depend>gripper_control</exec_depend>
   <test_depend>ament_cmake_pytest</test_depend>
   <export><build_type>ament_cmake</build_type></export>

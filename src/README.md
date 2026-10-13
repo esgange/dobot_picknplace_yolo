@@ -6,6 +6,7 @@ Every ROS 2 package in this workspace lives below `src/` and has a package-local
 
 | Package | Role |
 | --- | --- |
+| [`remote_setup`](remote_setup/) | CATARM server settings UI and one-shot headless connection checks; no robot commands |
 | [`motion_debug`](motion_debug/) | CR10 motion/status GUI; uses Dobot bringup services but never starts bringup |
 | [`gripper_control`](gripper_control/) | Dobot DO1, DO2, DO13, and DO14 gripper/suction IO diagnostic GUI; requires live bringup |
 | [`orbbec_camera_launcher`](orbbec_camera_launcher/) | Gemini 335 configuration GUI and strict three-attempt complete-set supervisor |

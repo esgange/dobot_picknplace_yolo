@@ -312,3 +312,13 @@ def test_package_event_log_preserves_records_after_1000(tmp_path):
     assert record["package"] == "item_perception_yolo"
     assert record["node"] == "platform_teach"
     assert record["event"] == "bounded"
+
+
+def test_remote_settings_are_optional_and_equal_signs_are_literal(tmp_path):
+    station = 'ROS_LOCALHOST_ONLY=1\nDOBOT_ROBOT_LAN1_IP=192.168.20.204\n'
+    (tmp_path / '.env.example').write_text(station + '# REMOTE_AMQP_PASSWORD=\n')
+    (tmp_path / '.env').write_text(station)
+    assert core.load_robot_lan1_ip(tmp_path) == '192.168.20.204'
+    (tmp_path / '.env').write_text(station + 'REMOTE_AMQP_PASSWORD=literal=secret\n')
+    assert core.load_robot_lan1_ip(tmp_path) == '192.168.20.204'
+    assert core._parse_env_file(tmp_path / '.env')['REMOTE_AMQP_PASSWORD'] == 'literal=secret'

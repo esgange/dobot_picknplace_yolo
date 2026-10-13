@@ -31,7 +31,7 @@ def test_hmi_pages_keep_stop_visible_and_do_not_start_tools(window):  # noqa: F8
         label.text() for label in window.pages.findChildren(QtWidgets.QLabel))
 
 
-@pytest.mark.parametrize('key', ['item', 'tray', 'motion', 'gripper'])
+@pytest.mark.parametrize('key', ['item', 'tray', 'motion', 'gripper', 'remote'])
 def test_hmi_external_windows_are_never_owned_or_closed(window, key):  # noqa: F811
     window.node.get_node_names_and_namespaces = lambda: [(BY_KEY[key].nodes[0], '/')]
     window.hmi_graph_at = -float('inf')
@@ -224,3 +224,20 @@ def test_tool_lock_prevents_second_hmi_from_spawning(manager, monkeypatch):
         release.set()
         second.close()
     wait_until(lambda: manager.snapshot('item')[0] == 'OFF')
+
+
+def test_remote_setup_allowed_in_auto_and_during_run_without_command_ownership(window):  # noqa: F811
+    window.node.status = status(operation_active=True, holding_item=True)
+    window.modes.managed = True
+    window.modes.state = 'AUTO'
+    window.node.get_node_names_and_namespaces = lambda: [('robot_controller', '/')]
+    window._refresh_hmi()
+    assert window.tool_controls['remote'][0].isEnabled()
+    window._tool_start_check('remote')
+    assert window.tools.active() == set()  # Merely inspecting never launches it.
+    window.node.status = status()
+    window.tools.active = lambda: {'remote'}
+    for field in (window.item_path, window.bin_path, window.tray_path):
+        field.setText('selected.yaml')
+    assert window._auto_change_reason() == ''
+    window.tools.active = lambda: set()
