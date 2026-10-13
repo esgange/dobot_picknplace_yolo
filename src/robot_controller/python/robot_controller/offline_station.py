@@ -83,6 +83,10 @@ class OfflineStation:
             if not launch.is_file():
                 raise RuntimeError(f'Build {package} first; missing installed launch: {launch}')
             result.append((role, [ros2, 'launch', '--noninteractive', str(launch), *arguments]))
+        core = self.root / 'install/robot_controller/share/robot_controller/launch' / \
+            'robot_controller_core.launch.py'
+        if not core.is_file():
+            raise RuntimeError(f'Build robot_controller first; missing installed launch: {core}')
         return result
 
     def run(self):
@@ -130,7 +134,8 @@ class OfflineStation:
             if process is None:
                 continue
             self.report('INFO', 'station_child_stopping', f'Stopping owned {role}')
-            for signum, timeout in ((signal.SIGINT, 40.), (signal.SIGTERM, 5.),
+            grace = 90. if role == 'controller' else 40.
+            for signum, timeout in ((signal.SIGINT, grace), (signal.SIGTERM, 5.),
                                     (signal.SIGKILL, 2.)):
                 try:
                     os.killpg(process.pid, signum)

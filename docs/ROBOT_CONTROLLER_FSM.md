@@ -1,5 +1,25 @@
 # Robot Controller — Finite State Machine
 
+HMI ownership review: **2026-10-13**, baseline **`b2643f9`** plus rule **281**.
+Persistent Manual (tools) and Auto (production) modes separate the HMI lifetime
+from its owned controller/Preview. Default Auto starts a new unconfigured core;
+wait for fresh editable status without preparing the robot. Manual requires no
+pending request/Preview, fresh stationary queue-empty feedback, raw DI1 LOW and
+unheld UNCONFIGURED/INACTIVE/READY. Stop owned detectors, recheck the robot, then
+stop the owned core and wait for process/graph disappearance before tools open.
+Keep bringup/robot TF and cameras running. Direct maintenance remains exclusive;
+Auto refuses owned/foreign maintenance and existing production processes before
+spawning. Read-only teaching may remain open for the existing Manual Run option.
+Auto requires explicit Load Teach/Load Auto again; retained process history is
+not restored. These are HMI ownership modes, not controller hardware states.
+Startup/release failures and unexpected core exit block controls for explicit
+correction/retry; no automatic restart or external-process termination. The HMI
+remains available for diagnostics after core failure. In Manual the production
+STOP service is absent: label it STOP (production), show unavailable controls and
+direct the operator to the active tool's controls/Stop. Motion Debug's explicit
+Open still performs its own existing initialization/enable. No new robot clients,
+motion, detector arming, ROS interfaces, saved mode or RabbitMQ are added.
+
 Offline station review: **2026-10-12**, baseline **`95bf80f`** plus rule **280**.
 The normal GUI launch owns canonical bringup/robot TF, both supervised cameras
 and controller/Preview/HMI. Auto is a local page with no server requirement.
@@ -7,8 +27,9 @@ Keep explicit Load Auto for deployment, detector startup and robot preparation;
 saved fields are prefill only. Opening the HMI never enables, moves or starts a
 cycle. Refuse detected existing owners before spawn; no adoption/foreign cleanup.
 Core-only GUI remains available with start_dependencies:=false; headless launch
-remains core-only. HMI/core/dependency exit or terminal shutdown closes owned
+remains core-only. HMI/dependency exit or terminal shutdown closes owned
 sessions, allowing controller shutdown/Stop before cameras and bringup close.
+Rule 281 keeps the HMI/dependencies alive across intentional core handoff or failure.
 Private sessions isolate terminal signals; bounded escalation and parent-death
 cleanup remain. Bringup failure/forced death cannot guarantee confirmed Stop.
 The camera supervisor retains rule 15's bounded policy; no outer restart loop,
@@ -859,6 +880,7 @@ Keep controller state records separate from the GUI detector supervisor:
 | Candidate ledger | What happened to each item pose in the accepted batch | `PENDING`, `INTERRUPTED`, `HELD` |
 | GUI Load Auto supervisor | Owned deployment/detector lifetime and request for existing controller preparation | `OFF`, `DEPLOYING`, `STARTING`, `PREPARING`, `RUNNING`, `STOPPING`, `FAILED` |
 | HMI tool launch | Owned application session, separate from robot readiness; external windows are not owned | `OFF`, `STARTING`, `RUNNING`, `STOPPING`, `FAILED` |
+| HMI station mode | Process ownership only; Auto owns production, Manual releases it for tools | `MANUAL`, `STARTING_AUTO`, `AUTO`, `STOPPING_AUTO`, `FAILED`; bare GUI is an unmanaged `EXTERNAL` client |
 
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
 Pick's initial Home travel still reports `PICKING`; it is not a separate Home
@@ -883,9 +905,16 @@ starts bringup/robot TF and both supervised cameras; teaching/debug windows stay
 explicit. Station-service presence is observational, separate from readiness.
 Tool launches never bypass their own model trust, arming or maintenance guards.
 Existing external windows are displayed and cannot be closed by the HMI.
+The persistent Manual/Auto selector is above the lifecycle row. Open non-RViz
+tools in Manual after ownership release; stop/close direct maintenance before
+returning to Auto. Production controls, including Load Auto, require Auto. Manual
+Run still uses teaching providers with the production controller in Auto mode.
+Manual displays MANUAL TOOLS and directs the operator to the active tool's Stop;
+without a production Stop service the HMI's STOP (production) is unavailable.
 
 The lifecycle row is Recover / Clear Error, a managed Pause/Continue/Return Item
-control, and a **permanent red STOP**. STOP always calls the independent Stop service when
+control, and a **permanent STOP button**, red when its service is available and
+grey when unavailable. STOP always calls the independent Stop service when
 reachable, including while another request is pending, with stale status, and in
 Preview. It never changes into Pause or Return. A pending Pause/Return disables
 the managed button and shows Pausing…/Returning item…; STOP remains available.
@@ -979,8 +1008,13 @@ arming of teaching GUIs, Home, pick/place cycle or direct driver client is added
 
 ```mermaid
 flowchart TD
-    Launch["Offline HMI launch: owned bringup + robot TF + supervised cameras + controller / Preview / HMI"] --> TeachPage
-    TeachPage["Teach page: select files; explicitly open teaching windows"] --> Manual
+    Launch["Offline HMI launch: bringup / TF + cameras + HMI; Auto owns unconfigured core"] --> StationMode{"Station mode"}
+    StationMode -->|Auto| TeachPage
+    StationMode -->|Manual: fresh idle unheld; no pending requests| ReleaseCore["Stop owned detectors; recheck robot; stop core; wait for process / graph exit"]
+    ReleaseCore --> Tools["Open teaching / debug tools; one direct command owner; use tool Stop"]
+    Tools -->|Close maintenance; select Auto| RestoreCore["Start owned core; fresh status; no automatic preparation"]
+    RestoreCore --> TeachPage
+    TeachPage["Teach page: select files"] -->|Explicit Load Teach; teaching providers armed| Manual
     TeachPage -->|Close owned teaching / maintenance windows| Deploy["Auto: explicit Load Auto ON; idle, unheld; no competing providers"]
     Deploy --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
@@ -2093,7 +2127,8 @@ Names below are relative to `/robot_controller/`.
 | Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
 | Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; all three paths; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
-| HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; non-RViz changes require no operation/held item/queued motion/pending command or active Load Auto; opening direct maintenance requires controller and competing command applications closed, closing an owned maintenance tool remains available; external processes are never closed |
+| HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; non-RViz Open requires Manual mode in managed HMI, no operation/held item/queued motion/pending command or active Load Auto; direct maintenance rechecks graph and local command owners before spawn; closing owned maintenance remains available; external processes are never closed |
+| HMI Manual / Auto (not a robot API) | Manual: idle editable UNCONFIGURED/INACTIVE/READY, fresh stationary queue-empty feedback, DI1 LOW, no held/retained operation or pending request/Preview; detectors then core stop, process/graph absence before tools. Auto: no competing maintenance/foreign core, new owned core then fresh status; no preparation/cycle on mode selection |
 | Offline HMI launch (not a robot API) | Default GUI entry starts bringup/robot TF, supervised cameras and core; installed paths and existing local owners checked before spawn; no recipe/enable/Auto Run on launch; core stops before owned cameras/bringup; no outer restart |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
@@ -2273,6 +2308,7 @@ Source map for the next review:
 | [auto_detection.py](../src/robot_controller/python/robot_controller/auto_detection.py) / [auto_deploy.py](../src/robot_controller/python/robot_controller/auto_deploy.py) | GUI-owned headless pair, catalog replacement, child cleanup; no robot commands |
 | [hmi_tools.py](../src/robot_controller/python/robot_controller/hmi_tools.py) | Explicit owned teaching/setup/debug launches, admission guards, external-process preservation and bounded shutdown |
 | [offline_station.py](../src/robot_controller/python/robot_controller/offline_station.py) | Default offline dependencies, duplicate-process preflight and ordered owned-session shutdown |
+| [hmi_modes.py](../src/robot_controller/python/robot_controller/hmi_modes.py) | Manual/Auto production ownership, handoff admission, process/graph barriers and explicit retry after failure |
 | [perception_mode.py](../src/robot_controller/python/robot_controller/perception_mode.py) | Shared run provider-type selection and enforcement |
 | [Controller README](../src/robot_controller/README.md) / [blueprint diary](WORKFLOW_RULES_BLUEPRINT_DIARY.md) | Operational detail and superseding project rules |
 

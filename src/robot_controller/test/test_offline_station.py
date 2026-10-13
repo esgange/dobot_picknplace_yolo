@@ -27,6 +27,8 @@ def owner(tmp_path, monkeypatch):
         launch = tmp_path / 'install' / package / 'share' / package / 'launch' / filename
         launch.parent.mkdir(parents=True, exist_ok=True)
         launch.touch()
+    (tmp_path / 'install/robot_controller/share/robot_controller/launch'
+     / 'robot_controller_core.launch.py').touch()
     monkeypatch.setattr(station, 'check_existing_processes', lambda: None)
     yield result
     result.cancel.set()
@@ -227,7 +229,7 @@ raise SystemExit(service.run())
 
 @pytest.mark.parametrize('headless,dependencies,executables', [
     ('false', 'true', ['robot_controller_station']),
-    ('false', 'false', ['robot_controller', 'robot_controller_preview', 'robot_controller_gui']),
+    ('false', 'false', ['robot_controller_gui']),
     ('true', 'true', ['robot_controller']),
     ('true', 'false', ['robot_controller']),
 ])

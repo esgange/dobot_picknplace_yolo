@@ -32,15 +32,17 @@ def test_typed_action_result_codes_are_in_result_not_goal():
     assert not hasattr(GoHome.Goal, "SUCCESS")
 
 
-def test_preview_constants_and_three_process_launch():
+def test_preview_constants_and_hmi_owned_production_launch():
     assert (Preview.Request.HOME, Preview.Request.PICK,
             Preview.Request.CLEAR, Preview.Request.PLACE) == (1, 2, 3, 4)
     launch = (PACKAGE / "launch/robot_controller.launch.py").read_text()
+    core = (PACKAGE / "launch/robot_controller_core.launch.py").read_text()
     assert 'executable="robot_controller"' in launch
-    assert 'executable="robot_controller_preview"' in launch
+    assert "executable='robot_controller_preview'" in core
     assert 'executable="robot_controller_gui"' in launch
     assert 'robot_camera_box' not in launch
-    assert "UnlessCondition(headless)" in launch
+    assert '"manage_controller": True' in launch
+    assert 'robot_controller_gui' not in core
     assert "item_teach_file" not in launch
     assert "bin_teach_file" not in launch
     response = Preview.Response()

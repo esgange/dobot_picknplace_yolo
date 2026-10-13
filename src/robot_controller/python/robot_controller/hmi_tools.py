@@ -51,6 +51,10 @@ TOOLS = (
          'Direct gripper control; requires exclusive robot command ownership.'),
 )
 BY_KEY = {tool.key: tool for tool in TOOLS}
+BY_KEY['production'] = Tool(
+    'production', 'Production controller', 'robot_controller', 'robot_controller_core.launch.py',
+    ('robot_controller', 'robot_controller_preview'), 'production',
+    'Controller and Preview owned by this HMI; no preparation on start.')
 MAINTENANCE_NODES = {'motion_debug_gui', 'motion_debug', 'gripper_control_gui',
                      'gripper_control', 'camera_calibration'}
 
@@ -135,19 +139,20 @@ class ToolLaunches:
                 record['cancel'].set()
                 record['state'], record['message'] = 'STOPPING', 'Closing owned window…'
 
-    def close(self):
+    def close(self, timeout=10.):
         with self.lock:
             threads = []
             for record in self.records.values():
                 record['cancel'].set()
                 threads.append(record['thread'])
-        deadline = time.monotonic() + 10.
+        deadline = time.monotonic() + timeout
         for thread in threads:
             thread.join(timeout=max(0., deadline - time.monotonic()))
 
     @staticmethod
-    def _terminate(process):
-        for signum, timeout in ((signal.SIGINT, 5.), (signal.SIGTERM, 2.), (signal.SIGKILL, 1.)):
+    def _terminate(process, grace=5.):
+        for signum, timeout in ((signal.SIGINT, grace), (signal.SIGTERM, 2.),
+                                (signal.SIGKILL, 1.)):
             try:
                 os.killpg(process.pid, signum)
             except ProcessLookupError:
@@ -208,7 +213,10 @@ class ToolLaunches:
             failure = str(exc)
         finally:
             if process is not None:
-                self._terminate(process)
+                if tool.kind == 'production':
+                    self._terminate(process, grace=40.)
+                else:
+                    self._terminate(process)
             if lock_file is not None:
                 lock_file.close()
             self._state(tool.key, 'FAILED' if failure else 'OFF',

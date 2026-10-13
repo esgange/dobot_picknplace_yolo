@@ -11532,6 +11532,87 @@ Never use a floating “latest” version in an issue, script, or deployment not
   runtime data, debug artifacts and unrelated RViz edits. Commit/push only this
   scope under the standing workflow.
 
+### 2026-10-13 — Rule 281: Manual tools and Auto production in one HMI
+
+- User cannot open Motion Debug while the production controller owns commands.
+  Requests two main HMI modes and explicitly confirms Manual stops production/
+  headless detectors while keeping bringup/cameras; Auto restores production.
+  Add persistent Manual — tools and Auto — production buttons, with selected
+  mode green and visible transition/refusal messages. These are process ownership
+  modes, not new controller hardware states or a change to run provider types.
+- Separate HMI lifetime from production. Normal GUI launches, including
+  start_dependencies:=false, start the HMI with manage_controller enabled. The
+  HMI owns a canonical robot_controller_core.launch.py session containing only
+  controller/Preview, starts Auto by default and waits for fresh editable status.
+  The bare GUI executable remains an unmanaged external client with mode buttons
+  unavailable; headless hardware launch is unchanged. Add no ROS interface,
+  configuration key, saved mode or direct Dobot client.
+- Manual requires no pending HMI/action request or Preview, fresh stationary
+  queue-empty robot feedback, raw DI1 LOW and unheld UNCONFIGURED/INACTIVE/READY.
+  Do not discard active/paused/held/recovery context to enter maintenance. Stop
+  only owned detectors; recheck robot gates after their shutdown, then stop the
+  owned core. Wait for process cleanup and graph identity disappearance, clear
+  cached controller status and only then enable non-RViz tool Open controls.
+  Refuse retained/unknown/stale state, overlaps and concurrent mode requests.
+  If the post-detector robot recheck fails, leave production ownership available
+  for correction without restarting detectors or proceeding into Manual.
+- Manual can open Item/Tray/Bin/Platform Teach, camera setup, calibration, Motion
+  Debug and Gripper Diagnostics subject to existing exclusivity/duplicate guards.
+  Recheck local command processes as well as graph and HMI-owned starting tools
+  before direct maintenance spawn. Multiple read-only tools may coexist; direct
+  command ownership stays exclusive. Passive RViz remains available in both modes.
+  Existing external windows remain external and are never stopped or adopted.
+- In Manual, production actions and Load Auto are disabled. Show MANUAL TOOLS,
+  unknown production feedback where absent, and STOP (production) with a visibly
+  disabled style when its service is unavailable; direct the operator to the
+  active tool's own Stop. Motion Debug still initializes/enables only on explicit
+  Open; no tool is launched by choosing Manual. Its command/close behavior is
+  unchanged; stop motion in the tool before closing it and returning to Auto.
+- Auto refuses graph/local-process and owned maintenance/calibration conflicts
+  before spawning and rechecks immediately before launch. Wait at most 30 seconds
+  for fresh controller status. Returning Auto creates an unconfigured process:
+  selected paths remain in the HMI but candidate/repick process history does not
+  survive. Require explicit Load Teach or Load Auto again. Do not prepare, enable,
+  restart detectors or start a cycle on mode selection. Read-only teaching may
+  remain open for the existing Manual Run production action; Load Auto still
+  requires owned teaching tools closed. RabbitMQ remains deferred.
+- Bound Manual handoff to 65 seconds. Startup/handoff failure or unexpected core
+  exit leaves the HMI in mode attention and stops owned detectors/core, with no
+  automatic retry. Keep HMI/dependencies for diagnostics and explicit correction.
+  Log mode transitions/failures through controller daily events. HMI exit closes
+  owned detectors/tools before its core; allow 40 seconds for the core's graceful
+  session termination and 45 seconds for its supervisor join. Preserve the core
+  node's 30-second shutdown window. The HMI launch allows 80 seconds, the outer
+  station 90 seconds for that session, and cameras/bringup retain 40-second waits.
+  Outer launch allows 200 seconds for complete bounded cleanup. Driver remains
+  available during normal core Stop handling; forced death/driver failure still
+  cannot guarantee confirmed physical Stop. No live process is restarted here.
+- Validation: **1,797 controller tests pass**, including 25 new mode cases for
+  ordered detector/core shutdown, process/graph barriers, active/held/stale/paused
+  refusal, post-detector recheck, pending requests, foreign/owned maintenance,
+  fresh Auto readiness, timeout/unexpected exit and disabled production UI.
+  Real harmless private dummy sessions exercise Auto → Manual → dummy Motion
+  Debug → Auto without overlapping owners or actual ROS/robot applications.
+  Existing offline outer-launch Ctrl-C tests continue to pass. Update legacy
+  launch expectations and make the lifecycle-row assertion independent of its
+  layout index. All robot/detector interactions in validation remain synthetic.
+- Isolated robot_controller build succeeds in build/install/hmi_modes in 8.69
+  seconds against canonical dependencies; verify installed GUI/mode imports and
+  the new core launch. Scoped lint adds no findings (two existing GUI line-length
+  findings remain), Python AST and diff checks pass. Offscreen Manual layout shows
+  Motion Debug enabled and production Stop unavailable. Update README/AGENTS/FSM,
+  regenerate HTML/PDF and verify source hash, nine diagrams/pages, mode labels
+  and offline navigation/zoom. No live or offline-transfer milestone is claimed.
+- Initially the owned station/HMI/controller/Preview, bringup/robot TF and camera
+  supervisor were running; the isolated build left them untouched. A later process
+  recheck found them stopped. Recheck affected processes immediately before a
+  canonical robot_controller-only build, which succeeds in 8.24 seconds. Verify
+  canonical mode/GUI imports and the installed core launch without starting a
+  node. No process is stopped/restarted and no robot command is issued by this
+  work. Preserve .env, calibration, teaching/models/runtime files, debug artifacts
+  and unrelated vendor RViz modifications. Commit/push only this tested scope
+  under the standing workflow.
+
 ### Future entry template
 
 ```text

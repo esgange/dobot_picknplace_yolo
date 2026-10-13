@@ -33,6 +33,41 @@ The window is **Pick & Place — Station HMI**. Robot/gripper status, station
 service observations and Recover/Pause/STOP remain visible on every page.
 Pages scroll on smaller displays and retain the same action and input guards.
 
+The persistent **Manual — tools / Auto — production** selector changes command
+ownership. Normal launch starts Auto with an unconfigured controller. This is
+separate from the Manual Run / Auto Run choice of perception provider.
+
+| Station mode | Behavior |
+| --- | --- |
+| Manual — tools | Stop owned headless detectors and production controller/Preview, keeping HMI, bringup, robot TF and cameras. Open teaching/setup/debug windows, including Motion Debug. Production actions and Load Auto are unavailable. |
+| Auto — production | Start owned controller/Preview and wait for fresh status. Load Auto or Load Teach Configuration explicitly prepares the robot; run actions remain explicit. Close competing maintenance/calibration first. |
+
+To run Motion Debug through the normal HMI: finish/Stop and recover any active
+operation, clear held items, leave Preview, select **Manual — tools**, wait for
+the ownership change, then choose **Tools / Debug → Motion Debug → Open**.
+Opening Motion Debug performs its existing initialization/enable sequence.
+Use Motion Debug's own Stop while working there. Stop its motion before closing
+the tool and selecting Auto again. The HMI's **STOP (production)** has no active
+controller in Manual and is unavailable; no direct Dobot client is added to the HMI.
+
+Manual admission requires fresh stationary, queue-empty robot feedback, raw DI1
+LOW, no held item/active or paused operation, no pending HMI request and Preview
+OFF. After detectors stop, recheck those robot gates before stopping production.
+Wait for the owned process session and controller/Preview graph identities to
+disappear before enabling tools. Foreign applications are never terminated.
+Auto checks graph/local-process and HMI-owned maintenance conflicts again before
+spawning, then requires fresh editable controller status within 30 seconds.
+Bound Manual transition to 65 seconds; startup/shutdown failure or unexpected
+core exit leaves mode attention and disabled production until explicit correction
+and retry. Bringup/cameras remain running. Mode changes/failures are logged.
+
+Returning to Auto starts a new unconfigured controller; old candidate context and
+in-memory repick history do not survive that process restart. Selected file fields
+remain available. No automatic Configure, detector restart, enable or cycle occurs.
+Read-only teaching windows may remain open when returning to Auto for **Manual
+Run**: arm them explicitly, return to Auto, load the selected controller files,
+then use Manual Run. Load Auto still requires owned teaching windows closed.
+
 | Page | Controls |
 | --- | --- |
 | Operate | Home/Pick/Place, Preview, placement X/Y/Rotation, shared Quantity, Manual Run/Auto Run, debug captures and speed/CP |
@@ -48,6 +83,8 @@ owned window/session. A tool discovered on the ROS graph is labelled **External*
 and cannot be closed by this HMI. Recheck graph/controller guards immediately
 before spawning; a per-tool lock prevents competing HMI launches. Report launch
 failures in the card and bounded command log; there is no automatic restart.
+Opening non-RViz tools in the managed HMI requires Manual mode; passive RViz can
+open in either mode. Each maintenance application's existing guards still apply.
 
 Teaching/setup changes are blocked during an operation, held item, queued motion,
 pending HMI command or active Load Auto. RViz remains available during a run.
@@ -58,24 +95,24 @@ still block Load Auto and are never disarmed automatically. Teaching windows
 retain their own explicit model trust, loading, Save and arming actions.
 
 Motion Debug and Gripper Diagnostics require the production controller and other
-competing maintenance applications to be closed. Motion Debug retains its existing
-automatic initialization/enable on opening; its card says so. For direct maintenance,
-close the normal controller launch and open the HMI alone in a sourced terminal:
+competing maintenance applications to be closed. Manual mode now releases the
+owned production controller without closing the station. A standalone external
+client is still available for an operator-managed installation:
 
 ```bash
 ros2 run robot_controller robot_controller_gui
 ```
 
-The HMI alone does not start a controller/driver. Bringup must already be available
-for direct maintenance. Camera Calibration opens read-only; automatic capture still
-requires its existing explicit confirmation and exclusive-command checks. No new
-controller suspension, ownership takeover or direct Dobot client is introduced.
+This bare executable does not own a controller/driver and its mode buttons are
+unavailable; it never adopts an external controller. Bringup must already be
+available for direct maintenance. Camera Calibration opens read-only; automatic
+capture retains its explicit confirmation and exclusive-command checks.
 
 Closing the HMI stops its owned detector pair and tools, including their launch
 children. Before removing owned Item/Tray providers during an active operation,
 send independent controller Stop. Existing preparation-cancellation Stop handling
 remains. Foreign applications stay running. The normal controller launch still
-shuts its controller/preview down when its HMI exits, then closes owned cameras
+shuts its HMI-owned controller/preview down when its HMI exits, then closes owned cameras
 and bringup. Linux parent-death signals
 also terminate owned tool launches if the HMI disappears. Camera setup retains
 its separate operator-terminal diagnostic ownership rules.
@@ -107,7 +144,8 @@ To use Auto Run:
    Preview. Disarm Item Teach and Tray Teach and stop independently launched
    headless detectors. Cameras and canonical bringup must already be available.
 2. On **Teach**, browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
-3. On **Auto**, turn **Load Auto ON**. It validates the files, both same-stem model
+3. Select **Auto — production**, then on the **Auto** page turn **Load Auto ON**.
+   It validates the files, both same-stem model
    hashes and saved calibration choices, then stages and verifies ordinary copies.
    It replaces the entire root `runtime_teach/` directory contents with exactly
    those three YAMLs and two models. Failed validation/copy leaves the old catalog
@@ -773,8 +811,10 @@ separate commissioning.
 - `robot_controller_gui` is a client of the controller and preview APIs. It has
   no Dobot command client.
 
-The normal launch is the offline station entry point. It starts these three
-processes plus canonical Dobot bringup (driver, actual-joint monitor and robot TF)
+The normal launch is the offline station entry point. The HMI owns the controller
+and Preview through `robot_controller_core.launch.py`, separately from its own
+lifetime so Manual mode can release them. The station also owns canonical Dobot
+bringup (driver, actual-joint monitor and robot TF)
 and the canonical headless camera supervisor (both cameras, in saved slot order):
 
 ```bash
@@ -800,13 +840,16 @@ installation whose dependencies are already managed separately, use:
 ros2 launch robot_controller robot_controller.launch.py start_dependencies:=false
 ```
 
-HMI/controller/Preview exit, dependency launch exit (including exit code zero),
-or terminal Ctrl-C closes the owned station. Graceful shutdown stops the core
-session first, allowing its existing active-operation Stop/confirmation while
-bringup remains available, then stops cameras and finally bringup/robot TF.
-Sessions receive SIGINT with a 40-second limit, then SIGTERM for five seconds,
-then SIGKILL for two seconds; escalation is logged. Controller/HMI nodes have a
-30-second graceful window inside their launch. Hardware Stop cannot be confirmed
+HMI exit, dependency launch exit (including exit code zero), or terminal Ctrl-C
+closes the owned station. Intentional Manual core exit keeps HMI/dependencies;
+unexpected core/Preview exit leaves HMI mode attention and stops owned detectors,
+without restarting. Graceful station shutdown closes HMI-owned detectors/tools/
+core while bringup remains available, then cameras and finally bringup/robot TF.
+The core has a 40-second graceful session wait (30 seconds for its controller
+node); HMI allows 45 seconds for core cleanup after detectors/tools. The station
+allows its HMI session 90 seconds, cameras/bringup 40 seconds, then escalates with
+SIGTERM for five seconds and SIGKILL for two seconds. The HMI node's launch allows
+80 seconds before escalation. Hardware Stop cannot be confirmed
 if bringup itself has failed; existing containment diagnostics still apply.
 Parent-death signals clean up children after an unexpected supervisor death;
 forced kills cannot promise orderly Stop confirmation. No foreign process is

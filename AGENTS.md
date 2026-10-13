@@ -2263,6 +2263,24 @@ cleanup. No outer restart loop; camera rule-15 attempt/health policy stays intac
 Keep optional viewers/teaching explicit, saved selections as prefill only, and
 RabbitMQ deferred. Update diary/FSM/exports and verify using dummy launches only.
 
+Rule 281 adds explicit HMI Manual (tools) and Auto (production) ownership modes.
+Default normal launch starts Auto with an unconfigured HMI-owned controller/
+Preview session; keep HMI, bringup and cameras alive across intentional mode
+changes. Manual requires fresh idle unheld editable controller state, raw DI1 LOW,
+no retained operation or pending GUI request and Preview OFF. Stop owned headless
+detectors, recheck the robot, stop owned production, and wait for its processes/
+graph identities to disappear before enabling teaching/setup/debug launches.
+Auto requires competing maintenance/calibration and foreign production owners
+closed; start a new core and await fresh status without Configure, enable, detector
+restart or cycle. Existing Manual Run remains a production action using armed
+teaching providers. Keep one direct maintenance owner; never close external apps.
+Mode failures block production/tools pending explicit correction/retry; no automatic
+restart. HMI production STOP is unavailable without its controller: visibly direct
+Manual operators to the active tool's controls/Stop. No new Dobot clients, hardware
+states, ROS interfaces, saved mode, RabbitMQ or Motion Debug startup changes.
+Close owned tools/detectors/core before station dependencies, with bounded waits.
+Update diary/FSM/exports and test handoffs with synthetic state and dummy processes.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

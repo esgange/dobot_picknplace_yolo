@@ -38,8 +38,10 @@ Recover/Pause/STOP remain visible throughout. Teach opens the non-headless Item,
 Tray, Bin and Platform teaching windows; Tools opens RViz, camera setup,
 calibration and eligible direct maintenance tools. Each explicit launch is owned
 by the HMI; closing the HMI closes those tools and its headless detector pair.
-Applications opened elsewhere remain external. Direct robot maintenance requires
-the production controller to be closed. **RabbitMQ integration is the next phase;
+Applications opened elsewhere remain external. Select **Manual — tools** to stop
+the owned production controller/detectors while keeping bringup and cameras, then
+open **Motion Debug** from Tools / Debug. Select **Auto — production** after closing
+maintenance tools to restore the controller. **RabbitMQ integration is the next phase;
 no remote command listener is implemented yet.** See [Station HMI](src/robot_controller/README.md#station-hmi).
 
 The normal launch now starts the **offline station**: canonical Dobot bringup,
@@ -47,6 +49,15 @@ robot TF, both supervised cameras, controller, Preview and HMI. No server or RVi
 is required. Opening it does not load a recipe, enable the robot or start motion.
 Select files on Teach, press **Load Auto** on Auto, then **Auto Run** on Operate.
 Load Auto starts the headless detectors and prepares the robot as before.
+
+The mode selector stays visible on every page. Manual requires an idle, unheld
+station with fresh stationary feedback and no pending request; it never cancels
+an active job or discards a held item to open a tool. In Manual, use the active
+tool's own robot controls and Stop; the HMI production controller is stopped.
+Returning to Auto starts an unconfigured controller: Load Auto or Load Teach
+Configuration must explicitly prepare it again. Mode selection does not launch
+Motion Debug, enable the robot or start motion. Opening Motion Debug retains that tool's
+existing initialization/enable sequence. Only one direct command tool may run.
 
 ```bash
 source scripts/source_ros_workspace.bash
@@ -58,6 +69,8 @@ owners are refused without stopping them. To keep separately managed bringup and
 cameras, use `start_dependencies:=false`. Closing the HMI closes its owned station:
 controller shutdown/Stop handling finishes before cameras and bringup are stopped.
 Dependency failure also ends the owned station, without an outer restart loop.
+Intentional Manual mode keeps dependencies/HMI alive; an unexpected production
+core exit leaves the HMI in mode attention with production disabled for explicit retry.
 The camera supervisor retains its existing bounded three-attempt policy.
 
 **Manual Run / Auto Run:** both use the same Quantity, X/Y, Rotation and debug

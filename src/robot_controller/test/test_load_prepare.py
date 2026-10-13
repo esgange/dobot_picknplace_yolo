@@ -100,7 +100,11 @@ def test_preparation_failure_retains_loaded_configuration_without_claiming_ready
 
 
 def test_lifecycle_row_contains_only_recover_managed_control_and_stop(window):  # noqa: F811
-    row = window.centralWidget().layout().itemAt(1).layout()
+    root = window.centralWidget().layout()
+    row = next(root.itemAt(i).layout() for i in range(root.count())
+               if root.itemAt(i).layout() is not None and any(
+                   root.itemAt(i).layout().itemAt(j).widget() is window.recover
+                   for j in range(root.itemAt(i).layout().count())))
     assert row.count() == 3
     assert [row.itemAt(i).widget() for i in range(3)] == [
         window.recover, window.pause, window.stop]

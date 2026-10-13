@@ -28,6 +28,7 @@ from .auto_detection import AutoDetectors, idle_reason, providers
 from .perception_mode import ANY, TEACH, HEADLESS, check_mode
 from .errors import FeedbackFailure
 from .hmi_tools import BY_KEY, TOOLS, ToolLaunches, change_reason
+from .hmi_modes import HmiModes
 
 
 AUTO_READY_STYLE = (
@@ -42,6 +43,7 @@ class GuiNode(rclpy.node.Node):
     def __init__(self):
         super().__init__("robot_controller_gui")
         self.root = workspace_root()
+        self.manage_controller = self.declare_parameter('manage_controller', False).value
         self.prefill = load_state(self.root / "logs/robot_controller/last_session.json")
         self._status_sample = None
         self.operator_logs = deque(maxlen=1000)
@@ -77,6 +79,9 @@ class GuiNode(rclpy.node.Node):
 
     def _status(self, message):
         self._status_sample = (message, time.monotonic())
+
+    def clear_controller_status(self):
+        self._status_sample = None
 
     @property
     def status(self):
@@ -126,6 +131,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.auto_prepare_canceled = False
         self.auto_stop_again = False
         self.tools = ToolLaunches(node)
+        self.modes = HmiModes(node, self.tools, self.auto_detectors, lambda: bool(
+            self._tools_pending() or self.preview_mode or self.preview_clear_future is not None
+            or self.auto_preparing or self.auto_stop_again))
         self.tool_controls = {}
         self.hmi_nodes = ()
         self.hmi_graph_at = -float('inf')
@@ -240,6 +248,26 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.page_layouts['Teach'].addWidget(self.teach_panel)
         layout.addLayout(header)
 
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.addWidget(QtWidgets.QLabel('Station mode'))
+        self.manual_mode = QtWidgets.QPushButton('Manual — tools')
+        self.auto_mode = QtWidgets.QPushButton('Auto — production')
+        self.mode_buttons = QtWidgets.QButtonGroup(self)
+        for button, mode in ((self.manual_mode, 'MANUAL'), (self.auto_mode, 'AUTO')):
+            button.setCheckable(True)
+            button.setMinimumHeight(36)
+            button.setMinimumWidth(200)
+            button.setStyleSheet('QPushButton{padding:5px 10px}'
+                                 'QPushButton:checked{background:#198754;color:white;'
+                                 'font-weight:700}')
+            button.clicked.connect(lambda _checked=False, target=mode: self._set_mode(target))
+            self.mode_buttons.addButton(button)
+            mode_row.addWidget(button)
+        self.mode_detail = QtWidgets.QLabel()
+        self.mode_detail.setWordWrap(True)
+        mode_row.addWidget(self.mode_detail, 1)
+        layout.addLayout(mode_row)
+
         self.clear_repick = QtWidgets.QPushButton("Clear Repick History")
         self.clear_repick.clicked.connect(lambda: self._command("clear_repick_history"))
         teach.addWidget(self.clear_repick, 4, 0, 1, 3)
@@ -294,7 +322,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 self.pause_menu.addAction(action)
         self.stop = QtWidgets.QPushButton("STOP")
         self.stop.setStyleSheet(
-            "background:#b51f24;color:white;font-weight:800;font-size:18px")
+            "QPushButton{background:#b51f24;color:white;font-weight:800;font-size:18px}"
+            "QPushButton:disabled{background:#e2e2e2;color:#999}")
         self.stop.setToolTip("Stop immediately and preserve the gripper outputs")
         self.recover.clicked.connect(lambda: self._command("recover"))
         self.recover.setToolTip(
@@ -456,6 +485,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh)
         self.timer.start(100)
+        if self.modes.managed:
+            try:
+                self.modes.request('AUTO')
+            except (ValueError, RuntimeError) as exc:
+                self.modes.fail(str(exc))
         self._refresh()
 
     @staticmethod
@@ -503,7 +537,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 row += 1
             self.page_layouts[title].addLayout(grid)
         note = QtWidgets.QLabel(
-            'Direct robot maintenance requires the robot controller to be closed. '
+            'Select Manual mode to release the production controller, then open Motion Debug '
+            'or another tool. Only one direct robot command application may own the robot. '
+            'Use the active tool’s Stop controls in Manual mode. '
             'Camera Calibration opens without moving; its automatic capture keeps its '
             'existing exclusive-control checks. RViz can be opened during a run.')
         note.setWordWrap(True)
@@ -513,12 +549,28 @@ class ControllerWindow(QtWidgets.QMainWindow):
         return bool(self.pending or self.pending_goal is not None
                     or self.result_future is not None)
 
+    def _set_mode(self, target):
+        try:
+            self.modes.request(target)
+            if target == 'MANUAL':
+                self.pages.setCurrentIndex(2)
+        except (ValueError, RuntimeError) as exc:
+            QtWidgets.QMessageBox.warning(self, 'Station mode', str(exc))
+        self._refresh_controls()
+        self._refresh_hmi()
+
+    def _manual_tool_reason(self, tool):
+        if (self.modes.managed and tool.kind != 'viewer'
+                and self.modes.state != 'MANUAL'):
+            return 'Select Manual mode before opening teaching/setup/debug tools'
+        return ''
+
     def _tool_start_check(self, key):
         # Also called by the worker immediately before spawn: do not access Qt widgets here.
         tool = BY_KEY[key]
         nodes = self.node.get_node_names_and_namespaces()
-        reason = change_reason(tool, self.node.status, nodes, self.auto_detectors.snapshot[0],
-                               self._tools_pending())
+        reason = self._manual_tool_reason(tool) or change_reason(
+            tool, self.node.status, nodes, self.auto_detectors.snapshot[0], self._tools_pending())
         if reason:
             raise ValueError(reason)
         if any(name in tool.nodes for name, _namespace in nodes):
@@ -527,6 +579,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 BY_KEY[other].kind in ('maintenance', 'calibration')
                 for other in self.tools.active() - {key}):
             raise ValueError('Close other maintenance tools before opening this one')
+        if tool.kind == 'maintenance':
+            local = self.modes.local_owner()
+            if local:
+                raise ValueError('Close existing local command applications: ' + local)
 
     def _tool_clicked(self, key):
         tool = BY_KEY[key]
@@ -546,6 +602,18 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._refresh_hmi()
 
     def _refresh_hmi(self):
+        self.mode_buttons.setExclusive(False)
+        for button, target in ((self.manual_mode, 'MANUAL'), (self.auto_mode, 'AUTO')):
+            selected = self.modes.state == target
+            reason = self.modes.reason(target) if not selected else ''
+            button.setChecked(selected)
+            button.setEnabled(not selected and not reason)
+            button.setToolTip(reason or (
+                'Stop owned production processes; keep cameras/bringup' if target == 'MANUAL'
+                else 'Start production controller; Load Auto and Auto Run remain explicit'))
+        self.mode_buttons.setExclusive(True)
+        self.mode_detail.setText(self.modes.message if self.modes.managed else
+                                 'External client; use the normal launch for mode switching')
         if time.monotonic() - self.hmi_graph_at >= 1.:
             try:
                 self.hmi_nodes = tuple(self.node.get_node_names_and_namespaces())
@@ -563,6 +631,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                                    self._tools_pending())
             if owned and tool.kind in ('viewer', 'maintenance'):
                 reason = ''
+            elif not owned:
+                reason = self._manual_tool_reason(tool) or reason
             button.setText('External' if external else 'Close' if owned else 'Open')
             button.setEnabled(not external and state != 'STOPPING' and not reason)
             button.setToolTip('Opened elsewhere; this HMI cannot close it' if external else
@@ -574,6 +644,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                           'Failed — see log' if state == 'FAILED' else reason or 'Not running')
             label.setToolTip(message if state == 'FAILED' else reason or message)
         for key, state, message in self.tools.take_messages():
+            self.log_view.appendPlainText(f'{BY_KEY[key].title} {state}: {message}')
+        for key, state, message in self.modes.core.take_messages():
             self.log_view.appendPlainText(f'{BY_KEY[key].title} {state}: {message}')
 
         def detector(prefix):
@@ -594,9 +666,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.station_services.setToolTip(
             'Observed services only; seeing a node does not prove input readiness. '
             'Load Auto verifies both detectors and robot preparation before enabling Auto Run.')
-        self.station_mode.setText(
-            'Offline · Headless detectors active' if auto_state == 'RUNNING' else
-            'Offline · Local operator control')
+        self.station_mode.setText('Offline · ' + (
+            'Manual tools' if self.modes.state == 'MANUAL' else
+            'Headless detectors active' if auto_state == 'RUNNING' else 'Local operator control'))
         self.production_recipe.setText('Selected teach files\n' + '\n'.join(
             f'{label}: {os.path.basename(field.text().strip()) or "Select on Teach page"}'
             for label, field in (('Item', self.item_path), ('Bin', self.bin_path),
@@ -717,6 +789,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self._immediate_stop()
         self.auto_detectors.close()
         self.tools.close()
+        self.modes.close()
         if self.preview_mode or "preview" in self.pending:
             self._clear_preview()
         super().closeEvent(event)
@@ -759,7 +832,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         paths = self.auto_detectors.take_preparation()
         if paths is None:
             return
-        reason = idle_reason(self.node.status)
+        reason = (('Select Auto mode first' if self.modes.managed
+                   and self.modes.state != 'AUTO' else '') or idle_reason(self.node.status))
         if (reason or self.preview_mode or self.pending or self.pending_goal is not None
                 or self.result_future is not None or self.preview_clear_future is not None):
             self.auto_detectors.prepared(error=reason or 'Another GUI operation is pending')
@@ -1066,10 +1140,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _refresh(self):
         self._append_operator_logs()
         self._collect()
+        self.modes.poll()
         self._refresh_controls()
         self._refresh_hmi()
 
     def _auto_change_reason(self):
+        if self.modes.managed and self.modes.state != 'AUTO':
+            return 'Select Auto mode and wait for the production controller'
         state, _message = self.auto_detectors.snapshot
         if state in ('DEPLOYING', 'STARTING', 'PREPARING'):
             return ''  # PREPARING cancellation also uses the independent Stop.
@@ -1138,6 +1215,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             target_error=target_error, item_selected=bool(self.item_path.text().strip()),
             bin_selected=bool(self.bin_path.text().strip()),
             tray_selected=bool(self.tray_path.text().strip()))
+        if self.modes.managed and self.modes.state != 'AUTO':
+            return dict.fromkeys(reasons, 'Select Auto mode for production controls')
         if not self.auto_quantity.hasAcceptableInput():
             reasons["auto_run"] = "Enter a whole quantity from 1 to 10000"
         for name in reasons:
@@ -1161,6 +1240,17 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _refresh_controls(self):
         state = self.node.status
         self._refresh_status(state)
+        if self.modes.managed and self.modes.state != 'AUTO':
+            self.status.setText('MANUAL TOOLS' if self.modes.state == 'MANUAL' else
+                                'CHANGING MODE' if self.modes.state != 'FAILED' else
+                                'MODE ATTENTION')
+            self.status_detail.setText(
+                'Production controller stopped. Use the active tool’s controls and Stop.'
+                if self.modes.state == 'MANUAL' else self.modes.message)
+        self.stop.setText('STOP (production)' if self.modes.state == 'MANUAL' else 'STOP')
+        self.stop.setToolTip(
+            'Production controller is stopped; use Stop in the active manual tool'
+            if self.modes.state == 'MANUAL' else 'Stop immediately and preserve gripper outputs')
         current = state.state if state else "OFFLINE"
         if current not in ("READY", "HOLDING", "HOMING", "PICKING", "TRAY_POSITIONING", "PLACING"):
             self.pause_requested_locally = False
