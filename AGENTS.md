@@ -2351,6 +2351,15 @@ design; do not apply further cosmetic reorganization without an explicit request
 Keep rule 285 as history in the diary, update current documentation/FSM and
 regenerate/verify HTML/PDF exports. Validate and build without starting hardware.
 
+Rule 287 clarifies the rollback's appearance using the user's Item Teach
+screenshot: keep the restored three-page HMI layout, but use Item Teach's native
+Qt font/palette, group borders and basic input/button styling. Remove the custom
+blue page background, white cards, tab underlines, field/slider/tooltip theme and
+decorative hint/progress colors. Keep established state/action colors, dark status
+panels, control locations, handlers and all robot/ownership/provider guards.
+This is appearance only; no new layout, workflow, command or process behavior.
+Update current documentation/FSM/exports and verify without running hardware.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

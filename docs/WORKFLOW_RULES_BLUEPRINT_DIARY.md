@@ -11873,6 +11873,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   process restarted, perception armed or robot command issued. No offline-transfer
   milestone is claimed. Commit/push only the rollback source and documentation.
 
+### 2026-10-13 — Rule 287: Match Item Teach's plain Qt appearance
+
+- User shows the restored HMI and Item Teach screenshots and clarifies that
+  Item Teach is the desired UI appearance. Rule 286 restored the layout but
+  retained rule 284's custom theme; remove that theme rather than reorganizing
+  the interface again. Keep Operate, Setup / Teach and Tools / Debug unchanged.
+- Match Item Teach's minimal group-box, input/button and checked-button QSS and
+  outer spacing. Inherit the same application font and native Qt palette. Remove
+  the custom blue page background, white cards, tab underlines, label/field/
+  slider/tooltip theme and decorative progress/hint colors. Keep dark status
+  panels and existing green readiness, amber pause and red Stop/state indications.
+  No control layout, handler, source/ownership guard, lifecycle, motion, detector,
+  process management or remote behavior changes. Item Teach itself is unchanged.
+- Validation: **321 existing tests pass**, covering HMI tools/modes, Load Auto,
+  status/operator presentation, Preview and speed/CP. Scoped flake8/diff checks
+  pass. Synthetic offscreen checks cover all pages at 1120×760 and 1024×768 with
+  no horizontal scrolling and inspect running/wait/fault/offline/Manual states.
+  Compare the plain styling to the supplied reference; no live operation occurs.
+- Update root/package README, AGENTS and FSM appearance review; regenerate and
+  verify HTML/PDF source hash, nine diagrams/pages and offline navigation/zoom
+  without HTTP requests. SHA-256:
+  `a187f9dc3e1bad99632f9eaad8bed62adcb1ca35ec3f475c2786dc0123203dec`.
+- Recheck before canonical build: no affected station processes are running.
+  robot_controller builds in 13.6 s. Verify canonical installed GUI/helper and
+  README, including removal of custom tab/page/slider styling, without launching
+  nodes. Existing duplicate nested remote_setup install warning is unchanged.
+- No process restart, robot command, perception arming or server connection.
+  Preserve .env, calibration, teaching/models/runtime/debug artifacts and
+  unrelated RViz modifications. No offline-transfer milestone is claimed.
+  Commit/push this appearance/documentation scope under rule 8.
+
 ### Future entry template
 
 ```text

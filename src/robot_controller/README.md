@@ -29,6 +29,13 @@ windows and the passive RViz viewer.
 
 ## Station HMI
 
+Rule 287 matches the user's Item Teach reference appearance while keeping the
+restored three-page layout. Use the application font and native Qt palette,
+tabs, fields and sliders, plus Item Teach's minimal group/input/button styling.
+Remove the blue page background, white cards, custom tab underlines and decorative
+hint/progress colors. Keep dark status panels and existing state/action colors.
+No control is moved and no behavior or command guard is changed.
+
 Rule 284 organizes the three existing pages around the operator's task. A compact
 status header and persistent station-mode/lifecycle rows leave more room for the
 working page. Operate has a **Production run** section for quantity, controller

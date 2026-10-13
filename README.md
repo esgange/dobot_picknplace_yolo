@@ -38,6 +38,11 @@ The root build contains 18 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
+The HMI uses the same plain Qt appearance as Item Teach (rule 287): native fonts,
+gray panels, standard tabs/buttons/fields/sliders and simple group borders.
+The custom blue/white theme is removed. The restored three-page layout and
+existing green readiness, amber pause and red Stop indicators remain.
+
 The two local run buttons have explicit detector sources:
 
 | Run button | Pose source | Preparation |

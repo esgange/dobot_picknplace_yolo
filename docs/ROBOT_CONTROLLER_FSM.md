@@ -1,5 +1,13 @@
 # Robot Controller — Finite State Machine
 
+HMI appearance review: **2026-10-13**, baseline **`88ad925`** plus rule **287**.
+The user clarifies that the intended appearance is Item Teach's plain Qt UI.
+Retain the restored three-page layout below, but replace the custom blue/white
+theme with native application fonts/palette, tabs/fields/sliders and Item Teach's
+minimal group/input/button styling. Remove decorative hint/progress colors;
+keep dark status panels and established state/action colors. This changes only
+appearance, with no control relocation, command, guard, state or process change.
+
 HMI rollback review: **2026-10-13**, baseline **`881307d`** plus rule **286**.
 At the user's request, restore the exact UI implementation from **`2f3a7ee`**.
 The three-page layout described below (rules 283/284) is current again; rule 285's
