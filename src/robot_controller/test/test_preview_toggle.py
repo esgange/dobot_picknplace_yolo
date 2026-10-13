@@ -41,7 +41,7 @@ def controls(window, monkeypatch):  # noqa: F811 - imported pytest fixture
 
 
 def test_operation_grid_has_exactly_the_four_requested_buttons(controls):
-    grid = controls.page_layouts['Operate'].itemAt(0).layout()
+    grid = controls.motion_grid
     assert grid.itemAtPosition(0, 0).widget() is controls.home_button
     assert grid.itemAtPosition(0, 1).widget() is controls.preview_toggle
     assert grid.itemAtPosition(1, 0).widget() is controls.pick_item

@@ -1,5 +1,17 @@
 # Robot Controller — Finite State Machine
 
+HMI organization review: **2026-10-13**, baseline **`ff8718e`** plus rule **284**.
+Keep the three pages and all existing command/provider/ownership guards. Operate
+groups quantity/progress, shared placement/debug fields and both runs in Production
+run, with Single actions beside it and Motion settings below. Setup / Teach has
+numbered file-selection/preparation sections beside compact teaching launchers.
+Tools / Debug groups inspection/calibration, direct robot tools, server settings
+and Detection history; Clear Repick History moves there. Compact status and the
+station-mode/Recover/Pause/STOP rows remain outside page scrolling. Add consistent
+presentation, keyboard focus order and accessible labels; hide empty blocker space
+only. Preserve green readiness and red/amber Stop/intervention meaning. No state,
+motion, process, configuration, automatic action or server-command change.
+
 Local HMI cleanup review: **2026-10-13**, baseline **`072b5a5`** plus rule **283**.
 The HMI buttons are **Manual/Test Run** (armed teaching windows for debug/testing)
 and **Offline Auto Run** (Load Auto headless detector pair). **Setup / Teach** combines
@@ -920,11 +932,13 @@ PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
 
 Robot/gripper status, observed station services and the lifecycle row remain
-outside the three scrollable pages. **Operate** contains motion/Preview, shared
-placement/Quantity, Manual/Test Run and Offline Auto Run, debug capture and speed/CP. **Setup / Teach**
-contains one artifact selection, Load/Reload, Load Auto/readiness, Clear Repick History and Item/Tray/Bin/
-Platform Teach launchers. **Tools / Debug** opens passive RViz, camera setup,
-calibration, Remote Setup and eligible direct maintenance applications. The normal launch
+outside the three scrollable pages. **Operate** groups the two runs and shared
+placement/Quantity/progress/debug inputs in Production run, motion/Preview in
+Single actions and speed/CP in Motion settings. **Setup / Teach** contains numbered
+artifact selection and Load/Reload/Load Auto preparation sections, readiness and
+compact Item/Tray/Bin/Platform Teach launchers. **Tools / Debug** groups passive RViz,
+camera setup/calibration, Remote Setup, eligible direct maintenance applications
+and Detection history / Clear Repick History. The normal launch
 starts bringup/robot TF and both supervised cameras; teaching/debug windows stay
 explicit. Station-service presence is observational, separate from readiness.
 Tool launches never bypass their own model trust, arming or maintenance guards.
@@ -1040,14 +1054,14 @@ flowchart TD
     ReleaseCore --> Tools["Open teaching / debug tools; one direct command owner; use tool Stop"]
     Tools -->|Close maintenance; select Auto| RestoreCore["Start owned core; fresh status; no automatic preparation"]
     RestoreCore --> TeachPage
-    TeachPage["Setup / Teach: select files once"] -->|Explicit Load Teach; teaching providers armed| Manual
+    TeachPage["Setup / Teach: 1 select files; 2 prepare station"] -->|Explicit Load Teach; teaching providers armed| Manual
     TeachPage -->|Close owned teaching / maintenance windows| Deploy["Same setup page: explicit Load Auto ON; idle, unheld; no competing providers"]
     Deploy --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
     Detect --> Prepare["PREPARING: Configure selected teach files; enable and initialize robot"]
     Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
     Loaded --> Auto["Offline Auto Run: owned headless pair ready"]
-    Manual["Manual/Test Run: both teaching GUIs armed"] --> Run["Shared native counted run; same quantity and placement; bind detector mode"]
+    Manual["Manual/Test Run: both teaching GUIs armed"] --> Run["Operate / Production run: shared native counted run; same quantity and placement; bind detector mode"]
     Auto --> Run
     Run -->|HMI exit with owned pose providers| HmiExit["Independent controller Stop; close owned tools and detectors"]
     HmiExit --> StationExit["Controller shutdown finishes before owned cameras and bringup stop"]

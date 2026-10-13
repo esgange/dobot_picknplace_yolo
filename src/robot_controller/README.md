@@ -29,6 +29,23 @@ windows and the passive RViz viewer.
 
 ## Station HMI
 
+Rule 284 organizes the three existing pages around the operator's task. A compact
+status header and persistent station-mode/lifecycle rows leave more room for the
+working page. Operate has a **Production run** section for quantity, controller
+progress, shared tray X/Y/rotation/debug fields and both run buttons, **Single
+actions** alongside, and aligned **Motion settings** below. The headless run is
+first; provider captions distinguish the two buttons. Place Item uses those same
+tray settings. Existing green readiness, red Stop and amber intervention colors
+remain, with visible keyboard focus, accessible field names and logical tab order.
+
+Setup / Teach has **1 · Select teach files**, **2 · Prepare station**, and compact
+teaching launchers alongside. Tools / Debug groups **Inspection / calibration**,
+**Direct robot tools**, **Server connection** and **Detection history**. Clear
+Repick History is now in that last group. Empty action-blocker space is hidden;
+real refusal messages remain visible. Pages scroll vertically on smaller displays.
+The presentation helpers in `hmi_widgets.py` contain no state or robot commands.
+No controller, provider, launch, preparation or ownership behavior changes.
+
 Rule 283 consolidates file selection and both preparation controls on **Setup /
 Teach**, removing the separate Auto page, repeated recipe list, extra mode summary
 and repeated workflow paragraphs. Process ownership and robot behavior are unchanged.
@@ -93,9 +110,9 @@ then use Manual/Test Run. Load Auto still requires owned teaching windows closed
 
 | Page | Controls |
 | --- | --- |
-| Operate | Home/Pick/Place, Preview, placement X/Y/Rotation, shared Quantity, Manual/Test Run and Offline Auto Run, debug captures and speed/CP |
-| Setup / Teach | One Item/Bin/Tray file selection, Load/Reload and Load Auto deploy/start/prepare controls, readiness, Clear Repick History and teaching windows |
-| Tools / Debug | Passive RViz, Remote Setup, camera setup, camera calibration, Motion Debug and Gripper Diagnostics |
+| Operate | Production run: shared Quantity/progress, tray X/Y/rotation/debug settings and both runs; Single actions: Home/Pick/Place/Preview; Motion settings: speed/CP |
+| Setup / Teach | Select Item/Bin/Tray files, prepare with Load Auto or Load/Reload, readiness and teaching windows |
+| Tools / Debug | Inspection/calibration, direct robot tools, Remote Setup and Detection history / Clear Repick History |
 
 The standard launch starts the offline dependencies described below. Opening the
 HMI or a page never opens a teaching/debug tool, deploys a recipe, arms perception

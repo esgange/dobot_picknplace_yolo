@@ -29,6 +29,7 @@ from .perception_mode import ANY, TEACH, HEADLESS, check_mode
 from .errors import FeedbackFailure
 from .hmi_tools import BY_KEY, TOOLS, ToolLaunches, change_reason
 from .hmi_modes import HmiModes
+from .hmi_widgets import STATION_STYLE, hint, section
 
 
 AUTO_READY_STYLE = (
@@ -142,17 +143,21 @@ class ControllerWindow(QtWidgets.QMainWindow):
         font = self.font()
         font.setPointSize(10)
         self.setFont(font)
+        self.setStyleSheet(STATION_STYLE)
         central = QtWidgets.QWidget()
+        central.setObjectName('stationHmi')
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
+        layout.setContentsMargins(16, 12, 16, 10)
+        layout.setSpacing(10)
         self.pages = QtWidgets.QTabWidget()
-        self.pages.setStyleSheet(
-            'QTabBar::tab{padding:10px 22px;font-size:14px}'
-            'QTabBar::tab:selected{font-weight:700;color:#146c43}')
         self.page_layouts = {}
         for name in ('Operate', 'Setup / Teach', 'Tools / Debug'):
             page = QtWidgets.QWidget()
+            page.setProperty('role', 'page')
             page_layout = QtWidgets.QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 6, 0, 6)
+            page_layout.setSpacing(12)
             page_layout.setAlignment(QtCore.Qt.AlignTop)
             scroll = QtWidgets.QScrollArea()
             scroll.setWidgetResizable(True)
@@ -161,7 +166,17 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.pages.addTab(scroll, name)
             self.page_layouts[name] = page_layout
         operate = self.page_layouts['Operate']
+        operate.setSpacing(8)
         setup = self.page_layouts['Setup / Teach']
+        setup_columns = QtWidgets.QHBoxLayout()
+        setup_columns.setSpacing(16)
+        self.recipe_layout = QtWidgets.QVBoxLayout()
+        self.teaching_layout = QtWidgets.QVBoxLayout()
+        self.recipe_layout.setSpacing(12)
+        self.teaching_layout.setSpacing(12)
+        setup_columns.addLayout(self.recipe_layout, 3)
+        setup_columns.addLayout(self.teaching_layout, 2)
+        setup.addLayout(setup_columns)
 
         header = QtWidgets.QHBoxLayout()
         self.robot_panel, robot_layout = self._status_panel("Robot status")
@@ -196,17 +211,18 @@ class ControllerWindow(QtWidgets.QMainWindow):
             indicators.addLayout(column, 1)
             self.gripper_leds[channel], self.gripper_values[channel] = led, value
         gripper_layout.addLayout(indicators, 1)
-        header.addWidget(self.robot_panel, 3)
+        header.addWidget(self.robot_panel, 4)
         header.addWidget(self.gripper_panel, 3)
         self.station_panel, station_layout = self._status_panel('Station services')
         self.station_services = QtWidgets.QLabel('Waiting for station status…')
         self.station_services.setTextFormat(QtCore.Qt.PlainText)
         self.station_services.setWordWrap(True)
+        self.station_services.setStyleSheet('font-size:12px;color:#edf3f8')
         station_layout.addWidget(self.station_services)
         station_layout.addStretch()
         header.addWidget(self.station_panel, 3)
 
-        self.teach_panel = QtWidgets.QGroupBox("Teach files")
+        self.teach_panel = QtWidgets.QGroupBox("1 · Select teach files")
         self.teach_panel.setMinimumWidth(300)
         self.teach_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
                                        QtWidgets.QSizePolicy.Maximum)
@@ -228,7 +244,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 ("Item Teach", self.item_path, "offline_teach/item_teach"),
                 ("Bin Teach", self.bin_path, "offline_teach/bin_teach"),
                 ("Tray Teach", self.tray_path, "offline_teach/tray_teach"))):
-            teach.addWidget(QtWidgets.QLabel(label), index, 0)
+            field_label = QtWidgets.QLabel(label)
+            field_label.setBuddy(edit)
+            edit.setAccessibleName(label + ' file')
+            teach.addWidget(field_label, index, 0)
             edit.setMinimumWidth(0)
             edit.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
             edit.textChanged.connect(edit.setToolTip)
@@ -242,7 +261,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.configure = QtWidgets.QPushButton("Load Teach Configuration")
         self.configure.clicked.connect(self._configure)
         teach.setColumnStretch(1, 1)
-        setup.addWidget(self.teach_panel)
+        self.recipe_layout.addWidget(self.teach_panel)
         layout.addLayout(header)
 
         mode_row = QtWidgets.QHBoxLayout()
@@ -253,7 +272,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         for button, mode in ((self.manual_mode, 'MANUAL'), (self.auto_mode, 'AUTO')):
             button.setCheckable(True)
             button.setMinimumHeight(36)
-            button.setMinimumWidth(200)
+            button.setMinimumWidth(210)
             button.setStyleSheet('QPushButton{padding:5px 10px}'
                                  'QPushButton:checked{background:#198754;color:white;'
                                  'font-weight:700}')
@@ -267,31 +286,33 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
         self.clear_repick = QtWidgets.QPushButton("Clear Repick History")
         self.clear_repick.clicked.connect(lambda: self._command("clear_repick_history"))
-        teach.addWidget(self.clear_repick, 5, 0, 1, 3)
         self.load_auto = QtWidgets.QPushButton("Load Auto: OFF")
         self.load_auto.setCheckable(True)
         self.load_auto.clicked.connect(self._toggle_auto)
-        preparation = QtWidgets.QHBoxLayout()
-        for button in (self.configure, self.load_auto):
+        prepare_panel, preparation = section('2 · Prepare station')
+        preparation.addWidget(hint('Select Auto — production above to prepare and run.'))
+        prepare_columns = QtWidgets.QGridLayout()
+        for column, button in enumerate((self.load_auto, self.configure)):
             button.setMinimumHeight(40)
-            preparation.addWidget(button, 1)
-        teach.addLayout(preparation, 3, 0, 1, 3)
+            prepare_columns.addWidget(button, 0, column)
+            prepare_columns.setColumnStretch(column, 1)
+        prepare_columns.addWidget(hint(
+            'Offline · Headless detectors and robot preparation. No separate Load Teach step.'), 1, 0)
+        prepare_columns.addWidget(hint(
+            'Manual/Test · Armed teaching windows. Keep Load Auto OFF.'), 1, 1)
+        preparation.addLayout(prepare_columns)
+        preparation.addWidget(hint(
+            'Close teaching windows before Load Auto. No server connection is needed.'))
         self.load_auto_status = QtWidgets.QLabel()
         self.load_auto_status.setTextFormat(QtCore.Qt.PlainText)
         self.load_auto_status.setWordWrap(True)
         self.load_auto_status.setStyleSheet('font-size:12px')
         self.load_auto_status.setMinimumHeight(32)
-        teach.addWidget(self.load_auto_status, 4, 0, 1, 3)
-        workflow_help = QtWidgets.QLabel(
-            'Offline: close teaching windows, select files, then Load Auto → READY → '
-            'Offline Auto Run. Load Auto starts headless detectors and prepares the robot; '
-            'no separate Load Teach step.\n'
-            'Manual/Test: load matching profiles and arm Item/Tray Teach in Manual — tools. Return to '
-            'Auto — production, Load Teach Configuration, then Manual/Test Run. Keep Load Auto OFF.\n'
-            'Both runs use Auto — production and the Quantity/placement settings on Operate. '
-            'No server connection is needed.')
-        workflow_help.setWordWrap(True)
-        setup.addWidget(workflow_help)
+        preparation.addWidget(self.load_auto_status)
+        self.recipe_layout.addWidget(prepare_panel)
+        self.recipe_layout.addWidget(hint(
+            '3 · When READY, set Quantity and placement on Operate and choose your run.'))
+        self.recipe_layout.addStretch()
         lifecycle = QtWidgets.QHBoxLayout()
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
         self.pause = QtWidgets.QToolButton()
@@ -318,12 +339,24 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "then test suction; detected suction offers Return Item before resetting outputs")
         self.stop.clicked.connect(self._immediate_stop)
         for button in (self.recover, self.pause, self.stop):
-            button.setMinimumHeight(58)
+            button.setMinimumHeight(48)
             lifecycle.addWidget(button, 1)
         layout.addLayout(lifecycle)
         layout.addWidget(self.pages, 1)
 
-        operations = QtWidgets.QGridLayout()
+        work_columns = QtWidgets.QHBoxLayout()
+        work_columns.setSpacing(16)
+        run_panel, run_layout = section('Production run')
+        self.single_actions, single_layout = section('Single actions')
+        self.motion_grid = QtWidgets.QGridLayout()
+        operations = self.motion_grid
+        work_columns.addWidget(run_panel, 3)
+        work_columns.addWidget(self.single_actions, 2)
+        operate.addLayout(work_columns)
+        single_layout.addWidget(hint('Home, pick or place individually. Preview shows TF targets only.'))
+        single_layout.addLayout(operations)
+        single_layout.addWidget(hint('Place Item uses the same tray X/Y and rotation settings.'))
+        single_layout.addStretch()
         self.preview_toggle = QtWidgets.QPushButton("Preview: OFF")
         self.preview_toggle.setCheckable(True)
         self.preview_toggle.setToolTip(
@@ -346,7 +379,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_item.clicked.connect(lambda: self._action("place"))
         for button in (self.home_button, self.preview_toggle,
                        self.pick_item, self.place_item):
-            button.setMinimumHeight(52)
+            button.setMinimumHeight(44)
         operations.addWidget(self.home_button, 0, 0)
         operations.addWidget(self.preview_toggle, 0, 1)
         operations.addWidget(self.pick_item, 1, 0)
@@ -356,6 +389,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_x.setPlaceholderText("Positive mm")
         self.place_y.setPlaceholderText("Positive mm")
         self.place_rotation = QtWidgets.QDoubleSpinBox()
+        self.place_rotation.setMinimumHeight(36)
         self.place_rotation.setRange(-180., 180.)
         self.place_rotation.setDecimals(1)
         self.place_rotation.setValue(0.)
@@ -363,19 +397,20 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_rotation.setToolTip(
             "0° aligns item/tray X axis lines; add offset, then choose the nearest of two "
             "orientations 180° apart, preserving taught tilt")
-        target_row = QtWidgets.QHBoxLayout()
-        for label, field in (("X (mm)", self.place_x), ("Y (mm)", self.place_y),
-                             ("Rotation", self.place_rotation)):
-            target_row.addWidget(QtWidgets.QLabel(label))
-            target_row.addWidget(field)
+        target_row = QtWidgets.QGridLayout()
+        for column, (label, field) in enumerate((
+                ("Tray X (mm)", self.place_x), ("Tray Y (mm)", self.place_y),
+                ("Rotation offset", self.place_rotation))):
+            target_row.addWidget(hint(label), 0, column)
+            target_row.addWidget(field, 1, column)
+            target_row.setColumnStretch(column, 1)
+            field.setAccessibleName(label)
         if node.prefill and node.prefill["placement"] is not None:
             x, y, rotation = node.prefill["placement"]
             self.place_x.setText(str(x))
             self.place_y.setText(str(y))
             self.place_rotation.setValue(rotation)
-        operations.addLayout(target_row, 2, 0, 1, 2)
-        operations.addWidget(self.debug_images, 3, 1)
-        auto_row = QtWidgets.QHBoxLayout()
+        auto_row = QtWidgets.QGridLayout()
         self.auto_run_button = QtWidgets.QPushButton("Manual/Test Run")
         self.auto_run_button.setMinimumHeight(48)
         self.auto_run_button.clicked.connect(lambda: self._action("auto_run", detector_mode=TEACH))
@@ -384,26 +419,41 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.headless_run_button.clicked.connect(
             lambda: self._action("auto_run", detector_mode=HEADLESS))
         self.auto_quantity = QtWidgets.QSpinBox()
+        self.auto_quantity.setMinimumHeight(36)
         self.auto_quantity.setRange(1, 10000)
         self.auto_quantity.setValue(1)
         self.auto_quantity.setAccessibleName("Run quantity")
         self.auto_progress = QtWidgets.QLabel("0 completed · Elapsed: 0.0 s")
+        self.auto_progress.setWordWrap(True)
+        self.auto_progress.setStyleSheet('font-size:15px;font-weight:600;color:#203e57')
         self.auto_progress.setToolTip(
             "Total run time, including retries, pauses and final Home. Resets on the next run.")
-        auto_row.addWidget(self.auto_run_button, 1)
-        auto_row.addWidget(self.headless_run_button, 1)
-        auto_row.addWidget(QtWidgets.QLabel("Quantity"))
-        auto_row.addWidget(self.auto_quantity)
-        auto_row.addWidget(self.auto_progress, 1)
-        operations.addLayout(auto_row, 4, 0, 1, 2)
-        operate.addLayout(operations)
+        quantity_row = QtWidgets.QHBoxLayout()
+        quantity_row.addWidget(QtWidgets.QLabel('Quantity'))
+        self.auto_quantity.setMaximumWidth(110)
+        quantity_row.addWidget(self.auto_quantity)
+        quantity_row.addSpacing(12)
+        quantity_row.addWidget(self.auto_progress, 1)
+        run_layout.addLayout(quantity_row)
+        run_layout.addLayout(target_row)
+        run_layout.addWidget(self.debug_images)
+        auto_row.addWidget(self.headless_run_button, 0, 0)
+        auto_row.addWidget(self.auto_run_button, 0, 1)
+        auto_row.addWidget(hint('Headless detectors · Load Auto'), 1, 0)
+        auto_row.addWidget(hint('Armed teaching windows'), 1, 1)
+        auto_row.setColumnStretch(0, 1)
+        auto_row.setColumnStretch(1, 1)
+        run_layout.addLayout(auto_row)
         self.availability_details = QtWidgets.QLabel()
         self.availability_details.setTextFormat(QtCore.Qt.PlainText)
         self.availability_details.setWordWrap(True)
         self.availability_details.setStyleSheet("color:#785000")
         operate.addWidget(self.availability_details)
 
-        speed = QtWidgets.QHBoxLayout()
+        tuning_panel, tuning = section('Motion settings')
+        tuning_grid = QtWidgets.QGridLayout()
+        tuning_grid.setHorizontalSpacing(16)
+        tuning_grid.setColumnStretch(1, 1)
         self.speed_label = QtWidgets.QLabel("Global SpeedFactor: unavailable")
         self.speed_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.speed_slider.setRange(1, 100)
@@ -416,11 +466,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.speed_debounce.setSingleShot(True)
         self.speed_debounce.setInterval(350)
         self.speed_debounce.timeout.connect(self._speed)
-        speed.addWidget(self.speed_label)
-        speed.addWidget(self.speed_slider, 1)
-        operate.addLayout(speed)
+        tuning_grid.addWidget(self.speed_label, 0, 0)
+        tuning_grid.addWidget(self.speed_slider, 0, 1)
 
-        cp = QtWidgets.QHBoxLayout()
         self.cp_label = QtWidgets.QLabel("Global CP: unavailable")
         self.cp_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.cp_slider.setRange(0, 100)
@@ -433,9 +481,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.cp_debounce.setSingleShot(True)
         self.cp_debounce.setInterval(350)
         self.cp_debounce.timeout.connect(self._cp)
-        cp.addWidget(self.cp_label)
-        cp.addWidget(self.cp_slider, 1)
-        operate.addLayout(cp)
+        tuning_grid.addWidget(self.cp_label, 1, 0)
+        tuning_grid.addWidget(self.cp_slider, 1, 1)
+        tuning.addLayout(tuning_grid)
+        operate.addWidget(tuning_panel)
         self._build_tool_pages()
 
         log_header = QtWidgets.QHBoxLayout()
@@ -463,6 +512,19 @@ class ControllerWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.log_view, 1)
         self.log_view.hide()
         layout.setAlignment(QtCore.Qt.AlignTop)
+        focus_order = (
+            self.manual_mode, self.auto_mode, self.recover, self.pause, self.stop, self.pages,
+            self.auto_quantity, self.place_x, self.place_y, self.place_rotation, self.debug_images,
+            self.headless_run_button, self.auto_run_button, self.home_button, self.preview_toggle,
+            self.pick_item, self.place_item, self.speed_slider, self.cp_slider,
+            self.item_path, self.teach_browse_buttons[0], self.bin_path, self.teach_browse_buttons[1],
+            self.tray_path, self.teach_browse_buttons[2], self.load_auto, self.configure,
+            *(self.tool_controls[key][0] for key in
+              ('item', 'tray', 'bin', 'platform', 'rviz', 'cameras', 'calibration',
+               'remote', 'motion', 'gripper')),
+            self.clear_repick, self.log_toggle, self.copy_log, self.log_view)
+        for previous, following in zip(focus_order, focus_order[1:]):
+            self.setTabOrder(previous, following)
         self.item_path.textEdited.connect(self._selection_changed)
         self.bin_path.textEdited.connect(self._selection_changed)
         self.tray_path.textEdited.connect(self._selection_changed)
@@ -482,7 +544,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _status_panel(title):
         panel = QtWidgets.QFrame()
-        panel.setMinimumHeight(160)
+        panel.setMinimumHeight(132)
         panel.setMaximumHeight(180)
         panel.setStyleSheet("QFrame{background:#202a35;border-radius:6px}"
                             "QLabel{color:#edf3f8;border:0;font-size:14px}")
@@ -495,42 +557,68 @@ class ControllerWindow(QtWidgets.QMainWindow):
         return panel, column
 
     def _build_tool_pages(self):
-        for title, kinds in (('Setup / Teach', {'teach'}),
-                             ('Tools / Debug',
-                              {'viewer', 'camera', 'calibration', 'maintenance', 'communication'})):
-            grid = QtWidgets.QGridLayout()
-            row = 0
-            for tool in TOOLS:
-                if tool.kind not in kinds:
-                    continue
-                card = QtWidgets.QGroupBox(tool.title)
-                body = QtWidgets.QVBoxLayout(card)
-                description = QtWidgets.QLabel(tool.description)
-                description.setWordWrap(True)
-                body.addWidget(description)
-                line = QtWidgets.QHBoxLayout()
-                label = QtWidgets.QLabel('Not running')
-                label.setWordWrap(True)
-                label.setMinimumWidth(0)
-                label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-                line.addWidget(label, 1)
-                button = QtWidgets.QPushButton('Open')
-                button.clicked.connect(
-                    lambda _checked=False, key=tool.key: self._tool_clicked(key))
-                line.addWidget(button)
-                body.addLayout(line)
-                grid.addWidget(card, row // 2, row % 2)
-                self.tool_controls[tool.key] = (button, label)
-                row += 1
-            self.page_layouts[title].addLayout(grid)
-        note = QtWidgets.QLabel(
-            'Select Manual mode to release the production controller, then open Motion Debug '
-            'or another tool. Only one direct robot command application may own the robot. '
-            'Use the active tool’s Stop controls in Manual mode. '
-            'Camera Calibration opens without moving; its automatic capture keeps its '
-            'existing exclusive-control checks. RViz and Remote Setup can be opened during a run.')
-        note.setWordWrap(True)
-        self.page_layouts['Tools / Debug'].addWidget(note)
+        self.teaching_layout.addWidget(self._tool_group(
+            'Teaching windows', ('item', 'tray', 'bin', 'platform'),
+            'Select Manual — tools to open. For Manual/Test Run, arm matching Item/Tray '
+            'profiles, keep the windows open and return to Auto — production.', compact=True))
+        self.teaching_layout.addStretch()
+
+        debug = self.page_layouts['Tools / Debug']
+        debug.addWidget(hint(
+            'Use Manual — tools for setup and direct maintenance. '
+            'Use the active tool’s Stop controls while production is stopped.'))
+        columns = QtWidgets.QHBoxLayout()
+        columns.setSpacing(16)
+        inspect = QtWidgets.QVBoxLayout()
+        maintenance = QtWidgets.QVBoxLayout()
+        inspect.addWidget(self._tool_group(
+            'Inspection / calibration', ('rviz', 'cameras', 'calibration')))
+        inspect.addWidget(self._tool_group('Server connection', ('remote',)))
+        inspect.addStretch()
+        maintenance.addWidget(self._tool_group(
+            'Direct robot tools', ('motion', 'gripper'),
+            'One command owner at a time. Stop motion in the tool before closing it.'))
+        history_panel, history = section('Detection history')
+        history.addWidget(hint(
+            'Clear pick-attempt exclusions from the idle production controller. '
+            'Requires Auto — production.'))
+        history.addWidget(self.clear_repick)
+        maintenance.addWidget(history_panel)
+        maintenance.addStretch()
+        columns.addLayout(inspect, 1)
+        columns.addLayout(maintenance, 1)
+        debug.addLayout(columns)
+
+    def _tool_group(self, title, keys, description='', *, compact=False):
+        panel, body = section(title)
+        if description:
+            body.addWidget(hint(description))
+        for index, key in enumerate(keys):
+            tool = BY_KEY[key]
+            if index:
+                separator = QtWidgets.QFrame()
+                separator.setFrameShape(QtWidgets.QFrame.HLine)
+                separator.setStyleSheet('color:#d5dfe8')
+                body.addWidget(separator)
+            heading = QtWidgets.QLabel(tool.title)
+            heading.setStyleSheet('font-weight:600')
+            heading.setToolTip(tool.description)
+            line = QtWidgets.QHBoxLayout()
+            line.addWidget(heading, 1)
+            button = QtWidgets.QPushButton('Open')
+            button.setAccessibleName(tool.title + ' window')
+            button.clicked.connect(
+                lambda _checked=False, key=tool.key: self._tool_clicked(key))
+            line.addWidget(button)
+            body.addLayout(line)
+            if not compact:
+                body.addWidget(hint(tool.description))
+            label = hint('Not running')
+            label.setTextFormat(QtCore.Qt.PlainText)
+            label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+            body.addWidget(label)
+            self.tool_controls[tool.key] = (button, label)
+        return panel
 
     def _tools_pending(self):
         return bool(self.pending or self.pending_goal is not None

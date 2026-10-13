@@ -49,8 +49,8 @@ def presentation(state, preview=False):
         return "ATTENTION REQUIRED", state.message
     if state.state in ("UNCONFIGURED", "INACTIVE"):
         return "NOT READY", (
-            "Reload teach configuration to prepare the robot." if state.configured else
-            "Select teach files and Load Teach Configuration.")
+            "Use Load Auto or reload teach configuration to prepare the robot." if state.configured else
+            "Select files on Setup / Teach, then choose a preparation method.")
     if state.state == "PAUSED":
         return "PAUSED", state.message
     if state.state == "HOLDING":

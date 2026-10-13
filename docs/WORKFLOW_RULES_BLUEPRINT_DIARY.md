@@ -11738,6 +11738,58 @@ Never use a floating “latest” version in an issue, script, or deployment not
   and debug artifacts and unrelated RViz edits. Commit/push only this tested scope
   under the standing workflow.
 
+### 2026-10-13 — Rule 284: Organize the HMI around operator tasks
+
+- User requests professional UI organization after duplicate cleanup. Retain the
+  three pages and reorganize presentation only. Add shared local Qt styling and
+  section/hint helpers in hmi_widgets.py; no external assets, dependencies, state
+  store, ROS clients or command handling are added there.
+- Operate leads with Production run: quantity, controller count/timing, shared
+  tray X/Y/rotation/debug fields and the two explicit run buttons. Put Offline
+  Auto Run first with a headless-provider caption and Manual/Test Run alongside
+  with a teaching-window caption. Put the existing Home/Preview/Pick/Place grid
+  in Single actions, explaining its shared placement settings, and align both
+  speed/CP sliders in Motion settings below. Keep the exact signal handlers,
+  values, native actions, source gates and green readiness behavior.
+- Setup / Teach places numbered file selection and station preparation sections
+  beside compact teaching launchers. Explain Load Auto's combined headless/robot
+  preparation and the separate manual testing option. NOT READY guidance points
+  to this setup flow without implying Load Teach must precede Load Auto. Retain
+  exact full paths/tooltips, explicit model loading/arming and saved selection
+  rules. No automatic selection, preparation or launch is introduced.
+- Tools / Debug groups Inspection / calibration, Direct robot tools, Server
+  connection and Detection history. Move the existing Clear Repick History control
+  into Detection history with its original idle-production guard. Keep every
+  tool's exact process identity, exclusivity, Open/Close/External behavior and
+  direct-maintenance initialization warning. Manual operators still use their
+  active tool's Stop; the HMI does not gain a direct driver command.
+- Use a compact persistent status header, clearer section hierarchy, consistent
+  spacing, readable disabled controls, visible keyboard focus and logical tab
+  order. Add accessible names for teach/placement fields and tool controls.
+  Recover/Pause/STOP and station modes remain outside scrolling pages. Preserve
+  the header's previous maximum height for longer fault text. No robot lifecycle,
+  motion, perception, readiness, ownership or remote-command behavior changes.
+- Validation: **491 regression tests pass** across HMI modes/tools, Load Auto,
+  counted runs/timing, status/operator UI, lifecycle, Preview, speed/CP and
+  architecture. Update the existing four-button-grid assertion to its named
+  layout after moving the grid into its section. Final status/operator wording
+  rerun passes **124 tests**. Offscreen checks at 1120×760 and 1024×768 verify all
+  pages have no horizontal scrolling; inspect READY, NOT READY, active run,
+  item-intervention, emergency-stop, stale/offline and Manual tools views. Existing
+  guards keep runs disabled and reachable Stop visible as appropriate. All status,
+  provider and process evidence is synthetic; no physical operation is verified.
+- Scoped lint/diff checks pass. Recheck processes immediately before canonical
+  installation: no affected station processes are running. robot_controller
+  builds successfully in 11.6 s; verify canonical GUI, the new presentation
+  module, operator wording and installed README without starting a node. Update
+  root/package README, AGENTS and FSM, regenerate adjacent HTML/PDF, and verify
+  source hash, nine diagrams/pages, new workflow labels and offline navigation/
+  zoom. No offline-transfer milestone is claimed.
+- No live process is started/restarted and no robot command, perception arming,
+  model load or server connection is performed. Preserve .env, calibration,
+  teaching/model/runtime/debug artifacts and unrelated RViz modifications.
+  Commit and push only this tested UI/source/documentation scope under rule 8.
+
 ### Future entry template
 
 ```text

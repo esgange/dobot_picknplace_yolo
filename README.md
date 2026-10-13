@@ -52,6 +52,13 @@ priority; online server-controlled Auto Run is deferred. Rule 283 consolidates
 setup controls and removes duplicate recipe/status/help displays while preserving
 process ownership and motion behavior.
 
+The task-oriented layout (rule 284) puts production quantity, placement and run
+controls together, beside separate single-action controls. Motion settings sit
+below. Setup separates **1 · Select teach files** and **2 · Prepare station** from
+teaching windows. Diagnostics groups inspection/calibration, direct robot tools,
+server settings and **Detection history → Clear Repick History**. Status and
+Recover/Pause/STOP remain visible on every page; all command guards are unchanged.
+
 The controller window is a **Station HMI** with three pages: **Operate**,
 **Setup / Teach**, and **Tools / Debug**. Robot/gripper status and
 Recover/Pause/STOP remain visible throughout. Setup / Teach contains file selection,
