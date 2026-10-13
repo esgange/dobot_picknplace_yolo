@@ -11690,6 +11690,54 @@ Never use a floating “latest” version in an issue, script, or deployment not
   issued during validation. Commit/push only this scoped tested source/docs under
   the standing workflow.
 
+### 2026-10-13 — Rule 283: Clear local run choices and one HMI setup page
+
+- User prioritizes offline headless production and non-headless manual testing,
+  with online command integration later; subsequently requests duplicate UI
+  cleanup. Label the two existing buttons Manual/Test Run and Offline Auto Run.
+  They retain the shared native AutoRun action, strict TEACH/HEADLESS source
+  selection and shared Quantity, X/Y, Rotation and debug-image inputs. Preserve
+  motion, preparation, ownership, Stop/Pause/intervention and green readiness
+  behavior. Add no server command integration or new controller state.
+- Consolidate the old Teach and Auto pages into Setup / Teach. Show one editable
+  Item/Bin/Tray selection, Load/Reload and Load Auto beside each other, detector
+  preparation status, Clear Repick History and the existing teaching launchers.
+  Retain Operate and Tools / Debug, scrollable pages and the always-visible robot/
+  gripper/service panels, station mode selector and lifecycle controls. Remove
+  the duplicate recipe list, separate Auto page, extra station-mode summary and
+  repeated workflow paragraphs. Keep each existing action connected once to its
+  original handler; tool launch and cleanup ownership are unchanged.
+- Explain the two paths once on Setup / Teach. Offline uses selected files →
+  Load Auto → READY → Offline Auto Run; Load Auto starts headless detectors and
+  prepares/enables the robot, so no separate Load Teach click is needed. Manual
+  testing loads matching profiles and explicitly arms Item/Tray Teach in Manual
+  tools, returns to Auto production, then loads controller configuration and runs
+  with Load Auto OFF. Both counted runs need Auto production; Manual tools releases
+  the controller. Update button tooltips and shared run-blocker labels accordingly.
+- Validation: **382 tests pass** across Load Auto/deployment, HMI mode/tool ownership,
+  counted runs/timing, status/operator UI, architecture and Preview. Update only
+  existing visible-label/page assertions. Synthetic provider tests retain exact
+  frozen quantity/placement/debug/source-mode checks and blocked-run/Stop behavior;
+  no robot applications are launched. Inspect offscreen Operate/Setup pages at
+  the default 1120×760 size with synthetic status. Scoped lint and diff checks pass.
+- Recheck processes before canonical builds: no affected station processes or
+  mapped canonical Dobot libraries are running. The five-package build succeeds
+  for robot_controller plus the previously pending rule-282 remote_setup,
+  orbbec_camera_launcher, item_perception_yolo and dobot_bringup_v4 deployment
+  (15.0 s). Rebuild the final controller cleanup successfully (10.0 s). Canonical
+  package-prefix/import checks verify the updated GUI and Remote Setup/shared
+  readers, labels, removed duplicate displays and installed controller README.
+  An ad-hoc import check initially named a nonexistent Item module; correcting
+  it to platform_teach_core verifies the actual installed configuration reader.
+- Update root/package README, AGENTS and current FSM UI/diagram descriptions.
+  Regenerate adjacent HTML/PDF and verify matching source hash, nine diagrams/
+  pages, new setup/run labels and offline navigation/zoom without external
+  requests. No physical operation or offline-transfer milestone is claimed.
+  No processes are started/restarted, perception armed or robot commands issued.
+  Actual .env hash remains unchanged. Preserve calibration, teaching/model/runtime
+  and debug artifacts and unrelated RViz edits. Commit/push only this tested scope
+  under the standing workflow.
+
 ### Future entry template
 
 ```text

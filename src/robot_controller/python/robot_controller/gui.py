@@ -150,7 +150,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             'QTabBar::tab{padding:10px 22px;font-size:14px}'
             'QTabBar::tab:selected{font-weight:700;color:#146c43}')
         self.page_layouts = {}
-        for name in ('Operate', 'Teach', 'Tools / Debug', 'Auto'):
+        for name in ('Operate', 'Setup / Teach', 'Tools / Debug'):
             page = QtWidgets.QWidget()
             page_layout = QtWidgets.QVBoxLayout(page)
             page_layout.setAlignment(QtCore.Qt.AlignTop)
@@ -161,7 +161,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.pages.addTab(scroll, name)
             self.page_layouts[name] = page_layout
         operate = self.page_layouts['Operate']
-        production = self.page_layouts['Auto']
+        setup = self.page_layouts['Setup / Teach']
 
         header = QtWidgets.QHBoxLayout()
         self.robot_panel, robot_layout = self._status_panel("Robot status")
@@ -204,8 +204,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.station_services.setWordWrap(True)
         station_layout.addWidget(self.station_services)
         station_layout.addStretch()
-        self.station_mode = QtWidgets.QLabel('Local operator control')
-        station_layout.addWidget(self.station_mode)
         header.addWidget(self.station_panel, 3)
 
         self.teach_panel = QtWidgets.QGroupBox("Teach files")
@@ -243,9 +241,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.teach_browse_buttons.append(button)
         self.configure = QtWidgets.QPushButton("Load Teach Configuration")
         self.configure.clicked.connect(self._configure)
-        teach.addWidget(self.configure, 3, 0, 1, 3)
         teach.setColumnStretch(1, 1)
-        self.page_layouts['Teach'].addWidget(self.teach_panel)
+        setup.addWidget(self.teach_panel)
         layout.addLayout(header)
 
         mode_row = QtWidgets.QHBoxLayout()
@@ -270,41 +267,31 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
         self.clear_repick = QtWidgets.QPushButton("Clear Repick History")
         self.clear_repick.clicked.connect(lambda: self._command("clear_repick_history"))
-        teach.addWidget(self.clear_repick, 4, 0, 1, 3)
+        teach.addWidget(self.clear_repick, 5, 0, 1, 3)
         self.load_auto = QtWidgets.QPushButton("Load Auto: OFF")
         self.load_auto.setCheckable(True)
         self.load_auto.clicked.connect(self._toggle_auto)
-        auto_intro = QtWidgets.QLabel(
-            'Offline production uses the teach files selected on the Teach page. '
-            'Load Auto deploys those files, opens Item Detect and Tray Detect, '
-            'then prepares the robot. Start the cycle from Operate.')
-        auto_intro.setWordWrap(True)
-        production.addWidget(auto_intro)
-        self.production_recipe = QtWidgets.QLabel()
-        self.production_recipe.setTextFormat(QtCore.Qt.PlainText)
-        self.production_recipe.setWordWrap(True)
-        production.addWidget(self.production_recipe)
-        self.load_auto.setMinimumHeight(48)
-        production.addWidget(self.load_auto)
+        preparation = QtWidgets.QHBoxLayout()
+        for button in (self.configure, self.load_auto):
+            button.setMinimumHeight(40)
+            preparation.addWidget(button, 1)
+        teach.addLayout(preparation, 3, 0, 1, 3)
         self.load_auto_status = QtWidgets.QLabel()
         self.load_auto_status.setTextFormat(QtCore.Qt.PlainText)
         self.load_auto_status.setWordWrap(True)
         self.load_auto_status.setStyleSheet('font-size:12px')
         self.load_auto_status.setMinimumHeight(32)
-        production.addWidget(self.load_auto_status)
-        startup_note = QtWidgets.QLabel(
-            'The standard HMI launch starts bringup, robot TF and both supervised cameras. '
-            'Select the files on Teach, enable Load Auto here, then press Auto Run on Operate. '
-            'Load Auto prepares/enables the robot; opening the HMI does not. '
+        teach.addWidget(self.load_auto_status, 4, 0, 1, 3)
+        workflow_help = QtWidgets.QLabel(
+            'Offline: close teaching windows, select files, then Load Auto → READY → '
+            'Offline Auto Run. Load Auto starts headless detectors and prepares the robot; '
+            'no separate Load Teach step.\n'
+            'Manual/Test: load matching profiles and arm Item/Tray Teach in Manual — tools. Return to '
+            'Auto — production, Load Teach Configuration, then Manual/Test Run. Keep Load Auto OFF.\n'
+            'Both runs use Auto — production and the Quantity/placement settings on Operate. '
             'No server connection is needed.')
-        startup_note.setWordWrap(True)
-        production.addWidget(startup_note)
-        close_note = QtWidgets.QLabel(
-            'Closing this HMI closes its detectors and tools. The standard station launch '
-            'also stops its controller, cameras and bringup. '
-            'Applications opened separately are left running.')
-        close_note.setWordWrap(True)
-        production.addWidget(close_note)
+        workflow_help.setWordWrap(True)
+        setup.addWidget(workflow_help)
         lifecycle = QtWidgets.QHBoxLayout()
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
         self.pause = QtWidgets.QToolButton()
@@ -350,7 +337,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             "Move to Tray Detect if needed, observe tray, then place and retract; item optional")
         self.debug_images = QtWidgets.QCheckBox("Save item/tray debug RGB/depth")
         self.debug_images.setToolTip(
-            "Save detection images for Pick Item, Place Item and Auto Run. "
+            "Save detection images for Pick Item, Place Item and both local runs. "
             "Item images: debug/pick_img; tray images: debug/tray_img. "
             "Keep the newest 500 captures per detector; delete older RGB/depth sets together.")
         self.preview_toggle.toggled.connect(self._toggle_preview)
@@ -389,10 +376,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         operations.addLayout(target_row, 2, 0, 1, 2)
         operations.addWidget(self.debug_images, 3, 1)
         auto_row = QtWidgets.QHBoxLayout()
-        self.auto_run_button = QtWidgets.QPushButton("Manual Run")
+        self.auto_run_button = QtWidgets.QPushButton("Manual/Test Run")
         self.auto_run_button.setMinimumHeight(48)
         self.auto_run_button.clicked.connect(lambda: self._action("auto_run", detector_mode=TEACH))
-        self.headless_run_button = QtWidgets.QPushButton("Auto Run")
+        self.headless_run_button = QtWidgets.QPushButton("Offline Auto Run")
         self.headless_run_button.setMinimumHeight(48)
         self.headless_run_button.clicked.connect(
             lambda: self._action("auto_run", detector_mode=HEADLESS))
@@ -508,7 +495,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         return panel, column
 
     def _build_tool_pages(self):
-        for title, kinds in (('Teach', {'teach'}),
+        for title, kinds in (('Setup / Teach', {'teach'}),
                              ('Tools / Debug',
                               {'viewer', 'camera', 'calibration', 'maintenance', 'communication'})):
             grid = QtWidgets.QGridLayout()
@@ -610,7 +597,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             button.setEnabled(not selected and not reason)
             button.setToolTip(reason or (
                 'Stop owned production processes; keep cameras/bringup' if target == 'MANUAL'
-                else 'Start production controller; Load Auto and Auto Run remain explicit'))
+                else 'Start production controller; Load Auto and both local runs remain explicit'))
         self.mode_buttons.setExclusive(True)
         self.mode_detail.setText(self.modes.message if self.modes.managed else
                                  'External client; use the normal launch for mode switching')
@@ -665,14 +652,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             f'RViz: {"Open" if "dobot_rviz" in names else "Closed (optional)"}')
         self.station_services.setToolTip(
             'Observed services only; seeing a node does not prove input readiness. '
-            'Load Auto verifies both detectors and robot preparation before enabling Auto Run.')
-        self.station_mode.setText('Offline · ' + (
-            'Manual tools' if self.modes.state == 'MANUAL' else
-            'Headless detectors active' if auto_state == 'RUNNING' else 'Local operator control'))
-        self.production_recipe.setText('Selected teach files\n' + '\n'.join(
-            f'{label}: {os.path.basename(field.text().strip()) or "Select on Teach page"}'
-            for label, field in (('Item', self.item_path), ('Bin', self.bin_path),
-                                 ('Tray', self.tray_path))))
+            'Load Auto verifies both headless detectors and robot preparation '
+            'before enabling Offline Auto Run.')
 
     def _refresh_status(self, state):
         label, detail = presentation(state, self.preview_mode)
@@ -1335,8 +1316,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 tip = "Show planned TF targets; no robot motion or gripper output"
             button.setToolTip(tip)
         for button, mode, description in (
-                (self.auto_run_button, TEACH, 'Run using armed Item Teach and Tray Teach'),
-                (self.headless_run_button, HEADLESS, 'Run using the Load Auto headless detectors')):
+                (self.auto_run_button, TEACH,
+                 'Debug/test the requested quantity using armed Item Teach and Tray Teach windows'),
+                (self.headless_run_button, HEADLESS,
+                 'Run offline using the Load Auto headless detectors; no server needed')):
             reason = reasons['auto_run'] or self._run_reason(mode)
             button.setEnabled(not reason)
             button.setToolTip(reason or description)
@@ -1355,7 +1338,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             'OFF stops the owned detectors. ON replaces runtime_teach with the selected '
             'teach files and models, then starts Item Detect and Tray Detect. '
             'It also loads the selected teach configuration and prepares/enables the robot. '
-            'Auto Run remains a separate click.'))
+            'Offline Auto Run remains a separate click.'))
         self.load_auto_status.setText(auto_message if len(auto_message) <= 180 else
                                       'Load Auto failed; see command log for details')
         self.load_auto_status.setToolTip(auto_message)
@@ -1367,7 +1350,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         for field in (self.place_x, self.place_y, self.place_rotation, self.auto_quantity):
             field.setEnabled(editable)
         if state is None:
-            self.auto_progress.setText("Auto Run status unavailable")
+            self.auto_progress.setText("Run status unavailable")
         elif state.auto_run_requested:
             timing = "Elapsed" if state.auto_run_active else "Total"
             self.auto_progress.setText(
@@ -1390,6 +1373,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                          ("pick", "place", "auto_run")):
                 if reasons[name] and reasons[name] != "Unavailable in the current state":
                     label = (self.managed_actions[name].text() if name in self.managed_actions
+                             else "Manual/Test Run / Offline Auto Run" if name == "auto_run"
                              else buttons[name].text())
                     visible_reasons.append(f"{label}: {reasons[name]}")
         self.availability_details.setText("\n".join(visible_reasons))

@@ -20,7 +20,7 @@ from test_status_ui import status, window  # noqa: F401
 def test_hmi_pages_keep_stop_visible_and_do_not_start_tools(window):  # noqa: F811
     window.show()
     assert [window.pages.tabText(i) for i in range(window.pages.count())] == [
-        'Operate', 'Teach', 'Tools / Debug', 'Auto']
+        'Operate', 'Setup / Teach', 'Tools / Debug']
     for index in range(window.pages.count()):
         window.pages.setCurrentIndex(index)
         QtWidgets.QApplication.processEvents()

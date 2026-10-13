@@ -81,7 +81,7 @@ def test_gui_shows_live_or_frozen_controller_seconds(window, active, state):  # 
     assert window.auto_progress.text().endswith("65.4 s")  # No local drifting clock.
     window.node.status = None
     window._refresh()
-    assert window.auto_progress.text() == "Auto Run status unavailable"
+    assert window.auto_progress.text() == "Run status unavailable"
     window.node.status = status()
     window._refresh()
     assert window.auto_progress.text() == "0 completed · Elapsed: 0.0 s"

@@ -1,5 +1,20 @@
 # Robot Controller — Finite State Machine
 
+Local HMI cleanup review: **2026-10-13**, baseline **`072b5a5`** plus rule **283**.
+The HMI buttons are **Manual/Test Run** (armed teaching windows for debug/testing)
+and **Offline Auto Run** (Load Auto headless detector pair). **Setup / Teach** combines
+file selection, Load Teach Configuration, Load Auto and teaching windows. Remove
+the separate Auto page, duplicate recipe list, extra mode summary and repeated
+help; retain Operate and Tools / Debug. Both use the existing native AutoRun action,
+shared Quantity/placement/debug fields and strict detector-source gates. Both need
+Auto — production; Manual — tools releases the production controller. Offline
+setup is select files → Load Auto → READY → Offline Auto Run; Load Auto includes
+robot preparation. Manual testing opens/loads/arms teaching windows in Manual,
+returns to Auto, loads matching controller files and leaves Load Auto OFF. Help,
+tooltips and shared run-blocker labels explain these paths. No lifecycle, process
+ownership, preparation, motion, Stop/intervention, green readiness or online
+command behavior changes; server-controlled Auto Run remains a later phase.
+
 Remote settings review: **2026-10-13**, baseline **`44372cd`** plus rule **282**.
 Tools / Debug → Remote Setup opens a separate settings/connection-test window in
 Manual or Auto, including during runs. Opening it does not connect. Explicit
@@ -905,12 +920,11 @@ PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
 
 Robot/gripper status, observed station services and the lifecycle row remain
-outside the four scrollable pages. **Operate** contains motion/Preview, shared
-placement/Quantity, Manual Run/Auto Run, debug capture and speed/CP. **Teach**
-contains selected artifacts, Load/Reload, Clear Repick History and Item/Tray/Bin/
+outside the three scrollable pages. **Operate** contains motion/Preview, shared
+placement/Quantity, Manual/Test Run and Offline Auto Run, debug capture and speed/CP. **Setup / Teach**
+contains one artifact selection, Load/Reload, Load Auto/readiness, Clear Repick History and Item/Tray/Bin/
 Platform Teach launchers. **Tools / Debug** opens passive RViz, camera setup,
-calibration, Remote Setup and eligible direct maintenance applications. **Auto**
-shows selected sources and Load Auto for offline production. The normal launch
+calibration, Remote Setup and eligible direct maintenance applications. The normal launch
 starts bringup/robot TF and both supervised cameras; teaching/debug windows stay
 explicit. Station-service presence is observational, separate from readiness.
 Tool launches never bypass their own model trust, arming or maintenance guards.
@@ -934,7 +948,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Manual Run / Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
+| READY | Home; Pick Item; Place Item; Manual/Test Run / Offline Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; all manual controls and input edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
@@ -980,14 +994,14 @@ source, ownership, I/O and feedback validation or guarantee a detection result.
 | Home | Preview: OFF / ON |
 | Pick Item | Place Item |
 
-The counted-run row has **Manual Run**, **Auto Run**, one Quantity field and shared
-progress. Manual Run requires armed Item Teach and Tray Teach. Auto Run also requires
+The counted-run row has **Manual/Test Run**, **Offline Auto Run**, one Quantity field and shared
+progress. Manual/Test Run requires armed Item Teach and Tray Teach. Offline Auto Run also requires
 Load Auto RUNNING and exactly the owned headless providers. Both send the same native
 action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
-Load Auto is on **Auto** and is green when its supervisor is
-RUNNING after confirmed preparation. Auto Run is green only when its normal
+Load Auto is beside Load Teach Configuration on **Setup / Teach** and is green when its supervisor is
+RUNNING after confirmed preparation. Offline Auto Run is green only when its normal
 admission gates enable the button. These colors change no guards.
 ON validates the browsed production
 sources and saved calibrations without executing models, then copies three YAMLs
@@ -1026,14 +1040,14 @@ flowchart TD
     ReleaseCore --> Tools["Open teaching / debug tools; one direct command owner; use tool Stop"]
     Tools -->|Close maintenance; select Auto| RestoreCore["Start owned core; fresh status; no automatic preparation"]
     RestoreCore --> TeachPage
-    TeachPage["Teach page: select files"] -->|Explicit Load Teach; teaching providers armed| Manual
-    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Auto: explicit Load Auto ON; idle, unheld; no competing providers"]
+    TeachPage["Setup / Teach: select files once"] -->|Explicit Load Teach; teaching providers armed| Manual
+    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Same setup page: explicit Load Auto ON; idle, unheld; no competing providers"]
     Deploy --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
     Detect --> Prepare["PREPARING: Configure selected teach files; enable and initialize robot"]
     Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
-    Loaded --> Auto["Auto Run: owned headless pair ready"]
-    Manual["Manual Run: both teaching GUIs armed"] --> Run["Shared native counted run; same quantity and placement; bind detector mode"]
+    Loaded --> Auto["Offline Auto Run: owned headless pair ready"]
+    Manual["Manual/Test Run: both teaching GUIs armed"] --> Run["Shared native counted run; same quantity and placement; bind detector mode"]
     Auto --> Run
     Run -->|HMI exit with owned pose providers| HmiExit["Independent controller Stop; close owned tools and detectors"]
     HmiExit --> StationExit["Controller shutdown finishes before owned cameras and bringup stop"]

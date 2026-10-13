@@ -2299,6 +2299,20 @@ blocking Load Auto. Keep external-window and owned-close rules. No autostart or
 remote authority. Tests use fake transports; leave live station/.env untouched.
 Update FSM/export HMI descriptions and document dependency/offline installation.
 
+Rule 283 clarifies local HMI runs and removes duplicate UI. Manual/Test Run uses
+armed Item Teach and Tray Teach windows; Offline Auto Run uses the Load Auto owned
+headless detector pair. Combine teach-file selection and Load Auto on Setup / Teach;
+retain Operate and Tools / Debug. Remove the separate Auto page, duplicate recipe
+list, extra mode summary and repeated help. Both retain the native AutoRun action, strict per-run source
+selection, shared Quantity/placement/debug inputs, preparation, ownership, Stop,
+pause/intervention and green readiness behavior. Explain that both runs require
+Auto — production; Manual — tools releases the controller for teaching/maintenance.
+Offline instructions select files then Load Auto (including robot preparation),
+without a separate Load Teach step. Manual testing opens/loads/arms teaching
+windows, returns to Auto, loads matching controller files and leaves Load Auto OFF.
+Keep online Auto Run/server command handling deferred. No new modes, launch,
+arming, command or automatic cycle is added. Update diary/FSM/exports together.
+
 1. This project is offline-first. `src/DOBOT_6Axis_ROS2_V4` and `src/OrbbecSDK_ROS2` are vendored source snapshots, not Git submodules. Do not recreate `.git` markers, `.gitmodules`, or submodule entries.
 2. Do not silently edit vendored upstream code. Put integration and application code in separate packages and record any intentional vendor patch in the diary with its reason and verification.
 3. The Dobot vendor profile is physical-CR10-only and excludes all Gazebo/robot-simulation support, MoveIt, vendor demonstration nodes, and servo control. Do not reintroduce Gazebo packages, worlds, launch/configuration files, URDF/Xacro simulation tags, simulation dependencies, any MoveIt package/configuration/plugin/dependency, `dobot_demo`, the `servo_action` package, or the Dobot `ServoJ`/`ServoP` interfaces. Do not reintroduce other robot-model URDF/XACRO files or mesh directories unless the user explicitly changes the scope and the diary is updated in the same change.

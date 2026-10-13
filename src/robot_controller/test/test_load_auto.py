@@ -150,8 +150,8 @@ def test_run_buttons_share_quantity_target_and_debug_but_pin_source(window, mode
     window.place_rotation.setValue(15)
     window.debug_images.setChecked(True)
     window._refresh()
-    assert window.auto_run_button.text() == 'Manual Run'
-    assert window.headless_run_button.text() == 'Auto Run'
+    assert window.auto_run_button.text() == 'Manual/Test Run'
+    assert window.headless_run_button.text() == 'Offline Auto Run'
     assert window.auto_run_button.isEnabled() is (mode == TEACH)
     assert window.headless_run_button.isEnabled() is (mode == HEADLESS)
     (window.auto_run_button if mode == TEACH else window.headless_run_button).click()

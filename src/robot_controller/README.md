@@ -22,12 +22,35 @@ Ready-to-view versions: [visual HTML](../../docs/ROBOT_CONTROLLER_FSM.html) and
 
 `robot_controller` is the sole production application-level authority for the
 physical CR10. The GUI provides Home, Pick Item and Place Item with one Preview toggle,
-plus Manual Run and Auto Run with one quantity field, completed count and elapsed seconds.
+plus Manual/Test Run and Offline Auto Run with one quantity field, completed count and elapsed seconds.
 The normal HMI launch owns Dobot bringup, robot TF and both supervised cameras.
 Explicit Load Auto owns the two headless detectors. The HMI can open teaching/setup
 windows and the passive RViz viewer.
 
 ## Station HMI
+
+Rule 283 consolidates file selection and both preparation controls on **Setup /
+Teach**, removing the separate Auto page, repeated recipe list, extra mode summary
+and repeated workflow paragraphs. Process ownership and robot behavior are unchanged.
+**Offline Auto Run** uses headless Item Detect and
+Tray Detect from **Load Auto**. **Manual/Test Run** uses explicitly armed Item
+Teach and Tray Teach windows for debugging/testing. Both send the same native
+`AutoRun` action with different enforced detector modes and shared Quantity,
+placement and debug-capture fields. Generic Auto Run references below describe
+that shared controller action. Online Auto Run with server commands is deferred.
+
+For offline production: select the Item/Bin/Tray files on Setup / Teach, use
+**Auto — production → Load Auto**, wait for robot READY and both
+headless detectors, then set Quantity/placement and press **Offline Auto Run** on
+Operate. Load Auto performs controller preparation; a separate Load Teach step
+is unnecessary. Close teaching windows before loading headless detection.
+
+For manual testing: use **Manual — tools** to open Item Teach/Tray Teach, load
+matching profiles and arm both explicitly. Keep those windows open when returning
+to **Auto — production**, load matching controller teach files, then press
+**Manual/Test Run** on Operate. Keep Load Auto OFF. The **Manual — tools** station
+mode releases the production controller, so counted runs require returning to
+**Auto — production**. Both local workflows remain independent of a server.
 
 The window is **Pick & Place — Station HMI**. Robot/gripper status, station
 service observations and Recover/Pause/STOP remain visible on every page.
@@ -35,7 +58,7 @@ Pages scroll on smaller displays and retain the same action and input guards.
 
 The persistent **Manual — tools / Auto — production** selector changes command
 ownership. Normal launch starts Auto with an unconfigured controller. This is
-separate from the Manual Run / Auto Run choice of perception provider.
+separate from the Manual/Test Run / Offline Auto Run choice of perception provider.
 
 | Station mode | Behavior |
 | --- | --- |
@@ -64,16 +87,15 @@ and retry. Bringup/cameras remain running. Mode changes/failures are logged.
 Returning to Auto starts a new unconfigured controller; old candidate context and
 in-memory repick history do not survive that process restart. Selected file fields
 remain available. No automatic Configure, detector restart, enable or cycle occurs.
-Read-only teaching windows may remain open when returning to Auto for **Manual
+Read-only teaching windows may remain open when returning to Auto for **Manual/Test
 Run**: arm them explicitly, return to Auto, load the selected controller files,
-then use Manual Run. Load Auto still requires owned teaching windows closed.
+then use Manual/Test Run. Load Auto still requires owned teaching windows closed.
 
 | Page | Controls |
 | --- | --- |
-| Operate | Home/Pick/Place, Preview, placement X/Y/Rotation, shared Quantity, Manual Run/Auto Run, debug captures and speed/CP |
-| Teach | Item/Bin/Tray file selection, Load/Reload, Clear Repick History, Item Teach, Tray Teach, Bin Teach and Platform Teach windows |
+| Operate | Home/Pick/Place, Preview, placement X/Y/Rotation, shared Quantity, Manual/Test Run and Offline Auto Run, debug captures and speed/CP |
+| Setup / Teach | One Item/Bin/Tray file selection, Load/Reload and Load Auto deploy/start/prepare controls, readiness, Clear Repick History and teaching windows |
 | Tools / Debug | Passive RViz, Remote Setup, camera setup, camera calibration, Motion Debug and Gripper Diagnostics |
-| Auto | Selected teach summary, Load Auto deploy/start/prepare toggle and readiness; local offline production |
 
 The standard launch starts the offline dependencies described below. Opening the
 HMI or a page never opens a teaching/debug tool, deploys a recipe, arms perception
@@ -83,8 +105,9 @@ owned window/session. A tool discovered on the ROS graph is labelled **External*
 and cannot be closed by this HMI. Recheck graph/controller guards immediately
 before spawning; a per-tool lock prevents competing HMI launches. Report launch
 failures in the card and bounded command log; there is no automatic restart.
-Opening non-RViz tools in the managed HMI requires Manual mode; passive RViz can
-open in either mode. Each maintenance application's existing guards still apply.
+Opening teaching/setup/maintenance tools in the managed HMI requires Manual mode;
+passive RViz and Remote Setup can open in either mode. Each maintenance
+application's existing guards still apply.
 
 Teaching/setup changes are blocked during an operation, held item, queued motion,
 pending HMI command or active Load Auto. RViz remains available during a run.
@@ -117,8 +140,8 @@ and bringup. Linux parent-death signals
 also terminate owned tool launches if the HMI disappears. Camera setup retains
 its separate operator-terminal diagnostic ownership rules.
 
-This phase has **no RabbitMQ connection or remote command listener**. Auto Run
-continues to be explicitly started locally. Remote recipe/job commands and
+Production has **no remote command listener**. Remote Setup can explicitly test
+connections; both runs are explicitly started locally. Remote recipe/job commands and
 local/remote command ownership are subsequent work; closing the HMI is intended
 to end its owned production processes in that future mode too.
 
@@ -128,23 +151,23 @@ build while the existing station processes remain running.
 
 ## Load Auto and run buttons
 
-The old **Auto Run** button is now **Manual Run** and uses armed Item Teach and
-Tray Teach. The new **Auto Run** uses the headless pair started by **Load Auto**.
+**Manual/Test Run** uses armed Item Teach and Tray Teach.
+**Offline Auto Run** uses the headless pair started by **Load Auto**.
 Load Auto also loads the selected teach configuration and prepares/enables the
-robot. It turns green after preparation and both detectors are ready; Auto Run
+robot. It turns green after preparation and both detectors are ready; Offline Auto Run
 is green when enabled. No separate Load Teach Configuration click is required.
 Both use the same Quantity, X/Y, Rotation and debug-image checkbox and the same
 native counted-cycle engine. They preserve count, timing, motion, placement,
 retry/intervention waits and direct STOP behavior. The existing AUTO RUN status
 and `/robot_controller/auto_run` endpoint describe this shared engine for both buttons.
 
-To use Auto Run:
+To use Offline Auto Run:
 
 1. Finish any active operation; leave the controller idle, unheld and out of
-   Preview. Disarm Item Teach and Tray Teach and stop independently launched
+   Preview. Close Item Teach and Tray Teach and stop independently launched
    headless detectors. Cameras and canonical bringup must already be available.
-2. On **Teach**, browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
-3. Select **Auto — production**, then on the **Auto** page turn **Load Auto ON**.
+2. On **Setup / Teach**, browse the desired saved Item Teach, Bin Teach and Tray Teach YAML files.
+3. Select **Auto — production**, then turn **Load Auto ON** on the same setup page.
    It validates the files, both same-stem model
    hashes and saved calibration choices, then stages and verifies ordinary copies.
    It replaces the entire root `runtime_teach/` directory contents with exactly
@@ -155,7 +178,7 @@ To use Auto Run:
    selected Item/Bin/Tray paths, then requires its successful response and matching
    fresh, enabled, idle READY status. Models/profiles load automatically; detection
    service requests still acquire fresh observations.
-5. On **Operate**, set Quantity and placement inputs and click **Auto Run** when READY.
+5. On **Operate**, set Quantity and placement inputs and click **Offline Auto Run** when READY.
 
 Load Auto starts OFF on every GUI launch; there is no saved toggle, automatic
 restart or directory watcher. Files remain deployed after OFF. To change files,
@@ -858,8 +881,8 @@ unchanged merely by launching or closing the station.
 
 Opening the HMI leaves Load Auto OFF and saved selections as prefill. Select the
 Item/Bin/Tray files, explicitly enable Load Auto to deploy/start both headless
-detectors and prepare the robot, then press Auto Run. No server connection is
-needed; RabbitMQ and online command handling remain deferred.
+detectors and prepare the robot, then press Offline Auto Run. No server connection is
+needed; online command handling remains deferred.
 
 Headless mode starts only the hardware controller and loads exactly one Item
 Teach YAML/paired `.pt` plus one Bin Teach YAML from the flat root
@@ -1034,7 +1057,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Manual Run / Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
+| READY | Home; Pick Item; Place Item; Manual/Test Run / Offline Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; manual controls and edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
@@ -1437,7 +1460,7 @@ do not drive these LEDs. DI12 Not detected does not prove that fingers are close
 The held-item decision uses its 500 ms loss debounce independently of the raw
 DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
-Item/Bin/Tray Teach fields, Browse buttons and Load/Reload occupy the **Teach**
+Item/Bin/Tray Teach fields, Browse buttons, Load/Reload and Load Auto occupy the **Setup / Teach**
 page. Full paths remain editable and available in field tooltips;
 prefill, explicit load, reload gates and validated persistence are unchanged.
 Lifecycle controls and the command-log toggle stay outside the pages; motion

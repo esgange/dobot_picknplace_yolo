@@ -38,9 +38,24 @@ The root build contains 18 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
-The controller window is now a **Station HMI** with four pages: **Operate**,
-**Teach**, **Tools / Debug**, and **Auto**. Robot/gripper status and
-Recover/Pause/STOP remain visible throughout. Teach opens the non-headless Item,
+The two local run buttons have explicit detector sources:
+
+| Run button | Pose source | Preparation |
+| --- | --- | --- |
+| Offline Auto Run | Headless Item Detect and Tray Detect | Select Item/Bin/Tray files, turn Load Auto ON and wait for READY; set Quantity/placement and run |
+| Manual/Test Run | Armed Item Teach and Tray Teach windows | Open/load/arm the windows in Manual — tools, return to Auto — production, load matching controller files and run; Load Auto stays OFF |
+
+Both execute the same counted cycle with shared Quantity, X/Y, Rotation and debug
+capture settings. Both need **Auto — production**; **Manual — tools** releases the
+controller for teaching and direct maintenance. Offline production is the current
+priority; online server-controlled Auto Run is deferred. Rule 283 consolidates
+setup controls and removes duplicate recipe/status/help displays while preserving
+process ownership and motion behavior.
+
+The controller window is a **Station HMI** with three pages: **Operate**,
+**Setup / Teach**, and **Tools / Debug**. Robot/gripper status and
+Recover/Pause/STOP remain visible throughout. Setup / Teach contains file selection,
+Load Teach Configuration and Load Auto together, and opens the non-headless Item,
 Tray, Bin and Platform teaching windows; Tools opens RViz, camera setup,
 calibration and eligible direct maintenance tools. Each explicit launch is owned
 by the HMI; closing the HMI closes those tools and its headless detector pair.
@@ -53,7 +68,7 @@ no remote command listener is implemented yet.** See [Station HMI](src/robot_con
 The normal launch now starts the **offline station**: canonical Dobot bringup,
 robot TF, both supervised cameras, controller, Preview and HMI. No server or RViz
 is required. Opening it does not load a recipe, enable the robot or start motion.
-Select files on Teach, press **Load Auto** on Auto, then **Auto Run** on Operate.
+Select files and press **Load Auto** on Setup / Teach, then **Offline Auto Run** on Operate.
 Load Auto starts the headless detectors and prepares the robot as before.
 
 The mode selector stays visible on every page. Manual requires an idle, unheld
@@ -79,8 +94,8 @@ Intentional Manual mode keeps dependencies/HMI alive; an unexpected production
 core exit leaves the HMI in mode attention with production disabled for explicit retry.
 The camera supervisor retains its existing bounded three-attempt policy.
 
-**Manual Run / Auto Run:** both use the same Quantity, X/Y, Rotation and debug
-settings. Manual Run uses armed Item Teach and Tray Teach. Auto Run requires
+**Manual/Test Run / Offline Auto Run:** both use the same Quantity, X/Y, Rotation and debug
+settings. Manual/Test Run uses armed Item Teach and Tray Teach. Offline Auto Run requires
 **Load Auto: ON** with both owned headless detectors ready. Load Auto validates
 the three browsed teach YAML files and paired models, replaces `runtime_teach/`
 with those five files, then starts Item Detect and Tray Detect. Once both are
@@ -88,7 +103,7 @@ ready, it also loads the selected teach configuration and prepares/enables the
 robot through the existing controller Configure service. Disarm teaching
 GUIs and stop existing headless detectors first. OFF or GUI exit stops only its
 owned detectors; canceling an issued preparation also sends controller Stop.
-Wait for Load Auto ON and robot READY, then explicitly click **Auto Run**.
+Wait for Load Auto ON and robot READY, then explicitly click **Offline Auto Run**.
 **Load Teach Configuration** remains available for manual use/reload.
 Selections stay locked until Load Auto is OFF.
 Rebuild `robot_controller_interfaces` and `robot_controller`, then relaunch their
@@ -170,7 +185,8 @@ The motion controls form one four-button grid:
 | Home | Preview: OFF / ON |
 | Pick Item | Place Item |
 
-**Auto Run**, below this grid, takes a quantity of 1–10000 and uses the displayed
+**Manual/Test Run** and **Offline Auto Run**, below this grid, share a quantity
+of 1–10000 and use the displayed
 placement X/Y/rotation for every cycle. Start from unheld READY with both detectors
 available. Each cycle confirms Tray Detect and acquires fresh tray pose/depth.
 If another item is needed, immediately start a fresh bin pose request while
@@ -415,7 +431,7 @@ restart. Load/Reload is disabled while Preview is ON. Headless `runtime_teach/` 
 immutable until the process is restarted.
 
 The GUI top row shows **Robot status**, **Gripper status** and observed station
-services; Item/Bin/Tray Teach loading is on Teach. Robot status uses NOT READY,
+services; Item/Bin/Tray Teach loading is on Setup / Teach. Robot status uses NOT READY,
 READY, BUSY, HOLDING ITEM, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED and OFFLINE, with activity
 and failure reasons always visible. Emergency stop has a prominent red override.
 The lifecycle row has Recover, a Pause/Continue/Return Item control and a **permanent
