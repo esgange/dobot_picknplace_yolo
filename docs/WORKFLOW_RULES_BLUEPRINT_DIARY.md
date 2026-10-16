@@ -12044,6 +12044,39 @@ Never use a floating “latest” version in an issue, script, or deployment not
   edit. **Do not push**, per the user's standing override. A canonical rebuild is
   still required before the normal installed applications can read these files.
 
+### 2026-10-16 — Repair canonical calibration installation
+
+- User reports `ModuleNotFoundError: camera_calibration_gui.calibration_format`
+  when launching Camera Calibration. Confirm the normal symlink installation
+  already reflects the edited `calibration_core.py` but lacks the newly added
+  module. Previous isolated builds did not refresh that canonical install.
+  No calibration conversion or source-logic change is required for this error.
+- Recheck processes and mapped runtimes. Dobot bringup and robot-state/RViz are
+  running; the two affected calibration/perception packages and their private
+  native runtimes are idle/unmapped. Rebuild only `camera_calibration` and
+  `item_perception_yolo` in the canonical workspace, retaining `--symlink-install`
+  and forcing CMake reconfiguration. Both packages complete successfully.
+  Do not build/reinstall the running driver or its libraries.
+- Verify the new module exists in the canonical install and normal imports work
+  without source-path overrides. Load all three actual converted calibrations
+  through the installed selection code. Verify private OpenCV/YOLO runtimes
+  contain ordinary files, and the live driver executable, `.env` and calibration
+  hashes match the pre-build snapshot.
+- Smoke-test the exact `ros2 launch camera_calibration camera_calibration.launch.py`
+  entry point with Qt offscreen in isolated localhost ROS domain 219. Confirm
+  node discovery, healthy OpenCV worker startup, the unapplied idle GUI and clean
+  shutdown of only the test-owned launch. An initial test-domain choice of 239
+  was rejected by Fast DDS's port range; rerun with valid domain 219 succeeds.
+  The station's ROS domain and live processes remain unchanged. No Apply, capture,
+  replay, arming or hardware command is issued; this is software startup evidence.
+- Logs: `logs/calibration_canonical_build.txt`,
+  `logs/calibration_canonical_launch_smoke.txt`, and
+  `logs/calibration_canonical_install_before.json`. The original domain-choice
+  failure remains in `logs/calibration_canonical_launch_domain239.txt`.
+- Documentation-only local commit records the completed installation repair.
+  Preserve operator artifacts and unrelated RViz changes. No push, per the user's
+  standing override. FSM behavior/source/exports are unchanged.
+
 ### Future entry template
 
 ```text
