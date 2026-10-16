@@ -733,9 +733,12 @@ def load_platform_calibration(
         }
     ):
         raise ValueError("Platform calibration camera-calibration fields are invalid")
+    # This identifies the original teaching file, not the active camera format.
+    # Explicitly converted platform evidence must retain its original hash/schema.
+    # Active camera files still pass the schema-8-only reader above.
     if (type(camera_calibration["schema_version"]) is not int
-            or camera_calibration["schema_version"] != CALIBRATION_ARTIFACT_SCHEMA_VERSION):
-        raise ValueError("Platform calibration camera schema must be exactly 8")
+            or camera_calibration["schema_version"] not in (7, CALIBRATION_ARTIFACT_SCHEMA_VERSION)):
+        raise ValueError("Platform teaching-camera provenance schema must be 7 or 8")
     calibration_mode = camera_calibration["calibration_mode"]
     expected_prefixes = {
         CAMERA_TO_HAND: "camera_to_hand_calibration_",

@@ -48,6 +48,13 @@ mounting, frame and reference checks remain, as do reconstruction checks for the
 camera chain and final platform transform. The historical teaching camera need
 not exist or equal the independently selected active camera.
 
+The historical teaching-camera schema may be 7 or 8. It describes the original
+file identified by the recorded hash, so an explicit offline conversion must
+preserve it. This is provenance validation, not permission to load a schema-7
+active camera. Rule 290 records the user's one-time conversion of this station's
+existing files, with byte-exact backups and verified geometry/sample preservation;
+runtime readers still accept only the current format.
+
 Portable Bin Teach files retain their existing schema and historical evidence.
 Their source identifiers can describe older teaching artifacts without loading
 those artifacts. All **active** camera/platform selection paths use the strict

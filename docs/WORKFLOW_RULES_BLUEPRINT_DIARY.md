@@ -11999,6 +11999,51 @@ Never use a floating “latest” version in an issue, script, or deployment not
   local commit under rule 8, but perform no remote push. Deployment and rebuild
   of the canonical workspace remain operator-controlled.
 
+### 2026-10-16 — Rule 290: explicitly convert the station's existing calibrations
+
+- User explicitly requests conversion of the existing PicknPlace calibration
+  files after rule 289. This authorizes this one-time artifact update, superseding
+  the previous request to leave them untouched for this operation only. Keep the
+  runtime current-format-only: no installed migration utility or legacy reader.
+- Validate original camera schemas 7 and platform schema 4 against their archived
+  strict readers at `ed2c03dcf38b007462fc240bd4f319337b84a3b8`, then prepare copies
+  in the current format. Verify all copies with the current strict readers before
+  replacing the three files, using checked original hashes and atomic per-file
+  replacement with rollback on failure. Preserve file permissions and filenames.
+- Convert the selected `camera_on_hand_calibration_20260909T084200_680387Z.yaml`
+  (18 samples), `camera_to_hand_calibration_20260929T113637_587047Z.yaml`
+  (24 samples), and `platform_calibration_20260910T115555_084982Z_192.168.20.204.yaml`
+  to schemas 8/8/5. Preserve every sample ID, joint observation, diagnostic,
+  setting, source identity/hash, frame and timestamp. Verify all **91 transforms**
+  within 1e-12 absolute matrix tolerance; maximum actual difference is
+  **1.1511624986582092e-14**. No physical pose is adjusted or re-solved.
+- The platform records a different, no-longer-present teaching camera. Correct
+  the new platform reader to accept historical camera schema 7 or 8 in that
+  provenance record, retaining its original filename/hash/schema exactly. Never
+  stamp schema 8 onto an unconverted historical source. Active camera readers
+  remain schema-8-only and active platform readers schema-5-only. The original
+  transform chain is checked in full after conversion.
+- Byte-exact backups, staged copies and a hash/equivalence manifest are in ignored
+  `logs/calibration_migration/20261016T140903_629108Z/`. The explicit one-time
+  scripts and preparation/application logs also remain ignored, outside runtime
+  packages. Calibration files remain operator artifacts and are not committed.
+- **78 focused tests pass**, including both camera modes with both historical
+  provenance versions, strict old-active-schema rejection, source immutability,
+  geometry/sample checks and complete selection validation. All three actual
+  converted files load successfully through explicit Item Teach selections,
+  automatic station/robot-camera catalogs and active Tray camera selection.
+  Existing portable Bin Teach files also load and project against the converted
+  platform. Root `.env` bytes and all teach/model/runtime files are unchanged.
+- Recheck processes (only robot-state/RViz launch observed); rebuild the affected
+  item package into `/tmp/picknplace-readable-calibration-build`, retaining the
+  previously built current camera reader. No canonical install, live restart,
+  robot command, arming or physical test. Software validation only. Runtime state
+  diagrams are unchanged, so no FSM-source/export regeneration is needed.
+- Update AGENTS and the file-format document. Commit only the scoped reader fix,
+  regressions and documentation locally under rule 8. Preserve the unrelated RViz
+  edit. **Do not push**, per the user's standing override. A canonical rebuild is
+  still required before the normal installed applications can read these files.
+
 ### Future entry template
 
 ```text

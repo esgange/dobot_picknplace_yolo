@@ -194,7 +194,8 @@ def test_ui_state_is_prefill_only_and_strict(tmp_path):
 
 
 @pytest.mark.parametrize("mode", [CAMERA_TO_HAND, CAMERA_ON_HAND])
-def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
+@pytest.mark.parametrize("source_schema", [7, 8])
+def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode, source_schema):
     applied = _applied(tmp_path, mode)
     capture = _capture(mode)
     created_at = datetime(2026, 9, 9, 12, 34, 56, 123456, tzinfo=timezone.utc)
@@ -233,6 +234,10 @@ def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
     assert "rotation_xyzw" not in artifact_text
     assert "translation_m" not in artifact_text
     assert artifact_text.count("format: xyz_rxryrz_m_deg_v1") == (6 if mode == CAMERA_ON_HAND else 5)
+
+    # A converted platform retains the original teaching camera's metadata.
+    provenance["camera_calibration"]["schema_version"] = source_schema
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
     loaded = core.load_platform_calibration(path, root=tmp_path)
     assert loaded.robot_lan1_ip == "192.168.20.204"

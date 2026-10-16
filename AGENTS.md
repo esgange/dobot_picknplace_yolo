@@ -21,6 +21,13 @@ existing operator files untouched. Bin Teach's unchanged schema-3 historical
 source identifiers do not authorize loading old active calibration artifacts.
 Runtime ROS quaternion messages and joint samples in radians are unchanged.
 
+Rule 290 records the user's explicit one-time conversion of existing local
+calibrations to rule 289. Preserve byte-exact backups and verify all samples,
+geometry and provenance before replacement. The platform's teaching-camera
+schema/hash identifies the original historical file and must not be relabelled;
+it may record schema 7 or 8. Active camera/platform readers still require only
+schemas 8/5. This does not authorize automatic migration or legacy runtime readers.
+
 Rule 32 is the superseding item-detection contract; historical stage-one text
 in rule 31 describes the original scaffold, not the current inference feature.
 Rule 37 supersedes rule 23's marker-PnP corner geometry for Bin Teach.
