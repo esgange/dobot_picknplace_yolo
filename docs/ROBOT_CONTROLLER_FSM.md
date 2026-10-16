@@ -888,8 +888,11 @@ feedback. Recover preserves alarm clearing after physical button release.
 Calibration selection review: **2026-09-29**, diary rule **173**. The controller
 combines the latest current-station platform geometry with the latest calibration
 of its camera prefix independently. The platform's teaching-camera filename/hash
-is historical provenance and need not match or exist. Platform schema 4 separates
-that provenance from the unchanged base/platform pose; schema 3 remains readable.
+is historical provenance and need not match or exist. Rule **289** now requires
+platform schema 5 and camera schema 8, with readable XYZ metres and fixed-axis
+RX/RY/RZ degrees throughout calibration poses, samples and platform evidence.
+Older calibration schemas are rejected without compatibility loading or conversion.
+Sample validation, provenance and transform-chain consistency checks remain strict.
 Item Teach/Detect retain explicit active-camera selection. Exact active source
 hashes must still agree across controller and detector before a pick. Camera-only
 recalibration preserves taught platform/bin geometry and wall clearances; lifecycle,

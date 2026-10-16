@@ -1527,11 +1527,14 @@ Below five samples the solution is cleared and TF broadcasting stops.
 A failed leave-one-out omission preserves the full preview but disables saving.
 
 Save YAML confirms the exact new timestamped path under `calibration/`.
-Strict schema 7 stores pinned pipeline provenance, settings, diagnostics,
+Strict schema 8 stores pinned pipeline provenance, settings, diagnostics,
 stable C# IDs, one RGB board pose, robot transform and six joint positions per
 sample. Load Calibration explicitly replaces confirmed samples, validates the
 five-sample/angular rules, and recomputes using live internal camera TF.
-Existing schema 1–6 files are preserved but rejected without conversion.
+Existing schema 1–7 files are preserved but rejected without conversion.
+All saved calibration transforms, including captured samples, use `x/y/z` in
+metres and fixed-axis `rx/ry/rz` in degrees. See
+[calibration file format](docs/CALIBRATION_FILE_FORMAT.md).
 After loading, **Start Automatic Capture** reuses the ordered joint positions
 directly through canonical Dobot bringup, collects fresh samples after each confirmed
 joint position and a one-second stationary/idle hold before each capture attempt.
@@ -1587,7 +1590,7 @@ ros2 launch item_perception_yolo platform_teach.launch.py
 
 At startup, Platform Teach reminds the operator to freshly calibrate the bin
 camera in its current position before teaching or re-teaching the platform.
-`platform_teach` explicitly loads one schema-7 camera-to-hand or camera-on-hand
+`platform_teach` explicitly loads one schema-8 camera-to-hand or camera-on-hand
 YAML directly from root `calibration/`, inherits its camera prefix and ChArUco
 geometry, and shows the same RGB marker/corner/board-axis feedback. A fixed
 camera uses its calibrated `base_link <- camera_link` directly. An on-hand
@@ -1598,13 +1601,14 @@ and board stationary, capture once, inspect the calculated
 `base_link <- platform_reference` XYZ/RPY and RViz TF preview, then confirm
 Save YAML. It performs no robot motion and does not subscribe to joint states.
 
-The strict schema-4 result is saved beside the camera artifacts as
+The strict schema-5 result is saved beside the camera artifacts as
 `calibration/platform_calibration_<UTC_TIMESTAMP>_<DOBOT_ROBOT_LAN1_IP>.yaml`.
 It stores the fixed base/platform transform separately from `teaching_provenance`:
 the source camera calibration/hash, ChArUco settings and original capture chain.
 Loading the platform does not require that source camera file. It stores no RGB
-frame or overlay. Existing schema-3 platforms remain readable without a source-file
-dependency; explicit migration only reorganizes metadata, preserving geometry. See
+frame or overlay. Only schema 5 is accepted; older platform files are rejected
+without conversion. Root and provenance transforms use the same readable six
+coordinates. See
 [`src/item_perception_yolo/README.md`](src/item_perception_yolo/README.md).
 
 After saving a platform calibration, teach a bin ROI with four 5x5 ArUco
@@ -1637,7 +1641,7 @@ After a successful capture, it dynamically publishes the complete RViz preview
 use the exact saved clockwise P1–P4 XY coordinates, Z=0, and platform-aligned
 orientation. Retake, re-Apply, terminal failure, or node exit stops publication.
 Run `dobot_rviz` separately to inspect the frames.
-Platform outputs use schema 4; portable Bin Teach remains schema 3. The platform records the
+Platform outputs use schema 5; portable Bin Teach remains schema 3. The platform records the
 shared ChArUco-origin/axis convention; the bin file separates portable XY
 geometry from its original station's teaching evidence. Each station must
 reproduce the same origin, axes, bin size and bin offset. Platform and corner
@@ -1666,8 +1670,8 @@ or stale projection inputs hide the border with an explanation. The original
 station's robot configuration and
 calibration files are not required to load the template. Loaded templates are
 preview-only; Retake clears them before a fresh capture, and Save YAML writes
-only fresh captures. Older platform/bin schemas 1–2 are preserved but rejected;
-re-teach them to produce platform schema 4 and bin schema 3. Camera calibration remains schema 7.
+only fresh captures. Older platform schemas 1–4 and bin schemas 1–2 are preserved but rejected;
+new captures produce platform schema 5 and bin schema 3. Camera calibration uses schema 8.
 
 Teaching previews do not define the future item detector's behavior. Item
 detection and picking are outside this change, and will consume the files

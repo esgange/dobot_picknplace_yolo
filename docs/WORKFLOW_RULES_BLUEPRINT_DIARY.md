@@ -11946,6 +11946,59 @@ Never use a floating “latest” version in an issue, script, or deployment not
   configuration, source or committed files. This PicknPlace change is diary-only;
   its FSM source/HTML/PDF remain unchanged and need no regeneration.
 
+### 2026-10-16 — Rule 289: readable calibration transforms, current format only
+
+- User requests readable raw calibration files in PicknPlace: XYZ remain in
+  **metres**, RX/RY/RZ use **degrees**, and all sample and provenance checks stay.
+  The subsequent explicit instruction removes backward compatibility. Supersede
+  older camera/platform format and compatibility clauses, including rule 173's
+  platform schema-3 reader/migration. Work is confined to PicknPlace.
+- Camera writer/reader now require **schema 8**; platform writer/reader require
+  **schema 5**. Every solved, captured-sample and platform-provenance transform
+  uses exact `format: xyz_rxryrz_m_deg_v1`, `x/y/z/rx/ry/rz`, with fixed-axis XYZ
+  rotation `Rz(rz) @ Ry(ry) @ Rx(rx)`. Reject old schemas, quaternion/matrix pose
+  payloads, mixed representations, missing fields, wrong units and non-finite or
+  nonnumeric values. No old-schema reader, automatic migration, silent default
+  or operator-file rewrite is permitted. Euler singularities use a deterministic
+  equivalent RZ=0 attitude; save/load retains the physical rigid transform.
+- Retain frame/direction/mounting checks, pinned solver/runtime provenance,
+  sample count/IDs/order/angular diversity, joint observations and quality
+  diagnostics, source hashes, platform reference conventions and recomposition
+  of the complete capture chain. Joint samples remain radians; runtime ROS TF
+  still uses quaternions. Loading the GUI still recomputes from validated samples
+  and live internal camera TF; there is no saved-result shortcut.
+- Platform geometry remains independent of the original teaching camera.
+  Portable Bin Teach stays schema 3: historical source schema identifiers remain
+  evidence and do not authorize an old active camera/platform artifact. Bin
+  geometry and existing teaching files are unchanged. All active consumers share
+  the strict new calibration readers. Document the exact file shape and these
+  boundaries in `docs/CALIBRATION_FILE_FORMAT.md` and package/root READMEs.
+- **534 distinct focused checks pass**: 390 camera/teaching/tray checks, 142
+  selection/controller-consumer checks, plus two added historical-provenance
+  cases. Coverage includes both mounting modes, five/six sample solve reloads,
+  noncommuting and singular Euler rotations, schema/mixed-payload rejection,
+  unchanged geometry, sample/provenance corruption, active-source immutability
+  and preserved portable-bin evidence. Python syntax, scoped static checks and
+  `git diff --check` pass. Tests use fake feedback and isolated localhost domains;
+  they provide software evidence only.
+- Recheck processes before building: a robot-state/RViz launch is present.
+  Build `camera_calibration`, `item_perception_yolo`, `tray_perception` and
+  `robot_controller` successfully under `/tmp/picknplace-readable-calibration-build`.
+  Verify the installed current-format module/schema versions and ordinary-file
+  private OpenCV/YOLO runtimes. Canonical installed code and live libraries remain
+  untouched. No hardware command, arming, station login, live restart or physical
+  test occurs. Existing operator artifacts and unrelated RViz changes remain.
+- Update the FSM calibration-selection contract and regenerate adjacent HTML/PDF.
+  Verify matching source hash, nine diagrams/PDF pages, offline navigation/zoom
+  and no browser errors. Runtime controller motion/IO behavior is unchanged.
+- Local validation logs: `/tmp/picknplace-readable-calibration-tests.log`,
+  `...-consumers.log`, `...-provenance.log`, `...-build.log`, `...-fsm.log` and
+  `...-export-check.log`. Existing calibration files require the current format
+  before use after rebuilding; they are deliberately not modified here.
+- **Delivery override:** user explicitly says not to push. Complete the scoped
+  local commit under rule 8, but perform no remote push. Deployment and rebuild
+  of the canonical workspace remain operator-controlled.
+
 ### Future entry template
 
 ```text

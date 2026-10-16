@@ -144,16 +144,24 @@ WORKSPACE_ROOT/calibration/camera_on_hand_calibration_<UTC_TIMESTAMP>.yaml
 ```
 
 The UTC token is `YYYYMMDDTHHMMSS_microsecondsZ`; existing files are not overwritten.
-Only strict **schema 7** is written/read. It records settings, output transform,
+Only strict **schema 8** is written/read. It records settings, output transform,
 pinned pipeline commit/runtime/detection/solver provenance, all diagnostics,
 stable sample IDs, one RGB optical-frame-from-board pose per sample, its robot
 transform, and its exact six joint positions. No fused pose or depth fields exist.
 
 Load Calibration is the sole explicit sample-restoration workflow. It confirms
-replacement, validates schema 7, at least five samples and both all-prior angular
+replacement, validates schema 8, at least five samples and both all-prior angular
 checks, preserves order/IDs/joints, applies artifact settings, and recomputes
-using the live internal camera TF. Older schema 1–6 files remain untouched but
+using the live internal camera TF. Older schema 1–7 files remain untouched but
 are explicitly rejected; there is no conversion reader or stored-result shortcut.
+The solved transform and both captured transforms per sample use
+`format: xyz_rxryrz_m_deg_v1` with `x`, `y`, `z` in metres and `rx`, `ry`, `rz`
+in degrees. Rotation is fixed-axis XYZ (`Rz @ Ry @ Rx`); units and direction
+are explicit. No quaternion or transform matrix is saved in these poses.
+Raw joint samples remain in radians for the existing replay contract. Sample
+validation, provenance, quality gates and recomputation are unchanged. Only the
+current format is accepted, including inside samples; there is no legacy reader.
+See [calibration file format](../../docs/CALIBRATION_FILE_FORMAT.md).
 Loading alone never moves the robot.
 
 ## Automatic recalibration from a loaded file
@@ -162,7 +170,7 @@ Loading alone never moves the robot.
    publisher). Close Robot Controller, Motion Debug and Gripper Diagnostics
    before replay; calibration must be the only command application. No Item/Bin
    Teach files or controller process are required.
-2. Load a valid schema-7 calibration. Its settings and ordered joint positions
+2. Load a valid schema-8 calibration. Its settings and ordered joint positions
    become the replay recipe. Bringup must provide fresh canonical joints,
    FeedInfo and connected RobotStatus. Robot state gates are checked after
    setup commands. Launch and loading perform no enable or motion.
@@ -185,7 +193,7 @@ Loading alone never moves the robot.
    `<mode>_calibration_<YYYYMMDDTHHMMSS_microsecondsZ>.yaml`. Saves stay in root
    `calibration/`; `.yaml` is appended when no extension is supplied. Cancel
    changes nothing. Existing files, including the loaded source, cannot be
-   overwritten. The strict schema-7 writer and all quality gates still apply;
+   overwritten. The strict schema-8 writer and all quality gates still apply;
    an incomplete or failed replay cannot be saved. Keep the default filename
    for Item Teach/Detect's strict automatic station discovery; custom names are
    intended for explicit loading and are not an alternative discovery format.

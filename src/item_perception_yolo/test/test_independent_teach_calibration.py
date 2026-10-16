@@ -88,38 +88,44 @@ def test_new_bin_creation_uses_active_camera_and_loading_needs_no_source_files(s
     payload = yaml.safe_load(old_bin_path.read_text())
     provenance = payload["teaching_provenance"]
     assert provenance["camera_calibration"]["filename"] == replacement.path.name
-    assert provenance["platform_calibration"]["schema_version"] == 4
+    assert provenance["platform_calibration"]["schema_version"] == 5
     replacement.path.unlink()
     original.platform.path.unlink()
     assert bin_core.load_bin_teach(old_bin_path, root=root).points == capture.points
 
 
-def test_explicit_legacy_platform_migration_preserves_transform_and_teaching_history(station):
+@pytest.mark.parametrize("version", [3, 4])
+def test_old_platform_calibrations_are_rejected_without_migration(station, version):
     root, original, _robot, _bin_path = station
     path = original.platform.path
-    current = yaml.safe_load(path.read_text())
-    legacy = {key: value for key, value in current.items() if key != "teaching_provenance"}
-    legacy.update(current["teaching_provenance"])
-    legacy["schema_version"] = 3
-    path.write_text(yaml.safe_dump(legacy))
+    payload = yaml.safe_load(path.read_text())
+    payload["schema_version"] = version
+    path.write_text(yaml.safe_dump(payload))
+    original_bytes = path.read_bytes()
+    with pytest.raises(ValueError, match="schema_version must be exactly 5"):
+        platform_core.load_platform_calibration(path, root=root)
+    with pytest.raises(ValueError, match="older artifacts are not converted"):
+        platform_core.independent_platform_payload(payload)
+    assert path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("platform_version", [3, 4])
+def test_bin_historical_sources_do_not_require_loading_old_calibrations(station, platform_version):
+    root, original, _robot, bin_path = station
+    payload = yaml.safe_load(bin_path.read_text())
+    payload["teaching_provenance"]["platform_calibration"]["schema_version"] = platform_version
+    payload["teaching_provenance"]["camera_calibration"]["schema_version"] = 7
+    bin_path.write_text(yaml.safe_dump(payload))
+    original.platform.path.unlink()
     original.camera.path.unlink()
-    old = platform_core.load_platform_calibration(path, root=root)
-    assert old.schema_version == 3
-    migrated = platform_core.independent_platform_payload(legacy)
-    assert migrated == current
-    assert platform_core.independent_platform_payload(migrated) == migrated
-    path.write_text(yaml.safe_dump(migrated))
-    new = platform_core.load_platform_calibration(path, root=root)
-    assert new.schema_version == 4
-    np.testing.assert_array_equal(new.base_from_platform, old.base_from_platform)
-    assert new.camera_calibration_filename == old.camera_calibration_filename
-    template = bin_core.load_bin_teach(_bin_path, root=root)
-    assert template.source_platform_calibration_sha256 != new.sha256
-    assert bin_core.bin_platform_warning(template, new) is None
-    moved = new.base_from_platform.copy()
+    template = bin_core.load_bin_teach(bin_path, root=root)
+    assert bin_core.bin_platform_warning(template, original.platform) is None
+    moved = original.platform.base_from_platform.copy()
     moved[0, 3] += .001
-    assert bin_core.bin_platform_warning(template, replace(new, base_from_platform=moved))
-    assert bin_core.bin_platform_warning(template, replace(new, robot_lan1_ip="192.0.2.99"))
+    assert bin_core.bin_platform_warning(
+        template, replace(original.platform, base_from_platform=moved, sha256="changed"))
+    assert bin_core.bin_platform_warning(
+        template, replace(original.platform, robot_lan1_ip="192.0.2.99", sha256="changed"))
 
 
 def test_platform_startup_reminder_explains_fresh_calibration_and_reuse(monkeypatch):

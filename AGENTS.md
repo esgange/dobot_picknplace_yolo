@@ -10,6 +10,17 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 289 supersedes earlier calibration-format compatibility rules: write and
+read only camera schema 8 and platform schema 5. Every calibration transform,
+including camera samples and platform capture/provenance, uses exact
+`format: xyz_rxryrz_m_deg_v1`, XYZ metres and fixed-axis RX/RY/RZ degrees
+(`Rz @ Ry @ Rx`). No quaternion/matrix disk fallback, old-schema reader,
+automatic conversion or silent default is permitted. Preserve strict sample,
+pipeline, source/hash, frame/direction and provenance-chain checks. Preserve
+existing operator files untouched. Bin Teach's unchanged schema-3 historical
+source identifiers do not authorize loading old active calibration artifacts.
+Runtime ROS quaternion messages and joint samples in radians are unchanged.
+
 Rule 32 is the superseding item-detection contract; historical stage-one text
 in rule 31 describes the original scaffold, not the current inference feature.
 Rule 37 supersedes rule 23's marker-PnP corner geometry for Bin Teach.

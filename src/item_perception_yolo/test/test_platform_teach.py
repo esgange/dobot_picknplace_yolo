@@ -214,14 +214,14 @@ def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
         root=tmp_path,
     )
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert payload["platform"]["reference"] == core.PLATFORM_REFERENCE_DEFINITION
     assert payload["artifact_type"] == "platform_calibration"
     assert payload["transform"]["target_frame"] == "base_link"
     assert payload["transform"]["source_frame"] == "platform_reference"
     provenance = payload["teaching_provenance"]
     assert "camera_calibration" not in payload
-    assert provenance["camera_calibration"]["schema_version"] == 7
+    assert provenance["camera_calibration"]["schema_version"] == 8
     assert provenance["camera_calibration"]["calibration_mode"] == mode
     assert provenance["capture"]["robot_tf"]["required"] is (
         mode == CAMERA_ON_HAND
@@ -230,6 +230,9 @@ def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
     artifact_text = path.read_text(encoding="utf-8").lower()
     assert "image_data" not in artifact_text
     assert "overlay" not in artifact_text
+    assert "rotation_xyzw" not in artifact_text
+    assert "translation_m" not in artifact_text
+    assert artifact_text.count("format: xyz_rxryrz_m_deg_v1") == (6 if mode == CAMERA_ON_HAND else 5)
 
     loaded = core.load_platform_calibration(path, root=tmp_path)
     assert loaded.robot_lan1_ip == "192.168.20.204"
@@ -237,6 +240,23 @@ def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
     assert loaded.reference_convention == core.PLATFORM_REFERENCE_CONVENTION
     assert loaded.camera_calibration_mode == mode
     assert np.allclose(loaded.base_from_platform, capture.base_from_platform)
+    original_bytes = path.read_bytes()
+    # Readable saved evidence still has to reconstruct the identical platform.
+    provenance["capture"]["optical_from_board"]["x"] += .01
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="captured transform chain"):
+        core.load_platform_calibration(path, root=tmp_path)
+    path.write_bytes(original_bytes)
+    payload = yaml.safe_load(original_bytes)
+    mixed = dict(payload)
+    mixed["transform"] = {
+        **payload["transform"],
+        "rotation_xyzw": dict(x=0., y=0., z=0., w=1.),
+    }
+    path.write_text(yaml.safe_dump(mixed), encoding="utf-8")
+    with pytest.raises(ValueError, match="transform fields are invalid"):
+        core.load_platform_calibration(path, root=tmp_path)
+    path.write_bytes(original_bytes)
     with pytest.raises(ValueError, match="already exists"):
         core.write_platform_calibration(
             path,
@@ -245,12 +265,12 @@ def test_platform_yaml_round_trip_contains_no_frame_archive(tmp_path, mode):
             capture,
             root=tmp_path,
         )
-    for schema in (1, 2):
+    for schema in (1, 2, 3, 4):
         payload["schema_version"] = schema
         path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
-        with pytest.raises(ValueError, match="schema_version must be 3 or 4"):
+        with pytest.raises(ValueError, match="schema_version must be exactly 5"):
             core.load_platform_calibration(path, root=tmp_path)
-    payload["schema_version"] = 4
+    payload["schema_version"] = 5
     payload["platform"]["reference"]["axes"] = "arbitrary_station_axes"
     path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="reference convention is invalid"):

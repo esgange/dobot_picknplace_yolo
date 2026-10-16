@@ -31,6 +31,10 @@ from camera_calibration_gui.calibration_core import (
     workspace_root,
 )
 
+from camera_calibration_gui.calibration_format import (
+    POSE_FIELDS, matrix_from_pose, pose_from_matrix,
+)
+
 from .daily_events import DailyEventLogger
 
 from .ui_state import (
@@ -41,7 +45,7 @@ from .ui_state import (
 
 
 PLATFORM_FRAME = "platform_reference"
-PLATFORM_ARTIFACT_SCHEMA_VERSION = 4
+PLATFORM_ARTIFACT_SCHEMA_VERSION = 5
 PLATFORM_PROVENANCE_FIELDS = frozenset((
     "camera_calibration", "camera", "charuco", "detector", "capture"))
 PLATFORM_REFERENCE_CONVENTION = "charuco_pick_corner_xy_v1"
@@ -238,7 +242,7 @@ def load_camera_calibration(
     artifact = load_calibration_yaml(candidate)
     if artifact.calibration_mode not in valid_prefixes:
         raise ValueError(
-            "Platform teaching requires a schema-7 camera_to_hand or "
+            "Platform teaching requires a schema-8 camera_to_hand or "
             f"camera_on_hand calibration; received {artifact.calibration_mode}"
         )
     required_prefix = valid_prefixes[artifact.calibration_mode]
@@ -493,7 +497,7 @@ def write_platform_calibration(
                 "sec": capture.robot_tf_stamp_sec,
                 "nanosec": capture.robot_tf_stamp_nanosec,
             },
-            "base_from_tool": _transform_payload(
+            "base_from_tool": pose_from_matrix(
                 base_from_tool,
                 f"Captured {BASE_FRAME} from {TOOL_FRAME}",
             ),
@@ -564,20 +568,20 @@ def write_platform_calibration(
                 "nanosec": capture.color_stamp_nanosec,
             },
             "charuco_corner_count": capture.charuco_corner_count,
-            "calibration_reference_from_camera_link": _transform_payload(
+            "calibration_reference_from_camera_link": pose_from_matrix(
                 capture.calibration_reference_from_camera_link,
                 "Captured calibrated-reference from camera_link",
             ),
             "robot_tf": robot_tf_payload,
-            "base_from_camera_link": _transform_payload(
+            "base_from_camera_link": pose_from_matrix(
                 capture.base_from_camera_link,
                 "Captured resolved base_link from camera_link",
             ),
-            "camera_link_from_optical": _transform_payload(
+            "camera_link_from_optical": pose_from_matrix(
                 capture.camera_link_from_optical,
                 "Captured camera_link from optical transform",
             ),
-            "optical_from_board": _transform_payload(
+            "optical_from_board": pose_from_matrix(
                 capture.optical_from_board,
                 "Captured optical from board transform",
             ),
@@ -586,7 +590,7 @@ def write_platform_calibration(
             "target_frame": BASE_FRAME,
             "source_frame": PLATFORM_FRAME,
             "convention": "target_from_source",
-            **_transform_payload(
+            **pose_from_matrix(
                 capture.base_from_platform,
                 "Captured base_link from platform_reference transform",
             ),
@@ -631,9 +635,13 @@ def _canonical_utc_value(value, label: str) -> str:
 def independent_platform_payload(payload):
     """Keep teaching evidence historical; the saved base/platform pose stands alone.
 
-    Also used for explicit migration of already validated schema-3 artifacts.
+    Only current-format artifacts are accepted; this is not a migration path.
     Never substitute a new camera transform into the original capture evidence.
     """
+    if (type(payload.get("schema_version")) is not int
+            or payload["schema_version"] != PLATFORM_ARTIFACT_SCHEMA_VERSION):
+        raise ValueError("Platform calibration schema_version must be exactly 5; "
+                         "older artifacts are not converted")
     if "teaching_provenance" in payload:
         return dict(payload)
     geometry = {key: value for key, value in payload.items()
@@ -659,9 +667,9 @@ def load_platform_calibration(
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ValueError(f"Cannot read platform calibration {candidate}: {exc}") from exc
     schema_version = payload.get("schema_version") if isinstance(payload, dict) else None
-    if type(schema_version) is not int or schema_version not in (
-            3, PLATFORM_ARTIFACT_SCHEMA_VERSION):
-        raise ValueError("Platform calibration schema_version must be 3 or 4")
+    if type(schema_version) is not int or schema_version != PLATFORM_ARTIFACT_SCHEMA_VERSION:
+        raise ValueError("Platform calibration schema_version must be exactly 5; "
+                         "older artifacts are not converted")
     if schema_version == PLATFORM_ARTIFACT_SCHEMA_VERSION:
         required = {"schema_version", "artifact_type", "created_utc", "robot",
                     "platform", "transform", "teaching_provenance"}
@@ -725,8 +733,9 @@ def load_platform_calibration(
         }
     ):
         raise ValueError("Platform calibration camera-calibration fields are invalid")
-    if camera_calibration["schema_version"] != CALIBRATION_ARTIFACT_SCHEMA_VERSION:
-        raise ValueError("Platform calibration camera schema is not 7")
+    if (type(camera_calibration["schema_version"]) is not int
+            or camera_calibration["schema_version"] != CALIBRATION_ARTIFACT_SCHEMA_VERSION):
+        raise ValueError("Platform calibration camera schema must be exactly 8")
     calibration_mode = camera_calibration["calibration_mode"]
     expected_prefixes = {
         CAMERA_TO_HAND: "camera_to_hand_calibration_",
@@ -848,7 +857,7 @@ def load_platform_calibration(
         stamp["nanosec"],
         "Platform capture color_stamp",
     )
-    calibration_reference_from_camera_link = _transform_from_payload(
+    calibration_reference_from_camera_link = matrix_from_pose(
         capture["calibration_reference_from_camera_link"],
         "Platform capture calibrated-reference from camera_link",
     )
@@ -886,7 +895,7 @@ def load_platform_calibration(
             robot_stamp["nanosec"],
             "Camera-on-hand platform robot TF stamp",
         )
-        base_from_tool = _transform_from_payload(
+        base_from_tool = matrix_from_pose(
             robot_tf["base_from_tool"],
             f"Platform capture {BASE_FRAME} from {TOOL_FRAME}",
         )
@@ -894,7 +903,7 @@ def load_platform_calibration(
             base_from_tool @ calibration_reference_from_camera_link,
             "Platform capture resolved base_link from camera_link",
         )
-    base_from_camera_link = _transform_from_payload(
+    base_from_camera_link = matrix_from_pose(
         capture["base_from_camera_link"],
         "Platform capture base_from_camera_link",
     )
@@ -904,11 +913,11 @@ def load_platform_calibration(
         atol=1e-9,
     ):
         raise ValueError("Platform resolved camera transform conflicts with its chain")
-    camera_link_from_optical = _transform_from_payload(
+    camera_link_from_optical = matrix_from_pose(
         capture["camera_link_from_optical"],
         "Platform capture camera_link_from_optical",
     )
-    optical_from_board = _transform_from_payload(
+    optical_from_board = matrix_from_pose(
         capture["optical_from_board"],
         "Platform capture optical_from_board",
     )
@@ -917,9 +926,7 @@ def load_platform_calibration(
         "target_frame",
         "source_frame",
         "convention",
-        "translation_m",
-        "rotation_xyzw",
-    }:
+    } | POSE_FIELDS:
         raise ValueError("Platform calibration transform fields are invalid")
     if transform["target_frame"] != BASE_FRAME:
         raise ValueError(f"Platform transform target must be {BASE_FRAME}")
@@ -927,11 +934,8 @@ def load_platform_calibration(
         raise ValueError(f"Platform transform source must be {PLATFORM_FRAME}")
     if transform["convention"] != "target_from_source":
         raise ValueError("Platform transform convention must be target_from_source")
-    base_from_platform = _transform_from_payload(
-        {
-            "translation_m": transform["translation_m"],
-            "rotation_xyzw": transform["rotation_xyzw"],
-        },
+    base_from_platform = matrix_from_pose(
+        {key: transform[key] for key in POSE_FIELDS},
         "Platform transform",
     )
     recomposed = compose_platform_transform(

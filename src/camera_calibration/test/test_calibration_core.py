@@ -1691,7 +1691,7 @@ def test_capture_at_minimum_and_later_samples_automatically_recomputes():
             assert "Automatic calibration complete." in message
 
 
-def test_schema_seven_yaml_round_trip_restores_rgb_and_joint_observations(tmp_path):
+def test_schema_eight_yaml_round_trip_restores_rgb_and_joint_observations(tmp_path):
     settings = CharucoSettings("camera_two", "DICT_4X4_100", 6, 8, 35.0, 25.0)
     created_at = datetime(2026, 9, 2, 12, 34, 56, 789012, tzinfo=timezone.utc)
     path = output_path_for_mode(CAMERA_ON_HAND, tmp_path, created_at)
@@ -1730,7 +1730,9 @@ def test_schema_seven_yaml_round_trip_restores_rgb_and_joint_observations(tmp_pa
     assert path.read_text(encoding="utf-8") == content
     assert sorted(entry.name for entry in path.parent.iterdir()) == sorted(
         [path.name, custom.name])
-    assert "schema_version: 7" in content
+    assert "schema_version: 8" in content
+    assert "rotation_xyzw" not in content
+    assert content.count("format: xyz_rxryrz_m_deg_v1") == 1 + 2 * len(samples)
     assert "calibration_mode: camera_on_hand" in content
     assert "prefix: camera_two" in content
     assert "dictionary: DICT_4X4_100" in content
@@ -1795,18 +1797,18 @@ def test_schema_seven_yaml_round_trip_restores_rgb_and_joint_observations(tmp_pa
     try:
         load_calibration_yaml(old_schema_path)
     except ValueError as exc:
-        assert "schema_version must be exactly 7" in str(exc)
+        assert "schema_version must be exactly 8" in str(exc)
     else:
         raise AssertionError("A schema-5 calibration artifact was accepted")
 
     malformed_path = tmp_path / "malformed.yaml"
     malformed_payload = yaml.safe_load(content)
-    malformed_payload["captured_samples"][0]["base_from_tool"][3][3] = 0.0
+    malformed_payload["captured_samples"][0]["base_from_tool"]["rx"] = float("nan")
     malformed_path.write_text(yaml.safe_dump(malformed_payload), encoding="utf-8")
     try:
         load_calibration_yaml(malformed_path)
     except ValueError as exc:
-        assert "homogeneous bottom row" in str(exc)
+        assert ".rx must be a finite number" in str(exc)
     else:
         raise AssertionError("A malformed raw calibration transform was accepted")
 
@@ -2008,7 +2010,7 @@ def test_distorted_exact_rgb_correspondences_recover_measured_board_pose_and_axe
 
 @pytest.mark.parametrize("count", (5, 6))
 @pytest.mark.parametrize("mode", (CAMERA_ON_HAND, CAMERA_TO_HAND))
-def test_schema_seven_strict_round_trip_and_rejections(tmp_path, count, mode):
+def test_schema_eight_strict_round_trip_and_rejections(tmp_path, count, mode):
     samples, _expected = _synthetic_problem(mode, range(count))
     # Preserve nonconsecutive, non-sorted IDs as well as capture order.
     samples = [_sample(f"C{20 - index}", sample.base_from_tool, sample.camera_from_target,
@@ -2031,10 +2033,26 @@ def test_schema_seven_strict_round_trip_and_rejections(tmp_path, count, mode):
         "not_available" if count == 5 else "valid"
     )
     bad_path = tmp_path / "bad.yaml"
-    for version in range(1, 7):
+    for version in range(1, 8):
         bad_path.write_text(yaml.safe_dump(dict(payload, schema_version=version)))
-        with pytest.raises(ValueError, match="schema_version must be exactly 7"):
+        with pytest.raises(ValueError, match="schema_version must be exactly 8"):
             load_calibration_yaml(bad_path)
+    # Merely relabelling an old artifact must not bypass the new pose contract.
+    broken = yaml.safe_load(path.read_text())
+    broken["transform"] = {
+        **{key: broken["transform"][key] for key in
+           ("target_frame", "source_frame", "convention")},
+        "translation_m": dict(x=0., y=0., z=0.),
+        "rotation_xyzw": dict(x=0., y=0., z=0., w=1.),
+    }
+    bad_path.write_text(yaml.safe_dump(broken))
+    with pytest.raises(ValueError, match="transform must contain exactly"):
+        load_calibration_yaml(bad_path)
+    broken = yaml.safe_load(path.read_text())
+    broken["captured_samples"][0]["base_from_tool"] = np.eye(4).tolist()
+    bad_path.write_text(yaml.safe_dump(broken))
+    with pytest.raises(ValueError, match="must contain exactly format"):
+        load_calibration_yaml(bad_path)
     for field in ("base_from_tool", "camera_from_target"):
         broken = yaml.safe_load(path.read_text())
         broken["captured_samples"][-1][field] = broken["captured_samples"][0][field]

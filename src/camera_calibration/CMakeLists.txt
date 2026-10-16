@@ -90,6 +90,12 @@ install(FILES README.md LICENSE NOTICE.md
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(
+    test_calibration_format
+    test/test_calibration_format.py
+    TIMEOUT 30
+    ENV "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python:$ENV{PYTHONPATH}"
+  )
+  ament_add_pytest_test(
     test_calibration_core
     test/test_calibration_core.py
     TIMEOUT 180

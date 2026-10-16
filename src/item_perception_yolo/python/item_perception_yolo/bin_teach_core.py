@@ -763,7 +763,7 @@ def load_bin_teach(path: Path, root: Path | None = None, *, deployment=False) ->
     ):
         raise ValueError("Bin-teach platform-calibration filename is invalid")
     if type(platform["schema_version"]) is not int or platform["schema_version"] not in (
-            3, PLATFORM_ARTIFACT_SCHEMA_VERSION):
+            3, 4, PLATFORM_ARTIFACT_SCHEMA_VERSION):
         raise ValueError("Bin-teach platform-calibration schema is invalid")
     if platform["platform_frame"] != PLATFORM_FRAME:
         raise ValueError("Bin-teach platform frame is invalid")
@@ -794,7 +794,8 @@ def load_bin_teach(path: Path, root: Path | None = None, *, deployment=False) ->
         BASE_FRAME if calibration_mode == CAMERA_TO_HAND else TOOL_FRAME
     )
     if (
-        camera_calibration["schema_version"] != CALIBRATION_ARTIFACT_SCHEMA_VERSION
+        type(camera_calibration["schema_version"]) is not int
+        or camera_calibration["schema_version"] not in (7, CALIBRATION_ARTIFACT_SCHEMA_VERSION)
         or calibration_mode not in expected_prefixes
         or camera_calibration["reference_frame"] != expected_reference_frame
         or re.fullmatch(r"[0-9a-f]{64}", str(camera_calibration["sha256"])) is None

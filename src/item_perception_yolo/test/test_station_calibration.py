@@ -143,7 +143,7 @@ def test_invalid_latest_camera_is_not_skipped(root):
     payload = yaml.safe_load(latest.path.read_text())
     payload["schema_version"] = 6
     latest.path.write_text(yaml.safe_dump(payload))
-    with pytest.raises(ValueError, match="schema_version must be exactly 7"):
+    with pytest.raises(ValueError, match="schema_version must be exactly 8"):
         station.latest_station_calibration(root)
 
 
@@ -214,7 +214,7 @@ def test_latest_robot_camera_requires_exact_on_hand_link6_binding(root):
     payload = yaml.safe_load(latest.path.read_text())
     payload["schema_version"] = 6
     latest.path.write_text(yaml.safe_dump(payload))
-    with pytest.raises(ValueError, match="schema_version must be exactly 7"):
+    with pytest.raises(ValueError, match="schema_version must be exactly 8"):
         station.validate_robot_camera_calibration(latest, root=root)
 
 
@@ -242,7 +242,7 @@ def test_warm_catalog_cannot_hide_changed_or_invalid_sources(root, change):
     stat = camera.path.stat()
     if change in ("prefix", "payload"):
         old, new = ((b"prefix: robot_camera", b"prefix: wrong_camera") if change == "prefix"
-                    else (b"schema_version: 7", b"schema_version: 6"))
+                    else (b"schema_version: 8", b"schema_version: 6"))
         changed = original.replace(old, new)
         assert changed != original and len(changed) == len(original)
         camera.path.write_bytes(changed)
@@ -277,7 +277,7 @@ def test_robot_camera_missing_wrong_mode_and_invalid_latest_never_fall_back(root
     payload = yaml.safe_load(latest.path.read_text())
     payload["schema_version"] = 6
     latest.path.write_text(yaml.safe_dump(payload))
-    with pytest.raises(ValueError, match="schema_version must be exactly 7"):
+    with pytest.raises(ValueError, match="schema_version must be exactly 8"):
         station.latest_robot_camera_calibration(root)
 
 

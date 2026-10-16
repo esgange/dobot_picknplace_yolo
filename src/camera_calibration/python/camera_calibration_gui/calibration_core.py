@@ -14,6 +14,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from .calibration_format import POSE_FIELDS, matrix_from_pose, pose_from_matrix
+
 
 MAX_LOG_EVENTS = 1000
 REQUIRED_OPENCV_VERSION = "4.10.0"
@@ -30,7 +32,7 @@ MINIMUM_SAMPLE_ROTATION_DEG = 5.0
 MOVEIT_REFERENCE_URL = "https://github.com/moveit/moveit_calibration"
 MOVEIT_REFERENCE_COMMIT = "3f9d48ebe843caf1de060bfafe78160585c7c26f"
 LEAVE_ONE_OUT_MINIMUM_SAMPLES = MINIMUM_CALIBRATION_SAMPLES + 1
-CALIBRATION_ARTIFACT_SCHEMA_VERSION = 7
+CALIBRATION_ARTIFACT_SCHEMA_VERSION = 8
 UI_STATE_SCHEMA_VERSION = 4
 UI_STATE_FILENAME = "last_session.json"
 CAMERA_PREFIX_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -1027,11 +1029,6 @@ def output_pattern_for_mode(calibration_mode: str, root: Path | None = None) -> 
     return project_root / "calibration" / f"{calibration_mode}_calibration_<UTC_TIMESTAMP>.yaml"
 
 
-def _matrix_payload(matrix: np.ndarray, label: str) -> list[list[float]]:
-    candidate = _validate_rigid_transform(matrix, label)
-    return [[float(value) for value in row] for row in candidate]
-
-
 def _validate_rigid_transform(matrix: np.ndarray, label: str) -> np.ndarray:
     candidate = _validate_transform(matrix, label)
     if not np.allclose(candidate[3, :], [0.0, 0.0, 0.0, 1.0], atol=1e-9):
@@ -1081,16 +1078,6 @@ def _artifact_number(
     return float(value)
 
 
-def _artifact_matrix(value: object, label: str) -> np.ndarray:
-    if not isinstance(value, list) or len(value) != 4:
-        raise ValueError(f"{label} must contain exactly four rows")
-    if any(not isinstance(row, list) or len(row) != 4 for row in value):
-        raise ValueError(f"{label} rows must each contain exactly four numbers")
-    if any(type(item) not in {int, float} for row in value for item in row):
-        raise ValueError(f"{label} entries must be numbers")
-    return _validate_rigid_transform(np.asarray(value, dtype=np.float64), label)
-
-
 def calibration_pipeline_payload() -> dict:
     return {
         "reference_repository": MOVEIT_REFERENCE_URL,
@@ -1119,8 +1106,6 @@ def _calibration_artifact_payload(
     created_at: datetime,
 ) -> dict:
     reference_frame = reference_frame_for_mode(calibration_mode)
-    translation = reference_from_camera_link[:3, 3]
-    qx, qy, qz, qw = rotation_matrix_to_quaternion(reference_from_camera_link[:3, :3])
     camera_mount = (
         "fixed_relative_to_base_link"
         if calibration_mode == CAMERA_TO_HAND
@@ -1160,12 +1145,7 @@ def _calibration_artifact_payload(
             "target_frame": reference_frame,
             "source_frame": settings.camera_link_frame,
             "convention": "target_from_source",
-            "translation_m": {
-                "x": float(translation[0]),
-                "y": float(translation[1]),
-                "z": float(translation[2]),
-            },
-            "rotation_xyzw": {"x": qx, "y": qy, "z": qz, "w": qw},
+            **pose_from_matrix(reference_from_camera_link, "Calibration transform"),
         },
         "robot": {
             "base_frame": BASE_FRAME,
@@ -1216,11 +1196,11 @@ def _calibration_artifact_payload(
         "captured_samples": [
             {
                 "id": sample.sample_id,
-                "base_from_tool": _matrix_payload(
+                "base_from_tool": pose_from_matrix(
                     sample.base_from_tool,
                     f"Calibration sample {sample.sample_id} base_from_tool",
                 ),
-                "camera_from_target": _matrix_payload(
+                "camera_from_target": pose_from_matrix(
                     sample.camera_from_target,
                     f"Calibration sample {sample.sample_id} camera_from_target",
                 ),
@@ -1447,7 +1427,7 @@ def load_calibration_yaml(path: Path) -> CalibrationArtifact:
     transform = _exact_mapping(
         root["transform"],
         "Calibration artifact transform",
-        {"target_frame", "source_frame", "convention", "translation_m", "rotation_xyzw"},
+        {"target_frame", "source_frame", "convention"} | POSE_FIELDS,
     )
     if _artifact_text(transform, "target_frame", "Calibration artifact transform") != (
         reference_frame_for_mode(calibration_mode)
@@ -1461,39 +1441,10 @@ def load_calibration_yaml(path: Path) -> CalibrationArtifact:
         "target_from_source"
     ):
         raise ValueError("Calibration artifact transform.convention must be target_from_source")
-    translation = _exact_mapping(
-        transform["translation_m"],
-        "Calibration artifact transform.translation_m",
-        {"x", "y", "z"},
+    reference_from_camera_link = matrix_from_pose(
+        {key: transform[key] for key in POSE_FIELDS},
+        "Calibration artifact camera-link transform",
     )
-    quaternion = _exact_mapping(
-        transform["rotation_xyzw"],
-        "Calibration artifact transform.rotation_xyzw",
-        {"x", "y", "z", "w"},
-    )
-    translation_values = [
-        _artifact_number(
-            translation,
-            key,
-            "Calibration artifact transform.translation_m",
-        )
-        for key in ("x", "y", "z")
-    ]
-    quaternion_values = [
-        _artifact_number(
-            quaternion,
-            key,
-            "Calibration artifact transform.rotation_xyzw",
-        )
-        for key in ("x", "y", "z", "w")
-    ]
-    if abs(float(np.linalg.norm(quaternion_values)) - 1.0) > 1e-5:
-        raise ValueError("Calibration artifact transform quaternion must have unit length")
-    reference_from_camera_link = np.eye(4, dtype=np.float64)
-    reference_from_camera_link[:3, :3] = quaternion_to_rotation_matrix(
-        *quaternion_values
-    )
-    reference_from_camera_link[:3, 3] = translation_values
     _validate_rigid_transform(
         reference_from_camera_link,
         "Calibration artifact camera-link transform",
@@ -1562,11 +1513,11 @@ def load_calibration_yaml(path: Path) -> CalibrationArtifact:
         samples.append(
             CalibrationSample(
                 sample_id,
-                _artifact_matrix(
+                matrix_from_pose(
                     sample["base_from_tool"],
                     f"Calibration artifact sample {sample_id} base_from_tool",
                 ),
-                _artifact_matrix(
+                matrix_from_pose(
                     sample["camera_from_target"],
                     f"Calibration artifact sample {sample_id} camera_from_target",
                 ),
