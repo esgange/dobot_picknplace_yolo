@@ -11,6 +11,7 @@ from item_perception_yolo.item_teach_core import depth_coverage_ok
 from item_perception_yolo.surface_guard import HeightPlane
 from tray_perception.core import ORIGIN_CONVENTION
 from tray_perception.placement import sampling_from_item
+from tray_perception.stability import validate_evidence
 from tray_perception.contract import SERVICE_NAME as SERVICE
 from tray_perception_interfaces.msg import PlacementDepthRequest
 from tray_perception_interfaces.srv import GetTrayPose
@@ -97,6 +98,11 @@ def validate_result(result, config, sampling, start_ns, now_ns):
                 or sample.sigma_mm < 0):
             raise ValueError("malformed tray pose or insufficient depth evidence")
         rotation = quaternion_to_rotation_matrix(q.x, q.y, q.z, q.w)
+        validate_evidence(evidence.get("stability"), {
+            "stamp_ns": stamps[0], "class_id": pose.class_id,
+            "position": [p.x, p.y, p.z], "quaternion": [q.x, q.y, q.z, q.w],
+            "width_mm": pose.width * 1000, "length_mm": pose.length * 1000},
+            settings["geometry"], sampling, start_ns, now_ns)
         plane = rigid_matrix(config.tray.profile["reference_plane"]["base_from_plane"],
                              "Tray reference plane")
         if (abs(np.dot(np.array([p.x, p.y, p.z]) - plane[:3, 3], plane[:3, 2])) > 1e-5

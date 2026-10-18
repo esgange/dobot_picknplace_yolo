@@ -13,7 +13,7 @@ from .projection_cache import clear_projection_caches
 from .preview_protocol import receive_packet, send_packet
 
 
-def initialize(runtime, manifest):
+def initialize(runtime, manifest, *, torch_threads=4):
     if manifest["schema_version"] != 1:
         raise RuntimeError("Unsupported YOLO runtime manifest")
     for name, version in manifest["private_packages"].items():
@@ -38,7 +38,10 @@ def initialize(runtime, manifest):
         raise RuntimeError("Exact provisioned Torch/torchvision runtime mismatch")
     cv2.setNumThreads(1)
     cv2.ocl.setUseOpenCL(False)
-    torch.set_num_threads(4)
+    from ultralytics import utils
+    from ultralytics.utils import torch_utils
+    utils.NUM_THREADS = torch_utils.NUM_THREADS = torch_threads
+    torch.set_num_threads(torch_threads)
     torch.set_num_interop_threads(1)
     ultralytics.settings.update({"sync": False})
     return cv2, np, torch, ultralytics
@@ -93,17 +96,18 @@ def render_result(result, rgb, names, task, maximum, cv2, np, *, included_indice
 
 
 def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations=None,
-          predictions=None):
+          predictions=None, torch_threads=4):
     """Share the pinned runtime/model lifecycle with project perception workers."""
     operations, predictions = operations or {}, predictions or {}
     try:
-        cv2, np, torch, ultralytics = initialize(runtime, manifest)
+        cv2, np, torch, ultralytics = initialize(runtime, manifest, torch_threads=torch_threads)
         send_packet(output_stream, {
             "state": "ready", "pid": os.getpid(), "device": "cpu",
             "ultralytics": ultralytics.__version__, "module": ultralytics.__file__,
             "opencv": cv2.__version__, "numpy": np.__version__, "torch": torch.__version__,
             "opencv_threads": cv2.getNumThreads(), "opencl": cv2.ocl.useOpenCL(),
             "torch_threads": torch.get_num_threads(), "wheel_hashes": manifest["wheels"],
+            "torch_interop_threads": torch.get_num_interop_threads(),
         })
         model = None
         selected = None
@@ -119,7 +123,9 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                     "detect", "inspect", "preview", "overlay_roi", "selected_pose",
                     "teaching_rviz", *operations, *predictions):
                 raise RuntimeError("Unsupported preview operation")
-            if cv2.getNumThreads() != 1 or cv2.ocl.useOpenCL() or torch.get_num_threads() != 4:
+            if (cv2.getNumThreads() != 1 or cv2.ocl.useOpenCL()
+                    or torch.get_num_threads() != torch_threads
+                    or torch.get_num_interop_threads() != 1):
                 raise RuntimeError("Native thread/OpenCL runtime drift")
             if request["operation"] in operations:
                 header, pixels = operations[request["operation"]](request, data, cv2, np)
@@ -231,6 +237,8 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 rect=False, batch=1, augment=False, agnostic_nms=False, nms=True, quantize=32,
                 save=False, save_txt=False, save_crop=False, show=False, verbose=False,
                 project=str(scratch), name="preview", exist_ok=True, stream=False,
+                **({"retina_masks": True} if request["operation"] == "tray_preview"
+                   and model.task == "segment" else {}),
             )
             yolo_ms = (time.monotonic() - start) * 1000.
             stages = {"yolo_ms": yolo_ms, "geometry_ms": 0., "clearance_ms": 0., "rendering_ms": 0.}

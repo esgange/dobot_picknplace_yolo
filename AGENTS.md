@@ -10,6 +10,17 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 291 requires two consecutive processed post-trigger tray poses with advancing
+RGB timestamps, exact image-time transforms and matching bound sources. Check
+origin/center/placement displacement within 5% of taught width and rotation within
+5 degrees; each frame passes taught size tolerance. Return the second pose/depth,
+never average; retain one deadline. Controller requires version-1 stability proof.
+Keep eye-on-hand arrival/position guards, ten-request budget and Pause/Stop. Use
+full-frame native masks, scaled cleanup, tray Torch8/inter-op1/OpenCV1, item Torch4
+and shared RGB/depth30 FPS. Cached validation uses dev/inode/size/mtime/ctime fences;
+changes require explicit reload. Intermediate/no-image requests skip rendering.
+No crop, new teach schema, trajectory change or physical verification is implied.
+
 Rule 289 supersedes earlier calibration-format compatibility rules: write and
 read only camera schema 8 and platform schema 5. Every calibration transform,
 including camera samples and platform capture/provenance, uses exact

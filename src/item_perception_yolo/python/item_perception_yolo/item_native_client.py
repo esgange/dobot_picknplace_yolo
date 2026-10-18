@@ -14,16 +14,18 @@ from .preview_protocol import receive_packet, send_packet
 
 class NativeClient:
     def __init__(self, events, *, worker_package="item_perception_yolo",
-                 worker_executable="item_preview_worker"):
+                 worker_executable="item_preview_worker", torch_threads=4):
         self.events = events
         self.worker_package = worker_package
         self.worker_executable = worker_executable
+        self.torch_threads = torch_threads
         self.lock = threading.Lock()
         self.process_lock = threading.Lock()
         self.process = None
         self.failed = False
         self.closed = False
         self.ready = False
+        self.retiring = False
         self.stderr_tail = bytearray()
 
     def _start(self):
@@ -37,8 +39,9 @@ class NativeClient:
             executable = Path(get_package_prefix(self.worker_package)) / \
                 "lib" / self.worker_package / self.worker_executable
             environment = dict(os.environ, YOLO_AUTOINSTALL="false", YOLO_OFFLINE="true",
-                               QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg", OMP_NUM_THREADS="4",
-                               MKL_NUM_THREADS="4", OPENBLAS_NUM_THREADS="1")
+                               QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg",
+                               OMP_NUM_THREADS=str(self.torch_threads),
+                               MKL_NUM_THREADS=str(self.torch_threads), OPENBLAS_NUM_THREADS="1")
             self.process = subprocess.Popen(
                 ["/usr/bin/python3", str(executable),
                  str(directory / "yolo_runtime")], stdin=subprocess.PIPE,
@@ -54,11 +57,31 @@ class NativeClient:
                 del self.stderr_tail[:-8192]
         threading.Thread(target=drain, daemon=True).start()
 
-    def call(self, header, data=b"", timeout=30.0):
+    def _failure(self, header, exc):
+        if self.closed and not self.failed:
+            return RuntimeError("Native operation cancelled by shutdown")
+        self.failed = True
+        process = self.process
+        self.events.record("FATAL", "item_worker_failed", str(exc),
+                           pid=None if process is None else process.pid,
+                           exit_code=None if process is None else process.poll(),
+                           operation=header.get("operation"), width=header.get("width"),
+                           height=header.get("height"),
+                           stderr_tail=bytes(self.stderr_tail).decode("utf-8", errors="replace"))
+        self.close()
+        return RuntimeError(f"Terminal item worker failure: {exc}")
+
+    def call(self, header, data=b"", timeout=30.0, *, request_timeout=None):
+        """An optional shorter caller deadline discards/drains, retaining native ownership."""
         deadline = time.monotonic() + timeout
-        if not self.lock.acquire(timeout=timeout):
+        wait_deadline = (deadline if request_timeout is None else
+                         min(deadline, time.monotonic() + max(0., request_timeout)))
+        if not self.lock.acquire(timeout=max(0., wait_deadline - time.monotonic())):
             raise TimeoutError("Native worker busy until request deadline")
+        retiring = False
         try:
+            if time.monotonic() >= wait_deadline:
+                raise TimeoutError("Native request expired before dispatch")
             if self.failed or self.closed:
                 raise RuntimeError("Native worker closed/failed; no replacement allowed")
             result = queue.Queue(maxsize=1)
@@ -68,7 +91,11 @@ class NativeClient:
                     self._start()
                     if not self.ready:
                         startup, payload = receive_packet(self.process.stdout)
-                        if startup.get("state") != "ready" or payload:
+                        if (startup.get("state") != "ready" or payload
+                                or startup.get("torch_threads") != self.torch_threads
+                                or startup.get("torch_interop_threads") != 1
+                                or startup.get("opencv_threads") != 1
+                                or startup.get("opencl") is not False):
                             raise RuntimeError(f"Invalid native startup: {startup}")
                         self.events.record("INFO", "item_runtime_ready", "Private CPU runtime",
                                            **startup)
@@ -82,27 +109,38 @@ class NativeClient:
                     result.put((None, None, exc))
             threading.Thread(target=exchange, daemon=True).start()
             try:
-                metadata, payload, error = result.get(
-                    timeout=max(0.001, deadline - time.monotonic()))
+                try:
+                    metadata, payload, error = result.get(
+                        timeout=max(0., wait_deadline - time.monotonic()))
+                except queue.Empty:
+                    if request_timeout is None or time.monotonic() >= deadline:
+                        raise
+                    # The caller can return, but no other request can touch the
+                    # pipe/model until this exact response drains or hard-fails.
+                    def retire():
+                        try:
+                            _, _, error = result.get(timeout=max(0., deadline-time.monotonic()))
+                            if error is not None:
+                                raise error
+                        except Exception as exc:
+                            self._failure(header, exc)
+                        finally:
+                            self.lock.release()
+                            self.retiring = False
+                    retiring = True
+                    self.retiring = True
+                    threading.Thread(target=retire, daemon=True).start()
+                    raise TimeoutError("Native request expired; previous operation is retiring")
                 if error is not None:
                     raise error
                 return metadata, payload
             except Exception as exc:
-                if self.closed and not self.failed:
-                    raise RuntimeError("Native operation cancelled by shutdown") from exc
-                self.failed = True
-                process = self.process
-                self.events.record("FATAL", "item_worker_failed", str(exc),
-                                   pid=None if process is None else process.pid,
-                                   exit_code=None if process is None else process.poll(),
-                                   operation=header.get("operation"), width=header.get("width"),
-                                   height=header.get("height"),
-                                   stderr_tail=bytes(self.stderr_tail).decode(
-                                       "utf-8", errors="replace"))
-                self.close()
-                raise RuntimeError(f"Terminal item worker failure: {exc}") from exc
+                if retiring:
+                    raise
+                raise self._failure(header, exc) from exc
         finally:
-            self.lock.release()
+            if not retiring:
+                self.lock.release()
 
     def close(self):
         with self.process_lock:

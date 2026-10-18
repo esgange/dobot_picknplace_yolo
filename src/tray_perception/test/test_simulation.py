@@ -168,12 +168,12 @@ def test_armed_request_while_frozen_still_acquires_a_new_observation(backend):
 
     def fresh():
         view = snapshot()
-        view["rgb"]["stamp_ns"] = 101_000_000_001
+        view["rgb"]["stamp_ns"] += 1_000_000_000
         return view
     node.snapshot.side_effect = fresh
     actual = trigger(backend)
     assert actual.success and actual.header.stamp.sec == 101
     assert actual.batch_id != local["response"].batch_id
-    assert node.preview.call_count == 2
+    assert node.preview.call_count == 4
     assert node.simulation.transform.header.stamp.sec == 100
     assert node.requests.service is not None

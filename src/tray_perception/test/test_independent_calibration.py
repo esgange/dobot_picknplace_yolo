@@ -42,7 +42,8 @@ def test_default_camera_uses_shared_active_choice_and_never_teaching_filename(
 
 def test_apply_replacement_preserves_plane_pose_and_capture_history(tmp_path, monkeypatch):
     camera = SimpleNamespace(path=tmp_path / "new.yaml",
-                             settings=SimpleNamespace(camera_prefix="robot_camera"))
+                             settings=SimpleNamespace(camera_prefix="robot_camera"), sha256="mock")
+    camera.path.write_text("camera fixture")
     monkeypatch.setattr(node_module, "load_camera_calibration", lambda *_a, **_k: camera)
     node = SimpleNamespace(root=tmp_path, lock=threading.RLock(), generation=3,
                            plane=plane(), position=position(), plane_camera_calibration="old",

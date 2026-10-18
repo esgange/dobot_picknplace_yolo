@@ -127,6 +127,7 @@ class TrayRequestDiagnostics:
             depth["valid_fraction"] = (depth["accepted_samples"] / depth["total_samples"]
                                        if depth["total_samples"] else 0.)
         rgb = {} if view is None else view.get("rgb", {})
+        diagnostics = json.loads(response.diagnostics_json or '{}')
         payload = finite_json({
             "request_id": self.request_id, "batch_id": response.batch_id,
             "source": "simulate" if self.simulated else "service",
@@ -145,6 +146,8 @@ class TrayRequestDiagnostics:
             "settings": self.settings, "sampling": self.sampling, "device": "cpu",
             "save_debug_images": bool(self.request.save_debug_images),
             "worker_timings_ms": worker,
+            "stability": diagnostics.get("stability"),
+            "snapshot_context": None if view is None else view.get("camera_context"),
         })
         evidence_started = time.monotonic()
         evidence = {"saved": False, "reason": "Successful request not sampled"}
@@ -156,7 +159,6 @@ class TrayRequestDiagnostics:
         payload["evidence"] = evidence
         self.timings["evidence_save_ms"] = (time.monotonic() - evidence_started) * 1000
         payload["timings_ms"] = {**self.timings, "total_ms": (time.monotonic()-self.started)*1000}
-        diagnostics = json.loads(response.diagnostics_json or '{}')
         diagnostics.update(request_id=self.request_id, timings_ms=payload["timings_ms"],
                            worker_timings_ms=worker, diagnostic_evidence=evidence,
                            rejection_category=category, depth_diagnostics=depth)

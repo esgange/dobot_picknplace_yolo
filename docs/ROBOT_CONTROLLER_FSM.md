@@ -1,5 +1,25 @@
 # Robot Controller — Finite State Machine
 
+Tray two-pose capture review: **2026-10-18**, baseline **`335c03c`** plus rule **291**.
+Keep verified saved Tray Detect joints, idle/empty queue and continuing observation-
+position checks for the eye-on-hand camera. All shared tray requests require two
+consecutive processed fresh post-trigger RGB observations with exact RGB-time TF.
+Both pass taught size/class gates; base-frame origin, center and requested target
+agree within 5% of taught width and matrix-relative rotation within 5 degrees.
+No fixed spacing, averaging, crop or extra size-difference threshold is added.
+Return sample two and its synchronized depth. Mismatch keeps the newer valid seed;
+empty/inconsistent frames break it. One deadline covers the search. Exhaustion is
+NO_VALID_TRAY with a precise reason; ten requests still lead to WAITING FOR TRAY.
+Expiry discards/drains a running native response while retaining transport ownership;
+new captures/previews wait for retirement. A separate hard worker deadline remains.
+Version-1 stability evidence is recomputed by the controller; missing/invalid proof
+is terminal. Source/CameraInfo changes invalidate capture. Pause/Stop retirement,
+placement geometry/rates/I/O and next-item overlap are unchanged. Native masks use
+scaled cleanup; tray Torch8/inter-op1/OpenCV1 (item Torch4), RGB/depth30 FPS. Strong
+cached file identity fences preserve strict calibration validation. Intermediate
+frames omit rendering; requested final images use accepted geometry without YOLO.
+Software verification only; physical accuracy and timing remain operator-tested.
+
 HMI appearance review: **2026-10-13**, baseline **`88ad925`** plus rule **287**.
 The user clarifies that the intended appearance is Item Teach's plain Qt UI.
 Retain the restored three-page layout below, but replace the custom blue/white
@@ -231,8 +251,8 @@ Tray observation recovery review: **2026-10-11**, baseline **`3e52eaf`** plus
 rule **262**. A provider rejects a complete observation when finite, well-formed
 tray detection corners, axes or dimensions disagree. A healthy worker/service
 remains active: passive preview clears its pose/overlay and retries newer RGB at
-1 Hz; triggered capture returns NO_VALID_TRAY (success/found false, no usable
-pose/depth). Existing controller acquisition handling uses ten requests total,
+1 Hz; rule 291 now retries inconsistent frames inside the same request deadline,
+then returns NO_VALID_TRAY (success=true, found=false, no usable pose/depth). Existing controller acquisition handling uses ten requests total,
 then PAUSED with Continue / Return Item. Keep fresh post-trigger frames, zero
 added settling and all held-item/Stop/source/ownership checks. Malformed native
 evidence, invalid reference planes and worker/protocol failures remain terminal;
@@ -1514,7 +1534,7 @@ claim PLACED or RETURNED.
 ```mermaid
 flowchart TD
     Request["PlaceItem: empty READY or trusted HOLDING; require pickup alignment when held; positive X/Y and Rotation"] --> Observe{"Fresh idle + saved Tray Detect joints?"}
-    Observe -->|Yes immediately| Depth["Fresh tray pose/depth; optional debug RGB/depth; valid pixels meet 20% placement coverage; at most 10 attempts; zero added delay"]
+    Observe -->|Yes immediately| Depth["Two advancing fresh tray poses: origin/center/target within 5% taught width, rotation within 5 deg; second pose/depth only; 20% coverage; at most 10 requests"]
     Observe -->|No| Travel["Queue MovL then MovJ to identical Tray Detect joints; speed 100%; preserve outputs; no intermediate arrival wait"]
     Travel --> Arrive["Confirm only final MovJ execution, raw saved joints and idle before detection"]
     Arrive --> Depth
@@ -1601,8 +1621,12 @@ this reopen. Only an issued approach command authorizes its finger-output change
 opening never confirms release or disables held-loss monitoring. All placement
 replies still precede next Pick admission.
 
-Use a fresh after-trigger synchronized RGB/depth observation and calibrated
-RGB-time TF. Preserve requested base X/Y; obtain surface base Z from target-ray
+Confirm two consecutive fresh post-trigger RGB observations and their exact
+RGB-time TF in base_link. Origins, centers and requested placement points must
+agree within 5% of taught tray width, rotations within 5 degrees; each sample
+passes taught dimension tolerance. Mismatch retains the newer seed; invalid/empty
+frames break the pair. Verify version-1 stability evidence, then use only the
+second pose and its synchronized registered depth. No averaging or fixed wait. Preserve requested base X/Y; obtain surface base Z from target-ray
 filtered median depth. Reuse Item Teach physical diameter and range/MAD, with fixed 20% valid
 pixel coverage (rule 251), with samples restricted to the tray and all circle pixels in
 the denominator. Empty/zero-valid samples fail; no count floor remains.
@@ -1619,8 +1643,9 @@ is malformed. INVALID_GEOMETRY is terminal. No target is clamped.
 
 Finite, well-formed detection corner/axis/dimension disagreements are rejected
 inside the tray provider before returning any pose. The provider stays armed and
-returns NO_VALID_TRAY with success/found false, numeric rejection diagnostics and
-no usable placement depth. This is an unavailable observation, distinct from an
+breaks the pair and continues with newer RGB within the original deadline.
+Exhaustion returns NO_VALID_TRAY with success=true/found=false, numeric rejection
+diagnostics and no usable placement depth. This is an unavailable observation, distinct from an
 invalid *successful* response. Passive preview discards the whole frame, clears
 pose/overlays and waits for newer RGB at its normal cadence, without consuming the
 controller budget. Degenerate/nonfinite/malformed evidence and native worker or
@@ -1749,7 +1774,7 @@ flowchart TD
     Start["READY: Manual or Auto Run; bind teaching/headless providers, quantity and target; start elapsed timer and run ID"] --> Pick["First Pick: fresh batch and initial Home; bounded Pick"]
     Start -.-> Audit["Read-only daily events: run/cycle/request/group IDs; 30-day retention; JSON/CSV on finish; no added motion waits"]
     Pick --> Tray["Linear lifts and exit; queue MovL then MovJ to identical tray joints without intermediate wait; confirm only final MovJ joints, execution and idle"]
-    Tray --> Observe["Fresh tray pose/depth: 20% valid pixels and surface within 20 mm below saved plane or higher before offsets; debug RGB/depth; at most 10 attempts; zero added delay"]
+    Tray --> Observe["Two matching fresh tray poses; verify stability proof; second pose/depth: 20% coverage and saved-plane height guard; at most 10 requests; no fixed spacing"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker with revisioned repick exclusions"]
     Prefetch --> Valid["Validate placement geometry and sources; keep suction"]
     Valid --> Place["Queue approach (use_grip OFF: open fingers at 80%) → descent (80% fingers; 90% suction OFF / exhaust ON) → retract (0% neutral); require all 3 accepted replies"]

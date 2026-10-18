@@ -84,6 +84,23 @@ def exercise_masks():
     with pytest.raises(RuntimeError, match="absent"):
         clean_objects(malformed, {0: "tray"}, 10, cv2, np)
 
+    # Retina masks stay in full-frame coordinates, with scaled morphology.
+    from tray_perception.mask_clean import native_kernel
+    full = np.zeros((480, 640), np.uint8)
+    full[100:300, 150:450] = 1
+    full[180:184, 450:480] = 1  # A four-pixel bridge is removed by the 5px kernel.
+    full[170:200, 480:510] = 1
+    output = clean_objects(result([full], (480, 640)), {0: "tray"}, 1,
+                           cv2, np, inference_size=448)[0]
+    assert native_kernel(640, 480, 448) == 5
+    validate_evidence(output["mask_clean"], kernel_px=5)
+    assert np.array_equal(output["polygon"].min(axis=0), [150, 100])
+    assert np.array_equal(output["polygon"].max(axis=0), [449, 299])
+    full[180:184, :150] = 1
+    edge = clean_objects(result([full], (480, 640)), {0: "tray"}, 1,
+                         cv2, np, inference_size=448)[0]
+    assert edge["mask_clean"]["source_touches_image_edge"]
+
     # Correct letterbox inverse: 1280×720 RGB padded into a 640×640 mask.
     mask = np.zeros((640, 640), np.uint8)
     mask[200:301, 100:201] = 1

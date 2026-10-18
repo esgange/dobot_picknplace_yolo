@@ -7,13 +7,17 @@ KERNEL_PX = 3
 MIN_RETAINED_FRACTION = .8
 
 
-def validate_evidence(value):
+def native_kernel(width, height, inference_size):
+    return max(KERNEL_PX, math.ceil(KERNEL_PX * max(width, height) / inference_size) | 1)
+
+
+def validate_evidence(value, *, kernel_px=KERNEL_PX):
     """Validate cleanup diagnostics at the ROS boundary without native imports."""
     counts = ("raw_pixels", "kept_pixels", "removed_pixels", "components_before",
               "components_after")
     if (type(value) is not dict or any(
             type(value.get(key)) is not int or value[key] < 0 for key in counts)
-            or value.get("kernel_px") != KERNEL_PX
+            or value.get("kernel_px") != kernel_px
             or value.get("minimum_retained_fraction") != MIN_RETAINED_FRACTION
             or type(value.get("source_touches_image_edge")) is not bool
             or value.get("status") not in ("unchanged", "cleaned", "rejected")
@@ -42,7 +46,7 @@ def summary(detection):
             f"{value['removed_pixels']} pixels removed")
 
 
-def clean_mask(mask, cv2, np):
+def clean_mask(mask, cv2, np, *, kernel_px=KERNEL_PX):
     """Split narrow bridges and retain a dominant connected region by pixel area."""
     if (mask.ndim != 2 or not mask.size or not np.isfinite(mask).all()
             or not np.isin(mask, (0, 1)).all()):
@@ -50,7 +54,7 @@ def clean_mask(mask, cv2, np):
     binary = np.ascontiguousarray(mask, dtype=np.uint8)
     before, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     total = int(binary.sum())
-    opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((KERNEL_PX, KERNEL_PX), np.uint8),
+    opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((kernel_px, kernel_px), np.uint8),
                               borderType=cv2.BORDER_CONSTANT, borderValue=0)
     after, cleaned_labels, cleaned_stats, _ = cv2.connectedComponentsWithStats(
         opened, connectivity=8)
@@ -70,7 +74,7 @@ def clean_mask(mask, cv2, np):
               "No dominant region after splitting blobs "
               f"({fraction:.1%} retained; need {MIN_RETAINED_FRACTION:.0%})"
               if fraction < MIN_RETAINED_FRACTION else "")
-    evidence = {"kernel_px": KERNEL_PX, "minimum_retained_fraction": MIN_RETAINED_FRACTION,
+    evidence = {"kernel_px": kernel_px, "minimum_retained_fraction": MIN_RETAINED_FRACTION,
                 "raw_pixels": total, "kept_pixels": kept, "removed_pixels": total - kept,
                 "components_before": before - 1, "components_after": after - 1,
                 "retained_fraction": fraction,
@@ -90,7 +94,7 @@ def _polygon(mask, original_shape, cv2, np):
     return scale_coords(mask.shape, contour, original_shape)
 
 
-def clean_objects(result, names, maximum, cv2, np):
+def clean_objects(result, names, maximum, cv2, np, *, inference_size=None):
     """One independent cleanup per model instance; never access merged masks.xy."""
     boxes = result.boxes
     if boxes is None:
@@ -107,12 +111,15 @@ def clean_objects(result, names, maximum, cv2, np):
             or not all(0 < size <= 4096 for size in masks.shape[1:])):
         raise RuntimeError("Malformed segmentation mask dimensions/count")
     height, width = result.orig_shape
+    kernel = (native_kernel(width, height, inference_size)
+              if inference_size is not None and masks.shape[1:] == (height, width)
+              else KERNEL_PX)
     objects = []
     for index, (mask, label, score) in enumerate(zip(masks, labels, scores)):
         if (not math.isfinite(float(label)) or int(label) != label or int(label) not in names
                 or not math.isfinite(float(score)) or not 0 <= score <= 1):
             raise RuntimeError("Malformed segmentation class/confidence")
-        cleaned, original, evidence = clean_mask(mask, cv2, np)
+        cleaned, original, evidence = clean_mask(mask, cv2, np, kernel_px=kernel)
         polygon = _polygon(cleaned, result.orig_shape, cv2, np)
         boundary = _polygon(original, result.orig_shape, cv2, np)
         evidence["source_touches_image_edge"] = bool(len(boundary) and (

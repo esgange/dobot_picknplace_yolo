@@ -374,7 +374,17 @@ Pause/Continue and drop/return recovery until a successful placement. Preserve
 initial Pick Home skip/arrival, candidate plans, timed I/O, acquisition Stop
 acknowledgement, lifts and saved Tray Detect destination.
 Tray pose acquisition begins only after Pick confirms saved tray joints and idle
-feedback. Auto Run always requires the trusted picked item for placement, including
+feedback. The shared tray provider now confirms two consecutive processed observations
+with advancing RGB timestamps, each after the request and using exact image-time TF.
+Origins, centers and the requested placement point must agree within 5% of taught
+tray width; rotation within 5 degrees. Each frame uses taught dimension tolerance.
+The controller recomputes version-1 `diagnostics_json.stability` evidence and rejects
+old single-frame providers. It uses only the second pose and its registered depth.
+No fixed inter-frame wait or averaging is added. One request deadline includes all
+comparisons; ten exhausted requests still pause at WAITING FOR TRAY. Keep rebuilding
+and relaunching tray provider and controller together; no teach upload is required.
+
+Auto Run always requires the trusted picked item for placement, including
 in GUI mode. Placement retains its existing approach/release/retract queue and rates.
 
 After Pick confirms Tray Detect joints/idle, acquire the tray pose and placement

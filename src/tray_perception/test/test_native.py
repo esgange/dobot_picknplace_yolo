@@ -206,7 +206,7 @@ def exercise_tray_axis_overlays():
     rgb = np.zeros((480, 640, 3), np.uint8)
     native.render_result = lambda *_: (rgb.copy(), 1)
     native.objects_from_result = lambda *_: objects
-    native.clean_objects = lambda *_: objects
+    native.clean_objects = lambda *_, **_kw: objects
     result, data = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
     item = result["detections"][0]
     assert result["selected"] is None and not item["valid"]
@@ -247,6 +247,15 @@ def exercise_tray_axis_overlays():
     assert all(value >= 0 for value in accepted_result.pop("timings_ms").values())
     assert returned_result == accepted_result and returned_result["selected"] is not None
     assert returned_pixels != plain_rgb
+    geometry, payload = native.predict_trays(
+        {**accepted_request, "render_images": False}, None, rgb, {1: "tray"}, cv2, np)
+    assert not payload and geometry["has_images"] is False
+    assert geometry["selected"] == returned_result["selected"]
+    assert geometry["timings_ms"]["rendering_ms"] == 0.
+    header, rendered = native.render_capture({"width": 640, "height": 480,
+        "settings": accepted_settings, "result": geometry}, rgb.tobytes(), cv2, np)
+    assert header == {"state": "ok", "width": 640, "height": 480}
+    assert rendered == returned_pixels
     passive_result, passive_pixels = native.predict_trays(
         {**accepted_request, "passive_overlay": True}, None, rgb, {1: "tray"}, cv2, np)
     assert all(value >= 0 for value in passive_result.pop("timings_ms").values())
@@ -355,7 +364,7 @@ def exercise_tray_axis_overlays():
             ("plane", {"plane": None}, objects),
             ("calibration", {"camera_context": None}, objects),
             ("edge", {}, edge), ("mask", {}, mask_rejected), ("empty", {}, [])):
-        native.clean_objects = lambda *_: detected
+        native.clean_objects = lambda *_, **_kw: detected
         for passive in (False, True):
             request = {**accepted_request, **override, "passive_overlay": passive}
             reply, pixels = native.predict_trays(request, None, rgb, {1: "tray"}, cv2, np)
@@ -416,7 +425,7 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
                             YOLO_AUTOINSTALL="false", MPLCONFIGDIR=str(tmp_path)),
                    check=True, capture_output=True, timeout=30)
     client = NativeClient(MagicMock(), worker_package="tray_perception",
-                          worker_executable="tray_worker")
+                          worker_executable="tray_worker", torch_threads=8)
     camera = {"width": 64, "height": 48, "k": [100., 0., 32., 0., 100., 24., 0., 0., 1.],
               "d": [0.] * 5, "distortion_model": "plumb_bob"}
     optical = np.diag([1., -1., -1., 1.])

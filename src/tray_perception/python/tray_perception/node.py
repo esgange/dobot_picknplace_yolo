@@ -24,6 +24,7 @@ from item_perception_yolo.platform_teach_core import (
     _parse_env_file, load_camera_calibration, load_robot_lan1_ip, resolve_base_from_camera_link)
 
 from .core import EventLogger, load_profile, validate_plane, validate_preview
+from .source_binding import fingerprints, check as check_binding
 from .calibration import active_robot_camera, camera_provenance
 from .rviz import TrayRvizPreview
 from .requests import (
@@ -46,7 +47,8 @@ class TrayTeachNode(Node):
             self.publisher_node = "/" + name
         self.events = EventLogger(self.root, self.get_name())
         self.native = NativeClient(self.events, worker_package="tray_perception",
-                                   worker_executable="tray_worker")
+                                   worker_executable="tray_worker", torch_threads=8)
+        self._camera_binding = None
         self.lock = threading.RLock()
         self.work_lock = threading.RLock()
         self.yolo_enabled = False
@@ -118,10 +120,15 @@ class TrayTeachNode(Node):
             self.rviz.invalidate(reason)
 
     def apply_camera(self, path):
+        before = fingerprints([Path(path)])
         camera = load_camera_calibration(Path(path), root=self.root)
+        if fingerprints([Path(path)]) != before:
+            raise ValueError("Camera calibration changed while loading")
         with self.lock:
             self.invalidate()
             self.camera = camera
+            self._camera_binding = {"paths": (camera.path,), "fingerprints": before,
+                                    "identity": (camera.path, camera.sha256)}
             generation = self.generation
         self.connect_camera(camera.settings.camera_prefix)
         self.events.record("INFO", "camera_loaded", str(camera.path), generation=generation)
@@ -212,8 +219,16 @@ class TrayTeachNode(Node):
             raise ValueError("Load a camera calibration")
         if self.camera_prefix != self.camera.settings.camera_prefix:
             raise ValueError("Connected prefix does not match camera calibration")
-        if file_sha256(self.camera.path) != self.camera.sha256:
-            raise ValueError("Camera calibration changed; explicitly reload it")
+        binding = getattr(self, "_camera_binding", None)
+        if binding is None or binding["identity"] != (self.camera.path, self.camera.sha256):
+            before = fingerprints([self.camera.path])
+            if (file_sha256(self.camera.path) != self.camera.sha256
+                    or fingerprints([self.camera.path]) != before):
+                raise ValueError("Camera calibration changed; explicitly reload it")
+            self._camera_binding = binding = {
+                "paths": (self.camera.path,), "fingerprints": before,
+                "identity": (self.camera.path, self.camera.sha256)}
+        check_binding(binding)
 
     def raw_snapshot(self, *, input_max_age_sec=.5):
         with self.lock:
@@ -322,7 +337,7 @@ class TrayTeachNode(Node):
         return self.plane
 
     def preview(self, settings=None, *, generation, view=None, visualize=True, deadline=None,
-                depth_quality=None, returned_only=False, passive_overlay=False):
+                depth_quality=None, returned_only=False, passive_overlay=False, render_images=True):
         supplied = view is not None
         view = self.raw_snapshot() if view is None else view
         if view["generation"] != generation:
@@ -345,7 +360,8 @@ class TrayTeachNode(Node):
         if context is None:
             plane = None
         request = {"width": rgb["width"], "height": rgb["height"], "plane": plane,
-                   "camera_context": context, "passive_overlay": passive_overlay}
+                   "camera_context": context, "passive_overlay": passive_overlay,
+                   "render_images": render_images}
         if settings is None:
             request["operation"] = "tray_overlay"
         else:
@@ -356,9 +372,10 @@ class TrayTeachNode(Node):
                            model={**model, "yolo": settings["yolo"]})
             if returned_only:
                 request["returned_only"] = True
-        remaining = 10 if deadline is None else max(.001, deadline - time.monotonic())
+        remaining = 10 if deadline is None else max(0., deadline - time.monotonic())
         native_started = time.monotonic()
-        result, pixels = self.native.call(request, rgb["rgb"], timeout=remaining)
+        result, pixels = self.native.call(request, rgb["rgb"], timeout=10.,
+                                         request_timeout=None if deadline is None else remaining)
         native_ms = (time.monotonic() - native_started) * 1000
         if settings is not None:
             timings = result.get("timings_ms", {})
@@ -374,10 +391,11 @@ class TrayTeachNode(Node):
         fields = {"state", "width", "height", "error"} if settings is None else {
             "state", "width", "height", "count", "detections", "selected", "reason",
             "inference_ms"}
-        optional = {"timings_ms"} if settings is not None else set()
+        optional = {"timings_ms", "has_images"} if settings is not None else set()
         if (set(result) - optional != fields or result.get("width") != rgb["width"]
                 or result.get("height") != rgb["height"]
-                or len(pixels) != rgb["width"] * rgb["height"] * 3):
+                or result.get("has_images", True) is not render_images
+                or len(pixels) != (rgb["width"] * rgb["height"] * 3 if render_images else 0)):
             raise RuntimeError("Invalid native tray image reply")
         selected = result.get("selected")
         if settings is not None and (type(result["detections"]) is not list
@@ -401,7 +419,9 @@ class TrayTeachNode(Node):
                 identities = []
                 for detection in result["detections"]:
                     if "mask_clean" in detection:
-                        validate_evidence(detection["mask_clean"])
+                        from .mask_clean import native_kernel
+                        validate_evidence(detection["mask_clean"], kernel_px=native_kernel(
+                            rgb["width"], rgb["height"], settings["yolo"]["image_size"]))
                         if detection["mask_clean"]["status"] == "rejected" and detection["valid"]:
                             raise ValueError("Rejected mask cannot have a valid pose")
                     polygon = np.asarray(detection["polygon"], dtype=float)
@@ -463,7 +483,24 @@ class TrayTeachNode(Node):
             if view["generation"] != self.generation:
                 raise ValueError("Tray preview was invalidated while processing")
         return {**view, **visuals, "overlay": pixels, "result": result,
+                "render_settings": settings,
                 "passive_overlay": passive_overlay and settings is not None}
+
+    def render_capture(self, view, *, deadline):
+        """Render the accepted snapshot once, without another model prediction."""
+        rgb = view["rgb"]
+        header, pixels = self.native.call({
+            "operation": "tray_render_capture", "width": rgb["width"], "height": rgb["height"],
+            "settings": view["render_settings"], "result": view["result"]}, rgb["rgb"],
+            timeout=10., request_timeout=max(0., deadline - time.monotonic()))
+        if (header != {"state": "ok", "width": rgb["width"], "height": rgb["height"]}
+                or len(pixels) != rgb["width"] * rgb["height"] * 3):
+            raise RuntimeError("Invalid tray capture rendering reply")
+        selected = view["result"]["selected"]
+        visuals = self.visuals(view, [] if selected is None else [selected],
+                               cloud=not self.deployment, deadline=deadline, plane=self.plane)
+        self._check_snapshot(view)
+        return {**view, **visuals, "overlay": pixels}
 
     def _reject_observation(self, view, errors):
         """Revoke this frame's visualization, without revoking its saved sources."""
@@ -508,7 +545,8 @@ class TrayTeachNode(Node):
             "passive_source": passive_source,
             "detections": detections, "pixels": list(pixels), "plane": plane},
             rgb["rgb"] + depth["depth"],
-            timeout=10 if deadline is None else max(.001, deadline - time.monotonic()))
+            timeout=10., request_timeout=(None if deadline is None else
+                                          max(0., deadline - time.monotonic())))
         size = rgb["width"] * rgb["height"] * 3
         if (set(result) != {"state", "width", "height", "point_count", "samples"}
                 or result["width"] != rgb["width"] or result["height"] != rgb["height"]

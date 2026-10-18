@@ -25,6 +25,8 @@ from .core import load_profile, ORIGIN_CONVENTION
 from .documents import detection_profile, load_document
 from .placement import sampling_from_message
 from .contract import SERVICE_NAME
+from .source_binding import fingerprints, check as check_binding
+from .stability import sample as stability_sample, compare as compare_poses
 from .diagnostics import TrayRequestDiagnostics, SUCCESS_SAMPLE_INTERVAL, prune_evidence
 from item_perception_yolo.daily_events import log_day
 
@@ -97,11 +99,6 @@ def preview_settings(settings, metadata):
     return value
 
 
-def fingerprints(paths):
-    return tuple((str(path), path.stat().st_ino, path.stat().st_size, path.stat().st_mtime_ns)
-                 for path in paths)
-
-
 def save_debug(root, identifier, view):
     if (type(identifier) is not str or len(identifier) != 32
             or any(character not in "0123456789abcdef" for character in identifier)):
@@ -148,16 +145,18 @@ class TrayRequests:
         self.status = "Disarmed — no tray pose service"
         self.diagnostic_successes = 0
         self.evidence_pruned_day = None
+        self._verified = None
 
     @property
     def busy(self):
-        return self.request_lock.locked()
+        return self.request_lock.locked() or getattr(self.node.native, "retiring", False)
 
     def disarm(self, reason="Disarmed"):
         with self.lock:
             self.epoch += 1
             service, self.service = self.service, None
             self.binding = None
+            self._verified = None
             self.status = reason
             if service is not None:
                 self.retired.append(service)
@@ -181,6 +180,22 @@ class TrayRequests:
             raise ValueError("Enable YOLO with valid saved settings before triggering or arming")
         if node.model is None:
             raise ValueError("Load the saved tray model before triggering or arming")
+        paths = (Path(path), Path(path).with_suffix(".pt"),
+                 Path(node.model["path"]), node.camera.path)
+        cached = self._verified
+        if cached is not None:
+            check_binding(cached)
+            if (cached["paths"] != paths or cached["digest"] != expected_digest
+                    or cached["settings"] != settings
+                    or cached["profile"]["reference_plane"] != node.plane
+                    or node.model["sha256"] != cached["profile"]["model"]["sha256"]
+                    or node.model["task"] != settings["model_task"]
+                    or any(str(i) not in node.model_metadata["classes"]
+                           for i in settings["yolo"]["class_ids"])):
+                raise ValueError("Save or load the exact current tray sources/settings before capture")
+            node.validate_sources()
+            return cached
+        before = fingerprints(paths)
         if node.deployment:
             profile = load_profile(path, node.root, deployment=True)
         else:
@@ -203,11 +218,12 @@ class TrayRequests:
                 or any(str(i) not in node.model_metadata["classes"]
                        for i in settings["yolo"]["class_ids"])):
             raise ValueError("Saved tray model does not match the loaded source")
-        paths = (Path(path), Path(path).with_suffix(".pt"),
-                 Path(node.model["path"]), node.camera.path)
-        return {"path": Path(path), "digest": digest, "profile": profile,
-                "settings": copy.deepcopy(settings), "paths": paths,
-                "fingerprints": fingerprints(paths)}
+        if fingerprints(paths) != before:
+            raise ValueError("Tray sources changed during validation; explicitly reload")
+        self._verified = {"path": Path(path), "digest": digest, "profile": profile,
+                          "settings": copy.deepcopy(settings), "paths": paths,
+                          "fingerprints": before}
+        return self._verified
 
     def _sole_provider(self):
         node = self.node
@@ -257,9 +273,7 @@ class TrayRequests:
             if binding is None:
                 return
             self.node.validate_sources()
-            if (fingerprints(binding["paths"]) != binding["fingerprints"]
-                    or file_sha256(binding["path"]) != binding["digest"]):
-                raise ValueError("Bound tray files changed; reload/restart before arming")
+            check_binding(binding)
             self._sole_provider()
         except (ValueError, OSError, RuntimeError) as exc:
             self.node.invalidate(str(exc))
@@ -274,7 +288,7 @@ class TrayRequests:
         if time.monotonic() >= deadline:
             raise TimeoutError("Tray request exceeded its configured deadline")
 
-    def _fresh_view(self, start_ns, started, deadline, check, sampling=None):
+    def _fresh_view(self, start_ns, started, deadline, check, sampling=None, *, after_ns=0):
         reason = "Waiting for RGB captured after this trigger"
         while time.monotonic() < deadline:
             check()
@@ -282,7 +296,7 @@ class TrayRequests:
                 view = (self.node.snapshot() if sampling is None else
                         self.node.snapshot(depth_required=True, quality=sampling))
                 rgb = view["rgb"]
-                if rgb["stamp_ns"] > start_ns and rgb["received_at"] >= started:
+                if rgb["stamp_ns"] > max(start_ns, after_ns) and rgb["received_at"] >= started:
                     if sampling is not None and (
                             view["depth"]["stamp_ns"] <= start_ns
                             or view["depth"]["received_at"] < started):
@@ -314,8 +328,7 @@ class TrayRequests:
         binding = view["trigger_binding"]
         if (view["trigger_epoch"] != self.epoch or not self.node.yolo_enabled
                 or self.node.native.failed or self.node.native.closed or self.node.fatal_error
-                or fingerprints(binding["paths"]) != binding["fingerprints"]
-                or file_sha256(binding["path"]) != binding["digest"]):
+                or fingerprints(binding["paths"]) != binding["fingerprints"]):
             raise ValueError("Simulated tray profile or source identity changed")
         self.node._check_snapshot(view)
 
@@ -324,6 +337,104 @@ class TrayRequests:
         response, view = self._batch(request, GetTrayPose.Response(),
                                      simulation=(path, settings), requested_at=requested_at)
         return {"response": response, "view": view}
+
+    def _stable_view(self, start_ns, started, deadline, check, alive, sampling, settings,
+                     verified, generation, diagnostics, set_phase):
+        previous, previous_view, latest, proof = None, None, None, None
+        after_ns, attempts, previous_ms = 0, 0, 0.
+        reason = "Waiting for two fresh valid tray observations"
+        while time.monotonic() < deadline:
+            alive()
+            check_binding(verified)
+            set_phase("fresh_observation")
+            try:
+                view = self._fresh_view(start_ns, started, deadline, check,
+                                        sampling if previous is not None else None,
+                                        after_ns=after_ns)
+            except TimeoutError as exc:
+                reason = f"{reason}; {exc}"
+                break
+            after_ns = view["rgb"]["stamp_ns"]
+            diagnostics.view = view
+            set_phase("inference")
+            attempts += 1
+            try:
+                latest = self.node.preview(
+                    preview_settings(settings, self.node.model_metadata), generation=generation,
+                    view=view, visualize=False, render_images=False, deadline=deadline,
+                    returned_only=True, **({"depth_quality": sampling} if sampling else {}))
+                candidate = latest["result"]["selected"]
+                if candidate is not None:
+                    pose_extents(candidate)
+            except TrayObservationGeometryError as exc:
+                alive()
+                self.node.validate_sources()
+                check_binding(verified)
+                self._sole_provider()
+                self.node._reject_observation(view, [exc])
+                previous = previous_view = latest = None
+                reason = str(exc)
+                proof = {"geometry_rejection": exc.evidence}
+                continue
+            except (ValueError, TransformException) as exc:
+                alive()
+                self.node.validate_sources()
+                check_binding(verified)
+                previous = previous_view = latest = None
+                reason = str(exc)
+                continue
+            except TimeoutError as exc:
+                # The native client retains its lock while an expired operation
+                # drains. The next request cannot run a second model operation.
+                reason = str(exc)
+                break
+            diagnostics.view = latest
+            set_phase("validate_after")
+            alive()
+            check_binding(verified)
+            if time.monotonic() >= deadline:
+                reason = "Processing exceeded the tray request deadline"
+                break
+            if candidate is None:
+                previous = previous_view = None
+                reason = "No eligible tray in consecutive observation: " + latest["result"]["reason"]
+            else:
+                current = stability_sample(candidate, after_ns)
+                if previous is not None:
+                    if (view["connection"] != previous_view["connection"]
+                            or view["info"] != previous_view["info"]
+                            or view["camera_context"]["camera"] !=
+                            previous_view["camera_context"]["camera"]):
+                        raise ValueError("Tray camera changed between stability samples")
+                    proof = compare_poses(previous, current, settings["geometry"], sampling,
+                                          attempts=attempts)
+                    proof["timings_ms"] = {
+                        "first_prediction": previous_ms,
+                        "second_prediction": latest["result"].get("timings_ms", {}).get(
+                            "yolo_predict_ms", latest["result"]["inference_ms"]),
+                        "search": (time.monotonic() - started) * 1000}
+                    reason = proof["reason"]
+                    self.node.events.record("INFO", "tray_pair_comparison", reason, stability=proof)
+                    if proof["accepted"]:
+                        return latest, proof
+                else:
+                    reason = "First tray pose captured; waiting for a second valid observation"
+                previous, previous_view = current, view
+                previous_ms = latest["result"].get("timings_ms", {}).get(
+                    "yolo_predict_ms", latest["result"]["inference_ms"])
+            self.status = reason
+        # No acquisition, inference or rendering is allowed after this deadline.
+        # Source and cancellation fences still apply to the empty response.
+        alive()
+        self.node.validate_sources()
+        check_binding(verified)
+        self._sole_provider()
+        if latest is not None:
+            latest = {**latest, "result": {**latest["result"], "selected": None}}
+        proof = {**(proof or {}), "schema_version": 1, "accepted": False,
+                 "processed_frames": attempts,
+                 "reason": "No stable consecutive tray pair before deadline: " + reason}
+        return latest, proof
 
     def _batch(self, request, response, *, simulation=None, requested_at=None):
         if not self.request_lock.acquire(blocking=False):
@@ -345,8 +456,14 @@ class TrayRequests:
             phase = value
             diagnostics.phase_changed(value)
 
+        completed_empty = False
+
+        def alive():
+            self._check(epoch, generation, float("inf"), simulated=simulated)
+
         def check():
-            self._check(epoch, generation, deadline, simulated=simulated)
+            self._check(epoch, generation, float("inf") if completed_empty else deadline,
+                        simulated=simulated)
 
         try:
             self.node.events.record(
@@ -365,6 +482,9 @@ class TrayRequests:
             set_phase("wait_for_preview")
             while not acquired:
                 check()
+                if getattr(self.node.native, "retiring", False):
+                    time.sleep(.01)
+                    continue
                 acquired = self.node.work_lock.acquire(
                     timeout=min(.02, max(.001, deadline - time.monotonic())))
             check()
@@ -375,16 +495,17 @@ class TrayRequests:
             floor = (None if sampling is None else HeightPlane(
                 verified["profile"]["reference_plane"]["base_from_plane"], "tray plane"))
             check()
-            set_phase("fresh_observation")
-            view = self._fresh_view(start_ns, started, deadline, check, sampling)
-            diagnostics.view = view
-            set_phase("inference")
-            result_view = self.node.preview(
-                preview_settings(settings, self.node.model_metadata), generation=generation,
-                view=view, visualize=(simulated or request.save_debug_images
-                                      or capture_preview is not None), deadline=deadline,
-                returned_only=True,
-                **({"depth_quality": sampling} if sampling is not None else {}))
+            result_view, stability = self._stable_view(
+                start_ns, started, deadline, check, alive, sampling, settings, verified,
+                generation, diagnostics, set_phase)
+            completed_empty = not stability["accepted"]
+            view = result_view
+            if result_view is None:
+                response.success, response.status = True, "NO_VALID_TRAY"
+                response.message = stability["reason"]
+                response.diagnostics_json = json.dumps({"stability": stability}, allow_nan=False)
+                self.status = response.message
+                return response, None
             diagnostics.view = result_view
             set_phase("validate_after")
             check()
@@ -394,6 +515,11 @@ class TrayRequests:
             check()
             result = result_view["result"]
             selected = result["selected"]
+            if stability["accepted"] and (simulated or request.save_debug_images
+                                           or capture_preview is not None):
+                set_phase("rendering")
+                result_view = self.node.render_capture(result_view, deadline=deadline)
+                check()
             response.batch_id = uuid.uuid4().hex
             response.header.frame_id = "base_link"
             response.header.stamp = Time(nanoseconds=view["rgb"]["stamp_ns"]).to_msg()
@@ -421,7 +547,8 @@ class TrayRequests:
                         "operation": "tray_placement_depth", "width": view["rgb"]["width"],
                         "height": view["rgb"]["height"], "selected": selected,
                         "camera_context": view["camera_context"], "sampling": sampling},
-                        view["depth"]["depth"], timeout=max(.001, deadline - time.monotonic()))
+                        view["depth"]["depth"], timeout=10.,
+                        request_timeout=max(0., deadline - time.monotonic()))
                     check()
                     diagnostics.depth = measured.get("depth_evidence", measured)
                     if (not data and set(measured) in (
@@ -460,7 +587,7 @@ class TrayRequests:
             set_phase("debug_save")
             debug = {"requested": bool(request.save_debug_images), "rgb_path": "",
                      "depth_path": "", "error": ""}
-            if request.save_debug_images:
+            if request.save_debug_images and not completed_empty:
                 try:
                     debug = save_debug(self.node.root, response.batch_id, result_view)
                 except Exception as exc:
@@ -468,6 +595,9 @@ class TrayRequests:
                 check()
                 self.prepare(path, settings, request.profile_sha256)
             set_phase("response_validation")
+            if not completed_empty:
+                self.node._check_snapshot(view)
+            self.prepare(path, settings, request.profile_sha256)
             response.diagnostics_json = json.dumps({
                 "profile_sha256": verified["digest"], "model_sha256": self.node.model["sha256"],
                 "camera_sha256": self.node.camera.sha256, "origin_convention": ORIGIN_CONVENTION,
@@ -475,12 +605,13 @@ class TrayRequests:
                 "reference_plane": verified["profile"]["reference_plane"],
                 "placement_sampling": sampling,
                 "placement_rejection": surface_rejection,
+                "stability": stability,
                 "inference_ms": result["inference_ms"], "detections": result["detections"],
                 "debug_capture": debug}, allow_nan=False)
             check()
             response.success = True
             response.status = "OK" if response.found else "NO_VALID_TRAY"
-            response.message = "One tray pose returned" if response.found else "No eligible tray"
+            response.message = "Stable tray pose returned" if response.found else stability["reason"]
             if surface_rejection:
                 response.status = "NO_VALID_PLACEMENT_DEPTH"
                 response.message = surface_rejection
@@ -504,7 +635,10 @@ class TrayRequests:
                                         if key in d} for d in result["detections"]
                                         if not d["valid"]],
                                     elapsed_sec=time.monotonic() - started)
+            if completed_empty:
+                view = None  # No stale or unrendered observation can become a capture preview.
         except Exception as exc:
+            expired = isinstance(exc, TimeoutError) and not self.node.native.failed
             recoverable = isinstance(exc, TrayObservationGeometryError)
             if recoverable:
                 try:
@@ -515,7 +649,7 @@ class TrayRequests:
                 except Exception as validation_error:
                     exc, recoverable = validation_error, False
             response = GetTrayPose.Response(success=False, found=False,
-                                            status="NO_VALID_TRAY" if recoverable else "ERROR",
+                                            status="NO_VALID_TRAY" if recoverable or expired else "ERROR",
                                             message=str(exc))
             if isinstance(exc, SurfaceGeometryError):
                 response.status = "INVALID_GEOMETRY"
@@ -552,6 +686,18 @@ class TrayRequests:
             except Exception as exc:
                 self.node.events.record("WARNING", "tray_diagnostics_failed", str(exc),
                                         request_id=request_id)
+            if response.success:
+                try:
+                    check()
+                    self.prepare(path, settings, request.profile_sha256)
+                    if response.found:
+                        self.node._check_snapshot(view)
+                except Exception as exc:
+                    response.success = response.found = response.placement.valid = False
+                    response.status, response.message = "ERROR", str(exc)
+                    view = None
+                    self.node.events.record("WARNING", "tray_delivery_revoked", str(exc),
+                                            request_id=request_id)
             if not simulated and capture_preview is not None:
                 capture_preview.put(response, view)
             if acquired:

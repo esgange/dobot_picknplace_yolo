@@ -1,4 +1,5 @@
 import copy
+import itertools
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,11 @@ from tray_perception.placement import sampling_from_item
 from test_documents import ready_form
 from test_core import artifact as saved_artifact
 from test_core import camera_info, plane, position, settings
+
+
+@pytest.fixture(autouse=True)
+def short_deadline(monkeypatch):
+    monkeypatch.setattr(requests, "REQUEST_TIMEOUT", .2)
 
 
 @pytest.fixture
@@ -58,10 +64,14 @@ def backend(tmp_path, artifact):
         get_node_names_and_namespaces=lambda: [("tray_teach", "/")],
         get_clock=lambda: SimpleNamespace(now=lambda: Time(seconds=100)))
 
+    sequence = 0
+
     def snapshot():
+        nonlocal sequence
+        sequence += 1
         return {"generation": node.generation, "connection": 1, "depth": None, "depth_info": None,
                 "info": camera_info(), "metric_error": "", "depth_error": "Depth unavailable",
-                "rgb": {"width": 2, "height": 2, "stamp_ns": 100_000_000_001,
+                "rgb": {"width": 2, "height": 2, "stamp_ns": 100_000_000_000 + sequence,
                         "received_at": time.monotonic(), "rgb": bytes(12)},
                 "camera_context": {"camera": camera_info(), "depth_camera": None,
                                    "base_from_optical": np.eye(4).tolist()}}
@@ -70,11 +80,12 @@ def backend(tmp_path, artifact):
 
     def preview(_settings, *, view, **_kwargs):
         result = {"count": 3, "detections": [selected()],
-                  "selected": selected(), "inference_ms": 2.}
+                  "selected": selected(), "inference_ms": 2., "reason": "One valid tray selected"}
         return {**view, "result": result, "overlay": bytes(12), "depth_overlay": b"",
                 "cloud": None, "samples": []}
 
     node.preview = MagicMock(side_effect=preview)
+    node.render_capture = MagicMock(side_effect=lambda view, **_kw: view)
     node.requests = requests.TrayRequests(node)
     node._reject_observation = lambda *args: TrayTeachNode._reject_observation(node, *args)
 
@@ -126,7 +137,7 @@ def test_cleanup_evidence_survives_request_and_event_log(backend, simulated):
 
 @pytest.mark.parametrize("usable", [True, False])
 @pytest.mark.parametrize("save_images", [False, True])
-def test_placement_request_uses_one_fresh_observation_and_reports_depth(
+def test_placement_request_uses_second_fresh_observation_and_reports_depth(
         backend, usable, save_images):
     node, path, digest = backend
     ordinary = node.snapshot.side_effect
@@ -152,8 +163,10 @@ def test_placement_request_uses_one_fresh_observation_and_reports_depth(
         placement=PlacementDepthRequest(**sample)), GetTrayPose.Response())
     assert response.success is usable and response.placement.valid is usable
     node.snapshot.assert_called_with(depth_required=True, quality=sample)
-    node.preview.assert_called_once()
-    assert node.preview.call_args.kwargs["visualize"] is save_images
+    assert node.preview.call_count == 2
+    assert node.preview.call_args.kwargs["visualize"] is False
+    assert node.preview.call_args.kwargs["render_images"] is False
+    assert node.render_capture.call_count == int(save_images)
     assert node.native.call.call_args.args[0]["sampling"] == sample
     if usable:
         assert response.placement.surface_base.z == .24
@@ -301,12 +314,12 @@ def test_depth_failure_restarts_pose_and_depth_from_new_observation(backend, las
             assert response.message == "Insufficient accepted placement depth samples/fraction"
         assert observations[-1]["rgb"]["stamp_ns"] > (100 + attempt) * 1_000_000_000
         assert node.requests.service is not None and not node.native.failed
-    assert order == ["pose", "depth"] * 3
-    assert len(observations) == 3
-    assert node.preview.call_count == node.native.call.call_count == 3
+    assert order == ["pose", "pose", "depth"] * 3
+    assert len(observations) == 6
+    assert node.preview.call_count == 6 and node.native.call.call_count == 3
 
 
-def test_armed_and_simulated_requests_share_fresh_single_pose_pipeline(backend):
+def test_armed_and_simulated_requests_share_fresh_two_pose_pipeline(backend):
     node, path, digest = backend
     api = node.requests
     local = api.simulate(path, settings(), digest, (100_000_000_000, time.monotonic()))
@@ -316,7 +329,7 @@ def test_armed_and_simulated_requests_share_fresh_single_pose_pipeline(backend):
     arm(backend)
     actual = trigger(backend)
     assert actual.success and actual.found and actual.status == "OK"
-    assert actual.header.frame_id == "base_link" and actual.header.stamp.nanosec == 1
+    assert actual.header.frame_id == "base_link" and actual.header.stamp.nanosec > local["response"].header.stamp.nanosec
     assert actual.tray.pose == local["response"].tray.pose
     assert actual.tray.length == .2 and actual.tray.width == .1
     assert actual.tray.extent_x == pytest.approx(.1)
@@ -324,7 +337,7 @@ def test_armed_and_simulated_requests_share_fresh_single_pose_pipeline(backend):
     assert actual.tray.id.startswith(actual.batch_id + ":")
     assert actual.batch_id != local["response"].batch_id
     assert actual.valid_count == 1 and actual.detected_count == 3
-    assert node.preview.call_count == 2  # One inference for each trigger.
+    assert node.preview.call_count == 4  # Two inferences for each trigger.
     assert node.preview.call_args.args[0]["yolo"]["class_ids"] == [0, 1]
     assert node.preview.call_args.args[0]["accepted_class_ids"] == [0]
     assert not node.preview.call_args.kwargs["visualize"]
@@ -347,7 +360,7 @@ def test_stale_rgb_cannot_satisfy_trigger_and_fresh_depth_is_not_required(backen
 
     node.snapshot.side_effect = snapshots
     response = trigger(backend)
-    assert response.success and len(calls) == 3
+    assert response.success and len(calls) == 4
     assert node.preview.call_args.kwargs["view"]["depth"] is None
     assert node.preview.call_args.kwargs["view"]["rgb"]["stamp_ns"] > 100_000_000_000
 
@@ -430,9 +443,13 @@ def test_saved_gui_and_headless_tray_pose_and_depth_match(backend, sample_depth)
         assert evidence["timings_ms"]["total_ms"] >= 0
         for key in ("request_id", "timings_ms", "worker_timings_ms", "diagnostic_evidence"):
             evidence.pop(key)
+        evidence["stability"].pop("timings_ms")
+        for key in ("first", "second"):
+            evidence["stability"][key]["stamp_ns"] = 0
+        response.header.stamp.nanosec = response.placement.depth_header.stamp.nanosec = 0
         response.diagnostics_json = json.dumps(evidence, sort_keys=True)
     assert responses[0] == responses[1]
-    assert node.preview.call_count == 2
+    assert node.preview.call_count == 4
     assert node.native.call.call_count == (2 if sample_depth else 0)
     assert node.preview.call_args_list[0].args == node.preview.call_args_list[1].args
 
@@ -505,7 +522,7 @@ def test_rejected_requests_never_infer_or_return_cached_pose(backend, monkeypatc
         node.snapshot.side_effect = ValueError("RGB not available")
     try:
         response = trigger(backend, "f" * 64 if cause == "hash" else None)
-        assert not response.success and not response.found and not response.tray.id
+        assert response.success is (cause == "timeout") and not response.found and not response.tray.id
         if cause == "busy":
             assert response.status == "BUSY"
         node.preview.assert_not_called()
@@ -533,7 +550,7 @@ def test_inflight_change_rejects_completed_result(backend, cause):
         return value
     node.preview.side_effect = changed
     response = trigger(backend)
-    assert not response.success and not response.found and not response.tray.id
+    assert response.success is (cause == "timeout") and not response.found and not response.tray.id
     api.tick()
     assert api.service is None
     assert bool(node.fatal_error) == (cause == "native")
@@ -711,6 +728,7 @@ def exercise_ros_transport(root):
             return view
         node.snapshot = snapshot  # Synthetic TF/context; real ROS RGB reception and service.
         node.preview = prototype.preview
+        node.render_capture = prototype.render_capture
         publisher = peer.create_publisher(Image, "/cam/color/image_raw", qos_profile_sensor_data)
 
         def publish():
@@ -748,12 +766,15 @@ def exercise_ros_transport(root):
             time.sleep(.01)
         assert second.done() and second.result().status == "BUSY"
         assert not first.done()  # The retained pre-request frame did not satisfy it.
+        publish()
+        while node.preview.call_count < 1 and time.monotonic() < deadline:
+            time.sleep(.01)
         fresh = publish()
         while not first.done() and time.monotonic() < deadline:
             time.sleep(.01)
         assert first.done() and first.result().success and first.result().found
         assert first.result().header.stamp == fresh.header.stamp
-        assert node.preview.call_count == 1
+        assert node.preview.call_count == 2
         cancelled = client.call_async(GetTrayPose.Request(profile_sha256=digest))
         deadline = time.monotonic() + 3
         while not node.requests.busy and time.monotonic() < deadline:
@@ -786,7 +807,8 @@ def exercise_ros_transport(root):
             placement = client.call_async(GetTrayPose.Request(
                 profile_sha256=digest, sample_placement_depth=True,
                 placement=PlacementDepthRequest(
-                    x_mm=20., y_mm=30., diameter_mm=30., **QUALITY_DEFAULTS)))
+                    x_mm=20., y_mm=30., diameter_mm=30.,
+                    **{**QUALITY_DEFAULTS, "request_timeout_sec": 1.})))
             deadline = time.monotonic() + 4
             while not placement.done() and time.monotonic() < deadline:
                 fresh = publish()
@@ -899,7 +921,7 @@ def test_geometry_rejection_keeps_provider_armed_and_next_trigger_recovers(
     handle, epoch = provider.service, provider.epoch
     preview = node.preview.side_effect
     snapshot = node.snapshot.side_effect
-    stamps = iter(range(100_000_000_001, 100_000_000_010))
+    stamps = itertools.count(100_000_000_001)
 
     def fresh_snapshot():
         view = snapshot()
@@ -922,12 +944,12 @@ def test_geometry_rejection_keeps_provider_armed_and_next_trigger_recovers(
 
     node.preview.side_effect = inconsistent
     result = capture()
-    assert not result.success and not result.found and result.status == "NO_VALID_TRAY"
+    assert result.success and not result.found and result.status == "NO_VALID_TRAY"
     assert not result.placement.valid
-    assert json.loads(result.diagnostics_json)["geometry_rejection"]["origin_error_mm"] > 9
+    assert json.loads(result.diagnostics_json)["stability"]["geometry_rejection"]["origin_error_mm"] > 9
     assert provider.service is handle and provider.epoch == epoch and not node.fatal_error
     assert node.selected is None
-    node.rviz.clear_pose.assert_called_once()
+    assert node.rviz.clear_pose.call_count >= 1
     node.destroy_service.assert_not_called()
     if not simulated:
         assert node.capture_preview.take()["view"] is None
@@ -960,7 +982,7 @@ def test_capture_waits_for_new_frame_after_passive_geometry_rejection(backend):
     original = node.snapshot.side_effect
     first = original()
     node.rejected_observation = (node.generation, 1, first["rgb"]["stamp_ns"])
-    stamps = iter([first["rgb"]["stamp_ns"], first["rgb"]["stamp_ns"] + 1])
+    stamps = itertools.count(first["rgb"]["stamp_ns"])
 
     def snapshot():
         view = original()
@@ -971,9 +993,9 @@ def test_capture_waits_for_new_frame_after_passive_geometry_rejection(backend):
     node.snapshot.reset_mock()
     response = trigger(backend)
     assert response.success and response.found
-    assert node.snapshot.call_count == 2
-    assert node.preview.call_count == 1
-    assert response.header.stamp.nanosec == 2
+    assert node.snapshot.call_count == 3
+    assert node.preview.call_count == 2
+    assert response.header.stamp.nanosec == first["rgb"]["stamp_ns"] % 1_000_000_000 + 2
     assert provider.service is not None
 
 
@@ -991,7 +1013,8 @@ def test_controller_capture_matches_saved_debug_and_saving_stays_optional(
     arm(backend)
     response = trigger(backend, debug=debug)
     assert response.success
-    assert node.preview.call_args.kwargs["visualize"] is (debug or display)
+    assert node.preview.call_args.kwargs["visualize"] is False
+    assert node.render_capture.call_count == int(debug or display)
     assert node.preview.call_args.kwargs["returned_only"] is True
     assert save.call_count == int(debug)
     if display:
@@ -1016,7 +1039,7 @@ def test_diagnostics_sample_successes_and_retain_failed_frame(backend):
         assert diagnostics['diagnostic_evidence']['saved'] is (index in (0, 10))
         assert diagnostics['timings_ms']['total_ms'] >= 0
         assert diagnostics['rejection_category'] == 'usable'
-    assert node.preview.call_count == 12
+    assert node.preview.call_count == 24
 
     def failed(*args, **kwargs):
         view = original(*args, **kwargs)

@@ -13,7 +13,7 @@ from robot_controller.errors import FeedbackFailure, OperationCanceled
 from robot_controller.tray_client import TrayAcquisitionExhausted, validate_result
 from test_candidates_v2 import client, configuration, valid_result
 from test_operation_retries import TrayRig, pick_rig
-from test_placement import response_fixture
+from test_placement import response_fixture, refresh_stability_fixture
 from test_tray_acquisition_pause import acquisition_rig, exhaust
 
 
@@ -210,6 +210,7 @@ def test_controller_uses_saved_tilted_plane_at_returned_xy(flipped, height):
     p, q = result.tray.pose.position, result.tray.pose.orientation
     p.x, p.y, p.z = map(float, plane[:3, 3])
     q.x, q.y, q.z, q.w = rotation_matrix_to_quaternion(rotation)
+    refresh_stability_fixture(result, config, sampling)
     point = plane[:3, 3] + rotation @ [.03, .04, 0.]
     point[2] += height
     surface = result.placement.surface_base

@@ -23,6 +23,7 @@ from robot_controller.placement import PlacementOperation, place_targets, valida
 from robot_controller.state_machine import ControllerStateMachine
 from robot_controller.tray_client import validate_result, TrayClient, TrayObservation
 from robot_controller.ui_state import load_state, save_state
+from tray_perception.stability import compare as compare_poses
 from tray_perception.core import ORIGIN_CONVENTION
 from tray_perception.placement import sampling_from_item
 from item_perception_yolo.item_teach_core import QUALITY_DEFAULTS
@@ -360,7 +361,9 @@ def response_fixture():
     tray = SimpleNamespace(sha256="tray", camera_sha256="camera",
                            profile={"model": {"sha256": "model"},
                                     "reference_plane": {"base_from_plane": np.eye(4).tolist()},
-                                    "settings": {"yolo": {"class_ids": [0], "confidence": .5}}})
+                                    "settings": {"yolo": {"class_ids": [0], "confidence": .5},
+                                                 "geometry": {"width_mm": 200., "length_mm": 300.,
+                                                              "tolerance_mm": 20.}}})
     config = SimpleNamespace(profile=profile, tray=tray)
     sampling = sampling_from_item(profile, 30., 40.)
     result = GetTrayPose.Response(success=True, found=True, batch_id="batch")
@@ -376,11 +379,30 @@ def response_fixture():
     result.tray.pose.orientation.w = 1.
     result.tray.extent_x = result.tray.width = .2
     result.tray.extent_y = result.tray.length = .3
+    pose = {"stamp_ns": 2_000_000_000, "class_id": 0, "position": [.1, .2, 0.],
+            "quaternion": [0., 0., 0., 1.], "width_mm": 200., "length_mm": 300.}
+    proof = compare_poses({**pose, "stamp_ns": 1_900_000_000}, pose,
+                          tray.profile["settings"]["geometry"], sampling)
+    proof["timings_ms"] = {"first_prediction": 100., "second_prediction": 100., "search": 220.}
     result.diagnostics_json = json.dumps({
-        "profile_sha256": "tray", "model_sha256": "model",
+        "stability": proof, "profile_sha256": "tray", "model_sha256": "model",
         "camera_sha256": "camera", "origin_convention": ORIGIN_CONVENTION,
         "reference_plane": tray.profile["reference_plane"], "placement_sampling": sampling})
     return result, config, sampling
+
+
+def refresh_stability_fixture(result, config, sampling):
+    p, q = result.tray.pose.position, result.tray.pose.orientation
+    stamp = result.header.stamp.sec * 1_000_000_000 + result.header.stamp.nanosec
+    sample = {"stamp_ns": stamp, "class_id": result.tray.class_id,
+              "position": [p.x, p.y, p.z], "quaternion": [q.x, q.y, q.z, q.w],
+              "width_mm": result.tray.width * 1000, "length_mm": result.tray.length * 1000}
+    proof = compare_poses({**sample, "stamp_ns": stamp - 1_000_000}, sample,
+                          config.tray.profile["settings"]["geometry"], sampling)
+    proof["timings_ms"] = {"first_prediction": 100., "second_prediction": 100., "search": 220.}
+    evidence = json.loads(result.diagnostics_json)
+    evidence["stability"] = proof
+    result.diagnostics_json = json.dumps(evidence)
 
 
 def test_tray_depth_response_binds_pose_settings_sources_and_capture_time():

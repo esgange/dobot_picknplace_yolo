@@ -1,6 +1,7 @@
 """Bounded Pick acquisition/physical retries and Place requests without hardware."""
 
 import copy
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -303,6 +304,12 @@ class TrayRig:
             self.now += .01
             stamp = Time(seconds=self.now).to_msg()
             result.header.stamp = result.placement.depth_header.stamp = stamp
+            evidence = json.loads(result.diagnostics_json)
+            second = stamp.sec * 1_000_000_000 + stamp.nanosec
+            if "stability" in evidence:
+                evidence["stability"]["first"]["stamp_ns"] = second - 1_000_000
+                evidence["stability"]["second"]["stamp_ns"] = second
+            result.diagnostics_json = json.dumps(evidence)
             future.set_result(result)
         elif reply != "timeout":
             future.set_result(reply)
@@ -422,8 +429,13 @@ def test_tray_invalid_success_evidence_is_terminal_without_retry(monkeypatch, da
     if damage != "cached":
         def fresh(_future):
             rig.now += .01
-            reply.header.stamp = reply.placement.depth_header.stamp = Time(
-                seconds=rig.now).to_msg()
+            stamp = Time(seconds=rig.now).to_msg()
+            reply.header.stamp = reply.placement.depth_header.stamp = stamp
+            evidence = json.loads(reply.diagnostics_json)
+            second = stamp.sec * 1_000_000_000 + stamp.nanosec
+            evidence["stability"]["first"]["stamp_ns"] = second - 1_000_000
+            evidence["stability"]["second"]["stamp_ns"] = second
+            reply.diagnostics_json = json.dumps(evidence)
         rig.on_send = fresh
     reason = {"hash": "mismatch", "cached": "cached/future", "geometry": "X/Y differs"}
     with pytest.raises(FeedbackFailure, match=reason[damage]):

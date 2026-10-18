@@ -74,7 +74,8 @@ still holds its exact captured pair and corner evidence until Create or Cancel.
    Segmentation masks and OBB models support metric poses; box-only models remain
    detection previews and can be saved in drafts but cannot produce a detection profile.
    **Detection Mask Clean** is always on for tray segmentation. Read each model
-   instance's raw binary mask, apply a 3×3 opening in native mask pixels to remove
+   instance's raw binary mask, apply an opening in original-image mask pixels (odd kernel
+   `max(3, ceil(3 × max(image width, height) / inference size))`, rounded up to odd) to remove
    thin bridges, then keep its largest connected region by pixel area. That region
    must retain at least 80% of the original foreground; empty or ambiguous splits
    are rejected before fitting a rectangle. This also avoids artificial lines
@@ -440,9 +441,49 @@ See [Item/Tray feature comparison](../../docs/TEACH_UI_COMPARISON.md) for the
 remaining inspection, depth, logging and task-specific differences.
 
 Each request supplies `profile_sha256`, the SHA-256 of the saved tray YAML. It
-waits for RGB both captured and received after the trigger, resolves TF at that
-image's timestamp, and runs inference once against the unchanged saved plane.
+waits for two processed RGB observations, each captured and received after the
+trigger, and resolves exact RGB-time TF independently for each image. Compare their
+base_link poses against the unchanged saved plane before returning the second pose.
 It never returns the continuous preview's cached pose or retained RViz cloud.
+The RGB timestamps must advance; there is no fixed spacing or conveyor-settling
+wait. Both observations independently pass the saved size/class/edge checks. Their
+origins, centers and requested placement points must each move at most **5% of the
+taught width** (9.5 mm for 190 mm). Relative rotation is at most **5 degrees**, using
+rotation matrices so quaternion sign is immaterial while origin/axis flips fail.
+There is no extra inter-frame size threshold. On mismatch, keep the newer valid
+pose as the next seed; empty/inconsistent observations break the pair. Source or
+CameraInfo changes invalidate it. Return the second observation without averaging;
+only its synchronized registered depth may supply the placement surface. A search
+that exhausts the original deadline returns `NO_VALID_TRAY` with its measured
+reason. Passive previews remain single-frame.
+
+`diagnostics_json.stability` schema version **1** contains both RGB timestamps,
+classes, base-frame poses and dimensions, processed-frame count, measured origin/
+center/optional placement deltas, angular delta, limits and prediction/search
+milliseconds. Robot Controller requires and recomputes this evidence; an older
+single-frame provider is rejected visibly. Build and relaunch provider and
+controller together. The controller's ten-request budget, WAITING FOR TRAY,
+Pause/Stop retirement and next-item overlap are unchanged.
+
+Tray segmentation requests native-resolution masks on the **full image**; no crop
+or alternate rectangle fitter is used. Dominant-region and original-image-edge
+rejection remain. The private tray worker uses **8 Torch / 1 inter-op / 1 OpenCV**
+threads, checked at startup and before operations. Item workers retain **4 Torch**
+threads and all pinned versions. Root `.env` `ORBBEC_COLOR_FPS=30` and
+`ORBBEC_DEPTH_FPS=30` apply to both cameras; this station retains **640×480**.
+Changing those keys requires an operator-controlled camera relaunch.
+
+Fully validate/hash the saved sources when loading/arming. Cached bindings check
+device, inode, size, nanosecond mtime and ctime before/after inference and before
+delivery. Changes require explicit reload; there is no silent file replacement or
+weaker schema/provenance reader. Intermediate observations and headless requests
+without requested images transfer geometry only. Render an accepted capture once,
+without another YOLO prediction. Preview/voxel work yields to requests; an already
+running native operation drains in the existing worker. Request expiry can return
+while that reply drains with transport ownership retained; no subsequent capture
+or preview starts until retirement. A bounded I/O waiter enforces the existing
+ten-second hard native limit. No parallel model or extra ROS executor is created.
+
 The ten-second deadline includes waiting for preview work and fresh inputs;
 concurrent requests return BUSY without accumulating. Keep two ROS executor
 threads and one shared native worker, with request work serialized against GUI
@@ -523,7 +564,7 @@ and quality settings. Controller Place Item, Auto Run and Preview requests use a
 fixed **20%** `minimum_depth_fraction`, independent of the saved Item pick threshold;
 all other quality settings come from Item Teach unchanged. The provider takes
 fresh synchronized RGB/depth
-after the trigger, performs the usual single tray inference, and samples the
+after the trigger, confirms two consecutive processed tray observations, and samples the
 requested target using original registered-depth pixels and their own intrinsics.
 It uses the same median/MAD acceptance as Item Pick, excludes outside-tray samples,
 and requires the requested `minimum_depth_fraction` of all original circle pixels

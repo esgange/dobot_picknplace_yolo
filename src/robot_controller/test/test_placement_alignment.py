@@ -168,6 +168,8 @@ def test_tray_client_keeps_quaternion_with_its_validated_depth_point(monkeypatch
     pose.orientation.z = pose.orientation.w = np.sqrt(.5)
     rig.result.placement.surface_base.x = .06
     rig.result.placement.surface_base.y = .23
+    from test_placement import refresh_stability_fixture
+    refresh_stability_fixture(rig.result, rig.config, rig.sampling)
     observation = rig.request()
     assert observation.surface == pytest.approx([.06, .23, .25])
     assert observation.rotation[:, 0] == pytest.approx([0., 1., 0.])

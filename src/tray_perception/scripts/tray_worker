@@ -26,8 +26,9 @@ with tempfile.TemporaryDirectory(prefix="picknplace-tray-") as scratch:
                        "MPLCONFIGDIR": scratch, "MPLBACKEND": "Agg"})
     from item_perception_yolo.yolo_worker_native import serve
     from tray_perception.native import (
-        capture_plane, predict_trays, overlay_plane, tray_visuals, placement_depth)
+        capture_plane, predict_trays, overlay_plane, tray_visuals, placement_depth, render_capture)
     serve(sys.stdin.buffer, protocol_output, runtime, manifest, Path(scratch),
           operations={"tray_plane": capture_plane, "tray_overlay": overlay_plane,
-                      "tray_visuals": tray_visuals, "tray_placement_depth": placement_depth},
-          predictions={"tray_preview": predict_trays})
+                      "tray_visuals": tray_visuals, "tray_placement_depth": placement_depth,
+                      "tray_render_capture": render_capture},
+          predictions={"tray_preview": predict_trays}, torch_threads=8)

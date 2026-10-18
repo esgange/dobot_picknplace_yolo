@@ -12077,6 +12077,82 @@ Never use a floating “latest” version in an issue, script, or deployment not
   Preserve operator artifacts and unrelated RViz changes. No push, per the user's
   standing override. FSM behavior/source/exports are unchanged.
 
+### 2026-10-18 — Rule 291: two-pose tray confirmation and bounded processing
+
+- User-approved port of applicable CATARM `pro` ideas into PicknPlace only.
+  CATARM is unchanged. Keep eye-on-hand Tray Detect joint/idle/empty-queue and
+  continuing observation-position guards, full-frame input, saved-plane projection,
+  current enclosing-rectangle fit, placement offsets/attitude, trajectories and I/O.
+- Shared armed/headless/Simulate Trigger request path processes consecutive fresh
+  post-trigger RGB observations with advancing stamps and exact per-image TF.
+  Independently require existing taught size/class/edge checks on each. Compare in
+  base_link: origin, center and requested placement displacement <= 5% taught width,
+  matrix-relative rotation <= 5 degrees. No fixed 100 ms spacing, extra size-delta
+  limit, averaging, crop or conveyor-settling delay. Mismatch retains the newer
+  valid seed; empty/invalid observations break the pair. Source changes invalidate.
+- Return the second accepted pose and sample placement depth only from its matched
+  registered depth. Preserve coverage, outside-tray and saved-plane height guards.
+  Keep one original request deadline across comparisons. Exhaustion returns
+  NO_VALID_TRAY with a precise reason; the controller still permits ten requests
+  then WAITING FOR TRAY. Pause/Stop cancellation and service retirement remain;
+  late or invalidated results cannot authorize placement. A shorter request deadline
+  discards/drains an ongoing native operation under the retained transport lock;
+  a bounded I/O waiter enforces the ten-second hard worker limit. New captures and
+  previews wait for retirement; cancellation remains responsive. No extra ROS
+  executor or parallel model is added. Next-item overlap is
+  unchanged. Passive previews remain single-frame.
+- No public message or teach schema change. Add `diagnostics_json.stability`
+  version 1: both stamps/classes/poses/dimensions, limits, observed deltas, processed
+  frame count and prediction/search timing. Controller recomputes it and fails
+  visibly for a single-frame provider or inconsistent proof. Include it and capture
+  camera context in existing request diagnostics/evidence; keep retention rules.
+- Tray YOLO uses native-resolution masks and a scaled odd morphology kernel
+  (5px at 640x480 / imgsz448), preserving dominant-region/original-edge rejection.
+  OBB geometry and item inference stay unchanged. Tray worker: Torch8, inter-op1,
+  OpenCV1; item worker: Torch4. Enforce startup and runtime drift checks without
+  extra ROS executor threads or concurrent model execution. Existing preview/voxel
+  arbitration gives requests priority after already-running native work drains.
+- Fully validate/hash source bindings on load/arm, then compare device/inode/size/
+  mtime_ns/ctime_ns before/after inference and before delivery, including after
+  optional diagnostics. Changed files require explicit reload; unchanged requests
+  do not repeatedly hash model weights. Strict schemas 8/5 and calibration sample,
+  pipeline, provenance, source and direction checks remain unchanged.
+- Intermediate frames and headless no-image requests omit overlays/image transfer.
+  Requested captures render the accepted geometry once without another YOLO call.
+  Preserve explicit debug saving and the existing sampled evidence archive.
+- Explicitly update only ignored root ORBBEC_COLOR_FPS and ORBBEC_DEPTH_FPS from
+  60 to 30. Both cameras retain 640x480 and every other .env byte. A private ignored
+  pre-change backup is retained in logs/. Validate actual launcher arguments without
+  starting cameras. No camera restart, robot command or production perception arm.
+- Recheck processes before isolated builds; keep canonical install and live driver
+  libraries untouched. No deployment or physical test. Software-only validation and
+  benchmark results are recorded in `docs/TRAY_CAPTURE_BENCHMARK.md` and logs/.
+- Verification: 2,896 broad perception/controller regressions pass, then 749 focused
+  tests pass against the final isolated installation after adding bounded native
+  retirement and strict proof types. Includes real pinned native mask/OBB/render
+  tests, 8/4-thread startup/drift checks, synthetic ROS service transport, request
+  cancellation, stale/mismatched frame handling, second-depth ownership, strong
+  source invalidation and controller placement/retry guards. Logs:
+  `logs/tray_pair_regressions_final.txt`, `logs/tray_pair_isolated_tests.txt`.
+- Isolated builds of item_perception_yolo, tray_perception and robot_controller
+  pass; all eight audited installed modules match final source bytes. Existing
+  underlay override warnings remain. No canonical install or driver changed.
+  Actual launcher arguments are 640x480/30 FPS for both RGB/depth camera slots.
+  FSM HTML/PDF source hashes match; nine diagrams/pages, offline navigation and
+  zoom pass with zero browser errors. `git diff --check` passes.
+- Offline benchmark: same three archived scenes/model/hardware, 8 warmups and
+  20 repeated-scene pairs per combination. Median pair compute falls from 464.5 ms
+  (4-thread standard masks) to 364.9 ms (8-thread native masks), about 21%; CPU
+  consumption rises from 395% to 781%. Median prediction is 225.8 vs 175.1 ms.
+  Compute-only pair timing excludes live camera/TF/ROS/depth waits and motion;
+  synthetic timestamps and reconstructed archive camera geometry are benchmarking
+  inputs only. No accuracy or physical throughput claim. See the benchmark report.
+- Delivery is a scoped local PicknPlace commit under the standing no-push override.
+  Preserve unrelated RViz edits and all operator/calibration/teach/model artifacts.
+  Rebuild item_perception_yolo, tray_perception and robot_controller together; then
+  operator-controlled provider/controller relaunch. No teach upload or calibration
+  conversion is required. FPS takes effect only on operator camera relaunch.
+
 ### Future entry template
 
 ```text

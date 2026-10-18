@@ -40,8 +40,12 @@ ros2 launch item_perception_yolo item_teach.launch.py
    model paths restored from an Item Teach profile also load automatically, with
    the saved pair's hashes checked. Selecting/restoring that path authorizes local
    model loading. One package-private CPU worker loads the model,
-   reports its actual task and lists **one checkbox per class ID/name**. Check
-   only production classes to accept; no implicit production all-classes selection. A new model starts
+   reports its actual task and lists **one checkbox per class ID/name**.
+   Item workers retain four Torch threads, one inter-op thread and one OpenCV thread;
+   startup and operation checks enforce those limits. The shared runtime also serves
+   Tray Perception in a separate process with eight Torch threads and native-resolution
+   segmentation masks. Item prediction/mask settings and pinned versions are unchanged.
+   Check only production classes to accept; no implicit production all-classes selection. A new model starts
    with unchecked classes. A saved profile restores selected IDs as unverified
    prefill until the automatic model load verifies them.
    Model loading takes priority over the automatic bin-border/inference preview:

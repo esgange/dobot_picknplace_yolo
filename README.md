@@ -1187,8 +1187,9 @@ that plane, without live surface depth, and reject detections outside the taught
 length/width tolerance. Select one valid tray nearest the image center.
 **Detection Mask Clean** runs before tray measurement in preview, Simulate
 Trigger and both pose-service providers. It uses each raw binary segmentation
-mask, avoiding polygon conversion that joins disconnected blobs. A 3×3 opening
-at native mask resolution breaks thin bridges; only the largest region remains,
+mask, avoiding polygon conversion that joins disconnected blobs. Tray masks use
+original image resolution with a proportionally scaled odd opening kernel
+(5×5 at 640×480 / inference size 448); this breaks thin bridges; only the largest region remains,
 and it must retain at least 80% of the original foreground pixels. Empty or
 ambiguous masks produce an explicit rejection. The cleaned outline supplies RGB
 and depth annotations, dimensions and poses. Original connected-region image-edge
@@ -1208,6 +1209,24 @@ entered; clicks report that tray's measurements without changing your settings.
 Before metric geometry is ready, mask/OBB detections show grey rectangles and
 red/green axes labelled **2D**, without mm dimensions or a base-frame pose.
 Only the eligible center-prioritized tray is returned by the pose service.
+The pose service, armed Tray Teach and Simulate Trigger require two consecutive
+processed post-trigger observations with advancing RGB stamps and exact image-time
+TF. Both pass the taught size tolerance; their base-frame origin, center and
+requested placement point must agree within **5% of taught width**, and rotation
+within **5°**. Return the second pose and only its matching registered depth;
+there is no averaging or fixed inter-frame delay. Mismatch keeps the newer seed;
+empty observations reset it, within the same request deadline. Controller validation
+requires version-1 two-pose evidence. Saved Tray Detect joint/idle checks, ten
+requests then WAITING FOR TRAY, Pause/Stop and next-item overlap are unchanged.
+Full-frame input and saved-plane rectangle fitting remain; no crop is introduced.
+Tray inference uses eight Torch threads (item: four), with one inter-op/OpenCV
+thread. Cached validated source identities replace repeated hashing; changes still
+require reload. Intermediate/headless no-image observations skip rendering and
+image transfer. The existing shared RGB/depth FPS keys are 30 on this station,
+with 640×480 retained. See [tray capture details](src/tray_perception/README.md).
+Rebuild/relaunch the provider and controller together; no teach upload or calibration
+conversion is needed. Camera FPS changes take effect at the next operator restart.
+
 RViz's separate **XY and blue UP guides** show the same X/Y and a blue normal
 pointing toward positive `base_link` Z. Item Teach uses the same convention for
 live, clicked and simulated poses. All guides are 200 mm long with 20 mm shafts,

@@ -107,7 +107,7 @@ def test_real_worker_survives_unusable_placement_depth():
                             **QUALITY_DEFAULTS},
                "camera_context": {"camera": camera, "depth_camera": camera,
                                   "base_from_optical": optical.tolist()}}
-    client = NativeClient(Mock(), worker_package="tray_perception", worker_executable="tray_worker")
+    client = NativeClient(Mock(), worker_package="tray_perception", worker_executable="tray_worker", torch_threads=8)
     try:
         failed, _ = client.call(request, bytes(64 * 48 * 2))
         assert failed["error"] and not client.failed
