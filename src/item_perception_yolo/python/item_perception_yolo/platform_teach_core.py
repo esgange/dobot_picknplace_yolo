@@ -194,8 +194,8 @@ def load_robot_lan1_ip(root: Path | None = None) -> str:
     project_root = workspace_root() if root is None else Path(root).resolve()
     example_values = _parse_env_file(project_root / ".env.example")
     values = _parse_env_file(project_root / ".env")
-    # Rule 282: remote settings are optional for all offline station readers.
-    optional = set(REMOTE_ENV_KEYS)
+    # Rules 282/293: remote settings and auto CPU overrides may be absent.
+    optional = set(REMOTE_ENV_KEYS) | {"ITEM_TORCH_THREADS", "TRAY_TORCH_THREADS"}
     required = set(example_values) - optional
     allowed = set(example_values) | optional
     if not required.issubset(values) or not set(values).issubset(allowed):
@@ -207,6 +207,8 @@ def load_robot_lan1_ip(root: Path | None = None) -> str:
         )
     if values.get("ROS_LOCALHOST_ONLY") != "1":
         raise ValueError("ROS_LOCALHOST_ONLY must be exactly 1")
+    from .cpu_budget import settings as cpu_settings
+    cpu_settings(values)
     raw_address = values.get("DOBOT_ROBOT_LAN1_IP", "")
     try:
         address = ipaddress.ip_address(raw_address)

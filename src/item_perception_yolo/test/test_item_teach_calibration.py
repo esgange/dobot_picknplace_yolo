@@ -120,9 +120,6 @@ def test_loaded_camera_stays_pinned_until_reload_and_disarms_on_source_change(fi
         applied=applied, robot_camera=robot, root=root, explicit_robot_camera=True,
         bin_artifact=SimpleNamespace(path=bin_path, sha256=detector.file_sha256(bin_path)),
         last_view=object(), service=object(), disarm=MagicMock())
-    validate = detector.validate_applied_sources
-    monkeypatch.setattr(detector, "validate_applied_sources",
-                        lambda pair: validate(pair, root=root))
     detector.ItemDetectNode._validate_sources(node)
     node.disarm.assert_not_called()
     paths[2].write_text(paths[2].read_text() + "\n# changed selected camera\n")

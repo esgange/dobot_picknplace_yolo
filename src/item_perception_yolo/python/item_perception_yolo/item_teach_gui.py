@@ -2150,6 +2150,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             self._error("Save failed", exc)
             return
         self.saved_path = output
+        self.node._profile_binding = None  # Explicit Save establishes a new source binding.
         self.save_target = target
         # Retain the explicitly loaded source path and native fingerprint. Saving
         # a new copy is not permission to switch/reload the active model.
@@ -2253,6 +2254,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.home = copy.deepcopy(profile["home"])
         self._show_home()
         self.saved_path = target.path
+        self.node._profile_binding = None  # Explicit Load; never a timer-driven replacement.
         self.save_target = target
         action = "Restored saved item teach" if prefill else "Loaded saved item teach"
         self._message(

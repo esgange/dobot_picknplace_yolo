@@ -50,6 +50,7 @@ def teaching_node(monkeypatch):
         _validate_sources=MagicMock(), applied=SimpleNamespace(
             platform=SimpleNamespace(base_from_platform=base)),
         settings={"quality": {}}, disarm=MagicMock())
+    node._check_profile = MagicMock()
     monkeypatch.setattr(detector, "file_sha256", lambda _: "a" * 64)
     for name in ("clear_selected_pose", "show_selected_pose", "show_simulated_poses",
                  "_broadcast_selected_pose"):
@@ -178,7 +179,7 @@ def test_batch_timer_clears_on_invalidation_without_gui_progress(
     elif failure == "source":
         node._validate_sources.side_effect = ValueError("Station changed")
     else:
-        monkeypatch.setattr(detector, "file_sha256", lambda _: "b" * 64)
+        node._check_profile.side_effect = ValueError("Item profile changed")
     node._broadcast_selected_pose()
     assert node.selected_pose is None
     node.selected_pose_broadcaster.sendTransform.assert_not_called()

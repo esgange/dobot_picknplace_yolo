@@ -3,6 +3,7 @@ import json
 
 import copy
 import shutil
+from types import MethodType
 
 import pytest
 import yaml
@@ -32,13 +33,16 @@ def test_saved_gui_and_headless_item_batches_match(
     node, candidate = service_node
     node.root = root
     node.settings = core.detection_settings(core.settings_from_profile(profile))
-    node.model_config = {"sha256": profile["model"]["sha256"]}
+    node.model_config = {"sha256": profile["model"]["sha256"], "path": str(path.with_suffix(".pt"))}
+    node._bound_profile = MethodType(detector.ItemDetectNode._bound_profile, node)
+    node._check_profile = MethodType(detector.ItemDetectNode._check_profile, node)
     node.model_metadata = {"geometry_sources": ["mask"]}
     node.infer.return_value["metadata"]["candidates"] = [
         {**copy.deepcopy(candidate), "source_index": index} for index in range(valid_count)]
     responses = []
     for deployment in (False, True):
         node.deployment = deployment
+        node._profile_binding = None  # Each mode represents its own explicit startup/load.
         node.profile_path = runtime / path.name if deployment else path
         loaded, node.profile_digest = detector.ItemDetectNode._validate_pose_profile(
             node, node.profile_path)

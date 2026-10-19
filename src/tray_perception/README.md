@@ -365,6 +365,13 @@ corners were not saved, so the precise numerical cause remains unconfirmed.
 
 ## Trigger, arming and controller requests
 
+The [inference audit](../../docs/INFERENCE_EFFICIENCY_AUDIT.md) confirms tray
+YOLO models, predictors and validated source bindings are retained between frames.
+The shared worker preserves camera projection caches across measured thread-budget
+changes and rejects a model edited during inference before delivering its result.
+Untuned workers skip per-request workload hashing. Geometry, two-pose confirmation,
+camera FPS, thread allocation and fresh depth/TF requirements are unchanged.
+
 The top row follows Item Teach: **YOLO Detect**, **Simulate Trigger**, and
 **Armed**. Preview and arming are separate. GUI startup and profile loading leave
 Armed OFF; Armed ON is red and advertises `/tray_detect/get_tray_pose_v3` using

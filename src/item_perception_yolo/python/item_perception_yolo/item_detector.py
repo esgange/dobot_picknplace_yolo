@@ -57,6 +57,7 @@ from .depth_snapshot import (
     DEFAULT_DEPTH_FRAME_COUNT, median_depth_snapshot, validate_depth_frame_count,
     item_depth_limits, camera_window_stationary)
 from .floor_clearance import REFERENCE
+from .source_binding import fingerprints, check as check_binding
 
 
 SERVICE_NAME = "/item_detect/get_item_poses"
@@ -462,6 +463,7 @@ class ItemDetectNode(Node):
         self.explicit_robot_camera = False
         self.settings = self.profile_path = None
         self.profile_digest = None
+        self._source_binding = self._profile_binding = None
         self.yolo_enabled = False
         self.preview_mode = "all"
         self.preview_source = "none"
@@ -596,6 +598,7 @@ class ItemDetectNode(Node):
 
     def inspect_model(self, path, *, expected_sha256=None):
         self.disarm("Model load requested")
+        self._profile_binding = None
         self.yolo_enabled = False
         path = Path(path).expanduser().resolve(strict=True)
         if path.suffix != ".pt" or path.stat().st_size == 0:
@@ -638,6 +641,8 @@ class ItemDetectNode(Node):
         place_bin_roi(template, applied.platform)
         self.applied, self.bin_artifact, self.robot_camera = applied, template, robot_camera
         self.explicit_robot_camera = robot_camera_path is not None
+        self._source_binding = self._profile_binding = None
+        self._validate_sources()
         self.connect_camera(applied.camera.settings.camera_prefix)
         self.events.record(
             "INFO", "item_station_applied",
@@ -708,6 +713,7 @@ class ItemDetectNode(Node):
 
     def arm(self, path):
         self.disarm("Re-arming requested; revalidating profile and inputs")
+        self._profile_binding = None
         profile, digest = self._validate_pose_profile(path)
         self._validate_sources()
         own = (self.get_name(), self.get_namespace())
@@ -731,9 +737,7 @@ class ItemDetectNode(Node):
         if (not self.yolo_enabled or self.native.failed or self.applied is None
                 or self.model_config is None or self.model_metadata is None):
             raise ValueError("Pose generation requires YOLO ON, loaded model and station/bin")
-        profile, digest = (
-            load_item_profile(Path(path), root=self.root, deployment=True)
-            if getattr(self, "deployment", False) else load_item_profile(Path(path)))
+        profile, digest = self._bound_profile(path)
         if detection_settings(settings_from_profile(profile)) != self.settings:
             raise ValueError("Save or load the exact currently applied item settings first")
         if (profile["model"]["sha256"] != self.model_config["sha256"]
@@ -742,18 +746,82 @@ class ItemDetectNode(Node):
             raise ValueError("Model/source mismatch or no verified mask/OBB output")
         return profile, digest
 
+    def _bound_profile(self, path):
+        """Validate once per explicit load/arm, then fence the exact source files."""
+        path = Path(path).expanduser().absolute()
+        paths = (path, path.with_suffix(".pt"), Path(self.model_config["path"]))
+        binding = getattr(self, "_profile_binding", None)
+        if binding is not None:
+            self._check_profile(path, binding["digest"])
+            if binding["paths"] != paths:
+                raise ValueError("Item profile selection changed; explicitly reload/re-arm")
+        else:
+            before = fingerprints(paths)
+            profile, digest = (
+                load_item_profile(path, root=self.root, deployment=True)
+                if getattr(self, "deployment", False) else load_item_profile(path))
+            if file_sha256(paths[2]) != self.model_config["sha256"]:
+                raise ValueError("Loaded item model changed; explicitly reload it")
+            binding = {"paths": paths, "fingerprints": before,
+                       "profile": profile, "digest": digest,
+                       "model_digest": self.model_config["sha256"]}
+            check_binding(binding)
+            self._profile_binding = binding
+        if binding["model_digest"] != self.model_config["sha256"]:
+            raise ValueError("Loaded item model identity changed; explicitly reload/re-arm")
+        # Callers may build editable drafts; do not expose the retained validated value.
+        return copy.deepcopy(binding["profile"]), binding["digest"]
+
+    def _check_profile(self, path, digest):
+        try:
+            binding = self._profile_binding
+            if (binding is None or binding["paths"][0] != Path(path).expanduser().absolute()
+                    or binding["digest"] != digest
+                    or binding["model_digest"] != self.model_config["sha256"]):
+                raise ValueError("Item profile changed; explicitly reload/re-arm")
+            check_binding(binding)
+        except (ValueError, OSError) as exc:
+            if self.service is not None:
+                self.disarm(f"Item profile source validation failed: {exc}")
+            raise
+
     def _validate_sources(self):
         if self.applied is None or self.bin_artifact is None or self.robot_camera is None:
             raise ValueError(
                 "Valid station, bin teach, and robot-camera calibration are required")
         try:
-            validate_applied_sources(self.applied)
-            if getattr(self, "explicit_robot_camera", False):
-                validate_selected_robot_camera(self.robot_camera, root=self.root)
-            else:
-                validate_robot_camera_calibration(self.robot_camera, root=self.root)
-            if file_sha256(self.bin_artifact.path) != self.bin_artifact.sha256:
-                raise ValueError("Applied bin teach changed")
+            binding = getattr(self, "_source_binding", None)
+            if binding is None:
+                root = workspace_root() if self.root is None else Path(self.root)
+                paths = (self.applied.platform.path, self.applied.camera.path,
+                         self.robot_camera.path, self.bin_artifact.path,
+                         root / ".env", root / ".env.example")
+                before = fingerprints(paths)
+                catalog = (None if getattr(self, "explicit_robot_camera", False)
+                           else self.robot_camera.path.parent.stat())
+                validate_applied_sources(self.applied, root=self.root)
+                if getattr(self, "explicit_robot_camera", False):
+                    validate_selected_robot_camera(self.robot_camera, root=self.root)
+                else:
+                    validate_robot_camera_calibration(self.robot_camera, root=self.root)
+                if file_sha256(self.bin_artifact.path) != self.bin_artifact.sha256:
+                    raise ValueError("Applied bin teach changed")
+                binding = {"paths": paths, "fingerprints": before,
+                           "identity": (self.applied, self.bin_artifact, self.robot_camera)}
+                # The legacy latest-selection path must also notice a newer file.
+                if catalog is not None:
+                    binding["catalog"] = (catalog.st_dev, catalog.st_ino,
+                                          catalog.st_mtime_ns, catalog.st_ctime_ns)
+                check_binding(binding)
+                self._source_binding = binding
+            check_binding(binding)
+            if any(old is not new for old, new in zip(binding["identity"],
+                    (self.applied, self.bin_artifact, self.robot_camera))):
+                raise ValueError("Applied item sources changed; explicitly reapply calibration")
+            if "catalog" in binding:
+                info = self.robot_camera.path.parent.stat()
+                if (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns) != binding["catalog"]:
+                    raise ValueError("Calibration catalog changed; explicitly reapply calibration")
         except (ValueError, OSError) as exc:
             self.last_view = None
             if self.service is not None:
@@ -1258,10 +1326,7 @@ class ItemDetectNode(Node):
             stage_started = time.monotonic()
             self._validate_sources()
             check_active()
-            _profile, digest = (
-                load_item_profile(profile_path, root=self.root, deployment=True)
-                if getattr(self, "deployment", False)
-                else load_item_profile(profile_path))
+            _profile, digest = self._bound_profile(profile_path)
             validate_regions(regions, _profile["retry"])
             if digest != profile_digest:
                 self.disarm("Item profile contents changed before acquisition")
@@ -1303,9 +1368,7 @@ class ItemDetectNode(Node):
                 raise RuntimeError("Detector exceeded requested candidate acquisition count")
             check_active()
             self._validate_sources()
-            if file_sha256(profile_path) != profile_digest:
-                self.disarm("Item profile contents changed during acquisition")
-                raise ValueError("Item profile changed during request")
+            self._check_profile(profile_path, profile_digest)
             if time.monotonic() > deadline:
                 raise ValueError("Request deadline exceeded")
             stages["validation_after_ms"] = (time.monotonic() - stage_started)*1000.
@@ -1357,9 +1420,7 @@ class ItemDetectNode(Node):
                         batch_id=response.batch_id, error=str(exc))
                 check_active()
                 self._validate_sources()
-                if file_sha256(profile_path) != profile_digest:
-                    self.disarm("Item profile contents changed while saving debug images")
-                    raise ValueError("Item profile changed while saving debug images")
+                self._check_profile(profile_path, profile_digest)
                 if time.monotonic() > deadline:
                     raise ValueError("Request deadline exceeded while saving debug images")
             stages["detector_total_ms"] = (time.monotonic() - started)*1000.
@@ -1389,6 +1450,11 @@ class ItemDetectNode(Node):
                                batch_id=response.batch_id, status=response.status,
                                evidence=evidence,
                                candidates=result["candidates"])
+            check_active()
+            self._validate_sources()
+            self._check_profile(profile_path, profile_digest)
+            if time.monotonic() > deadline:
+                raise ValueError("Request deadline exceeded before delivery")
             if capture_rviz is not None:
                 capture_rviz.publish(view["rviz"])
         except Exception as exc:
@@ -1415,9 +1481,7 @@ class ItemDetectNode(Node):
             raise ValueError("Simulated batch invalidated by changed settings/arming")
         self._validate_sources()
         path, digest = view["simulation_profile"]
-        if file_sha256(Path(path)) != digest:
-            self.disarm("Simulated item profile contents changed")
-            raise ValueError("Simulated item profile changed")
+        self._check_profile(path, digest)
 
     def close_runtime(self):
         self.disarm("Item node shutting down")

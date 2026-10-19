@@ -4,6 +4,13 @@ ROS 2 workspace for a physical Dobot CR10 robot and an Orbbec Gemini 335 depth c
 
 ## Workspace contents
 
+The [inference efficiency audit](docs/INFERENCE_EFFICIENCY_AUDIT.md) covers all
+active learned and marker detectors. Models/predictors remain loaded between
+frames. Item requests now retain validated source/configuration data and use file
+identity checks instead of repeatedly reading calibration, YAML and model bytes.
+Changed sources still require explicit reload/reapplication; live pose/depth/TF
+are always acquired afresh. No teach-file changes are required.
+
 [`remote_setup`](src/remote_setup/README.md) adds optional CATARM server settings and
 read-only connection tests, available from **HMI → Tools / Debug → Remote Setup**
 in Manual or Auto. It has UI and one-shot headless modes; remote robot commands

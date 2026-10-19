@@ -84,7 +84,8 @@ class NativeClient:
         threading.Thread(target=drain, daemon=True).start()
 
     def _select_threads(self, header):
-        key = cpu_budget.workload_key(self.role, header)
+        # The common untuned path needs no settings serialization/hash per frame.
+        key = cpu_budget.workload_key(self.role, header) if self.tuning else None
         selected = self.tuning.get(key, self.thread_limit)
         if not 1 <= selected <= self.thread_limit:
             selected = self.thread_limit

@@ -10,6 +10,15 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 294 caches fully validated item profiles, paired/loaded model identities,
+station calibrations, bin and root configuration after explicit load/arm/application.
+Fence dev/inode/size/mtime/ctime and ordinary-file paths around capture and delivery;
+changed sources require explicit reload/reapply/restart, never silent adoption.
+Keep YOLO/predictor and ChArUco/ArUco contexts alive, retain camera-ray caches across
+thread-budget changes, and omit workload hashing without offline measurements.
+No cached poses, weaker provenance, inference/geometry/thread/FPS or robot changes.
+See docs/INFERENCE_EFFICIENCY_AUDIT.md; preserve no-push and operator artifacts.
+
 Rule 293 supersedes fixed item/tray Torch counts with hardware-aware startup
 budgets shared across both workers: affinity, physical cores and ancestor cgroup
 quotas, with nominal control headroom. Optional root ITEM_TORCH_THREADS and

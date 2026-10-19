@@ -120,7 +120,7 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
         while True:
             request, data = receive_packet(input_stream)
             current_generation = (request.get("generation"), request.get("camera_generation"))
-            if current_generation != projection_generation:
+            if request.get("operation") != "thread_budget" and current_generation != projection_generation:
                 clear_projection_caches()
                 projection_generation = current_generation
             if request.get("operation") not in (
@@ -270,6 +270,8 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                                              if key in ("preprocess", "inference", "postprocess")
                                              and isinstance(value, (int, float))
                                              and np.isfinite(value) and value >= 0})
+                if _fingerprint(path) != fingerprint:
+                    raise RuntimeError("Loaded model changed during inference; no result delivered")
                 send_packet(output_stream, header, pixels)
                 continue
             boxes = results[0].obb if model.task == "obb" else results[0].boxes
@@ -351,6 +353,8 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 overlay, _ = render_result(results[0], rgb, names, config["task"],
                                            settings["max_detections"], cv2, np)
                 stages["rendering_ms"] = (time.monotonic() - draw_started)*1000.
+            if _fingerprint(path) != fingerprint:
+                raise RuntimeError("Loaded model changed during inference; no result delivered")
             send_packet(output_stream, {
                 "state": "ok", "generation": request["generation"], "width": width,
                 "height": height, "count": count, "task": model.task,

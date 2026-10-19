@@ -62,6 +62,8 @@ def exercise_service():
                       "blackist_radius": 0., "blackist_cooldown": 0, "trickle_depth": 0.}}
         module.load_item_profile = lambda _: (profile, "a"*64)
         module.file_sha256 = lambda _: "a"*64
+        detector._bound_profile = lambda _: (profile, "a"*64)
+        detector._check_profile = MagicMock()
         detector.model_config = {"sha256": "b"*64}
         detector.model_metadata = {"classes": {"1": "part"}, "task": "segment",
                                    "geometry_sources": ["mask"]}

@@ -54,12 +54,16 @@ def test_paired_digest_is_checked_before_native_model_load(tmp_path, matching):
     node.disarm.assert_called_once()
 
 
-def test_station_source_changes_disarm(monkeypatch):
-    node = SimpleNamespace(applied=object(), root=None,
-        robot_camera=SimpleNamespace(path="robot", sha256="robot"),
-        bin_artifact=SimpleNamespace(path="bin", sha256="old"), disarm=MagicMock(),
+def test_station_source_changes_disarm(monkeypatch, tmp_path):
+    for name in ("platform", "camera", "robot", "bin", ".env", ".env.example"):
+        (tmp_path / name).write_text(name)
+    node = SimpleNamespace(applied=SimpleNamespace(
+        platform=SimpleNamespace(path=tmp_path / "platform"),
+        camera=SimpleNamespace(path=tmp_path / "camera")), root=tmp_path,
+        robot_camera=SimpleNamespace(path=tmp_path / "robot", sha256="robot"),
+        bin_artifact=SimpleNamespace(path=tmp_path / "bin", sha256="old"), disarm=MagicMock(),
         service=object(), last_view={"old": "overlay"})
-    monkeypatch.setattr(detector, "validate_applied_sources", lambda _: None)
+    monkeypatch.setattr(detector, "validate_applied_sources", lambda *a, **kw: None)
     monkeypatch.setattr(detector, "validate_robot_camera_calibration", lambda *args, **kwargs: None)
     monkeypatch.setattr(detector, "file_sha256", lambda _: "changed")
     with pytest.raises(ValueError, match="bin teach changed"):
@@ -152,6 +156,13 @@ def service_node(monkeypatch, tmp_path):
     node._validate_pose_profile = MagicMock(return_value=(profile, "a"*64))
     monkeypatch.setattr(detector, "load_item_profile", lambda _: (profile, "a"*64))
     monkeypatch.setattr(detector, "file_sha256", lambda _: "a"*64)
+    # Synthetic service fixtures isolate capture/response behavior from filesystem binding.
+    # Real binding/loader integration is exercised in test_item_source_binding.py.
+    node._bound_profile = lambda path: detector.load_item_profile(path)
+    def check_profile(path, digest):
+        if detector.file_sha256(path) != digest:
+            raise ValueError("Item profile changed")
+    node._check_profile = check_profile
     return node, candidate
 
 

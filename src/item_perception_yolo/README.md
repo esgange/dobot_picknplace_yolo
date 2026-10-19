@@ -16,6 +16,18 @@ Item Teach/Detect calibration selection or the fresh-request contract.
 
 ## Installed nodes
 
+Rule 294 retains validated item profiles/model bindings and station/bin/calibration
+bindings after explicit load/arm/application. Normal captures and frozen-result
+checks compare file device/inode/size/mtime/ctime, including ordinary-file paths;
+they do not reread unchanged YAML, model bytes, calibration samples or root config.
+Full current-schema/provenance/hash validation still runs when establishing the
+binding. Replacement, deletion, symlinks and edits preserving size/mtime revoke it.
+Root `.env`/`.env.example` edits require reapplying calibration or restarting the
+headless provider; changing CPU settings still requires both providers to restart.
+Explicit profile Save/Load/Arm may establish a new profile binding. No silent
+reload occurs in preview/capture timers. See the
+[audit and measured validation costs](../../docs/INFERENCE_EFFICIENCY_AUDIT.md).
+
 | Node | Purpose |
 | --- | --- |
 | `platform_teach` | Detect one ChArUco board pose, calculate `base_link <- platform_reference`, preview it in TF, and save a strict platform calibration YAML. |

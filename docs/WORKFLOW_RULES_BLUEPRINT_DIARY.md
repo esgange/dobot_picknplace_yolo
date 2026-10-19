@@ -12260,6 +12260,77 @@ Never use a floating “latest” version in an issue, script, or deployment not
   compilation and `git diff --check` pass. Rebuild the five changed packages and
   relaunch providers together under operator control; no teach upload is needed.
 
+### 2026-10-19 — Rule 294: retain validated inference sources and avoid repeated file work
+
+- User requests an efficiency audit of every inference node in PicknPlace, including
+  model reuse and loading static variables once. Scope remains PicknPlace only;
+  CATARM and the excluded imported `item_pick` reference are unchanged.
+- Verified that Item/Tray Teach and headless Detect already retain one YOLO object
+  and predictor/backend between frames. Model construction/hashing is confined to
+  explicit model identity changes, with no automatic reload of changed weights.
+  Camera Calibration/Platform Teach retain ChArUco contexts; Bin Teach retains its
+  ArUco context. Their per-frame camera inputs remain dynamic. No unnecessary
+  detector reconstruction or model reload was found in these paths.
+- Item capture and frozen-result checks did repeatedly read profile/model bytes,
+  selected calibration files and root config. Cache the fully validated station,
+  bin, camera, robot-camera, root config and item-profile/model bindings. Full
+  current-schema/sample/provenance/robot-identity/hash validation still runs when
+  applying station sources or establishing a profile binding. Explicit profile
+  Save/Load/Arm can establish a new binding; timers cannot silently replace one.
+- Share tray's ordinary-file dev/inode/size/mtime_ns/ctime_ns checks in the item
+  package. Fence before/after validation, around capture/inference and before
+  delivery, including after optional diagnostics/logging. Check parent symlinks.
+  Reject deletion, replacement and edits retaining size/mtime; never cache poses,
+  depth, eligibility or new source bytes. Changed station/bin/root config needs
+  explicit reapplication or headless restart. Legacy latest-camera selection also
+  fences its catalog; explicitly selected calibration still ignores newer files.
+- Native item/tray workers now check model metadata after prediction/geometry as
+  well as before it. A model changed during inference cannot deliver its result.
+  Private thread-budget commands no longer clear unchanged camera-ray/mapping
+  caches. Untuned NativeClients skip per-request workload serialization/hashing;
+  hardware/runtime/model/settings matching remains intact for actual measurements.
+- Audit also found `platform_teach_core.load_robot_lan1_ip` still treated rule 293's
+  CPU keys as mandatory when listed in `.env.example`. Honor their absent=auto
+  contract and validate explicit values. Existing private `.env` validates without
+  modification. No new key, calibration/teach schema or compatibility reader.
+- Keep model settings, CPU allocation, 640x480/30 FPS, geometry/filters, exact-time
+  transforms, tray two-pose/depth guards, capture deadlines, request priority,
+  cancellation/retirement and all controller motion/I/O behavior. Controller/FSM
+  behavior and its source document are unchanged; no export regeneration is needed.
+- Offline timing, 40 repetitions after three warmups on current deployed sources:
+  one station validation median 5.389 -> 0.171 ms; one item-profile validation
+  median 12.172 -> 0.170 ms, using a 19,766,723-byte model. This measures file
+  validation only, not inference or physical throughput. No model was executed by
+  that measurement (`logs/inference_cache_benchmark.json`). See the full node audit
+  and limitations in `docs/INFERENCE_EFFICIENCY_AUDIT.md`.
+- Tests use temporary source files and synthetic feedback/images/weights. Real
+  pinned workers count one model/predictor across repeated frames, confidence and
+  generation changes and thread reduction; hashes occur only at initial loading.
+  Cover no-content-read cached requests, source races/edits/replacements, debug/
+  logging invalidation, strict real calibration/profile readers and teaching/runtime
+  parity. Initial failures were stale synthetic-fixture assumptions and a new test
+  harness parsing Ultralytics's settings announcement as JSON; fix those fixtures
+  and redirect the harness's import chatter before final validation.
+- Process checks found no affected station processes. Build item_perception_yolo
+  and tray_perception in isolated `/tmp/picknplace-inference-cache` outputs; keep
+  canonical installs and mapped driver libraries unchanged. No camera/robot start,
+  production arming or live restart. Preserve unrelated RViz edits and all operator
+  files. Scoped local commit only under the standing no-push instruction.
+- Isolated builds pass (`logs/inference_cache_final_build.txt`), with existing
+  underlay warnings. Seven installed modules match source bytes and the private
+  runtime contains no symlinks (`logs/inference_cache_installed_verification.txt`).
+  Focused tests pass 147 checks (`logs/inference_cache_final_focused.txt`). The final
+  installed broad suite passes 1,174 cases; its one failing new catalog test used
+  a custom basename from the explicit-selection fixture in the automatic catalog.
+  Correct that fixture to use its required timestamp basename, then all 32 binding
+  tests pass (`logs/inference_cache_final_binding_tests.txt`). The failed-case rerun
+  also passes: 1 passed, 34 deselected (`logs/inference_cache_failed_case_recheck.txt`;
+  pytest's last-failed mode skips unaffected files during collection).
+  All 1,175 broad-suite cases are thus covered at the final revision without an
+  implementation change after the isolated build. Python compilation and
+  `git diff --check` pass. Rebuild/relaunch both perception packages together to
+  deploy; no teach upload, calibration conversion or controller rebuild required.
+
 ### Future entry template
 
 ```text
