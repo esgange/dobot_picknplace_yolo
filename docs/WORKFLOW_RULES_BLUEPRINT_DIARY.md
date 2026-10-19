@@ -12344,6 +12344,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   calibration, teach/model, runtime and debug artifacts outside the commit.
   No deployment, process restart, perception arming or robot command.
 
+### 2026-10-19 — Repair canonical Item Teach and Tray Teach installations
+
+- Reproduce both requested GUI launches: each exits on an ImportError for
+  `item_perception_yolo.cpu_budget`. Existing installed Python symlinks expose
+  current source, but the canonical install lacks newly added modules, including
+  item `cpu_budget`/`source_binding` and tray `stability`/`source_binding`.
+  Prior isolated validation builds did not update the canonical install.
+- Recheck processes: Dobot bringup and the camera launcher were external; no
+  affected perception process remained after the failed launches. Rebuild only
+  `item_perception_yolo` and `tray_perception` with `--symlink-install` and
+  `--cmake-force-configure`. Both packages build successfully. Do not rebuild or
+  overwrite driver libraries or restart existing hardware processes.
+- Verify all 34 item and 18 tray Python modules match source, both GUI imports
+  succeed, and the private native runtime contains ordinary files, no symlinks.
+  Both real-display windows remain open with their ROS nodes present; saved
+  cutlery/tray profiles and models restore, and both native workers report ready
+  with the hardware-selected seven Torch threads. Launch logs have no traceback
+  or process failure after repair; Qt reports its Wayland/Xwayland notice.
+- Fresh camera images are unavailable at the verification check; Tray Teach
+  reports waiting for fresh RGB. This verifies installation and GUI/worker startup,
+  not live pose acquisition or robot operation. Do not arm providers, trigger
+  captures, start cameras, issue robot commands or change teaching/calibration data.
+- Preserve `.env` and unrelated RViz bytes. No application/controller behavior
+  changes or FSM export update is needed. Record this installation repair under
+  the scoped commit/push workflow. Logs: `logs/teach_launch_repair_build.txt`,
+  `logs/item_teach_launch_check.txt`, `logs/tray_teach_launch_check.txt`,
+  `logs/item_teach_launch_verified.txt`, `logs/tray_teach_launch_verified.txt`.
+
 ### Future entry template
 
 ```text
