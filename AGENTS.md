@@ -10,6 +10,11 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 292 raises item inference to Torch8, matching tray inference, with inter-op1
+and OpenCV1 in each private worker. Startup and runtime drift checks enforce this
+budget. It supersedes rule 291's item Torch4 only; shared 640x480 RGB/depth30 FPS,
+inference geometry, model settings and controller behavior remain unchanged.
+
 Rule 291 requires two consecutive processed post-trigger tray poses with advancing
 RGB timestamps, exact image-time transforms and matching bound sources. Check
 origin/center/placement displacement within 5% of taught width and rotation within

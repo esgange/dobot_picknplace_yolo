@@ -13,7 +13,7 @@ from .projection_cache import clear_projection_caches
 from .preview_protocol import receive_packet, send_packet
 
 
-def initialize(runtime, manifest, *, torch_threads=4):
+def initialize(runtime, manifest, *, torch_threads=8):
     if manifest["schema_version"] != 1:
         raise RuntimeError("Unsupported YOLO runtime manifest")
     for name, version in manifest["private_packages"].items():
@@ -96,7 +96,7 @@ def render_result(result, rgb, names, task, maximum, cv2, np, *, included_indice
 
 
 def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations=None,
-          predictions=None, torch_threads=4):
+          predictions=None, torch_threads=8):
     """Share the pinned runtime/model lifecycle with project perception workers."""
     operations, predictions = operations or {}, predictions or {}
     try:

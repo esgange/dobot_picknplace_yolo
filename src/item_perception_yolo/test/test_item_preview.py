@@ -104,6 +104,9 @@ def start_worker(native_paths):
     header, data = receive_packet(child.stdout)
     assert header["state"] == "ready", header
     assert header["ultralytics"] == "8.4.150" and not data
+    assert header["torch_threads"] == 8
+    assert header["torch_interop_threads"] == header["opencv_threads"] == 1
+    assert header["opencl"] is False
     return child
 
 
@@ -162,6 +165,10 @@ def test_roi_then_model_load_and_detection_share_worker(synthetic_model):
         pixels = bytes(320 * 240 * 3)
         metadata, overlay = client.call(header, pixels)
         assert metadata["roi_overlay"]["visible"] is False and overlay == pixels
+        ready = [call.kwargs for call in client.events.record.call_args_list
+                 if call.args[1] == "item_runtime_ready"]
+        assert len(ready) == 1 and ready[0]["torch_threads"] == 8
+        assert ready[0]["torch_interop_threads"] == ready[0]["opencv_threads"] == 1
         pid = client.process.pid
         metadata, payload = client.call({"operation": "inspect", "model": {
             "path": str(synthetic_model), "sha256": file_sha256(synthetic_model)}})

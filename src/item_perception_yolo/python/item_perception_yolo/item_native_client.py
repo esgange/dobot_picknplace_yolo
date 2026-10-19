@@ -14,7 +14,7 @@ from .preview_protocol import receive_packet, send_packet
 
 class NativeClient:
     def __init__(self, events, *, worker_package="item_perception_yolo",
-                 worker_executable="item_preview_worker", torch_threads=4):
+                 worker_executable="item_preview_worker", torch_threads=8):
         self.events = events
         self.worker_package = worker_package
         self.worker_executable = worker_executable

@@ -12153,6 +12153,34 @@ Never use a floating “latest” version in an issue, script, or deployment not
   operator-controlled provider/controller relaunch. No teach upload or calibration
   conversion is required. FPS takes effect only on operator camera relaunch.
 
+### 2026-10-19 — Rule 292: match item inference to tray's eight-thread budget
+
+- User requests the same CPU inference budget for items and trays. Supersede only
+  rule 291's item Torch4: Item Teach and headless Item Detect now default to
+  Torch8/inter-op1/OpenCV1 in their private worker. Match the client startup
+  contract, OMP/MKL environment, native initialization and runtime drift checks.
+  Explicit thread overrides remain available for offline comparison benchmarks.
+- Existing shared camera configuration is already 640x480 RGB/depth at 30 FPS for
+  both camera slots; retain it without rewriting the private .env. Item inference
+  geometry, model settings, pinned versions, filters, pose acquisition and controller
+  behavior remain unchanged. Tray still uses its separate eight-thread worker.
+- Updated current runtime documentation and regenerated/verified the FSM HTML/PDF
+  after correcting its runtime-budget note. Historical rule 291 and four/eight-thread
+  benchmark measurements remain unchanged.
+- Verification: 760 perception regressions pass against the isolated item package,
+  including actual eight-thread item startup/model execution, explicit tray budget,
+  runtime drift rejection and native retirement (`logs/item_threads_tests.txt`).
+  Isolated package build passes (`logs/item_threads_build.txt`); both changed installed
+  modules match source bytes and the private runtime contains no symlinks. Existing
+  underlay warnings remain. Actual launcher arguments confirm both cameras at
+  640x480 RGB/depth30 FPS. FSM exports match the source hash, with nine diagrams/PDF
+  pages, offline navigation/zoom and no browser errors (`logs/item_threads_fsm_verify.txt`).
+  `git diff --check` passes. No affected station process was running at the pre-build
+  check. No camera/robot restart, production arming or robot command; software
+  verification only. Runtime changes require operator rebuild/relaunch.
+- Make a scoped local commit under the standing no-push instruction. Preserve the
+  unrelated RViz change, operator teach/calibration/model files and CATARM.
+
 ### Future entry template
 
 ```text

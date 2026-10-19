@@ -15,7 +15,7 @@ new captures/previews wait for retirement. A separate hard worker deadline remai
 Version-1 stability evidence is recomputed by the controller; missing/invalid proof
 is terminal. Source/CameraInfo changes invalidate capture. Pause/Stop retirement,
 placement geometry/rates/I/O and next-item overlap are unchanged. Native masks use
-scaled cleanup; tray Torch8/inter-op1/OpenCV1 (item Torch4), RGB/depth30 FPS. Strong
+scaled cleanup; tray and item Torch8/inter-op1/OpenCV1 (rule 292), RGB/depth30 FPS. Strong
 cached file identity fences preserve strict calibration validation. Intermediate
 frames omit rendering; requested final images use accepted geometry without YOLO.
 Software verification only; physical accuracy and timing remain operator-tested.

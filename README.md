@@ -1219,7 +1219,7 @@ empty observations reset it, within the same request deadline. Controller valida
 requires version-1 two-pose evidence. Saved Tray Detect joint/idle checks, ten
 requests then WAITING FOR TRAY, Pause/Stop and next-item overlap are unchanged.
 Full-frame input and saved-plane rectangle fitting remain; no crop is introduced.
-Tray inference uses eight Torch threads (item: four), with one inter-op/OpenCV
+Tray and item inference each use eight Torch threads, with one inter-op/OpenCV
 thread. Cached validated source identities replace repeated hashing; changes still
 require reload. Intermediate/headless no-image observations skip rendering and
 image transfer. The existing shared RGB/depth FPS keys are 30 on this station,
