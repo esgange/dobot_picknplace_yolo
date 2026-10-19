@@ -12181,6 +12181,85 @@ Never use a floating “latest” version in an issue, script, or deployment not
 - Make a scoped local commit under the standing no-push instruction. Preserve the
   unrelated RViz change, operator teach/calibration/model files and CATARM.
 
+### 2026-10-19 — Rule 293: hardware-aware item/tray CPU budgets and offline tuning
+
+- User requests portable CPU utilization for both detectors, in PicknPlace only.
+  Supersede rules 291/292's fixed Torch counts with one startup allocation policy
+  used by both headless and teaching providers. Read affinity, physical topology,
+  CPU identity and the tightest ancestor cgroup v1/v2 quota. Reserve nominal
+  ceil(usable logical CPUs / 8) capacity, at least one; divide the rest between the
+  two workers with the extra thread for item, capped per worker by physical cores.
+  Keep one thread per worker even on restricted hosts and report limited capacity.
+  Current 8-core/16-logical host selects item7/tray7. This is not CPU pinning or a
+  measured production optimum; no active redistribution or realtime guarantee.
+- Two optional canonical root `.env` keys, ITEM_TORCH_THREADS/TRAY_TORCH_THREADS,
+  use `auto` or canonical positive integers. Absence explicitly selects this auto
+  policy; this is the scoped exception to the older absolute-settings rule, not
+  a compatibility alias or alternate configuration source. Explicit counts can
+  consume headroom but cannot exceed effective per-worker/combined capacity.
+  Keep current private .env untouched; .env.example documents both keys. Both
+  providers must restart together after CPU limits/overrides/hardware change.
+- Add the keys to shell/camera/Dobot launch/Motion Debug readers so an override
+  cannot prevent station launch. Vendor patch is only the supported-key set in
+  `dobot_bringup_v4/launch/dobot_bringup_ros2.launch.py`, against the existing
+  pruned upstream `Dobot-Arm/DOBOT_6Axis_ROS2_V4` baseline `def21d05` (section 2).
+  No socket, service, driver binary implementation or robot behavior is changed.
+- Parent passes the selected count explicitly to its native worker, aligns OMP/MKL,
+  and checks actual startup. Preserve Torch/Ultralytics agreement, inter-op1,
+  OpenCV1/OpenCL-off, OpenBLAS1 and runtime drift checks. Measured reductions use
+  one serialized private thread-budget acknowledgment inside the original request
+  deadline; reject above-startup counts and preserve drift rejection. No model
+  reload/second prediction/extra ROS executor or concurrent model execution.
+- Add `scripts/tune_perception_cpu.py`: explicit saved full native request/payload
+  replay, fresh processes per candidate allocation, warmups and overlapping item
+  and two-frame tray computation with the existing pair comparator. Refuse running
+  perception processes. Measure median/p95 and child CPU use; choose by slower p95,
+  summed p95 then thread count while preserving baseline candidate counts/pair
+  acceptance. Full-resolution RGB/depth/context bundles are required; PNG-only
+  archives cannot establish pose-compute timing. No live acquisition or hardware.
+- `--save` writes optional derived measurements atomically under ignored logs/;
+  report contains input hashes/timings. Bind hardware, allocation, runtime lock,
+  installed processing code and each role's model hash/settings/resolution/limits.
+  Malformed/stale/missing measurements use the automatic budget; explicit overrides
+  disable tuning. Different models/settings restore the startup maximum. Cache
+  matching is per role; re-tune a changed paired recipe to reassess concurrency.
+  The cache is measured output, not a second user configuration source.
+- Preserve camera 640x480/30 FPS local settings, pinned runtime versions, inference
+  and geometry filters, tray two-pose evidence, depth/plane/arrival checks, deadlines,
+  source retirement, next-item overlap, robot paths and I/O. Teaching previews keep
+  their existing rate and priority. No teach upload or calibration change.
+- Document policy, overrides, logs, replay format and limits in
+  `docs/PERCEPTION_CPU_BUDGET.md`, root/package READMEs and AGENTS. Update the FSM's
+  runtime note and regenerate/verify adjacent exports; no state diagram changes.
+- Verification is software-only; process-aware builds are isolated under
+  `/tmp/picknplace-cpu-auto`. No live process restart, robot/camera command or
+  production perception arming. Retain all operator artifacts and unrelated RViz
+  edits. Make a scoped local commit; standing PicknPlace no-push remains in force.
+- Results: 1,165 perception/configuration/launch regressions pass
+  (`logs/cpu_auto_regressions.txt`). An additional 57 focused checks cover real
+  item/tray workers, saved-measurement application/reset, native thread limits,
+  drift and overlapping synthetic replay (`logs/cpu_auto_final_tests.txt`). After
+  adding ARM CPU identity fields, 31 final installed-policy/native checks pass
+  (`logs/cpu_auto_installed_tests.txt`). Synthetic-model timings prove the replay
+  tool works, not production speed; no production tuning cache was written.
+- Final audit skips installed-code hashing when there is no measurement cache or
+  an explicit override, and records absent peer packages in the cache identity
+  instead of requiring Tray Perception for an item-only installation. After the
+  final item build, 40 focused tests pass (`logs/cpu_auto_final_client_tests.txt`),
+  including actual measured-budget changes/restoration, cached startup, drift,
+  quota/topology cases, request retirement and real paired-worker replay.
+- Isolated builds pass for item_perception_yolo, tray_perception,
+  orbbec_camera_launcher, dobot_bringup_v4 and motion_debug. Logs:
+  `logs/cpu_auto_final_build.txt`, `logs/cpu_auto_readers_build.txt`. Existing
+  underlay warnings remain. Eight audited installed modules match final source;
+  native runtime has no symlinks. Confirm current auto7/auto7 and actual launcher
+  640x480/30 FPS in `logs/cpu_auto_installed_verification.txt`. Canonical driver
+  libraries and private .env remain untouched.
+- FSM source hash, nine HTML diagrams/PDF pages, offline navigation/zoom and
+  browser errors verified (`logs/cpu_auto_fsm_verify.txt`). Shell syntax, Python
+  compilation and `git diff --check` pass. Rebuild the five changed packages and
+  relaunch providers together under operator control; no teach upload is needed.
+
 ### Future entry template
 
 ```text

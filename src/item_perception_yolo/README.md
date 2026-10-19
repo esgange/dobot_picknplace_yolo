@@ -41,9 +41,9 @@ ros2 launch item_perception_yolo item_teach.launch.py
    the saved pair's hashes checked. Selecting/restoring that path authorizes local
    model loading. One package-private CPU worker loads the model,
    reports its actual task and lists **one checkbox per class ID/name**.
-   Item workers use eight Torch threads, one inter-op thread and one OpenCV thread;
+   Item workers use a hardware-aware Torch budget, one inter-op thread and one OpenCV thread;
    startup and operation checks enforce those limits. The shared runtime also serves
-   Tray Perception in a separate process with eight Torch threads and native-resolution
+   Tray Perception in a separate process sharing the CPU budget, with native-resolution
    segmentation masks. Item prediction/mask settings and pinned versions are unchanged.
    Check only production classes to accept; no implicit production all-classes selection. A new model starts
    with unchecked classes. A saved profile restores selected IDs as unverified
@@ -569,7 +569,12 @@ age-labelled. Station and model selections load independently; neither arms the 
 The ROS/Qt parent never imports cv2/Torch/Ultralytics. Build verifies and extracts
 the exact private inference wheels without internet/global installation. Fixed
 CPU inference uses Ultralytics 8.4.150, OpenCV 4.10.0 and NumPy 1.26.4, with
-eight Torch CPU threads, one inter-op thread, one OpenCV thread and OpenCL disabled. The exact
+hardware-aware Torch CPU threads, one inter-op thread, one OpenCV thread and OpenCL disabled.
+Both detector roles account for affinity, physical cores and container quotas, with
+control headroom; this host selects seven threads per worker. Optional root
+`ITEM_TORCH_THREADS=auto` / `TRAY_TORCH_THREADS=auto` overrides and matched offline
+measurements are described in [CPU budgets](../../docs/PERCEPTION_CPU_BUDGET.md).
+The exact
 preprovisioned Torch/torchvision and other dependencies are recorded in
 `third_party/wheels/item-yolo-runtime-lock.json`; they are not bundled OS
 dependencies. See [NOTICE.md](NOTICE.md) for attribution/offline limitations.

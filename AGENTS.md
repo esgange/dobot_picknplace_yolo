@@ -10,6 +10,15 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 293 supersedes fixed item/tray Torch counts with hardware-aware startup
+budgets shared across both workers: affinity, physical cores and ancestor cgroup
+quotas, with nominal control headroom. Optional root ITEM_TORCH_THREADS and
+TRAY_TORCH_THREADS select auto or explicit bounded counts. Keep inter-op/OpenCV1,
+strict startup/drift checks and unchanged geometry/30 FPS. Offline replay tuning
+may select smaller counts only for matching hardware/runtime/model/settings;
+stale measurements use the automatic budget. Never tune on live production input.
+See docs/PERCEPTION_CPU_BUDGET.md; no command, trajectory or teach-schema change.
+
 Rule 292 raises item inference to Torch8, matching tray inference, with inter-op1
 and OpenCV1 in each private worker. Startup and runtime drift checks enforce this
 budget. It supersedes rule 291's item Torch4 only; shared 640x480 RGB/depth30 FPS,

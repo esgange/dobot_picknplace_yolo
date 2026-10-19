@@ -10,15 +10,30 @@ import time
 from ament_index_python.packages import get_package_prefix
 
 from .preview_protocol import receive_packet, send_packet
+from . import cpu_budget
 
 
 class NativeClient:
     def __init__(self, events, *, worker_package="item_perception_yolo",
-                 worker_executable="item_preview_worker", torch_threads=8):
+                 worker_executable="item_preview_worker", torch_threads=None, root=None):
         self.events = events
         self.worker_package = worker_package
         self.worker_executable = worker_executable
-        self.torch_threads = torch_threads
+        self.role = 'tray' if worker_package == 'tray_perception' else 'item'
+        self.thread_policy = None
+        self.tuning = {}
+        if torch_threads is None:
+            from camera_calibration_gui.calibration_core import workspace_root
+            from orbbec_camera_launcher.project_config import _parse_env_file
+            self.root = workspace_root() if root is None else Path(root)
+            hardware = cpu_budget.discover()
+            allocation = cpu_budget.allocate(hardware, cpu_budget.settings(
+                _parse_env_file(self.root / '.env')))
+            self.thread_policy = {'hardware': hardware, 'allocation': allocation}
+            torch_threads = allocation['limits'][self.role]
+            self.events.record('INFO', 'perception_cpu_budget', 'Selected CPU budget',
+                               role=self.role, threads=torch_threads, **self.thread_policy)
+        self.thread_limit = self.torch_threads = cpu_budget.checked_threads(torch_threads)
         self.lock = threading.Lock()
         self.process_lock = threading.Lock()
         self.process = None
@@ -38,13 +53,24 @@ class NativeClient:
                 "lib/item_perception_yolo"
             executable = Path(get_package_prefix(self.worker_package)) / \
                 "lib" / self.worker_package / self.worker_executable
+            if self.thread_policy is not None:
+                path = self.root / 'logs/perception_cpu_tuning.json'
+                if self.thread_policy['allocation']['overrides'][self.role] is not None:
+                    self.tuning, reason = {}, 'explicit thread override'
+                elif not path.exists():
+                    self.tuning, reason = {}, 'no measurements'
+                else:
+                    identity = {**self.thread_policy,
+                                'runtime': cpu_budget.runtime_identity(directory / 'yolo_runtime')}
+                    self.tuning, reason = cpu_budget.read_tuning(path, identity)
+                self.events.record('INFO', 'perception_cpu_tuning', reason, role=self.role)
             environment = dict(os.environ, YOLO_AUTOINSTALL="false", YOLO_OFFLINE="true",
                                QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg",
                                OMP_NUM_THREADS=str(self.torch_threads),
                                MKL_NUM_THREADS=str(self.torch_threads), OPENBLAS_NUM_THREADS="1")
             self.process = subprocess.Popen(
                 ["/usr/bin/python3", str(executable),
-                 str(directory / "yolo_runtime")], stdin=subprocess.PIPE,
+                 str(directory / "yolo_runtime"), str(self.thread_limit)], stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
             process = self.process
 
@@ -56,6 +82,22 @@ class NativeClient:
                 self.stderr_tail.extend(block)
                 del self.stderr_tail[:-8192]
         threading.Thread(target=drain, daemon=True).start()
+
+    def _select_threads(self, header):
+        key = cpu_budget.workload_key(self.role, header)
+        selected = self.tuning.get(key, self.thread_limit)
+        if not 1 <= selected <= self.thread_limit:
+            selected = self.thread_limit
+        if selected == self.torch_threads:
+            return
+        send_packet(self.process.stdin, {'operation': 'thread_budget', 'threads': selected})
+        reply, payload = receive_packet(self.process.stdout)
+        if reply != {'state': 'ok', 'torch_threads': selected} or payload:
+            raise RuntimeError(f'Invalid native thread budget reply: {reply}')
+        self.torch_threads = selected
+        self.events.record('INFO', 'perception_cpu_selected', 'Applied measured/default CPU budget',
+                           role=self.role, threads=selected, workload=key,
+                           measured=key in self.tuning)
 
     def _failure(self, header, exc):
         if self.closed and not self.failed:
@@ -100,6 +142,7 @@ class NativeClient:
                         self.events.record("INFO", "item_runtime_ready", "Private CPU runtime",
                                            **startup)
                         self.ready = True
+                    self._select_threads(header)
                     send_packet(self.process.stdin, header, data)
                     metadata, payload = receive_packet(self.process.stdout)
                     if metadata.get("state") != "ok":

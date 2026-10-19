@@ -443,7 +443,7 @@ class ItemDetectNode(Node):
         self.events = PackageEventLogger(node_name=name)
         model = Path(get_package_share_directory("cra_description")) / "urdf/cr10_robot.xacro"
         self.kinematics = Cr10Kinematics(model)
-        self.native = NativeClient(self.events)
+        self.native = NativeClient(self.events, root=self.root)
         self._feedback_lock = threading.Lock()
         self.request_lock = threading.Lock()
         self.operation_lock = threading.Lock()

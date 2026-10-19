@@ -47,7 +47,7 @@ class TrayTeachNode(Node):
             self.publisher_node = "/" + name
         self.events = EventLogger(self.root, self.get_name())
         self.native = NativeClient(self.events, worker_package="tray_perception",
-                                   worker_executable="tray_worker", torch_threads=8)
+                                   worker_executable="tray_worker", root=self.root)
         self._camera_binding = None
         self.lock = threading.RLock()
         self.work_lock = threading.RLock()

@@ -25,4 +25,6 @@ with tempfile.TemporaryDirectory(prefix="picknplace-yolo-session-") as scratch:
                        "YOLO_AUTOINSTALL": "false", "YOLO_VERBOSE": "false",
                        "MPLCONFIGDIR": scratch, "MPLBACKEND": "Agg"})
     from item_perception_yolo.yolo_worker_native import serve
-    serve(sys.stdin.buffer, protocol_output, runtime, manifest, Path(scratch))
+    from item_perception_yolo.cpu_budget import worker_threads
+    serve(sys.stdin.buffer, protocol_output, runtime, manifest, Path(scratch),
+          torch_threads=worker_threads('item', sys.argv))

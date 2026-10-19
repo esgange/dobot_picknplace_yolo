@@ -425,7 +425,7 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
                             YOLO_AUTOINSTALL="false", MPLCONFIGDIR=str(tmp_path)),
                    check=True, capture_output=True, timeout=30)
     client = NativeClient(MagicMock(), worker_package="tray_perception",
-                          worker_executable="tray_worker", torch_threads=8)
+                          worker_executable="tray_worker")
     camera = {"width": 64, "height": 48, "k": [100., 0., 32., 0., 100., 24., 0., 0., 1.],
               "d": [0.] * 5, "distortion_model": "plumb_bob"}
     optical = np.diag([1., -1., -1., 1.])
@@ -439,6 +439,10 @@ def test_real_private_worker_plane_and_prediction(tmp_path):
              "pixels": [[10., 10.], [50., 10.], [50., 35.], [10., 35.]]},
             np.full((48, 64), 600, "<u2").tobytes())
         assert result["plane"] is not None and not data
+        ready = [call.kwargs for call in client.events.record.call_args_list
+                 if call.args[1] == 'item_runtime_ready']
+        assert len(ready) == 1 and ready[0]['torch_threads'] == client.thread_limit
+        assert client.thread_limit == client.thread_policy['allocation']['limits']['tray']
         plane = result["plane"]
         rgb = np.broadcast_to(np.array([17, 34, 51], np.uint8), (48, 64, 3)).tobytes()
         depths = np.full((48, 64), 600, "<u2").tobytes()

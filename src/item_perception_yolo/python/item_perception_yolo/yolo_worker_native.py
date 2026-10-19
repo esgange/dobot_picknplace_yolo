@@ -11,9 +11,11 @@ import time
 from .depth_snapshot import DEPTH_ENCODING, item_depth_limits
 from .projection_cache import clear_projection_caches
 from .preview_protocol import receive_packet, send_packet
+from .cpu_budget import automatic_threads, checked_threads
 
 
-def initialize(runtime, manifest, *, torch_threads=8):
+def initialize(runtime, manifest, *, torch_threads=None):
+    torch_threads = automatic_threads() if torch_threads is None else checked_threads(torch_threads)
     if manifest["schema_version"] != 1:
         raise RuntimeError("Unsupported YOLO runtime manifest")
     for name, version in manifest["private_packages"].items():
@@ -96,9 +98,11 @@ def render_result(result, rgb, names, task, maximum, cv2, np, *, included_indice
 
 
 def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations=None,
-          predictions=None, torch_threads=8):
+          predictions=None, torch_threads=None):
     """Share the pinned runtime/model lifecycle with project perception workers."""
     operations, predictions = operations or {}, predictions or {}
+    torch_threads = automatic_threads() if torch_threads is None else checked_threads(torch_threads)
+    thread_limit = torch_threads
     try:
         cv2, np, torch, ultralytics = initialize(runtime, manifest, torch_threads=torch_threads)
         send_packet(output_stream, {
@@ -121,12 +125,23 @@ def serve(input_stream, output_stream, runtime, manifest, scratch, *, operations
                 projection_generation = current_generation
             if request.get("operation") not in (
                     "detect", "inspect", "preview", "overlay_roi", "selected_pose",
-                    "teaching_rviz", *operations, *predictions):
+                    "teaching_rviz", "thread_budget", *operations, *predictions):
                 raise RuntimeError("Unsupported preview operation")
             if (cv2.getNumThreads() != 1 or cv2.ocl.useOpenCL()
                     or torch.get_num_threads() != torch_threads
                     or torch.get_num_interop_threads() != 1):
                 raise RuntimeError("Native thread/OpenCL runtime drift")
+            if request['operation'] == 'thread_budget':
+                count = checked_threads(request.get('threads'))
+                if data or count > thread_limit:
+                    raise RuntimeError('Native thread budget exceeds startup limit')
+                from ultralytics import utils
+                from ultralytics.utils import torch_utils
+                utils.NUM_THREADS = torch_utils.NUM_THREADS = count
+                torch.set_num_threads(count)
+                torch_threads = count
+                send_packet(output_stream, {'state': 'ok', 'torch_threads': torch.get_num_threads()})
+                continue
             if request["operation"] in operations:
                 header, pixels = operations[request["operation"]](request, data, cv2, np)
                 send_packet(output_stream, header, pixels)

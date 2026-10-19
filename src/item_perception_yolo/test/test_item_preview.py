@@ -104,7 +104,8 @@ def start_worker(native_paths):
     header, data = receive_packet(child.stdout)
     assert header["state"] == "ready", header
     assert header["ultralytics"] == "8.4.150" and not data
-    assert header["torch_threads"] == 8
+    from item_perception_yolo.cpu_budget import automatic_threads
+    assert header["torch_threads"] == automatic_threads('item')
     assert header["torch_interop_threads"] == header["opencv_threads"] == 1
     assert header["opencl"] is False
     return child
@@ -154,6 +155,48 @@ def test_native_model_inspection_and_classes(native_paths, synthetic_model):
         child.wait(timeout=5)
 
 
+def test_real_worker_applies_measured_threads_and_restores_on_settings_change(synthetic_model):
+    from item_perception_yolo.item_native_client import NativeClient
+    from item_perception_yolo.cpu_budget import workload_key
+    client = NativeClient(MagicMock(), torch_threads=3)
+    header = request(synthetic_model)
+    client.tuning = {workload_key('item', header): 1}
+    try:
+        result, _ = client.call(header, bytes(320 * 240 * 3))
+        assert result['state'] == 'ok' and client.torch_threads == 1
+        changed = {**header, 'render_images': False}
+        result, _ = client.call(changed, bytes(320 * 240 * 3))
+        assert result['state'] == 'ok' and client.torch_threads == 3
+        result, _ = client.call(header, bytes(320 * 240 * 3))
+        assert result['state'] == 'ok' and client.torch_threads == 1
+    finally:
+        client.close()
+
+
+def test_auto_client_reads_matching_measurements_before_inference(tmp_path, synthetic_model):
+    import json
+    from item_perception_yolo.item_native_client import NativeClient
+    from item_perception_yolo import cpu_budget
+    root = Path(__file__).resolve().parents[3]
+    (tmp_path / '.env').write_bytes((root / '.env.example').read_bytes())
+    header = request(synthetic_model)
+    runtime = Path(get_package_prefix('item_perception_yolo'))/'lib/item_perception_yolo/yolo_runtime'
+    hardware = cpu_budget.discover()
+    identity = {'hardware': hardware, 'allocation': cpu_budget.allocate(hardware),
+                'runtime': cpu_budget.runtime_identity(runtime)}
+    (tmp_path / 'logs').mkdir()
+    (tmp_path / 'logs/perception_cpu_tuning.json').write_text(json.dumps({
+        'version': 1, 'identity': identity, 'entries': {cpu_budget.workload_key('item', header): 1}}))
+    client = NativeClient(MagicMock(), root=tmp_path)
+    try:
+        result, _ = client.call(header, bytes(320 * 240 * 3))
+        assert result['state'] == 'ok' and client.torch_threads == 1
+        assert any(call.args[1:3] == ('perception_cpu_tuning', 'matched')
+                   for call in client.events.record.call_args_list)
+    finally:
+        client.close()
+
+
 def test_roi_then_model_load_and_detection_share_worker(synthetic_model):
     from item_perception_yolo.item_native_client import NativeClient
     client = NativeClient(MagicMock())
@@ -167,7 +210,7 @@ def test_roi_then_model_load_and_detection_share_worker(synthetic_model):
         assert metadata["roi_overlay"]["visible"] is False and overlay == pixels
         ready = [call.kwargs for call in client.events.record.call_args_list
                  if call.args[1] == "item_runtime_ready"]
-        assert len(ready) == 1 and ready[0]["torch_threads"] == 8
+        assert len(ready) == 1 and ready[0]["torch_threads"] == client.thread_limit
         assert ready[0]["torch_interop_threads"] == ready[0]["opencv_threads"] == 1
         pid = client.process.pid
         metadata, payload = client.call({"operation": "inspect", "model": {

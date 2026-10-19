@@ -467,9 +467,12 @@ Pause/Stop retirement and next-item overlap are unchanged.
 
 Tray segmentation requests native-resolution masks on the **full image**; no crop
 or alternate rectangle fitter is used. Dominant-region and original-image-edge
-rejection remain. The private tray worker uses **8 Torch / 1 inter-op / 1 OpenCV**
-threads, checked at startup and before operations. Item workers also use **8 Torch**
-threads (rule 292), with all pinned versions retained. Root `.env` `ORBBEC_COLOR_FPS=30` and
+rejection remain. The private tray worker uses a **hardware-aware Torch budget /
+1 inter-op / 1 OpenCV**, checked at startup and before operations. Item workers
+share the allocation policy (rule 293); this host selects seven threads per worker.
+Optional overrides and matched offline tuning are documented in
+[CPU budgets](../../docs/PERCEPTION_CPU_BUDGET.md). All pinned versions remain.
+Root `.env` `ORBBEC_COLOR_FPS=30` and
 `ORBBEC_DEPTH_FPS=30` apply to both cameras; this station retains **640×480**.
 Changing those keys requires an operator-controlled camera relaunch.
 

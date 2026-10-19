@@ -243,6 +243,8 @@ def _load_robot_type_from_project_env() -> str:
         'ITEM_TEACH_PLATFORM_CALIBRATION',
         'ITEM_TEACH_BIN_CAMERA_CALIBRATION',
         'ITEM_TEACH_ROBOT_CAMERA_CALIBRATION',
+        'ITEM_TORCH_THREADS',
+        'TRAY_TORCH_THREADS',
     }
     with env_path.open('r', encoding='utf-8') as env_file:
         for line_number, line in enumerate(env_file, start=1):

@@ -1219,8 +1219,10 @@ empty observations reset it, within the same request deadline. Controller valida
 requires version-1 two-pose evidence. Saved Tray Detect joint/idle checks, ten
 requests then WAITING FOR TRAY, Pause/Stop and next-item overlap are unchanged.
 Full-frame input and saved-plane rectangle fitting remain; no crop is introduced.
-Tray and item inference each use eight Torch threads, with one inter-op/OpenCV
-thread. Cached validated source identities replace repeated hashing; changes still
+Tray and item inference share hardware-aware Torch budgets (rule 293), with one
+inter-op/OpenCV thread each. The current 8-core/16-logical-CPU host selects 7+7;
+optional root `.env` overrides and offline replay tuning are described in
+[CPU budgets](docs/PERCEPTION_CPU_BUDGET.md). Cached validated source identities replace repeated hashing; changes still
 require reload. Intermediate/headless no-image observations skip rendering and
 image transfer. The existing shared RGB/depth FPS keys are 30 on this station,
 with 640×480 retained. See [tray capture details](src/tray_perception/README.md).

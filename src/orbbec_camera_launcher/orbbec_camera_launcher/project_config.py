@@ -78,6 +78,7 @@ REMOTE_ENV_KEYS = (
     'REMOTE_CONNECT_TIMEOUT_SEC',
 )
 SUPPORTED_ENV_KEYS = SUPPORTED_ENV_KEYS.union(REMOTE_ENV_KEYS)
+SUPPORTED_ENV_KEYS = SUPPORTED_ENV_KEYS.union(('ITEM_TORCH_THREADS', 'TRAY_TORCH_THREADS'))
 ORBBEC_LAUNCH_FILE = 'gemini_330_series.launch.py'
 FIXED_CAMERA_COUNT = 2
 ORBBEC_CAMERA_SLOTS = tuple(range(1, FIXED_CAMERA_COUNT + 1))
@@ -138,6 +139,10 @@ def _parse_env_file(env_path: Path) -> dict[str, str]:
                     f'Duplicate project .env key {key!r} at {env_path}:{line_number}'
                 )
             values[key] = value
+
+    for key in ('ITEM_TORCH_THREADS', 'TRAY_TORCH_THREADS'):
+        if key in values and values[key] != 'auto' and not re.fullmatch(r'[1-9][0-9]*', values[key]):
+            raise RuntimeError(f'{key} must be auto or a positive integer')
 
     missing = sorted(REQUIRED_ENV_KEYS - values.keys())
     if missing:

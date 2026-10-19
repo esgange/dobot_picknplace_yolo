@@ -59,6 +59,7 @@ _SUPPORTED_ENV_KEYS = {
     "ITEM_TEACH_ROBOT_CAMERA_CALIBRATION",
 }
 _REQUIRED_ENV_KEYS = frozenset(_SUPPORTED_ENV_KEYS)
+_SUPPORTED_ENV_KEYS.update(('ITEM_TORCH_THREADS', 'TRAY_TORCH_THREADS'))
 # Optional remote_setup settings never participate in hardware configuration.
 _SUPPORTED_ENV_KEYS.update((
     'REMOTE_SERVER_HOST',
