@@ -191,9 +191,12 @@ class ToolLaunches:
             check()
             if cancel.is_set():
                 return
+            arguments = (['require_camera_watchdog:=true']
+                         if tool.kind == 'production'
+                         and getattr(self.node, 'require_camera_watchdog', False) else [])
             process = subprocess.Popen(
                 [sys.executable, '-m', 'robot_controller.auto_detector_child',
-                 str(os.getpid()), ros2, 'launch', '--noninteractive', str(launch)],
+                 str(os.getpid()), ros2, 'launch', '--noninteractive', str(launch), *arguments],
                 cwd=self.root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, start_new_session=True)
 

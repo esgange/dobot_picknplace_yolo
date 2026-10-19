@@ -12372,6 +12372,72 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `logs/item_teach_launch_check.txt`, `logs/tray_teach_launch_check.txt`,
   `logs/item_teach_launch_verified.txt`, `logs/tray_teach_launch_verified.txt`.
 
+### 2026-10-19 — Rule 295: persistent camera alarm without station teardown
+
+- User requests a camera-connection prompt and station alarm until resolved,
+  instead of closing the station when the camera disconnects. Logs show the
+  robot camera disappearing from USB, both streams becoming stale, then the
+  lifetime three-attempt watchdog exiting and the station closing its owned core.
+  Supersede rule 15's lifetime retry cap and rule 280's camera-dependency teardown
+  only; keep strict configured serials, ordered complete-set startup, per-camera
+  readiness, publisher ownership and owned-process shutdown confirmation.
+- Watchdog publishes unhealthy diagnostics before camera cleanup. Three failed
+  attempts enter persistent `alarm`; bounded serial scans repeat no sooner than
+  three seconds after the preceding scan. Spawn no camera process while either
+  configured serial is missing. Once both return, start another three-attempt
+  batch, using the completed scan rather than scanning twice. Healthy streams
+  are required again. Incomplete camera shutdown stays `blocked`, reports the
+  exact error and forbids automatic retries until operator correction/relaunch.
+- Normal owned launches pass `require_camera_watchdog=true` through HMI/core,
+  including subsequent Auto-mode launches. External controllers can explicitly
+  opt in; otherwise they monitor once supervisor status is observed. Check
+  advancing timestamps, five-second source/receipt age, the sole canonical
+  supervisor and both exact names/serials. Unhealthy, missing, replayed or
+  mismatched health blocks admission and interrupts existing operation waits.
+- Latch one camera interruption per outage. Prepared/active work uses the shared
+  independent Stop attempt and its physical confirmation, preserving grip,
+  saved pickup and release evidence. Initial unconfigured waiting issues no robot
+  command. Reconnection alone cannot clear cancellation or authorize motion;
+  explicit Recover or preparation requires healthy cameras. Existing Recover
+  cancels the interrupted action and retains all Home/held-item checks.
+- Existing status fields carry camera alarm/block reasons. Keep the dashboard
+  layout; show red CAMERA ALARM with connection/cable/power guidance and underlying
+  containment reason, including during pending requests and Manual/Auto changes.
+  Emergency-stop reporting takes precedence. STOP remains independent. After
+  stream recovery, explicitly prompt Recover or configuration. HMI/bringup remain
+  open even if the camera-supervisor process unexpectedly exits; missing health
+  still interlocks production and supervisor relaunch is explicit.
+- No camera settings, model/geometry, motion targets, timed I/O, calibration,
+  teach schema, count or ROS message definitions change. Add diagnostic_msgs as
+  a controller dependency. Update root/package READMEs, AGENTS and controller FSM.
+  Regenerate adjacent HTML/PDF: matching source SHA-256, nine diagrams/pages,
+  offline navigation/zoom and no browser errors verified.
+- Synthetic verification: 1,850 controller/camera regressions pass against the
+  isolated install (`logs/camera_alarm_installed_regressions.txt`). An additional
+  final focused run passes 126 tests, including the later added required-health
+  propagation test (`logs/camera_alarm_final_focused.txt`); counts overlap. Cover
+  blocked startup without motion, loss across active/paused/recovery states,
+  exactly one Stop with unchanged outputs/source, unconfirmed Stop, admission
+  races, no automatic resume, stale/replayed/foreign/mismatched diagnostics,
+  repeated missing-device scans without spawning, reconnect, incomplete shutdown,
+  visible HMI alarms and camera-child exit with retained HMI/bringup.
+- Initial tests caught ROS diagnostic level being a byte constant, a held-source
+  fixture used for unconfigured startup, an HMI mode label hiding the new alarm,
+  and a source-string assertion for unchanged launch quoting. Correct these and
+  rerun the full suite. No physical camera fault injection or robot operation.
+- Process checks found the user's station running. Build only robot_controller
+  and orbbec_camera_launcher into `build/camera_alarm`, `install/camera_alarm`
+  and `log/camera_alarm`; both pass (`logs/camera_alarm_isolated_build.txt`).
+  Verify eight installed modules and both controller launches against source
+  (`logs/camera_alarm_install_verify.txt`). Existing unrelated underlay warnings
+  remain. Do not rebuild canonical outputs, overwrite mapped driver libraries,
+  restart live processes or send hardware commands. Preserve `.env`, unrelated
+  RViz bytes and all operator artifacts. Scoped commit/push follows rule 8.
+- Deployment: with affected processes closed, rebuild orbbec_camera_launcher and
+  robot_controller using `--symlink-install --cmake-force-configure`, then relaunch
+  the normal station. No teach upload is needed. Software verification is complete;
+  disconnect/reconnect behavior on physical hardware remains operator-verified.
+
 ### Future entry template
 
 ```text

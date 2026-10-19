@@ -10,6 +10,17 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 295 supersedes rule 15's lifetime retry cap and rule 280's camera-exit teardown.
+Keep camera-loss alarms and the HMI alive. Watchdog retries three-attempt
+batches, then scans for both exact serials before another batch; incomplete owned
+shutdown blocks retries. Publish loss before cleanup. Normal owned stations require
+fresh advancing canonical camera diagnostics; unhealthy/stale/mismatched health
+blocks production and stops prepared/active work once via shared Stop, preserving
+grip/source/release context. Reconnection never resumes motion; explicit Recover or
+preparation is required. Initial unconfigured camera waiting sends no robot command.
+Camera-supervisor exit retains HMI/bringup with a stale-health interlock. Keep STOP,
+existing layout, geometry/I/O, operator artifacts and operator-controlled deployment.
+
 Rule 294 caches fully validated item profiles, paired/loaded model identities,
 station calibrations, bin and root configuration after explicit load/arm/application.
 Fence dev/inode/size/mtime/ctime and ordinary-file paths around capture and delivery;

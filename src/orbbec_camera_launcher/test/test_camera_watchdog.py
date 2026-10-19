@@ -411,7 +411,7 @@ class CameraLauncherTests(unittest.TestCase):
                 require_camera_ready=False,
             )
 
-    def test_watchdog_hard_fails_after_three_complete_set_attempts(self):
+    def test_watchdog_keeps_alarm_alive_after_three_attempts_without_spawning(self):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = create_workspace(Path(temporary))
             context = Context()
@@ -431,8 +431,15 @@ class CameraLauncherTests(unittest.TestCase):
                         node._next_attempt_at = 0.0
                         node._check_cameras()
                         self.assertEqual(node._attempt_count, expected_attempt)
-                    self.assertTrue(node.terminal_failure)
-                    self.assertEqual(node._phase, 'failed')
+                    self.assertFalse(node.terminal_failure)
+                    self.assertEqual(node._phase, 'alarm')
+                    self.assertTrue(context.ok())
+                    with patch.object(camera_watchdog.subprocess, 'Popen') as spawn:
+                        for _ in range(4):
+                            node._next_attempt_at = 0.0
+                            node._check_cameras()
+                        spawn.assert_not_called()
+                    self.assertEqual(node._attempt_count, 3)
                     events = [
                         json.loads(line)
                         for line in workspace.joinpath(
@@ -446,14 +453,55 @@ class CameraLauncherTests(unittest.TestCase):
                         ),
                         3,
                     )
-                    self.assertEqual(events[-1]['event'], 'launcher_failed')
+                    self.assertEqual(events[-1]['event'], 'camera_connection_alarm')
+                    with patch.object(camera_watchdog, 'scan_connected_serials', return_value=(
+                            0, [s.serial_number for s in node._states.values()], 'reconnected')) as scan, \
+                            patch.object(camera_watchdog.subprocess, 'Popen', FakeProcess):
+                        node._next_attempt_at = 0.0
+                        node._check_cameras()
+                        self.assertEqual(scan.call_count, 1)
+                        self.assertEqual(node._attempt_count, 1)
+                        self.assertEqual(node._phase, 'starting')
+                        for name in node._camera_order:
+                            node._record_image(name, 'color')
+                            node._record_image(name, 'depth')
+                            node._check_cameras()
+                        self.assertEqual(node._phase, 'healthy')
+                        node._stop_owned_processes()
             finally:
                 if node is not None:
                     node.shutdown()
                     node.destroy_node()
                 context.try_shutdown()
 
-    def test_watchdog_uses_owned_process_and_lifetime_retry_budget(self):
+    def test_incomplete_shutdown_stays_blocked_without_relaunch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = create_workspace(Path(temporary))
+            context = Context()
+            rclpy.init(context=context)
+            node = None
+            try:
+                with patch.dict(os.environ, {'ROS_LOCALHOST_ONLY': '1'}):
+                    node = camera_watchdog.CameraWatchdog(
+                        parameter_overrides=parameters(workspace), context=context)
+                    with patch.object(node, '_stop_owned_processes', return_value=False):
+                        node._fail_attempt('stream lost')
+                    self.assertEqual(node._phase, 'blocked')
+                    self.assertFalse(node.terminal_failure)
+                    self.assertTrue(context.ok())
+                    with patch.object(camera_watchdog, 'scan_connected_serials') as scan, \
+                            patch.object(camera_watchdog.subprocess, 'Popen') as spawn:
+                        node._next_attempt_at = 0.0
+                        node._check_cameras()
+                        scan.assert_not_called()
+                        spawn.assert_not_called()
+            finally:
+                if node is not None:
+                    node.shutdown()
+                    node.destroy_node()
+                context.try_shutdown()
+
+    def test_watchdog_uses_owned_process_and_bounded_retry_batch(self):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = create_workspace(Path(temporary))
             FakeProcess.popen_calls = []
@@ -924,7 +972,8 @@ class CameraLauncherTests(unittest.TestCase):
                     node._fail_attempt('prepare unknown endpoint attempt')
                     node._next_attempt_at = 0.0
                     node._check_cameras()
-                    self.assertTrue(node.terminal_failure)
+                    self.assertFalse(node.terminal_failure)
+                    self.assertEqual(node._phase, 'alarm')
                     self.assertIn('unowned publishers', node._last_error)
             finally:
                 if node is not None:

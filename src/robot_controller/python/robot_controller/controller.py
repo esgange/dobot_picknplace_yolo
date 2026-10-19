@@ -15,6 +15,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import JointState
+from diagnostic_msgs.msg import DiagnosticArray
 from std_msgs.msg import String
 
 from dobot_msgs_v4.msg import RobotStatus
@@ -50,6 +51,7 @@ from .tray_client import TrayClient
 from .pick_session import PickSession, return_targets
 from .repick import RepickHistory
 from .state_machine import ControllerStateMachine
+from .camera_health import CameraHealth, configured_cameras, TOPIC as CAMERA_STATUS
 
 
 @dataclass
@@ -73,6 +75,10 @@ class RobotController(Node):
         self.headless = self.declare_parameter("headless", False).value
         if type(self.headless) is not bool:
             raise ValueError("headless must be an explicit Boolean")
+        required_cameras = self.declare_parameter('require_camera_watchdog', False).value
+        if type(required_cameras) is not bool:
+            raise ValueError('require_camera_watchdog must be Boolean')
+        self.camera_health = CameraHealth(configured_cameras(env), required=required_cameras)
 
         self.events = PackageEventLogger(self.root)
         model_path = Path(get_package_share_directory("cra_description")) / "urdf/cr10_robot.xacro"
@@ -124,6 +130,8 @@ class RobotController(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.status_publisher = self.create_publisher(
             ControllerStatus, "/robot_controller/status", status_qos)
+        self.create_subscription(DiagnosticArray, CAMERA_STATUS, self._on_camera_status,
+                                 status_qos)
         operator_log_qos = QoSProfile(
             depth=1000, reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -298,6 +306,29 @@ class RobotController(Node):
 
     # ---------- state/status ----------
 
+    def _on_camera_status(self, message):
+        try:
+            owners = self.get_publishers_info_by_topic(CAMERA_STATUS)
+        except RuntimeError:
+            owners = []
+        self.camera_health.update(message, owners, self.get_clock().now().nanoseconds)
+        self._supervise_cameras()
+
+    def _supervise_cameras(self):
+        health = getattr(self, 'camera_health', None)
+        if health is None:
+            return
+        with self.stop_guard:
+            if not health.trip():
+                return
+            reason = health.unavailable()
+            self.events.record('ERROR', 'camera_alarm', reason)
+            self.publish_operator_log('ERROR', reason)
+            # Initial camera startup is read-only. An active/prepared controller
+            # stops once, retaining its source/release/output context.
+            if self.operation_lock.locked() or self.startup_complete or self.holding_item:
+                self._stop_unexpected_idle_motion(reason)
+
     def _transition(self, state, message):
         before = self.machine.state
         snapshot = (self.machine.update(message) if before == state
@@ -431,6 +462,13 @@ class RobotController(Node):
         except FeedbackFailure as exc:
             status.feedback_fresh = False
             status.motion_block_reason = status.continue_block_reason = str(exc)
+        health = getattr(self, 'camera_health', None)
+        camera_message = health.message(status.configured) if health is not None else ''
+        if camera_message:
+            status.message = camera_message + '\n' + status.message
+            status.motion_ready = status.can_continue = False
+            status.motion_block_reason = camera_message
+            status.continue_block_reason = camera_message
         self.status_publisher.publish(status)
 
     def publish_operator_log(self, level, message):
@@ -442,10 +480,20 @@ class RobotController(Node):
 
     def _begin_operation(self, name):
         with self.stop_guard:
+            health = getattr(self, 'camera_health', None)
+            if health is not None:
+                health.admit(name)
             if self.machine.state == "STOPPING":
                 raise CommandRejected("Stop is still being confirmed")
             if not self.operation_lock.acquire(blocking=False):
                 raise CommandRejected("Another controller operation is active")
+            if health is not None:
+                # A camera callback can invalidate readiness during admission.
+                try:
+                    health.admit(name, acknowledge=True)
+                except Exception:
+                    self.operation_lock.release()
+                    raise
             self.cancel_event.clear()
             self.stop_attempt = None
         self.active_action, self.phase, self.waypoint = name, "", ""
@@ -480,7 +528,9 @@ class RobotController(Node):
 
     def cancel_requested(self):
         return (self.cancel_event.is_set() or self.shutdown_event.is_set()
-                or not rclpy.ok())
+                or not rclpy.ok()
+                or bool(getattr(self, 'camera_health', None)
+                        and self.camera_health.unavailable()))
 
     def raise_if_cancelled(self):
         if self.cancel_requested():
@@ -1683,6 +1733,7 @@ class RobotController(Node):
             self.supervision_stop_thread.start()
 
     def _supervise(self):
+        RobotController._supervise_cameras(self)
         if not self.startup_complete:
             return
         if (self.operation_lock.locked()

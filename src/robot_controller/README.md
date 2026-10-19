@@ -880,8 +880,10 @@ ros2 launch robot_controller robot_controller.launch.py
 
 The `robot_controller_station` supervisor starts canonical installed launch files
 in private sessions. It has no robot-command clients. The camera supervisor keeps
-its strict stream/collision checks and exactly three complete-set attempts; the
-station adds no restart loop. RViz remains optional and is opened from Tools.
+its strict stream/collision checks and three-attempt startup batches. Exhaustion
+keeps a connection alarm alive and scans until both configured cameras return,
+then retries the complete set. The station adds no outer process restart loop.
+RViz remains optional and is opened from Tools.
 Status shows observed TF/camera-supervisor presence separately from live robot
 feedback; node presence alone does not establish readiness. Load Auto continues
 to validate actual inputs, detector services and robot preparation.
@@ -897,7 +899,7 @@ installation whose dependencies are already managed separately, use:
 ros2 launch robot_controller robot_controller.launch.py start_dependencies:=false
 ```
 
-HMI exit, dependency launch exit (including exit code zero), or terminal Ctrl-C
+HMI exit, bringup launch exit (including exit code zero), or terminal Ctrl-C
 closes the owned station. Intentional Manual core exit keeps HMI/dependencies;
 unexpected core/Preview exit leaves HMI mode attention and stops owned detectors,
 without restarting. Graceful station shutdown closes HMI-owned detectors/tools/
@@ -912,6 +914,28 @@ Parent-death signals clean up children after an unexpected supervisor death;
 forced kills cannot promise orderly Stop confirmation. No foreign process is
 signalled. Root configuration, calibration, teach/models and runtime files are
 unchanged merely by launching or closing the station.
+
+**Camera connection alarm (rule 295):** ordinary camera failure and even an
+unexpected camera-supervisor exit keep HMI/bringup open. The normal owned station
+passes `require_camera_watchdog:=true` through HMI to each production core. A
+standalone/external controller can opt in with that same launch argument; otherwise
+it begins monitoring once it sees supervisor diagnostics. Production requires
+fresh, advancing `/camera_watchdog/status` from the sole `/camera_watchdog/supervisor`
+with both exact configured names/serials healthy. Missing health for five seconds,
+an unhealthy report or invalid ownership produces **CAMERA ALARM** with connection,
+cable and power guidance. Existing STOP remains available; no controls move.
+
+An active/prepared controller uses one shared Stop attempt per outage and retains
+outputs, held source and release progress. Initial unconfigured camera startup
+does not command the robot. Reconnection shows **Camera streams restored** but
+keeps production blocked until explicit **Recover** (or configuration/startup when
+unprepared). Recover retains its guarded Home/suction procedure and cancels the
+interrupted action; reconnection never resumes it. Stop confirmation failure remains
+visible alongside the camera alarm. A supervisor crash needs explicit supervisor
+relaunch; unconfirmed camera-process shutdown needs operator correction, not
+another competing process. No teach-file change is required. Rebuild
+`orbbec_camera_launcher` and `robot_controller` with their affected processes closed,
+then relaunch the station; deployment is operator-controlled.
 
 Opening the HMI leaves Load Auto OFF and saved selections as prefill. Select the
 Item/Bin/Tray files, explicitly enable Load Auto to deploy/start both headless

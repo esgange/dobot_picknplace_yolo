@@ -60,13 +60,26 @@ One attempt covers the complete configured camera set:
 6. Once the complete set is ready, continuously monitor every owned process and
    every required color/depth stream.
 
-The entire launcher run gets exactly three total attempts: the initial attempt
-and two retries. A failed attempt stops the complete owned camera set and rests
-exactly three seconds after shutdown completes, rescans both serials, and starts
-again from Camera 1. The third failure records a terminal error and exits.
-There is no supervised partial-camera startup, individual-camera retry,
-connection-check bypass, exponential backoff, manual budget reset, or unlimited
-restart. The explicit single-camera terminal mode is diagnostic and
+Startup uses three-attempt batches. A failed attempt publishes unhealthy status
+before stopping the complete owned camera set, rests three seconds after shutdown,
+rescans both serials, and starts again from Camera 1. The third failure keeps the
+supervisor alive in `alarm`: **check camera connection, cable and power**. It scans
+again at least three seconds after each completed scan, without spawning camera
+nodes while either configured serial is absent. Once both reappear, a new bounded
+startup batch runs. Repeated startup failures remain in alarm/retry; no process
+or stream readiness check is bypassed. If owned processes cannot be confirmed
+stopped, `blocked` stays alive and reports the exact error without retrying;
+resolve the process problem and explicitly relaunch the supervisor.
+
+The station controller independently consumes `/camera_watchdog/status`, requires
+fresh advancing status from the sole canonical supervisor and exact configured
+names/serials, and latches an operator alarm on loss. Prepared/active work uses one
+shared Stop attempt, preserving grip and saved source/release evidence. Restoring
+both streams does not resume the robot; explicit Recover/preparation is required.
+Unconfigured startup waits without issuing a robot command. Missing supervisor
+heartbeats are treated as camera loss after five seconds. There is no supervised
+partial-camera startup, individual-camera retry or connection-check bypass.
+The explicit single-camera terminal mode is diagnostic and
 intentionally has no watchdog; its driver startup and output remain visible to
 the operator in that terminal.
 

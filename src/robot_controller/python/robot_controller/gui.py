@@ -14,8 +14,9 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
+from diagnostic_msgs.msg import DiagnosticArray
 
-from item_perception_yolo.platform_teach_core import workspace_root
+from item_perception_yolo.platform_teach_core import workspace_root, _parse_env_file
 from robot_controller_interfaces.action import AutoRun, GoHome, PickItem, PlaceItem
 from robot_controller_interfaces.msg import ControllerStatus
 from robot_controller_interfaces.srv import Command, Configure, Preview, SetGlobalCP, SetGlobalSpeed
@@ -30,6 +31,7 @@ from .errors import FeedbackFailure
 from .hmi_tools import BY_KEY, TOOLS, ToolLaunches, change_reason
 from .hmi_modes import HmiModes
 from .hmi_widgets import STATION_STYLE, hint, section
+from .camera_health import CameraHealth, configured_cameras, TOPIC as CAMERA_STATUS
 
 
 AUTO_READY_STYLE = (
@@ -45,6 +47,10 @@ class GuiNode(rclpy.node.Node):
         super().__init__("robot_controller_gui")
         self.root = workspace_root()
         self.manage_controller = self.declare_parameter('manage_controller', False).value
+        self.require_camera_watchdog = self.declare_parameter(
+            'require_camera_watchdog', False).value
+        self.camera_health = CameraHealth(configured_cameras(_parse_env_file(self.root / '.env')),
+                                         required=self.require_camera_watchdog)
         self.prefill = load_state(self.root / "logs/robot_controller/last_session.json")
         self._status_sample = None
         self.operator_logs = deque(maxlen=1000)
@@ -53,6 +59,7 @@ class GuiNode(rclpy.node.Node):
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
             ControllerStatus, "/robot_controller/status", self._status, qos)
+        self.create_subscription(DiagnosticArray, CAMERA_STATUS, self._camera_status, qos)
         log_qos = QoSProfile(depth=1000, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
@@ -80,6 +87,13 @@ class GuiNode(rclpy.node.Node):
 
     def _status(self, message):
         self._status_sample = (message, time.monotonic())
+
+    def _camera_status(self, message):
+        try:
+            owners = self.get_publishers_info_by_topic(CAMERA_STATUS)
+        except RuntimeError:
+            owners = []
+        self.camera_health.update(message, owners, self.get_clock().now().nanoseconds)
 
     def clear_controller_status(self):
         self._status_sample = None
@@ -739,10 +753,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _refresh_status(self, state):
         label, detail = presentation(state, self.preview_mode)
+        camera = getattr(self.node, 'camera_health', None)
+        if camera is not None and camera.unavailable() and label != 'EMERGENCY STOP PRESSED':
+            label, detail = 'CAMERA ALARM', camera.unavailable() + '\n' + detail
         self.status.setText(label)
         self.status_detail.setText(detail)
         color = ("#61dfa5" if label == "READY" else
-                 "#ff9393" if label in ("ATTENTION REQUIRED", "EMERGENCY STOP PRESSED") else
+                 "#ff9393" if label in (
+                     "ATTENTION REQUIRED", "EMERGENCY STOP PRESSED", "CAMERA ALARM") else
                  "#ffd077" if label in (
                      "PAUSED", "OFFLINE", "HOLDING ITEM", "WAITING FOR ITEMS", "WAITING FOR TRAY")
                  else "#edf3f8")
@@ -1303,7 +1321,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _refresh_controls(self):
         state = self.node.status
         self._refresh_status(state)
-        if self.modes.managed and self.modes.state != 'AUTO':
+        if (self.modes.managed and self.modes.state != 'AUTO'
+                and self.status.text() not in ('CAMERA ALARM', 'EMERGENCY STOP PRESSED')):
             self.status.setText('MANUAL TOOLS' if self.modes.state == 'MANUAL' else
                                 'CHANGING MODE' if self.modes.state != 'FAILED' else
                                 'MODE ATTENTION')
@@ -1328,6 +1347,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         returning = self.return_requested_locally or "return_item" in self.pending
         parking = self.pause_requested_locally or "pause" in self.pending
         if (state is not None and state.feedback_fresh and not self.preview_mode
+                and self.status.text() not in ('CAMERA ALARM', 'EMERGENCY STOP PRESSED')
                 and current not in ("FAULT", "HELD_UNKNOWN", "RECOVERY_REQUIRED")
                 and (self.pending or self.pending_goal is not None or returning or parking)):
             self.status.setText("BUSY")

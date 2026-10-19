@@ -173,6 +173,23 @@ def test_cancel_during_start_prevents_spawn(manager, monkeypatch):
     spawn.assert_not_called()
 
 
+def test_owned_production_launch_propagates_required_camera_health(manager, monkeypatch):
+    manager.node.require_camera_watchdog = True
+    tool = BY_KEY['production']
+    launch = manager.root / 'install' / tool.package / 'share' / tool.package / 'launch' / tool.launch
+    launch.parent.mkdir(parents=True, exist_ok=True)
+    launch.write_text('# fixture only')
+    process = Mock(pid=12345, stdout=io.BytesIO(b''))
+    process.poll.return_value = 0
+    spawn = Mock(return_value=process)
+    monkeypatch.setattr(hmi_tools.subprocess, 'Popen', spawn)
+    monkeypatch.setattr(manager, '_terminate', lambda *_args, **_kwargs: None)
+    manager.start('production', lambda: None)
+    wait_until(lambda: manager.snapshot('production')[0] == 'OFF')
+    assert spawn.call_count == 1
+    assert spawn.call_args.args[0][-1] == 'require_camera_watchdog:=true'
+
+
 def test_real_owned_dummy_receives_arguments_and_closes_without_touching_foreign_pid(
         manager, monkeypatch):
     # Substitute ros2 with a harmless executable. No ROS node, model or robot starts.

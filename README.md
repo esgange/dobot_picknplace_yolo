@@ -110,10 +110,16 @@ Close existing station processes before this complete launch; detected existing
 owners are refused without stopping them. To keep separately managed bringup and
 cameras, use `start_dependencies:=false`. Closing the HMI closes its owned station:
 controller shutdown/Stop handling finishes before cameras and bringup are stopped.
-Dependency failure also ends the owned station, without an outer restart loop.
+Bringup failure also ends the owned station. Camera failure keeps the HMI and
+bringup alive with a red **CAMERA ALARM**: check the camera connection, cable and
+power. The controller stops active/prepared work once and preserves grip/source
+context. The watchdog retries in three-attempt batches, waiting for both configured
+serials after exhaustion. Restored streams do not resume motion: use **Recover**
+(or load teach configuration if unconfigured), then explicitly start the next job.
 Intentional Manual mode keeps dependencies/HMI alive; an unexpected production
 core exit leaves the HMI in mode attention with production disabled for explicit retry.
-The camera supervisor retains its existing bounded three-attempt policy.
+Unexpected camera-supervisor exit also retains the HMI; missing/stale health
+blocks production. Resolve the supervisor error and explicitly relaunch it.
 
 **Manual/Test Run / Offline Auto Run:** both use the same Quantity, X/Y, Rotation and debug
 settings. Manual/Test Run uses armed Item Teach and Tray Teach. Offline Auto Run requires
@@ -1501,11 +1507,14 @@ launches the complete configured set headlessly under the mandatory watchdog,
 starting Camera 1 and requiring both streams before Camera 2 is started with its
 own five-second deadline. Camera 1 remains supervised throughout Camera 2
 startup. Any camera failure stops both, then the full ordered sequence is
-retried; there are three total full-set attempts separated by fixed
-three-second rests after shutdown completes.
+retried in three-attempt batches separated by fixed three-second rests after
+shutdown completes. Exhaustion raises a persistent connection alarm, with serial
+rescans at least three seconds apart; both cameras must reappear before another
+startup batch. No camera processes are spawned while either serial is missing.
 Launch modes are mutually exclusive. Every supervised serial and both
-color/depth streams are required; supervised partial startup and unlimited
-restart are forbidden. The package forces USB-only Orbbec enumeration while
+color/depth streams are required; supervised partial startup is forbidden.
+Unconfirmed owned-process shutdown blocks retries and requires operator correction.
+The package forces USB-only Orbbec enumeration while
 all ROS 2 communication remains local.
 With depth registration enabled, both launch paths request complete RGB/depth
 bundles (`frame_aggregate_mode=full_frame`). The driver discards unsuccessful

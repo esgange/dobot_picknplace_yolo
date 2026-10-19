@@ -212,9 +212,10 @@ class CameraWatchdog(Node):
         )
         self.get_logger().info(
             f'Supervising complete camera set: {configured}; '
-            'strict slot-order startup, maximum three total attempts with '
-            '3-second rests.'
+            'strict slot-order startup, three-attempt batches with '
+            '3-second rests; connection alarm remains alive until resolved.'
         )
+        self._publish_status(time.monotonic())
 
     @property
     def terminal_failure(self) -> bool:
@@ -299,6 +300,24 @@ class CameraWatchdog(Node):
         if self._shutting_down or self._terminal_failure:
             return
         now = time.monotonic()
+        if self._phase == 'alarm':
+            if now >= self._next_attempt_at:
+                scan = scan_connected_serials(self._scan_timeout_sec)
+                missing = sorted({s.serial_number for s in self._states.values()} - set(scan[1]))
+                if scan[0] == 0 and not missing:
+                    self._attempt_count = 0
+                    self._event_logger.record('INFO', 'camera_reconnection_detected',
+                                              'Configured cameras found; retrying complete set')
+                    self._begin_attempt(scan)
+                else:
+                    detail = ('Configured camera serial(s) not detected: ' + ', '.join(missing)
+                              if scan[0] == 0 else f'Device scan failed ({scan[0]}): {scan[2]}')
+                    if detail != self._last_error:
+                        self._event_logger.record('ERROR', 'camera_connection_alarm', detail)
+                    self._last_error = detail
+                self._next_attempt_at = time.monotonic() + self._retry_delay_sec
+            self._publish_status(time.monotonic())
+            return
         if self._phase == 'waiting':
             if now >= self._next_attempt_at:
                 self._begin_attempt()
@@ -460,10 +479,11 @@ class CameraWatchdog(Node):
                 return
         self._publish_status(time.monotonic())
 
-    def _begin_attempt(self) -> None:
+    def _begin_attempt(self, scan=None) -> None:
         self._attempt_count += 1
         self._phase = 'scanning'
         self._last_error = ''
+        self._publish_status(time.monotonic())
         self._event_logger.record(
             'INFO',
             'connection_attempt_started',
@@ -475,7 +495,8 @@ class CameraWatchdog(Node):
             f'Orbbec connection attempt {self._attempt_count}/{self._max_attempts}.'
         )
 
-        return_code, detected, output = scan_connected_serials(self._scan_timeout_sec)
+        return_code, detected, output = (scan if scan is not None else
+                                        scan_connected_serials(self._scan_timeout_sec))
         configured = {state.serial_number for state in self._states.values()}
         missing = sorted(configured - set(detected))
         self._event_logger.record(
@@ -694,6 +715,9 @@ class CameraWatchdog(Node):
         attempt = self._attempt_count
         self._last_error = reason
         self._phase = 'stopping'
+        # Publish loss before waiting for owned processes to stop; production
+        # containment must not wait for camera cleanup or a reconnect scan.
+        self._publish_status(time.monotonic())
         self._event_logger.record(
             'ERROR',
             'connection_attempt_failed',
@@ -706,8 +730,7 @@ class CameraWatchdog(Node):
 
         if not owned_set_stopped:
             self._last_error = reason + '; owned camera set did not stop completely'
-            self._phase = 'failed'
-            self._terminal_failure = True
+            self._phase = 'blocked'
             self._event_logger.record(
                 'ERROR',
                 'launcher_failed',
@@ -717,26 +740,26 @@ class CameraWatchdog(Node):
                 failure='owned_set_shutdown_incomplete',
             )
             self._publish_status(time.monotonic())
-            self.get_logger().fatal(
+            self.get_logger().error(
                 'Owned camera shutdown did not complete; retry is unsafe and '
-                'the launcher is terminating.'
+                'the camera alarm remains active. Resolve the remaining process '
+                'and explicitly relaunch the camera supervisor.'
             )
-            self.context.try_shutdown()
             return
 
         if attempt >= self._max_attempts:
-            self._phase = 'failed'
-            self._terminal_failure = True
+            self._phase = 'alarm'
+            self._next_attempt_at = time.monotonic() + self._retry_delay_sec
             self._event_logger.record(
                 'ERROR',
-                'launcher_failed',
-                f'all {self._max_attempts} attempts exhausted: {reason}',
+                'camera_connection_alarm',
+                f'{self._max_attempts} attempts exhausted; check camera connection: {reason}',
                 attempt=attempt,
                 maximum_attempts=self._max_attempts,
             )
             self._publish_status(time.monotonic())
-            self.get_logger().fatal('All three Orbbec attempts failed; terminating launcher.')
-            self.context.try_shutdown()
+            self.get_logger().error('Check camera connection, cable and power. '
+                                    'Waiting for configured cameras; station remains in alarm.')
             return
 
         self._phase = 'waiting'
@@ -833,7 +856,7 @@ class CameraWatchdog(Node):
             if self._phase == 'healthy':
                 status.level = DiagnosticStatus.OK
                 status.message = 'Camera streams healthy'
-            elif self._phase == 'failed':
+            elif self._phase in ('failed', 'alarm', 'blocked', 'stopping'):
                 status.level = DiagnosticStatus.ERROR
                 status.message = self._last_error
             else:
@@ -864,8 +887,8 @@ class CameraWatchdog(Node):
         self._healthy_publisher.publish(Bool(data=self._phase == 'healthy'))
 
     def _camera_phase(self, state: CameraState) -> str:
-        if self._phase == 'failed':
-            return 'failed'
+        if self._phase in ('failed', 'alarm', 'blocked'):
+            return self._phase
         if self._phase == 'healthy':
             return 'healthy'
         if state.process is None:

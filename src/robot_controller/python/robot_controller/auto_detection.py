@@ -29,6 +29,8 @@ def providers(node, kind):
 def idle_reason(status):
     if status is None:
         return 'Waiting for fresh controller status'
+    if getattr(status, 'message', '').startswith('CAMERA ALARM: '):
+        return status.message
     if not status.configuration_editable:
         return 'Load Auto belongs to the GUI controller'
     if (status.operation_active or status.holding_item

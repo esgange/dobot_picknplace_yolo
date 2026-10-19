@@ -18,7 +18,7 @@ LAUNCHES = (
     ('bringup', 'dobot_bringup_v4', 'dobot_bringup_ros2.launch.py', ()),
     ('cameras', 'orbbec_camera_launcher', 'camera_headless.launch.py', ()),
     ('controller', 'robot_controller', 'robot_controller.launch.py',
-     ('start_dependencies:=false',)),
+     ('start_dependencies:=false', 'require_camera_watchdog:=true')),
 )
 CONFLICT_EXECUTABLES = {
     'dobot_bringup_v4_node', 'robot_state_publisher', 'actual_joint_state_monitor.py',
@@ -65,6 +65,7 @@ class OfflineStation:
         self.root = Path(root)
         self.cancel = threading.Event()
         self.children = {}
+        self.failed_dependencies = set()
         self.events = PackageEventLogger(self.root, 'robot_controller_offline_station')
 
     def report(self, level, event, message):
@@ -112,8 +113,19 @@ class OfflineStation:
                         self.report('INFO', 'station_child_started', f'Started owned {role}')
                     while not self.cancel.wait(.1):
                         for role, process in self.children.items():
+                            if role in self.failed_dependencies:
+                                continue
                             code = process.poll()
                             if code is not None:
+                                if role == 'cameras':
+                                    self.failed_dependencies.add(role)
+                                    self.report('ERROR', 'station_camera_alarm',
+                                                f'Camera supervisor exited ({code}). '
+                                                'Check camera connection and supervisor logs. '
+                                                'HMI/bringup retained; controller camera '
+                                                'interlock blocks production. Relaunch the '
+                                                'camera supervisor after resolving its error.')
+                                    continue
                                 normal = role == 'controller' and code == 0
                                 self.report('INFO' if normal else 'ERROR', 'station_child_exit',
                                             f'{role} launch exited ({code}); '

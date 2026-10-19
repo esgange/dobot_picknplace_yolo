@@ -1,5 +1,29 @@
 # Robot Controller — Finite State Machine
 
+Camera connection alarm review: **2026-10-19**, baseline **`a24e3f0`** plus rule **295**.
+Keep the station HMI and bringup alive on camera loss. Watchdog failure publishes
+unhealthy diagnostics before camera cleanup; three failed startup attempts enter
+a persistent alarm, with bounded serial scans and a new startup batch only when
+both exact serials are present. Incomplete owned shutdown remains blocked without
+retries. Unexpected supervisor exit also retains HMI/bringup; stale health blocks
+the controller. Normal owned launches propagate `require_camera_watchdog=true` to
+each production core, including after Manual/Auto mode changes. Separately managed
+controllers may explicitly require it; otherwise monitoring starts once seen.
+
+Fresh advancing diagnostics (at most five seconds old) from the sole canonical
+supervisor must identify both configured cameras and report healthy streams.
+Unhealthy, missing, replayed or mismatched health shows **CAMERA ALARM** and the
+instruction to check camera connection, cable and power. Active/prepared work uses
+one shared Stop attempt per outage, preserving outputs, pickup source and release
+evidence; physical containment still requires the existing feedback checks. Initial
+unconfigured waiting issues no hardware command. The alarm is an interlock layered
+over the existing lifecycle: active Stop reaches RECOVERY_REQUIRED/HELD_UNKNOWN or
+FAULT on unconfirmed containment. Alarm text also retains the underlying reason.
+Reconnection never resumes motion or clears this latch. Explicit Recover (or
+configuration/startup while unprepared) requires healthy cameras and retains its
+existing motion/held-item guards. Recover cancels the interrupted action. STOP
+remains independent and available; all geometry, placement counts and I/O remain.
+
 Tray two-pose capture review: **2026-10-18**, baseline **`335c03c`** plus rule **291**.
 Keep verified saved Tray Detect joints, idle/empty queue and continuing observation-
 position checks for the eye-on-hand camera. All shared tray requests require two
@@ -957,6 +981,7 @@ Keep controller state records separate from the GUI detector supervisor:
 | GUI Load Auto supervisor | Owned deployment/detector lifetime and request for existing controller preparation | `OFF`, `DEPLOYING`, `STARTING`, `PREPARING`, `RUNNING`, `STOPPING`, `FAILED` |
 | HMI tool launch | Owned application session, separate from robot readiness; external windows are not owned | `OFF`, `STARTING`, `RUNNING`, `STOPPING`, `FAILED` |
 | HMI station mode | Process ownership only; Auto owns production, Manual releases it for tools | `MANUAL`, `STARTING_AUTO`, `AUTO`, `STOPPING_AUTO`, `FAILED`; bare GUI is an unmanaged `EXTERNAL` client |
+| Camera interlock | Required/seen canonical health, loss latch, explicit acknowledgment | Initial wait; healthy; CAMERA ALARM; cameras restored awaiting Recover/preparation |
 
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
 Pick's initial Home travel still reports `PICKING`; it is not a separate Home
@@ -1102,6 +1127,13 @@ flowchart TD
     Loaded --> Auto["Offline Auto Run: owned headless pair ready"]
     Manual["Manual/Test Run: both teaching GUIs armed"] --> Run["Operate / Production run: shared native counted run; same quantity and placement; bind detector mode"]
     Auto --> Run
+    Launch -.-> CameraHealth{"Fresh canonical camera health?"}
+    CameraHealth -->|Unavailable or unhealthy| CameraAlarm["CAMERA ALARM: check connection / cable / power; HMI and bringup stay open"]
+    Run -->|Camera loss| CameraAlarm
+    CameraAlarm --> CameraStop["Prepared / active: one shared Stop; preserve grip / source / release evidence; initial unconfigured wait sends no command"]
+    CameraStop --> CameraWait["Watchdog scans / retries; no robot motion; unconfirmed shutdown stays blocked"]
+    CameraWait -->|Both streams healthy| CameraRestored["Cameras restored; latch retained; explicit Recover or preparation required"]
+    CameraRestored -->|Explicit operator action and all normal guards| TeachPage
     Run -->|HMI exit with owned pose providers| HmiExit["Independent controller Stop; close owned tools and detectors"]
     HmiExit --> StationExit["Controller shutdown finishes before owned cameras and bringup stop"]
     Loaded -->|Idle OFF, exit, service loss or child failure| End["Stop owned pair only; no restart; deployed files remain"]
@@ -2392,6 +2424,7 @@ Source map for the next review:
 | [auto_detection.py](../src/robot_controller/python/robot_controller/auto_detection.py) / [auto_deploy.py](../src/robot_controller/python/robot_controller/auto_deploy.py) | GUI-owned headless pair, catalog replacement, child cleanup; no robot commands |
 | [hmi_tools.py](../src/robot_controller/python/robot_controller/hmi_tools.py) | Explicit owned teaching/setup/debug launches, admission guards, external-process preservation and bounded shutdown |
 | [offline_station.py](../src/robot_controller/python/robot_controller/offline_station.py) | Default offline dependencies, duplicate-process preflight and ordered owned-session shutdown |
+| [camera_health.py](../src/robot_controller/python/robot_controller/camera_health.py) | Canonical fresh camera health, persistent alarm and explicit recovery admission |
 | [hmi_modes.py](../src/robot_controller/python/robot_controller/hmi_modes.py) | Manual/Auto production ownership, handoff admission, process/graph barriers and explicit retry after failure |
 | [perception_mode.py](../src/robot_controller/python/robot_controller/perception_mode.py) | Shared run provider-type selection and enforcement |
 | [Controller README](../src/robot_controller/README.md) / [blueprint diary](WORKFLOW_RULES_BLUEPRINT_DIARY.md) | Operational detail and superseding project rules |

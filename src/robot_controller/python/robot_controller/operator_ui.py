@@ -1,6 +1,7 @@
 """Operator labels and button policy, independent of Qt and hardware commands."""
 
 from .errors import EMERGENCY_STOP_MESSAGE
+from .camera_health import ALARM, RESTORED
 
 
 BUSY_ACTIVITIES = {
@@ -31,6 +32,8 @@ def presentation(state, preview=False):
         return "OFFLINE", "Controller status is missing or older than 1 second."
     if state.state == "FAULT" and EMERGENCY_STOP_MESSAGE in state.message:
         return "EMERGENCY STOP PRESSED", state.message
+    if state.message.startswith((ALARM, RESTORED)):
+        return "CAMERA ALARM", state.message
     if preview:
         return "PREVIEW", "No robot motion. Home, Pick Item and Place Item show planned TFs."
     if not state.feedback_fresh:
@@ -73,6 +76,8 @@ def button_policy(state, *, preview=False, pending=False, action_pending=False,
             reasons["preview_toggle"] = ""
         return reasons
     current = state.state
+    if state.message.startswith(ALARM):
+        return dict.fromkeys(names, state.message)
     if getattr(state, "auto_run_active", False) and not (
             acquisition_paused(state) or item_acquisition_paused(state)):
         return dict.fromkeys(names, "Auto Run owns the robot; use STOP to end the run")

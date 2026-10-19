@@ -106,7 +106,7 @@ role = {'dobot_bringup_ros2.launch.py': 'bringup',
         'robot_controller.launch.py': 'controller'}[Path(sys.argv[3]).name]
 assert sys.argv[1:3] == ['launch', '--noninteractive']
 if role == 'controller':
-    assert sys.argv[4:] == ['start_dependencies:=false']
+    assert sys.argv[4:] == ['start_dependencies:=false', 'require_camera_watchdog:=true']
 Path(role + '.started').write_text(str(os.getpid()))
 def stop(*_):
     if role == 'controller':
@@ -150,9 +150,15 @@ def test_owned_station_exit_cleanup_and_driver_order(owner, monkeypatch, trigger
             owner.cancel.set()
         else:
             (owner.root / (trigger + '.exit')).write_text('0')
+        if trigger == 'cameras':
+            wait_until(lambda: 'cameras' in owner.failed_dependencies)
+            assert worker.is_alive()
+            assert not (owner.root / 'controller.stopped').exists()
+            assert not (owner.root / 'bringup.stopped').exists()
+            owner.cancel.set()
         worker.join(5.)
         assert not worker.is_alive()
-        assert results == [0 if trigger in ('controller', 'cancel') else 1]
+        assert results == [0 if trigger in ('controller', 'cancel', 'cameras') else 1]
         order = (owner.root / 'order').read_text().splitlines()
         assert set(order) == {'controller', 'cameras', 'bringup'}
         if trigger != 'bringup':

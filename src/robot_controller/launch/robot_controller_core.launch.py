@@ -3,7 +3,9 @@
 import os
 
 from launch import LaunchDescription
-from launch.actions import Shutdown
+from launch.actions import DeclareLaunchArgument, Shutdown
+from launch.substitutions import LaunchConfiguration
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.actions import Node
 
 
@@ -11,8 +13,11 @@ def generate_launch_description():
     if os.environ.get('ROS_LOCALHOST_ONLY') != '1':
         raise RuntimeError('Source scripts/source_ros_workspace.bash first')
     return LaunchDescription([
+        DeclareLaunchArgument('require_camera_watchdog', default_value='false'),
         Node(package='robot_controller', executable='robot_controller', name='robot_controller',
-             parameters=[{'headless': False}], output='screen', sigterm_timeout='30',
+             parameters=[{'headless': False, 'require_camera_watchdog': ParameterValue(
+                 LaunchConfiguration('require_camera_watchdog'), value_type=bool)}],
+             output='screen', sigterm_timeout='30',
              sigkill_timeout='5', on_exit=Shutdown(reason='Production controller stopped')),
         Node(package='robot_controller', executable='robot_controller_preview',
              name='robot_controller_preview', output='screen',
