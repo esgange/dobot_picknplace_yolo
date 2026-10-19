@@ -2,6 +2,8 @@
 
 ROS 2 workspace for a physical Dobot CR10 robot and an Orbbec Gemini 335 depth camera. The Dobot source is an intentionally pruned hardware-only CR10 vendor profile; the Orbbec source is vendored in full. A transferred copy therefore contains the project source without requiring network access.
 
+https://youtu.be/Yjac6tFBIwY?si=Kv2JsTiRWXZVnm41
+
 ## Workspace contents
 
 The [inference efficiency audit](docs/INFERENCE_EFFICIENCY_AUDIT.md) covers all

@@ -12331,6 +12331,19 @@ Never use a floating “latest” version in an issue, script, or deployment not
   `git diff --check` pass. Rebuild/relaunch both perception packages together to
   deploy; no teach upload, calibration conversion or controller rebuild required.
 
+### 2026-10-19 — Authorized PicknPlace push and upstream reconciliation
+
+- User explicitly authorized pushing the completed PicknPlace work. The earlier
+  no-push instruction does not block this requested delivery.
+- Fetch origin and merge its sole additional commit, `545bbfe` (README video
+  link), preserving the seven local commits through `c9aee54`. No force-push or
+  history rewrite; the merge changes documentation only.
+- Retain the previously recorded software tests/builds; no implementation changed
+  during reconciliation. Verify the merged diff and exact remote SHA after push.
+- Preserve the unrelated RViz modification and all local configuration,
+  calibration, teach/model, runtime and debug artifacts outside the commit.
+  No deployment, process restart, perception arming or robot command.
+
 ### Future entry template
 
 ```text
