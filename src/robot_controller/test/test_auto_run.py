@@ -505,7 +505,7 @@ def test_auto_and_place_away_from_tray_show_missing_provider(window):  # noqa: F
     window._refresh()
     assert window.pick_item.isEnabled()
     assert not window.auto_run_button.isEnabled() and not window.place_item.isEnabled()
-    assert 'Manual/Test Run / Offline Auto Run: Arm Tray Teach' in window.availability_details.text()
+    assert 'Manual/Test Run / Local Auto Run: Arm Tray Teach' in window.availability_details.text()
     assert 'Place Item: Arm Tray Teach' in window.availability_details.text()
     window.node.status.tray_detector_ready = True
     window._refresh()

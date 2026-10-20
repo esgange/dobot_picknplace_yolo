@@ -125,6 +125,7 @@ def test_strict_reader_and_calibration_failures_prevent_deployment(tmp_path, mon
     monkeypatch.setattr(auto_deploy, 'saved_calibration_paths', lambda _: ('p', 'b', 'r'))
     auto_deploy.load_calibration_selection.return_value = (SimpleNamespace(platform='p'), 'r')
     getattr(auto_deploy, names[invalid]).side_effect = ValueError('bad ' + invalid)
+    monkeypatch.setattr(auto_deploy, 'fingerprints', lambda _: ())
     with pytest.raises(ValueError, match='bad ' + invalid):
         auto_deploy.selected_files(tmp_path, ('item.yaml', 'bin.yaml', 'tray.yaml'))
 
@@ -151,7 +152,7 @@ def test_run_buttons_share_quantity_target_and_debug_but_pin_source(window, mode
     window.debug_images.setChecked(True)
     window._refresh()
     assert window.auto_run_button.text() == 'Manual/Test Run'
-    assert window.headless_run_button.text() == 'Offline Auto Run'
+    assert window.headless_run_button.text() == 'Local Auto Run'
     assert window.auto_run_button.isEnabled() is (mode == TEACH)
     assert window.headless_run_button.isEnabled() is (mode == HEADLESS)
     (window.auto_run_button if mode == TEACH else window.headless_run_button).click()
@@ -196,7 +197,7 @@ def test_load_auto_default_off_waits_for_detectors_before_preparing(window):  # 
     assert not window.item_path.isEnabled() and not window.configure.isEnabled()
     window.auto_detectors.state = 'RUNNING'
     window._refresh()
-    assert window.configure.isEnabled()  # Explicit reload remains available.
+    assert not window.configure.isEnabled()  # Do not bind controller back to offline files.
     assert not window.item_path.isEnabled()
     window.auto_detectors.stop = Mock()
     window.load_auto.click()
@@ -400,8 +401,11 @@ def test_unarmed_headless_process_blocks_deployment(manager):
 
 @pytest.mark.parametrize('failure', [
     'second_spawn', 'child_exit', 'conflict', 'service_lost', 'timeout', 'cancel',
-    'prepare_rejected', 'prepare_timeout', 'ready_timeout'])
-def test_supervisor_cleans_owned_pair_without_restart(manager, monkeypatch, failure):
+    'prepare_rejected', 'prepare_timeout', 'ready_timeout', 'nodes_only'])
+@pytest.mark.parametrize('remote', [False, True])
+def test_supervisor_cleans_owned_pair_without_restart(manager, monkeypatch, failure, remote):
+    manager.runtime_source = remote
+    manager.prepare_requested = failure != 'nodes_only'
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
     manager._check = lambda: None
     for kind, package in auto_detection.PACKAGES.items():
@@ -411,6 +415,11 @@ def test_supervisor_cleans_owned_pair_without_restart(manager, monkeypatch, fail
         exe.chmod(0o700)
     deployed = Mock(return_value={'validated': 'digest'})
     monkeypatch.setattr(auto_detection, 'deploy', deployed)
+    paths = tuple(manager.root / 'runtime_teach' / name
+                  for name in ('item.yaml', 'bin.yaml', 'tray.yaml'))
+    monkeypatch.setattr(auto_detection, 'validated_runtime',
+                        lambda _: (paths, {paths[0]: 'digest'}, ()))
+    monkeypatch.setattr(auto_detection, 'check_runtime', lambda *_: None)
     children, signals = {}, []
     monkeypatch.setattr(auto_detection.os, 'killpg', lambda pid, sig: signals.append((pid, sig)))
     ticks = 0
@@ -449,14 +458,21 @@ def test_supervisor_cleans_owned_pair_without_restart(manager, monkeypatch, fail
     if failure == 'ready_timeout':
         manager.node.status.configuration_id = 'old'
     manager._run(('item', 'bin', 'tray'))
-    assert manager.snapshot[0] == ('OFF' if failure == 'cancel' else 'FAILED')
+    assert manager.snapshot[0] == ('OFF' if failure in ('cancel', 'nodes_only') else 'FAILED')
     assert not manager.children
-    deployed.assert_called_once()
+    if remote:
+        deployed.assert_not_called()
+    else:
+        deployed.assert_called_once()
     assert signals and {pid for pid, _sig in signals} == {p.pid for p in children.values()}
     assert all(p.wait.called for p in children.values())
     states = [state for state, _message in manager.take_messages()]
     assert states.count('STARTING') == 1
-    if failure in ('cancel', 'service_lost'):
+    if failure == 'nodes_only':
+        assert 'DETECTORS_READY' in states
+        assert 'PREPARING' not in states and 'RUNNING' not in states
+        assert manager.take_preparation() is None
+    elif failure in ('cancel', 'service_lost'):
         assert 'RUNNING' in states
     elif failure.startswith('prepare') or failure == 'ready_timeout':
         assert 'PREPARING' in states and 'RUNNING' not in states

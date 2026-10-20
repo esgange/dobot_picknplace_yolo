@@ -10,6 +10,8 @@ from .events import PackageEventLogger
 
 
 CORE_NODES = {'robot_controller', 'robot_controller_preview'}
+AUTO_MODES = {'AUTO', 'REMOTE_AUTO'}
+MODE_NAMES = {'AUTO': 'Local Auto', 'REMOTE_AUTO': 'Remote Auto', 'MANUAL': 'Manual / Maintenance'}
 
 
 def local_core_or_maintenance():
@@ -38,6 +40,8 @@ class HmiModes:
         self.message = 'Manual tools; production controller is stopped'
         self.deadline = 0.
         self.stopping_core = False
+        self.destination = 'MANUAL'
+        self.previous_mode = 'AUTO'
 
     def transition(self, state, message):
         self.state, self.message = state, message
@@ -73,13 +77,15 @@ class HmiModes:
             return 'Wait for the mode change to finish'
         if self.pending():
             return 'Finish pending requests and turn Preview OFF before changing mode'
-        if target == 'MANUAL':
-            if self.state != 'AUTO':
+        if target == self.state:
+            return 'Station is already in this mode'
+        if target == 'MANUAL' or target in AUTO_MODES and self.state in AUTO_MODES:
+            if self.state not in AUTO_MODES:
                 return 'Start Auto and obtain fresh idle feedback before entering Manual'
             if self.core.snapshot('production')[0] != 'RUNNING':
                 return 'The owned production controller is unavailable'
             return idle_reason(self.node.status)
-        if target == 'AUTO':
+        if target in AUTO_MODES:
             if self.core.active():
                 return 'Wait for the owned controller to stop'
             if self.detectors.snapshot[0] not in ('OFF', 'FAILED'):
@@ -91,7 +97,9 @@ class HmiModes:
         reason = self.reason(target)
         if reason:
             raise ValueError(reason)
-        if target == 'MANUAL':
+        self.destination = target
+        if self.state in AUTO_MODES:
+            self.previous_mode = self.state
             self.detectors.stop()
             self.stopping_core = False
             self.transition('STOPPING_AUTO',
@@ -122,7 +130,8 @@ class HmiModes:
             elif (core_state == 'RUNNING' and self.node.status is not None
                   and self.node.status.configuration_editable
                   and 'robot_controller' in self.names()):
-                self.transition('AUTO', 'Auto mode; load teach files to prepare the robot')
+                self.transition(self.destination, MODE_NAMES[self.destination] +
+                                '; explicitly load the recipe to prepare the robot')
             elif time.monotonic() > self.deadline:
                 self.fail('Production controller did not publish fresh status within 30 seconds')
         elif self.state == 'STOPPING_AUTO':
@@ -130,7 +139,7 @@ class HmiModes:
                 # Recheck after detector shutdown; never discard a newly active/held context.
                 reason = idle_reason(self.node.status)
                 if reason:
-                    self.transition('AUTO', 'Manual switch refused: ' + reason)
+                    self.transition(self.previous_mode, 'Mode switch refused: ' + reason)
                     return
                 self.core.stop('production')
                 self.stopping_core = True
@@ -141,9 +150,15 @@ class HmiModes:
                   and not local_core_or_maintenance()):
                 self.node.clear_controller_status()
                 self.transition('MANUAL', 'Manual tools; production controller is stopped')
+                if self.destination in AUTO_MODES:
+                    target = self.destination
+                    try:
+                        self.request(target)
+                    except (ValueError, RuntimeError) as exc:
+                        self.fail('Mode handoff failed: ' + str(exc))
             elif time.monotonic() > self.deadline:
                 self.fail('Timed out releasing production ownership; inspect the command log')
-        elif self.state == 'AUTO' and core_state in ('FAILED', 'OFF'):
+        elif self.state in AUTO_MODES and core_state in ('FAILED', 'OFF'):
             self.fail('Production controller exited: ' + core_message)
 
     def fail(self, message):

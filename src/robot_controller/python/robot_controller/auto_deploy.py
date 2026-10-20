@@ -11,27 +11,56 @@ from item_perception_yolo.item_teach_calibration import (
     load_calibration_selection, saved_calibration_paths)
 from item_perception_yolo.runtime_teach import runtime_teach_catalog
 from tray_perception.core import load_profile
+from item_perception_yolo.source_binding import fingerprints
 
 
-def selected_files(root, selections):
+def selected_files(root, selections, *, deployment=False):
     """Validate production sources and calibration without executing model weights."""
     if len(selections) != 3 or not all(selections):
         raise ValueError("Select Item Teach, Bin Teach and Tray Teach first")
     item, bin_path, tray = (Path(p).expanduser().absolute() for p in selections)
-    load_item_profile(item, root=root)
-    bin_artifact = load_bin_teach(bin_path, root=root)
-    load_profile(tray, root)
+    paths = (item, item.with_suffix('.pt'), bin_path, tray, tray.with_suffix('.pt'))
+    before = fingerprints(paths)
+    load_item_profile(item, root=root, deployment=deployment)
+    bin_artifact = load_bin_teach(bin_path, root=root, deployment=deployment)
+    load_profile(tray, root, deployment=deployment)
     calibration = saved_calibration_paths(root)
     if calibration is None:
         raise ValueError("Select and save all three calibrations in Item Teach first")
     station, _camera = load_calibration_selection(*calibration, root=root)
     place_bin_roi(bin_artifact, station.platform)
-    paths = (item, item.with_suffix('.pt'), bin_path, tray, tray.with_suffix('.pt'))
     if len({path.name for path in paths}) != 5:
         raise ValueError("Teach artifact filenames must be distinct")
     if any(path.is_symlink() or not path.is_file() for path in paths):
         raise ValueError("Load Auto requires regular source files, not symlinks")
-    return {path: file_sha256(path) for path in paths}
+    result = {path: file_sha256(path) for path in paths}
+    if fingerprints(paths) != before:
+        raise ValueError("Teach files changed during validation; explicitly reload")
+    return result
+
+
+def runtime_paths(root):
+    """Read the complete externally/local deployed catalog, without modifying it."""
+    catalog = runtime_teach_catalog(root)
+    if catalog.tray_yaml is None:
+        raise ValueError("Auto requires a complete Tray Teach YAML/model pair in runtime_teach/")
+    return catalog.item_yaml, catalog.bin_yaml, catalog.tray_yaml
+
+
+def validated_runtime(root):
+    paths = runtime_paths(root)
+    item, bin_path, tray = paths
+    before = fingerprints((item, item.with_suffix('.pt'), bin_path, tray, tray.with_suffix('.pt')))
+    files = selected_files(root, paths, deployment=True)
+    binding = fingerprints(files)
+    if runtime_paths(root) != paths or binding != before:
+        raise ValueError("Runtime catalog changed during validation; explicitly reload")
+    return paths, files, binding
+
+
+def check_runtime(root, paths, files, binding):
+    if runtime_paths(root) != paths or fingerprints(files) != binding:
+        raise ValueError("Runtime recipe changed; turn Load Auto OFF and explicitly reload")
 
 
 def deploy(root, selections, check):

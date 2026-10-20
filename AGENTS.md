@@ -10,6 +10,18 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rules 296/297 separate Remote Auto (external runtime catalog, no copy) from Local
+Auto (explicit offline-to-runtime deployment) and Manual / Maintenance. Normal HMI
+launch starts only the GUI. Initialize Station or explicit Remote Auto starts
+required owned nodes; Remote Auto checks all health and starts read-only runtime
+detectors without Configure. Load Auto explicitly prepares/enables the robot.
+Local Auto Run checks fresh node health before admission; failures latch an HMI
+station alarm. Preserve canonical ownership, bounded startup, camera interlock,
+idle/unheld mode handoffs, independent Stop and operator-controlled deployment.
+Both automatic modes configure from the exact validated runtime catalog; source
+changes require explicit reload. No remote jobs/RabbitMQ listener or new hardware
+API/state, teach schema, geometry or I/O behavior. See the maintained FSM/exports.
+
 Rule 295 supersedes rule 15's lifetime retry cap and rule 280's camera-exit teardown.
 Keep camera-loss alarms and the HMI alive. Watchdog retries three-attempt
 batches, then scans for both exact serials before another batch; incomplete owned

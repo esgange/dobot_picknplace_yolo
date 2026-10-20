@@ -58,6 +58,10 @@ BY_KEY['production'] = Tool(
     'production', 'Production controller', 'robot_controller', 'robot_controller_core.launch.py',
     ('robot_controller', 'robot_controller_preview'), 'production',
     'Controller and Preview owned by this HMI; no preparation on start.')
+BY_KEY['station_dependencies'] = Tool(
+    'station_dependencies', 'Station dependencies', 'robot_controller',
+    'station_dependencies.launch.py', (), 'dependencies',
+    'Explicitly start owned robot bringup, TF and both supervised cameras.')
 MAINTENANCE_NODES = {'motion_debug_gui', 'motion_debug', 'gripper_control_gui',
                      'gripper_control', 'camera_calibration'}
 
@@ -221,6 +225,8 @@ class ToolLaunches:
             if process is not None:
                 if tool.kind == 'production':
                     self._terminate(process, grace=40.)
+                elif tool.kind == 'dependencies':
+                    self._terminate(process, grace=100.)
                 else:
                     self._terminate(process)
             if lock_file is not None:

@@ -17,17 +17,14 @@ def _launch(context):
             parameters=[{"headless": True, 'require_camera_watchdog': cameras}], output="screen",
             sigterm_timeout="30", sigkill_timeout="5",
             on_exit=Shutdown(reason="Robot controller stopped"))]
-    if ParameterValue(dependencies, value_type=bool).evaluate(context):
-        return [Node(
-            package="robot_controller", executable="robot_controller_station",
-            output="screen", sigterm_timeout="200", sigkill_timeout="5",
-            on_exit=Shutdown(reason="Offline station stopped"))]
+    owned = ParameterValue(dependencies, value_type=bool).evaluate(context)
     return [
         Node(
             package="robot_controller", executable="robot_controller_gui",
             name="robot_controller_gui", parameters=[{"manage_controller": True,
-                                                     'require_camera_watchdog': cameras}],
-            output="screen", sigterm_timeout="80", sigkill_timeout="5",
+                                                     "manage_dependencies": owned,
+                                                     'require_camera_watchdog': True if owned else cameras}],
+            output="screen", sigterm_timeout="200", sigkill_timeout="5",
             on_exit=Shutdown(reason="Controller GUI stopped")),
     ]
 
@@ -47,7 +44,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "start_dependencies", default_value="true",
             description=(
-                "GUI mode starts the offline station with bringup/robot TF and supervised "
-                "cameras. Set false only when those services are managed separately.")),
+                "Initialize Station starts owned bringup/TF and cameras after the HMI opens. "
+                "Set false when those services are managed separately.")),
         OpaqueFunction(function=_launch),
     ])

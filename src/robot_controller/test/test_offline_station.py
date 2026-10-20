@@ -27,8 +27,6 @@ def owner(tmp_path, monkeypatch):
         launch = tmp_path / 'install' / package / 'share' / package / 'launch' / filename
         launch.parent.mkdir(parents=True, exist_ok=True)
         launch.touch()
-    (tmp_path / 'install/robot_controller/share/robot_controller/launch'
-     / 'robot_controller_core.launch.py').touch()
     monkeypatch.setattr(station, 'check_existing_processes', lambda: None)
     yield result
     result.cancel.set()
@@ -70,9 +68,25 @@ def test_preflight_ignores_shell_text_and_own_outer_launch(tmp_path):
     station.check_existing_processes(tmp_path)
 
 
+def test_preflight_exempts_own_hmi_ancestor_but_rejects_another_hmi(tmp_path, monkeypatch):
+    monkeypatch.setattr(station.os, 'getpid', lambda: 500)
+    for pid, parent, executable in ((500, 400, 'robot_controller_station'),
+                                     (400, 1, 'robot_controller_gui')):
+        path = tmp_path / str(pid)
+        path.mkdir()
+        (path / 'status').write_text(f'PPid:\t{parent}\n')
+        (path / 'cmdline').write_bytes(f'/usr/bin/python3\0/install/{executable}\0'.encode())
+    station.check_existing_processes(tmp_path)
+    foreign = tmp_path / '600'
+    foreign.mkdir()
+    (foreign / 'cmdline').write_bytes(b'/usr/bin/python3\0/install/robot_controller_gui\0')
+    with pytest.raises(RuntimeError, match='already running.*600'):
+        station.check_existing_processes(tmp_path)
+
+
 def test_missing_install_refuses_before_spawning_any_dependency(owner, monkeypatch):
-    package = owner.root / 'install/robot_controller/share/robot_controller/launch'
-    (package / 'robot_controller.launch.py').unlink()
+    package = owner.root / 'install/orbbec_camera_launcher/share/orbbec_camera_launcher/launch'
+    (package / 'camera_headless.launch.py').unlink()
     spawn = Mock(side_effect=AssertionError('Preflight must complete before launch'))
     monkeypatch.setattr(station.subprocess, 'Popen', spawn)
     assert owner.run() == 1
@@ -134,7 +148,7 @@ def wait_until(predicate):
         time.sleep(.01)
 
 
-@pytest.mark.parametrize('trigger', ['controller', 'cameras', 'bringup', 'cancel'])
+@pytest.mark.parametrize('trigger', ['cameras', 'bringup', 'cancel'])
 def test_owned_station_exit_cleanup_and_driver_order(owner, monkeypatch, trigger):
     executable = owner.root / 'dummy_ros2'
     executable.write_text('#!' + sys.executable + '\n' + DUMMY_ROS2)
@@ -145,7 +159,7 @@ def test_owned_station_exit_cleanup_and_driver_order(owner, monkeypatch, trigger
     worker.start()
     try:
         wait_until(lambda: all((owner.root / (role + '.started')).exists()
-                               for role in ('bringup', 'cameras', 'controller')))
+                               for role in ('bringup', 'cameras')))
         if trigger == 'cancel':
             owner.cancel.set()
         else:
@@ -160,11 +174,9 @@ def test_owned_station_exit_cleanup_and_driver_order(owner, monkeypatch, trigger
         assert not worker.is_alive()
         assert results == [0 if trigger in ('controller', 'cancel', 'cameras') else 1]
         order = (owner.root / 'order').read_text().splitlines()
-        assert set(order) == {'controller', 'cameras', 'bringup'}
+        assert set(order) == {'cameras', 'bringup'}
         if trigger != 'bringup':
             assert order[-1] == 'bringup'
-        if trigger in ('cancel', 'cameras'):
-            assert (owner.root / 'driver_available_for_stop').is_file()
         for role in order:
             pid = int((owner.root / (role + '.started')).read_text())
             with pytest.raises(ProcessLookupError):
@@ -187,46 +199,42 @@ def test_spawn_failure_cleans_only_already_owned_dependency(owner, monkeypatch):
     assert kill.call_args_list[0].args[1] == signal.SIGINT
 
 
-def test_real_outer_launch_ctrl_c_preserves_driver_during_controller_cleanup(owner):
-    executable = owner.root / 'dummy_ros2'
-    executable.write_text('#!' + sys.executable + '\n' + DUMMY_ROS2)
-    executable.chmod(0o700)
+def test_real_outer_launch_opens_only_hmi_and_handles_ctrl_c(owner):
     launch = Path(__file__).parents[1] / 'launch/robot_controller.launch.py'
     harness = owner.root / 'launch_fixture.py'
-    harness.write_text('''
-import runpy, sys
+    harness.write_text("""
+import runpy, sys, signal, time
 from pathlib import Path
 root = Path(__file__).parent
-if sys.argv[1] == 'station':
-    from robot_controller import offline_station as module
-    module.workspace_root = lambda: root
-    module.check_existing_processes = lambda: None
-    module.shutil.which = lambda _name: str(root / 'dummy_ros2')
-    raise SystemExit(module.main())
+if sys.argv[1] == 'gui':
+    Path(root / 'gui.started').touch()
+    def stop(*_): raise SystemExit(0)
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    while True: time.sleep(.05)
 from launch import LaunchService
 from launch.actions import ExecuteProcess
 module = runpy.run_path(sys.argv[2])
 def substitute(**kwargs):
-    assert kwargs.pop('executable') == 'robot_controller_station'
+    assert kwargs.pop('executable') == 'robot_controller_gui'
+    assert kwargs.pop('parameters')[0]['manage_dependencies'] is True
     kwargs.pop('package')
-    return ExecuteProcess(cmd=[sys.executable, __file__, 'station'], **kwargs)
+    return ExecuteProcess(cmd=[sys.executable, __file__, 'gui'], **kwargs)
 module['_launch'].__globals__['Node'] = substitute
 service = LaunchService(noninteractive=True)
 service.include_launch_description(module['generate_launch_description']())
 raise SystemExit(service.run())
-''')
+""")
     with (owner.root / 'outer.log').open('w') as output:
         process = subprocess.Popen(
             [sys.executable, str(harness), 'outer', str(launch)],
             stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            wait_until(lambda: all((owner.root / (role + '.started')).is_file()
-                                   for role in ('bringup', 'cameras', 'controller')))
+            wait_until(lambda: (owner.root / 'gui.started').is_file())
+            assert not list(owner.root.glob('bringup.*'))
+            assert not list(owner.root.glob('cameras.*'))
             os.killpg(process.pid, signal.SIGINT)
             assert process.wait(timeout=8.) == 0
-            assert (owner.root / 'driver_available_for_stop').is_file()
-            assert (owner.root / 'order').read_text().splitlines() == [
-                'controller', 'cameras', 'bringup']
         finally:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -234,7 +242,7 @@ raise SystemExit(service.run())
 
 
 @pytest.mark.parametrize('headless,dependencies,executables', [
-    ('false', 'true', ['robot_controller_station']),
+    ('false', 'true', ['robot_controller_gui']),
     ('false', 'false', ['robot_controller_gui']),
     ('true', 'true', ['robot_controller']),
     ('true', 'false', ['robot_controller']),
@@ -245,7 +253,8 @@ def test_launch_routes_default_offline_and_preserves_core_only(
     path = Path(__file__).parents[1] / 'launch/robot_controller.launch.py'
     module = runpy.run_path(str(path))
     context = LaunchContext()
-    context.launch_configurations.update(headless=headless, start_dependencies=dependencies)
+    context.launch_configurations.update(headless=headless, start_dependencies=dependencies,
+                                        require_camera_watchdog='false')
     nodes = []
 
     def capture(**kwargs):

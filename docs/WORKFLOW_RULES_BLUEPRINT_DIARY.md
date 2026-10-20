@@ -12438,6 +12438,82 @@ Never use a floating “latest” version in an issue, script, or deployment not
   the normal station. No teach upload is needed. Software verification is complete;
   disconnect/reconnect behavior on physical hardware remains operator-verified.
 
+### 2026-10-20 — Rules 296/297: recipe-source modes, explicit initialization and node health
+
+- User requests factory-style Remote Auto / Local Auto / Manual maintenance,
+  separate external and offline teach deployment, passive HMI opening, an
+  Initialize Station button and required-node health instead of service presence.
+  Explicit clarification: Remote Auto selection starts missing required nodes;
+  Local Auto Run checks the same health before starting a cycle. HMI modes/runtime
+  loading are the agreed first phase; CATARM/RabbitMQ jobs remain deferred.
+- Rule 296: Remote Auto validates the externally completed flat runtime_teach
+  catalog without copying offline artifacts or replacing saved local selections.
+  Local Auto's explicit Load Auto stages/validates the chosen offline Item/Bin/Tray
+  YAMLs and paired models, then replaces runtime_teach. Both controller and detector
+  pair now use those exact deployed runtime paths. Keep strict schema/hash/source/
+  calibration checks, complete-catalog admission and ordinary-file metadata fences
+  around validation/configuration/startup and subsequent supervisor monitoring.
+  Changes, replacements, extra/missing files and symlinks require explicit reload;
+  no directory watcher, automatic recipe adoption or compatibility conversion.
+- Source-mode handoff releases detectors then the owned core after existing fresh
+  stationary, queue-empty, idle/unheld, DI1 LOW and no-pending-request gates. Restart
+  an unconfigured core in the target mode. Manual / Maintenance retains bringup,
+  cameras and HMI, releases production for existing teaching/direct tools, and
+  keeps each tool's own Stop/ownership requirements. Local Home/Pick/Place and
+  Manual/Test Run stay in Local Auto; remote mode blocks local recipe editing and
+  those motion controls. Independent Stop and Recover remain available.
+- Rule 297: normal launch starts only the HMI. Initialize Station or explicit
+  Remote Auto starts owned bringup/TF/cameras and core through separate launch
+  sessions. Merely opening the HMI, restoring fields or selecting a page starts
+  nothing. Wait for a dependency identity before core startup so the dependency
+  supervisor finishes its ownership preflight; process launch alone is not ready.
+  Exempt only the owning ancestor HMI from that preflight, not another HMI.
+  Refuse foreign owners and incomplete owned shutdown, preserving operator files.
+- Remote mode checks base health before validating/starting read-only runtime
+  detectors, then checks every required node. It stops at DETECTORS_READY without
+  Configure/enable/motion. Explicit Load Auto: Prepare Robot runs the existing
+  guarded Configure preparation. Startup checks have a 180-second overall health
+  window; detector/preparation bounds remain. Failures latch STATION ALARM and
+  retain the HMI; correction needs explicit recheck/retry. A Local Auto Run attempt
+  refreshes health before sending any goal; unhealthy sends no goal. Successful
+  explicit checks clear only this HMI alarm, never controller recovery context.
+- Station health covers canonical driver, feedback monitor, robot TF, controller,
+  preview, camera supervisor, both configured cameras and Item/Tray perception.
+  Discovery alone is UNVERIFIED. Require live coherent feedback/current TF,
+  advancing canonical camera diagnostics and service readiness; perception still
+  validates images/depth/TF/source evidence per request. RViz stays optional.
+  Keep three-page layout and permanent lifecycle controls. Bound displayed error
+  text; record complete health errors in logs/robot_controller_station_health.
+- Camera loss still preserves HMI/bringup and retained grip/source/release context
+  under rule 295. Watchdog retry batches remain; an exited camera supervisor needs
+  explicit operator correction/relaunch. Driver/core failures keep HMI diagnostics;
+  a refused core start retains healthy dependencies for explicit retry. Normal
+  shutdown closes detectors/tools/core before cameras/driver. No new hardware
+  lifecycle/API, motion target, I/O, inference, calibration or teach-schema change.
+- Develop in isolated /tmp/picknplace-hmi-recipe-modes because the user's station
+  is running and canonical installed Python points at source. No hardware command,
+  camera/model launch, live restart, canonical rebuild or operator-artifact change.
+  Isolated robot_controller build passes; existing remote_setup underlay warning
+  is unchanged. Verify ten installed module imports, all runtime Python syntax and
+  three installed launches against source. Installed regression suite passes
+  1,870 tests, using synthetic telemetry, temporary artifacts and harmless child
+  processes. This covers remote no-copy/no-Configure startup, health failure/retry,
+  source races, ownership handoffs, launch order, cleanup and existing recovery.
+  Final status-hint/UI checks pass 86 overlapping tests. Evidence is retained in
+  logs/hmi_modes_isolated_build.txt, logs/hmi_modes_installed_regressions.txt and
+  logs/hmi_modes_final_ui_tests.txt.
+- Review catches the dependency/core preflight race and adds ordering/timeout
+  tests. An initial fixture lacked a dependency active-set return and is corrected;
+  no production fallback is added. Offscreen 1120×760 views verify health rows,
+  mode/init/preparation controls and persistent Stop. Updated README/package guide,
+  AGENTS and FSM; regenerate all nine HTML/PDF diagrams from Markdown and verify
+  matching source hash, offline rendering and PDF page count. git diff --check
+  passes. Scoped commit/push follows standing rule 8; unrelated RViz edit stays out.
+- Deployment: operator closes affected processes, rebuilds robot_controller with
+  --symlink-install --cmake-force-configure, then relaunches. No interface rebuild
+  or teach upload is needed for this change. The running station is unchanged;
+  real camera disconnect/reconnect and physical cycles remain operator-verified.
+
 ### Future entry template
 
 ```text

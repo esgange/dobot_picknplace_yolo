@@ -25,10 +25,13 @@ class CameraHealth:
         self.healthy = False
         self.detail = 'Waiting for camera supervisor status'
         self.latched = False
+        self.camera_details = {}
+        self.valid_set = False
 
     def update(self, message, publishers, now_ns):
         with self.lock:
             self.seen = True
+            self.valid_set = False
             stamp = message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec
             owners = [(p.node_name, p.node_namespace) for p in publishers]
             if owners != [('supervisor', '/camera_watchdog')]:
@@ -46,11 +49,28 @@ class CameraHealth:
                 self.healthy = False
                 self.detail = 'Camera supervisor does not match the configured camera names/serials'
                 return
+            self.valid_set = True
             self.healthy = all(s.level == DiagnosticStatus.OK and dict(
                 (v.key, v.value) for v in s.values).get('phase') == 'healthy' for s in statuses)
             details = [dict((v.key, v.value) for v in s.values).get('last_error')
                        or s.message for s in statuses]
+            self.camera_details = {
+                s.name: (s.level == DiagnosticStatus.OK and
+                         dict((v.key, v.value) for v in s.values).get('phase') == 'healthy',
+                         detail) for s, detail in zip(statuses, details)}
             self.detail = '; '.join(dict.fromkeys(details))
+
+    def health_rows(self):
+        """Display individual diagnostics only while the canonical set is valid/fresh."""
+        with self.lock:
+            stale = self.received is None or self.clock() - self.received > MAX_AGE_SEC
+            reason = self.unavailable()
+            return [(name, 'STALE' if stale else
+                     'HEALTHY' if self.valid_set and self.camera_details.get(name, (False, ''))[0]
+                     else 'ATTENTION',
+                     reason if stale or not self.valid_set else
+                     self.camera_details.get(name, (False, 'No diagnostics'))[1])
+                    for name in self.expected]
 
     def unavailable(self):
         with self.lock:

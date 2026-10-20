@@ -1,4 +1,4 @@
-"""Own the offline station's launches; keep bringup alive for controller shutdown."""
+"""Own explicitly initialized bringup/TF and cameras; the HMI owns the core."""
 
 import fcntl
 import os
@@ -17,8 +17,6 @@ from .events import PackageEventLogger
 LAUNCHES = (
     ('bringup', 'dobot_bringup_v4', 'dobot_bringup_ros2.launch.py', ()),
     ('cameras', 'orbbec_camera_launcher', 'camera_headless.launch.py', ()),
-    ('controller', 'robot_controller', 'robot_controller.launch.py',
-     ('start_dependencies:=false', 'require_camera_watchdog:=true')),
 )
 CONFLICT_EXECUTABLES = {
     'dobot_bringup_v4_node', 'robot_state_publisher', 'actual_joint_state_monitor.py',
@@ -34,8 +32,21 @@ CONFLICT_LAUNCHES = {
 
 def check_existing_processes(proc=Path('/proc')):
     """Refuse existing owners, including ones not yet discovered or in other ROS domains."""
+    ancestors = {os.getpid()}
+    current = os.getpid()
+    # The explicitly owning HMI is an ancestor of this dependency supervisor.
+    # Exclude that exact process, not every HMI or another station's processes.
+    while current > 1:
+        try:
+            fields = (proc / str(current) / 'status').read_text().splitlines()
+            current = int(next(line.split()[1] for line in fields if line.startswith('PPid:')))
+        except (OSError, StopIteration, ValueError):
+            break
+        if current in ancestors:
+            break
+        ancestors.add(current)
     for process in proc.iterdir():
-        if not process.name.isdigit() or int(process.name) == os.getpid():
+        if not process.name.isdigit() or int(process.name) in ancestors:
             continue
         try:
             args = [os.fsdecode(arg) for arg in (process / 'cmdline').read_bytes().split(b'\0')
@@ -84,10 +95,6 @@ class OfflineStation:
             if not launch.is_file():
                 raise RuntimeError(f'Build {package} first; missing installed launch: {launch}')
             result.append((role, [ros2, 'launch', '--noninteractive', str(launch), *arguments]))
-        core = self.root / 'install/robot_controller/share/robot_controller/launch' / \
-            'robot_controller_core.launch.py'
-        if not core.is_file():
-            raise RuntimeError(f'Build robot_controller first; missing installed launch: {core}')
         return result
 
     def run(self):
@@ -126,11 +133,10 @@ class OfflineStation:
                                                 'interlock blocks production. Relaunch the '
                                                 'camera supervisor after resolving its error.')
                                     continue
-                                normal = role == 'controller' and code == 0
-                                self.report('INFO' if normal else 'ERROR', 'station_child_exit',
+                                self.report('ERROR', 'station_child_exit',
                                             f'{role} launch exited ({code}); '
-                                            'closing owned station')
-                                return 0 if normal else 1
+                                            'closing owned dependencies')
+                                return 1
                     return 0
                 finally:
                     self.close()
@@ -141,12 +147,12 @@ class OfflineStation:
     def close(self):
         # Separate sessions prevent terminal Ctrl-C from killing bringup before
         # the core's existing active-operation Stop/confirmation has completed.
-        for role in ('controller', 'cameras', 'bringup'):
+        for role in ('cameras', 'bringup'):
             process = self.children.get(role)
             if process is None:
                 continue
             self.report('INFO', 'station_child_stopping', f'Stopping owned {role}')
-            grace = 90. if role == 'controller' else 40.
+            grace = 40.
             for signum, timeout in ((signal.SIGINT, grace), (signal.SIGTERM, 5.),
                                     (signal.SIGKILL, 2.)):
                 try:

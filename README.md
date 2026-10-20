@@ -47,94 +47,57 @@ The root build contains 18 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
-The HMI uses the same plain Qt appearance as Item Teach (rule 287): native fonts,
-gray panels, standard tabs/buttons/fields/sliders and simple group borders.
-The custom blue/white theme is removed. The restored three-page layout and
-existing green readiness, amber pause and red Stop indicators remain.
+Opening the HMI starts **only the HMI**. Press **Initialize Station** to launch
+owned robot bringup/TF, supervised cameras and the selected production core.
+Selecting **Remote Auto** also starts missing required nodes. Neither action
+prepares/enables the robot or starts motion. The existing three-page Qt layout,
+robot/gripper panels and permanent Recover/Pause/STOP row remain.
 
-The two local run buttons have explicit detector sources:
+| Station mode | Recipe and operation |
+| --- | --- |
+| Remote Auto | The external station completes the five-file `runtime_teach/` catalog. Selecting this mode starts missing owned nodes and read-only detectors, validates the runtime recipe and checks health. **Load Auto: Prepare Robot** explicitly prepares/enables the robot. Remote jobs are not connected in this phase. |
+| Local Auto | Select saved Item/Bin/Tray profiles from `offline_teach/`. **Load Auto** validates and copies their three YAMLs and two paired models into `runtime_teach/`, starts detectors and prepares the controller from those deployed files. Set quantity/placement and press **Local Auto Run**. |
+| Manual / Maintenance | Release owned production controller/detectors after fresh idle/unheld checks; keep HMI, bringup and cameras. Open teaching, calibration, Motion Debug or Gripper Diagnostics. Use the active maintenance tool's controls and Stop. |
 
-| Run button | Pose source | Preparation |
-| --- | --- | --- |
-| Offline Auto Run | Headless Item Detect and Tray Detect | Select Item/Bin/Tray files, turn Load Auto ON and wait for READY; set Quantity/placement and run |
-| Manual/Test Run | Armed Item Teach and Tray Teach windows | Open/load/arm the windows in Manual — tools, return to Auto — production, load matching controller files and run; Load Auto stays OFF |
+The **Station health** panel replaces Station services. It reports the driver,
+feedback, robot TF, controller, preview, camera supervisor, both configured cameras
+and Item/Tray perception. Node discovery alone does not mean healthy. Remote Auto
+checks all required nodes, with a bounded startup window and a latched station
+alarm on failure. Local Auto Run checks fresh health before sending a cycle goal.
+**Check Station Health** explicitly rechecks a corrected issue; camera/controller
+faults still require their existing Recover/preparation procedure. There is no
+motion on reconnection. RViz is optional.
 
-Both execute the same counted cycle with shared Quantity, X/Y, Rotation and debug
-capture settings. Both need **Auto — production**; **Manual — tools** releases the
-controller for teaching and direct maintenance. Offline production is the current
-priority; online server-controlled Auto Run is deferred. Rule 283 consolidates
-setup controls and removes duplicate recipe/status/help displays while preserving
-process ownership and motion behavior.
+**Manual/Test Run** uses armed Item Teach and Tray Teach windows in Local Auto.
+To teach/test: select Manual / Maintenance, open/load/arm the windows, return to
+Local Auto, load matching controller configuration and use Home/Pick/Place or
+Manual/Test Run. Keep Load Auto OFF for teaching providers. Switching source mode
+requires fresh stationary feedback, no held item, active/paused job or pending
+request; it starts a new unconfigured controller and requires preparation again.
 
-The task-oriented layout (rule 284) puts production quantity, placement and run
-controls together, beside separate single-action controls. Motion settings sit
-below. Setup separates **1 · Select teach files** and **2 · Prepare station** from
-teaching windows. Diagnostics groups inspection/calibration, direct robot tools,
-server settings and **Detection history → Clear Repick History**. Status and
-Recover/Pause/STOP remain visible on every page; all command guards are unchanged.
-
-The controller window is a **Station HMI** with three pages: **Operate**,
-**Setup / Teach**, and **Tools / Debug**. Robot/gripper status and
-Recover/Pause/STOP remain visible throughout. Setup / Teach contains file selection,
-Load Teach Configuration and Load Auto together, and opens the non-headless Item,
-Tray, Bin and Platform teaching windows; Tools opens RViz, camera setup,
-calibration and eligible direct maintenance tools. Each explicit launch is owned
-by the HMI; closing the HMI closes those tools and its headless detector pair.
-Applications opened elsewhere remain external. Select **Manual — tools** to stop
-the owned production controller/detectors while keeping bringup and cameras, then
-open **Motion Debug** from Tools / Debug. Select **Auto — production** after closing
-maintenance tools to restore the controller. **RabbitMQ integration is the next phase;
-no remote command listener is implemented yet.** See [Station HMI](src/robot_controller/README.md#station-hmi).
-
-The normal launch now starts the **offline station**: canonical Dobot bringup,
-robot TF, both supervised cameras, controller, Preview and HMI. No server or RViz
-is required. Opening it does not load a recipe, enable the robot or start motion.
-Select files and press **Load Auto** on Setup / Teach, then **Offline Auto Run** on Operate.
-Load Auto starts the headless detectors and prepares the robot as before.
-
-The mode selector stays visible on every page. Manual requires an idle, unheld
-station with fresh stationary feedback and no pending request; it never cancels
-an active job or discards a held item to open a tool. In Manual, use the active
-tool's own robot controls and Stop; the HMI production controller is stopped.
-Returning to Auto starts an unconfigured controller: Load Auto or Load Teach
-Configuration must explicitly prepare it again. Mode selection does not launch
-Motion Debug, enable the robot or start motion. Opening Motion Debug retains that tool's
-existing initialization/enable sequence. Only one direct command tool may run.
+Remote Auto never copies offline files or overwrites local saved selections.
+Complete external deployment before selecting Remote Auto or explicitly reloading.
+Changed, missing, duplicate or symlinked runtime files are rejected; no live
+watcher silently adopts a new recipe. **CATARM/RabbitMQ job commands remain deferred.**
+See [Station HMI](src/robot_controller/README.md#station-hmi).
 
 ```bash
 source scripts/source_ros_workspace.bash
 ros2 launch robot_controller robot_controller.launch.py
 ```
 
-Close existing station processes before this complete launch; detected existing
-owners are refused without stopping them. To keep separately managed bringup and
-cameras, use `start_dependencies:=false`. Closing the HMI closes its owned station:
-controller shutdown/Stop handling finishes before cameras and bringup are stopped.
-Bringup failure also ends the owned station. Camera failure keeps the HMI and
-bringup alive with a red **CAMERA ALARM**: check the camera connection, cable and
-power. The controller stops active/prepared work once and preserves grip/source
-context. The watchdog retries in three-attempt batches, waiting for both configured
-serials after exhaustion. Restored streams do not resume motion: use **Recover**
-(or load teach configuration if unconfigured), then explicitly start the next job.
-Intentional Manual mode keeps dependencies/HMI alive; an unexpected production
-core exit leaves the HMI in mode attention with production disabled for explicit retry.
-Unexpected camera-supervisor exit also retains the HMI; missing/stale health
-blocks production. Resolve the supervisor error and explicitly relaunch it.
+Close competing station processes before Initialize Station. Existing owners are
+refused, never stopped or adopted. Use `start_dependencies:=false` for separately
+managed bringup/cameras. HMI shutdown closes the owned core before cameras and
+bringup. Dependency/core failure leaves the HMI open with an alarm. Camera loss
+retains bringup and uses the existing guarded retry policy; production containment
+preserves grip/source/release context. Recover or explicit preparation remains
+required after camera restoration. An exited supervisor or incomplete shutdown
+requires operator correction before retry.
 
-**Manual/Test Run / Offline Auto Run:** both use the same Quantity, X/Y, Rotation and debug
-settings. Manual/Test Run uses armed Item Teach and Tray Teach. Offline Auto Run requires
-**Load Auto: ON** with both owned headless detectors ready. Load Auto validates
-the three browsed teach YAML files and paired models, replaces `runtime_teach/`
-with those five files, then starts Item Detect and Tray Detect. Once both are
-ready, it also loads the selected teach configuration and prepares/enables the
-robot through the existing controller Configure service. Disarm teaching
-GUIs and stop existing headless detectors first. OFF or GUI exit stops only its
-owned detectors; canceling an issued preparation also sends controller Stop.
-Wait for Load Auto ON and robot READY, then explicitly click **Offline Auto Run**.
-**Load Teach Configuration** remains available for manual use/reload.
-Selections stay locked until Load Auto is OFF.
-Rebuild `robot_controller_interfaces` and `robot_controller`, then relaunch their
-clients together for the new run goal field. See [Load Auto](src/robot_controller/README.md#load-auto-and-run-buttons).
+Deployment remains operator-controlled: close affected processes, rebuild
+`robot_controller` with `--symlink-install --cmake-force-configure`, then relaunch.
+No ROS interface, teach schema, geometry, motion or I/O sequence changes.
 
 Placement **Rotation 0°** aligns the item's short X axis line with the detected
 tray's short X; the item's length follows the tray's length. Rotating the tray

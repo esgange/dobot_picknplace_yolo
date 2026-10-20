@@ -1,5 +1,36 @@
 # Robot Controller — Finite State Machine
 
+Station initialization / recipe-source review: **2026-10-20**, baseline
+**`233630a`** plus rules **296/297**. These supersede earlier launch-default and
+single-Auto-mode descriptions below. Normal launch opens only the HMI. Initialize
+Station or explicit Remote Auto selection starts required owned dependencies and
+an unconfigured core. Wait for a dependency identity before core startup so the
+dependency supervisor completes its ownership preflight first. Remote Auto validates the complete externally deployed
+runtime catalog and starts read-only detector nodes after base health passes.
+It does not copy offline files, Configure, enable or move. Explicit Load Auto
+prepares/enables the robot after DETECTORS_READY. Local Auto's explicit Load Auto
+copies validated offline files into runtime and prepares from that deployed
+catalog. Both modes bind controller/detectors to the same runtime sources; catalog
+and ordinary-file identity changes require explicit reload. No live recipe adoption.
+
+Station health replaces the service-presence summary. Required rows cover driver,
+feedback, robot TF, controller, preview, camera supervisor, both exact configured
+cameras and Item/Tray perception. Discovery is not health: require fresh controller
+feedback, current TF, advancing canonical camera diagnostics and canonical service
+providers. Remote selection has a 180-second health window, with explicit retry
+and a latched STATION ALARM on failure. Local Auto Run rechecks fresh health before
+sending a goal; failure sends no goal. A successful explicit health check clears
+only the HMI health alarm, never controller/camera recovery context. No remote
+job listener or host authorization is implemented. Local motion tests are available
+in Local Auto; Manual / Maintenance releases production for existing tools.
+
+Source-mode handoffs retain fresh stationary idle/unheld admission and restart an
+unconfigured core. Owned shutdown precedes retry; no foreign process adoption or
+termination. HMI survives dependency/core failures. Camera retry/containment rules
+remain as below. No hardware lifecycle state, ROS API, motion, geometry, I/O,
+calibration or teach schema changes. Operator-controlled rebuild/relaunch remains
+pending; software tests do not establish physical station performance.
+
 Camera connection alarm review: **2026-10-19**, baseline **`a24e3f0`** plus rule **295**.
 Keep the station HMI and bringup alive on camera loss. Watchdog failure publishes
 unhealthy diagnostics before camera cleanup; three failed startup attempts enter
@@ -74,13 +105,13 @@ motion, process, configuration, automatic action or server-command change.
 
 Local HMI cleanup review: **2026-10-13**, baseline **`072b5a5`** plus rule **283**.
 The HMI buttons are **Manual/Test Run** (armed teaching windows for debug/testing)
-and **Offline Auto Run** (Load Auto headless detector pair). **Setup / Teach** combines
+and **Local Auto Run** (Load Auto headless detector pair). **Setup / Teach** combines
 file selection, Load Teach Configuration, Load Auto and teaching windows. Remove
 the separate Auto page, duplicate recipe list, extra mode summary and repeated
 help; retain Operate and Tools / Debug. Both use the existing native AutoRun action,
 shared Quantity/placement/debug fields and strict detector-source gates. Both need
-Auto — production; Manual — tools releases the production controller. Offline
-setup is select files → Load Auto → READY → Offline Auto Run; Load Auto includes
+Local Auto; Manual / Maintenance releases the production controller. Offline
+setup is select files → Load Auto → READY → Local Auto Run; Load Auto includes
 robot preparation. Manual testing opens/loads/arms teaching windows in Manual,
 returns to Auto, loads matching controller files and leaves Load Auto OFF. Help,
 tooltips and shared run-blocker labels explain these paths. No lifecycle, process
@@ -99,8 +130,9 @@ states/transitions are unchanged. Headless tests saved settings once and exits.
 
 HMI ownership review: **2026-10-13**, baseline **`b2643f9`** plus rule **281**.
 Persistent Manual (tools) and Auto (production) modes separate the HMI lifetime
-from its owned controller/Preview. Default Auto starts a new unconfigured core;
-wait for fresh editable status without preparing the robot. Manual requires no
+from its owned controller/Preview. Rules 296/297 now defer all station-node startup
+until Initialize Station or explicit Remote Auto; core startup waits for fresh
+editable status without preparing the robot. Manual requires no
 pending request/Preview, fresh stationary queue-empty feedback, raw DI1 LOW and
 unheld UNCONFIGURED/INACTIVE/READY. Stop owned detectors, recheck the robot, then
 stop the owned core and wait for process/graph disappearance before tools open.
@@ -118,8 +150,8 @@ Open still performs its own existing initialization/enable. No new robot clients
 motion, detector arming, ROS interfaces, saved mode or RabbitMQ are added.
 
 Offline station review: **2026-10-12**, baseline **`95bf80f`** plus rule **280**.
-The normal GUI launch owns canonical bringup/robot TF, both supervised cameras
-and controller/Preview/HMI. Auto is a local page with no server requirement.
+After explicit initialization, the normal GUI owns canonical bringup/robot TF,
+both supervised cameras and controller/Preview; HMI opening alone is passive. Auto is a local page with no server requirement.
 Keep explicit Load Auto for deployment, detector startup and robot preparation;
 saved fields are prefill only. Opening the HMI never enables, moves or starts a
 cycle. Refuse detected existing owners before spawn; no adoption/foreign cleanup.
@@ -161,7 +193,7 @@ Enforce the selected type before admission, requests/retries and observation use
 Load Auto starts OFF, validates/stages the selected Item/Bin/Tray YAML and two
 models, replaces the complete runtime catalog, then starts the detector pair.
 Both services must appear within 180 seconds. GUI PREPARING then sends one existing
-Configure request with the frozen selected paths; recheck idle/unheld feedback
+Configure request with the frozen deployed runtime paths; recheck idle/unheld feedback
 and GUI ownership before dispatch. Configure performs the existing guarded robot
 preparation, including enable/settings/output initialization. Require its successful
 reply and matching fresh enabled idle READY before RUNNING/green ON. Bound this
@@ -978,9 +1010,10 @@ Keep controller state records separate from the GUI detector supervisor:
 | --- | --- | --- |
 | Controller lifecycle | What the whole controller is doing | `PICKING`, `PAUSED`, `RECOVERING` |
 | Candidate ledger | What happened to each item pose in the accepted batch | `PENDING`, `INTERRUPTED`, `HELD` |
-| GUI Load Auto supervisor | Owned deployment/detector lifetime and request for existing controller preparation | `OFF`, `DEPLOYING`, `STARTING`, `PREPARING`, `RUNNING`, `STOPPING`, `FAILED` |
+| GUI Load Auto supervisor | Owned deployment/validation/detector lifetime and explicit preparation | `OFF`, `DEPLOYING`, `STARTING`, `DETECTORS_READY`, `PREPARING`, `RUNNING`, `STOPPING`, `FAILED` |
 | HMI tool launch | Owned application session, separate from robot readiness; external windows are not owned | `OFF`, `STARTING`, `RUNNING`, `STOPPING`, `FAILED` |
-| HMI station mode | Process ownership only; Auto owns production, Manual releases it for tools | `MANUAL`, `STARTING_AUTO`, `AUTO`, `STOPPING_AUTO`, `FAILED`; bare GUI is an unmanaged `EXTERNAL` client |
+| HMI station mode | Process ownership and recipe source; automatic modes own production, Manual releases it for tools | `MANUAL`, `STARTING_AUTO`, `AUTO` (Local), `REMOTE_AUTO`, `STOPPING_AUTO`, `FAILED`; bare GUI is `EXTERNAL` |
+| HMI initialization / health | Explicit owned node startup and health admission; separate from robot lifecycle | `OFF`, `STARTING`, `RUNNING`, `FAILED`; bounded check plus latched station alarm |
 | Camera interlock | Required/seen canonical health, loss latch, explicit acknowledgment | Initial wait; healthy; CAMERA ALARM; cameras restored awaiting Recover/preparation |
 
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
@@ -990,28 +1023,30 @@ action. Flowchart boxes below describe steps unless explicitly named as states.
 ## 1a. Operator status, buttons and preview
 
 The window title is **Pick & Place — Station HMI**. The main status is NOT READY, READY,
-BUSY, HOLDING ITEM, AUTO RUN, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED or OFFLINE. Starting, homing,
+NOT INITIALIZED, STATION ALARM, BUSY, HOLDING ITEM, AUTO RUN, PAUSED, WAITING FOR ITEMS, WAITING FOR TRAY, ATTENTION REQUIRED or OFFLINE. Starting, homing,
 picking, placing, parking, returning and recovering appear in the activity line;
 PAUSED appears only after confirmed parking/Stop. The reason is always visible.
 Confirmed emergency-stop evidence overrides the main label in red.
 
-Robot/gripper status, observed station services and the lifecycle row remain
+Robot/gripper status, required-node Station health and the lifecycle row remain
 outside the three scrollable pages. **Operate** groups the two runs and shared
 placement/Quantity/progress/debug inputs in Production run, motion/Preview in
 Single actions and speed/CP in Motion settings. **Setup / Teach** contains numbered
 artifact selection and Load/Reload/Load Auto preparation sections, readiness and
 compact Item/Tray/Bin/Platform Teach launchers. **Tools / Debug** groups passive RViz,
 camera setup/calibration, Remote Setup, eligible direct maintenance applications
-and Detection history / Clear Repick History. The normal launch
-starts bringup/robot TF and both supervised cameras; teaching/debug windows stay
-explicit. Station-service presence is observational, separate from readiness.
+and Detection history / Clear Repick History. Initialize Station or explicit
+Remote Auto starts required owned nodes; opening the HMI starts none. Health
+combines canonical identities and live feedback/TF/diagnostics/service checks.
 Tool launches never bypass their own model trust, arming or maintenance guards.
 Existing external windows are displayed and cannot be closed by the HMI.
 RViz and Remote Setup remain available in either mode, including during runs.
-The persistent Manual/Auto selector is above the lifecycle row. Open teaching/setup/maintenance
+The persistent Remote Auto / Local Auto / Manual / Maintenance selector and
+Initialize Station button are above the lifecycle row. Open teaching/setup/maintenance
 tools in Manual after ownership release; stop/close direct maintenance before
-returning to Auto. Production controls, including Load Auto, require Auto. Manual
-Run still uses teaching providers with the production controller in Auto mode.
+returning to an automatic mode. Local motion tests/counts require Local Auto.
+Load Auto is available in both automatic modes. Manual/Test Run uses teaching
+providers with the production controller in Local Auto mode.
 Manual displays MANUAL TOOLS and directs the operator to the active tool's Stop;
 without a production Stop service the HMI's STOP (production) is unavailable.
 
@@ -1026,7 +1061,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
 | NOT READY, configured | Reload to prepare; Preview; STOP |
-| READY | Home; Pick Item; Place Item; Manual/Test Run / Offline Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
+| READY | Home; Pick Item; Place Item; Manual/Test Run / Local Auto Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; all manual controls and input edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
 | BUSY, startup/recovery/return/parking/stopping | STOP |
@@ -1072,24 +1107,29 @@ source, ownership, I/O and feedback validation or guarantee a detection result.
 | Home | Preview: OFF / ON |
 | Pick Item | Place Item |
 
-The counted-run row has **Manual/Test Run**, **Offline Auto Run**, one Quantity field and shared
-progress. Manual/Test Run requires armed Item Teach and Tray Teach. Offline Auto Run also requires
+The counted-run row has **Manual/Test Run**, **Local Auto Run**, one Quantity field and shared
+progress. Manual/Test Run requires armed Item Teach and Tray Teach. Local Auto Run also requires
 Load Auto RUNNING and exactly the owned headless providers. Both send the same native
 action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
 Load Auto is beside Load Teach Configuration on **Setup / Teach** and is green when its supervisor is
-RUNNING after confirmed preparation. Offline Auto Run is green only when its normal
+RUNNING after confirmed preparation. Local Auto Run is green only when its normal
 admission gates enable the button. These colors change no guards.
-ON validates the browsed production
-sources and saved calibrations without executing models, then copies three YAMLs
-and two paired models into staging and verifies hashes/catalog before replacing
-all contents of root runtime_teach. Failed validation/copy preserves the old catalog.
-Sources, calibration and .env stay unchanged. Start the canonical installed headless
-executables only after deployment; they load models and arm after input validation.
-Require no armed teaching provider or independently running headless detector.
-Once both are ready, request Configure with the frozen browsed paths, reusing the
-same load/preparation and saved-selection handling as Load Teach Configuration.
+Local Auto ON validates browsed production sources and saved calibrations without
+executing models, copies three YAMLs/two models into staging, then verifies hashes
+and catalog before replacing root runtime_teach. Failed validation/copy preserves
+the old catalog. Remote Auto validates the externally deployed catalog without
+copying or modifying it. Bind ordinary-file dev/inode/size/mtime/ctime across
+validation, worker startup and supervisor monitoring; catalog/source drift fails
+and requires explicit reload. Both modes configure from exact deployed paths;
+remote preparation never replaces saved local selections.
+
+Require no armed teaching provider or independent headless detector. Start
+canonical installed workers only after complete validation; both services must
+appear. Local Load Auto proceeds to PREPARING. Remote mode entry instead waits
+in DETECTORS_READY; the explicit Load Auto: Prepare Robot click requests Configure.
+Existing robot preparation and matching READY confirmation remain mandatory.
 Failure ends the sequence and stops the owned pair. OFF stops owned processes and
 leaves files deployed. GUI exit also stops owned tools; if an operation is active
 and the HMI owns Item/Tray providers, issue independent Stop before removing them;
@@ -1101,33 +1141,42 @@ arming of teaching GUIs, Home, pick/place cycle or direct driver client is added
 
 | Load Auto state | Meaning / next explicit control |
 | --- | --- |
-| OFF | Default on every GUI launch; idle/unheld with fresh stationary feedback and all three paths selected can enable |
-| DEPLOYING | Validate/copy/verify complete catalog off the GUI thread; selections and conflicting controls locked; OFF cancels |
+| OFF | Default on every GUI launch; explicit initialization/mode selection required; Local Load Auto needs selected offline paths, Remote needs the complete deployed catalog |
+| DEPLOYING | Local validates/copies/verifies; Remote validates only; work off the GUI thread; selections and conflicting controls locked; OFF cancels |
 | STARTING | Owned pair starting; wait for both sole canonical services, at most 180 seconds; OFF cancels |
+| DETECTORS_READY | Remote mode has healthy read-only workers; explicit Load Auto: Prepare Robot enters PREPARING; no Configure/enable has occurred |
 | PREPARING | Both detectors ready; GUI sends Configure once and waits for success plus matching fresh enabled idle READY; at most 180 seconds overall / five seconds after response; OFF cancels, with Stop if issued |
-| RUNNING | Preparation completed; Auto Run additionally follows normal READY/action gates; manual Load/Reload remains available; idle/unheld OFF stops pair |
+| RUNNING | Preparation completed; Auto Run additionally follows normal READY/action gates; local manual Load/Reload requires OFF; idle/unheld OFF stops pair |
 | STOPPING | Wait for owned children/native workers to terminate; no new start |
 | FAILED | Pair stopped; reason visible and logged; correct problem and explicitly enable again |
 
 ```mermaid
 flowchart TD
-    Launch["Offline HMI launch: bringup / TF + cameras + HMI; Auto owns unconfigured core"] --> StationMode{"Station mode"}
-    StationMode -.->|Either mode: explicit Open| Remote["Remote Setup: save settings / bounded connection test; no robot commands"]
-    StationMode -->|Auto| TeachPage
-    StationMode -->|Manual: fresh idle unheld; no pending requests| ReleaseCore["Stop owned detectors; recheck robot; stop core; wait for process / graph exit"]
-    ReleaseCore --> Tools["Open teaching / debug tools; one direct command owner; use tool Stop"]
-    Tools -->|Close maintenance; select Auto| RestoreCore["Start owned core; fresh status; no automatic preparation"]
-    RestoreCore --> TeachPage
-    TeachPage["Setup / Teach: 1 select files; 2 prepare station"] -->|Explicit Load Teach; teaching providers armed| Manual
-    TeachPage -->|Close owned teaching / maintenance windows| Deploy["Same setup page: explicit Load Auto ON; idle, unheld; no competing providers"]
-    Deploy --> Copy["Validate, stage and verify 5 files; replace runtime_teach"]
+    Launch["Open HMI only: NOT INITIALIZED; no station nodes"] --> Init["Initialize Station or explicit Remote Auto selection"]
+    Init --> Base["Start required owned bringup / TF, cameras and unconfigured core"]
+    Base --> Health{"Fresh required base-node health?"}
+    Health -->|Failure or 180-second timeout| Alarm["STATION ALARM; no cycle; correct issue and explicitly retry"]
+    Health -->|Healthy| StationMode{"Station mode"}
+    StationMode -.->|Explicit Open| Remote["Remote Setup: settings / connection test; no job listener"]
+    StationMode -->|Local Auto| TeachPage
+    StationMode -->|Remote Auto| Runtime["Validate external runtime catalog; no offline copy"]
+    Runtime --> RemoteDetect["Start missing owned read-only detectors; check all node health"]
+    RemoteDetect -->|Healthy| NodesReady["DETECTORS_READY; no Configure or enable"]
+    RemoteDetect -->|Failure| Alarm
+    NodesReady -->|Explicit Load Auto: Prepare Robot| Prepare
+    StationMode -->|Manual: fresh idle unheld; no pending requests| ReleaseCore["Stop detectors; recheck robot; stop core; wait for process / graph exit"]
+    ReleaseCore --> Tools["Open teaching / maintenance; one direct owner; use tool Stop"]
+    Tools -->|Close maintenance; select automatic mode| Base
+    TeachPage["Setup / Teach: select offline files"] -->|Explicit Load Teach; teaching providers armed| Manual
+    TeachPage -->|Explicit Load Auto; no competing providers| Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for both services, at most 180 seconds"]
-    Detect --> Prepare["PREPARING: Configure selected teach files; enable and initialize robot"]
+    Detect --> Prepare["PREPARING: Configure deployed runtime files; enable and initialize robot"]
     Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
-    Loaded --> Auto["Offline Auto Run: owned headless pair ready"]
+    Loaded -->|Local Auto only| Auto["Local Auto Run click: recheck all required node health"]
+    Auto -->|Unhealthy| Alarm
     Manual["Manual/Test Run: both teaching GUIs armed"] --> Run["Operate / Production run: shared native counted run; same quantity and placement; bind detector mode"]
-    Auto --> Run
-    Launch -.-> CameraHealth{"Fresh canonical camera health?"}
+    Auto -->|Healthy| Run
+    Base -.-> CameraHealth{"Fresh canonical camera health?"}
     CameraHealth -->|Unavailable or unhealthy| CameraAlarm["CAMERA ALARM: check connection / cable / power; HMI and bringup stay open"]
     Run -->|Camera loss| CameraAlarm
     CameraAlarm --> CameraStop["Prepared / active: one shared Stop; preserve grip / source / release evidence; initial unconfigured wait sends no command"]
@@ -2242,10 +2291,11 @@ Names below are relative to `/robot_controller/`.
 | Placement-to-pick trickle reset | Plan past release ignoring only old source ID; clear real history only on confirmed PLACED; preserve containment and other areas |
 | Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
 | `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
-| Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; all three paths; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
+| Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; Local offline selections / Remote complete runtime catalog; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
 | HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; teaching/setup/maintenance Open requires Manual mode in managed HMI; RViz and Remote Setup are available during runs in either mode; other tool changes require no operation/held item/queued motion/pending command or active Load Auto; direct maintenance rechecks graph and local command owners before spawn; closing owned maintenance remains available; external processes are never closed |
-| HMI Manual / Auto (not a robot API) | Manual: idle editable UNCONFIGURED/INACTIVE/READY, fresh stationary queue-empty feedback, DI1 LOW, no held/retained operation or pending request/Preview; detectors then core stop, process/graph absence before tools. Auto: no competing maintenance/foreign core, new owned core then fresh status; no preparation/cycle on mode selection |
-| Offline HMI launch (not a robot API) | Default GUI entry starts bringup/robot TF, supervised cameras and core; installed paths and existing local owners checked before spawn; no recipe/enable/Auto Run on launch; core stops before owned cameras/bringup; no outer restart |
+| HMI Manual / Local Auto / Remote Auto (not a robot API) | Manual: idle editable UNCONFIGURED/INACTIVE/READY, fresh stationary queue-empty feedback, DI1 LOW, no held/retained operation or pending request/Preview; detectors then core stop, process/graph absence before tools. Auto: no competing maintenance/foreign core, new owned core then fresh status. Remote selection starts missing nodes and read-only runtime detectors with full health checks; no preparation/cycle on mode selection |
+| HMI initialization (not a robot API) | Launch GUI only; explicit Initialize Station / Remote Auto starts owned dependencies/core after installed-path and ownership preflight; core stops before cameras/bringup; incomplete owned shutdown blocks retry; no hardware command |
+| Local Auto Run HMI admission | Refresh graph and require live node-health checks before sending goal; failure latches station alarm and sends no action; existing controller guards/provider-type checks still apply |
 | `startup` service | Configured INACTIVE; operation slot free |
 | `go_home` action | Started READY / HOLDING; exact configuration ID; operation slot free |
 | `pick_item` action | Started, configured, unheld READY; exact configuration ID and item selection; recorded tray joints; item detector ready; operation slot free |

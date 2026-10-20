@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-from .auto_deploy import deploy
+from .auto_deploy import deploy, validated_runtime, check_runtime
 from .events import PackageEventLogger
 from .perception_mode import SERVICES
 
@@ -57,6 +57,9 @@ class AutoDetectors:
         self.children = {}
         self.messages = deque()
         self.selections = ()
+        self.runtime_source = False
+        self.prepare_requested = True
+        self.runtime_recipe = None
         self.preparation_claimed = False
         self.preparation_result = None
 
@@ -103,13 +106,36 @@ class AutoDetectors:
                 raise ValueError('A local headless detector is running; stop it before Load Auto')
 
     def start(self, selections):
+        self._start(selections, runtime=False)
+
+    def start_runtime(self):
+        """Use an externally deployed recipe; never copy/delete runtime files."""
+        self._start((), runtime=True)
+
+    def start_runtime_nodes(self):
+        """Remote mode starts read-only perception; robot preparation stays explicit."""
+        self._start((), runtime=True, prepare=False)
+
+    def request_preparation(self):
+        with self.lock:
+            if self.state != 'DETECTORS_READY' or self.cancel.is_set():
+                raise ValueError('Wait for the runtime detectors to become ready')
+            self.prepare_requested = True
+        self._state('PREPARING', 'Loading the runtime recipe and preparing the robot…',
+                    expected='DETECTORS_READY')
+
+    def _start(self, selections, *, runtime, prepare=True):
         if self.thread is not None and self.thread.is_alive():
             raise ValueError('Load Auto is already active')
         self.cancel.clear()
         self.selections = tuple(selections)
+        self.runtime_source = runtime
+        self.prepare_requested = prepare
+        self.runtime_recipe = None
         self.preparation_claimed = False
         self.preparation_result = None
-        self._state('DEPLOYING', 'Validating and copying the selected teach files…')
+        self._state('DEPLOYING', 'Validating the deployed runtime recipe…' if runtime else
+                    'Validating and copying the selected offline teach files…')
         self.thread = threading.Thread(target=self._run, args=(tuple(selections),), daemon=True)
         self.thread.start()
 
@@ -121,6 +147,10 @@ class AutoDetectors:
                 return None
             self.preparation_claimed = True
             return self.selections
+
+    def check_recipe(self):
+        if self.runtime_recipe is not None:
+            check_runtime(self.root, *self.runtime_recipe)
 
     def prepared(self, configuration_id='', *, error=''):
         with self.lock:
@@ -194,10 +224,18 @@ class AutoDetectors:
             for executable in executables.values():
                 if not executable.is_file() or not os.access(executable, os.X_OK):
                     raise ValueError(f'Build the headless detector first: {executable}')
-            deployed = deploy(self.root, selections, self._check)
-            self.events.record('INFO', 'load_auto_deployed', 'Replaced runtime_teach catalog',
-                               files=deployed)
+            if not self.runtime_source:
+                deployed = deploy(self.root, selections, self._check)
+                self.events.record('INFO', 'load_auto_deployed', 'Replaced runtime_teach catalog',
+                                   files=deployed)
+            self.runtime_recipe = validated_runtime(self.root)
+            self.selections = tuple(str(p) for p in self.runtime_recipe[0])
+            self.events.record('INFO', 'load_auto_runtime_validated',
+                               'Using validated runtime recipe',
+                               source='remote' if self.runtime_source else 'local',
+                               files={p.name: digest for p, digest in self.runtime_recipe[1].items()})
             self._check()
+            self.check_recipe()
             self._state('STARTING',
                         'Starting Item Detect and Tray Detect; waiting for both services…')
             for kind, executable in executables.items():
@@ -209,6 +247,7 @@ class AutoDetectors:
             preparation_deadline = None
             ready_deadline = None
             while not self.cancel.wait(.2):
+                self.check_recipe()
                 for kind, (process, tail) in self.children.items():
                     if process.poll() is not None:
                         raise RuntimeError(f'{NODES[kind]} exited ({process.returncode}): '
@@ -219,9 +258,12 @@ class AutoDetectors:
                     raise RuntimeError('Conflicting detection provider; stopping owned detectors')
                 ready = all(available.values())
                 if ready and not ready_once:
-                    self._state('PREPARING', 'Detectors ready; loading teach files and '
-                                'preparing the robot…', expected='STARTING')
-                    preparation_deadline = time.monotonic() + 180.
+                    if self.prepare_requested:
+                        self._state('PREPARING', 'Detectors ready; loading teach files and '
+                                    'preparing the robot…', expected='STARTING')
+                    else:
+                        self._state('DETECTORS_READY', 'Runtime detectors ready; press Load Auto '
+                                    'to prepare/enable the robot', expected='STARTING')
                     ready_once = True
                 elif not ready and ready_once:
                     raise RuntimeError('A headless detection service disappeared')
@@ -231,6 +273,8 @@ class AutoDetectors:
                     preparing = self.state == 'PREPARING'
                     result = self.preparation_result
                 if preparing:
+                    if preparation_deadline is None:
+                        preparation_deadline = time.monotonic() + 180.
                     if result is not None:
                         configuration_id, error = result
                         if error:

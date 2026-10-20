@@ -13,6 +13,8 @@ from item_perception_yolo.runtime_teach import runtime_teach_catalog
 
 from .profiles import load_selection, runtime_selection
 from .tray import TrayConfiguration, load_tray_configuration
+from .auto_deploy import runtime_paths
+from item_perception_yolo.source_binding import fingerprints
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,15 @@ def _identifier(profile_digest, selection, tray=None):
 
 
 def load_configuration(item_path, bin_path, root, kinematics, *, deployment=False, tray_path=""):
+    # Configure keeps its typed path API. A runtime request must name exactly the
+    # complete canonical catalog; mixed/offline paths cannot silently substitute it.
+    requested = tuple(Path(p).expanduser().absolute() if p else None
+                      for p in (item_path, bin_path, tray_path))
+    runtime = Path(root).resolve() / "runtime_teach"
+    if not deployment and any(p is not None and p.parent == runtime for p in requested):
+        if requested != runtime_paths(root):
+            raise ValueError("Runtime configuration must select the complete runtime_teach catalog")
+        return load_runtime_configuration(root, kinematics)
     item_path = Path(item_path).expanduser().resolve()
     bin_path = Path(bin_path).expanduser().resolve() if bin_path else None
     if bin_path is None:
@@ -80,6 +91,11 @@ def load_configuration(item_path, bin_path, root, kinematics, *, deployment=Fals
 
 
 def load_runtime_configuration(root, kinematics):
+    catalog = runtime_teach_catalog(root)
+    paths = (catalog.item_yaml, catalog.item_model, catalog.bin_yaml)
+    if catalog.tray_yaml is not None:
+        paths += (catalog.tray_yaml, catalog.tray_model)
+    before = fingerprints(paths)
     selection = runtime_selection(root)
     tray = load_tray_configuration(
         runtime_teach_catalog(root).tray_yaml, root, kinematics, deployment=True)
@@ -91,4 +107,6 @@ def load_runtime_configuration(root, kinematics):
         configuration_id=_identifier(selection.item_sha256, selection, tray),
         selection=selection, deployment=True, tray=tray)
     result.validate_sources(root)
+    if runtime_teach_catalog(root) != catalog or fingerprints(paths) != before:
+        raise ValueError("Runtime recipe changed during configuration; explicitly reload")
     return result

@@ -21,8 +21,9 @@ Every ROS 2 package in this workspace lives below `src/` and has a package-local
 `item_perception_yolo` also installs the `item_teach` GUI and shared headless
 `item_detect` runtime, with class checkboxes, RGB/depth preview and explicitly
 armed calibrated pose requests. The controller can request/log a candidate
-batch without robot execution. `robot_controller` requires explicit Startup in
-both GUI and headless deployments; launch itself never enables or moves.
+batch without robot execution. `robot_controller` requires explicit Configure/Load Auto in the GUI or Startup
+headlessly. Normal HMI launch starts no station nodes: Initialize Station or
+Remote Auto starts required nodes, with health checks and explicit robot preparation.
 Imported `item_pick` is retained as reference source with `COLCON_IGNORE`;
 its unaligned execution path is not part of the root build or installed runtime.
 
