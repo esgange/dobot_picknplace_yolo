@@ -27,8 +27,44 @@ def test_hmi_pages_keep_stop_visible_and_do_not_start_tools(window):  # noqa: F8
         assert window.stop.isVisible() and window.pause.isVisible()
         assert window.robot_panel.isVisible() and window.gripper_panel.isVisible()
     assert window.tools.active() == set()
+    assert not hasattr(window, 'configure')
     assert 'No server connection is needed' in ' '.join(
         label.text() for label in window.pages.findChildren(QtWidgets.QLabel))
+
+
+@pytest.mark.parametrize('key', ['item', 'tray'])
+def test_teach_open_snapshots_selected_files_without_loading_controller(window, key):
+    window.node.get_node_names_and_namespaces = lambda: []
+    paths = []
+    for field, name in zip((window.item_path, window.bin_path, window.tray_path),
+                           ('item selected', 'bin selected', 'tray selected')):
+        path = window.node.root / (name + '.yaml')
+        path.write_text('synthetic selection; validation belongs to teach loader')
+        field.setText(str(path))
+        paths.append(path)
+    window.tools.start = Mock()
+    window._tool_clicked(key)
+    expected = ((f'teach_file:={paths[0]}', f'bin_teach_file:={paths[1]}') if key == 'item'
+                else (f'teach_file:={paths[2]}',))
+    assert window.tools.start.call_args.kwargs == {'launch_arguments': expected}
+    window.item_path.setText('changed selection')
+    assert window.tools.start.call_args.kwargs['launch_arguments'] == expected
+    window.tools.start.call_args.args[1]()  # Worker guard does not read Qt fields.
+    assert not window.pending and not window.local_preparation.busy
+
+
+@pytest.mark.parametrize('key', ['item', 'tray'])
+@pytest.mark.parametrize('bad', ['', 'missing.yaml'])
+def test_invalid_selection_never_opens_a_teach_window_with_previous_session(
+        window, monkeypatch, key, bad):
+    monkeypatch.setattr(QtWidgets.QMessageBox, 'warning', Mock())
+    window.node.get_node_names_and_namespaces = lambda: []
+    for field in (window.item_path, window.bin_path, window.tray_path):
+        field.setText(bad)
+    window.tools.start = Mock()
+    window._tool_clicked(key)
+    window.tools.start.assert_not_called()
+    assert not window.pending
 
 
 @pytest.mark.parametrize('key', ['item', 'tray', 'motion', 'gripper', 'remote'])
@@ -136,19 +172,23 @@ def test_tool_rechecks_before_spawn_and_reports_failure_without_start(manager, m
     assert checks.call_count == 2
 
 
-def test_failed_tool_only_cleans_owned_group_and_never_restarts(manager, monkeypatch):
+@pytest.mark.parametrize('arguments', [(), ('teach_file:=/selected tray: 2.yaml',)])
+def test_failed_tool_only_cleans_owned_group_and_never_restarts(manager, monkeypatch, arguments):
     signals = []
     process = SimpleNamespace(pid=12345, stdout=io.BytesIO(b'fixture failure'),
                               poll=lambda: 2, wait=lambda **_kw: 2)
     spawn = Mock(return_value=process)
     monkeypatch.setattr(hmi_tools.subprocess, 'Popen', spawn)
     monkeypatch.setattr(hmi_tools.os, 'killpg', lambda pid, sig: signals.append((pid, sig)))
-    manager.start('tray', lambda: None)
+    manager.start('tray', lambda: None, launch_arguments=arguments)
     wait_until(lambda: manager.snapshot('tray')[0] == 'FAILED')
     assert 'exited (2)' in manager.snapshot('tray')[1]
     assert spawn.call_count == 1
     assert signals and all(pid == 12345 for pid, _sig in signals)
     command = spawn.call_args.args[0]
+    if arguments:
+        assert command[-len(arguments):] == list(arguments)
+        command = command[:-len(arguments)]
     assert command[-3:-1] == ['launch', '--noninteractive']
     assert command[-1].endswith('/tray_perception/launch/tray_teach.launch.py')
 

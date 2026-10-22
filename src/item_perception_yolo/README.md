@@ -2,6 +2,15 @@
 
 The teaching window title is **Item Teach**, without a version suffix.
 
+Opening Item Teach from the station HMI loads its currently selected Item Teach
+file and Bin Teach path, overriding this window's previous session. Paired-model
+validation and automatic read-only preview use the normal loader; Armed stays OFF.
+An invalid HMI selection never falls back to an older profile or a recovery model.
+Close/reopen after changing the HMI selection, or use this window's Load control.
+The launch accepts explicit string arguments `teach_file` and `bin_teach_file`;
+leaving them empty retains standalone session restoration. No controller command
+is sent by loading either selection.
+
 `item_perception_yolo` is the project perception package. Its aligned local-only
 teaching GUIs establish the robot pick-area origin and then the four-corner bin
 ROI used by later item detection.

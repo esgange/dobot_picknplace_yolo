@@ -997,6 +997,61 @@ def finish_model_job(window):
     window._refresh_video()
 
 
+def test_hmi_selection_overrides_session_and_loads_verified_pair_unarmed(
+        window, paired_teach, monkeypatch):
+    path, profile, _, _, question = paired_teach
+    previous_session = MagicMock(side_effect=ValueError('Previous session is invalid'))
+    monkeypatch.setattr(gui, "load_package_ui_state", previous_session)
+    selected_bin = path.parent / "selected_bin.yaml"
+    before = path.read_bytes(), path.with_suffix(".pt").read_bytes()
+    selected = gui.ItemTeachWindow(window.node, teach_file=str(path),
+                                   bin_teach_file=str(selected_bin))
+    selected.timer.stop()
+    try:
+        assert selected.saved_path == path
+        previous_session.assert_not_called()
+        assert selected.bin_path.text() == str(selected_bin)
+        selected._autoload_model()
+        finish_model_job(selected)
+        selected._autoload_model()
+        window.node.inspect_model.assert_called_once_with(
+            str(path.with_suffix(".pt")), expected_sha256=profile["model"]["sha256"])
+        assert not selected.armed_toggle.isChecked()
+        window.node.arm.assert_not_called()
+        question.assert_not_called()  # Open in the HMI already selects this file.
+        assert before == (path.read_bytes(), path.with_suffix(".pt").read_bytes())
+    finally:
+        selected.close()
+
+
+@pytest.mark.parametrize("failure", ["missing", "invalid", "model_changed"])
+def test_rejected_hmi_item_selection_never_restores_previous_profile_or_model(
+        window, paired_teach, monkeypatch, failure):
+    path, _, _, _, _ = paired_teach
+    monkeypatch.setattr(gui, "item_directory", lambda: path.parent)
+    monkeypatch.setattr(gui, "load_package_ui_state", lambda _: SimpleNamespace(
+        item_profile_filename=path.name, item_preview_camera_prefix=None,
+        item_platform_filename=None, item_bin_filename=None))
+    selected_path = path.parent / "missing.yaml"
+    if failure == "invalid":
+        selected_path.write_text("broken: [")
+    elif failure == "model_changed":
+        selected_path = path
+        path.with_suffix(".pt").write_bytes(b"changed")
+    selected = gui.ItemTeachWindow(window.node, teach_file=str(selected_path))
+    selected.timer.stop()
+    try:
+        assert selected.saved_path is None and selected.model.text() == ""
+        assert selected.bin_path.text() == "" and not selected.recovered_draft
+        for _ in range(3):
+            selected._autoload_model()
+        window.node.inspect_model.assert_not_called()
+        window.node.arm.assert_not_called()
+        assert "Selected Item Teach could not load" in selected.status.toPlainText()
+    finally:
+        selected.close()
+
+
 def test_live_nearby_checks_all_detections_and_invalidates_edits(window, paired_teach):
     window._load_dialog()
     finish_model_job(window)

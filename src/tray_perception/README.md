@@ -2,6 +2,14 @@
 
 The teaching window title is **Tray Teach**, without a version suffix.
 
+Opening Tray Teach from the station HMI loads its currently selected Tray Teach
+file, overriding this window's previous session. The normal loader validates the
+profile, calibration and paired model; Armed stays OFF. Failed loading never falls
+back to remembered sources. Close/reopen after changing the HMI selection, or use
+this window's Load control. The launch accepts an explicit string `teach_file`
+argument; leaving it empty retains standalone session restoration. No controller
+command is sent by loading the selection.
+
 `tray_teach` is a read-only GUI for teaching one tray profile and inspecting the
 best detected tray pose in `base_link`. Headless `tray_detect` shares its fresh
 pose-request pipeline, including controller-requested placement depth. No camera/robot process is launched and no

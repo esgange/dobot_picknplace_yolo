@@ -398,6 +398,50 @@ def restorable_sources(window, monkeypatch):
     return path, camera, model
 
 
+@pytest.mark.parametrize("failure", [None, "missing", "invalid", "model_changed"])
+def test_hmi_selection_overrides_session_without_fallback_or_arming(
+        window, monkeypatch, failure):
+    from tray_perception import documents
+    from test_documents import ready_form
+    _, camera, model = restorable_sources(window, monkeypatch)
+    path, _, target, _ = documents.save_document(
+        ready_form(), settings(), position(), plane(), camera, model, window.node.root)
+    state = ready_form()
+    state.update(profile_filename=path.name, model_path=str(path.with_suffix('.pt')),
+                 camera_filename=camera.path.name)
+    state["draft"]["name"] = "previous_session"
+    gui.write_session(window.node.root, state)
+    selected_path = path
+    if failure in ("missing", "invalid"):
+        selected_path = path.parent / "tray_teach_rejected.yaml"
+        if failure == "invalid":
+            selected_path.write_text("broken: [")
+    elif failure == "model_changed":
+        path.with_suffix('.pt').write_bytes(b'changed')
+    before = path.read_bytes(), path.with_suffix('.pt').read_bytes()
+    selected = gui.TrayTeachWindow(window.node, teach_file=str(selected_path))
+    selected.timer.stop()
+    selected.next_preview = float('inf')
+    try:
+        finish_jobs(selected)
+        for _ in range(3):
+            selected._tick()
+        if failure is None:
+            assert selected.profile_path == path and selected.save_target == target
+            assert selected.settings == settings() and selected._class_ids() == [0]
+            window.node.inspect_model.assert_called_once_with(
+                path.with_suffix('.pt'), model['sha256'])
+        else:
+            assert selected.profile_path is None and selected.node.model is None
+            assert 'Could not restore' in selected.status.text()
+            window.node.inspect_model.assert_not_called()
+        assert selected.name.text() != 'previous_session'
+        assert not selected.armed_toggle.isChecked() and selected.node.requests.service is None
+        assert before == (path.read_bytes(), path.with_suffix('.pt').read_bytes())
+    finally:
+        selected.close()
+
+
 def test_reload_profiles_waits_for_preview_and_discards_old_result(window, monkeypatch):
     from tray_perception import documents
     from test_documents import ready_form
@@ -1538,7 +1582,12 @@ def test_launch_is_local_only_and_does_not_launch_dependencies(monkeypatch):
         factory()
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     description = factory()
-    assert len(description.entities) == 1
+    from launch.actions import DeclareLaunchArgument
+    from launch_ros.actions import Node
+    assert len(description.entities) == 2
+    assert isinstance(description.entities[0], DeclareLaunchArgument)
+    assert description.entities[0].name == 'teach_file'
+    assert isinstance(description.entities[1], Node)
 
 
 def ready_trigger_window(window):

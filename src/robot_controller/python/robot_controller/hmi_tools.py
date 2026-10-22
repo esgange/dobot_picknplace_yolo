@@ -31,9 +31,11 @@ TOOLS = (
          ('remote_setup',), 'communication',
          'Save server settings and test connections; remote robot commands are not enabled.'),
     Tool('item', 'Item Teach', 'item_perception_yolo', 'item_teach.launch.py',
-         ('item_teach',), 'teach', 'Teach items, inspect detections and arm manual picking.'),
+         ('item_teach',), 'teach',
+         'Open with selected Item/Bin files. Inspect detections; arm picking explicitly.'),
     Tool('tray', 'Tray Teach', 'tray_perception', 'tray_teach.launch.py',
-         ('tray_teach',), 'teach', 'Teach the tray, inspect its pose and arm manual placement.'),
+         ('tray_teach',), 'teach',
+         'Open with the selected Tray file. Inspect its pose; arm placement explicitly.'),
     Tool('bin', 'Bin Teach', 'item_perception_yolo', 'bin_teach.launch.py',
          ('bin_teach',), 'teach', 'Create or inspect the saved bin boundary.'),
     Tool('platform', 'Platform Teach', 'item_perception_yolo', 'platform_teach.launch.py',
@@ -126,15 +128,17 @@ class ToolLaunches:
             self.messages.clear()
             return result
 
-    def start(self, key, check):
+    def start(self, key, check, *, launch_arguments=()):
         tool = BY_KEY[key]
+        launch_arguments = tuple(launch_arguments)
         check()
         with self.lock:
             old = self.records.get(key)
             if old is not None and old['thread'].is_alive():
                 raise ValueError(f'{tool.title} is already active')
             cancel = threading.Event()
-            thread = threading.Thread(target=self._run, args=(tool, cancel, check), daemon=True)
+            thread = threading.Thread(target=self._run,
+                                      args=(tool, cancel, check, launch_arguments), daemon=True)
             self.records[key] = {'state': 'STARTING', 'message': 'Opening…',
                                  'cancel': cancel, 'thread': thread}
             thread.start()
@@ -176,7 +180,7 @@ class ToolLaunches:
                 pass
             return
 
-    def _run(self, tool, cancel, check):
+    def _run(self, tool, cancel, check, launch_arguments):
         process = lock_file = None
         failure = None
         tail = deque(maxlen=8)
@@ -200,7 +204,8 @@ class ToolLaunches:
                          and getattr(self.node, 'require_camera_watchdog', False) else [])
             process = subprocess.Popen(
                 [sys.executable, '-m', 'robot_controller.auto_detector_child',
-                 str(os.getpid()), ros2, 'launch', '--noninteractive', str(launch), *arguments],
+                 str(os.getpid()), ros2, 'launch', '--noninteractive', str(launch),
+                 *arguments, *launch_arguments],
                 cwd=self.root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, start_new_session=True)
 

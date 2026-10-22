@@ -58,13 +58,17 @@ Opening the HMI starts **only the HMI**. There are two station modes:
 pages or restoring saved file fields never loads or prepares the robot. The
 explicit **Local / Maintenance** click is what authorizes loading/preparation.
 If selected files are missing or invalid, correct the selections and click the
-local mode again or **Load/Reload Teach Configuration**. Waiting for station
+local mode again. There is no separate Reload Teach Configuration button. Waiting for station
 health and Configure each have a 180-second bound; successful Configure must be
 followed by matching fresh enabled idle READY within five seconds. Stop cancels
 preparation; failures or late replies never restart it automatically.
 
 For teaching/testing, keep **Load Auto OFF**, open Item Teach and Tray Teach in
-Local / Maintenance, load matching profiles and arm them explicitly. Use Home,
+Local / Maintenance. Each **Open** loads the currently selected HMI profile;
+Item Teach also uses the selected Bin file. Paired models load through the existing
+validation, and **Armed stays OFF** until you enable it. Changing HMI selections
+does not replace a file in an already-open teaching window: close/reopen it, or
+use its own Load control. Use Home,
 Pick, Place or **Manual/Test Run** without switching modes. **Load Auto** remains
 an optional local workflow: close teaching providers, validate/deploy the selected
 three YAMLs and two paired models into `runtime_teach/`, start the headless pair,
@@ -99,7 +103,8 @@ Use `start_dependencies:=false` for separately managed bringup/cameras. HMI exit
 closes its owned tools/detectors/core before cameras and bringup. Driver/core
 failure leaves the HMI available for diagnosis; incomplete shutdown blocks retry.
 Deployment remains operator-controlled: close affected processes, rebuild
-`robot_controller` with `--symlink-install --cmake-force-configure`, then relaunch.
+`item_perception_yolo`, `tray_perception` and `robot_controller` with
+`--symlink-install --cmake-force-configure`, then relaunch.
 No ROS interface, teach schema, geometry, trajectory or I/O sequence changes.
 
 Placement **Rotation 0°** aligns the item's short X axis line with the detected
@@ -412,15 +417,15 @@ those actions, while reliable transient-local typed status reports the state and
 operation phase. The old Trigger/JSON/Live/Enable/validation/pose-proxy/debug-image
 endpoints are removed.
 
-In the non-headless GUI, **Load Teach Configuration** becomes **Reload Teach
-Configuration** after the first successful load. Reload is available only while
-the controller is idle and unheld in `READY` (or already `INACTIVE`). Load/Reload
-now validates files and runs the existing guarded robot initialization automatically,
+In the HMI, explicitly selecting **Local / Maintenance** loads the selected files
+and prepares the robot. Reselecting the mode while idle and unheld reloads them;
+there is no separate Reload Teach Configuration button. The guarded Configure
+sequence validates files and runs the existing robot initialization,
 reporting READY only after it succeeds. It may enable the robot and reset unheld
 gripper outputs, but never queues Home/Pick/Place. There is no Start button.
 Invalid files preserve the current configuration; initialization failures show
 the cause and require explicit Recover. Stop cancels preparation without a delayed
-restart. Load/Reload is disabled while Preview is ON. Headless `runtime_teach/` configuration is
+restart. Local preparation is blocked while Preview is ON. Headless `runtime_teach/` configuration is
 immutable until the process is restarted.
 
 The GUI top row shows **Robot status**, **Gripper status** and observed station
@@ -1075,7 +1080,7 @@ hash checks require the same artifacts as the detector. The controller requests
 one fresh batch directly
 from `/item_detect/get_item_poses`, always using the taught `pose_candidates`
 limit and exact profile/station hashes. Detector/teach nodes remain read-only;
-explicit controller Load/Reload (or headless Startup) prepares hardware before
+explicit Local / Maintenance selection (or headless Startup) prepares hardware before
 a typed motion action. No training is included. Private inference
 wheels are pinned/verified/extracted offline; exact Torch/system dependencies
 still require separate provisioning. The extracted native runtime is always

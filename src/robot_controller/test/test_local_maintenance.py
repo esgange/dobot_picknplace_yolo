@@ -150,6 +150,10 @@ def test_local_click_loads_selected_files_once_and_retains_teaching_and_motion(l
     assert view.home_button.isEnabled() and view.pick_item.isEnabled()
     assert view.tool_controls['item'][0].isEnabled()
     assert view.tool_controls['tray'][0].isEnabled()
+    for field, name in ((view.item_path, 'item.yaml'), (view.bin_path, 'bin.yaml')):
+        path = view.node.root / name
+        path.write_text('synthetic selection')
+        field.setText(str(path))
     view.tools.start = Mock()
     view._tool_clicked('item')
     view.tools.start.call_args.args[1]()

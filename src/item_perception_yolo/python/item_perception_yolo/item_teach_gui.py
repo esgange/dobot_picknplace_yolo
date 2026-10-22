@@ -282,7 +282,7 @@ def build_simulated_pose_transforms(base_from_platform, response, stamp):
 
 
 class ItemTeachWindow(QtWidgets.QWidget):
-    def __init__(self, node):
+    def __init__(self, node, *, teach_file=None, bin_teach_file=None):
         super().__init__()
         self.node = node
         self.home = None
@@ -783,13 +783,25 @@ class ItemTeachWindow(QtWidgets.QWidget):
         self.task.currentIndexChanged.connect(self._dirty)
         for key in GRIPPER_FIELDS:
             self.inputs[key].stateChanged.connect(self._dirty)
-        state = load_package_ui_state(ui_state_path())
+        state = None if teach_file else load_package_ui_state(ui_state_path())
         if state is not None and state.item_preview_camera_prefix is not None:
             self.camera_prefix.setText(state.item_preview_camera_prefix)
-        if state is not None and state.item_platform_filename is not None:
+        if bin_teach_file:
+            self.bin_path.setText(str(bin_teach_file))
+        elif not teach_file and state is not None and state.item_platform_filename is not None:
             self.bin_path.setText(
                 str(workspace_root() / "offline_teach/bin_teach" / state.item_bin_filename))
-        if state is not None and state.item_profile_filename is not None:
+        if teach_file:
+            # An explicit HMI selection takes precedence over the saved session.
+            # Failed validation cannot load an old profile or recovery-model pair.
+            try:
+                self._load(Path(teach_file), prefill=False, allow_recovery=False)
+            except (ValueError, OSError) as exc:
+                self.model.clear()
+                self.node.model_config = self.node.model_metadata = None
+                self._message(f"Selected Item Teach could not load: {teach_file}: {exc}. "
+                              "Select a valid file and reopen, or use Load Item Teach.")
+        elif state is not None and state.item_profile_filename is not None:
             self._load(item_directory() / state.item_profile_filename, prefill=True)
         else:
             self._message("Browse a model + Connect RGB to start automatic YOLO preview. "
@@ -2208,10 +2220,12 @@ class ItemTeachWindow(QtWidgets.QWidget):
                 self._finish_model_load()
             self._error("Load failed", exc)
 
-    def _load(self, path, *, prefill):
+    def _load(self, path, *, prefill, allow_recovery=True):
         try:
             profile, _digest = load_item_profile(path)
         except (ValueError, OSError) as exc:
+            if not allow_recovery:
+                raise
             return self._load_recovery(path, exc, prefill=prefill)
         target = item_save_target(
             path, profile["item"]["name"], _digest,
@@ -2336,7 +2350,9 @@ def main(args=None):
     signal.signal(signal.SIGINT, lambda *_: app.quit())
     try:
         node = ItemTeachNode()
-        window = ItemTeachWindow(node)
+        window = ItemTeachWindow(
+            node, teach_file=node.declare_parameter("teach_file", "").value or None,
+            bin_teach_file=node.declare_parameter("bin_teach_file", "").value or None)
         executor = MultiThreadedExecutor(num_threads=3)
         executor.add_node(node)
         worker = threading.Thread(target=executor.spin, daemon=True)

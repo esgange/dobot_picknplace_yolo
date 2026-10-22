@@ -12582,6 +12582,53 @@ Never use a floating “latest” version in an issue, script, or deployment not
   requires this rebuild. No interface rebuild or teach upload is required.
   Software checks do not claim a physical cycle or live camera fault test.
 
+### 2026-10-22 — Rule 299: load HMI-selected files when teaching windows open
+
+- User requests removal of Reload Teach Configuration and wants Item Teach /
+  Tray Teach to use whichever files are selected in the HMI. Remove the separate
+  Load/Reload control, its handler and focus entry. Keep explicit Local /
+  Maintenance selection as rule 298's guarded controller load/prepare operation;
+  optional Load Auto still deploys and prepares for local headless runs.
+- Each teaching Open snapshots the GUI fields before starting the worker: Item
+  receives Item/Bin paths; Tray receives its Tray path. Reject empty, missing or
+  symlink selections before spawn. Pass absolute paths as separate subprocess
+  arguments, never shell text. Keep cancellation, ownership and the final spawn
+  recheck. An already-open window keeps its loaded profile until its own explicit
+  Load or close/reopen; HMI field edits never silently replace it.
+- Teaching launches accept string teach_file (and Item bin_teach_file) inputs.
+  Explicit selections bypass old session restoration and reuse existing profile,
+  model/hash and calibration validation. Item rejects an invalid selected profile
+  without adopting a recovery-model pair; Tray retains its existing complete/draft
+  loader and prevents remembered-source fallback on failure. Paired models and
+  read-only preview use existing automatic loading; Armed remains OFF. Empty
+  standalone launch inputs retain the previous session workflow. No controller
+  request, motion, hardware API, schema, geometry, I/O or deployment change.
+- Work in /tmp/picknplace-hmi-teach-selection while the canonical station runs.
+  Build item_perception_yolo, tray_perception and robot_controller successfully
+  there. Native-worker tests also need a local camera_calibration build and a
+  temporary .env copied from .env.example. Do not rebuild the canonical install,
+  restart live processes, execute operator models or send hardware commands.
+- Controller suite: 1,904 passed. Tray suite: 357 passed. Item suite: 817 passed
+  initially; all nine environment-blocked cases pass after adding the isolated
+  configuration/OpenCV runtime (826 total). Final overlapping checks after the
+  session-bypass/hint refinements pass 132 Item UI and 76 HMI/ownership cases.
+  Earlier failures exposed the missing Path import, obsolete button/launch-count
+  assertions, missing synthetic selections and unmocked modal warnings; fix those
+  directly without weakening production admission. New tests verify selected
+  files/pairs, frozen launch arguments including spaces/colons, no previous-profile
+  fallback, unchanged artifact bytes and explicit arming. Synthetic telemetry,
+  temporary artifacts and harmless child processes only; no physical verification.
+- Installed launch --show-args confirms both file interfaces without launching
+  nodes. Offscreen 1120x760 and 1024x768 views retain layout and STOP while removing
+  Reload and retaining Load Auto. Update root/package guides, AGENTS and FSM;
+  regenerate its nine offline HTML/PDF diagrams and verify source hash/page count.
+  Evidence is in logs/hmi_teach_selection_*.txt; git diff --check passes. Scoped
+  commit/push follows standing rule 8, excluding operator files and the RViz edit.
+- Deployment remains operator-controlled: close affected processes, rebuild
+  item_perception_yolo, tray_perception and robot_controller with --symlink-install
+  --cmake-force-configure, source and relaunch. The teaching launches require this
+  rebuild. No interface rebuild or teach upload is needed; live station unchanged.
+
 ### Future entry template
 
 ```text

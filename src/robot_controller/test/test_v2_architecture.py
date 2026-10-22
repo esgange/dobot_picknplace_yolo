@@ -135,7 +135,7 @@ def test_gui_configuration_can_reload_only_from_unheld_idle_ready():
     gui = (PACKAGE / "python/robot_controller/gui.py").read_text()
     assert "INACTIVE" in legal_targets("READY")
     assert '("UNCONFIGURED", "INACTIVE", "READY")' in controller
-    assert '"Reload Teach Configuration" if state and state.configured' in gui
+    assert 'Reload Teach Configuration' not in gui
     assert 'current in ("UNCONFIGURED", "INACTIVE", "READY")' in gui
 
 

@@ -152,13 +152,14 @@ def test_continue_unavailable_still_allows_known_item_return(window):  # noqa: F
     assert 'cannot resume' in window.availability_details.text()
 
 
-def test_preview_blocks_load_preparation_even_when_called_directly(window):  # noqa: F811
+def test_preview_blocks_load_preparation_even_when_called_directly(window, monkeypatch):  # noqa: F811
+    from robot_controller import gui
+    monkeypatch.setattr(gui.QtWidgets.QMessageBox, 'warning', Mock())
     window.item_path.setText('item.yaml')
     window.preview_mode = True
     window._refresh()
-    assert not window.configure.isEnabled()
-    assert 'Turn Preview OFF' in window.configure.toolTip()
-    window._configure()  # The fixture fails on any service dispatch.
+    window._set_mode('AUTO')  # The fixture fails on any service dispatch.
+    assert not window.local_preparation.busy
     assert not window.pending
 
 
@@ -171,8 +172,8 @@ def test_gui_load_sends_only_configure_and_waits_for_ready_without_startup_clien
     sent = Mock(return_value=pending)
     window.node.service_clients['configure'] = SimpleNamespace(
         service_is_ready=lambda: True, call_async=sent)
-    window._configure()
+    window._configure_paths(('item.yaml', '', ''))
     sent.assert_called_once()
     assert set(window.pending) == {'configure'}
     assert window.stop.isEnabled() and not window.home_button.isEnabled()
-    assert not window.configure.isEnabled()
+    assert not window.item_path.isEnabled()

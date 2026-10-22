@@ -2,6 +2,7 @@
 
 from collections import deque
 import os
+from pathlib import Path
 import signal
 import sys
 import threading
@@ -296,8 +297,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 lambda _checked, e=edit, d=directory: self._browse(e, d))
             teach.addWidget(button, index, 2)
             self.teach_browse_buttons.append(button)
-        self.configure = QtWidgets.QPushButton("Load Teach Configuration")
-        self.configure.clicked.connect(self._configure)
         teach.setColumnStretch(1, 1)
         self.recipe_layout.addWidget(self.teach_panel)
         self.runtime_recipe_status = QtWidgets.QLabel()
@@ -342,10 +341,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
             'Local / Maintenance loads the selected teach files and prepares the robot. '
             'Load Auto optionally deploys them for local headless runs.'))
         prepare_columns = QtWidgets.QGridLayout()
-        for column, button in enumerate((self.load_auto, self.configure)):
-            button.setMinimumHeight(40)
-            prepare_columns.addWidget(button, 0, column)
-            prepare_columns.setColumnStretch(column, 1)
+        self.load_auto.setMinimumHeight(40)
+        prepare_columns.addWidget(self.load_auto, 0, 0, 1, 2)
+        prepare_columns.setColumnStretch(0, 1)
+        prepare_columns.setColumnStretch(1, 1)
         prepare_columns.addWidget(hint(
             'Load Auto · Validate runtime recipe, start detectors and prepare robot.'), 1, 0)
         prepare_columns.addWidget(hint(
@@ -568,7 +567,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.headless_run_button, self.auto_run_button, self.home_button, self.preview_toggle,
             self.pick_item, self.place_item, self.speed_slider, self.cp_slider,
             self.item_path, self.teach_browse_buttons[0], self.bin_path, self.teach_browse_buttons[1],
-            self.tray_path, self.teach_browse_buttons[2], self.load_auto, self.configure,
+            self.tray_path, self.teach_browse_buttons[2], self.load_auto,
             *(self.tool_controls[key][0] for key in
               ('item', 'tray', 'bin', 'platform', 'rviz', 'cameras', 'calibration',
                'remote', 'motion', 'gripper')),
@@ -604,7 +603,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _build_tool_pages(self):
         self.teaching_layout.addWidget(self._tool_group(
             'Teaching windows', ('item', 'tray', 'bin', 'platform'),
-            'In Local / Maintenance, open and arm matching Item/Tray profiles. '
+            'Open Item/Tray Teach to load the selected files, then arm each provider. '
             'Home, Pick, Place and Manual/Test Run remain available.', compact=True))
         self.teaching_layout.addStretch()
 
@@ -865,10 +864,31 @@ class ControllerWindow(QtWidgets.QMainWindow):
                     self.modes.request('MANUAL')
                     self.pending_tool = key
                 else:
-                    self.tools.start(key, lambda: self._tool_start_check(key))
-        except (ValueError, RuntimeError) as exc:
+                    # Snapshot Qt fields here; the launch worker never reads widgets.
+                    arguments = self._teach_launch_arguments(key)
+                    self.tools.start(key, lambda: self._tool_start_check(key),
+                                     launch_arguments=arguments)
+        except (ValueError, OSError, RuntimeError) as exc:
             QtWidgets.QMessageBox.warning(self, tool.title, str(exc))
         self._refresh_hmi()
+
+    def _teach_launch_arguments(self, key):
+        fields = ((('teach_file', self.item_path), ('bin_teach_file', self.bin_path))
+                  if key == 'item' else (('teach_file', self.tray_path),)
+                  if key == 'tray' else ())
+        arguments = []
+        for name, field in fields:
+            selected = field.text().strip()
+            if not selected:
+                raise ValueError('Select the teach files on Setup / Teach before opening '
+                                 + BY_KEY[key].title)
+            path = Path(selected).expanduser()
+            if not path.is_absolute():
+                path = self.node.root / path
+            if not path.is_file() or path.is_symlink():
+                raise ValueError(f'Selected teach file must be an ordinary file: {path}')
+            arguments.append(f'{name}:={path}')
+        return tuple(arguments)
 
     def _refresh_hmi(self):
         self.mode_buttons.setExclusive(False)
@@ -938,7 +958,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
             '\nHeadless nodes wait here; remote server commands are not connected yet. '
             'No automatic robot preparation or motion.')
         self.load_auto.setVisible(not remote)
-        self.configure.setVisible(not remote)
         self.prepare_panel.setVisible(not remote)
         self.local_run_hint.setVisible(not remote)
         if time.monotonic() - self.hmi_graph_at >= 1.:
@@ -1153,17 +1172,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.pending[name] = client.call_async(request)
         self._refresh_controls()
         return True
-
-    def _configure(self):
-        if self._availability()["configure"]:
-            return
-        paths = tuple(field.text().strip() for field in (
-            self.item_path, self.bin_path, self.tray_path))
-        if self.modes.managed and self.modes.state == 'AUTO':
-            self.station_startup.check_health(perception=False)
-            self.local_preparation.request(paths)
-        else:
-            self._configure_paths(paths)
 
     def _configure_paths(self, paths):
         request = Configure.Request()
@@ -1684,9 +1692,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
         reasons = self._availability()
         paused = current == "PAUSED"
         retry = self._acquisition_paused(state) and not self.preview_mode
-        self.configure.setText(
-            "Reload Teach Configuration" if state and state.configured
-            else "Load Teach Configuration")
         returning = self.return_requested_locally or "return_item" in self.pending
         parking = self.pause_requested_locally or "pause" in self.pending
         if (state is not None and state.feedback_fresh and not self.preview_mode
@@ -1725,7 +1730,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.place_item.setText("Place Item (Retry)" if retry else "Place Item")
         buttons = {
             "clear_repick_history": self.clear_repick,
-            "configure": self.configure, "recover": self.recover, managed_name: self.pause,
+            "recover": self.recover, managed_name: self.pause,
             "home": self.home_button, "pick": self.pick_item, "place": self.place_item,
             "preview_toggle": self.preview_toggle, "speed": self.speed_slider,
             "cp": self.cp_slider,
@@ -1734,7 +1739,6 @@ class ControllerWindow(QtWidgets.QMainWindow):
         descriptions = {
             "clear_repick_history": "Clear tracked pick attempts and active exclusion circles",
             "auto_run": "Pick and place the requested quantity, then return Home",
-            "configure": "Load teach files, enable and initialize the robot to READY",
             "continue": ("Retest suction at Home after clearing the item or obstruction"
                          if recovery_paused else
                          "Clear repick/trickle history and retry with fresh item detections"
@@ -1827,6 +1831,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 if reasons[name] and reasons[name] != "Unavailable in the current state":
                     label = (self.managed_actions[name].text() if name in self.managed_actions
                              else "Manual/Test Run / Local Headless Run" if name == "auto_run"
+                             else "Select Local / Maintenance" if name == "configure"
                              else buttons[name].text())
                     visible_reasons.append(f"{label}: {reasons[name]}")
         self.availability_details.setText("\n".join(visible_reasons))

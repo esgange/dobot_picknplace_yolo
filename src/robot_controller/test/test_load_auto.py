@@ -194,10 +194,10 @@ def test_load_auto_default_off_waits_for_detectors_before_preparing(window):  # 
     window.load_auto.click()
     assert started == [('i', 'b', 't')]
     assert window.load_auto.isChecked() and window.load_auto.isEnabled()  # Cancellation allowed.
-    assert not window.item_path.isEnabled() and not window.configure.isEnabled()
+    assert not window.item_path.isEnabled()
     window.auto_detectors.state = 'RUNNING'
     window._refresh()
-    assert not window.configure.isEnabled()  # Do not bind controller back to offline files.
+    assert window._availability()['configure']  # No binding back to offline files.
     assert not window.item_path.isEnabled()
     window.auto_detectors.stop = Mock()
     window.load_auto.click()
@@ -239,7 +239,7 @@ def test_ready_detectors_prepare_exact_frozen_selection_once(preparing):
     assert (request.item_teach_file, request.bin_teach_file, request.tray_teach_file) == (
         'item.yaml', 'bin.yaml', 'tray.yaml')
     assert view.load_auto.isEnabled() and view.load_auto.isChecked()
-    assert not view.configure.isEnabled() and not view.headless_run_button.isEnabled()
+    assert not view.headless_run_button.isEnabled()
     assert not view.item_path.isEnabled() and view.stop.isEnabled()
     view._refresh()
     client.call_async.assert_called_once()

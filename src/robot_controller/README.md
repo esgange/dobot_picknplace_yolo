@@ -49,11 +49,27 @@ are managed separately.
 | Local / Maintenance | Each explicit mode click snapshots the selected Item/Bin/Tray paths, waits for healthy nodes and fresh idle/unheld controller feedback, then sends one Configure request to load and prepare/enable. Home/Pick/Place, Preview, speed/CP, teaching windows and local runs share this mode. |
 | Remote Auto | Validate the complete external runtime catalog without copying, start read-only headless Item/Tray providers, check required health and remain at DETECTORS_READY. Show WAITING FOR REMOTE. The server command connection is not implemented; no HMI Configure/enable/cycle or Prepare Robot button is provided in this mode. |
 
+There is no separate Load/Reload Teach Configuration button. Reselect
+**Local / Maintenance** to reload/prepare the controller from the selected files.
+Opening **Item Teach** loads the selected Item file and selected Bin path; opening
+**Tray Teach** loads the selected Tray file. Each Open snapshots those paths,
+overriding the tool's previous session. Missing/invalid selections fail visibly
+without loading another profile. Existing paired-model/source checks remain and
+Armed stays OFF. Changing HMI selections while a teaching window is open does
+not reload it: close/reopen it, or use its own Load control. Load Auto retains its
+explicit deployment/headless workflow.
+
+To deploy this teaching-selection change, close affected processes and rebuild
+`item_perception_yolo`, `tray_perception` and `robot_controller` with
+`--symlink-install --cmake-force-configure`, then source and relaunch the HMI.
+The installed teaching launch files need the new file arguments; no interface
+rebuild or teach-file upload is required.
+
 Local preparation has a 180-second health wait and a separate 180-second
 Configure deadline, followed by five seconds for fresh enabled idle READY with
 the exact returned configuration ID. Fields and conflicting controls are locked
 while preparing. Missing/invalid files leave a visible failure with no fallback;
-correct the files and explicitly click the local mode or Load/Reload again.
+correct the files and explicitly click the local mode again.
 A mode click never moves Home or starts a production cycle. STOP cancels pending
 preparation and independently stops issued work; a late successful reply after
 cancellation/timeout requires another Stop. There is no automatic retry or resume.
@@ -64,11 +80,11 @@ For teaching and testing:
 
 1. Select **Local / Maintenance**. The files shown in **Setup / Teach → 1 · Select
    teach files** are loaded automatically and the robot is prepared. If those
-   fields are empty, browse the saved files and click the mode or Load Teach
-   Configuration again. Changing fields does not silently reload them.
-2. Keep **Load Auto OFF**. Open Item Teach/Tray Teach, load matching profiles and
-   explicitly arm each provider. Those windows keep their own trust/loading/arming
-   controls; the HMI does not automatically execute their selected models.
+   fields are empty, browse the saved files and click the mode again.
+   Changing fields does not silently reload them.
+2. Keep **Load Auto OFF**. Open Item Teach/Tray Teach to load the selected profiles
+   and verified paired models, then explicitly arm each provider. Loading uses
+   the teaching windows' existing source validation; opening never arms them.
 3. Use **Home**, **Pick Item**, **Place Item** or **Manual/Test Run** on Operate
    while the teaching windows remain open. Quantity/placement/debug inputs and
    the existing controller action guards are unchanged.
@@ -1003,7 +1019,7 @@ runtime limit (its integer `r` is sent unchanged).
 
 ## Operator status and buttons
 
-Load/Reload Teach Configuration is the explicit preparation command. After the
+Selecting Local / Maintenance explicitly requests controller preparation. After the
 files validate, the controller runs its existing Startup sequence under the same
 operation owner: alarm/ownership/feedback checks, Stop, cold DI1 protection,
 disable/clear/enable, global settings, guarded neutral outputs and confirmed READY.
@@ -1024,8 +1040,8 @@ failure uses that same Continue/Return menu, plus the **Place Item (Retry)**
 shortcut, in manual Place and Auto Run. Pending requests disable conflicting
 actions; STOP remains direct.
 
-Load/Reload is disabled in Preview because loading now prepares real hardware.
-Turning Preview OFF never starts preparation; click Load/Reload explicitly.
+Local preparation is blocked in Preview because it prepares real hardware.
+Turning Preview OFF never starts preparation; select Local / Maintenance explicitly.
 Preview motion buttons retain their read-only behavior, including while disabled.
 
 The window title is **Pick & Place — Station HMI**. The main status is NOT READY, READY,
@@ -1043,7 +1059,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | Operator status | Available controls, subject to the prerequisites below |
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
-| NOT READY, configured | Reload to prepare; Preview; STOP |
+| NOT READY, configured | Select Local / Maintenance to prepare; Preview; STOP |
 | READY | Home; Pick Item; Place Item; Manual/Test Run / Local Headless Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; manual controls and edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
@@ -1176,10 +1192,9 @@ The states are `UNCONFIGURED`, `INACTIVE`, `STARTING`, `READY`, `HOMING`,
 operation generation exist at a time. Action configuration IDs prevent a stale
 GUI or supervisor from executing a replaced profile.
 
-The non-headless GUI labels the configuration control **Reload Teach
-Configuration** after a profile is installed. It remains enabled in idle,
-unheld `READY`, so the operator can revalidate the selected files or install a
-different pair without restarting the controller process. A successful reload
+Reselecting **Local / Maintenance** in idle, unheld `READY` lets the operator
+revalidate the selected files or install a different selection without restarting
+the controller process. There is no separate reload button. A successful reload
 clears TF preview output and repeats robot preparation, restoring SpeedFactor
 100% and validated neutral outputs before reporting READY. Reload is blocked during Home/Pick, Pause, holding, Stop,
 recovery, unknown-held, and fault states. Headless configuration remains fixed
@@ -1447,9 +1462,9 @@ do not drive these LEDs. DI12 Not detected does not prove that fingers are close
 The held-item decision uses its 500 ms loss debounce independently of the raw
 DI1 display. Full raw robot flags and DI/DO remain in typed status.
 
-Item/Bin/Tray Teach fields, Browse buttons, Load/Reload and Load Auto occupy the **Setup / Teach**
+Item/Bin/Tray Teach fields, Browse buttons and Load Auto occupy the **Setup / Teach**
 page. Full paths remain editable and available in field tooltips;
-prefill, explicit load, reload gates and validated persistence are unchanged.
+prefill and validated persistence remain; explicit local-mode selection reloads the controller.
 Lifecycle controls and the command-log toggle stay outside the pages; motion
 and speed/CP controls are on **Operate**.
 The GUI consumes only controller APIs. It adds no Dobot/camera subscription or

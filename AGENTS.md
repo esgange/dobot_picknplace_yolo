@@ -10,6 +10,17 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 299 removes the HMI Load/Reload Teach Configuration button. Explicit local
+mode selection retains rule 298's guarded controller loading/preparation. Item
+Teach Open snapshots the selected Item/Bin paths; Tray Teach Open snapshots the
+selected Tray path. Pass them to the existing loaders instead of remembered
+profiles. Refuse missing selections; invalid sources never fall back to previous
+profiles/models. Preserve paired-model/calibration/source checks, read-only
+preview and explicit provider arming. No live selection watcher or implicit
+controller reload, motion, deployment or ownership change. Close/reopen or use
+the tool's Load control to change an open window. Standalone empty launch
+arguments retain existing session restoration. Update FSM and visual exports.
+
 Rule 298 replaces the three-mode HMI with Remote Auto and Local / Maintenance.
 An explicit local-mode click starts required owned nodes, snapshots the selected
 Item/Bin/Tray paths and sends one guarded Configure to load/prepare/enable after

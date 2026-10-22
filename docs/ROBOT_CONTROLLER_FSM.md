@@ -1,5 +1,17 @@
 # Robot Controller — Finite State Machine
 
+Teach selection review: **2026-10-22**, baseline **`d72493b`** plus rule **299**.
+Remove the separate HMI Load/Reload Teach Configuration button. Explicit local
+mode selection remains the guarded controller loading/preparation action below.
+Item Teach Open snapshots the HMI's selected Item/Bin paths; Tray Teach Open
+snapshots its selected Tray path. Existing loaders validate those files and their
+paired models instead of restoring the tool's previous profile. Missing or
+invalid selections never load another profile. Opening a tool sends no controller
+command and leaves Armed OFF. Selection edits do not replace an open window's
+profile: close/reopen or use its own Load control. Standalone launches without
+explicit file arguments retain session restoration. Load Auto remains explicit
+offline-to-runtime deployment with its existing guards.
+
 Two-mode HMI review: **2026-10-22**, baseline **`d4ac7e1`** plus rule **298**.
 The only station modes are **Remote Auto** and **Local / Maintenance**. This
 supersedes rules 281/296/297's separate Local Auto/Manual modes and the Remote
@@ -118,7 +130,7 @@ motion, process, configuration, automatic action or server-command change.
 Local HMI layout: **rule 298** retains rules 283/284/286/287's three native Qt
 pages and shared controls. Manual/Test Run uses explicitly armed teaching windows;
 Local Headless Run uses the optional Load Auto pair. Both run in Local / Maintenance.
-Setup / Teach keeps file selection, Load/Reload, Load Auto and teaching launchers.
+Setup / Teach keeps file selection, Load Auto and teaching launchers.
 The local mode click itself now loads/prepares the selected files. No mode switch
 is needed to use controller actions with teaching windows open. Remote Auto has
 no local preparation control. Help and refusal text reflect this two-mode workflow.
@@ -203,7 +215,7 @@ Canceling suppresses deferred readiness, and a late successful Configure after
 cancellation gets another Stop after the prior Stop reply is collected. Existing
 providers are refused, never disarmed/killed. Files/selections are locked while
 active; changes require idle/unheld and fresh stationary feedback, or canceling
-startup. Load Teach Configuration remains for manual use/reload; Auto Run remains
+startup. Explicit Local / Maintenance selection handles reload; Auto Run remains
 an explicit separate click. These are GUI supervisor states, not new hardware
 lifecycle states. Controller startup and motion behavior are unchanged. Synthetic
 tests do not establish live readiness.
@@ -984,7 +996,7 @@ a browser with diagram selection, zoom and dragging; both exports work offline.
 
 ## 1. Read this first
 
-- **Launch does not enable or move the robot.** Explicit Local / Maintenance selection or local Load/Reload prepares the robot to READY; motion still needs an action.
+- **Launch does not enable or move the robot.** Explicit Local / Maintenance selection or local Load Auto prepares the robot to READY; motion still needs an action.
 - **READY** means available for an operation; it does not always mean at Home.
 - **HOLDING** means trusted held-item context; it does not always mean at Home.
 - **Pause parks Home/Pick/tray-position operations. Placement Pause stops in place**,
@@ -1032,7 +1044,7 @@ Robot/gripper status, required-node Station health and the lifecycle row remain
 outside the three scrollable pages. **Operate** groups the two runs and shared
 placement/Quantity/progress/debug inputs in Production run, motion/Preview in
 Single actions and speed/CP in Motion settings. **Setup / Teach** contains numbered
-artifact selection and Load/Reload/Load Auto preparation sections, readiness and
+artifact selection and Load Auto preparation sections, readiness and
 compact Item/Tray/Bin/Platform Teach launchers. **Tools / Debug** groups passive RViz,
 camera setup/calibration, Remote Setup, eligible direct maintenance applications
 and Detection history / Clear Repick History. Initialize Station or explicit
@@ -1060,7 +1072,7 @@ the managed button and shows Pausing…/Returning item…; STOP remains availabl
 | Operator status | Available controls, subject to the prerequisites below |
 | --- | --- |
 | NOT READY, no configuration | Select/load teach files; STOP |
-| NOT READY, configured | Reload to prepare; Preview; STOP |
+| NOT READY, configured | Select Local / Maintenance to prepare; Preview; STOP |
 | READY | Home; Pick Item; Place Item; Manual/Test Run / Local Headless Run by provider; Load Auto; Preview; reload; speed; CP; STOP |
 | AUTO RUN | STOP; quantity/progress visible; all manual controls and input edits disabled |
 | BUSY, Home/Pick/Place/tray travel | Pause; STOP |
@@ -1113,7 +1125,7 @@ Load Auto RUNNING and exactly the owned headless providers. Both send the same n
 action with their frozen detector mode and the same X/Y/Rotation/debug inputs.
 The existing AUTO RUN progress label applies to both. Neither button runs in Preview.
 
-Load Auto is beside Load Teach Configuration on **Setup / Teach** and is green when its supervisor is
+Load Auto is on **Setup / Teach** and is green when its supervisor is
 RUNNING after confirmed preparation. Local Headless Run is green only when its normal
 admission gates enable the button. These colors change no guards.
 Local Load Auto ON validates browsed production sources and saved calibrations without
@@ -1147,7 +1159,7 @@ arming of teaching GUIs, Home, pick/place cycle or direct driver client is added
 | STARTING | Owned pair starting; wait for both sole canonical services, at most 180 seconds; OFF cancels |
 | DETECTORS_READY | Remote mode waits with read-only workers; no Configure/enable or server command handling; no HMI transition to PREPARING |
 | PREPARING | Both detectors ready; GUI sends Configure once and waits for success plus matching fresh enabled idle READY; at most 180 seconds overall / five seconds after response; OFF cancels, with Stop if issued |
-| RUNNING | Preparation completed; Auto Run additionally follows normal READY/action gates; local manual Load/Reload requires OFF; idle/unheld OFF stops pair |
+| RUNNING | Preparation completed; Auto Run additionally follows normal READY/action gates; reselecting local mode to reload requires OFF; idle/unheld OFF stops pair |
 | STOPPING | Wait for owned children/native workers to terminate; no new start |
 | FAILED | Pair stopped; reason visible and logged; correct problem and explicitly enable again |
 
@@ -1168,6 +1180,8 @@ flowchart TD
     LocalLoad -->|Invalid files, failure or timeout| Alarm
     LocalLoad -->|Stop or close| CancelLocal["Cancel local preparation; Stop if issued; contain late success; no retry"]
     TeachPage --> Buttons["Home / Pick Item / Place Item"]
+    TeachPage -->|Explicit Item / Tray Teach Open| SelectedTeach["Load HMI-selected files and verified pairs; Armed OFF; no controller command"]
+    SelectedTeach -->|Explicit Arm in teaching windows| Manual
     TeachPage -->|Armed teaching providers| Manual["Manual/Test Run"]
     TeachPage -->|Explicit direct-tool Open; idle unheld| ReleaseCore["Stop detectors; recheck feedback; stop core; await process / graph exit"]
     ReleaseCore --> Tools["Local direct tools; exclusive owner; use tool Stop"]
@@ -1208,8 +1222,8 @@ flowchart TD
 Preview is a GUI routing mode, starts OFF, and cannot be entered with an active or
 pending hardware operation. It adds no controller lifecycle state. While ON,
 Load, Continue, Recover, managed Pause/Return and global speed/CP cannot dispatch;
-the three motion buttons use only `/robot_controller/preview_v2`. Load/Reload is
-disabled because it now prepares real hardware. External hardware APIs retain their own guards and are independent.
+the three motion buttons use only `/robot_controller/preview_v2`. Local preparation
+is blocked because it prepares real hardware. External hardware APIs retain their own guards and are independent.
 There is no fallback when the preview service is unavailable. Its process creates
 only read-only perception clients, never Dobot command clients, and can plan from
 fresh feedback while disabled without running Startup.
@@ -1235,7 +1249,7 @@ it never moves there. Lifecycle buttons stay in their separate row.
 
 ## 2. Normal lifecycle
 
-Load/Reload Teach Configuration is the explicit preparation command. After the
+Selecting Local / Maintenance explicitly requests controller preparation. After the
 files validate, the controller runs its existing Startup sequence under the same
 operation owner: alarm/ownership/feedback checks, Stop, cold DI1 protection,
 disable/clear/enable, global settings, guarded neutral outputs and confirmed READY.
@@ -1256,8 +1270,8 @@ failure uses this same Continue/Return menu in manual Place and Auto Run, plus
 the **Place Item (Retry)** shortcut. Pending requests disable conflicting actions;
 STOP remains direct.
 
-Load/Reload is disabled in Preview because loading now prepares real hardware.
-Turning Preview OFF never starts preparation; click Load/Reload explicitly.
+Local preparation is blocked in Preview because it prepares real hardware.
+Turning Preview OFF never starts preparation; select Local / Maintenance explicitly.
 Preview motion buttons retain their read-only behavior, including while disabled.
 
 ```mermaid
@@ -1266,7 +1280,7 @@ flowchart TD
     UNCONFIGURED -->|Explicit Load validates files| INACTIVE
     INACTIVE -->|Continue same Configure operation, or external Startup| STARTING
     STARTING -->|Confirmed| READY
-    READY -->|Explicit Reload validates files| INACTIVE
+    READY -->|Explicit local-mode reload validates files| INACTIVE
     READY -->|Idle speed/CP accepted| READY
     HOLDING -->|Idle speed/CP accepted| HOLDING
     READY -->|Home| HOMING

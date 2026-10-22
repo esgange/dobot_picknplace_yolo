@@ -105,7 +105,7 @@ class TrayCanvas(QtWidgets.QWidget):
 
 
 class TrayTeachWindow(QtWidgets.QWidget):
-    def __init__(self, node):
+    def __init__(self, node, *, teach_file=None):
         super().__init__()
         self.node = node
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tray-teach")
@@ -377,7 +377,7 @@ class TrayTeachWindow(QtWidgets.QWidget):
             "Connect RGB and browse a model to preview. Selected files load automatically.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        state = read_session(node.root)
+        state = None if teach_file else read_session(node.root)
         if state is not None:
             self.camera_path.setText(state["camera_filename"])
             self.profile_filename = state["profile_filename"]
@@ -409,9 +409,10 @@ class TrayTeachWindow(QtWidgets.QWidget):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(100)
-        if self.profile_filename:
-            self.restoring_profile = tray_directory(node.root) / self.profile_filename
-            self._message(f"Restoring Tray Teach: {self.profile_filename}. Armed stays OFF.")
+        if teach_file or self.profile_filename:
+            self.restoring_profile = (Path(teach_file) if teach_file else
+                                      tray_directory(node.root) / self.profile_filename)
+            self._message(f"Loading Tray Teach: {self.restoring_profile}. Armed stays OFF.")
             self._read_tray(self.restoring_profile)
 
     def _button(self, title, callback):
@@ -1450,7 +1451,8 @@ def main(args=None):
         executor.add_node(node)
         thread = threading.Thread(target=spin_checked, args=(node, executor), daemon=True)
         thread.start()
-        window = TrayTeachWindow(node)
+        window = TrayTeachWindow(
+            node, teach_file=node.declare_parameter("teach_file", "").value or None)
         window.show()
         app.exec_()
         if node.fatal_error:
