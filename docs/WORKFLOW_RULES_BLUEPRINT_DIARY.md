@@ -12763,6 +12763,8 @@ Never use a floating “latest” version in an issue, script, or deployment not
 
 ### 2026-10-22 — Rule 303: tray purge begins in the final 5 mm
 
+Superseded by rule 304 below; retained as historical implementation evidence.
+
 - User keeps continuous blended placement and replaces the fixed 90% vacuum
   trigger with the last 5 mm before the release target. This supersedes rule
   267's tray vacuum timing only. The earlier approximate 50 ms pulse discussion
@@ -12800,6 +12802,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   measurement is performed. Apply through an operator-controlled controller
   relaunch after the active operation ends; no teach edit or interface rebuild
   is needed. Commit and push follow the standing workflow.
+
+### 2026-10-22 — Rule 304: roll back distance purge and trigger at 97% descent
+
+- User explicitly requests rolling back the recent last-5-mm change, cleaning
+  up its implementation and changing the original 90% tray vacuum event to 97%.
+  Supersede rule 303 and rule 267's earlier percentage. This does not roll back
+  schema-16 retracts, the full settling-height pickup check or the HMI alarm fix.
+- Restore the original percentage-only MotionIO, output-conflict validation and
+  shared release planner. Remove distance_mm, trigger identity, distance override,
+  short-stroke branch and the tests specific to those removed features. Verify
+  motion.py/release.py exactly match pre-35a7827; placement.py differs from that
+  baseline only by vacuum_release_percent=90 becoming 97. No leftover distance
+  arguments or negative-five event tuples remain in controller source/tests.
+- Manual Place, Auto Run and Preview queue `{0,97,13,0}` then `{0,97,1,1}`:
+  suction OFF before exhaust ON at 97% of descent. Fingers retain 80% OPEN;
+  all outputs neutralize at retract start. Approach/retract remain at Home Z,
+  release remains tray surface + trayplace_height, and all three motions retain
+  continuous CP blending. Preserve rates, ordered admission, release evidence,
+  held-loss/Stop/recovery and Return Item/missed-pick timing. No fixed pulse
+  duration, new height field, teach schema or interface change is introduced.
+- Update existing target, real-transport and Preview expectations to 97%, then
+  run the complete controller suite: 1,929 tests pass using synthetic feedback
+  and offscreen UI. Isolated robot_controller build, Python AST, changed-line
+  100-column lint and git diff --check pass. Update AGENTS and current guides/FSM;
+  regenerate adjacent HTML/PDF and verify nine diagrams/pages, source hash and
+  97% placement labels. Evidence: logs/tray_purge_97_* in the isolated checkout.
+- Preserve operator artifacts and the unrelated RViz edit. No live commands,
+  deployment, restart or physical timing measurement is performed. The running
+  controller needs an operator-controlled relaunch after the active operation
+  ends. No teach-file changes are required. Commit/push follows the standing
+  workflow; retain history rather than resetting or force-pushing shared main.
 
 ### Future entry template
 

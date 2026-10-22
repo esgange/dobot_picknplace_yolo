@@ -675,9 +675,7 @@ At 50% of the first upward lift, `use_grip=false` relaxes DO2 and DO14 (both OFF
 `use_grip=true, grip_onpick=false` closes them at 50% of the second pick_retract
 lift. With both flags true they stay closed.
 After valid tray pose/depth, `use_grip=false` reopens at 80% of pre-place motion.
-Suction remains on until the last 5 mm before the placement release target;
-Return Item retains 80% of descent. A placement descent of 5 mm or less starts
-purge immediately; purge ends when retract starts, without a fixed pulse duration.
+Suction remains on until 97% of placement descent; Return Item retains 80%.
 These are existing boolean fields; loading/saving preserves both independently.
 Controller rule 300 defines the independent approach/two-stage retract heights and
 DI1-monitored final descent; teaching remains non-actuating.

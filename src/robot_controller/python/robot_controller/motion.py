@@ -19,7 +19,6 @@ class MotionIO:
     percent: int
     channel: int
     active: bool
-    distance_mm: int | None = None
 
     def __post_init__(self):
         if type(self.percent) is not int or not 0 <= self.percent <= 100:
@@ -28,21 +27,12 @@ class MotionIO:
             raise ValueError("Motion I/O must use the canonical gripper outputs")
         if type(self.active) is not bool:
             raise ValueError("Motion I/O state must be an explicit boolean")
-        if self.distance_mm is not None:
-            if type(self.distance_mm) is not int or self.percent != 0:
-                raise ValueError("Motion I/O distance must be an integer with percentage zero")
-
-    @property
-    def trigger(self):
-        if self.distance_mm is not None:
-            # Negative distances are measured back from the target in V4 MovLIO.
-            return (1, self.distance_mm)
-        # Distance-mode zero is the start trigger; percentage mode excludes zero.
-        return (1 if self.percent == 0 else 0, self.percent)
 
     def vendor_value(self):
-        mode, distance = self.trigger
-        return f"{{{mode},{distance},{self.channel},{int(self.active)}}}"
+        # The manual explicitly defines distance-mode zero as the start trigger;
+        # percentage-mode's listed range otherwise excludes zero.
+        mode = 1 if self.percent == 0 else 0
+        return f"{{{mode},{self.percent},{self.channel},{int(self.active)}}}"
 
 
 def gripper_open_events(percent):
@@ -64,10 +54,9 @@ def vacuum_suck_events(percent):
     return (MotionIO(percent, 1, False), MotionIO(percent, 13, True))
 
 
-def vacuum_exhaust_events(percent, *, distance_mm=None):
+def vacuum_exhaust_events(percent):
     """Enter EXHAUST only after commanding suction OFF."""
-    return (MotionIO(percent, 13, False, distance_mm),
-            MotionIO(percent, 1, True, distance_mm))
+    return (MotionIO(percent, 13, False), MotionIO(percent, 1, True))
 
 
 def vacuum_neutral_events(percent):
@@ -105,13 +94,13 @@ class Target:
                 raise ValueError("Joint motion cannot carry relative-Z")
         states = {}
         for event in self.motion_io:
-            key = (event.trigger, event.channel)
+            key = (event.percent, event.channel)
             if key in states and states[key] != event.active:
                 raise ValueError("One timed output cannot request two states at one point")
             states[key] = event.active
-        for trigger in {event.trigger for event in self.motion_io}:
+        for percent in {event.percent for event in self.motion_io}:
             active = {event.channel for event in self.motion_io
-                      if event.trigger == trigger and event.active}
+                      if event.percent == percent and event.active}
             if {1, 13} <= active or {2, 14} <= active:
                 raise ValueError("Opposing actuator outputs cannot be active together")
         if self.relative_z and self.motion_io:
