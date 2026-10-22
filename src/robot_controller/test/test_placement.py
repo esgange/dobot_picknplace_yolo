@@ -17,7 +17,7 @@ from robot_controller.hardware import DobotTransport
 from robot_controller.errors import FeedbackFailure, OperationCanceled, ManagedInterruption
 from robot_controller.kinematics import pose_matrix, pose_values
 from robot_controller.managed_control import ManagedControl
-from robot_controller.motion import pick_targets
+from robot_controller.motion import MotionIO, Target, pick_targets
 from robot_controller.pick_session import PickSession
 from robot_controller.placement import PlacementOperation, place_targets, validate_target
 from robot_controller.state_machine import ControllerStateMachine
@@ -67,8 +67,8 @@ def test_place_preserves_tool_z_and_exact_depth_heights(angle, use_grip):
     assert [p.acceleration_percent for p in plan] == [70, 30, 40]
     assert [(e.percent, e.channel, e.active) for e in plan[0].motion_io] == (
         [] if use_grip else [(80, 2, False), (80, 14, True)])
-    assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
-        (80, 2, False), (80, 14, True), (90, 13, False), (90, 1, True)]
+    assert [e.vendor_value() for e in plan[1].motion_io] == [
+        '{0,80,2,0}', '{0,80,14,1}', '{1,-5,13,0}', '{1,-5,1,1}']
     assert [(e.percent, e.channel, e.active) for e in plan[2].motion_io] == [
         (0, 2, False), (0, 14, False), (0, 1, False), (0, 13, False)]
 
@@ -111,6 +111,44 @@ def test_drop_at_or_above_home_rejects_before_any_placement_command(surface_z, u
         run_place(node)
     assert not node.hardware.calls
     assert node.holding_item
+
+
+@pytest.mark.parametrize('descent_mm', [2., 5., 5.01, 10., 50., 100., 200.])
+@pytest.mark.parametrize('tray_height_mm', [0., 60., 100.])
+def test_purge_uses_last_five_mm_for_every_placement_height(descent_mm, tray_height_mm):
+    profile = settings()
+    profile['motion']['trayplace_height'] = tray_height_mm
+    drop_mm = 250. + tray_height_mm
+    home = pose_matrix([300, 200, drop_mm + descent_mm, 180, 0, 0])
+    plan = place_targets(home, tray_observation(), profile, 0., home)
+    distance_mm = 0 if descent_mm <= 5. else -5
+    assert [e.vendor_value() for e in plan[1].motion_io][-2:] == [
+        f'{{1,{distance_mm},13,0}}', f'{{1,{distance_mm},1,1}}']
+    assert [e.vendor_value() for e in plan[2].motion_io] == [
+        '{1,0,2,0}', '{1,0,14,0}', '{1,0,1,0}', '{1,0,13,0}']
+    assert len(plan) == 3  # Same blended queue; no pulse command or extra waypoint.
+    assert plan[1].matrix[2, 3] == pytest.approx(drop_mm / 1000)
+
+
+@pytest.mark.parametrize('distance_mm', [True, 1.5, float('nan'), '-5'])
+def test_distance_io_requires_integer_millimetres(distance_mm):
+    with pytest.raises(ValueError, match='distance'):
+        MotionIO(0, 1, True, distance_mm=distance_mm)
+
+
+def test_distance_io_rejects_ambiguous_trigger_and_conflicting_states():
+    with pytest.raises(ValueError, match='distance'):
+        MotionIO(90, 1, True, distance_mm=-5)
+    pose = np.eye(4)
+    with pytest.raises(ValueError, match='two states'):
+        Target('release', pose, 100, 100, motion_io=(
+            MotionIO(0, 1, True, distance_mm=-5), MotionIO(0, 1, False, distance_mm=-5)))
+    with pytest.raises(ValueError, match='Opposing actuator'):
+        Target('release', pose, 100, 100, motion_io=(
+            MotionIO(0, 1, True, distance_mm=-5), MotionIO(0, 13, True, distance_mm=-5)))
+    # A distance trigger must not collide with a different start/end trigger.
+    Target('release', pose, 100, 100, motion_io=(
+        MotionIO(0, 1, False), MotionIO(0, 1, True, distance_mm=-5)))
 
 
 @pytest.mark.parametrize("value", [-1., float("nan"), float("inf"), True, "40", None])

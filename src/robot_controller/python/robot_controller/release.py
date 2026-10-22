@@ -7,13 +7,24 @@ from .motion import (Target, gripper_neutral_events, gripper_open_events, rigid_
                      vacuum_exhaust_events, vacuum_neutral_events)
 
 
-def release_targets(release_pose, settings, home_matrix, *, prefix, vacuum_release_percent=80):
+def release_targets(release_pose, settings, home_matrix, *, prefix,
+                    vacuum_release_distance_mm=None):
     """Open at 80%; release vacuum at the caller's trigger; neutral on retract."""
     release = rigid_matrix(release_pose, "Release target")
     home = rigid_matrix(home_matrix, "Home")
     pre_z = home[2, 3]
     if pre_z <= release[2, 3]:
         raise ValueError("Placement approach at Home Z must be above the drop height")
+    vacuum_events = vacuum_exhaust_events(80)
+    if vacuum_release_distance_mm is not None:
+        if (type(vacuum_release_distance_mm) is not int
+                or vacuum_release_distance_mm <= 0):
+            raise ValueError("Vacuum release distance must be a positive integer in mm")
+        descent_mm = (pre_z - release[2, 3]) * 1000
+        # A shorter descent is already within the release window at its start.
+        distance = (0 if descent_mm <= vacuum_release_distance_mm + 1e-9
+                    else -vacuum_release_distance_mm)
+        vacuum_events = vacuum_exhaust_events(0, distance_mm=distance)
     result = []
     for name, z, rate in (("pre", pre_z, "travel_percent"),
                           ("release", release[2, 3], "approach_percent"),
@@ -22,7 +33,7 @@ def release_targets(release_pose, settings, home_matrix, *, prefix, vacuum_relea
         point[2, 3] = z
         events = ()
         if name == "release":
-            events = gripper_open_events(80) + vacuum_exhaust_events(vacuum_release_percent)
+            events = gripper_open_events(80) + vacuum_events
         elif name == "retract":
             events = gripper_neutral_events(0) + vacuum_neutral_events(0)
         result.append(Target(f"{prefix}_{name}", point, 100,

@@ -12761,6 +12761,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   controller/HMI relaunch after ending the active operation. No teach-file edit
   or ROS interface rebuild is needed. Commit/push follows the standing workflow.
 
+### 2026-10-22 — Rule 303: tray purge begins in the final 5 mm
+
+- User keeps continuous blended placement and replaces the fixed 90% vacuum
+  trigger with the last 5 mm before the release target. This supersedes rule
+  267's tray vacuum timing only. The earlier approximate 50 ms pulse discussion
+  resolves to a distance trigger; purge duration still depends on motion.
+- Manual Place, Auto Run and Preview share native MovLIO distance-mode events
+  `{1,-5,13,0}` then `{1,-5,1,1}`: suction OFF before exhaust ON. Negative distance
+  is measured back from the target in the official
+  [Dobot V4 API](https://github.com/Dobot-Arm/TCP-IP-Python-V4/blob/main/dobot_api.py).
+  Keep vendor source unchanged. The reference is measured tray surface Z plus
+  trayplace_height, independently of pick heights. A 100 mm descent triggers at
+  95%; 50 mm triggers at 90%. A descent of 5 mm or less triggers at its start.
+- Extend internal MotionIO with an explicitly validated integer distance and
+  canonical trigger identity for conflicting/opposing-output checks. Existing
+  percentage events keep their exact encoding. The shared release planner's
+  default remains 80% for Return Item; only placement requests distance 5 mm.
+- Keep fingers OPEN at 80% of descent and all outputs neutral at retract start.
+  On descents shorter than 25 mm vacuum therefore releases before finger opening.
+  Keep the same three motions, CP blending, rates, ordered responses, release
+  observation, continuous held-loss monitoring and Stop/recovery gates. No dwell,
+  extra waypoint, timer, separate DO call, ROS interface or teach-schema change.
+  Missed-pick release and all operator files remain unchanged.
+- All 21 placement-height/descent-distance regression combinations fail against
+  the old fixed-90% implementation. After the fix, 264 focused tests pass. The
+  isolated robot_controller build and complete 1,955-test controller suite pass,
+  covering native serialized requests, short strokes, invalid/conflicting event
+  triggers, both gripper modes, Preview, continuous queue admission, release/drop
+  supervision, Stop/recovery and unchanged Return Item behavior. Python AST,
+  changed-line 100-column lint and git diff --check pass.
+- Update AGENTS, current root/package guides and FSM diagrams/guards. Regenerate
+  its nine HTML SVG diagrams and nine-page PDF; verify the source SHA-256 and
+  updated placement text in both exports. Evidence is under ignored
+  logs/tray_purge_distance_* in /tmp/picknplace-settling-pick-retract.
+- Preserve the running station, operator artifacts and unrelated RViz edit.
+  No live restart, deployment, Configure, enable, motion or physical pulse
+  measurement is performed. Apply through an operator-controlled controller
+  relaunch after the active operation ends; no teach edit or interface rebuild
+  is needed. Commit and push follow the standing workflow.
+
 ### Future entry template
 
 ```text

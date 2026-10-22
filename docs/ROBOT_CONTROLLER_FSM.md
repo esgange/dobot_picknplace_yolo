@@ -1,5 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Tray purge distance review: **2026-10-22**, baseline **`71ab475`** plus rule **303**.
+Manual Place, Auto Run and Preview turn suction OFF (DO13), then exhaust ON (DO1)
+5 mm before the release target: measured tray surface Z + trayplace_height.
+Use native MovLIO distance mode -5, measured back from the target. Descents of
+5 mm or less trigger at distance zero/start. A 100 mm descent therefore triggers
+at 95%; 50 mm triggers at 90%. Finger OPEN remains at 80% of descent, independent
+of this distance trigger. All outputs become neutral at the start of retract.
+Keep the same three continuous CP-blended motions, rates, ordered admission,
+release observation, held-loss supervision and Stop gates. There is no dwell,
+extra waypoint or separate pulse command. Purge duration varies with motion;
+this is not a fixed 50 ms pulse. Return Item and missed-pick timing remain
+unchanged. No teach file, schema, interface or operator artifact changes.
+
 Full settling-height pickup check review: **2026-10-22**, baseline **`8d41dc3`**
 plus rule **302**. If final-pick settling expires without DI1, lift through the
 full remaining upward distance to the saved settling_retract height. Keep the
@@ -339,9 +352,9 @@ capture, depth and visualization/I/O timings, retaining unlabelled failed/sample
 success frames. Logging failures do not alter motion or valid perception results.
 All states, motion/IO, speed, blending, freshness, retry and Stop guards remain.
 
-Tray vacuum timing review: **2026-10-11**, baseline **`f14b560`** plus rule
-**267** (superseding rule 266). Manual Place, Auto Run and Preview command
-DO13 OFF then DO1 ON at 90% of tray descent. Keep finger OPEN at 80%, pre-place
+Tray vacuum timing: rule **303** supersedes rule **267**. Manual Place,
+Auto Run and Preview command DO13 OFF then DO1 ON in the last 5 mm before
+the release target (or at the start when the descent is at most 5 mm). Keep finger OPEN at 80%, pre-place
 finger timing and all outputs neutral at 0% retract. Finger opening alone does not end held monitoring;
 observed commanded suction OFF still defines release. Return Item and missed-pick
 exhaust retain 80%. Geometry, rates, CP blending, queue admission and Stop/drop
@@ -438,8 +451,8 @@ Open at 80% of that travel; no separate output/arrival wait. `use_grip=true` kee
 MovL pre-place. Hardware, Auto Run and Preview share targets. Admit only issued
 approach output changes during feedback reconciliation; opening neither confirms
 release nor ends held-loss monitoring. Keep vacuum, poses, rates, CP, three-command
-queue, next-bin prefetch/handoff and 0% retract neutral. Rule 267 retains the
-80% descent finger event but delays tray vacuum release to 90%.
+queue, next-bin prefetch/handoff and 0% retract neutral. Rule 303 retains the
+80% descent finger event but triggers tray vacuum release in the final 5 mm.
 Pickup and Return Item I/O remain unchanged; live verification is pending.
 
 Measured-surface guard review: **2026-10-08**, baseline **`73582e3`** plus rule
@@ -724,7 +737,7 @@ transport reopen with timed DO2 OFF then DO14 ON at 80% of pre-place MovLIO.
 Auto Run starts its fresh bin request before queue admission; all placement replies still
 precede next-Pick admission. Vacuum stays on; no DI12 wait is added. Continuous
 drop/Stop supervision and 0% retract reset remain in force. Fingers open at 80%
-descent; rule 267 uses 90% vacuum release for Place, retaining 80% for Return.
+descent; rule 303 uses the last 5 mm for Place vacuum release, retaining 80% for Return.
 Item Teach exposes both booleans independently without schema/profile changes.
 
 Fresh-cycle review: **2026-10-05**, baseline **`0301756`** plus rule **218**.
@@ -760,9 +773,9 @@ run automatically; source, feedback, output and Stop containment remain strict.
 
 Release-timing review: **2026-10-04**, baseline **`3de7a22`** plus rule **213**.
 Every Return Item route opens fingers, turns suction OFF and turns exhaust ON at
-**80% descent**, using the shared release planner. Rule 267 supersedes this timing
+**80% descent**, using the shared release planner. Rule 303 supersedes this timing
 for Place Item's vacuum only: fingers remain at 80%, suction OFF/exhaust ON move
-to 90%. All four outputs still become neutral at
+to the final 5 mm before the release target. All four outputs still become neutral at
 0% retract. Preserve route geometry, rates, ordered queue admission, endpoint
 checks and continuous drop monitoring until observed commanded suction OFF.
 No teach setting, schema or interface change is introduced.
@@ -873,8 +886,8 @@ counts placement before retry. Service faults and invalid evidence stay terminal
 
 Queued release review: **2026-10-01**, baseline **`57bf58e`** plus rule **199**.
 Place Item and explicit held Return Item open fingers (DO2 OFF, DO14 ON) at 80%
-of descent. Disable suction then enable exhaust (DO13 OFF, DO1 ON) at 90% for
-Place under rule 267, retaining 80% for Return Item.
+of descent. Disable suction then enable exhaust (DO13 OFF, DO1 ON) in the final
+5 mm before the Place release target under rule 303; retain 80% for Return Item.
 There is no separate 100% output event.
 Release evidence uses finger-open/exhaust ON, finger-close/suction OFF and DI1 LOW, independently
 of DI12. Missing intermediate release evidence still cannot block the queue.
@@ -889,7 +902,7 @@ Pick behind placement. No slow Drop Retract segment is added.
 Queued Return Item review: **2026-10-01**, baseline **`9706508`** plus rule **191**.
 Explicit held Return shares placement's approach/drop/retract and 0% neutral
 timing, using the saved pre-pick drop target. Return retains 80% finger OPEN/
-suction OFF/exhaust ON; rule 267 changes only Place vacuum release to 90%.
+suction OFF/exhaust ON; rule 303 changes only Place vacuum release to the last 5 mm.
 Append exact joint Home in the same queue; confirm final Home and neutral/DI1 LOW. Source/release
 context survives Stop. Rule 212 extends this same route to automatic drop returns.
 
@@ -1709,7 +1722,7 @@ flowchart TD
     Valid --> Align["Align item/tray X axis lines; add offset; choose smallest Link6 turn of two attitudes 180 degrees apart from fresh Tray Detect pose; preserve taught tilt"]
     Align --> Queue["One queue: pre-place, drop and retract at speed 100%; selected CP; no intermediate arrival wait"]
     Queue --> Pre["Placement X/Y at Home Z: use_grip OFF uses MovLIO with 80% DO2 OFF then DO14 ON; otherwise MovL"]
-    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN; 90% suction OFF then exhaust ON"]
+    Pre --> Release["MovLIO: drop Z = tray surface + trayplace_height; 80% fingers OPEN; last 5 mm: suction OFF then exhaust ON"]
     Release --> Retract["MovLIO to pre-place in same queue; speed 100%; 0% start fingers + vacuum neutral"]
     Retract --> Accepted["All replies accepted: PlaceItem SUCCESS; retain PLACING and operation ownership"]
     Accepted --> Monitor["Completion worker: final retract joint-FK + idle + execution; neutral and DI1 LOW"]
@@ -1859,11 +1872,15 @@ Retain Item Teach travel/approach/retract acceleration for the queue and
 travel acceleration for Tray Detect Position; Item Pick retains its taught speeds.
 Commands are pre-place MovLIO with 80% DO2 OFF → DO14 ON when `use_grip=false`
 (otherwise MovL); MovLIO release
-with 80% DO2 OFF → DO14 ON, then 90% DO13 OFF → DO1 ON; MovLIO back to pre-place with
+with 80% DO2 OFF → DO14 ON and final-5-mm DO13 OFF → DO1 ON; MovLIO back to pre-place with
 0% DO2 OFF → DO14 OFF → DO1 OFF → DO13 OFF. No final Home command or additional
 retract-height/clearance target is sent. Exhaust
-lasts from descent's 90% vacuum trigger until the upward command starts,
-not a 50 ms pulse.
+lasts from the final-5-mm vacuum trigger until the upward command starts,
+with motion-dependent duration. Native distance-mode events are `{1,-5,13,0}`
+then `{1,-5,1,1}`; a descent of 5 mm or less uses zero/start distance instead.
+The reference is the release target (surface + trayplace_height). Fingers keep
+their independent 80% trigger, which follows vacuum release for descents below
+25 mm. No 50 ms pulse or added arrival wait is introduced.
 Zero uses distance-mode start events (`{1,0,channel,0}`) in the retract MovLIO;
 there is no separate DO call or pre-retract output wait.
 
@@ -1932,7 +1949,7 @@ flowchart TD
     Tray --> Observe["Two matching fresh tray poses; verify stability proof; second pose/depth: 20% coverage and saved-plane height guard; at most 10 requests; no fixed spacing"]
     Observe --> Prefetch["If another item needed: start fresh next-bin worker with revisioned repick exclusions"]
     Prefetch --> Valid["Validate placement geometry and sources; keep suction"]
-    Valid --> Place["Queue approach (use_grip OFF: open fingers at 80%) → descent (80% fingers; 90% suction OFF / exhaust ON) → retract (0% neutral); require all 3 accepted replies"]
+    Valid --> Place["Queue approach (use_grip OFF: open fingers at 80%) → descent (80% fingers; last 5 mm suction OFF / exhaust ON) → retract (0% neutral); require all 3 accepted replies"]
     Prefetch -.-> Capture["In parallel: post-trigger RGB and median depth/TF; validate and retain batch ranked by distance from Home"]
     Place -->|All accepted| Last{"Last required item?"}
     Last -->|Yes| Home["Immediately append MovJ Home behind placement"]
@@ -2393,7 +2410,7 @@ Names below are relative to `/robot_controller/`.
 | Auto Run repick reacquisition (rule 263) | Blocked prefetch revision changed after owned placement/Home; check cancellation and restore PICKING before fresh acquisition/motion; retain action owner and count; unchanged exclusions enter the Home item wait; no new READY → HOLDING / RETURNING_ITEM edges |
 | Placement depth admission (internal) | Fresh v3 response bound to the exact sources/settings; valid original pixels meet the placement-specific 20% of the full sampling circle after tray containment/range/MAD filtering; empty/zero-valid samples fail; no fixed count floor; item pick percentage unchanged |
 | Placement finger reopen (internal) | `use_grip=false`; valid tray pose/depth, placement geometry and sources; pre-place MovLIO has 80% DO2 OFF then DO14 ON; reconcile only issued approach transitions; no separate DO/output wait; suction/held monitoring preserved, drop/Stop still pre-empt; Auto Run bin request already started when needed |
-| Tray vacuum release (rule 267) | Release MovLIO: fingers OPEN at 80%, DO13 OFF then DO1 ON at 90%; keep holding/drop monitoring through finger opening until observed commanded suction OFF; 0% retract neutral; Return Item vacuum stays at 80%; same manual/Auto Run/Preview targets |
+| Tray vacuum release (rule 303) | Release MovLIO: fingers OPEN at 80%, DO13 OFF then DO1 ON 5 mm before the release target; descent at most 5 mm uses start distance zero; keep holding/drop monitoring through finger opening until observed commanded suction OFF; 0% retract neutral; Return Item vacuum stays at 80%; same manual/Auto Run/Preview targets |
 | `pause` service | Started READY / HOLDING / HOMING / PICKING / PAUSED; managed-request and owning-operation guards |
 | `continue` service | Confirmed managed PAUSED with valid parked feedback; recovery suction Pause additionally requires raw DI1 LOW and only retests; during Auto Run, item or tray acquisition Pause; item Continue clears history/poses and resets budgets |
 | `return_item` service | Started eligible managed state and held source, or recovery suction Pause with unreleased HELD/DROPPED source; during Place/Auto Run, only exhausted-acquisition PAUSED before release admission; no conflicting request |

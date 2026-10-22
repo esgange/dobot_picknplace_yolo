@@ -10,6 +10,15 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 303 triggers tray suction OFF then exhaust ON 5 mm before the release
+target, superseding rule 267's 90% vacuum trigger. Use native MovLIO distance
+mode -5; descents of 5 mm or less trigger at distance zero/start. Keep fingers
+OPEN at 80%, neutral at retract start, the same three CP-blended motions and
+release/held-loss/Stop gates. Manual Place, Auto Run and Preview share this rule.
+Purge duration depends on motion; no fixed 50 ms pulse, dwell or extra command.
+Return Item and missed-pick release timing stay unchanged. No teach/schema or
+operator-file changes; update diary, FSM and its adjacent HTML/PDF exports.
+
 Rule 302 extends the no-suction pickup check to the full remaining upward distance
 to saved settling_retract Z, superseding rules 224/300's 50% probe only. Keep the
 candidate ACTIVE and suction/fingers unchanged through the lift at approach rates.
