@@ -10,6 +10,23 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 298 replaces the three-mode HMI with Remote Auto and Local / Maintenance.
+An explicit local-mode click starts required owned nodes, snapshots the selected
+Item/Bin/Tray paths and sends one guarded Configure to load/prepare/enable after
+base health and idle/unheld feedback. Health and Configure each have 180 seconds;
+match fresh enabled idle READY within five seconds of success. Stop cancels and
+contains late success; no retry, motion or teaching-provider arming is implicit.
+Teaching windows coexist with controller Home/Pick/Place and Manual/Test Run.
+Local Load Auto remains explicit offline-to-runtime deployment for Local Headless
+Run, which retains fresh health admission. Direct-tool Open (Motion Debug, Gripper
+Diagnostics, Camera Calibration) releases the owned core under existing gates and
+waits for process/graph exit before spawn. Close the tool and explicitly reselect
+local to restore/reload; closing it never enables. Remote validates external
+runtime and starts headless nodes, then waits without HMI Configure/enable or a
+Prepare Robot button. Server commands remain unimplemented. Preserve source
+fences, ownership, camera interlock, independent Stop and operator deployment.
+This supersedes rules 281/296/297's mode/preparation clauses only; update FSM/exports.
+
 Rules 296/297 separate Remote Auto (external runtime catalog, no copy) from Local
 Auto (explicit offline-to-runtime deployment) and Manual / Maintenance. Normal HMI
 launch starts only the GUI. Initialize Station or explicit Remote Auto starts

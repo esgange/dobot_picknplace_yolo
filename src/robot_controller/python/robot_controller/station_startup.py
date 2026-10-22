@@ -38,7 +38,9 @@ class StationStartup:
                 self.alarm = ''
                 self.last_alarm = ''
                 self.events.record('INFO', 'station_health_ready', 'Required nodes are healthy')
-                self.message = 'Required nodes are healthy; recipe preparation remains explicit'
+                self.message = ('Required nodes are healthy; remote server commands are not connected'
+                                if self.mode == 'REMOTE_AUTO' else
+                                'Required nodes are healthy')
             elif time.monotonic() >= self.deadline:
                 self.fail_health(['Required nodes did not become healthy: ' + '; '.join(errors)])
 

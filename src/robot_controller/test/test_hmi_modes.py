@@ -188,7 +188,7 @@ def test_manual_tool_button_enabled_only_after_ownership_released(
     window._refresh()
     assert window.tool_controls['motion'][0].isEnabled()
     assert not window.load_auto.isEnabled() and not window.pick_item.isEnabled()
-    assert window.status.text() == 'MANUAL TOOLS'
+    assert window.status.text() == 'LOCAL DIRECT TOOLS'
     assert 'active manual tool' in window.stop.toolTip()
     window.tools.start = Mock()
     window.tool_controls['motion'][0].click()
@@ -202,8 +202,10 @@ def test_manual_tool_button_enabled_only_after_ownership_released(
     modes.core.state = 'RUNNING'
     window.node.status = status()
     window._refresh()
-    assert not window.tool_controls['motion'][0].isEnabled()
-    assert 'Manual mode' in window.tool_controls['motion'][0].toolTip()
+    assert window.tool_controls['motion'][0].isEnabled()
+    # Open may request release, but direct spawn still refuses concurrent control.
+    with pytest.raises(ValueError, match='Close the robot controller'):
+        window._tool_start_check('motion')
 
 
 def test_returning_auto_preserves_teach_window_option_for_manual_run(modes):

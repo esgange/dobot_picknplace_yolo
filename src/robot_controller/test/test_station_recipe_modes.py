@@ -198,31 +198,30 @@ def test_hmi_shutdown_keeps_dependencies_until_core_closed(window):  # noqa: F81
     assert order == ['detectors', 'tools', 'core', 'dependencies']
 
 
-def test_remote_load_uses_runtime_and_blocks_local_actions(window):  # noqa: F811
+def test_remote_placeholder_blocks_preparation_and_local_actions(window):  # noqa: F811
     window.modes.state = 'REMOTE_AUTO'
     window.auto_detectors.start_runtime = Mock()
     window.auto_detectors.start = Mock()
     window._refresh()
-    assert window.load_auto.isEnabled()  # No browsed offline paths needed.
+    assert not window.load_auto.isEnabled()
+    assert window.load_auto.isHidden()
     assert not window.item_path.isEnabled()
     assert not window.home_button.isEnabled()
     assert not window.headless_run_button.isEnabled()
     window._toggle_auto(True)
-    window.auto_detectors.start_runtime.assert_called_once()
+    window.auto_detectors.start_runtime.assert_not_called()
     window.auto_detectors.start.assert_not_called()
 
 
-def test_remote_prepare_does_not_overwrite_local_selection(preparing):  # noqa: F811
-    from robot_controller import gui
+def test_remote_cannot_claim_preparation_or_overwrite_local_selection(preparing):  # noqa: F811
     view, future = preparing
     view.modes.state = 'REMOTE_AUTO'
     view.item_path.setText('/offline/item_teach_saved.yaml')
+    view._configure_paths = Mock()
     view._refresh()
-    assert view.saved_selection is None
-    future.set_result(SimpleNamespace(success=True, configuration_id='runtime', message='Ready'))
-    view._refresh()
-    gui.save_state.assert_not_called()
-    assert view.auto_detectors.preparation_result == ('runtime', '')
+    view._configure_paths.assert_not_called()
+    assert not view.auto_detectors.preparation_claimed
+    assert view.item_path.text() == '/offline/item_teach_saved.yaml'
 
 
 def healthy_rows():
@@ -331,16 +330,19 @@ def test_remote_detector_failure_latches_alarm_and_does_not_loop(window):
     assert not window.station_startup.checking
 
 
-def test_remote_nodes_ready_requires_explicit_prepare_click(window):
+def test_remote_nodes_ready_stays_read_only_even_if_toggle_handler_called(window):
     window.modes.state = 'REMOTE_AUTO'
+    window.node.status = status(state='UNCONFIGURED', configured=False)
     window.auto_detectors.state = 'DETECTORS_READY'
     window._configure_paths = Mock()
     window._refresh()
     window._configure_paths.assert_not_called()
-    assert window.load_auto.text() == 'Load Auto: Prepare Robot'
+    assert window.load_auto.isHidden()
+    assert window.status.text() == 'WAITING FOR REMOTE'
     assert not window.load_auto.isChecked()
     window._toggle_auto(True)
-    assert window.auto_detectors.snapshot[0] == 'PREPARING'
+    assert window.auto_detectors.snapshot[0] == 'DETECTORS_READY'
+    window._configure_paths.assert_not_called()
 
 
 def test_initialization_retry_refuses_incomplete_owned_shutdown(modes):

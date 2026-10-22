@@ -113,7 +113,7 @@ class AutoDetectors:
         self._start((), runtime=True)
 
     def start_runtime_nodes(self):
-        """Remote mode starts read-only perception; robot preparation stays explicit."""
+        """Remote placeholder starts read-only perception without robot preparation."""
         self._start((), runtime=True, prepare=False)
 
     def request_preparation(self):
@@ -262,8 +262,9 @@ class AutoDetectors:
                         self._state('PREPARING', 'Detectors ready; loading teach files and '
                                     'preparing the robot…', expected='STARTING')
                     else:
-                        self._state('DETECTORS_READY', 'Runtime detectors ready; press Load Auto '
-                                    'to prepare/enable the robot', expected='STARTING')
+                        self._state('DETECTORS_READY', 'Runtime detectors ready; waiting for '
+                                    'remote server commands (connection not implemented)',
+                                    expected='STARTING')
                     ready_once = True
                 elif not ready and ready_once:
                     raise RuntimeError('A headless detection service disappeared')

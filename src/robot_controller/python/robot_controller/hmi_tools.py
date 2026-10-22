@@ -79,7 +79,7 @@ def change_reason(tool, status, nodes, auto_state, pending=False):
     names = {name for name, _namespace in nodes}
     if status is None and 'robot_controller' in names:
         return 'Waiting for fresh controller status before changing tools'
-    if tool.kind == 'maintenance':
+    if tool.kind in ('maintenance', 'calibration'):
         if status is not None or 'robot_controller' in names:
             return 'Close the robot controller before opening direct robot maintenance'
         others = names.intersection(MAINTENANCE_NODES.difference(tool.nodes))

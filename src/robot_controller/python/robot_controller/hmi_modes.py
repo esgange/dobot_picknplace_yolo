@@ -1,4 +1,4 @@
-"""Local HMI ownership handoff between production and manual tools."""
+"""Two station modes, with a temporary controller release for direct local tools."""
 
 import os
 from pathlib import Path
@@ -11,7 +11,8 @@ from .events import PackageEventLogger
 
 CORE_NODES = {'robot_controller', 'robot_controller_preview'}
 AUTO_MODES = {'AUTO', 'REMOTE_AUTO'}
-MODE_NAMES = {'AUTO': 'Local Auto', 'REMOTE_AUTO': 'Remote Auto', 'MANUAL': 'Manual / Maintenance'}
+MODE_NAMES = {'AUTO': 'Local / Maintenance', 'REMOTE_AUTO': 'Remote Auto',
+              'MANUAL': 'Local / Maintenance — direct tools'}
 
 
 def local_core_or_maintenance():
@@ -37,7 +38,7 @@ class HmiModes:
         self.core = ToolLaunches(node)
         self.events = PackageEventLogger(node.root, 'robot_controller_hmi_modes')
         self.state = 'MANUAL' if self.managed else 'EXTERNAL'
-        self.message = 'Manual tools; production controller is stopped'
+        self.message = 'Local direct tools; production controller is stopped'
         self.deadline = 0.
         self.stopping_core = False
         self.destination = 'MANUAL'
@@ -131,7 +132,9 @@ class HmiModes:
                   and self.node.status.configuration_editable
                   and 'robot_controller' in self.names()):
                 self.transition(self.destination, MODE_NAMES[self.destination] +
-                                '; explicitly load the recipe to prepare the robot')
+                                ('; starting read-only runtime detectors; remote commands pending'
+                                 if self.destination == 'REMOTE_AUTO' else
+                                 '; teaching windows and robot controls share this mode'))
             elif time.monotonic() > self.deadline:
                 self.fail('Production controller did not publish fresh status within 30 seconds')
         elif self.state == 'STOPPING_AUTO':
@@ -149,7 +152,8 @@ class HmiModes:
                   and not self.names().intersection(CORE_NODES)
                   and not local_core_or_maintenance()):
                 self.node.clear_controller_status()
-                self.transition('MANUAL', 'Manual tools; production controller is stopped')
+                self.transition('MANUAL', 'Local direct tools; controller released. Close the tool '
+                                'and select Local / Maintenance to restore robot controls')
                 if self.destination in AUTO_MODES:
                     target = self.destination
                     try:

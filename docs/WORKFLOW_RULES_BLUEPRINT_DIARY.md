@@ -12514,6 +12514,74 @@ Never use a floating “latest” version in an issue, script, or deployment not
   or teach upload is needed for this change. The running station is unchanged;
   real camera disconnect/reconnect and physical cycles remain operator-verified.
 
+### 2026-10-22 — Rule 298: merge local production and maintenance in the HMI
+
+- User requests two station modes: Remote Auto and Local / Maintenance. Merge
+  teaching/maintenance with former Local Auto controls so teaching providers can
+  stay open while Home/Pick/Place and Manual/Test Run use the production controller.
+  Keep the existing three-page native Qt layout. Rename the headless run button
+  Local Headless Run; local Load Auto remains an explicit deployment option.
+- Explicit local-mode selection starts missing owned dependencies/core, snapshots
+  the three displayed Item/Bin/Tray paths, waits for canonical base health and fresh
+  idle/unheld feedback, then sends one existing Configure to load/prepare/enable.
+  Opening the HMI/restoring selections still starts/loads nothing. Health wait and
+  Configure each have 180-second bounds; successful response requires fresh enabled
+  idle READY with matching configuration ID within five seconds. Failed/empty
+  selections never fall back. Changing fields needs explicit load/reselection.
+- Keep Stop independent: cancel waiting/preparing work without another Configure;
+  contain issued work and any accepted late response after cancellation/timeout.
+  Closing during initial unconfigured camera waiting cancels without a robot
+  command. Close during issued preparation uses Stop before core cleanup. No
+  implicit Home, pick/place, retry, teaching-model trust or provider arming.
+- Direct Motion Debug, Gripper Diagnostics and Camera Calibration Open requests
+  temporarily release the local core under existing idle/unheld/pending/Preview
+  gates. Recheck after detector shutdown, then require owned process/graph exit and
+  final tool ownership admission. Refused or failed release never opens the tool;
+  clear a refused pending handoff so the operator can correct it. Keep the same
+  local mode selected; display LOCAL DIRECT TOOLS and use the active tool's Stop.
+  Close the tool and explicitly reselect local to restore/reload/prepare. Tool
+  closure never enables automatically. Read-only teaching does not release core.
+- Remote Auto is an explicit placeholder: validate external runtime without copy,
+  start missing required nodes and read-only Item/Tray workers, check health, then
+  remain DETECTORS_READY / WAITING FOR REMOTE. Remove HMI Prepare Robot/configure
+  access there. No server command listener, authentication/job integration, enable
+  or cycle is implemented. Keep Stop/Recover under existing guards. A startup race
+  between fresh camera diagnostics and still-waiting controller status now waits
+  within the health deadline instead of prematurely latching station failure.
+- Preserve exact runtime source fences, operator-controlled deployment, optional
+  local offline-to-runtime Load Auto, fresh health before Local Headless Run,
+  canonical ownership, camera-loss containment and retained source/grip/release
+  context. No hardware API/lifecycle, trajectory, I/O, calibration, inference or
+  teach-schema changes. Rules 281/296/297's conflicting mode/preparation clauses
+  are superseded only. Update AGENTS, root/package READMEs and maintained FSM;
+  regenerate its nine offline HTML/PDF diagrams with the existing local renderer.
+- The user's HMI/driver/cameras are active. Develop in isolated worktree
+  /tmp/picknplace-two-station-modes and build only robot_controller there; build
+  succeeds with the existing remote_setup/underlay warnings. Installed modules
+  match final source and import correctly. Do not rebuild canonical outputs,
+  restart station processes, launch sensor/model nodes or send hardware commands.
+  Preserve unrelated RViz edits and all .env/calibration/teach/model/runtime data.
+- Installed controller suite passes 1,897 regressions. Final focused UI/ownership
+  checks after label/hint refinements pass 249 cases (overlapping suite). New
+  coverage includes one-shot loading, frozen selection, required health and matched
+  READY, unsafe feedback, invalid files, response/confirmation deadlines, Stop,
+  late acceptance, no initial-wait shutdown command, direct-tool release/refusal,
+  teaching/controller coexistence and remote read-only waiting. Earlier failures
+  were changed old-mode assertions and incomplete synthetic fixtures; correct
+  them without adding production fallbacks.
+- Offscreen 1120x760 and 1024x768 views verify the two mode buttons, persistent
+  STOP, usable local pages and remote waiting without preparation controls. Fix
+  checked-label clipping and stale loading hints. Verify FSM source hash, nine
+  embedded SVGs and nine A3 PDF pages; rendering has no browser errors/network.
+  Evidence: logs/hmi_two_modes_build.txt, logs/hmi_two_modes_installed_tests.txt,
+  logs/hmi_two_modes_final_ui_tests.txt, logs/hmi_two_modes_visual.txt and
+  logs/hmi_two_modes_fsm_render.txt. git diff --check passes. Commit/push follows
+  standing rule 8, excluding all operator/unrelated files.
+- Deployment: operator closes affected processes, rebuilds robot_controller with
+  --symlink-install --cmake-force-configure, then relaunches. The new Python module
+  requires this rebuild. No interface rebuild or teach upload is required.
+  Software checks do not claim a physical cycle or live camera fault test.
+
 ### Future entry template
 
 ```text

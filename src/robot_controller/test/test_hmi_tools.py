@@ -98,7 +98,7 @@ def test_hmi_exit_stops_active_operation_before_owned_providers(window):  # noqa
     ('motion', None, 'OFF', [('gripper_control_gui', '/')], 'competing'),
     ('gripper', status(), 'OFF', [], 'Close the robot controller'),
     ('motion', None, 'OFF', [], ''),
-    ('calibration', status(), 'OFF', [], ''),
+    ('calibration', status(), 'OFF', [], 'Close the robot controller'),
 ])
 def test_tool_admission(key, controller, auto, nodes, expected):
     reason = change_reason(BY_KEY[key], controller, nodes, auto)

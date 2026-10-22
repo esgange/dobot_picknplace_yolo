@@ -32,6 +32,7 @@ from .perception_mode import ANY, TEACH, HEADLESS, check_mode
 from .errors import FeedbackFailure
 from .hmi_tools import BY_KEY, TOOLS, ToolLaunches, change_reason
 from .hmi_modes import HmiModes, AUTO_MODES
+from .local_preparation import LocalPreparation
 from .hmi_widgets import STATION_STYLE, hint, section
 from .camera_health import CameraHealth, configured_cameras, TOPIC as CAMERA_STATUS
 from .station_startup import StationStartup
@@ -169,6 +170,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self._tools_pending() or self.preview_mode or self.preview_clear_future is not None
             or self.auto_preparing or self.auto_stop_again))
         self.station_startup = StationStartup(node, self.modes)
+        self.local_preparation = LocalPreparation(node.root)
+        self.pending_tool = None
         self.remote_health_pending = False
         self.remote_nodes_requested = False
         self.tool_controls = {}
@@ -309,15 +312,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.initialize_station.clicked.connect(self._initialize_station)
         mode_row.addWidget(self.initialize_station)
         mode_row.addWidget(QtWidgets.QLabel('Station mode'))
-        self.manual_mode = QtWidgets.QPushButton('Manual / Maintenance')
-        self.auto_mode = QtWidgets.QPushButton('Local Auto')
+        self.local_mode = QtWidgets.QPushButton('Local / Maintenance')
         self.remote_mode = QtWidgets.QPushButton('Remote Auto')
         self.mode_buttons = QtWidgets.QButtonGroup(self)
         for button, mode in ((self.remote_mode, 'REMOTE_AUTO'),
-                             (self.auto_mode, 'AUTO'), (self.manual_mode, 'MANUAL')):
+                             (self.local_mode, 'AUTO')):
             button.setCheckable(True)
             button.setMinimumHeight(36)
-            button.setMinimumWidth(160)
+            button.setMinimumWidth(max(160, button.fontMetrics().horizontalAdvance(button.text()) + 44))
             button.setStyleSheet('QPushButton{padding:5px 10px}'
                                  'QPushButton:checked{background:#198754;color:white;'
                                  'font-weight:700}')
@@ -335,8 +337,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto.setCheckable(True)
         self.load_auto.clicked.connect(self._toggle_auto)
         prepare_panel, preparation = section('2 · Prepare station')
+        self.prepare_panel = prepare_panel
         preparation.addWidget(hint(
-            'Local Auto copies offline teach files. Remote Auto uses externally deployed runtime files.'))
+            'Local / Maintenance loads the selected teach files and prepares the robot. '
+            'Load Auto optionally deploys them for local headless runs.'))
         prepare_columns = QtWidgets.QGridLayout()
         for column, button in enumerate((self.load_auto, self.configure)):
             button.setMinimumHeight(40)
@@ -355,8 +359,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto_status.setMinimumHeight(32)
         preparation.addWidget(self.load_auto_status)
         self.recipe_layout.addWidget(prepare_panel)
-        self.recipe_layout.addWidget(hint(
-            '3 · When READY, set Quantity and placement on Operate and choose your run.'))
+        self.local_run_hint = hint(
+            '3 · When READY, set Quantity and placement on Operate and choose your run.')
+        self.recipe_layout.addWidget(self.local_run_hint)
         self.recipe_layout.addStretch()
         lifecycle = QtWidgets.QHBoxLayout()
         self.recover = QtWidgets.QPushButton("Recover / Clear Error")
@@ -459,7 +464,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.auto_run_button = QtWidgets.QPushButton("Manual/Test Run")
         self.auto_run_button.setMinimumHeight(48)
         self.auto_run_button.clicked.connect(lambda: self._action("auto_run", detector_mode=TEACH))
-        self.headless_run_button = QtWidgets.QPushButton("Local Auto Run")
+        self.headless_run_button = QtWidgets.QPushButton("Local Headless Run")
         self.headless_run_button.setMinimumHeight(48)
         self.headless_run_button.clicked.connect(
             lambda: self._action("auto_run", detector_mode=HEADLESS))
@@ -558,7 +563,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.log_view.hide()
         layout.setAlignment(QtCore.Qt.AlignTop)
         focus_order = (
-            self.manual_mode, self.auto_mode, self.recover, self.pause, self.stop, self.pages,
+            self.local_mode, self.recover, self.pause, self.stop, self.pages,
             self.auto_quantity, self.place_x, self.place_y, self.place_rotation, self.debug_images,
             self.headless_run_button, self.auto_run_button, self.home_button, self.preview_toggle,
             self.pick_item, self.place_item, self.speed_slider, self.cp_slider,
@@ -599,14 +604,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _build_tool_pages(self):
         self.teaching_layout.addWidget(self._tool_group(
             'Teaching windows', ('item', 'tray', 'bin', 'platform'),
-            'Select Manual / Maintenance to open. For Manual/Test Run, arm matching Item/Tray '
-            'profiles, keep the windows open and return to Local Auto.', compact=True))
+            'In Local / Maintenance, open and arm matching Item/Tray profiles. '
+            'Home, Pick, Place and Manual/Test Run remain available.', compact=True))
         self.teaching_layout.addStretch()
 
         debug = self.page_layouts['Tools / Debug']
         debug.addWidget(hint(
-            'Use Manual / Maintenance for setup and direct maintenance. '
-            'Use the active tool’s Stop controls while production is stopped.'))
+            'Local / Maintenance supports teaching and robot operation together. Direct robot '
+            'tools release the controller first; use the active tool’s Stop while it owns the robot.'))
         columns = QtWidgets.QHBoxLayout()
         columns.setSpacing(16)
         inspect = QtWidgets.QVBoxLayout()
@@ -621,7 +626,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         history_panel, history = section('Detection history')
         history.addWidget(hint(
             'Clear pick-attempt exclusions from the idle production controller. '
-            'Requires an Auto mode.'))
+            'Available in Local / Maintenance.'))
         history.addWidget(self.clear_repick)
         maintenance.addWidget(history_panel)
         maintenance.addStretch()
@@ -671,10 +676,17 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _set_mode(self, target):
         try:
+            if self.pending_tool or self.local_preparation.busy or self.local_preparation.awaiting_reply:
+                raise ValueError('Wait for local preparation/tool handoff, or press Stop to cancel preparation')
+            if target == 'AUTO' and self.modes.state == 'AUTO':
+                reason = idle_reason(self.node.status)
+                if reason or self._tools_pending() or self.preview_mode:
+                    raise ValueError(reason or 'Finish pending requests and leave Preview')
+                if self.auto_detectors.snapshot[0] not in ('OFF', 'FAILED'):
+                    raise ValueError('Turn Load Auto OFF before loading selected local teach files')
             if self.station_startup.state in ('OFF', 'FAILED'):
                 self.station_startup.select(target)
-                if target == 'REMOTE_AUTO':
-                    self.station_startup.start()
+                self.station_startup.start()
             elif target != self.modes.state:
                 self.modes.request(target)
             self.station_startup.mode = target
@@ -682,9 +694,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 self._request_remote_health()
             else:
                 self.remote_health_pending = False
-                self.station_startup.checking = False
-            if target == 'MANUAL':
-                self.pages.setCurrentIndex(2)
+                self.station_startup.check_health(perception=False)
+                self.local_preparation.request(tuple(field.text().strip() for field in (
+                    self.item_path, self.bin_path, self.tray_path)))
         except (ValueError, RuntimeError) as exc:
             if target == 'REMOTE_AUTO':
                 self.station_startup.fail_health([str(exc)])
@@ -694,6 +706,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _initialize_station(self):
         try:
+            if self.local_preparation.busy or self.pending_tool:
+                raise ValueError('Wait for local preparation or tool handoff')
             if self.station_startup.state == 'RUNNING':
                 if self.modes.state == 'FAILED':
                     self.modes.request(self.station_startup.mode)
@@ -728,22 +742,71 @@ class ControllerWindow(QtWidgets.QMainWindow):
             # bind the external runtime recipe. Never Configure on mode entry.
             if readiness_errors(self._health_rows(refresh=True), perception=False):
                 return
+            # Controller and camera diagnostics arrive independently. A transient
+            # startup blocker waits within the health deadline, never latches an
+            # early failure merely because the unconfigured core is still waiting.
+            if idle_reason(self.node.status) or self._tools_pending():
+                return
+            blockers = [BY_KEY[key].title for key in self.tools.active()
+                        if BY_KEY[key].kind in ('teach', 'calibration', 'maintenance')]
+            if blockers:
+                self.station_startup.fail_health(['Close local tools: ' + ', '.join(blockers)])
+                self.remote_health_pending = False
+                return
             self.remote_nodes_requested = True
             try:
-                reason = self._auto_change_reason()
-                if reason:
-                    raise ValueError(reason)
                 self.auto_detectors.start_runtime_nodes()
             except (ValueError, RuntimeError) as exc:
                 self.station_startup.fail_health([str(exc)])
                 self.remote_health_pending = False
 
+    def _poll_local_preparation(self):
+        preparation = self.local_preparation
+        if preparation.busy:
+            if self.modes.state == 'FAILED' or self.station_startup.state == 'FAILED':
+                preparation.fail(self.modes.message if self.modes.state == 'FAILED'
+                                 else self.station_startup.message)
+            else:
+                errors = readiness_errors(self._health_rows(refresh=True), perception=False)
+                reason = idle_reason(self.node.status)
+                if reason:
+                    errors.append(reason)
+                if self.modes.state != 'AUTO':
+                    errors.append('Waiting for local controller ownership')
+                if preparation.state == 'WAITING' and (self.pending or self.preview_mode
+                        or self.pending_goal is not None or self.result_future is not None):
+                    errors.append('Another HMI request is pending')
+                preparation.poll(errors, self.node.status, self._configure_paths)
+        if preparation.stop_needed:
+            preparation.stop_needed = False
+            self.auto_stop_again = True
+        if preparation.state == 'FAILED' and self.station_startup.mode == 'AUTO':
+            self.station_startup.fail_health([preparation.message])
+
+    def _poll_tool_handoff(self):
+        if self.pending_tool is None:
+            return
+        if self.modes.state == 'FAILED':
+            self.pending_tool = None
+        elif self.modes.state not in ('STOPPING_AUTO', 'MANUAL'):
+            self.pending_tool = None
+            self.station_startup.fail_health([self.modes.message])
+        elif self.modes.state == 'MANUAL':
+            key, self.pending_tool = self.pending_tool, None
+            try:
+                self.tools.start(key, lambda: self._tool_start_check(key))
+            except (ValueError, RuntimeError) as exc:
+                self.station_startup.fail_health([str(exc)])
+
     def _manual_tool_reason(self, tool):
         if self.station_startup.state == 'OFF' and tool.kind not in ('communication', 'camera'):
             return 'Initialize Station before opening station tools'
         if (self.modes.managed and tool.kind not in ('viewer', 'communication')
-                and self.modes.state != 'MANUAL'):
-            return 'Select Manual mode before opening teaching/setup/debug tools'
+                and self.modes.state not in ('AUTO', 'MANUAL')):
+            return 'Select Local / Maintenance before opening teaching/setup/debug tools'
+        if tool.kind not in ('viewer', 'communication') and (
+                self.local_preparation.busy or self.pending_tool):
+            return 'Wait for local preparation or tool handoff'
         return ''
 
     def _tool_start_check(self, key):
@@ -756,28 +819,53 @@ class ControllerWindow(QtWidgets.QMainWindow):
             raise ValueError(reason)
         if any(name in tool.nodes for name, _namespace in nodes):
             raise ValueError(f'{tool.title} is already running; its existing window is external')
-        if tool.kind == 'maintenance' and any(
+        if tool.kind in ('maintenance', 'calibration') and any(
                 BY_KEY[other].kind in ('maintenance', 'calibration')
                 for other in self.tools.active() - {key}):
             raise ValueError('Close other maintenance tools before opening this one')
-        if tool.kind == 'maintenance':
+        if tool.kind in ('maintenance', 'calibration'):
             local = self.modes.local_owner()
             if local:
                 raise ValueError('Close existing local command applications: ' + local)
+
+    def _tool_open_reason(self, tool, nodes):
+        reason = self._manual_tool_reason(tool)
+        if reason:
+            return reason
+        if (tool.kind in ('maintenance', 'calibration') and self.modes.managed
+                and self.modes.state == 'AUTO'):
+            # Open means an explicit guarded handoff, not concurrent ownership.
+            reason = self.modes.reason('MANUAL')
+            if reason:
+                return reason
+            nodes = [(name, ns) for name, ns in nodes
+                     if name not in ('robot_controller', 'robot_controller_preview')]
+            return change_reason(tool, None, nodes, self.auto_detectors.snapshot[0],
+                                 self._tools_pending())
+        return change_reason(tool, self.node.status, nodes, self.auto_detectors.snapshot[0],
+                             self._tools_pending())
 
     def _tool_clicked(self, key):
         tool = BY_KEY[key]
         state, _message = self.tools.snapshot(key)
         try:
             if state not in ('OFF', 'FAILED'):
-                reason = ('' if tool.kind in ('viewer', 'maintenance', 'communication') else change_reason(
+                reason = ('' if tool.kind in ('viewer', 'maintenance', 'calibration', 'communication') else change_reason(
                     tool, self.node.status, self.hmi_nodes, self.auto_detectors.snapshot[0],
                     self._tools_pending()))
                 if reason:
                     raise ValueError(reason)
                 self.tools.stop(key)
             else:
-                self.tools.start(key, lambda: self._tool_start_check(key))
+                reason = self._tool_open_reason(tool, self.node.get_node_names_and_namespaces())
+                if reason:
+                    raise ValueError(reason)
+                if (tool.kind in ('maintenance', 'calibration') and self.modes.managed
+                        and self.modes.state == 'AUTO'):
+                    self.modes.request('MANUAL')
+                    self.pending_tool = key
+                else:
+                    self.tools.start(key, lambda: self._tool_start_check(key))
         except (ValueError, RuntimeError) as exc:
             QtWidgets.QMessageBox.warning(self, tool.title, str(exc))
         self._refresh_hmi()
@@ -787,29 +875,47 @@ class ControllerWindow(QtWidgets.QMainWindow):
         uninitialized = self.station_startup.state == 'OFF'
         retry = self.station_startup.state == 'FAILED'
         for button, target in ((self.remote_mode, 'REMOTE_AUTO'),
-                               (self.auto_mode, 'AUTO'), (self.manual_mode, 'MANUAL')):
-            selected = (self.station_startup.mode if uninitialized or
-                        self.station_startup.state == 'STARTING' else self.modes.state) == target
-            reason = self.modes.reason(target) if not selected and not uninitialized and not retry else ''
+                               (self.local_mode, 'AUTO')):
+            selected = self.station_startup.mode == target
+            reason = ''
+            if not uninitialized and not retry:
+                if target != self.modes.state:
+                    reason = self.modes.reason(target)
+                elif target == 'AUTO':
+                    reason = idle_reason(self.node.status)
+                    if self._tools_pending() or self.preview_mode:
+                        reason = 'Finish pending requests and leave Preview'
+                    elif self.auto_detectors.snapshot[0] not in ('OFF', 'FAILED'):
+                        reason = 'Turn Load Auto OFF before loading local teach files'
             if self.station_startup.state == 'STARTING':
                 reason = 'Wait for station initialization'
+            if self.local_preparation.busy or self.local_preparation.awaiting_reply or self.pending_tool:
+                reason = 'Wait for local preparation/tool handoff; Stop cancels preparation'
             button.setChecked(selected)
-            button.setEnabled((not selected or target == 'REMOTE_AUTO') and not reason
+            button.setEnabled(self.modes.managed and not reason
                               and not self.station_startup.checking)
             button.setToolTip(reason or (
-                'Stop owned production processes; keep cameras/bringup' if target == 'MANUAL'
-                else 'Start missing nodes and check health using the external runtime recipe'
+                'Start headless nodes using the external runtime recipe and wait; '
+                'remote server commands are not connected yet'
                 if target == 'REMOTE_AUTO' else
-                'Select offline teach files; Load Auto copies them into runtime_teach'))
+                'Load selected Item/Bin/Tray teach files and prepare/enable the robot; '
+                'keep teaching windows and robot controls together'))
         self.mode_buttons.setExclusive(True)
         self.mode_detail.setText(self.station_startup.message if uninitialized or
                                  self.station_startup.state in ('STARTING', 'FAILED') else
                                  self.modes.message if self.modes.managed else
                                  'External client; use the normal launch for mode switching')
+        if self.station_startup.mode == 'AUTO' and self.local_preparation.message:
+            if self.local_preparation.busy or self.local_preparation.state in ('FAILED', 'CANCELED'):
+                self.mode_detail.setText(self.local_preparation.message)
+        elif (self.modes.state == 'REMOTE_AUTO'
+              and self.auto_detectors.snapshot[0] == 'DETECTORS_READY'):
+            self.mode_detail.setText('Headless nodes ready; remote server commands pending')
         self.initialize_station.setEnabled(uninitialized or retry or
                                           self.station_startup.state == 'RUNNING'
                                           and self.modes.state != 'MANUAL'
-                                          and not self.station_startup.checking)
+                                          and not self.station_startup.checking
+                                          and not self.local_preparation.busy and not self.pending_tool)
         self.initialize_station.setText('Initialize Station' if uninitialized else
                                         'Initializing…' if self.station_startup.state == 'STARTING'
                                         else 'Checking Health…' if self.station_startup.checking
@@ -828,8 +934,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
             'Remote recipe: runtime_teach/\n' +
             ('\n'.join(str(path) for path in paths) if paths else
              'The external station must finish deploying Item/Bin/Tray YAMLs and paired models '
-             'before selecting Remote Auto. Load Auto explicitly prepares/enables the robot.') +
-            '\nRemote job connection is not implemented in this phase.')
+             'before selecting Remote Auto.') +
+            '\nHeadless nodes wait here; remote server commands are not connected yet. '
+            'No automatic robot preparation or motion.')
+        self.load_auto.setVisible(not remote)
+        self.configure.setVisible(not remote)
+        self.prepare_panel.setVisible(not remote)
+        self.local_run_hint.setVisible(not remote)
         if time.monotonic() - self.hmi_graph_at >= 1.:
             try:
                 self.hmi_nodes = tuple(self.node.get_node_names_and_namespaces())
@@ -845,10 +956,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
             external = not owned and bool(names.intersection(tool.nodes))
             reason = change_reason(tool, self.node.status, self.hmi_nodes, auto_state,
                                    self._tools_pending())
-            if owned and tool.kind in ('viewer', 'maintenance', 'communication'):
+            if owned and tool.kind in ('viewer', 'maintenance', 'calibration', 'communication'):
                 reason = ''
             elif not owned:
-                reason = self._manual_tool_reason(tool) or reason
+                reason = self._tool_open_reason(tool, self.hmi_nodes)
             button.setText('External' if external else 'Close' if owned else 'Open')
             button.setEnabled(not external and state != 'STOPPING' and not reason)
             button.setToolTip('Opened elsewhere; this HMI cannot close it' if external else
@@ -1010,6 +1121,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.preview_clear_deadline = time.monotonic() + 5.0
 
     def closeEvent(self, event):
+        if (self.local_preparation.state in ('CONFIGURING', 'CONFIRMING')
+                or self.local_preparation.awaiting_reply):
+            self._immediate_stop()
+        else:
+            self.local_preparation.cancel()
         state = self.node.status
         owns_providers = (self.auto_detectors.snapshot[0] not in ('OFF', 'FAILED')
                           or bool(self.tools.active().intersection({'item', 'tray'})))
@@ -1041,8 +1157,13 @@ class ControllerWindow(QtWidgets.QMainWindow):
     def _configure(self):
         if self._availability()["configure"]:
             return
-        self._configure_paths(tuple(field.text().strip() for field in (
-            self.item_path, self.bin_path, self.tray_path)))
+        paths = tuple(field.text().strip() for field in (
+            self.item_path, self.bin_path, self.tray_path))
+        if self.modes.managed and self.modes.state == 'AUTO':
+            self.station_startup.check_health(perception=False)
+            self.local_preparation.request(paths)
+        else:
+            self._configure_paths(paths)
 
     def _configure_paths(self, paths):
         request = Configure.Request()
@@ -1057,6 +1178,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         return True
 
     def _prepare_auto(self):
+        if self.modes.state == 'REMOTE_AUTO':
+            return  # Remote is a read-only headless placeholder in this phase.
         auto_state = self.auto_detectors.snapshot[0]
         if (self.auto_preparing and not self.auto_prepare_canceled
                 and auto_state in ('STOPPING', 'FAILED', 'OFF')):
@@ -1065,7 +1188,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         paths = self.auto_detectors.take_preparation()
         if paths is None:
             return
-        reason = (('Select an Auto mode first' if self.modes.managed
+        reason = (('Select Local / Maintenance first' if self.modes.managed
                    and self.modes.state not in AUTO_MODES else '') or idle_reason(self.node.status))
         if (reason or self.preview_mode or self.pending or self.pending_goal is not None
                 or self.result_future is not None or self.preview_clear_future is not None):
@@ -1091,6 +1214,10 @@ class ControllerWindow(QtWidgets.QMainWindow):
     _acquisition_paused = staticmethod(acquisition_paused)
 
     def _immediate_stop(self):
+        if self.local_preparation.busy:
+            self.station_startup.checking = False
+        self.local_preparation.cancel()
+        self.local_preparation.stop_needed = False  # Independent Stop below contains it.
         if self.preview_mode:
             self._clear_preview()
         # Dispatch the independent Stop before optional action cancellation.
@@ -1286,6 +1413,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             try:
                 result = future.result()
                 accepted = result is not None and result.success
+                if name == 'configure':
+                    self.local_preparation.response(result)
                 if (name == 'configure' and self.auto_preparing
                         and self.auto_prepare_canceled and accepted):
                     # The service may have completed after cancellation's first Stop.
@@ -1331,6 +1460,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
                         "Fingers are relaxed, suction and "
                         "exhaust are OFF, and DI1 is LOW. The interrupted action was cancelled.")
             except Exception as exc:
+                if name == 'configure':
+                    self.local_preparation.response(error=str(exc))
                 if name == 'configure' and self.auto_preparing:
                     self.auto_detectors.prepared(error=str(exc))
                     self._immediate_stop()
@@ -1385,9 +1516,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._collect()
         self.station_startup.poll()
         self.modes.poll()
+        self._poll_tool_handoff()
         if self.modes.state == 'FAILED' and self.station_startup.state != 'OFF':
             self.station_startup.fail_health([self.modes.message])
         self._poll_remote_health()
+        self._poll_local_preparation()
         if (self.modes.state in AUTO_MODES and self.auto_detectors.snapshot[0] == 'FAILED'
                 and (not self.remote_health_pending or self.remote_nodes_requested)):
             self.station_startup.fail_health([self.auto_detectors.snapshot[1]])
@@ -1395,8 +1528,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self._refresh_hmi()
 
     def _auto_change_reason(self):
+        if self.modes.state == 'REMOTE_AUTO':
+            return 'Remote Auto only starts headless nodes and waits; server commands are not connected'
+        if self.local_preparation.busy or self.local_preparation.awaiting_reply or self.pending_tool:
+            return 'Wait for local preparation or tool handoff'
         if self.modes.managed and self.modes.state not in AUTO_MODES:
-            return 'Select Auto mode and wait for the production controller'
+            return 'Select Local / Maintenance and wait for the production controller'
         state, _message = self.auto_detectors.snapshot
         if state in ('DEPLOYING', 'STARTING', 'PREPARING'):
             return ''  # PREPARING cancellation also uses the independent Stop.
@@ -1425,13 +1562,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         if not self._auto_change_reason():
             if enabled:
                 try:
-                    if self.auto_detectors.snapshot[0] == 'DETECTORS_READY':
-                        self.auto_detectors.request_preparation()
-                    elif self.modes.state == 'REMOTE_AUTO':
-                        self.auto_detectors.start_runtime()
-                    else:
-                        self.auto_detectors.start(tuple(field.text().strip() for field in (
-                            self.item_path, self.bin_path, self.tray_path)))
+                    self.auto_detectors.start(tuple(field.text().strip() for field in (
+                        self.item_path, self.bin_path, self.tray_path)))
                 except ValueError as exc:
                     QtWidgets.QMessageBox.warning(self, 'Load Auto', str(exc))
             else:
@@ -1465,7 +1597,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
             target_error = "Enter positive X/Y in mm and a valid rotation"
         reasons = button_policy(
             self.node.status, preview=self.preview_mode,
-            pending=bool(self.pending or self.auto_stop_again
+            pending=bool(self.pending or self.auto_stop_again or self.local_preparation.busy
+                         or self.local_preparation.awaiting_reply or self.pending_tool
                          or self.preview_clear_future is not None
                          or self.auto_detectors.snapshot[0] in
                          ('DEPLOYING', 'STARTING', 'PREPARING', 'STOPPING')),
@@ -1475,11 +1608,11 @@ class ControllerWindow(QtWidgets.QMainWindow):
             bin_selected=bool(self.bin_path.text().strip()),
             tray_selected=bool(self.tray_path.text().strip()))
         if self.modes.managed and self.modes.state not in AUTO_MODES:
-            return dict.fromkeys(reasons, 'Select Auto mode for production controls')
+            return dict.fromkeys(reasons, 'Select Local / Maintenance to restore robot controls')
         if self.modes.state == 'REMOTE_AUTO':
             for name in ('configure', 'home', 'pick', 'place', 'auto_run', 'preview_toggle',
                          'speed', 'cp', 'clear_repick_history'):
-                reasons[name] = 'Select Local Auto for local recipe editing and motion tests'
+                reasons[name] = 'Select Local / Maintenance for teaching and robot controls'
         elif self.auto_detectors.snapshot[0] not in ('OFF', 'FAILED'):
             reasons['configure'] = 'Turn Load Auto OFF before loading teaching-window configuration'
         if not self.auto_quantity.hasAcceptableInput():
@@ -1511,20 +1644,28 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.status_detail.setText('Press Initialize Station to start robot and camera nodes.')
         elif (self.modes.managed and self.modes.state not in AUTO_MODES
                 and self.status.text() not in ('CAMERA ALARM', 'EMERGENCY STOP PRESSED')):
-            self.status.setText('MANUAL TOOLS' if self.modes.state == 'MANUAL' else
+            self.status.setText('LOCAL DIRECT TOOLS' if self.modes.state == 'MANUAL' else
                                 'CHANGING MODE' if self.modes.state != 'FAILED' else
                                 'MODE ATTENTION')
             self.status_detail.setText(
-                'Production controller stopped. Use the active tool’s controls and Stop.'
+                'Use the active tool’s controls and Stop. Close it, then click '
+                'Local / Maintenance to reload and restore robot controls.'
                 if self.modes.state == 'MANUAL' else self.modes.message)
         if self.modes.state == 'REMOTE_AUTO':
             if self.status.text() == 'READY':
                 self.status_detail.setText(
                     'Runtime recipe prepared. Remote job connection is not implemented yet.')
-            elif (self.status.text() == 'NOT READY'
-                  and self.auto_detectors.snapshot[0] == 'DETECTORS_READY'):
+            elif (self.auto_detectors.snapshot[0] == 'DETECTORS_READY'
+                  and self.status.text() not in ('CAMERA ALARM', 'EMERGENCY STOP PRESSED',
+                                                  'ATTENTION REQUIRED')):
+                self.status.setText('WAITING FOR REMOTE')
                 self.status_detail.setText(
-                    'Runtime detectors ready. On Setup / Teach, press Load Auto: Prepare Robot.')
+                    'Headless nodes ready. Remote server commands are not connected yet; '
+                    'the robot has not been prepared or enabled by Remote Auto.')
+        if self.local_preparation.busy and self.status.text() not in (
+                'CAMERA ALARM', 'EMERGENCY STOP PRESSED'):
+            self.status.setText('PREPARING LOCAL')
+            self.status_detail.setText(self.local_preparation.message)
         if (self.station_startup.alarm and
                 self.status.text() not in ('CAMERA ALARM', 'EMERGENCY STOP PRESSED')):
             self.status.setText('STATION ALARM')
@@ -1635,18 +1776,14 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto.blockSignals(True)
         self.load_auto.setChecked(auto_active and auto_state != 'DETECTORS_READY')
         self.load_auto.blockSignals(False)
-        self.load_auto.setText('Load Auto: Prepare Robot' if auto_state == 'DETECTORS_READY'
-                               else 'Load Auto: ' + ('ON' if auto_state == 'RUNNING' else auto_state))
+        self.load_auto.setText('Load Auto: ' + ('ON' if auto_state == 'RUNNING' else auto_state))
         auto_reason = self._auto_change_reason()
         self.load_auto.setEnabled(not auto_reason)
         self.load_auto.setToolTip(auto_reason or (
-            'OFF stops the owned detectors. ON validates the externally deployed runtime_teach '
-            'recipe without copying files, then starts detectors and prepares/enables the robot.'
-            if self.modes.state == 'REMOTE_AUTO' else
             'OFF stops the owned detectors. ON replaces runtime_teach with the selected '
             'teach files and models, then starts Item Detect and Tray Detect. '
             'It also loads the selected teach configuration and prepares/enables the robot. '
-            'Local Auto Run remains a separate click.'))
+            'Local Headless Run remains a separate click.'))
         self.load_auto_status.setText(auto_message if len(auto_message) <= 180 else
                                       'Load Auto failed; see command log for details')
         self.load_auto_status.setToolTip(auto_message)
@@ -1654,7 +1791,9 @@ class ControllerWindow(QtWidgets.QMainWindow):
             self.log_view.appendPlainText(f'Load Auto {event_state}: {message}')
         self.stop.setEnabled(self.node.service_clients["stop"].service_is_ready())
         editable = (state is not None and not state.operation_active and not self.pending
-                    and self.pending_goal is None and self.result_future is None)
+                    and self.pending_goal is None and self.result_future is None
+                    and not self.local_preparation.busy and not self.local_preparation.awaiting_reply
+                    and not self.pending_tool)
         for field in (self.place_x, self.place_y, self.place_rotation, self.auto_quantity):
             field.setEnabled(editable)
         if state is None:
@@ -1666,9 +1805,15 @@ class ControllerWindow(QtWidgets.QMainWindow):
                 f" · {timing}: {state.auto_run_elapsed_sec:.1f} s")
         else:
             self.auto_progress.setText("0 completed · Elapsed: 0.0 s")
+        selection_editable = (not self.local_preparation.busy and not self.local_preparation.awaiting_reply
+                              and not self.pending_tool and not self.pending and not auto_active
+                              and self.modes.state != 'REMOTE_AUTO'
+                              and not (self.station_startup.state == 'OFF'
+                                       and self.station_startup.mode == 'REMOTE_AUTO')
+                              and (editable and current in ("UNCONFIGURED", "INACTIVE", "READY")
+                                   or self.modes.state == 'MANUAL' and state is None))
         for field in (self.item_path, self.bin_path, self.tray_path, *self.teach_browse_buttons):
-            field.setEnabled(editable and not auto_active and self.modes.state != 'REMOTE_AUTO'
-                             and current in ("UNCONFIGURED", "INACTIVE", "READY"))
+            field.setEnabled(selection_editable)
         self.debug_images.setEnabled(not self.preview_mode and editable)
         visible_reasons = []
         if not self.pending and current in ("READY", "HOLDING", "PAUSED", "INACTIVE",
@@ -1681,7 +1826,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
                          ("pick", "place", "auto_run")):
                 if reasons[name] and reasons[name] != "Unavailable in the current state":
                     label = (self.managed_actions[name].text() if name in self.managed_actions
-                             else "Manual/Test Run / Local Auto Run" if name == "auto_run"
+                             else "Manual/Test Run / Local Headless Run" if name == "auto_run"
                              else buttons[name].text())
                     visible_reasons.append(f"{label}: {reasons[name]}")
         self.availability_details.setText("\n".join(visible_reasons))
