@@ -10,6 +10,15 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 302 extends the no-suction pickup check to the full remaining upward distance
+to saved settling_retract Z, superseding rules 224/300's 50% probe only. Keep the
+candidate ACTIVE and suction/fingers unchanged through the lift at approach rates.
+Only fresh executed/idle endpoint feedback without DI1 marks FAILED, then queue
+the existing empty retract/exit/next-candidate approach. No second settling wait;
+zero rise skips motion and never descends. Preserve pickup Stop, Pause, source and
+vacuum-reset gates, timed retry I/O and the separate 500 ms held-loss monitoring.
+No schema or operator-file edits; update messages, diary, FSM and visual exports.
+
 Rule 301 retires a failed/canceled local-mode preparation after a later explicit
 Load Auto reaches RUNNING with matching fresh enabled idle READY. Keep outstanding
 local replies and Stop containment protected. Start one bounded full station-health
@@ -22,8 +31,9 @@ pick_retract. Nominal pick Z is item Z + standoff; pre-pick adds prepick_height
 independently; settling Z adds settling_retract to nominal pick; second lift Z
 adds pick_retract to settling Z. No pre-pick offset belongs in either retract.
 Start existing continuous 500 ms DI1-loss monitoring at actual settling height
-(or higher actual pickup origin), without a dwell or split queue. The 50% pickup
-probe targets the remaining rise to settling Z. Successful first lift retains
+(or higher actual pickup origin), without a dwell or split queue. The pickup
+probe covers the full remaining rise to settling Z under rule 302. Successful
+first lift retains
 taught retract rates; second/empty lifts retain 100% speed/travel acceleration.
 With use_grip ON and grip_onpick OFF, close at 50% of the second lift. Grab on Pick
 still closes at pickup; use_grip OFF still relaxes at 50% of the first lift.

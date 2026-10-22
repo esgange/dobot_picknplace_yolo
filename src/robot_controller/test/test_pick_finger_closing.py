@@ -30,7 +30,7 @@ def test_close_at_arrival_without_di1_then_probe_with_closed_fingers(monkeypatch
     rig, clock = relaxation_rig(monkeypatch)
     rig.steps = iter([dict(z=.14, outputs=VACUUM, running=1), dict(z=.1, outputs=VACUUM),
                       *[dict(z=.1, outputs=CLOSED)] * 8,
-                      dict(z=.12, outputs=CLOSED, command_id=7)])
+                      dict(z=.14, outputs=CLOSED, command_id=7)])
     where = []
 
     def echo(request):
@@ -39,7 +39,7 @@ def test_close_at_arrival_without_di1_then_probe_with_closed_fingers(monkeypatch
 
     rig.on_output = echo
     acquired, origin = pick(rig, settling)
-    assert not acquired and origin[2, 3] == pytest.approx(.12)
+    assert not acquired and origin[2, 3] == pytest.approx(.14)
     assert where == [(.1, .1), (.1, .1)]
     assert rig.outputs == [(14, 0, 0), (2, 1, 0)]
     events = [a[1] for a, _ in rig.events]

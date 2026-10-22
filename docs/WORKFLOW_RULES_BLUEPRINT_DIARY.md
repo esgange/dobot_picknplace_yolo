@@ -12721,6 +12721,46 @@ Never use a floating “latest” version in an issue, script, or deployment not
   RViz changes remain untouched. Deployment requires an operator-controlled HMI
   relaunch; no live restart, Configure, enable or motion is performed by this task.
 
+### 2026-10-22 — Rule 302: check pickup through the full settling-retract lift
+
+- User requests replacing the 50% no-suction pickup probe with the full lift to
+  settling_retract, then queuing the next eligible candidate if suction remains
+  absent. Supersede rules 224/300's fractional probe distance only; schema 16 and
+  taught values stay unchanged.
+- After the existing final-pick settling interval, command the full positive
+  difference between saved settling Z and actual settled Z at taught approach
+  rates. Preserve measured XY/attitude, suction and fingers throughout the check.
+  This also reaches the original settling level from a lowered trickle pick.
+  Zero/nonpositive distance skips motion without descending or inventing clearance.
+- Retain ACTIVE/acquisition eligibility until fresh executed queue ID, idle state,
+  outputs and endpoint confirm no DI1. Mark FAILED then admit the existing miss
+  group through settling/pick_retract, old exit, next entry, pre-pick and final
+  pick, or exhausted return when no eligible candidates remain. Keep the settling
+  waypoint's timed exhaust even when already at that height; existing neutral,
+  vacuum-reset and late-DI1 isolation remain. No second settling interval is added.
+- DI1 anywhere during the lift, including beyond its former halfway boundary,
+  retains immediate pickup latch, issued-response/Stop handling and held return.
+  Preserve Pause/Stop, source context, the separate 500 ms held-loss gate and
+  transport-finger timing. Update live progress/failure messages to name the lift
+  to settling_retract instead of a 50% check.
+- Four revised regression cases fail against the old half-distance code. Update
+  existing pickup/finger fixtures to provide the full endpoint; a new executor
+  integration case checks that retry admission follows the confirmed failed
+  endpoint and preserves both transits/release events. Correct its expected
+  existing exit-waypoint name after the initial focused check.
+- Build robot_controller in the isolated checkout; the complete controller suite
+  passes 1,929 tests with synthetic feedback/offscreen UI. This includes early
+  pickup, full endpoint/queue-id/idle gates, trickle, zero rise, output failures,
+  Stop/Pause, next-candidate and exhausted routes, and held-loss monitoring.
+  Final Python AST/changed-line lint and git diff --check pass. Regenerate the
+  nine HTML diagrams and nine-page PDF from the maintained FSM and verify the
+  source hash and full-lift wording. Evidence: logs/full_settling_* in the
+  isolated checkout. Tests do not establish physical robot performance.
+- Preserve operator artifacts and the unrelated RViz edit. No live restart,
+  deployment, Configure, enable or motion is performed; apply with an explicit
+  controller/HMI relaunch after ending the active operation. No teach-file edit
+  or ROS interface rebuild is needed. Commit/push follows the standing workflow.
+
 ### Future entry template
 
 ```text

@@ -75,7 +75,7 @@ def test_relax_at_arrival_before_settling_and_preserve_through_failed_probe(monk
     rig.steps = iter([dict(z=.14, outputs=OPEN, running=1),
                       dict(z=.1, outputs=OPEN),
                       *[dict(z=.1, outputs=VACUUM)] * 8,
-                      dict(z=.12, outputs=VACUUM, command_id=7)])
+                      dict(z=.14, outputs=VACUUM, command_id=7)])
     positions = []
 
     def echo(request):
@@ -84,7 +84,7 @@ def test_relax_at_arrival_before_settling_and_preserve_through_failed_probe(monk
 
     rig.on_output = echo
     acquired, origin = pick(rig)
-    assert not acquired and origin[2, 3] == pytest.approx(.12)
+    assert not acquired and origin[2, 3] == pytest.approx(.14)
     assert rig.outputs == [(2, 0, 0), (14, 0, 0)]
     assert positions == [(.1, .1), (.1, .1)]  # Arrival; before .3 s settling expires.
     assert [name for name, _ in rig.calls] == ["MovLIO", "MovL"]
@@ -297,7 +297,7 @@ def test_pause_during_either_output_prevents_probe_or_return(monkeypatch, channe
 def test_no_finger_policy_keeps_legacy_transport_fixture_outputs(monkeypatch):
     rig, _clock = relaxation_rig(monkeypatch)
     rig.steps = iter([dict(z=.1, outputs=OPEN), *[dict(z=.1, outputs=OPEN)] * 8,
-                      dict(z=.12, outputs=OPEN, command_id=7)])
+                      dict(z=.14, outputs=OPEN, command_id=7)])
     acquired, _origin = pick(rig, relax=False)
     assert not acquired and not rig.outputs
     assert rig.monitor.snapshot().feed["digital_outputs"] == OPEN
@@ -306,7 +306,7 @@ def test_no_finger_policy_keeps_legacy_transport_fixture_outputs(monkeypatch):
 def test_zero_settling_still_confirms_relaxation_before_probe(monkeypatch):
     rig, clock = relaxation_rig(monkeypatch)
     rig.steps = iter([dict(z=.1, outputs=OPEN),
-                      dict(z=.12, outputs=VACUUM, command_id=7)])
+                      dict(z=.14, outputs=VACUUM, command_id=7)])
     acquired, _origin = pick(rig, settling=0.)
     assert not acquired and clock[0] == pytest.approx(.1)
     events = [a[1] for a, _ in rig.events]

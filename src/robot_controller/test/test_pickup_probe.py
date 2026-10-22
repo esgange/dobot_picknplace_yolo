@@ -17,12 +17,13 @@ from test_motion_v2 import item_pose, matrix, settings, tray_target
 from test_pick_acquisition import pickup_rig, VACUUM
 
 
-def probe_rig(monkeypatch, *, retract_z=.14):
+def probe_rig(monkeypatch, *, retract_z=.14, pick_z=.1):
     rig, clock = pickup_rig(monkeypatch)
+    rig.pick_z = pick_z
     rig.retract = np.eye(4)
     rig.retract[2, 3] = retract_z
-    rig.settle = [dict(z=.1, outputs=VACUUM, running=1)] + [
-        dict(z=.1, outputs=VACUUM)] * 8
+    rig.settle = [dict(z=pick_z, outputs=VACUUM, running=1)] + [
+        dict(z=pick_z, outputs=VACUUM)] * 8
 
     def dispatch(calls, **kwargs):
         replies = rig.dispatch(calls, **kwargs)
@@ -32,13 +33,13 @@ def probe_rig(monkeypatch, *, retract_z=.14):
         return replies
 
     rig.transport.call_group = dispatch
-    rig.during_admission = lambda: rig.emit(z=.1, outputs=VACUUM, running=1)
+    rig.during_admission = lambda: rig.emit(z=pick_z, outputs=VACUUM, running=1)
     return rig, clock
 
 
 def pick_with_probe(rig):
     matrix = np.eye(4)
-    matrix[2, 3] = .1
+    matrix[2, 3] = rig.pick_z
     return rig.run(targets=(Target("p1_pick", matrix, 10, 35,
                                   motion_io=(MotionIO(20, 13, True),)),),
                    stop_on_suction=True, pick_settling_sec=.3,
@@ -48,7 +49,7 @@ def pick_with_probe(rig):
 @pytest.mark.parametrize("at_endpoint", [False, True])
 def test_di1_during_probe_takes_normal_acquisition_stop_without_waiting(monkeypatch, at_endpoint):
     rig, clock = probe_rig(monkeypatch)
-    height = .120 if at_endpoint else .112
+    height = .140 if at_endpoint else .130
     rig.steps = iter([*rig.settle, dict(z=height, running=int(not at_endpoint),
                                       command_id=8, outputs=VACUUM, di1=True)])
     acquired, origin = pick_with_probe(rig)
@@ -57,7 +58,7 @@ def test_di1_during_probe_takes_normal_acquisition_stop_without_waiting(monkeypa
     assert len(rig.stops) == 1
     assert [name for name, _fields in rig.calls] == ["MovLIO", "MovL"]
     fields = rig.calls[-1][1]
-    assert fields["c"] == pytest.approx(120.)  # 50% of 40 mm is 20 mm.
+    assert fields["c"] == pytest.approx(140.)  # Full 40 mm rise to settling_retract.
     assert fields["param_value"] == ["user=0", "tool=0", "v=10", "a=35"]
     assert "mdis" not in fields
     assert rig.transport.node.expected_outputs[13]
@@ -69,12 +70,12 @@ def test_di1_during_probe_takes_normal_acquisition_stop_without_waiting(monkeypa
 def test_no_di1_fails_only_after_probe_queue_id_idle_and_endpoint(monkeypatch):
     rig, clock = probe_rig(monkeypatch)
     rig.steps = iter([*rig.settle,
-                      dict(z=.120, command_id=7, outputs=VACUUM),  # Old command.
-                      dict(z=.1, command_id=8, outputs=VACUUM),  # Not at probe endpoint.
-                      dict(z=.120, command_id=8, outputs=VACUUM, running=1),
-                      dict(z=.120, command_id=8, outputs=VACUUM)])
+                      dict(z=.140, command_id=7, outputs=VACUUM),  # Old command.
+                      dict(z=.120, command_id=8, outputs=VACUUM),  # Halfway is not failure.
+                      dict(z=.140, command_id=8, outputs=VACUUM, running=1),
+                      dict(z=.140, command_id=8, outputs=VACUUM)])
     acquired, origin = pick_with_probe(rig)
-    assert not acquired and origin[2, 3] == pytest.approx(.120)
+    assert not acquired and origin[2, 3] == pytest.approx(.140)
     assert len(rig.calls) == 2 and not rig.stops
     assert clock[0] == pytest.approx(.65)  # No second settling interval.
     assert not rig.transport.acquisition_eligible and rig.transport.late_miss_suction
@@ -106,11 +107,11 @@ def test_probe_preserves_actual_xy_and_attitude(monkeypatch):
         return pose
 
     rig.transport.node.kinematics.forward = actual
-    rig.steps = iter([*rig.settle, dict(z=.120, command_id=8, outputs=VACUUM)])
+    rig.steps = iter([*rig.settle, dict(z=.140, command_id=8, outputs=VACUUM)])
     acquired, origin = pick_with_probe(rig)
     fields = rig.calls[-1][1]
     assert not acquired
-    assert [fields[axis] for axis in "abcf"] == pytest.approx([2., -1., 120., .2])
+    assert [fields[axis] for axis in "abcf"] == pytest.approx([2., -1., 140., .2])
     assert np.allclose(origin[:2, 3], [.002, -.001])
 
 
@@ -162,7 +163,7 @@ def test_executor_retains_active_ledger_until_probe_result_and_retracts_from_act
         progress(rig.monitor.snapshot(require_enabled=True))
 
     rig.transport.output = relax
-    height = .112 if acquire else .120
+    height = .112 if acquire else .140
     rig.steps = iter([*rig.settle, dict(z=height, command_id=8, outputs=VACUUM,
                                       running=int(acquire), di1=acquire)])
     outcome = PickExecutor(rig.transport, finish_home=False).run(
@@ -287,7 +288,70 @@ def test_failure_log_explains_both_attempts_but_keeps_typed_state(settling_ms):
         publish_status=lambda: None)
     RobotController._attempt_changed(node, 1, SimpleNamespace(state="FAILED", identifier="item"))
     expected = (f"FAILED — no DI1 pickup detected after {settling_ms:g} ms settling "
-                "and the 50% upward-lift check.")
+                "and the lift to settling_retract.")
     assert messages == [f"Candidate 1 (item): {expected}"]
     assert events[0][0][2] == expected
     assert events[0][1]["candidate_state"] == "FAILED"
+
+
+@pytest.mark.parametrize('pick_z, settling_z', [(.1, .11), (.08, .11), (.1, .2)])
+def test_probe_reaches_saved_settling_height_including_lowered_trickle_pick(
+        monkeypatch, pick_z, settling_z):
+    rig, _clock = probe_rig(monkeypatch, retract_z=settling_z, pick_z=pick_z)
+    rig.steps = iter([*rig.settle, dict(z=settling_z, command_id=8, outputs=VACUUM)])
+    acquired, origin = pick_with_probe(rig)
+    assert not acquired and origin[2, 3] == pytest.approx(settling_z)
+    assert rig.calls[-1][1]['c'] == pytest.approx(settling_z * 1000)
+    started = [k for a, k in rig.events if a[1] == 'pickup_probe_started']
+    assert started[0]['lift_mm'] == pytest.approx((settling_z - pick_z) * 1000)
+
+
+def test_full_probe_miss_queues_retry_only_after_confirmed_settling_endpoint(monkeypatch):
+    rig, _clock = probe_rig(monkeypatch)
+    taught = settings(use_grip=False, close_on_pick=False)
+    taught['motion']['settling_retract'] = 40.
+    taught['timing']['pick_settling'] = .3
+    plans = [list(pick_targets(matrix(.5), item_pose(x=0., y=0., z=.1), taught,
+                               index, rotation=np.eye(3))) for index in (1, 2)]
+    plans[0][0] = replace(plans[0][0], motion_io=())
+    session = PickSession(['one', 'two'], plans)
+    rig.transport.node.motion_admitted = session.admitted
+    dispatch = rig.transport.call_group
+
+    def admit(calls, **kwargs):
+        replies = dispatch(calls, **kwargs)
+        for index in range(len(replies)):
+            kwargs['admitted'](index)
+        return replies
+
+    rig.transport.call_group = admit
+    move = rig.transport.move_batch
+    groups = []
+
+    def move_or_record(targets, **kwargs):
+        groups.append((targets, kwargs))
+        if len(groups) == 1:
+            return move(targets, **kwargs)
+        if kwargs.get('stop_on_suction'):
+            assert [a.state for a in session.attempts] == ['FAILED', 'PENDING']
+            assert rig.monitor.snapshot().joints[0] == pytest.approx(.14)
+            assert kwargs['confirmed_start_pose'][2, 3] == pytest.approx(.14)
+            session.admitted(targets[-1])
+            return True, targets[-1].matrix.copy()
+
+    rig.transport.move_batch = move_or_record
+    rig.transport.sensor = lambda *_a: True
+    rig.transport.output = lambda _channel, _active, *, progress: progress(rig.monitor.snapshot())
+    rig.steps = iter([*rig.settle, dict(z=.12, command_id=8, outputs=VACUUM),
+                      dict(z=.14, command_id=8, outputs=VACUUM)])
+    outcome = PickExecutor(rig.transport, finish_home=False).run(
+        plans, taught, tray_target=tray_target(), session=session, check=lambda _i: None,
+        return_home=lambda **_k: pytest.fail('Retry must queue directly to the next candidate'))
+    assert outcome['picked'] and outcome['candidate'] == 2
+    assert [a.state for a in session.attempts] == ['FAILED', 'HELD']
+    retry, policy = groups[1]
+    assert [t.name for t in retry] == [
+        'p1_retract', 'p1_final', 'p1_transit_exit', 'p2_transit', 'p2_prepick', 'p2_pick']
+    assert retry[0].matrix[2, 3] == pytest.approx(.14)
+    assert retry[0].motion_io == (MotionIO(80, 13, False), MotionIO(80, 1, True))
+    assert policy['require_suction_reset']

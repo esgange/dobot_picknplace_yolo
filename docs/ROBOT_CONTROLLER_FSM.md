@@ -1,5 +1,18 @@
 # Robot Controller — Finite State Machine
 
+Full settling-height pickup check review: **2026-10-22**, baseline **`8d41dc3`**
+plus rule **302**. If final-pick settling expires without DI1, lift through the
+full remaining upward distance to the saved settling_retract height. Keep the
+candidate ACTIVE and acquisition armed until fresh executed/idle endpoint
+feedback confirms no pickup. Then mark FAILED and queue the existing miss
+route to the next eligible candidate, or the exhausted return when none remain.
+The settling waypoint retains its timed release events even if already at that
+height. Preserve approach rates, measured XY/attitude, outputs during the check,
+early-DI1 Stop/reply handling, Pause/Stop, source and vacuum-reset guards. There
+is no second settling interval; zero rise skips motion and never descends.
+This supersedes the 50% probe distance only. Held-loss monitoring and transport
+finger timing remain unchanged; no teach schema or operator-file changes.
+
 Stale local-load alarm review: **2026-10-22**, baseline **`4b547d4`** plus rule **301**.
 A failed/canceled local-mode preparation is superseded only when a later explicit
 Load Auto confirms matching fresh enabled idle READY and reaches RUNNING. Do not
@@ -27,7 +40,7 @@ remain upward-only from the actual stopped XY/attitude, followed by the Home-Z
 exit and existing destination. At measured settling Z (or higher actual pickup
 origin), arm the existing continuous 500 ms DI1-loss debounce. There is no pause,
 dwell, additional arrival confirmation or split queue at this height. The
-last-chance 50% pickup probe also references the remaining rise to settling Z.
+last-chance pickup probe covers the full remaining rise to settling Z (rule 302).
 
 `use_grip=true, grip_onpick=false` closes halfway through the second lift;
 Grab on Pick retains arrival/early-Stop closing. `use_grip=false` retains RELAX
@@ -662,10 +675,10 @@ clears a pending gate. Raw I/O, acquisition/probe, output/freshness checks,
 intentional release and confirmed-drop containment remain unchanged. Log
 `drop_detection_deferred` and `drop_detection_armed` with height and 500 ms.
 
-Pickup probe review: **2026-10-06**, baseline **`1451bfa`** plus rule **224**
-(superseding rule 222's 20% distance only).
+Pickup probe review: **2026-10-22**, baseline **`8d41dc3`** plus rule **302**
+(superseding rules 222/224/300's fractional probe distance only).
 After final-pick settling expires without DI1, keep the candidate ACTIVE and
-command a last-chance upward lift through 50% of the remaining distance from
+command a last-chance upward lift through the full remaining distance from
 actual settled Z to saved settling-retract Z, at final-approach speed/acceleration.
 Preserve measured XY/attitude, suction and finger outputs. Acquisition stays
 armed across settling, probe admission and travel; DI1 HIGH uses the existing
@@ -674,8 +687,8 @@ fresh executed/idle probe endpoint without DI1 latches FAILED, with no second
 settling interval. Zero available rise skips motion and never descends. This
 applies to all shared Pick paths, including retries and Auto Run. Keep source
 retention, Pause/Stop, failed retract/retry and post-failure late-DI1 isolation.
-Messages read `FAILED — no DI1 pickup detected after N ms settling and the 50%
-upward-lift check.` N comes from loaded `pick_settling`; typed state remains
+Messages read `FAILED — no DI1 pickup detected after N ms settling and the lift
+to settling_retract.` N comes from loaded `pick_settling`; typed state remains
 FAILED. Probe events include actual distance/rates, including zero rise. This
 supersedes the rule-221 settling-only message and miss boundary.
 
@@ -1454,7 +1467,7 @@ flowchart TD
     Drain --> Acquire["Send one pickup Stop; await acceptance; fresh joint pose"]
     Sense -->|No| Settle["Final joint-FK / idle / executed queue; Grip on Pick ON: confirm CLOSE, OFF: RELAX; then taught DI1 settling"]
     Settle -->|DI1 HIGH| Drain
-    Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 50% toward settling_retract at approach rates; fingers unchanged"]
+    Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift fully to settling_retract at approach rates; fingers unchanged"]
     Probe -->|DI1 HIGH| Drain
     Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; record one repick attempt; activate circle at trigger; log no DI1"]
     Acquire --> Fingers["Finish remaining CLOSE / RELAX outputs once; early Stop closes here; record HELD repick attempt"]
@@ -1465,7 +1478,7 @@ flowchart TD
     PutBack -->|Eligible saved candidate; same queue| Entry
     PutBack -->|No eligible poses; return confirmed| Unsafe
     Miss --> More{"Another unblocked candidate with safe updated trickle target?"}
-    More -->|Yes| Retry["Old settling lift → old pick_retract → old exit transit → next entry with selected attitude → next pre-pick → final approach; blended"]
+    More -->|Yes| Retry["Retain settling waypoint / release I/O → old pick_retract → old exit transit → next entry with selected attitude → next pre-pick → final approach; blended"]
     Retry --> Sense
     More -->|No| Exhausted["Empty settling lift → pick_retract → exit transit → joint Home"]
     Exhausted --> Unsafe{"Remaining poses rejected by trickle guard?"}
@@ -1579,7 +1592,7 @@ empty observations retain nine Home retries and fresh-frame requirements.
   all feedback guards. Normal delayed callbacks cannot send a redundant Stop
   into the return queue. Rejection/timeout blocks the return.
   If there is no early pickup, observe taught `timing.pick_settling` at the final
-  stationary/idle pose. Expiry without acquisition starts a 50% upward probe to
+  stationary/idle pose. Expiry without acquisition starts a full upward probe to
   saved settling-retract Z at taught approach rates, keeping measured XY/attitude and
   unchanged suction/finger outputs. Keep the same acquisition filter and ACTIVE
   candidate throughout; HIGH latches pickup in either phase. Require the
@@ -1643,7 +1656,7 @@ flowchart TD
     PENDING -->|Motion accepted| ACTIVE
     ACTIVE -->|Unheld Pause| INTERRUPTED
     INTERRUPTED -->|Continue same candidate| ACTIVE
-    ACTIVE -->|Settling + 50% upward-lift check end without pickup| FAILED
+    ACTIVE -->|Settling + full lift to settling_retract end without pickup| FAILED
     ACTIVE -->|Pickup confirmed| HELD
     HELD -->|Suction loss confirmed| DROPPED
     HELD -->|Return queue complete at Home; neutral and DI1 LOW| RETURNED
@@ -2366,7 +2379,7 @@ Names below are relative to `/robot_controller/`.
 | Measured surface floor/plane (perception / controller / Preview) | Base Z at actual target X/Y must be no more than 20 mm below calibrated bin floor or saved tray plane before tool offsets, with 0.001 mm numerical tolerance at that limit; either normal sign and tilted planes; reject without clamping; skip bin candidates/use empty retry budget, retry tray observations/use acquisition pause; invalid geometry/evidence remains fatal |
 | Controller item priority (manual Pick / Auto Run / Preview) | Validate detector order and all source/timestamp/pose evidence first; then rank returned item XYZ in base_link by 3D distance from taught Home Link6 XYZ, exact ties by detector priority; preserve IDs and fixed order for the batch; never expand the detector's returned set |
 | Missed-pick next candidate (rule 264) | Old lifts and both common-safety-Z transits, then next pre-pick/pick; omit next clearance only in ordinary missed retry; next selected attitude at entry and throughout descent; one blended group, terminal confirmation only, no midpoint orientation/J6 wait; preserve timed I/O and observed vacuum reset |
-| Two-stage retract (rule 300) | Schema 16: first lift at nominal pick + settling_retract; second at settling + pick_retract; approach uses prepick_height independently; Home above all; DI1 loss starts at measured settling height without dwell; delayed CLOSE at 50% of second lift; no automatic legacy conversion |
+| Two-stage retract (rules 300/302) | Schema 16: first lift at nominal pick + settling_retract; second at settling + pick_retract; approach uses prepick_height independently; Home above all; absent pickup: check full lift to settling before FAILED/retry; held DI1 loss starts at measured settling height without dwell; delayed CLOSE at 50% of second lift; no automatic legacy conversion |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
 | Pick nearby-depth eligibility (perception) | No usable median-depth point inside/on the physical outer bin and camera-XY radius reaches the saved floor-relative height difference from the candidate surface; evaluate platform Z=0 beneath each point along camera Z; exclude standoff; schema-13 defaults 150/60 mm and three frames; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |

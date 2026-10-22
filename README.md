@@ -304,7 +304,7 @@ return without
 stationary confirmation. Operator Stop and fault containment stay immediate;
 response/output waits retain five-second bounds.
 If final-pick settling ends without DI1, keep suction on and try a last-chance
-lift through 50% of the remaining distance to settling_retract at final-approach rates.
+lift all the way to settling_retract at final-approach rates.
 DI1 latches pickup during settling or this lift; only completing the lift without
 DI1 fails the candidate. Already-queued motion can continue while its reply is pending.
 Explicit Recover cancels the interrupted action, preserves current gripper
@@ -647,8 +647,8 @@ or NEUTRAL (both OFF); vacuum states are SUCK (DO1 OFF then DO13 ON), EXHAUST
 intentionally active together and such feedback aborts motion. The first pick
 group goes Home-Z item X/Y with OPEN at 50%, directly to pre-pick, then to final
 pick with SUCK at its start. A miss latches only after final-pose `pick_settling`
-and the 50% last-chance upward lift both finish without DI1.
-Retry rises to the old settling height with EXHAUST at 80%, enters both NEUTRAL states
+and the full lift to settling_retract both finish without DI1, with no second wait.
+Retry retains the old settling waypoint with EXHAUST at 80%, enters both NEUTRAL states
 at the start of the old pick_retract rise, enters OPEN at 50% of travel to the
 next candidate's safety-Z transit, and enters SUCK at the start of the next final
 descent. A late DI1 from an already missed attempt cannot become success or
