@@ -624,6 +624,7 @@ class RobotController(Node):
     def _configure(self, request, response):
         acquired = False
         installed = False
+        reusing_ready = False
         try:
             if self.headless:
                 raise CommandRejected("Headless runtime_teach configuration is immutable")
@@ -634,26 +635,44 @@ class RobotController(Node):
                 raise CommandRejected("Configure/reload is blocked while holding an item")
             self._begin_operation("configure")
             acquired = True
+            was_ready = self.machine.state == "READY" and self.startup_complete
             config = load_configuration(
                 request.item_teach_file, request.bin_teach_file, self.root,
                 self.kinematics, deployment=False, tray_path=request.tray_teach_file)
+            # Load Auto still binds the exact deployed recipe. An already prepared
+            # controller can retain its hardware state after live, read-only checks.
+            reusing_ready = was_ready and config.deployment
+            if reusing_ready:
+                config.validate_sources(self.root)
+                self.hardware.confirm_prepared_configuration()
             # Stop during validation must not be followed by enable/reset. Keep
             # one operation owner through installation and robot preparation.
             with self.stop_guard:
                 self.raise_if_cancelled()
+                if reusing_ready and (self.machine.state != "READY"
+                                      or not self.startup_complete):
+                    raise FeedbackFailure("Robot readiness changed during runtime configuration")
                 self.configuration = config
                 self.repick = RepickHistory(config.profile["retry"], self.events)
                 installed = True
-                self.startup_complete = False
-                self.global_speed_percent = None
-                self.global_cp_percent = None
-                self.expected_outputs.clear()
-                self._transition("INACTIVE", "Teach files loaded; preparing robot")
+                if reusing_ready:
+                    self._transition(
+                        "READY", "Runtime teach files loaded; existing robot readiness "
+                        "verified without re-enabling")
+                else:
+                    self.startup_complete = False
+                    self.global_speed_percent = None
+                    self.global_cp_percent = None
+                    self.expected_outputs.clear()
+                    self._transition("INACTIVE", "Teach files loaded; preparing robot")
             self._log_configuration("configuration_loaded")
-            self._prepare_robot()
-            response.success = True
-            response.message = self.machine.message
-            response.configuration_id = config.configuration_id
+            if not reusing_ready:
+                self._prepare_robot()
+            with self.stop_guard:
+                self.raise_if_cancelled()
+                response.success = True
+                response.message = self.machine.message
+                response.configuration_id = config.configuration_id
         except HeldUnknown as exc:
             self.startup_complete = False
             self._transition("HELD_UNKNOWN", str(exc))
@@ -669,10 +688,12 @@ class RobotController(Node):
             response.success = False
             response.message = str(exc)
             response.configuration_id = ""
-            if installed:
+            if installed or reusing_ready:
                 self.startup_complete = False
                 if self.machine.state != "STOPPING":
-                    self._transition("FAULT", f"Robot preparation after loading failed: {exc}")
+                    message = ("Existing robot readiness could not be reused" if reusing_ready
+                               else "Robot preparation after loading failed")
+                    self._transition("FAULT", f"{message}: {exc}")
             self.events.record("ERROR", "configuration_prepare_failed" if installed
                                else "configuration_rejected", str(exc))
         finally:

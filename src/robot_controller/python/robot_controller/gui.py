@@ -346,7 +346,7 @@ class ControllerWindow(QtWidgets.QMainWindow):
         prepare_columns.setColumnStretch(0, 1)
         prepare_columns.setColumnStretch(1, 1)
         prepare_columns.addWidget(hint(
-            'Load Auto · Validate runtime recipe, start detectors and prepare robot.'), 1, 0)
+            'Load Auto · Deploy recipe, start detectors and verify robot readiness.'), 1, 0)
         prepare_columns.addWidget(hint(
             'Manual/Test · Armed teaching windows. Keep Load Auto OFF.'), 1, 1)
         preparation.addLayout(prepare_columns)
@@ -1792,7 +1792,8 @@ class ControllerWindow(QtWidgets.QMainWindow):
         self.load_auto.setToolTip(auto_reason or (
             'OFF stops the owned detectors. ON replaces runtime_teach with the selected '
             'teach files and models, then starts Item Detect and Tray Detect. '
-            'It also loads the selected teach configuration and prepares/enables the robot. '
+            'It loads the runtime recipe and verifies existing READY state; '
+            'robot preparation runs only if needed. '
             'Local Headless Run remains a separate click.'))
         self.load_auto_status.setText(auto_message if len(auto_message) <= 180 else
                                       'Load Auto failed; see command log for details')

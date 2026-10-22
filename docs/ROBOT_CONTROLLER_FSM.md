@@ -1,5 +1,24 @@
 # Robot Controller — Finite State Machine
 
+Load Auto readiness reuse review: **2026-10-22**, baseline **`e2549fd`**, rule **305**.
+Configure for the exact validated runtime catalog can keep an already prepared
+READY robot enabled. Under the same operation owner, validate the new recipe and
+verify canonical command/feedback ownership, no outstanding reply, no held/retained
+operation, complete known speed/CP/outputs and fresh enabled idle/empty-queue
+feedback. Require raw DI1 LOW and legal matching outputs. Observe advancing joints,
+RobotStatus and controller time; command ID stays unchanged and joints stay within
+0.05°. This read-only check has a two-second bound and sends no robot command.
+Install the new runtime configuration while retaining READY, startup_complete,
+global speed/CP and outputs. Preserve source/camera checks, cancellation, matching
+configuration-ID/READY confirmation and the existing deployment/detector deadlines.
+
+Failed verification never falls back to Startup: retain the previous configuration,
+invalidate readiness and report FAULT/HELD_UNKNOWN as applicable. Stop wins before
+installation or success. Unprepared runtime loads and offline local-mode Configure
+retain the existing full Startup sequence. Remote Auto remains read-only. This
+supersedes unconditional preparation for Load Auto only; no API, schema, trajectory,
+I/O sequence, implicit run or live adoption is added. PREPARING includes verification.
+
 Tray purge percentage review: **2026-10-22**, baseline **`35a7827`** plus rule **304**.
 Manual Place, Auto Run and Preview turn suction OFF (DO13), then exhaust ON (DO1)
 at **97% of placement descent**. This replaces rule 303's last-5-mm trigger and
@@ -269,8 +288,9 @@ Load Auto starts OFF, validates/stages the selected Item/Bin/Tray YAML and two
 models, replaces the complete runtime catalog, then starts the detector pair.
 Both services must appear within 180 seconds. GUI PREPARING then sends one existing
 Configure request with the frozen deployed runtime paths; recheck idle/unheld feedback
-and GUI ownership before dispatch. Configure performs the existing guarded robot
-preparation, including enable/settings/output initialization. Require its successful
+and GUI ownership before dispatch. Rule 305 verifies and reuses an already
+prepared READY robot; only an unprepared controller performs the existing guarded
+Startup with enable/settings/output initialization. Require its successful
 reply and matching fresh enabled idle READY before RUNNING/green ON. Bound this
 stage to 180 seconds, with five seconds for matching status after its response.
 OFF/exit/child failure/lost or conflicting service stops owned children, with no
@@ -1200,14 +1220,16 @@ the old catalog. Remote Auto validates the externally deployed catalog without
 copying or modifying it. Bind ordinary-file dev/inode/size/mtime/ctime across
 validation, worker startup and supervisor monitoring; catalog/source drift fails
 and requires explicit reload. Local Load Auto configures from those exact deployed
-paths. Local-mode entry instead loads the explicitly selected offline files; Remote
+paths. Rule 305 keeps an already prepared READY robot enabled after live read-only
+verification, preserving speed/CP/outputs; failed reuse never falls back to Startup.
+An unprepared controller retains full Startup. Local-mode entry instead loads the explicitly selected offline files; Remote
 Auto never configures or replaces saved local selections.
 
 Require no armed teaching provider or independent headless detector. Start
 canonical installed workers only after complete validation; both services must
 appear. Local Load Auto proceeds to PREPARING. Remote mode entry instead waits
 in DETECTORS_READY without Configure; remote server commands remain unimplemented.
-Local headless production still requires preparation and matching READY confirmation.
+Local headless production requires confirmed preparation or verified reuse, and matching READY.
 Failure ends the sequence and stops the owned pair. OFF stops owned processes and
 leaves files deployed. GUI exit also stops owned tools; if an operation is active
 and the HMI owns Item/Tray providers, issue independent Stop before removing them;
@@ -1223,7 +1245,7 @@ arming of teaching GUIs, Home, pick/place cycle or direct driver client is added
 | DEPLOYING | Local validates/copies/verifies; Remote validates only; work off the GUI thread; selections and conflicting controls locked; OFF cancels |
 | STARTING | Owned pair starting; wait for both sole canonical services, at most 180 seconds; OFF cancels |
 | DETECTORS_READY | Remote mode waits with read-only workers; no Configure/enable or server command handling; no HMI transition to PREPARING |
-| PREPARING | Both detectors ready; GUI sends Configure once and waits for success plus matching fresh enabled idle READY; at most 180 seconds overall / five seconds after response; OFF cancels, with Stop if issued |
+| PREPARING | Both detectors ready; Configure loads runtime files and verifies existing READY, or prepares an unprepared controller; failed reuse never re-enables; wait for success plus matching fresh enabled idle READY; at most 180 seconds overall / five seconds after response; OFF cancels, with Stop if issued |
 | RUNNING | Preparation completed; Auto Run additionally follows normal READY/action gates; reselecting local mode to reload requires OFF; idle/unheld OFF stops pair |
 | STOPPING | Wait for owned children/native workers to terminate; no new start |
 | FAILED | Pair stopped; reason visible and logged; correct problem and explicitly enable again |
@@ -1253,7 +1275,7 @@ flowchart TD
     Tools -->|Close tool; click Local / Maintenance| Base
     TeachPage -->|Explicit Load Auto; close competing providers| Copy["Validate, stage and verify 5 files; replace runtime_teach"]
     Copy --> Detect["Start owned headless pair; wait for services, at most 180 seconds"]
-    Detect --> Prepare["Configure exact deployed runtime files; prepare / enable"]
+    Detect --> Prepare["Configure exact runtime files; already prepared READY: verify without re-enabling; otherwise Startup; failed reuse refuses"]
     Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
     Loaded -->|Supersedes failed or canceled local load; replies and Stop contained| Recheck["Retire old local attempt; one bounded full health recheck; clear HMI alarm only when healthy"]
     Recheck -->|Unhealthy at deadline| Alarm
@@ -1348,6 +1370,7 @@ flowchart TD
     INACTIVE -->|Continue same Configure operation, or external Startup| STARTING
     STARTING -->|Confirmed| READY
     READY -->|Explicit local-mode reload validates files| INACTIVE
+    READY -->|Load Auto runtime reload: sources and live readiness verified; preserve settings/outputs| READY
     READY -->|Idle speed/CP accepted| READY
     HOLDING -->|Idle speed/CP accepted| HOLDING
     READY -->|Home| HOMING
@@ -1387,7 +1410,8 @@ Pick and tray operations require those joints. Place requires an armed canonical
 READY robot or a trusted HOLDING item with retained pickup alignment in either
 launch mode; Auto Run still requires a trusted item. Unknown held alignment
 rejects before observation travel.
-Configuration hashes include Tray Teach and its camera; explicit reload includes preparation.
+Configuration hashes include Tray Teach and its camera; explicit reload includes
+preparation or rule 305's verified reuse for an already prepared runtime reload.
 
 New Pick and Place goals require a currently available pose service from exactly
 one allowed root provider. Typed status exposes `item_detector_ready` and
@@ -2375,7 +2399,7 @@ Names below are relative to `/robot_controller/`.
 | Trickle target (rule 261) | Positive finite mm step requires enabled blacklist; use prior completed fixed-area count; only final pick Z changes; check floor allowance and camera footprint; skip unsafe without counting, all unsafe Home/item wait; malformed geometry is an error; interrupted attempt retains depth |
 | Placement-to-pick trickle reset | Plan past release ignoring only old source ID; clear real history only on confirmed PLACED; preserve containment and other areas |
 | Repick history (rule 259) | Count once on confirmed HELD/FAILED, allow triggering attempt, exclude circle boundary in platform XY regardless of Z; age only on other completed physical picks; PLACED clears only associated area; Preview/capture/Stop do not count |
-| `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and robot preparation; success means READY |
+| `configure` service | GUI mode; unheld UNCONFIGURED / INACTIVE / READY; reserves operation through loading and preparation or read-only reuse. Runtime + already prepared READY requires fresh advancing enabled idle feedback, unchanged joints/command ID, DI1 LOW, complete matching legal outputs, known settings, sole ownership and no pending/retained work; preserve speed/CP/outputs; failed reuse never starts Startup; success means matching READY |
 | Load Auto GUI toggle (not a robot API) | Idle/unheld UNCONFIGURED / INACTIVE / READY, fresh stationary queue-empty feedback and raw DI1 LOW; no pending action or Preview; Local offline selections / Remote complete runtime catalog; reject existing providers/headless detectors before replacement/start; OFF during startup cancels; active runs lock changes |
 | HMI Open/Close tool (not a robot API) | Explicit owned launch only; refuse existing identity; teaching/setup Open requires Local / Maintenance; direct-tool Open releases the owned core before launch; RViz and Remote Setup are available during runs in either mode; other tool changes require no operation/held item/queued motion/pending command or active Load Auto; direct maintenance rechecks graph and local command owners before spawn; closing owned maintenance remains available; external processes are never closed |
 | HMI Remote Auto / Local / Maintenance (not a robot API) | Source changes require idle editable UNCONFIGURED/INACTIVE/READY, fresh stationary queue-empty feedback, DI1 LOW, no held/retained operation or pending request/Preview. Complete detector/core exit before restart. Local selection loads/prepares selected files once; teaching retains core; direct tools temporarily release it. Remote starts read-only runtime detectors and waits without Configure/enable/server command handling. |

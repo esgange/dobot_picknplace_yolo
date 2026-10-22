@@ -870,6 +870,60 @@ class DobotTransport:
             raise FeedbackFailure(
                 "READY fields were valid but did not remain coherent for 200 ms") from exc
 
+    def confirm_prepared_configuration(self):
+        """Read-only admission for runtime reload on an already prepared robot."""
+        self.node.raise_if_cancelled()
+        self.ensure_no_pending_response()
+        strict = tuple(name for name in self.required_services if name != "StopMoveJog")
+        self.node.check_all_command_owners(strict)
+        self.node.check_feedback_owners()
+        managed = self.node.managed
+        if (self.node.holding_item or managed.kind is not None or managed.held_loss_pending
+                or managed.return_progress is not None
+                or managed.session is not None and managed.session.held_index is not None
+                or retained_release_progress(self.node) is not None):
+            raise CommandRejected("Runtime reload requires no held or retained operation")
+        recovery = getattr(self.node, "recovery_home", None)
+        if recovery is not None and recovery.awaiting_return:
+            raise CommandRejected("Runtime reload requires completed item recovery")
+        if (type(self.node.global_speed_percent) is not int
+                or not 1 <= self.node.global_speed_percent <= 100
+                or type(self.node.global_cp_percent) is not int
+                or not 0 <= self.node.global_cp_percent <= 100
+                or set(self.node.expected_outputs) != {1, 2, 13, 14}):
+            raise FeedbackFailure("Prepared robot settings/output state is incomplete")
+        expected = dict(self.node.expected_outputs)
+
+        def check(sample):
+            if self.moving or not self._idle(sample):
+                raise FeedbackFailure("Runtime reload requires enabled idle/empty-queue feedback")
+            if sample.feed["digital_input_bits"] & 1:
+                raise HeldUnknown(UNKNOWN_ITEM_GUIDANCE)
+            outputs = sample.feed["digital_outputs"]
+            for channel, active in expected.items():
+                if bool(outputs & (1 << (channel - 1))) != active:
+                    raise FeedbackFailure(f"Runtime reload observed unexpected DO{channel}")
+            for pair in ((1, 13), (2, 14)):
+                if all(expected[channel] for channel in pair):
+                    raise FeedbackFailure("Runtime reload found opposing actuator outputs")
+            return True
+
+        initial = self._ready_snapshot()
+        check(initial)
+
+        def stationary(sample):
+            check(sample)
+            if (sample.feed["currentCommandId"] != initial.feed["currentCommandId"]
+                    or max(abs(a - b) for a, b in zip(sample.joints, initial.joints))
+                    > math.radians(0.05)):
+                raise FeedbackFailure("Robot moved during runtime readiness verification")
+            return sample.feed["controller_timer"] != initial.feed["controller_timer"]
+
+        self._phase("READY_VERIFY", "Verifying existing robot readiness without re-enabling")
+        self._wait_position(stationary, initial, MODE_TRANSITION_TIMEOUT_SEC,
+                            "advancing stationary feedback for runtime configuration")
+        self.node.raise_if_cancelled()
+
     def startup(self):
         self.wait_services(optional=("StopMoveJog",))
         strict = tuple(name for name in self.required_services if name != "StopMoveJog")

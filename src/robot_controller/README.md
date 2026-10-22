@@ -158,8 +158,10 @@ To use Local Headless Run:
    failure preserves the old catalog. Offline sources, calibration and `.env` are
    not rewritten.
 4. The owned detector pair starts. Configure uses those exact deployed runtime
-   paths, followed by its successful response and fresh matching enabled idle
-   READY. Each detector startup and preparation has its existing 180-second bound;
+   paths. An already prepared READY controller verifies live readiness without
+   disabling/re-enabling or resetting speed, CP or outputs. An unprepared controller
+   runs the existing Startup sequence. Require a successful response and fresh
+   matching enabled idle READY. Each detector startup and configuration stage has its 180-second bound;
    post-response READY confirmation has five seconds.
 5. Set Quantity/placement and click **Local Headless Run**. It rechecks all required
    node health immediately before sending a goal; a failure sends no goal and
@@ -172,6 +174,17 @@ providers before changing deployment. A child exit, lost service, source/catalog
 drift or conflicting provider stops the owned pair and reports failure. Canceling
 issued preparation uses independent Stop and contains late accepted responses.
 No automatic restart, watcher, teaching-provider disarm or recipe adoption exists.
+
+Rule 305's runtime reuse requires canonical command/feedback ownership, no pending
+reply or retained item/operation, fresh enabled idle/empty-queue feedback, DI1 LOW
+and legal outputs matching all four known gripper outputs. Verify advancing joints,
+RobotStatus and controller time with unchanged command ID and joints within 0.05°.
+The read-only feedback check is bounded by two seconds. Failure refuses the load
+with FAULT/HELD_UNKNOWN, or honors cancellation; it never falls back to re-enabling.
+The new runtime configuration replaces the old only after validation/verification.
+This also applies when recipe content changes; taught motion settings are used by
+later commands. Offline local-mode preparation and cold runtime startup retain
+their existing behavior. The HMI's PREPARING phase includes this readiness check.
 
 Remote Auto validates the external five-file runtime catalog and uses the same
 ordinary-file identity fences without copying/deleting it or overwriting saved

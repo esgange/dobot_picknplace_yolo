@@ -26,7 +26,7 @@ def response():
 @pytest.mark.parametrize('initial', ['UNCONFIGURED', 'INACTIVE', 'READY'])
 def test_load_runs_shared_startup_sequence_once_without_releasing_operation(monkeypatch, initial):
     node, _old, calls = configuration_node(initial)
-    config = SimpleNamespace(configuration_id='loaded', validate_sources=Mock(),
+    config = SimpleNamespace(configuration_id='loaded', deployment=False, validate_sources=Mock(),
                              profile={'retry': dict(REPICK_DEFAULTS)})
     monkeypatch.setattr(controller_module, 'load_configuration', lambda *_a, **_kw: config)
     phases = []
@@ -45,7 +45,7 @@ def test_load_runs_shared_startup_sequence_once_without_releasing_operation(monk
 def test_stop_during_load_or_preparation_never_enables_after_cancel_or_reports_ready(
         monkeypatch, stage):
     node, old, calls = configuration_node()
-    config = SimpleNamespace(configuration_id='loaded', validate_sources=Mock(),
+    config = SimpleNamespace(configuration_id='loaded', deployment=False, validate_sources=Mock(),
                              profile={'retry': dict(REPICK_DEFAULTS)})
     canceled = []
 
@@ -88,7 +88,7 @@ def test_stop_during_load_or_preparation_never_enables_after_cancel_or_reports_r
 def test_preparation_failure_retains_loaded_configuration_without_claiming_ready(
         monkeypatch, error, state):
     node, _old, _calls = configuration_node('UNCONFIGURED')
-    config = SimpleNamespace(configuration_id='loaded', validate_sources=Mock(),
+    config = SimpleNamespace(configuration_id='loaded', deployment=False, validate_sources=Mock(),
                              profile={'retry': dict(REPICK_DEFAULTS)})
     monkeypatch.setattr(controller_module, 'load_configuration', lambda *_a, **_kw: config)
     node.hardware.startup = Mock(side_effect=error)

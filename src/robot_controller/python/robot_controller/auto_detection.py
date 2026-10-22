@@ -121,7 +121,7 @@ class AutoDetectors:
             if self.state != 'DETECTORS_READY' or self.cancel.is_set():
                 raise ValueError('Wait for the runtime detectors to become ready')
             self.prepare_requested = True
-        self._state('PREPARING', 'Loading the runtime recipe and preparing the robot…',
+        self._state('PREPARING', 'Loading the runtime recipe and verifying robot readiness…',
                     expected='DETECTORS_READY')
 
     def _start(self, selections, *, runtime, prepare=True):
@@ -259,8 +259,8 @@ class AutoDetectors:
                 ready = all(available.values())
                 if ready and not ready_once:
                     if self.prepare_requested:
-                        self._state('PREPARING', 'Detectors ready; loading teach files and '
-                                    'preparing the robot…', expected='STARTING')
+                        self._state('PREPARING', 'Detectors ready; loading runtime teach files and '
+                                    'verifying robot readiness…', expected='STARTING')
                     else:
                         self._state('DETECTORS_READY', 'Runtime detectors ready; waiting for '
                                     'remote server commands (connection not implemented)',
@@ -286,7 +286,7 @@ class AutoDetectors:
                         if (not idle_reason(status) and status.state == 'READY'
                                 and status.startup_complete and status.robot_enabled
                                 and status.configuration_id == configuration_id):
-                            self._state('RUNNING', 'Robot prepared; headless Item Detect '
+                            self._state('RUNNING', 'Robot ready; headless Item Detect '
                                         'and Tray Detect are ready', expected='PREPARING')
                         elif time.monotonic() >= ready_deadline:
                             raise TimeoutError('Robot preparation did not confirm matching READY')

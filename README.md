@@ -84,7 +84,10 @@ use its own Load control. Use Home,
 Pick, Place or **Manual/Test Run** without switching modes. **Load Auto** remains
 an optional local workflow: close teaching providers, validate/deploy the selected
 three YAMLs and two paired models into `runtime_teach/`, start the headless pair,
-and prepare from exactly those deployed files. Then use **Local Headless Run**.
+and load exactly those deployed files. If the controller is already prepared and
+READY, verify live readiness and preserve its enabled state, speed, CP and outputs.
+An unprepared controller runs the existing preparation sequence. Failed readiness
+verification refuses the load without trying to re-enable. Then use **Local Headless Run**.
 
 Opening Motion Debug, Gripper Diagnostics or Camera Calibration in the local
 mode explicitly releases the owned controller after fresh idle/unheld checks.

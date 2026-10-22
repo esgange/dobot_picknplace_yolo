@@ -12834,6 +12834,54 @@ Superseded by rule 304 below; retained as historical implementation evidence.
   ends. No teach-file changes are required. Commit/push follows the standing
   workflow; retain history rather than resetting or force-pushing shared main.
 
+### 2026-10-22 — Rule 305: Load Auto reuses verified READY robot state
+
+- User requests that Load Auto not blindly re-enable a robot whose station is
+  already healthy and READY. The old Configure path always cleared readiness,
+  ran Stop/DisableRobot/EnableRobot and reset global settings/outputs, including
+  the offline-to-runtime handoff immediately after Local / Maintenance prepared it.
+- Keep explicit deployment, worker startup and Configure of the exact runtime
+  catalog. A GUI controller that was already READY with startup_complete may
+  install that validated runtime configuration after read-only hardware checks.
+  Restrict reuse to deployment=True runtime configurations, including changed
+  recipes. Offline local-mode loading and unprepared runtime loading retain the
+  existing Startup sequence. Headless configuration remains immutable and Remote
+  Auto still starts read-only providers without Configure or enable.
+- The hardware authority verifies canonical command/feedback owners and no pending
+  reply, held item, retained source/release/recovery or managed interruption. Require
+  known speed/CP/all four output states, enabled idle/empty-queue feedback, raw DI1
+  LOW and matching legal outputs. Observe advancing joint timestamps, RobotStatus
+  and controller time with unchanged command ID and joints within 0.05 degrees;
+  bound that wait by the existing two-second motion-origin deadline. Preserve
+  camera/source/cancellation gates. This path sends no robot command.
+- Reuse retains READY/startup_complete, global speed/CP and output expectations.
+  Validate before replacing configuration; retain the previous one on failed
+  verification. A failed reuse invalidates readiness and reports FAULT or
+  HELD_UNKNOWN; never fall back to enable/reset. Stop during loading, verification,
+  installation or response completion prevents success and retains containment.
+  Keep one operation owner, matching configuration-ID/READY confirmation and
+  the supervisor's 180-second/five-second deadlines. No motion or run is implicit.
+- Update HMI phase/help text to describe readiness verification, retaining the
+  PREPARING supervisor state. Update root/package guides, AGENTS and FSM review,
+  diagrams and guards, and regenerate adjacent offline HTML/PDF exports. No new
+  ROS service/field, teach schema, robot state or operator file is introduced.
+- Focused lifecycle/runtime-deployment tests pass 241 cases. The complete
+  controller suite passes 1,983 tests, including 54 new cases for successful reuse,
+  preserved nondefault settings/outputs, unprepared startup, faults/stale/disabled
+  feedback, ownership, retained context, advancing stationary proof, DI1/output
+  changes and Stop at each reload stage. All use synthetic feedback/offscreen UI.
+  The isolated robot_controller build passes. Correct one changed line's 101-column
+  lint violation by wrapping it; behavior is unchanged. Final AST/changed-line
+  lint and diff checks pass; verify all nine HTML/PDF diagrams and source hash.
+- Final review retains Startup's optional StopMoveJog service exclusion in
+  ownership checks. The readiness/transport suites pass all 104 cases after this
+  adjustment, including legal active-output preservation and no hardware command.
+- Work in /tmp/picknplace-settling-pick-retract; evidence is in ignored
+  logs/load_auto_reuse_* files. Preserve the active station, unrelated RViz edit
+  and all operator teach/model/calibration/runtime files. No live robot command,
+  restart, deployment or physical verification is performed. Apply by an explicit
+  controller/HMI relaunch after active work ends. Commit/push follows standing rules.
+
 ### Future entry template
 
 ```text

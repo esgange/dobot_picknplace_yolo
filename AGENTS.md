@@ -10,6 +10,17 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 305 makes Load Auto's runtime Configure reuse an already prepared READY
+controller after read-only live verification, without Stop/disable/enable,
+settings or output reset. Still load the exact validated deployed recipe.
+Require canonical ownership, no pending command or retained operation, enabled
+idle/empty-queue advancing feedback, unchanged joints/command ID, DI1 LOW and
+matching legal known outputs. Preserve global speed/CP and outputs. Failed reuse
+must not fall back to Startup; refuse with FAULT/HELD_UNKNOWN or honor Stop.
+Unprepared runtime loads and offline local-mode preparation keep existing Startup.
+Keep camera/source guards, deadlines, matching READY, Remote behavior and explicit
+run admission. No new ROS API/schema or live reload; update diary/FSM/exports.
+
 Rule 304 replaces rule 303's last-5-mm tray purge with a fixed 97% descent trigger,
 superseding rule 267's earlier 90%. Remove the distance-event extension and its
 short-stroke special case. At 97%, command suction DO13 OFF then exhaust DO1 ON.
