@@ -214,7 +214,7 @@ def test_place_preview_contains_only_three_placement_targets(preview, angle, use
     assert [e.vendor_value() for e in preview.targets[0].motion_io] == (
         [] if use_grip else ['{0,80,2,0}', '{0,80,14,1}'])
     assert [e.vendor_value() for e in preview.targets[1].motion_io] == [
-        '{0,80,2,0}', '{0,80,14,1}', '{0,97,13,0}', '{0,97,1,1}']
+        '{0,80,2,0}', '{0,80,14,1}', '{0,98,13,0}', '{0,98,1,1}']
     preview.trays.request.call_args.kwargs["check_state"]()
     preview.client.request.assert_not_called()
 

@@ -68,7 +68,7 @@ def test_place_preserves_tool_z_and_exact_depth_heights(angle, use_grip):
     assert [(e.percent, e.channel, e.active) for e in plan[0].motion_io] == (
         [] if use_grip else [(80, 2, False), (80, 14, True)])
     assert [(e.percent, e.channel, e.active) for e in plan[1].motion_io] == [
-        (80, 2, False), (80, 14, True), (97, 13, False), (97, 1, True)]
+        (80, 2, False), (80, 14, True), (98, 13, False), (98, 1, True)]
     assert [(e.percent, e.channel, e.active) for e in plan[2].motion_io] == [
         (0, 2, False), (0, 14, False), (0, 1, False), (0, 13, False)]
 

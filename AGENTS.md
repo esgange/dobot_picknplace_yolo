@@ -10,6 +10,11 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 306 changes rule 304's tray vacuum trigger from 97% to 98% of descent:
+DO13 OFF then DO1 ON. Keep 80% finger OPEN, neutral at retract start, continuous
+blending and shared Manual Place/Auto Run/Preview targets. All other geometry,
+timing, source, Stop and readiness behavior stays unchanged; update FSM/exports.
+
 Rule 305 makes Load Auto's runtime Configure reuse an already prepared READY
 controller after read-only live verification, without Stop/disable/enable,
 settings or output reset. Still load the exact validated deployed recipe.

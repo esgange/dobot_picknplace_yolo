@@ -12882,6 +12882,24 @@ Superseded by rule 304 below; retained as historical implementation evidence.
   restart, deployment or physical verification is performed. Apply by an explicit
   controller/HMI relaunch after active work ends. Commit/push follows standing rules.
 
+### 2026-10-22 — Rule 306: tray vacuum release at 98% descent
+
+- User requests tuning the current tray purge trigger from 97% to 98%. Change
+  only placement's shared vacuum_release_percent to 98: DO13 OFF then DO1 ON.
+  Manual Place, Auto Run and Preview share the target. Supersede rule 304's 97%
+  only; retain 80% finger OPEN, neutral at retract start, continuous blending,
+  Home-Z approach/retract, release geometry, rates, Return Item/missed-pick I/O,
+  Stop/source guards and rule 305's verified READY reuse. No teach-file change.
+- Update existing target, transport and Preview expectations plus current guides,
+  AGENTS and FSM text/diagrams/guards. Regenerate its nine-diagram HTML and
+  nine-page PDF and verify their source hash and 98% placement labels.
+- The isolated robot_controller build and 238 placement/release/Preview/motion
+  tests pass. Python syntax and git diff --check pass. Evidence is in ignored
+  logs/tray_purge_98_* in /tmp/picknplace-settling-pick-retract.
+- Preserve the active station, unrelated RViz edit and operator files. No live
+  command, restart or physical timing measurement; activate via controller
+  relaunch after active work ends. Commit/push follows the standing workflow.
+
 ### Future entry template
 
 ```text
