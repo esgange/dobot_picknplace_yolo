@@ -39,7 +39,7 @@ def test_new_profiles_start_disabled_and_recover_schema13_without_changing_file(
     profile["retry"] = {"pose_candidates": 3}
     path.write_text(yaml.safe_dump(profile))
     before = path.read_bytes()
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
     draft = recover_item_fields(path, root=root)
     assert all(draft.values[k] == v for k, v in core.REPICK_DEFAULTS.items())
@@ -101,7 +101,7 @@ def test_schema15_round_trip_and_missing_trickle_stays_invalid(pair):  # noqa: F
     fields["retry"] = {**enabled(), "trickle_depth": 10.5}
     path, saved = core.save_item_profile(fields, profile["home"], model, root=root)
     loaded, _ = core.load_item_profile(path, root=root)
-    assert loaded["schema_version"] == 15 and loaded["retry"]["trickle_depth"] == 10.5
+    assert loaded["schema_version"] == 16 and loaded["retry"]["trickle_depth"] == 10.5
     del saved["retry"]["trickle_depth"]
     import yaml
     path.write_text(yaml.safe_dump(saved))

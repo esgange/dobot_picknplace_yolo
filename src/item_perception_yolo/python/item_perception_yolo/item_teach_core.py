@@ -26,10 +26,11 @@ from .repick import REPICK_DEFAULTS
 from .depth_snapshot import validate_depth_frame_count, item_depth_limits
 
 
-ITEM_SCHEMA_VERSION = 15
+ITEM_SCHEMA_VERSION = 16
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
 MODEL_TASKS = ("detect", "segment", "obb")
-MOTION_FIELDS = ("standoff_height", "prepick_height", "retract_height", "trayplace_height")
+MOTION_FIELDS = ("standoff_height", "prepick_height", "settling_retract", "pick_retract",
+                 "trayplace_height")
 SPEED_FIELDS = ("travel_percent", "approach_percent", "retract_percent")
 NEW_PROFILE_SPEED = {"travel_percent": 100, "approach_percent": 6, "retract_percent": 6}
 NEW_PROFILE_ACCELERATION = dict.fromkeys(SPEED_FIELDS, 100)
@@ -388,9 +389,9 @@ def validate_profile(profile):
     if (type(profile) is not dict or type(profile.get("schema_version")) is not int
             or profile["schema_version"] != ITEM_SCHEMA_VERSION):
         raise ValueError(
-            "Item teach schema_version must be exactly 15 "
-            "(repick history and trickle depth settings); "
-            "schemas 1–14 require review and Save in Item Teach; no compatibility reader")
+            "Item teach schema_version must be exactly 16 "
+            "(independent settling retract and additional pick retract); "
+            "schemas 1–15 require review and Save in Item Teach; no compatibility reader")
     _fields(profile, ("schema_version", "artifact_type", "created_at_utc", "item", "model",
                       "units", "home", "pick_rotation", "motion", "speed", "acceleration",
                       "timing",

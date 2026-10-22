@@ -36,8 +36,8 @@ def tray_observation(surface=(.3, .2, .25), rotation=None):
 
 
 def settings():
-    return {"motion": {"standoff_height": 10., "prepick_height": 50., "retract_height": 20.,
-                       "trayplace_height": 60.},
+    return {"motion": {"standoff_height": 10., "prepick_height": 50.,
+                       "settling_retract": 50., "pick_retract": 20., "trayplace_height": 60.},
             "speed": {"travel_percent": 80, "approach_percent": 10, "retract_percent": 20},
             "acceleration": {"travel_percent": 70, "approach_percent": 30, "retract_percent": 40},
             "timing": {"pick_settling": .2}, "pick_rotation": 90.,
@@ -81,7 +81,8 @@ def test_tray_drop_height_is_independent_of_pick_heights(
         standoff, prepick, retract, trayplace):
     profile = settings()
     profile["motion"] = {"standoff_height": standoff, "prepick_height": prepick,
-                         "retract_height": retract, "trayplace_height": trayplace}
+                         "settling_retract": prepick, "pick_retract": retract,
+                         "trayplace_height": trayplace}
     home = pose_matrix([500, -150, 900, 170, 25, -60])
     detect = pose_matrix([300, 200, 800, 175, 12, 28])
     surface = pose_matrix([300, 200, 250, 0, 0, 0])

@@ -23,7 +23,8 @@ def settings():
         "pick_rotation": 15.0,
         "geometry_source": "none", "quality": dict(core.QUALITY_DEFAULTS),
         "motion": {"standoff_height": 150.0,
-                   "prepick_height": 50.0, "retract_height": 80.0, "trayplace_height": 40.0},
+                   "prepick_height": 50.0, "settling_retract": 50.0,
+                   "pick_retract": 80.0, "trayplace_height": 40.0},
         "speed": dict(core.NEW_PROFILE_SPEED),
         "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": 0.5},
@@ -71,7 +72,7 @@ def test_anywhere_source_becomes_independent_local_pair(pair):
     assert profile["home"]["positions_rad"] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     assert profile["controller_contract"]["motion_enabled"] is False
     assert profile["model"]["verification"] == "file_sha256_only"
-    assert profile["schema_version"] == 15
+    assert profile["schema_version"] == 16
     assert profile["pick_rotation"] == 15.0
     assert profile["motion"]["trayplace_height"] == 40.0
     assert "result_max_age_sec" not in profile["quality"]
@@ -261,13 +262,13 @@ def test_duplicate_yaml_keys_and_old_schema_rejected(pair):
     path.write_text(path.read_text() + "schema_version: 1\n")
     with pytest.raises(ValueError, match="Duplicate YAML key"):
         core.load_item_profile(path, root=root)
-    for old_version in range(1, 15):
+    for old_version in range(1, 16):
         profile["schema_version"] = old_version
-        with pytest.raises(ValueError, match="exactly 15"):
+        with pytest.raises(ValueError, match="exactly 16"):
             core.validate_profile(profile)
 
 
-@pytest.mark.parametrize("schema", [9, 10, 11, 12, 13, 14, 15])
+@pytest.mark.parametrize("schema", [9, 10, 11, 12, 13, 14, 15, 16])
 def test_deployed_reader_requires_explicit_current_placement_height(pair, schema):
     root, _, path, profile = pair
     directory = root / "runtime_teach"
@@ -278,8 +279,8 @@ def test_deployed_reader_requires_explicit_current_placement_height(pair, schema
         del profile["motion"]["trayplace_height"]
     deployed.write_text(yaml.safe_dump(profile))
     deployed.with_suffix(".pt").write_bytes(path.with_suffix(".pt").read_bytes())
-    if schema < 15:
-        with pytest.raises(ValueError, match="exactly 15"):
+    if schema < 16:
+        with pytest.raises(ValueError, match="exactly 16"):
             core.load_item_profile(deployed, root=root, deployment=True)
     else:
         loaded, _ = core.load_item_profile(deployed, root=root, deployment=True)
@@ -307,7 +308,7 @@ def test_schema_eight_forbids_removed_height_and_older_height_requires_gui_revie
     original = path.read_bytes()
     draft = recover_item_fields(path, root=root)
     assert "zheight_offset" not in draft.values
-    assert draft.values["retract_height"] is None
+    assert draft.values["settling_retract"] is None
     assert draft.values["prepick_height"] == profile["motion"]["prepick_height"]
     assert draft.values["standoff_height"] == profile["motion"]["standoff_height"]
     assert any("extra above pre-pick" in issue for issue in draft.issues)
@@ -327,14 +328,14 @@ def test_gui_recovery_of_old_count_does_not_convert_file_or_weaken_runtime(pair)
     assert draft.model_path == path.with_suffix(".pt")
     assert draft.model_sha256 == profile["model"]["sha256"]
     assert "retry_limit" in " ".join(draft.issues)
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
 
 def test_recovery_clears_invalid_values_and_conflicts_without_defaults(pair):
     root, _, path, profile = pair
-    profile["motion"]["retract_height"] = ""
+    profile["motion"]["settling_retract"] = ""
     profile["yolo"].update(confidence=40, class_ids=[0, "1"], image_size=None)
     profile["gripper"]["use_grip"] = "false"
     profile["geometry"].update(height=20, width=50)
@@ -343,7 +344,7 @@ def test_recovery_clears_invalid_values_and_conflicts_without_defaults(pair):
     profile["retry"] = {"retry_limit": 3, "pose_candidates": 5}
     path.write_text(yaml.safe_dump(profile))
     draft = recover_item_fields(path, root=root)
-    for key in ("retract_height", "confidence", "class_ids", "image_size", "use_grip",
+    for key in ("settling_retract", "confidence", "class_ids", "image_size", "use_grip",
                 "height", "width", "depth_min_mm", "depth_max_mm", "pose_candidates"):
         assert draft.values[key] is None, key
     assert draft.home is None
@@ -398,7 +399,7 @@ def test_recovery_never_uses_unverified_model_bytes(pair, failure):
 
 
 @pytest.mark.parametrize("section,key,value", [
-    ("motion", "standoff_height", -1), ("motion", "retract_height", float("nan")),
+    ("motion", "standoff_height", -1), ("motion", "settling_retract", float("nan")),
     ("timing", "pick_settling", True), ("gripper", "use_grip", 1),
     ("retry", "pose_candidates", 0), ("retry", "pose_candidates", 21),
     ("retry", "pose_candidates", True), ("retry", "pose_candidates", 3.0),
@@ -442,7 +443,7 @@ def test_nearby_filter_profile_roundtrip_and_explicit_legacy_review(pair):
         del profile["geometry"][key]
     path.write_text(yaml.safe_dump(profile))
     before = path.read_bytes()
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
     draft = recover_item_fields(path, root=root)
     assert {key: draft.values[key] for key in core.NEARBY_DEPTH_DEFAULTS} == \
@@ -482,11 +483,11 @@ def test_schema_nine_recovery_requires_explicit_trayplace_height(pair, extra_fie
     assert draft.values["trayplace_height"] is None
     assert draft.values["standoff_height"] == 150.
     assert draft.values["prepick_height"] == 50.
-    assert draft.values["retract_height"] == 80.
+    assert draft.values["settling_retract"] is None
     assert draft.home == profile["home"]
     assert draft.model_path == path.with_suffix(".pt")
     assert any("predates explicit trayplace_height" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -514,7 +515,7 @@ def test_schema_seven_recovery_requires_explicit_pick_rotation(pair):
     draft = recover_item_fields(path, root=root)
     assert draft.values["pick_rotation"] is None
     assert any("predates explicit pick_rotation" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -528,7 +529,7 @@ def test_schema_eight_recovery_requires_explicit_bin_clearance(pair):
     draft = recover_item_fields(path, root=root)
     assert all(draft.values[key] is None for key in core.BIN_CLEARANCE_FIELDS)
     assert any("predates optional bin-wall clearance" in issue for issue in draft.issues)
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
     assert path.read_bytes() == original
 
@@ -598,7 +599,7 @@ def test_schema_four_recovery_leaves_unknown_rates_blank_and_does_not_write(pair
         assert draft.values[key] is None
         assert draft.values[f"acceleration_{key}"] is None
     assert path.read_bytes() == original
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
 
 
@@ -797,7 +798,7 @@ def test_content_cache_is_immutable_and_rechecks_equal_size_timestamp_tampering(
         assert parser.call_count == 1
         stat = path.stat()
         contents = path.read_bytes()
-        changed = contents.replace(b"schema_version: 15", b"schema_version: 13")
+        changed = contents.replace(b"schema_version: 16", b"schema_version: 13")
         assert len(changed) == len(contents) and changed != contents
         path.write_bytes(changed)
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
@@ -821,10 +822,49 @@ def test_schema_twelve_requires_explicit_floor_and_frame_review_before_save(pair
     del profile["geometry"]["depth_frame_count"]
     path.write_text(yaml.safe_dump(profile))
     contents = path.read_bytes()
-    with pytest.raises(ValueError, match="exactly 15"):
+    with pytest.raises(ValueError, match="exactly 16"):
         core.load_item_profile(path, root=root)
     draft = recover_item_fields(path, root=root)
     assert draft.values["depth_frame_count"] == 3
     assert any("floor-relative" in issue and "500 mm" in issue for issue in draft.issues)
     assert any("three-frame" in issue for issue in draft.issues)
     assert path.read_bytes() == contents
+
+
+@pytest.mark.parametrize("key", ["settling_retract", "pick_retract"])
+@pytest.mark.parametrize("value", [-1., float("nan"), float("inf"), True, "20"])
+def test_two_stage_retract_requires_finite_nonnegative_mm(settings, key, value):
+    settings["motion"][key] = value
+    with pytest.raises(ValueError, match=key):
+        core.validate_settings(settings)
+
+
+def test_retract_keys_are_required_and_old_name_is_not_an_alias(settings):
+    for key in ("settling_retract", "pick_retract"):
+        changed = copy.deepcopy(settings)
+        changed["motion"].pop(key)
+        with pytest.raises(ValueError, match="motion must contain exactly"):
+            core.validate_settings(changed)
+    settings["motion"].update(settling_retract=0., pick_retract=0.)
+    core.validate_settings(settings)
+    settings["motion"]["retract_height"] = 20.
+    with pytest.raises(ValueError, match="motion must contain exactly"):
+        core.validate_settings(settings)
+
+
+def test_schema15_retract_is_not_silently_reinterpreted(pair):
+    root, _, path, profile = pair
+    profile["schema_version"] = 15
+    profile["motion"].pop("settling_retract")
+    profile["motion"].pop("pick_retract")
+    profile["motion"]["retract_height"] = 20.
+    path.write_text(yaml.safe_dump(profile))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="exactly 16"):
+        core.load_item_profile(path, root=root)
+    draft = recover_item_fields(path, root=root)
+    assert draft.values["settling_retract"] is None
+    assert draft.values["pick_retract"] is None
+    assert "retract_height" not in draft.values
+    assert draft.values["prepick_height"] == 50.
+    assert path.read_bytes() == before

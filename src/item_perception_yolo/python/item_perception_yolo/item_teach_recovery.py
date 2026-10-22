@@ -89,8 +89,10 @@ def recover_item_fields(path, *, root=None):
     else:
         accept("pick_rotation", rotation, True)
     for key in core.MOTION_FIELDS:
-        if key == "retract_height" and payload["schema_version"] < 6:
-            accept(key, None, False, "old height was relative to pick; now extra above pre-pick")
+        if key in ("settling_retract", "pick_retract") and payload["schema_version"] < 16:
+            accept(key, None, False,
+                   "schema predates two-stage retract; old retract_height was extra "
+                   "above pre-pick and cannot be reused")
         elif key == "trayplace_height" and payload["schema_version"] < 10:
             accept(key, None, False, "schema predates explicit trayplace_height")
         else:

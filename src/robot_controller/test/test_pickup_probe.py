@@ -119,7 +119,7 @@ def test_executor_retains_active_ledger_until_probe_result_and_retracts_from_act
         monkeypatch, acquire):
     rig, _clock = probe_rig(monkeypatch)
     taught = settings(use_grip=False, close_on_pick=False)
-    taught["motion"]["prepick_height"] = 40.
+    taught["motion"]["settling_retract"] = 40.
     taught["timing"]["pick_settling"] = .3
     plan = list(pick_targets(matrix(.5), item_pose(x=0., y=0., z=.1), taught, 1,
                              rotation=np.eye(3)))
@@ -175,7 +175,7 @@ def test_executor_retains_active_ledger_until_probe_result_and_retracts_from_act
     targets, kwargs = returns[0]
     assert kwargs["confirmed_start_pose"][2, 3] == pytest.approx(height)
     assert targets[0].matrix[2, 3] == pytest.approx(.14)
-    assert session.attempts[0].plan[2].matrix[2, 3] == pytest.approx(.14)
+    assert session.attempts[0].plan[2].matrix[2, 3] == pytest.approx(.15)
     assert targets[0].motion_io == (
         (MotionIO(50, 2, False), MotionIO(50, 14, False)) if acquire else
         (MotionIO(80, 13, False), MotionIO(80, 1, True)))

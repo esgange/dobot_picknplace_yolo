@@ -47,7 +47,7 @@ def settings(*, use_grip=True, close_on_pick=True):
     return {
         "pick_rotation": 0.0,
         "motion": {"standoff_height": 0.0, "prepick_height": 50.0,
-                   "retract_height": 100.0},
+                   "settling_retract": 50.0, "pick_retract": 100.0},
         "speed": {"travel_percent": 100, "approach_percent": 6,
                   "retract_percent": 6},
         "acceleration": {"travel_percent": 100, "approach_percent": 100,
@@ -344,7 +344,7 @@ def test_placement_departure_rejects_a_cartesian_only_tray_target():
         placement_pick_targets(plan, replace(tray_target(), joint_motion=False))
 
 
-def test_success_with_deferred_grip_closes_halfway_through_prepick_lift():
+def test_success_with_deferred_grip_closes_halfway_through_additional_pick_retract():
     taught = settings(close_on_pick=False)
     hardware = FakeHardware([True])
     plan = pick_targets(matrix(1.0), item_pose(), taught, 1)
@@ -360,9 +360,9 @@ def test_success_with_deferred_grip_closes_halfway_through_prepick_lift():
                    for entry in hardware.log)
     assert not returned
     retract, clearance, exit_transit, linear, destination = hardware.targets[-1]
-    assert [event.vendor_value() for event in retract.motion_io] == [
+    assert not retract.motion_io
+    assert [event.vendor_value() for event in clearance.motion_io] == [
         "{0,50,14,0}", "{0,50,2,1}"]
-    assert not clearance.motion_io
     assert not exit_transit.motion_io
     assert not destination.motion_io
     assert not linear.motion_io
@@ -395,14 +395,16 @@ def test_pick_return_queues_finger_policy_and_safety_exit_before_tray_arrival(
     rig.transport.move_batch(
         hardware.targets[-1], require_suction=True, confirmed_start_pose=hardware.pose)
 
-    lift_service = "MovL" if use_grip and close_on_pick else "MovLIO"
-    assert rig.order == [lift_service, "MovL", "MovL", "MovL", "MovJ", "feedback"]
+    lift_service = "MovL" if use_grip else "MovLIO"
+    pick_retract_service = "MovLIO" if use_grip and not close_on_pick else "MovL"
+    assert rig.order == [lift_service, pick_retract_service, "MovL", "MovL", "MovJ", "feedback"]
     lift, clearance, exit_transit, linear, tray = [r for _service, r in rig.requests]
     assert all(getattr(linear, field) == getattr(tray, field)
                for field in ('mode', 'a', 'b', 'c', 'd', 'e', 'f', 'param_value'))
     assert list(getattr(lift, "mdis", ())) == (
-        ["{0,50,2,0}", "{0,50,14,0}"] if not use_grip else
-        ["{0,50,14,0}", "{0,50,2,1}"] if not close_on_pick else [])
+        ["{0,50,2,0}", "{0,50,14,0}"] if not use_grip else [])
+    assert list(getattr(clearance, "mdis", ())) == (
+        ["{0,50,14,0}", "{0,50,2,1}"] if use_grip and not close_on_pick else [])
     assert not lift.mode and not clearance.mode and not exit_transit.mode and tray.mode
     assert [tray.a, tray.b, tray.c, tray.d, tray.e, tray.f] == pytest.approx(
         [10., -20., 30., -40., 50., -347.524])
@@ -483,9 +485,9 @@ def test_success_and_exhaustion_keep_vertical_safety_exit_before_final_travel(
             assert all(event.channel in (2, 14) for target in group
                        for event in target.motion_io)
             assert group[0].motion_io == (
-                gripper_neutral_events(50) if not use_grip else
-                gripper_close_events(50) if not close_on_pick else ())
-            assert not group[1].motion_io
+                gripper_neutral_events(50) if not use_grip else ())
+            assert group[1].motion_io == (
+                gripper_close_events(50) if use_grip and not close_on_pick else ())
         else:
             assert group[0].motion_io == vacuum_exhaust_events(80)
             assert group[1].motion_io == (

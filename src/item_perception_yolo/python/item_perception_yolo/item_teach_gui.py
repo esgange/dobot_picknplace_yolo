@@ -574,7 +574,10 @@ class ItemTeachWindow(QtWidgets.QWidget):
         descriptions = {
             "standoff_height": "Gripper compensation at final Link6 pick position",
             "prepick_height": "Distance above Link6 pick Z before final approach",
-            "retract_height": "Extra clearance above pre-pick Z (pick + pre-pick + retract)",
+            "settling_retract": "Height above nominal pick Z for the first lift; starts "
+                                "continuous DI1 loss monitoring with 500 ms debounce, no dwell",
+            "pick_retract": "Additional lift above settling_retract; delayed transport finger "
+                            "CLOSE occurs at 50% of this lift when use_grip is ON",
             "trayplace_height": "Placement Link6 drop height above the detected tray surface; "
                                 "independent of pick heights",
         }
@@ -596,7 +599,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
 
         speed = group("Motion speeds — %", 7)
         speed_labels = {"travel_percent": "Travel / Home", "approach_percent": "Final approach",
-                        "retract_percent": "Pick to pre-pick retract"}
+                        "retract_percent": "Pick to settling retract"}
         for key in SPEED_FIELDS:
             field = QtWidgets.QLineEdit(str(NEW_PROFILE_SPEED[key]))
             field.setPlaceholderText("Required; integer 1–100%")
@@ -624,7 +627,7 @@ class ItemTeachWindow(QtWidgets.QWidget):
             "Relax when suction starts during descent. Close at final pick arrival "
             "even if DI1 remains LOW, regardless of use_grip. "
             "Early suction Stop closes at the stopped pickup position. "
-            "When off with use_grip on, close at 50% of the first upward lift.")
+            "When off with use_grip on, close at 50% of the additional pick_retract lift.")
         settle = QtWidgets.QLineEdit()
         settle.setPlaceholderText("Required; seconds to wait at pick if DI1 has not triggered")
         self.inputs["pick_settling"] = settle

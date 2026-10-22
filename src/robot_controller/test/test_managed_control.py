@@ -20,7 +20,7 @@ def profile(prepick=80.0):
     return {
         "pick_rotation": 0.0,
         "motion": {"standoff_height": 0.0, "prepick_height": prepick,
-                   "retract_height": 50.0},
+                   "settling_retract": prepick, "pick_retract": 50.0},
         "speed": {"travel_percent": 80, "approach_percent": 6, "retract_percent": 10},
         "acceleration": {"travel_percent": 80, "approach_percent": 50,
                          "retract_percent": 50},
@@ -933,7 +933,7 @@ def test_return_requested_at_paused_drop_releases_once_and_finishes_ready():
 @pytest.mark.parametrize("prepick", [20., 50., 80.])
 def test_put_back_never_sends_release_events_on_zero_distance_retreat(prepick):
     settings = profile(prepick)
-    settings["motion"]["retract_height"] = 0.
+    settings["motion"]["pick_retract"] = 0.
     plan = pick_targets(matrix(z=.8), matrix(z=.3), settings, 1)
     release, retreat = return_targets(plan)
     assert np.array_equal(release.matrix, plan[2].matrix)
@@ -946,7 +946,7 @@ def test_put_back_never_sends_release_events_on_zero_distance_retreat(prepick):
 
 def test_put_back_rejects_geometry_without_any_upward_neutral_retreat():
     settings = profile(50.)
-    settings["motion"]["retract_height"] = 0.
+    settings["motion"]["pick_retract"] = 0.
     plan = pick_targets(matrix(z=.35), matrix(z=.3), settings, 1)
     with pytest.raises(ValueError, match="Home Z must be above"):
         return_targets(plan)

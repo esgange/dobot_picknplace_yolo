@@ -1,5 +1,32 @@
 # Robot Controller — Finite State Machine
 
+Two-stage retract review: **2026-10-22**, baseline **`f760337`** plus rule **300**.
+Item Teach schema 16 replaces `motion.retract_height` with `settling_retract`
+and `pick_retract`, both required finite nonnegative millimetres. Nominal pick Z
+is measured item Z + standoff; approach is nominal pick Z + prepick_height;
+first lift is nominal pick Z + settling_retract; second lift is first lift Z +
+pick_retract. Pre-pick is independent of both retract levels. Home Z must be at
+or above approach and both retracts. Recovery's next-item entry waypoint is the
+higher of pre-pick and second-lift Z to keep that handoff descending.
+
+First successful lift uses taught retract speed/acceleration; the additional
+lift and both empty lifts use speed 100% with travel acceleration. Both lifts
+remain upward-only from the actual stopped XY/attitude, followed by the Home-Z
+exit and existing destination. At measured settling Z (or higher actual pickup
+origin), arm the existing continuous 500 ms DI1-loss debounce. There is no pause,
+dwell, additional arrival confirmation or split queue at this height. The
+last-chance 50% pickup probe also references the remaining rise to settling Z.
+
+`use_grip=true, grip_onpick=false` closes halfway through the second lift;
+Grab on Pick retains arrival/early-Stop closing. `use_grip=false` retains RELAX
+halfway through the first lift. Saved pre-pick release is independent of these
+retract heights, including an early pickup above pre-pick. Trickle only lowers
+final pick, retaining all nominal lift/release levels. Preview, retries,
+Auto Run and Pause acquisition share these targets. Legacy files open only as
+unarmed GUI recovery drafts with both new fields blank, requiring explicit
+entry/Save/deployment; no alias or automatic conversion. Existing source,
+ownership, Stop, I/O and feedback gates remain mandatory.
+
 Teach selection review: **2026-10-22**, baseline **`d72493b`** plus rule **299**.
 Remove the separate HMI Load/Reload Teach Configuration button. Explicit local
 mode selection remains the guarded controller loading/preparation action below.
@@ -271,8 +298,8 @@ selected by the operator. Do not descend further to obtain nominal arrival.
 Each output needs acceptance and fresh feedback. DI1 during a finger command
 finishes only that issued response/echo before Stop, then completes remaining
 channels once; no duplicate close after later acquisition. OFF stays relaxed;
-transport grip at 50% of the first held lift, all routes/rates and direct Stop/
-Pause remain unchanged. Rule 271 moves the neutral/SUCK event to final-descent start
+transport CLOSE is at 50% of the additional pick_retract lift under rule 300.
+Direct Stop/Pause retain their existing behavior. Rule 271 moves the neutral/SUCK event to final-descent start
 using distance-mode zero; all other rule-269 behavior is unchanged.
 
 Time-study review: **2026-10-12**, baseline **`f3d80cc`** plus rule **268**.
@@ -613,8 +640,8 @@ managed Pause and automatic drop containment retain their physical Stop checks.
 Deferred drop-monitoring review: **2026-10-06**, baseline **`09ed60a`** plus rule
 **223**. The shared falling-edge debounce is now **500 ms**. On pickup, retain
 HELD/source context but defer loss monitoring until fresh joint FK reaches the
-first retract/pre-pick height (at least the actual pickup origin Z). Observe
-height while the full lift/clearance/Tray Detect queue executes; no midpoint
+settling-retract height (at least the actual pickup origin Z). Observe
+height while the full settling/additional-lift/Tray Detect queue executes; no midpoint
 arrival wait or queue split. Ignore pre-retract LOW time and start a fresh
 500 ms interval at activation; HIGH resets it immediately. Zero remaining lift
 arms on a new position sample at that height. Pause acquisition uses the same
@@ -627,7 +654,7 @@ Pickup probe review: **2026-10-06**, baseline **`1451bfa`** plus rule **224**
 (superseding rule 222's 20% distance only).
 After final-pick settling expires without DI1, keep the candidate ACTIVE and
 command a last-chance upward lift through 50% of the remaining distance from
-actual settled Z to saved pre-pick Z, at final-approach speed/acceleration.
+actual settled Z to saved settling-retract Z, at final-approach speed/acceleration.
 Preserve measured XY/attitude, suction and finger outputs. Acquisition stays
 armed across settling, probe admission and travel; DI1 HIGH uses the existing
 Stop/reply containment and held continuation from the latest pose. Only the
@@ -661,7 +688,8 @@ Independent finger settings review: **2026-10-06**, baseline **`757c79c`** plus
 rule **219**, with close timing superseded by rule **269**: `grip_onpick=true`
 closes at final arrival or accepted early suction Stop, regardless of `use_grip`.
 At 50% of the first held lift, `use_grip=false` relaxes
-DO2/DO14 OFF; `use_grip=true, grip_onpick=false` closes; both true stays closed.
+DO2/DO14 OFF. Under rule 300, `use_grip=true, grip_onpick=false` closes at
+50% of the second pick_retract lift; both true stays closed.
 Rule 248 moves initial relaxation earlier for both `grip_onpick=false`
 combinations: final-pick arrival or accepted early pickup Stop, before any lift.
 Held Pause preserves outputs; Continue restores CLOSE or RELAX according to
@@ -773,7 +801,7 @@ Preserve motion/I/O, retry limits, source/DI1 ownership, slow-result supervision
 cancellation, final-item behavior and physical counting.
 
 Safety Z restoration review: **2026-10-01**, baseline **`77f3559`** plus rule **205**.
-Successful manual/Auto Run Pick now queues pre-pick lift → clearance → explicit
+Successful manual/Auto Run Pick now queues settling lift → additional pick_retract → explicit
 vertical Safety Z exit → saved Tray Detect. Exit Z is max(taught Home Z, current
 height), with unchanged measured X/Y/attitude and taught travel rates. Keep it
 even when coincident with clearance. Preserve the one ordered group, selected
@@ -841,8 +869,8 @@ Append exact joint Home in the same queue; confirm final Home and neutral/DI1 LO
 context survives Stop. Rule 212 extends this same route to automatic drop returns.
 
 Pickup grip review: **2026-10-01**, baseline **`fa9836d`** plus diary rule **190**.
-With use_grip enabled and grip_onpick disabled, close fingers at 50% of the first
-held lift to pre-pick using MovLIO; clearance uses MovL with no finger event.
+With use_grip enabled and grip_onpick disabled, close fingers at 50% of the
+additional pick_retract lift using MovLIO; the settling lift has no CLOSE event.
 Rule 219 supersedes the dependency of immediate pickup closing on use_grip and
 adds first-lift RELAX for suction-only transport. Motion rates, Stop acknowledgement
 and direct Tray Detect completion remain unchanged for manual Pick and Auto Run.
@@ -907,7 +935,7 @@ same three targets; interrupted confirmed release resumes upward only.
 Pick destination review: **2026-09-30**, baseline **`1fdc2f0`** plus diary rule
 **182**. Initial Home skips immediately from fresh idle RobotStatus and all six
 canonical joint positions within ±1°, with no extra tick/query/dwell. Successful
-Pick queues pre-pick lift → clearance lift → Safety Z exit → saved Tray Detect
+Pick queues settling lift → additional pick_retract lift → Safety Z exit → saved Tray Detect
 joints (exit restored by rule 205), with no final Home. Finish HOLDING at Tray Detect; held Continue uses that same
 destination. Missed candidates, put-back and exhausted batches retain their Home
 routes. Pick/preview require recorded tray joints before motion or detection.
@@ -1412,20 +1440,20 @@ flowchart TD
     Drain --> Acquire["Send one pickup Stop; await acceptance; fresh joint pose"]
     Sense -->|No| Settle["Final joint-FK / idle / executed queue; Grip on Pick ON: confirm CLOSE, OFF: RELAX; then taught DI1 settling"]
     Settle -->|DI1 HIGH| Drain
-    Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 50% toward pre-pick at approach rates; fingers unchanged"]
+    Settle -->|Interval ends with no pickup| Probe["Keep ACTIVE / suction ON; lift 50% toward settling_retract at approach rates; fingers unchanged"]
     Probe -->|DI1 HIGH| Drain
     Probe -->|Executed / idle endpoint; no DI1 or no upward distance| Miss["Latch FAILED; record one repick attempt; activate circle at trigger; log no DI1"]
     Acquire --> Fingers["Finish remaining CLOSE / RELAX outputs once; early Stop closes here; record HELD repick attempt"]
-    Fingers --> HeldReturn["Pre-pick lift: at 50%, use_grip OFF stays/becomes relaxed; ON closes/stays closed; clearance → Safety Z exit → MovL then MovJ to Tray Detect; no intermediate wait"]
+    Fingers --> HeldReturn["Settling lift: DI1 loss gate at measured height; use_grip OFF relaxes at 50%. Additional pick_retract: delayed CLOSE at 50% with use_grip ON. Safety Z exit → MovL then MovJ Tray Detect; no dwell"]
     HeldReturn -->|Final MovJ execution, raw joints, idle and grip confirmed| Success["HOLDING / SUCCESS at Tray Detect"]
-    HeldReturn -.-> DropGate["At measured pre-pick height: arm drop detection; no queue split; start fresh LOW timer"]
+    HeldReturn -.-> DropGate["At measured settling_retract height: arm drop detection; no queue split; start fresh LOW timer"]
     DropGate -->|DI1 LOW for 500 ms of advancing feedback| PutBack["Stop containment → shared Return Item approach / 80% release / 0% neutral retract; no Home"]
     PutBack -->|Eligible saved candidate; same queue| Entry
     PutBack -->|No eligible poses; return confirmed| Unsafe
     Miss --> More{"Another unblocked candidate with safe updated trickle target?"}
-    More -->|Yes| Retry["Old pre-pick → old clearance → old exit transit → next entry with selected attitude → next pre-pick → final approach; blended"]
+    More -->|Yes| Retry["Old settling lift → old pick_retract → old exit transit → next entry with selected attitude → next pre-pick → final approach; blended"]
     Retry --> Sense
-    More -->|No| Exhausted["Empty retract → clearance → exit transit → joint Home"]
+    More -->|No| Exhausted["Empty settling lift → pick_retract → exit transit → joint Home"]
     Exhausted --> Unsafe{"Remaining poses rejected by trickle guard?"}
     Unsafe -->|Yes| SafeEnd["Confirm Home and Stop; WAITING FOR ITEMS"]
     Unsafe -->|No| Limit
@@ -1538,17 +1566,17 @@ empty observations retain nine Home retries and fresh-frame requirements.
   into the return queue. Rejection/timeout blocks the return.
   If there is no early pickup, observe taught `timing.pick_settling` at the final
   stationary/idle pose. Expiry without acquisition starts a 50% upward probe to
-  saved pre-pick Z at taught approach rates, keeping measured XY/attitude and
+  saved settling-retract Z at taught approach rates, keeping measured XY/attitude and
   unchanged suction/finger outputs. Keep the same acquisition filter and ACTIVE
   candidate throughout; HIGH latches pickup in either phase. Require the
   probe's returned queue ID, fresh idle endpoint and unchanged outputs before
   latching a miss. There is no second settling wait. Zero upward distance skips
   motion. Failed retract or successful held lift then uses the measured pose;
   the original saved source remains unchanged.
-- Success first lifts to pre-pick at taught retract rates. Empty retract and
-  the clearance rise use speed 100% with taught travel acceleration. Other Pick
+- Success first lifts to settling_retract at taught retract rates. Empty retract and
+  the additional pick_retract rise use speed 100% with taught travel acceleration. Other Pick
   travel uses its taught rates; global SpeedFactor scales all motion.
-  Drop supervision starts only when fresh joint FK reaches first-retract Z;
+  Drop supervision starts only when fresh joint FK reaches settling-retract Z;
   it remains deferred during this first lift. No LOW time from lifting counts
   toward the subsequent 500 ms debounce. Source/HELD context and output guards
   remain active. Monitor crossing the height within the same blended queue;
@@ -1559,7 +1587,7 @@ empty observations retain nine Home retries and fresh-frame requirements.
   supervised during response and output waits. Only fresh confirmed OFF states
   update the expected outputs; failures/cancellation prevent lift or probe.
   Relax once per attempt, retaining neutral fingers throughout the probe and
-  first half of the held lift. Missed retries reopen on the next entry as before.
+  settling lift and first half of the additional pick_retract. Missed retries reopen on the next entry as before.
   DI1 during either DO finishes that issued output before pickup Stop, then
   completes the other channel after Stop when needed. Never start another DO
   between the latch and Stop, and never repeat a confirmed OFF channel.
@@ -1571,9 +1599,9 @@ empty observations retain nine Home retries and fresh-frame requirements.
   `use_grip`. Failed attempts can close before their unchanged exhaust/neutral
   return. With `use_grip=false`, the first held lift
   uses MovLIO `{0,50,2,0}` then `{0,50,14,0}`: both finger outputs OFF at 50%.
-  With `use_grip=true, grip_onpick=false`, it instead uses `{0,50,14,0}` then
-  `{0,50,2,1}`: CLOSE at 50%. Both true keeps CLOSE, with no lift I/O. Clearance
-  never has finger I/O. Suction remains ON in every combination. Held Continue
+  With `use_grip=true, grip_onpick=false`, the second pick_retract lift uses
+  `{0,50,14,0}` then `{0,50,2,1}`: CLOSE at 50%. Both true keeps CLOSE, with
+  no lift I/O. Suction remains ON in every combination. Held Continue
   restores the chosen transport state before direct travel from safety parking.
   Both false remains relaxed; the 50% OFF events simply reaffirm the arrival state.
 - Successful Pick queues its two lifts, Cartesian Safety Z exit, then
@@ -2066,7 +2094,7 @@ flowchart TD
     Paused -->|Continue accepted| Resume["Restore owning operation and replan from actual parked pose"]
     Paused -->|Held item: Return Item| Return["RETURNING_ITEM → Home → READY"]
     Paused -->|Armed DI1 LOW for 500 ms| Drop["Put back saved item → Home → remain PAUSED"]
-    Rise -->|After first-retract height: DI1 LOW for 500 ms| Drop
+    Rise -->|After settling_retract height: DI1 LOW for 500 ms| Drop
     Drop --> Paused
 ```
 
@@ -2281,9 +2309,9 @@ item placement is not measured; source context does not survive restart.
 | Explicit Hardware Home / `go_home` | Conditional unchanged-XY/attitude rise to Home Z, separately confirmed → absolute joint MovJ Home | Exact taught joints within ±1° each, execution/idle; skip only when those joints already match |
 | Pick's Home after pose acquisition, or before its empty-result retry | If needed: unchanged-XY/attitude rise to Home Z → exact taught joint Home | Separate rise barrier when needed, then joint Home; skip if idle and every Home joint is within ±1° |
 | Explicit Return Item or paused drop | Shared queue: optional rise → item XY at Home Z → saved pre-pick timed drop → timed retract Home Z → joint Home | Final Home joints / idle / execution with neutral outputs / DI1 LOW |
-| Final exhausted miss | Item retreat/clearance → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
+| Final exhausted miss | Item settling/pick_retract → explicit exit transit → conditional Home-height target → exact joint Home, one ordered group | Final joint Home |
 
-Successful Pick is not a Home route: it lifts to pre-pick and clearance, then
+Successful Pick is not a Home route: it lifts to settling and pick_retract, then
 queues its linear Safety Z exit then MovL and MovJ to the same saved Tray Detect joints
 and finishes HOLDING there.
 
@@ -2324,13 +2352,14 @@ Names below are relative to `/robot_controller/`.
 | Measured surface floor/plane (perception / controller / Preview) | Base Z at actual target X/Y must be no more than 20 mm below calibrated bin floor or saved tray plane before tool offsets, with 0.001 mm numerical tolerance at that limit; either normal sign and tilted planes; reject without clamping; skip bin candidates/use empty retry budget, retry tray observations/use acquisition pause; invalid geometry/evidence remains fatal |
 | Controller item priority (manual Pick / Auto Run / Preview) | Validate detector order and all source/timestamp/pose evidence first; then rank returned item XYZ in base_link by 3D distance from taught Home Link6 XYZ, exact ties by detector priority; preserve IDs and fixed order for the batch; never expand the detector's returned set |
 | Missed-pick next candidate (rule 264) | Old lifts and both common-safety-Z transits, then next pre-pick/pick; omit next clearance only in ordinary missed retry; next selected attitude at entry and throughout descent; one blended group, terminal confirmation only, no midpoint orientation/J6 wait; preserve timed I/O and observed vacuum reset |
+| Two-stage retract (rule 300) | Schema 16: first lift at nominal pick + settling_retract; second at settling + pick_retract; approach uses prepick_height independently; Home above all; DI1 loss starts at measured settling height without dwell; delayed CLOSE at 50% of second lift; no automatic legacy conversion |
 | Pick camera-body clearance (perception / preview / hardware) | All eight corners of the RGB-referenced 90 × 25 × 30 mm box, center (+11, 0, −12.79) mm, composed through nominal RGB-to-link, saved mounting and planned Link6 pose, project inside/on green; try normal attitude then exact 180° tool-Z mirror; reject if neither fits |
 | Pick nearby-depth eligibility (perception) | No usable median-depth point inside/on the physical outer bin and camera-XY radius reaches the saved floor-relative height difference from the candidate surface; evaluate platform Z=0 beneath each point along camera Z; exclude standoff; schema-13 defaults 150/60 mm and three frames; check in rank order until requested count passes, skip blockers, leave remaining candidates unchecked; consume only the checked profile-bound batch |
 | Pickup probe (internal) | Final-pick settling completed with no DI1; candidate still ACTIVE, suction armed/ON; upward distance to saved pre-pick; unchanged outputs and normal Stop/Pause gates |
 | Pickup Stop ordering (internal) | Eligible DI1 latched; all issued service responses accepted; in-flight stationary finger DO echoed its commanded state; no later normal admission until one accepted Stop; five-second deadlines and immediate operator/fault containment retained |
 | Pickup finger preparation (internal) | Confirmed final-pick idle or accepted early acquisition Stop; grip_onpick=true: DO14 OFF then DO2 ON before taught settling; false: confirm DO2/DO14 OFF; fresh echoes before probing/lifting; suction ON/exhaust OFF and DI1 supervision through both waits; no extra settling interval |
 | Tray arrival pair (internal) | Admit MovL then MovJ to identical taught angles/rates, waiting only for ordered service acceptance; preserve outputs/Stop/drop gates; no midpoint arrival or mismatch decision; final MovJ execution/idle and all raw joints within ±1° required before completion or detection |
-| Drop activation (internal) | Confirmed pickup; fresh joint FK reaches first-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
+| Drop activation (internal) | Confirmed pickup; fresh joint FK reaches settling-retract Z; restart LOW interval at activation; never use queue acceptance as height evidence |
 | Tray rectangle observation rejection | Finite, structurally valid detection evidence disagrees: provider returns no pose, remains armed while healthy, requires newer RGB; controller uses existing ten-request budget then acquisition pause; malformed evidence/invalid reference planes/worker failures remain terminal |
 | Auto Run next-bin request (internal) | Confirmed Tray Detect, valid tray pose/depth and observation position; another item remains, regardless of unused old poses; no cancellation; starts before placement planning/admission |
 | Auto Run next Pick motion (internal) | All three placement commands have received ordered acceptance; fresh validated new batch available; exact taught Tray Detect joint return (MovJIO, OPEN at 50%) precedes linear entry/pre-pick/pick; no cancellation or added midpoint arrival wait |
@@ -2369,7 +2398,7 @@ and READY, or failure containment. Clients must observe status for that outcome.
 
 | I/O | Meaning |
 | --- | --- |
-| DI1 | Acquisition HIGH is immediate; held loss is deferred until first-retract height, then debounced 500 ms with advancing feedback |
+| DI1 | Acquisition HIGH is immediate; held loss is deferred until settling-retract height, then debounced 500 ms with advancing feedback |
 | DI12 | Finger fully open feedback, shown on the GUI; LOW does not prove fingers are closed |
 | DO1 / DO13 | Exhaust / suction; both OFF is neutral; both ON is invalid |
 | DO2 / DO14 | Finger close / open; both OFF is neutral; both ON is invalid |

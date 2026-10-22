@@ -12629,6 +12629,67 @@ Never use a floating “latest” version in an issue, script, or deployment not
   --cmake-force-configure, source and relaunch. The teaching launches require this
   rebuild. No interface rebuild or teach upload is needed; live station unchanged.
 
+### 2026-10-22 — Rule 300: independent settling retract and additional transport lift
+
+- User replaces the existing supplementary motion.retract_height with
+  settling_retract and adds pick_retract. They explicitly confirm pick_retract
+  is extra travel above settling_retract and retain continuous movement with the
+  existing 500 ms DI1-loss monitoring, without a stop at the first lift.
+- Strict Item Teach schema 16 requires both finite nonnegative millimetre fields.
+  Nominal pick Z=item Z+standoff; pre-pick Z=nominal pick+prepick_height;
+  settling Z=nominal pick+settling_retract; second-lift Z=settling Z+pick_retract.
+  Pre-pick is independent. Home must be at or above all levels. The retained
+  automatic-return/next-candidate entry uses max(pre-pick, second-lift Z), keeping
+  its descending route and execution-based source handoff when approach is higher.
+- Shared manual/Auto/preview/retry planning uses those two lifts. Clamp both
+  upward from actual stopped Z, preserving measured XY/attitude, then retain the
+  explicit Home-Z exit and existing Tray Detect/Home destination. Successful
+  first lift keeps taught retract rates; second and empty lifts keep speed 100%
+  with travel acceleration. No new motion service, action, state or queue barrier.
+- Existing 50% pickup probe and deferred drop supervision receive the first
+  settling target. Arm loss monitoring at measured settling Z or the higher
+  actual pickup origin; no pre-height LOW time consumes its fresh 500 ms interval.
+  Preserve Pause acquisition, Stop containment and continuous monitoring afterward.
+  With use_grip ON/grip_onpick OFF, move timed CLOSE to 50% of the second lift;
+  Grab on Pick still closes at final arrival/early pickup Stop. use_grip OFF
+  still relaxes both outputs at 50% of the first lift. Misses retain first-lift
+  80% EXHAUST, second-lift 0% NEUTRAL and observed reset before the next attempt.
+- Keep saved Return Item release at pre-pick (or its established higher actual
+  early-pickup pose), independent of the new first lift. Remove the old incidental
+  coupling when recording a pickup above pre-pick. Trickle still adjusts only
+  final pick; nominal lift/release levels, source fences, outputs, motion response
+  ordering, global CP and cancellation remain unchanged.
+- New UI fields replace retract_height and explain the references/DI behavior.
+  Schema-15 and older profiles are unarmed GUI recovery drafts with both new
+  values blank for explicit review/Save. No legacy alias, automatic migration,
+  runtime fallback or operator YAML/model/calibration/runtime-file edits. Existing
+  backups and explicit offline-to-runtime deployment remain operator-controlled.
+- Work in /tmp/picknplace-settling-pick-retract while the canonical station runs.
+  Isolated camera_calibration/item_perception_yolo/robot_controller builds pass;
+  existing dependencies are supplied by the installed underlay. Canonical build
+  outputs and active station processes remain untouched. No robot commands,
+  arming, physical cycle or live sensor verification is performed.
+- Validation: focused synthetic/offscreen tests pass 485 cases. Complete affected
+  package suites pass 2,752 cases. They cover unequal/zero heights, Home bounds,
+  upward-only early pickup, separate saved release, second-lift finger events and
+  real transport requests, probe/DI monitoring, retries, Pause/Stop, Auto Run,
+  source checks, preview and strict schema/recovery. Initial failures were old
+  first-lift I/O assertions, an obsolete schema-15 acceptance case and fixtures
+  missing the added field; update those without production fallbacks.
+- Update root/package/artifact guides, AGENTS and the FSM behavior/diagram/guard
+  table. Regenerate adjacent HTML/PDF from that source with the local renderer.
+  Two additional UI load/edit/disarm tests pass (2,754 distinct tests total).
+  Offscreen inspection confirms all five motion fields fit the existing form.
+  Both exports contain nine diagrams/pages and match the source hash; inspect
+  the updated Pick node and verify offline navigation/zoom. Changed Python AST,
+  changed-line 100-column flake8 and git diff --check pass. Evidence lives in
+  the isolated checkout logs/retract_* files. No physical motion claim is made.
+- Deployment: operator closes affected processes, rebuilds item_perception_yolo
+  and robot_controller, relaunches Item Teach, explicitly enters both new heights
+  and Saves schema 16, then reloads/redeploys the reviewed profiles through the
+  existing controls. No interface rebuild is needed. Preserve the unrelated RViz
+  edit and all operator artifacts; scoped commit/push follows standing rule 8.
+
 ### Future entry template
 
 ```text

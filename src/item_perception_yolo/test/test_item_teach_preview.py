@@ -952,7 +952,8 @@ def paired_teach(window, tmp_path, monkeypatch):
         "pick_rotation": 12.5,
         "bin_clearance": dict.fromkeys(core.BIN_CLEARANCE_FIELDS),
         "quality": dict(core.QUALITY_DEFAULTS),
-        "motion": dict(zip(core.MOTION_FIELDS, [90., 50., 60., 100.])),
+        "motion": {"standoff_height": 90., "prepick_height": 50.,
+                   "settling_retract": 20., "pick_retract": 60., "trayplace_height": 100.},
         "speed": dict(core.NEW_PROFILE_SPEED),
         "acceleration": dict(core.NEW_PROFILE_ACCELERATION),
         "timing": {"pick_settling": .5}, "gripper": {"use_grip": True, "grip_onpick": True},
@@ -1334,6 +1335,10 @@ def test_depth_percentage_load_recovery_and_save(
     window._load_dialog()
     finish_model_job(window)
     assert window.recovered_draft is old_schema
+    if old_schema:
+        for key in ("settling_retract", "pick_retract"):
+            assert window.inputs[key].text() == ""
+            window.inputs[key].setText(str(profile["motion"][key]))
     assert "minimum_depth_samples" not in window.inputs
     field = window.inputs["minimum_depth_fraction"]
     assert float(field.text()) == 50.
@@ -1342,7 +1347,7 @@ def test_depth_percentage_load_recovery_and_save(
     monkeypatch.setattr(gui.QtWidgets.QMessageBox, "information", MagicMock())
     window._save()
     saved, _ = core.load_item_profile(path, root=tmp_path)
-    assert saved["schema_version"] == 15
+    assert saved["schema_version"] == 16
     assert saved["quality"]["minimum_depth_fraction"] == .75
     assert "minimum_depth_samples" not in saved["quality"]
     window._load(path, prefill=True)
@@ -1359,7 +1364,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     window._load(path, prefill=True)
     assert window.recovered_draft
     assert window.inputs["pick_rotation"].text() == ""
-    assert window.inputs["retract_height"].text() == ""
+    assert window.inputs["settling_retract"].text() == ""
     with pytest.raises(ValueError, match="pick_rotation"):
         window._settings()
     assert window.saved_path is None
@@ -1368,10 +1373,11 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     finish_model_job(window)
     assert window.recovered_draft
     assert window.inputs["pick_rotation"].text() == ""
-    assert window.inputs["retract_height"].text() == ""
+    assert window.inputs["settling_retract"].text() == ""
     assert window.inputs["trayplace_height"].text() == ""
     window.inputs["trayplace_height"].setText(str(settings["motion"]["trayplace_height"]))
-    window.inputs["retract_height"].setText(str(settings["motion"]["retract_height"]))
+    window.inputs["settling_retract"].setText(str(settings["motion"]["settling_retract"]))
+    window.inputs["pick_retract"].setText(str(settings["motion"]["pick_retract"]))
     window.inputs["pick_rotation"].setText(str(settings["pick_rotation"]))
     assert window._settings() == settings
     assert window.saved_path is None
@@ -1383,7 +1389,7 @@ def test_old_teach_requires_review_then_overwrites_with_backup(
     assert not window.recovered_draft and window.saved_path == path
     assert window.recovery_notice.isHidden()
     saved, _ = core.load_item_profile(window.saved_path, root=tmp_path)
-    assert saved["schema_version"] == 15
+    assert saved["schema_version"] == 16
     assert saved["retry"] == {"pose_candidates": 3, **core.REPICK_DEFAULTS}
     assert "result_max_age_sec" not in saved["quality"]
     assert saved["home"] == profile["home"]
@@ -2125,3 +2131,24 @@ def test_passive_click_rechecks_source_and_mode_before_inspection(window, invali
         window.node.background_suspended = lambda: True
     window._select_detection(gui.QtCore.QPointF(window.video.contentsRect().center()))
     assert window.passive_inspection is None and window.pending_pose is None
+
+
+@pytest.mark.parametrize("key", ["settling_retract", "pick_retract"])
+def test_new_retract_fields_load_independently_and_edit_disarms(window, paired_teach, key):
+    path, _, settings, _, _ = paired_teach
+    assert "retract_height" not in window.inputs
+    assert window.inputs[key].text() == ""
+    before = path.read_bytes()
+    window._load_dialog()
+    finish_model_job(window)
+    assert float(window.inputs[key].text()) == settings["motion"][key]
+    window.armed_toggle.setChecked(True)
+    assert window.armed_toggle.isChecked()
+    window.node.disarm.reset_mock()
+    window.inputs[key].setText("27.5")
+    assert window.saved_path is None and not window.armed_toggle.isChecked()
+    window.node.disarm.assert_called()
+    actual = window._settings()["motion"]
+    assert actual[key] == 27.5
+    assert all(actual[k] == v for k, v in settings["motion"].items() if k != key)
+    assert path.read_bytes() == before

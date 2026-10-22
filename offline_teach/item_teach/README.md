@@ -17,7 +17,7 @@ profile or automatic reader. Externally changed files require reloading before
 overwrite. A failed copy or changed source prevents YAML publication; unchanged
 paired weights are not rewritten. The success dialog names both files.
 
-Strict item schema 11 groups data by purpose. Production rejects schemas 1–10;
+Strict item schema 16 groups data by purpose. Production rejects schemas 1–15;
 only the Item Teach GUI may recover old/invalid files into an unarmed editable draft:
 
 | Section | Saved data |
@@ -27,7 +27,7 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 | `units` | Motion distances in mm, time in seconds, `pick_rotation` in degrees, home joints in radians, speed/acceleration in % |
 | `home` | Six named joint positions, feedback timestamp, recording time, source IP/node/topic |
 | `pick_rotation` | Unsigned 0–90° offset from the detected item short-axis line |
-| `motion` | `standoff_height`, `prepick_height`, `retract_height`, `trayplace_height` |
+| `motion` | `standoff_height`, `prepick_height`, `settling_retract`, `pick_retract`, `trayplace_height` |
 | `speed` | `travel_percent`, `approach_percent`, `retract_percent` (integers 1–100; initial 100/6/6) |
 | `acceleration` | The same three phase keys (integers 1–100; initial 100/100/100) |
 | `timing` | `pick_settling` |
@@ -43,7 +43,7 @@ only the Item Teach GUI may recover old/invalid files into an unarmed editable d
 `motion.trayplace_height` is the required finite, nonnegative Link6 drop height
 above the detected tray surface in millimetres. It appears below `pick_rotation`
 in **Vertical motion — mm**. Hardware placement and Preview use surface Z +
-trayplace_height; pick geometry retains its existing three heights. Zero is valid
+trayplace_height; pick heights remain independent of placement. Zero is valid
 for a drop target on the surface, but drop Z must remain below taught Home Z.
 Schema-9 and older files open as GUI recovery drafts with this field blank.
 Enter the intended height and explicitly Save before controller use or runtime
@@ -61,9 +61,14 @@ TF-only debug. Teaching never commands motion.
 
 Travel rates apply to Home, XY transit, initial positioning and descent to
 pre-pick; approach rates apply only to final descent. Slow retract applies to
-pick-to-prepick; the remaining clearance and Home return use travel rates.
-Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick, clearance Z=pre-pick Z+retract,
-in robot base Z. The candidate attitude preserves taught tool Z and applies the
+pick-to-settling; the second lift uses speed 100% and travel acceleration.
+Pick Z=item Z+standoff, pre-pick Z=pick Z+prepick_height,
+settling Z=pick Z+settling_retract, second-lift Z=settling Z+pick_retract,
+all in robot base Z. Follow both lifts with the Home-Z exit. DI1 loss monitoring
+starts at the measured settling level with 500 ms debounce; motion continues.
+With use_grip ON and grip_onpick OFF, close halfway through the second lift.
+Grab on Pick still closes at pickup; use_grip OFF relaxes halfway through the first.
+The candidate attitude preserves taught tool Z and applies the
 nearest legal clockwise/counter-clockwise `pick_rotation` offset from the item
 short-axis line relative to taught Home. Every candidate is solved independently;
 retry orientations do not accumulate. zheight_offset is removed, not an alias.
@@ -72,8 +77,9 @@ per-command `v=`/`a=` while global SpeedFactor stays 100%. These are percentages
 not absolute velocity/acceleration. Slow rates do not relax acquisition
 freshness or the request deadline; an accepted candidate batch has no age expiry.
 Missing/invalid rates in recovery drafts are blank, never automatically filled.
-Old retract_height is also blank in GUI recovery: its meaning changed from an
-offset above pick to extra clearance above pre-pick. Review and fill it explicitly.
+The old retract_height is removed. Schema-15 and older recovery drafts leave
+settling_retract and pick_retract blank; enter both and explicitly Save schema 16.
+No old value is automatically converted or used as a production alias.
 Schema-7 and older recovery drafts also leave `pick_rotation` blank rather than
 assuming zero; review and enter 0–90° explicitly.
 Schema-8 and older recovery drafts leave all four bin-wall fields blank. A valid

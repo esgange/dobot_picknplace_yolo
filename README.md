@@ -47,6 +47,18 @@ The root build contains 18 ROS packages below `src`: seven packages grouped unde
 
 ## Robot Controller
 
+Item Teach schema **16** separates approach from retract. `prepick_height` is
+above nominal pick Z. `settling_retract` is independently above nominal pick Z,
+and `pick_retract` is an additional lift above that settling level. For example,
+40 / 20 / 30 mm means approach at pick +40, first lift at pick +20, then pick +50
+and the Home-Z exit. The old `retract_height` field is removed. Older files open
+as unarmed recovery drafts; explicitly enter both new distances and Save before
+controller loading or deployment. Existing operator files are never rewritten on load.
+DI1 loss monitoring starts at the measured settling height with the existing
+500 ms debounce while motion continues. Delayed finger closing (`use_grip=true`,
+`grip_onpick=false`) occurs halfway through `pick_retract`. Grab on Pick still
+closes at pickup; suction-only transport still relaxes halfway through the first lift.
+
 Opening the HMI starts **only the HMI**. There are two station modes:
 
 | Station mode | Behavior |
@@ -133,7 +145,7 @@ retries that same item and target without resetting bin history. Return Item is
 available there with a trusted held source. Both waits supervise feedback, pose,
 queue and outputs; STOP and faults retain their containment behavior.
 
-Item Teach schema 15 adds **Repick candidates** settings under `retry`:
+Item Teach schema 16 adds **Repick candidates** settings under `retry`:
 `pose_candidates`, `blaclist_trigger`, `blackist_radius` (mm),
 `blackist_cooldown` (other physical picks), and `trickle_depth` (mm). The four
 repick controls default to zero; `pose_candidates` retains its configured count.
@@ -171,7 +183,7 @@ Repick exclusions require matching Item Detect clients and providers. After
 stopping affected processes, rebuild `item_perception_interfaces`,
 `item_perception_yolo` and `robot_controller`,
 then relaunch matching providers/clients. Review/save old Item Teach files as
-schema 15; schema-14 recovery preserves blacklist settings and proposes
+schema 16; schema-14 recovery preserves blacklist settings and proposes
 `trickle_depth=0`. Older profiles start repick disabled. No operator file is
 migrated automatically. Deploy matching YAML/model pairs manually when using
 `runtime_teach/`. Do not overwrite a live mapped library.
@@ -292,7 +304,7 @@ return without
 stationary confirmation. Operator Stop and fault containment stay immediate;
 response/output waits retain five-second bounds.
 If final-pick settling ends without DI1, keep suction on and try a last-chance
-lift through 50% of the remaining distance to pre-pick at final-approach rates.
+lift through 50% of the remaining distance to settling_retract at final-approach rates.
 DI1 latches pickup during settling or this lift; only completing the lift without
 DI1 fails the candidate. Already-queued motion can continue while its reply is pending.
 Explicit Recover cancels the interrupted action, preserves current gripper
@@ -524,7 +536,7 @@ Home Z must be above saved pre-pick so the retract is upward; no fixed 50 mm
 release offset or minimum pre-pick height is introduced. All return speeds are
 100%, scaled by global SpeedFactor.
 
-For an ordinary missed pick, rise through the old item's pre-pick and clearance,
+For an ordinary missed pick, rise through the old item's settling and pick_retract levels,
 then queue its exit transit and the next item's entry transit at the same safety
 Z. The entry commands the next item's selected attitude; descend directly through
 its pre-pick to final pick with that attitude, matching the first-item approach.
@@ -540,8 +552,8 @@ crosses into the next clearance and neutral outputs/DI1 LOW have been observed;
 queue acceptance alone cannot transfer ownership or arm the next pickup.
 
 After pickup, defer drop detection until fresh joint feedback reaches the first
-retract/pre-pick height. LOW during that lift does not count toward the 500 ms
-debounce. Keep the complete lift/clearance/Tray Detect queue; no midpoint wait is
+settling_retract height. LOW during that lift does not count toward the 500 ms
+debounce. Keep the complete settling/pick_retract/Tray Detect queue; no midpoint wait is
 added. Then monitor continuously through travel, idle holding, tray acquisition
 and placement approach/descent. A confirmed 500 ms DI1 loss immediately
 sends Stop from the feedback callback and blocks further interrupted commands.
@@ -616,7 +628,7 @@ Otherwise obtain the current Link6 pose from canonical joint FK; if more than
 Then send `MovJ(mode=true)` to the six exact saved Home angles, preserving grip
 and taught travel rates. Confirm its returned command ID, exact joint arrival
 and an empty queue. Final Home uses joint interpolation. A
-successful Pick queues actual stopped pose → pre-pick lift → clearance lift →
+successful Pick queues actual stopped pose → settling lift → additional pick_retract lift →
 vertical Safety Z exit → saved Tray Detect joints in one CP (default 100%) group.
 Safety Z is taught Home Z or the higher actual height; the exit preserves current
 X/Y and attitude. It omits final Home, confirms only Tray Detect and finishes
@@ -636,8 +648,8 @@ intentionally active together and such feedback aborts motion. The first pick
 group goes Home-Z item X/Y with OPEN at 50%, directly to pre-pick, then to final
 pick with SUCK at its start. A miss latches only after final-pose `pick_settling`
 and the 50% last-chance upward lift both finish without DI1.
-Retry rises to the old pre-pick with EXHAUST at 80%, enters both NEUTRAL states
-at the start of the old-clearance rise, enters OPEN at 50% of travel to the
+Retry rises to the old settling height with EXHAUST at 80%, enters both NEUTRAL states
+at the start of the old pick_retract rise, enters OPEN at 50% of travel to the
 next candidate's safety-Z transit, and enters SUCK at the start of the next final
 descent. A late DI1 from an already missed attempt cannot become success or
 block that retry.
@@ -689,7 +701,7 @@ coherent for the taught `pick_settling` time. This one profile-driven interval
 replaces the fixed 300 ms final-pick gate and has no later suction wait.
 Missed picks queue entry and exit `park_transit` targets. Item returns use the
 shared Home-Z approach/retract described above. On an
-intermediate miss, one group rises through the old item's pre-pick and clearance
+intermediate miss, one group rises through the old item's settling and pick_retract levels
 at `v=100`, then queues the old item's exit transit followed by the next item's
 entry transit before descending through its clearance and pre-pick to final pick.
 Both transits use the higher of taught Home Z and stopped Z. The exit preserves
@@ -702,7 +714,7 @@ and SUCK at the start of the new final descent. A final miss queues the same
 EXHAUST/NEUTRAL rise, explicit exit transit and exact joint Home in one
 ordered group. Clearance and transits remain blended control points; only exact
 joint Home is physically confirmed. A confirmed pickup lifts through
-pre-pick, clearance and the Safety Z exit, then moves to saved Tray Detect in one group
+settling_retract, pick_retract and the Safety Z exit, then moves to saved Tray Detect in one group
 while holding SUCK. Held Continue moves directly from its parked pose to Tray
 Detect. Unheld Continue reuses the entry transit already confirmed by Pause.
 Motion services are admitted in order: each response must be `res=0`
@@ -745,7 +757,7 @@ ros2 launch robot_controller robot_controller.launch.py start_dependencies:=fals
 
 Item Teach selects `.pt` from any directory, edits grouped item/YOLO settings,
 and records all six actual home joints from fresh canonical bringup feedback.
-Save creates a strict schema-15 YAML and SHA-256-bound `.pt` copy under
+Save creates a strict schema-16 YAML and SHA-256-bound `.pt` copy under
 `offline_teach/item_teach/`, with matching timestamped names and a confirmation
 dialog. Transfer both files together; the original model path is not needed.
 Home joints are portable between the user's identical robots: source IP/node
@@ -774,15 +786,16 @@ Independently valid fields are kept; missing/ambiguous fields are blank (unknown
 checkboxes show a partial state). The old `retry_limit` count is recovered as
 `pose_candidates` only when unambiguous. Missing/bad model pairing clears the
 model field; it is never silently trusted. Review the recovery warning/log,
-complete the form, and Save a valid schema-15 YAML/.pt pair before simulating,
+complete the form, and Save a valid schema-16 YAML/.pt pair before simulating,
 arming or sending it to the controller. The same known item name updates the
 loaded file with a previous-version backup; an unknown original name creates a
 new pair. Loading alone never rewrites files. Detector/controller loaders
-accept only complete schema-15 profiles; they never recover old files.
-The removed zheight_offset is not recovered. Old retract_height is blank in GUI
-drafts because it now means extra clearance above pre-pick, not above pick.
+accept only complete schema-16 profiles; they never recover old files.
+The removed zheight_offset and retract_height are not recovered. Schema-15 and
+older drafts leave settling_retract and pick_retract blank for explicit entry;
+the old extra-clearance value is never reinterpreted as an independent first lift.
 Schema-7 and older drafts also leave `pick_rotation` blank; explicitly enter
-0–90° before saving schema 15. Schema-8 and older drafts leave all four optional
+0–90° before saving schema 16. Schema-8 and older drafts leave all four optional
 bin-wall clearance fields blank for explicit review. Schema-9 and older drafts
 leave `trayplace_height` blank; enter the intended tray clearance explicitly and
 Save before loading the new profile into the controller or deploying it for
@@ -801,12 +814,12 @@ nearby height in that order. Skip blocked candidates and stop immediately once
 the requested number pass (for example, three), or the ranked list is exhausted.
 Later candidates stay unchecked; the controller receives only checked poses.
 Teaching preview, Simulate Trigger and headless detection share this sequence.
-Schema 15 saves these as
+Schema 16 saves these as
 `geometry.nearby_depth_radius_mm` and `geometry.nearby_depth_height_mm`.
 Older profiles open as recovery drafts proposing the new defaults for review.
 Save and manually redeploy the pair, then reload all consumers; runtime readers
-require complete schema 15. Existing operator artifacts are not rewritten.
-Schema 15 also requires `geometry.depth_frame_count`: 1, 3 (default) or 5.
+require complete schema 16. Existing operator artifacts are not rewritten.
+Schema 16 also requires `geometry.depth_frame_count`: 1, 3 (default) or 5.
 Production/simulation use distinct post-request frames and a strict-majority
 float32 median for all pose, clearance and image paths. Item-only depth limits
 start at max(500 mm, configured minimum); tray limits stay unchanged.
@@ -816,7 +829,7 @@ Item Teach updates RViz voxels from each completed pose capture, including empty
 batches, while background jobs pause. Idle retains the live 1 Hz voxel stream.
 Captures reuse their exact RGB/depth/TF with no second YOLO prediction; unchanged
 clouds turn grey after five seconds. Source validation still reads/verifies contents.
-See the [capture and timing contract](src/item_perception_yolo/README.md#schema-15-capture-and-request-scheduling)
+See the [capture and timing contract](src/item_perception_yolo/README.md#schema-16-capture-and-request-scheduling)
 for deployment/restart and measurement details.
 
 To inspect this check, Item Teach overlays both RGB and registered depth:
@@ -853,7 +866,7 @@ Item capture uses `pose_candidates` as its acquisition limit and reports how man
 remaining candidates were left unchecked. `valid_count` reports validated returned poses, not an
 exhaustive count of every potentially usable item in the image.
 
-Item Teach schema 15 provides optional inward clearances for Bin Teach edges
+Item Teach schema 16 provides optional inward clearances for Bin Teach edges
 P1→P2, P2→P3, P3→P4 and P4→P1. Blank means no inset on that edge. A configured
 valid inset is projected in light blue on both RGB and registered depth. The
 green ROI ignores a detection only when its platform-plane footprint is fully
@@ -868,9 +881,9 @@ receives only accepted candidates and does not reinterpret the border.
 Item Teach also edits per-motion speed and acceleration percentages (integers
 1–100). New profiles explicitly start with travel/Home speed 100%, final-approach
 speed 6% and retract speed 6%. Final pick uses taught approach rates. After a
-successful pickup, the first lift from final pick to pre-pick uses taught retract
+successful pickup, the first lift from final pick to settling_retract uses taught retract
 speed and acceleration. Without a picked item, that retract uses speed 100% and
-taught travel acceleration. The following clearance rise also uses speed 100%
+taught travel acceleration. The additional pick_retract rise also uses speed 100%
 and travel acceleration in both cases. Successful Pick travel to Tray Detect and
 missed-pick exit-transit/Home moves use taught travel rates. Every item return uses
 speed 100%: approach/rise/Home use travel acceleration, release descent uses
@@ -881,12 +894,14 @@ The controller passes each target's `v=`/`a=` to MovJ, MovJIO, MovL, MovLIO or t
 RelMovLUser exception, independently of the controller's global SpeedFactor
 (100% at initialization, adjustable explicitly while idle). Loaded rates are
 preserved; missing/invalid rates in old GUI recovery drafts remain blank,
-never silently defaulted. Production rejects schemas 1–10.
-Motion saves `standoff_height`, `prepick_height`, `retract_height` and
-`trayplace_height`. The new required, finite, nonnegative millimetre field is
+never silently defaulted. Production rejects schemas 1–15.
+Motion saves `standoff_height`, `prepick_height`, `settling_retract`, `pick_retract`
+and `trayplace_height`. These are required finite, nonnegative millimetre fields.
+The placement field is
 below `pick_rotation` at the bottom of **Vertical motion — mm**.
 Pick Z = item Z + standoff; pre-pick Z = pick Z + prepick;
-clearance Z = pre-pick Z + retract. Placement drop Z = tray surface Z +
+settling Z = pick Z + settling_retract; second-lift Z = settling Z + pick_retract.
+Placement drop Z = tray surface Z +
 trayplace_height, shared by hardware and Preview. Offsets are in robot base Z.
 Queued motion commands omit per-command `cp`/`r`, so the selected global CP
 (default 100%) governs every transition. Intermediate waypoints are
@@ -901,10 +916,10 @@ settling interval, independently of `use_grip`; early DI1 retains Stop and close
 at the stopped pickup position. Closing does not require DI1 HIGH, so a missed
 attempt can also close. With `grip_onpick=false`, confirm DO2/DO14 OFF at final
 pick arrival, or after an early pickup Stop, while leaving suction ON. Keep
-fingers relaxed through settling/probing and the first half of the held lift.
-At 50% of the first successful lift to pre-pick, `use_grip=false`
-relaxes both finger outputs; `use_grip=true, grip_onpick=false` closes them.
-With both flags true they stay closed. Clearance has no timed finger event.
+fingers relaxed through settling/probing and the settling-retract lift.
+At 50% of the first successful lift, `use_grip=false` relaxes both finger outputs.
+At 50% of the additional pick_retract lift, `use_grip=true, grip_onpick=false`
+closes them. With both flags true they stay closed.
 After valid tray pose/depth, `use_grip=false` reopens at 80% of travel to pre-place
 using MovLIO (DO2 OFF then DO14 ON), while next-bin inference can run. There are
 no separate pre-placement DO calls. Suction stays on until the 90% descent vacuum release;

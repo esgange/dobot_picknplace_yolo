@@ -174,12 +174,15 @@ def pick_targets(home, item_in_base, settings, candidate_index, *, rotation=None
     motion = settings["motion"]
     pick_z = float(position[2]) + motion["standoff_height"] / 1000
     prepick_z = pick_z + motion["prepick_height"] / 1000
-    clearance_z = prepick_z + motion["retract_height"] / 1000
-    heights = (home[2, 3], clearance_z, prepick_z, pick_z, prepick_z, clearance_z)
+    settling_z = pick_z + motion["settling_retract"] / 1000
+    retract_z = settling_z + motion["pick_retract"] / 1000
+    # The return-to-next-pick handoff retains a descending entry waypoint.
+    entry_z = max(prepick_z, retract_z)
+    heights = (home[2, 3], entry_z, prepick_z, pick_z, settling_z, retract_z)
     if not all(math.isfinite(v) for v in (*position, *heights)):
         raise ValueError("Pick geometry contains nonfinite values")
     if home[2, 3] < max(heights[1:]):
-        raise ValueError("Home Z must be at or above every pick clearance/retract height")
+        raise ValueError("Home Z must be at or above every pick approach/retract height")
     names = ("transit", "initial", "prepick", "pick", "retract", "final")
     targets = []
     speeds = settings["speed"]
@@ -338,8 +341,10 @@ class PickExecutor:
                     # Suction-only transport relaxes both finger outputs.
                     if not grip:
                         events = gripper_neutral_events(50)
-                    elif not close_on_pick:
-                        events = gripper_close_events(50)
+                elif grip and not close_on_pick:
+                    # Transport closing belongs halfway through the additional
+                    # pick_retract lift, after the settling-height DI1 gate.
+                    events = gripper_close_events(50)
                 held_retract = acquired and not upward
                 upward.append(replace(
                     target, matrix=matrix,
@@ -350,7 +355,7 @@ class PickExecutor:
                 origin_z = matrix[2, 3]
             if (acquired and remember_prepick is not None
                     and return_origin[2, 3] > plan[2].matrix[2, 3]):
-                remember_prepick(replace(plan[2], matrix=upward[0].matrix.copy()),
+                remember_prepick(replace(plan[2], matrix=return_origin.copy()),
                                  settings["gripper"])
             upward.append(candidate_exit_transit(upward[-1].matrix, plan))
             if acquired:

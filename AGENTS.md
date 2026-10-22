@@ -10,6 +10,22 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 300 replaces motion.retract_height with schema-16 settling_retract and
+pick_retract. Nominal pick Z is item Z + standoff; pre-pick adds prepick_height
+independently; settling Z adds settling_retract to nominal pick; second lift Z
+adds pick_retract to settling Z. No pre-pick offset belongs in either retract.
+Start existing continuous 500 ms DI1-loss monitoring at actual settling height
+(or higher actual pickup origin), without a dwell or split queue. The 50% pickup
+probe targets the remaining rise to settling Z. Successful first lift retains
+taught retract rates; second/empty lifts retain 100% speed/travel acceleration.
+With use_grip ON and grip_onpick OFF, close at 50% of the second lift. Grab on Pick
+still closes at pickup; use_grip OFF still relaxes at 50% of the first lift.
+Keep upward-only actual-pose returns, Home-Z exit, saved pre-pick release, retries,
+Pause/Stop, trickle-only final descent and source guards. Return continuation's
+entry stays at max(pre-pick Z, second-lift Z). Old profiles are unarmed GUI drafts
+with both new fields blank; no alias, automatic migration or operator-file edits.
+Update diary/FSM and regenerate HTML/PDF; verify with synthetic inputs only.
+
 Rule 299 removes the HMI Load/Reload Teach Configuration button. Explicit local
 mode selection retains rule 298's guarded controller loading/preparation. Item
 Teach Open snapshots the selected Item/Bin paths; Tray Teach Open snapshots the

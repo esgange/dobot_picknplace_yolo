@@ -352,7 +352,7 @@ def test_first_and_retry_acquisitions_follow_pick_flag_independently_of_transpor
     assert len(acquisitions) == 2
     assert all(k["relax_pick_fingers"] == (not close_on_pick) for k in acquisitions)
     assert all(k["close_pick_fingers"] == close_on_pick for k in acquisitions)
-    close_events = [event for event in hardware.targets[-1][0].motion_io
+    close_events = [event for event in hardware.targets[-1][1].motion_io
                     if event.channel == 2 and event.active]
     assert [event.percent for event in close_events] == (
         [50] if use_grip and not close_on_pick else [])

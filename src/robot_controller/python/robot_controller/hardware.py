@@ -1184,12 +1184,12 @@ class DobotTransport:
         return self.finish_batch(batch)
 
     def defer_pickup_drop(self, retract_pose, sample):
-        """Arm loss detection at actual first-lift height without a queue barrier."""
+        """Arm loss detection at settling_retract height without a queue barrier."""
         height = max(retract_pose[2, 3], self.pose_from_snapshot(sample)[2, 3])
 
         def armed(actual_height):
             self.node.events.record(
-                "INFO", "drop_detection_armed", "First retract height reached; monitor DI1 loss",
+                "INFO", "drop_detection_armed", "Settling retract reached; monitor DI1 loss",
                 retract_z_m=height, actual_z_m=actual_height,
                 debounce_ms=SUCTION_LOSS_DEBOUNCE_SEC * 1000)
 
@@ -1197,7 +1197,7 @@ class DobotTransport:
             height, height_from_joints=lambda joints: self.node.kinematics.forward(joints)[2, 3],
             on_armed=armed)
         self.node.events.record(
-            "INFO", "drop_detection_deferred", "Defer DI1 loss monitoring until first retract",
+            "INFO", "drop_detection_deferred", "Defer DI1 loss monitoring until settling retract",
             retract_z_m=height, debounce_ms=SUCTION_LOSS_DEBOUNCE_SEC * 1000)
 
     @staticmethod
