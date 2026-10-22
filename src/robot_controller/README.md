@@ -75,6 +75,10 @@ preparation and independently stops issued work; a late successful reply after
 cancellation/timeout requires another Stop. There is no automatic retry or resume.
 Successful explicit health checks clear only the HMI station alarm, not controller
 or camera recovery context.
+After a failed local load, a later successful **Load Auto** replaces that old
+failure once matching READY is confirmed and outstanding replies/Stop are contained.
+The HMI then rechecks full station health before clearing the alarm. Saving a
+corrected teach file alone does not reload the controller or dismiss a failed load.
 
 For teaching and testing:
 

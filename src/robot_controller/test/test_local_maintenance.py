@@ -284,3 +284,69 @@ def test_close_during_initial_camera_wait_cancels_without_robot_command(local):
     assert view.local_preparation.state == 'CANCELED'
     view.node.service_clients['configure'].call_async.assert_not_called()
     view.node.service_clients['stop'].call_async.assert_not_called()
+
+
+@pytest.mark.parametrize('previous', ['FAILED', 'CANCELED'])
+def test_successful_load_auto_replaces_old_local_error_after_fresh_health(local, previous):
+    from robot_controller.station_health import HealthRow
+
+    view, _future = local
+    view.local_preparation.transition(previous, 'Item teach schema_version must be exactly 16')
+    view.station_startup.fail_health([view.local_preparation.message])
+    view.auto_detectors.state = 'RUNNING'  # Supervisor confirmed matching enabled READY.
+    view._health_rows.return_value = [HealthRow('tf', 'Robot TF', 'STALE', 'old')]
+    view._poll_local_preparation()
+    view._refresh_hmi()
+    assert view.local_preparation.state == 'OFF'
+    assert view.station_startup.checking and view.station_startup.require_perception
+    assert view.station_startup.alarm  # Success alone cannot bypass station health.
+    deadline = view.station_startup.deadline
+    view._poll_local_preparation()
+    view._refresh_hmi()
+    assert view.station_startup.deadline == deadline  # One bounded recheck, not a retry loop.
+    view._health_rows.return_value = []
+    view._refresh_hmi()
+    view._poll_local_preparation()
+    view._refresh_controls()
+    assert not view.station_startup.alarm and not view.station_startup.checking
+    assert view.status.text() == 'READY'
+    view.node.service_clients['configure'].call_async.assert_not_called()
+    view.node.service_clients['stop'].call_async.assert_not_called()
+
+
+@pytest.mark.parametrize('auto_state', [
+    'OFF', 'DEPLOYING', 'STARTING', 'DETECTORS_READY', 'PREPARING', 'STOPPING', 'FAILED',
+])
+def test_unsuccessful_load_auto_cannot_dismiss_local_failure(local, auto_state):
+    view, _future = local
+    view.local_preparation.fail('Invalid selected profile')
+    view.auto_detectors.state = auto_state
+    view._poll_local_preparation()
+    view.station_startup.update_health([])
+    assert view.local_preparation.state == 'FAILED'
+    assert 'Invalid selected profile' in view.station_startup.alarm
+    assert not view.station_startup.checking
+    view.auto_detectors.state = 'OFF'
+
+
+@pytest.mark.parametrize('pending', ['awaiting_reply', 'stop_needed'])
+def test_load_auto_cannot_retire_uncontained_local_preparation(tmp_path, pending):
+    prep = LocalPreparation(tmp_path)
+    prep.fail('Previous request failed')
+    setattr(prep, pending, True)
+    assert not prep.superseded_by_load_auto()
+    assert prep.state == 'FAILED' and getattr(prep, pending)
+
+
+def test_load_auto_health_timeout_does_not_restore_old_schema_error(local):
+    view, _future = local
+    view.local_preparation.fail('Old schema error')
+    view._poll_local_preparation()
+    view.auto_detectors.state = 'RUNNING'
+    view._poll_local_preparation()
+    view.station_startup.deadline = -1.
+    view.station_startup.update_health(['Item perception: missing'])
+    view._poll_local_preparation()
+    assert 'Item perception: missing' in view.station_startup.alarm
+    assert 'Old schema error' not in view.station_startup.alarm
+    assert not view.station_startup.checking

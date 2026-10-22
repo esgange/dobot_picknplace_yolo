@@ -47,6 +47,14 @@ class LocalPreparation:
             self.transition('CANCELED', 'Local preparation canceled; select Local / Maintenance '
                             'again when ready')
 
+    def superseded_by_load_auto(self):
+        """Retire a terminal attempt after Load Auto confirms matching READY."""
+        if (self.state not in ('FAILED', 'CANCELED')
+                or self.awaiting_reply or self.stop_needed):
+            return False
+        self.transition('OFF', 'Previous local preparation superseded by successful Load Auto')
+        return True
+
     def poll(self, errors, status, send):
         if not self.busy:
             return

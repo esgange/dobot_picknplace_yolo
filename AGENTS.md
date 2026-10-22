@@ -10,6 +10,13 @@ Regenerate its adjacent HTML/PDF visual exports whenever that document changes.
 
 ## Non-negotiable repository rules
 
+Rule 301 retires a failed/canceled local-mode preparation after a later explicit
+Load Auto reaches RUNNING with matching fresh enabled idle READY. Keep outstanding
+local replies and Stop containment protected. Start one bounded full station-health
+recheck before clearing the HMI alarm; failed/unconfirmed loads cannot clear it.
+An old local failure must not relatch after replacement. No implicit Configure,
+deployment, motion, recovery or source adoption. Update diary/FSM and exports.
+
 Rule 300 replaces motion.retract_height with schema-16 settling_retract and
 pick_retract. Nominal pick Z is item Z + standoff; pre-pick adds prepick_height
 independently; settling Z adds settling_retract to nominal pick; second lift Z

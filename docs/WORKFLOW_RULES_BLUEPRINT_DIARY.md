@@ -12690,6 +12690,37 @@ Never use a floating “latest” version in an issue, script, or deployment not
   existing controls. No interface rebuild is needed. Preserve the unrelated RViz
   edit and all operator artifacts; scoped commit/push follows standing rule 8.
 
+### 2026-10-22 — Rule 301: retire stale local-load alarms after successful Load Auto
+
+- User reports a schema-16 STATION ALARM after updating the Item Teach file.
+  Read-only inspection confirms offline/runtime Cutlery files are identical schema
+  16, with settling_retract=10 mm and pick_retract=50 mm. The live log shows the
+  rejected local preparation at 14:21:01 local time, followed by successful Load
+  Auto configuration at 14:24:54 and confirmed READY at 14:24:58. The failed local
+  preparation remained FAILED and relatched its old schema message every refresh.
+- After a later explicitly requested Load Auto reaches RUNNING (its existing
+  Configure/matching fresh enabled idle READY guard), retire a previous terminal
+  FAILED/CANCELED local preparation to OFF. Do not retire outstanding local replies,
+  required Stop containment or a pending Stop. Begin one bounded full station-health
+  check including both perception providers; only healthy results clear the HMI
+  alarm. A health timeout reports the current cause without restoring the old
+  schema error. Failed, canceled or merely accepted/unconfirmed loads never clear it.
+- Preserve operator-controlled deployment/reload, source identity, controller and
+  camera recovery, independent Stop and all motion/I/O behavior. This reconciles
+  HMI workflow state only and sends no additional robot commands.
+- Reproduce the old failure using synthetic GUI feedback; both FAILED/CANCELED
+  regression cases fail before the fix. The local-preparation, station-recipe and
+  load-preparation suites pass 87 tests afterward, including retained alarms on
+  unhealthy/unconfirmed states, one bounded recheck and outstanding-reply/Stop gates.
+  Status UI, HMI mode/tool and Load Auto integration suites pass another 196 tests
+  (283 total). Changed Python parses; changed-line flake8 and git diff --check pass.
+  The nine HTML SVG diagrams and nine-page PDF match the final FSM source hash.
+- Work and verify in the existing isolated checkout while the station remains
+  untouched. Update AGENTS, package guide and FSM, then regenerate its adjacent
+  offline HTML/PDF. Operator teach/model/calibration/runtime files and unrelated
+  RViz changes remain untouched. Deployment requires an operator-controlled HMI
+  relaunch; no live restart, Configure, enable or motion is performed by this task.
+
 ### Future entry template
 
 ```text

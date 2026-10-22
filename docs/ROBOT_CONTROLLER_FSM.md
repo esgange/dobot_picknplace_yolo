@@ -1,5 +1,17 @@
 # Robot Controller — Finite State Machine
 
+Stale local-load alarm review: **2026-10-22**, baseline **`4b547d4`** plus rule **301**.
+A failed/canceled local-mode preparation is superseded only when a later explicit
+Load Auto confirms matching fresh enabled idle READY and reaches RUNNING. Do not
+retire an attempt with an outstanding reply or pending Stop containment. Then run
+one bounded full station-health recheck, including both perception providers,
+before clearing the HMI alarm. The previous failure cannot relatch afterward;
+unhealthy nodes retain the alarm and timeout reports the current health failure.
+Saving a file, starting detectors, an accepted Configure response without matching
+READY, a failed load or a canceled load cannot dismiss the old failure. This only
+reconciles HMI state; camera/controller recovery and explicit hardware actions
+retain their existing gates.
+
 Two-stage retract review: **2026-10-22**, baseline **`f760337`** plus rule **300**.
 Item Teach schema 16 replaces `motion.retract_height` with `settling_retract`
 and `pick_retract`, both required finite nonnegative millimetres. Nominal pick Z
@@ -1053,7 +1065,7 @@ Keep controller state records separate from the GUI detector supervisor:
 | HMI tool launch | Owned application session, separate from robot readiness; external windows are not owned | `OFF`, `STARTING`, `RUNNING`, `STOPPING`, `FAILED` |
 | HMI station mode / ownership | Two visible modes: Remote Auto and Local / Maintenance; direct-tool release is internal | `AUTO` (local control), `REMOTE_AUTO`; internal `MANUAL` (local direct tools), `STARTING_AUTO`, `STOPPING_AUTO`, `FAILED`; bare GUI is `EXTERNAL` |
 | Local preparation | One explicit selection owns one bounded Configure; no automatic retry | `OFF`, `WAITING`, `CONFIGURING`, `CONFIRMING`, `READY`, `FAILED`, `CANCELED` |
-| HMI initialization / health | Explicit owned node startup and health admission; separate from robot lifecycle | `OFF`, `STARTING`, `RUNNING`, `FAILED`; bounded check plus latched station alarm |
+| HMI initialization / health | Explicit owned node startup and health admission; separate from robot lifecycle | `OFF`, `STARTING`, `RUNNING`, `FAILED`; bounded check plus latched station alarm; successful explicit Load Auto supersedes terminal local preparation and rechecks full health once |
 | Camera interlock | Required/seen canonical health, loss latch, explicit acknowledgment | Initial wait; healthy; CAMERA ALARM; cameras restored awaiting Recover/preparation |
 
 `phase` and `waypoint` are progress details inside a lifecycle state. For example,
@@ -1218,6 +1230,8 @@ flowchart TD
     Copy --> Detect["Start owned headless pair; wait for services, at most 180 seconds"]
     Detect --> Prepare["Configure exact deployed runtime files; prepare / enable"]
     Prepare --> Loaded["Successful Configure and matching fresh READY: Load Auto ON"]
+    Loaded -->|Supersedes failed or canceled local load; replies and Stop contained| Recheck["Retire old local attempt; one bounded full health recheck; clear HMI alarm only when healthy"]
+    Recheck -->|Unhealthy at deadline| Alarm
     Loaded --> Auto["Local Headless Run click: recheck all required node health"]
     Auto -->|Unhealthy| Alarm
     Manual --> Run["Shared native counted run; same quantity / placement; bound detector mode"]

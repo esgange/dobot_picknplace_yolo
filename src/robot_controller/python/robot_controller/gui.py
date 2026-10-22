@@ -761,6 +761,12 @@ class ControllerWindow(QtWidgets.QMainWindow):
 
     def _poll_local_preparation(self):
         preparation = self.local_preparation
+        if (self.modes.state == 'AUTO' and self.auto_detectors.snapshot[0] == 'RUNNING'
+                and not self.auto_stop_again and 'stop' not in self.pending
+                and preparation.superseded_by_load_auto()):
+            # A later explicit Load Auto has replaced this failed/canceled attempt.
+            # Recheck all nodes once before clearing its latched HMI alarm.
+            self.station_startup.check_health(perception=True)
         if preparation.busy:
             if self.modes.state == 'FAILED' or self.station_startup.state == 'FAILED':
                 preparation.fail(self.modes.message if self.modes.state == 'FAILED'
